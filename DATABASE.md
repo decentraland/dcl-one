@@ -935,7 +935,7 @@ Rollout, in order:
 
 1. Deploy the binary without the scene routes on every replica and run its
    `catalyst schema migrate`, which records step
-   `0056_builder_scenes_retired`. Confirm no `serve` of the old build is
+   `0057_builder_scenes_retired`. Confirm no `serve` of the old build is
    left. From this point the new binary's collector no longer counts
    `builder.asset_catalog`, so the asset-pack files the catalogue pulled into
    the store become collectable; the other scene blobs stay protected by
@@ -952,7 +952,7 @@ Rollout, in order:
    names, then `catalyst storage gc --delete` to unlink them.
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0056_builder_scenes_retired` is not
+`meta.schema_steps`, one where step `0057_builder_scenes_retired` is not
 recorded (the new binary has not migrated it), one that holds only some of
 the seven tables, and one whose `builder.projects` or `builder.asset_packs`
 changed in the last ten minutes (an old `serve` still editing). It runs in
@@ -969,7 +969,7 @@ release drops them again. Do not reset a database.
 
 The builder stores no published or approved flag on a collection: it derives
 both on read ("Builder chain state workload" below). Step
-`0058_builder_collection_flags_retired` drops the two checks that tied a
+`0059_builder_collection_flags_retired` drops the two checks that tied a
 contract address to the flag (`collections_contract_published_check`,
 `collections_pending_not_published_check`), so a draft can hold the contract
 address computed before its deployment. A database bootstrapped before the
@@ -1003,7 +1003,7 @@ Rollout, in order:
    binary, whether or not the release has run.
 2. Deploy the binary that derives collection state on every replica and run
    its `catalyst schema migrate`, which records step
-   `0058_builder_collection_flags_retired`. Confirm no `serve` of the old
+   `0059_builder_collection_flags_retired`. Confirm no `serve` of the old
    build is left, then set `CREATE_WRITES_ENABLED` back.
 3. Take a restore point: back up the database and test the restore. The
    drop is not reversible without that backup.
@@ -1014,7 +1014,7 @@ Rollout, in order:
    ```
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0058_builder_collection_flags_retired` is
+`meta.schema_steps`, one where step `0059_builder_collection_flags_retired` is
 not recorded, one that holds only one of the two columns, and one where a
 collection flagged published has no row in the Polygon collections copy, no
 verified publication, no submitted linked publication and no item with an
@@ -1056,7 +1056,7 @@ Rollout, in order:
 1. Set `CREATE_WRITES_ENABLED=false` on every replica.
 2. Deploy the binary that keeps item curations on every replica and run its
    `catalyst schema migrate`, which records step
-   `0064_builder_collection_forum`. Until the release runs, a third-party
+   `0065_builder_collection_forum`. Until the release runs, a third-party
    item the node submitted itself reads as unpublished.
 3. Take a restore point: back up the database and test the restore.
 4. Run the release once, with the administrative role, then set
@@ -1067,7 +1067,7 @@ Rollout, in order:
    ```
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0064_builder_collection_forum` is not
+`meta.schema_steps`, one where step `0065_builder_collection_forum` is not
 recorded, one that holds only one of the two columns, and one with a
 third-party item submitted here, without an item curation, whose
 `local_content_hash` is not 64 lowercase hex digits. It runs in one
@@ -1101,7 +1101,7 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 A third-party collection is submitted through `POST
 /v1/collections/{id}/publish` alone, so `builder.linked_collection_publications`
 has no reader or writer. Fresh databases don't have it. Step
-`0066_builder_linked_publications_retired` clears `publication_pending` on
+`0067_builder_linked_publications_retired` clears `publication_pending` on
 every third-party collection, which only that flow set, so an attempt left
 in flight doesn't keep its collection's drafts at 423.
 
@@ -1113,7 +1113,7 @@ It copies the cheque of each `submitted` row into `builder.slot_usage_cheques`
 salt its provider already used skipped and counted in a notice), clears
 `publication_pending` on third-party collections again and drops the table,
 in one transaction with a 10 s lock timeout. It refuses, changing nothing, a
-database without step 0066, one that still holds the linked forum column or
+database without step 0067, one that still holds the linked forum column or
 the builder collection flags (whose release reads this table), and one with a
 submitted row whose cheque a cheque row can't keep, a missing field included.
 A second run notes the table is gone. Until it runs,
@@ -1214,7 +1214,7 @@ Invariants:
   a stored state of the node's flow, not a published flag.
 - `builder.collections.contract_address` is stored lowercase
   (`collections_contract_address_lowercase_check`; step
-  `0071_builder_collection_contract_lowercase` sets it on an applied
+  `0072_builder_collection_contract_lowercase` sets it on an applied
   database), so its unique key holds for the lowercased address every read
   joins on.
 - Approved is the copy's `is_approved` for a standard collection. A
@@ -1321,7 +1321,7 @@ Invariants:
   of a standard draft whose contract the copy doesn't hold, which a
   complete pass of any age serves, as the owner's listing does.
 
-Indexes created with step `0059_builder_collection_listings` (the step adds the
+Indexes created with step `0060_builder_collection_listings` (the step adds the
 columns, checks and the unique constraint; the object pass that follows it
 builds the indexes, the function and the trigger):
 
@@ -1421,10 +1421,10 @@ Tables and what they hold:
   route reads.
   An upload stores only a hash its item names, verified against the bytes.
   `size` is at most 250,000,000 bytes, the largest item video
-  (`uploaded_contents_size_check`; step `0067_builder_uploaded_video_size`
+  (`uploaded_contents_size_check`; step `0068_builder_uploaded_video_size`
   sets it on an applied database). `video` is true only on a record the
   videos route wrote after its MP4 check (step
-  `0070_builder_uploaded_video_checked` adds it, false, to an applied
+  `0071_builder_uploaded_video_checked` adds it, false, to an applied
   database); both publications and the approval's video pin take no other
   record for a `video.mp4` entry.
 
@@ -1491,12 +1491,12 @@ Invariants:
   `a_standard_publication_takes_only_files_each_names_writer_uploaded` and
   `every_refusal_answers_before_anything_is_written`).
 
-Upgrade: step `0060_builder_item_contents_order` adds `item_contents.position`
+Upgrade: step `0061_builder_item_contents_order` adds `item_contents.position`
 and drops the key from `item_contents.hash` to `uploaded_contents`. A step
 can't retype a column or change a primary key, so the release
 `schemas/releases/builder-item-documents-and-uploaders.sql` turns `data` and
 `metrics` into `json` and keys `uploaded_contents` by hash and uploader. It
-refuses a database without step 0060, one where a table still references
+refuses a database without step 0061, one where a table still references
 `builder.uploaded_contents` by key (run `builder-scenes-retired.sql` first)
 and one where only one of the two documents is `json`; a second run notes
 it's done. Until it runs, item saves and uploads answer 503 naming the
@@ -1508,7 +1508,7 @@ Rollout, in order:
 
 1. Deploy the binary on every replica with creator writes closed
    (`CREATE_WRITES_ENABLED=false`) and run its `catalyst schema migrate`,
-   which records step 0060. Confirm no `serve` of an older build is left.
+   which records step 0061. Confirm no `serve` of an older build is left.
    Once the release has run, an older binary answers 500 to every item file
    upload (its upload record names a key the release replaces) and to a
    collection listing filtered by tag, and its item saves store documents in
@@ -1627,14 +1627,14 @@ Invariants:
   retired scene project) stays readable by its uploader alone and keeps its
   blob from the collector.
 
-Upgrade: step `0062_builder_item_video_named_by` adds `video_named_by`
+Upgrade: step `0063_builder_item_video_named_by` adds `video_named_by`
 (nullable, a check that refuses an empty or uppercase writer) and fills each
 video from the writer of the item's own entry for that hash, one holding an
 upload record first; a video no entry of its item names keeps no writer, so it
 opens nothing until a save writes it again. `schema migrate` builds
 `items_video_idx` from `schemas/50_create.sql`.
 
-Upgrade: step `0061_builder_item_contents_named_by` adds `named_by` (`NOT
+Upgrade: step `0062_builder_item_contents_named_by` adds `named_by` (`NOT
 NULL DEFAULT ''`, a check that refuses an empty or uppercase writer) and fills
 it in place. Each existing name goes to the first wallet that could have
 written it and holds the bytes, else to the item's owner: in order, the
@@ -1854,7 +1854,7 @@ Invariants:
 - The forward is at least once: at most six attempts, the wait doubling from
   a minute; a row the warehouse took is never claimed again.
 
-Upgrade: step `0063_builder_collection_lock` adds `collections.lock`; the
+Upgrade: step `0064_builder_collection_lock` adds `collections.lock`; the
 schema's object pass creates `builder.terms_acceptances` and its indexes.
 
 ## Builder third parties workload
@@ -1956,7 +1956,7 @@ Tables and what they hold:
   provider), `qty` (positive). Never updated by a route. A deleted
   collection's cheques stay with `collection_id` NULL (the foreign key sets
   it), so a spent salt stays spent; step
-  `0069_builder_slot_cheques_outlive_collections` drops the column's
+  `0070_builder_slot_cheques_outlive_collections` drops the column's
   `NOT NULL` and recreates the key with `ON DELETE SET NULL` on a database
   that has the table.
 - `builder.collections.forum_link` (an `http(s)` URL without spaces, at
@@ -2052,12 +2052,12 @@ Invariants code upholds:
   contents name, in the same transaction.
 
 Upgrade: the object pass creates the four tables; step
-`0064_builder_collection_forum` adds the forum columns and their checks. The
+`0065_builder_collection_forum` adds the forum columns and their checks. The
 import's `collection_curation`, `item_curation`, `collection_event` and
 `slot_usage_cheque` steps copy upstream's rows
 (`tooling/migration/sources/builder-server/MAPPING.md`).
 
-Step `0065_builder_collection_forum_claim` adds the claim timestamp and copies
+Step `0066_builder_collection_forum_claim` adds the claim timestamp and copies
 any linked publication's retained forum link into its collection before
 writes resume. It preserves an existing collection link. With writers
 stopped and a verified backup, run
@@ -2089,7 +2089,7 @@ The builder records the wearable validator's work in
 `handlers/validator.rs`; decided in
 [the validator ADR](docs/adr/2026-11-21-builder-validator-pulls-reviews.md)).
 The object pass creates both tables. Step
-`0068_builder_validation_retry` widens `validation_requests_trigger_check`
+`0069_builder_validation_retry` widens `validation_requests_trigger_check`
 to the trigger `retry` on a database that has the table; the object pass
 creates it with that check where it doesn't.
 
@@ -2301,7 +2301,8 @@ they do not establish equal latency with the source's combined lookup.
 Community ranking reads current membership, posts, places and thumbnail facts in
 pages of 100 communities. Five lifetime counters on `social.communities` retain
 photos, ended events, event attendees, ended streams and ended voice chats. The
-ranking job updates local authoritative communities only. Mirrored ranking scores
+ranking job updates scores for local authoritative communities and preserves their
+`updated_at` timestamps for import conflict resolution. Mirrored ranking scores
 remain upstream facts. `ranking_tracking_since` bounds local event occurrences
 eligible for collection; zero counter defaults do not reconstruct history. The
 social-service-ea import copies the lifetime counters and moves
@@ -3102,6 +3103,103 @@ sorted, deduplicated ID list held under the configured cache capacity and TTL,
 so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
+
+## Rental listing status workload
+
+`signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
+The `rentals` index fold (`shop/src/rentals/index.rs`, run by `catalyst index`
+after each pass over `shop.rental_event`) moves listings to `executed`,
+`claimed`, `cancelled` with `cancel_reason = 'nonce'`, or back to `open` on a
+rebuild. The leased `rental-listing-status` job (`shop/src/rentals/status.rs`,
+every minute on the fleet-jobs process) cancels open listings for three
+reasons. It writes `expired` when `expiration` is past the bound clock. It
+writes `transferred` when the land-authz index shows that the owner has
+changed since the listing was created. It writes `dissolved` for an estate
+without parcels once the index head is newer than the listing. The index
+reads run only on a published land-authz snapshot. The refresh route
+(`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
+rules to one listing, using the asset row that the marketplace subgraph reader
+returned when that row is newer than `rental_assets.nft_updated_at`. The
+route then writes the row to `signatures.rental_assets` only when it is no
+older than the stored one, so a lagging reader replaces no metadata.
+
+Workload: mainnet holds thousands of listings, of which hundreds are open
+(an estimate, not a measurement). Each pass does the following:
+
+- One `UPDATE` over the open rows. The partial `rentals_open_asset_key`
+  enumerates them, so no new index is needed.
+- One snapshot select over the open rows of the LAND and Estate registries,
+  with one primary-key probe into `land_authz.token_right` per row, one
+  `authz_event_ownership_idx` probe for the latest transfer, one
+  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
+  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+- One batched `UPDATE` by id, guarded by `status = 'open'`.
+
+Invariants:
+
+- `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
+- The routes never move `rental_assets.nft_updated_at` backwards, and a
+  reader row older than the stored one replaces no asset detail. The refresh
+  route skips such a row. The create route still creates the listing, and
+  its upsert keeps the stored category, search text, distance to plaza, road
+  adjacency, estate size, `fetched_at` and time; a row that is not older
+  replaces them. A reader that answers from an older block
+  and then from a less old one therefore cannot pass the refresh route's
+  newer-row test. The signatures-server import writes the upstream time as
+  it is.
+- A cancellation with no recorded cause keeps NULL. Rows imported from
+  signatures-server, which records no cause, are of this kind.
+- A reopening never makes a second open listing of an asset
+  (`rentals_open_asset_key`). The fold writes reopenings after its other
+  verdicts, reopens only the newest listing of an asset, and only while no
+  other listing of that asset is open. A blocked listing keeps its stored
+  status and reason.
+- The fold reopens a cancelled listing only when its reason is `nonce` and
+  its `expiration` is not before the fold's clock, the job's expiry test. An
+  expired one keeps `cancelled` with `nonce`, and the asset's newest
+  unexpired nonce cancellation reopens in its place. Any
+  reason gives way to a rent of the listing: an incremental fold also
+  revisits a cancelled listing whose own `rented` log is past its block. The
+  fold reads the distinct signatures of the venue's `rented` rows past that
+  block once and joins the venue's listings to them. On the measured data
+  both custom and generic plans chose a hash join, so the leg cost one read
+  of the range's rents plus one pass over the venue's listings, which the
+  fold already scans, with no event lookup per cancelled listing. A set
+  larger than the session's hash memory spilled to disk in batches and
+  stayed linear. No test pins that plan; a statistics or planner change
+  can choose another join. A rebuild and the refresh route never read that set. The refresh
+  route, which folds one listing over every block, makes one
+  `rental_event_signature_idx` probe for that listing's signature instead.
+- The fold's `cancelled` verdict never rewrites a listing that is already
+  cancelled. The fold reads its verdicts before it writes them, so a listing
+  the job cancelled in between keeps the job's reason and stays closed on a
+  rebuild. An `executed` or `claimed` verdict still applies.
+- A cancellation that is not a nonce move is never undone, so an unknown never
+  cancels. No published index, no indexed token, or an indexed transfer older
+  than the listing all leave the listing open.
+- A token the Rentals contract owns keeps its listing unless an indexed rent
+  shows that the contract holds it for another lessor. The asset's latest
+  `rented` row in `shop.rental_event` counts only when it is no older than
+  the token's arrival in the contract, because an older rent means the
+  `rentals` index has not reached the rent the token arrived under (an
+  accepted offer, for example). The job requires the rent's `block_number` to
+  be at or after that of the latest folded `transfer` in
+  `land_authz.authz_event`: both indexes commit whole blocks of the same
+  chain, and a rent either moves the token in its own transaction or finds
+  it already in the contract. The refresh route has no chain position for the
+  subgraph's asset row, so it requires the rent's `block_time` to be at or
+  after the row's `updatedAt`. When that row was updated again after the
+  rent, the route decides nothing and the job's block comparison decides.
+  While the `rentals` index is not published, neither path reads custody.
+- The signatures-server import keeps a node reason only while upstream also
+  says `cancelled`, and clears it otherwise. It skips an upstream row older
+  than the stored one, except that an upstream `executed` or `claimed`
+  replaces a `cancelled` row of any age; the row then takes the upstream
+  `updated_at`, which can be older than the cancellation's. Its load SQL is
+  `tooling/migration/sources/signatures-server/rentals.load.sql`.
+
+Step `0056_signatures_rental_cancel_reason` adds the nullable column and its
+two checks without a rewrite.
 
 ## Camera reel photo events workload
 

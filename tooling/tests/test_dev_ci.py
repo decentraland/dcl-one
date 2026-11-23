@@ -484,6 +484,17 @@ class FrontendSelectionTest(unittest.TestCase):
                 self.write(name, 'changed')
                 self.assertTrue(self.selected(self.commit(), before))
 
+    def test_sites_only_reason_is_reported_and_shared_changes_are_excluded(self):
+        self.write('apps/sites/src/example.ts', 'changed')
+        head = self.commit()
+        plan = dev.web_plan('pull_request', self.base, head)
+        self.assertTrue(plan['run-web-unit-tests'])
+        self.assertEqual(plan['reason'], 'Sites source only; both suites still run')
+        self.write('library/catalyst-api/example.ts', 'changed')
+        plan = dev.web_plan('pull_request', self.base, self.commit())
+        self.assertTrue(plan['run-web-unit-tests'])
+        self.assertNotIn('Sites source only', plan['reason'])
+
     def test_empty_and_documentation_only_diffs_skip_units(self):
         self.assertEqual(dev.web_plan('pull_request', self.base, self.base),
                          {'run-web-unit-tests': False, 'reason': 'No changed files'})

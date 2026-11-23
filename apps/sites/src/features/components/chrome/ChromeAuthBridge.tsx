@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { useRouteLoaderData } from "react-router";
+import { useNavigate, useRouteLoaderData } from "react-router";
 
 import { ChromeAuthContext } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { installSitesShopClient } from "@/data/lib/auth/shop-client";
 import { useProfileIdentity } from "@/data/lib/auth/use-profile-name";
+import { watchBrowserWalletAccount } from "@/data/lib/auth/wallet-account-switch";
 import { NOTIFICATIONS_PREFIX } from "@/data/lib/catalyst/bases";
 import { catalystBase } from "@/data/lib/catalyst/client";
-import { openSignIn } from "../auth/signin-store";
+import { loginPath } from "../../auth/login/redirect";
+import { navigateForAccountChange, openSignIn } from "../auth/signin-store";
 import { hubAccountActions } from "./explorer-host";
 import { usePrivateQueryLifecycle } from "./usePrivateQueryLifecycle";
 
@@ -22,11 +24,24 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
     | undefined;
   const seedWallet = rootData?.wallet ?? "";
   const committee = rootData?.committee ?? false;
+  const navigate = useNavigate();
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
+  useEffect(() => watchBrowserWalletAccount(window, (change) => {
+    const { pathname, search, hash } = window.location;
+    if (pathname.startsWith("/auth/") && pathname !== "/auth/login") return;
+    const returnTo = `${pathname}${search}${hash}`;
+    if (change === "activated") {
+      navigateForAccountChange(returnTo, () => window.location.reload());
+    } else if (pathname !== "/auth/login") {
+      navigateForAccountChange(returnTo, () => {
+        void navigate(loginPath(returnTo, { walletSwitch: true }), { replace: true });
+      });
+    }
+  }), [navigate]);
 
   const { isConnected, address, fetch: signedFetch, disconnect } = useAuth();
   const effSignedIn = mounted ? isConnected : !!seedWallet;

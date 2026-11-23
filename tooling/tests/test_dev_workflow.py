@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from tooling.tests.cache_cleanup_fixture import cache_cleanup_api
+
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'
 CLEANUP = WORKFLOW.with_name('closed-pr-cache.yml')
@@ -272,9 +274,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
-                    # One Rust test shard saves; the other jobs save from every main run.
+                    # One Rust test shard and the web job's ui3 leg save; the other jobs save from every main run.
                     self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1'"
-                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else ' }}'), snapshot)
+                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else
+                                     " && matrix.app == 'ui3' }}" if 'app: [sites, ui3]' in job else ' }}'), snapshot)
                     self.assertIn('gc-max-store-size: 0', snapshot)
                     self.assertIn('mkdir -p .cache/nix-roots\n', roots)
                     self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
@@ -324,24 +327,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         ]}]
         with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
                                      'GITHUB_EVENT_NAME': 'pull_request'}), \
-                patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api(pages)) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-            request = listing.call_args.args[0]
+            request = next(call.args[0] for call in cli.call_args_list if '--paginate' in call.args[0])
             self.assertIn('ref=refs/pull/150/merge', request)
             self.assertIn('--paginate', request)
-            self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+            self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
                 'repos/decentraland/dcl-one/actions/caches/3',
                 'repos/decentraland/dcl-one/actions/caches/5',
             ])
             for number in ('', '0', '-1', '../main', '150; echo unsafe'):
                 with self.subTest(number=number), patch.dict(os.environ, {'PR_NUMBER': number}):
-                    listing.reset_mock()
-                    deletion.reset_mock()
+                    cli.reset_mock()
                     with self.assertRaises(ValueError):
                         exec(compile(script, str(CLEANUP), 'exec'), {})
-                    listing.assert_not_called()
-                    deletion.assert_not_called()
+                    cli.assert_not_called()
 
     def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
@@ -376,20 +376,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
-        def api(args, **kwargs):
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': caches}])
-            if args[-1].endswith('/pulls/10'):
-                return json.dumps({'state': 'closed'})
-            if args[-1].endswith('/pulls/11'):
-                return json.dumps({'state': 'open'})
-            self.fail(f'Unexpected API call: {args}')
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api([{'actions_caches': caches}], {'10': 'MERGED'})) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+        self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
             'repos/decentraland/dcl-one/actions/caches/1',
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
@@ -401,7 +392,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
         ])
-        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
+        self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         command = re.search(r'^          source=(.*)$', jobs()['smoke'], re.M).group(1)
@@ -481,19 +472,29 @@ class DevelopmentWorkflowTest(unittest.TestCase):
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']
-        self.assertIn('name: Web tests and contracts', web)
-        self.assertIn('run: python3 tooling/dev-ci.py', web)
-        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
+        changes = jobs()['changes']
+        self.assertIn('run: python3 tooling/dev-ci.py\n', changes)
+        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
+        self.assertIn('web-units: ${{ steps.web-coverage.outputs.run-web-unit-tests }}', changes)
+        self.assertIn('fail-fast: false', web)
+        self.assertIn('app: [sites, ui3]', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
-        selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
+        selected = [step for step in steps if 'needs.changes.outputs.web-units' in step]
         self.assertEqual(len(selected), 3)
+        for app, command in [('ui3', 'ui3 test'), ('ui3', 'ui3 test:browser'), ('sites', 'sites test')]:
+            step = next(step for step in selected if f'pnpm --dir apps/{command}\n' in step)
+            self.assertIn(f"if: matrix.app == '{app}' && needs.changes.outputs.web-units != 'false'", step)
         for app in ('ui3', 'sites'):
-            self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
-        self.assertTrue(any('pnpm --dir apps/ui3 test:browser\n' in step for step in selected))
-        contracts = next(step for step in steps if 'name: Check web types' in step)
-        self.assertNotIn('\n        if:', contracts)
+            contracts = next(step for step in steps if f'pnpm --dir apps/{app} typecheck\n' in step)
+            self.assertIn(f"if: matrix.app == '{app}'\n", contracts)
         self.assertIn('typecheck:scripts', contracts)
         self.assertIn('gen:schemas:check', contracts)
+        save = next(step for step in steps if step.startswith('name: Save the pnpm store from main'))
+        self.assertIn("if: matrix.app == 'ui3' && github.ref == 'refs/heads/main'", save)
+        installs = [i for i, step in enumerate(steps)
+                    if 'pnpm --dir apps/ui3 install' in step and 'pnpm --dir apps/sites install' in step]
+        self.assertEqual(len(installs), 1)
+        self.assertLess(installs[0], steps.index(save))
 
 
 if __name__ == '__main__':
