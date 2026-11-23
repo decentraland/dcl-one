@@ -11,7 +11,12 @@ import CreatorHubDownloadSuccessRoute from "./download_.creator-hub-success";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+// A document whose analytics is ready: its page view has been sent.
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => fire(),
+}));
 
 afterEach(() => {
   cleanup();

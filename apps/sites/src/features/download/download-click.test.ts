@@ -1,13 +1,27 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { track } from "@/core/lib/telemetry/track";
+import { legacyAnalyticsReady, track, whenLegacyAnalyticsReady } from "@/core/lib/telemetry/track";
 import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
 import { DOWNLOAD_CLICK_STORAGE_KEY, trackDownloadClick, type DownloadClick } from "./download-click";
 import { legacyMacArch } from "./legacy-mac-arch";
 
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+// The document's readiness (its first page view) is driven here; `download-click.wire.test.ts` covers the real gates.
+let ready = true;
+let pending: Array<() => void> = [];
+function becomeReady() {
+  ready = true;
+  const queued = pending;
+  pending = [];
+  for (const fire of queued) fire();
+}
+
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: vi.fn(() => ready),
+  whenLegacyAnalyticsReady: vi.fn((fire: () => void) => (ready ? fire() : pending.push(fire))),
+}));
 vi.mock("./legacy-mac-arch", () => ({ legacyMacArch: vi.fn(() => null) }));
 
 const CLICK: DownloadClick = { place: "Landing Hero", event: "Download", download_target: "desktop_installer" };
@@ -20,6 +34,10 @@ function sent() {
 }
 
 beforeEach(() => {
+  ready = true;
+  pending = [];
+  vi.mocked(legacyAnalyticsReady).mockClear();
+  vi.mocked(whenLegacyAnalyticsReady).mockClear();
   window.history.replaceState(null, "", "/");
   sessionStorage.clear();
 });
@@ -126,5 +144,62 @@ describe("trackDownloadClick", () => {
       throw new Error("boom");
     });
     expect(() => trackDownloadClick(CLICK, SESSION)).not.toThrow();
+  });
+});
+
+describe("trackDownloadClick track_deferred (the legacy isInitialized)", () => {
+  it("sends a conversion at once, deferred, with delivered_at equal to called_at, before the document is ready", () => {
+    ready = false;
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    trackDownloadClick(CLICK, SESSION);
+    expect(sent().props).toMatchObject({
+      track_called_at: 1_700_000_000_000,
+      track_delivered_at: 1_700_000_000_000,
+      track_deferred: true,
+    });
+    expect(whenLegacyAnalyticsReady).not.toHaveBeenCalled();
+  });
+
+  it("sends a click that is not a conversion at once and not deferred once the document is ready", () => {
+    trackDownloadClick(CLICK, SESSION, { conversion: false, correlate: false });
+    expect(sent().props.track_deferred).toBe(false);
+  });
+
+  it("holds a click that is not a conversion until the document is ready, then sends it deferred with its delivery time", () => {
+    ready = false;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    trackDownloadClick(CLICK, SESSION, { conversion: false, correlate: false });
+    expect(track).not.toHaveBeenCalled();
+
+    now.mockReturnValue(1_700_000_000_750);
+    becomeReady();
+    expect(sent().props).toMatchObject({
+      track_called_at: 1_700_000_000_000,
+      track_delivered_at: 1_700_000_000_750,
+      track_deferred: true,
+    });
+  });
+
+  it("never sends a click that is not a conversion when the document never becomes ready", () => {
+    ready = false;
+    trackDownloadClick(CLICK, SESSION, { conversion: false, correlate: false });
+    expect(track).not.toHaveBeenCalled();
+    expect(pending).toHaveLength(1);
+  });
+
+  it("reads the sign-out at delivery, not at the click, for a held click", () => {
+    ready = false;
+    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xabc" }, { conversion: false, correlate: false });
+    dropTrackedUser();
+    becomeReady();
+    expect(sent().ctx).toEqual({ sid: "sid-1", legacy: true });
+  });
+
+  it("never throws into the click when reading readiness fails", () => {
+    vi.mocked(legacyAnalyticsReady).mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    expect(() => trackDownloadClick(CLICK, SESSION)).not.toThrow();
+    expect(track).not.toHaveBeenCalled();
   });
 });

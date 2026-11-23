@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
@@ -71,4 +71,99 @@ it("carries the low-entropy userAgentData when the browser exposes it", async ()
 it("leaves userAgentData out where the browser has none", async () => {
   trackDownloadClick(CLICK, { sid: "sid-1" });
   expect((await body()).context).not.toHaveProperty("userAgentData");
+});
+
+// track_deferred through the real gates: each test loads a fresh document, whose readiness is its first page view.
+
+const BOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+
+async function loadDocument(path = "/") {
+  window.history.replaceState(null, "", path);
+  vi.stubGlobal("performance", { ...performance, getEntriesByType: () => [] });
+  vi.resetModules();
+  const telemetry = await import("@/core/lib/telemetry/track");
+  const download = await import("./download-click");
+  return { page: telemetry.page, trackDownloadClick: download.trackDownloadClick };
+}
+
+async function clicks(): Promise<Array<Record<string, unknown>>> {
+  const bodies = await Promise.all(sendBeacon.mock.calls.map(async ([, blob]) => JSON.parse(await blob.text())));
+  return bodies.filter((b) => b.type === "track" && b.event === "Click").map((b) => b.properties);
+}
+
+const TRACK_CLICK = { conversion: false, correlate: false } as const;
+
+describe("track_deferred", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("is false for a click after the document's page view", async () => {
+    const { page, trackDownloadClick } = await loadDocument("/");
+    page("/", {}, { sid: "sid-1" });
+    trackDownloadClick(CLICK, { sid: "sid-1" });
+    expect(await clicks()).toEqual([expect.objectContaining({ track_deferred: false })]);
+  });
+
+  it("is true for a conversion clicked before the document's first page view, sent at once", async () => {
+    const { trackDownloadClick } = await loadDocument("/");
+    trackDownloadClick(CLICK, { sid: "sid-1" });
+    const [click] = await clicks();
+    expect(click).toMatchObject({ track_deferred: true });
+    expect(click!.track_delivered_at).toBe(click!.track_called_at);
+  });
+
+  it("holds a non-conversion click until the first page view, then sends it deferred", async () => {
+    const { page, trackDownloadClick } = await loadDocument("/download/creator-hub");
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    trackDownloadClick({ ...CLICK, place: "Download", download_target: "creator_hub" }, { sid: "sid-1" }, TRACK_CLICK);
+    expect(await clicks()).toEqual([]);
+
+    now.mockReturnValue(1_700_000_000_400);
+    page("/download/creator-hub", {}, { sid: "sid-1" });
+    expect(await clicks()).toEqual([
+      expect.objectContaining({ track_called_at: 1_700_000_000_000, track_delivered_at: 1_700_000_000_400, track_deferred: true }),
+    ]);
+    now.mockRestore();
+  });
+
+  it("is true for every conversion in a session that started on /download, whose page view is held back", async () => {
+    const { page, trackDownloadClick } = await loadDocument("/download");
+    page("/download", {}, { sid: "sid-1" });
+    trackDownloadClick({ ...CLICK, place: "Download" }, { sid: "sid-1" });
+    expect(await clicks()).toEqual([expect.objectContaining({ track_deferred: true })]);
+  });
+
+  it("never sends a non-conversion click in a session that started on /download", async () => {
+    const { page, trackDownloadClick } = await loadDocument("/download");
+    page("/download", {}, { sid: "sid-1" });
+    trackDownloadClick({ ...CLICK, place: "Download", download_target: "creator_hub" }, { sid: "sid-1" }, TRACK_CLICK);
+    expect(await clicks()).toEqual([]);
+  });
+
+  it("is true for a bot's conversion, and a bot's non-conversion click is never sent", async () => {
+    vi.stubGlobal("navigator", { userAgent: BOT_UA, language: "en-US", maxTouchPoints: 0, sendBeacon });
+    const { page, trackDownloadClick } = await loadDocument("/");
+    page("/", {}, { sid: "sid-1" });
+    trackDownloadClick(CLICK, { sid: "sid-1" });
+    trackDownloadClick({ ...CLICK, place: "Download", download_target: "creator_hub" }, { sid: "sid-1" }, TRACK_CLICK);
+    expect(await clicks()).toEqual([expect.objectContaining({ place: "Landing Hero", track_deferred: true })]);
+  });
+
+  it("stays false after a client navigation to /download from a tracked page", async () => {
+    const { page, trackDownloadClick } = await loadDocument("/");
+    page("/", {}, { sid: "sid-1" });
+    window.history.replaceState(null, "", "/download");
+    trackDownloadClick({ ...CLICK, place: "Download" }, { sid: "sid-1" });
+    expect(await clicks()).toEqual([expect.objectContaining({ track_deferred: false })]);
+  });
+
+  it("stays true when the page view could not be sent for want of a write key", async () => {
+    delete (window as unknown as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__;
+    const { page, trackDownloadClick } = await loadDocument("/");
+    page("/", {}, { sid: "sid-1" });
+    (window as unknown as { __DCL_PUBLIC__: Record<string, string> }).__DCL_PUBLIC__ = { SEGMENT_WRITE_KEY: "key-test" };
+    trackDownloadClick(CLICK, { sid: "sid-1" });
+    expect(await clicks()).toEqual([expect.objectContaining({ track_deferred: true })]);
+  });
 });

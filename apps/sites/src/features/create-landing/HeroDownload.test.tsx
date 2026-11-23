@@ -16,7 +16,12 @@ vi.hoisted(() => {
     $RefreshSig$: () => (type: unknown) => type,
   });
 });
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+// A document whose analytics is ready: its page view has been sent.
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => fire(),
+}));
 vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/data/lib/download/mac-chip")>()),
   detectMacChip: vi.fn(() => "unknown"),

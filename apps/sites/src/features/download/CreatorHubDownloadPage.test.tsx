@@ -13,7 +13,12 @@ import CreatorHubDownloadPage from "./CreatorHubDownloadPage";
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../creators/components/SubNav", () => ({ SubNav: () => null }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+// A document whose analytics is ready: its page view has been sent.
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => fire(),
+}));
 vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/data/lib/download/mac-chip")>()),
   detectMacChip: vi.fn(() => "unknown"),

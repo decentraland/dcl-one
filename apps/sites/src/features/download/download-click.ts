@@ -1,5 +1,5 @@
 import { collectCampaignParams, type CampaignParams } from "@/core/lib/telemetry/campaign-params";
-import { track } from "@/core/lib/telemetry/track";
+import { legacyAnalyticsReady, track, whenLegacyAnalyticsReady } from "@/core/lib/telemetry/track";
 import { trackedUserDropped } from "@/core/lib/telemetry/tracked-user";
 
 import { legacyMacArch, type LegacyMacArch } from "./legacy-mac-arch";
@@ -84,6 +84,11 @@ export type DownloadClickSession = { sid: string; userId?: string | null };
 /**
  * Sends the legacy `Click` for a download control. Merge order is the legacy one: the URL's `utm_*`, then the
  * correlation, then the control's own attributes.
+ *
+ * `track_deferred` is the legacy one: true when the click came before the document's analytics was ready (see
+ * `legacyAnalyticsReady`). A conversion is sent at once either way, as the legacy beacon was, so its
+ * `track_delivered_at` equals `track_called_at`. Any other click waits for readiness, as the legacy queue did:
+ * its `track_delivered_at` is when it left, and a bot or an exempt session never sends it.
  */
 export function trackDownloadClick(
   click: DownloadClick,
@@ -92,25 +97,32 @@ export function trackDownloadClick(
 ): void {
   try {
     const calledAt = Date.now();
+    const deferred = !legacyAnalyticsReady();
     const arch = legacyMacArch();
-    // A sign-out in progress leaves the account out before root's data has reloaded without it.
-    const user = userId && !trackedUserDropped() ? userId : undefined;
-    const props: DownloadClickProps = {
+    const base = {
       ...collectCampaignParams(),
       ...(correlate ? recordCorrelation() : {}),
       ...click,
       ...(arch ? { mac_arch: arch } : {}),
-      // Sent at once: nothing waits for an SDK to load, so the click is never deferred.
-      track_called_at: calledAt,
-      track_delivered_at: Date.now(),
-      track_deferred: false,
     };
-    track("Click", props, {
-      sid,
-      ...(user ? { userId: user } : {}),
-      legacy: true,
-      ...(conversion ? { conversion: true } : {}),
-    });
+    const fire = () => {
+      // A sign-out in progress leaves the account out before root's data has reloaded without it.
+      const user = userId && !trackedUserDropped() ? userId : undefined;
+      const props: DownloadClickProps = {
+        ...base,
+        track_called_at: calledAt,
+        track_delivered_at: Date.now(),
+        track_deferred: deferred,
+      };
+      track("Click", props, {
+        sid,
+        ...(user ? { userId: user } : {}),
+        legacy: true,
+        ...(conversion ? { conversion: true } : {}),
+      });
+    };
+    if (conversion) fire();
+    else whenLegacyAnalyticsReady(fire);
   } catch {
     // Telemetry never breaks a download.
   }

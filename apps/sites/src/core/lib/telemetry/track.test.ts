@@ -557,6 +557,46 @@ describe("page, identify, gates and the telemetry client (fetch mocked)", () => 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("is not ready for legacy analytics until the document's first Sites page view is sent, then runs what waited, in order", async () => {
+    stubBrowser({ path: "/" });
+    const fresh = await loadDocument();
+    const ran: string[] = [];
+    expect(fresh.legacyAnalyticsReady()).toBe(false);
+    fresh.whenLegacyAnalyticsReady(() => ran.push("first"));
+    fresh.whenLegacyAnalyticsReady(() => {
+      throw new Error("boom");
+    });
+    fresh.whenLegacyAnalyticsReady(() => ran.push("third"));
+    expect(ran).toEqual([]);
+    fresh.page("Home", {}, { sid: "s" });
+    expect(fresh.legacyAnalyticsReady()).toBe(true);
+    expect(ran).toEqual(["first", "third"]);
+    fresh.whenLegacyAnalyticsReady(() => ran.push("later"));
+    expect(ran).toEqual(["first", "third", "later"]);
+  });
+
+  it.each([
+    ["a bot", { userAgent: GOOGLEBOT_UA }],
+    ["an exempt session", { path: "/download" }],
+    ["no write key", { publicEnv: {} }],
+  ])("is never ready for legacy analytics for %s, whose page view is held back", async (_case, browser) => {
+    stubBrowser(browser);
+    const fresh = await loadDocument();
+    const ran = vi.fn();
+    fresh.whenLegacyAnalyticsReady(ran);
+    fresh.page("Home", {}, { sid: "s" });
+    expect(fresh.legacyAnalyticsReady()).toBe(false);
+    expect(ran).not.toHaveBeenCalled();
+  });
+
+  it("is not made ready for Sites by a Shop page view", async () => {
+    stubBrowser({ publicEnv: { SEGMENT_WRITE_KEY: "key-1", SHOP_SEGMENT_WRITE_KEY: "shop-key" } });
+    const fresh = await loadDocument();
+    fresh.page("Shop", {}, { sid: "s", source: "shop" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fresh.legacyAnalyticsReady()).toBe(false);
+  });
+
   it("redacts credential paths in any case and with a trailing slash, and the wallet in a confirmation link's query", () => {
     expect(withoutSensitivePath("/CAST/S/live-key/")).toBe("/cast/s/:key/");
     expect(withoutSensitivePath("/Account/Confirm-Email/CODE-1/")).toBe("/account/Confirm-Email/:code/");

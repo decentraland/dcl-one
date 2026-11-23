@@ -461,10 +461,11 @@ function suppressedInBrowser(body: SegmentBody, ctx: GateContext): boolean {
   return sites && legacyParity && exemptSession();
 }
 
-function sendToSegment(body: SegmentBody, ctx: GateContext): void {
+/** Sends `body` unless a gate holds it back; true when it left for Segment. */
+function sendToSegment(body: SegmentBody, ctx: GateContext): boolean {
   const writeKey = segmentWriteKey(ctx.source);
-  if (!writeKey) return;
-  if (isBrowser() && suppressedInBrowser(body, ctx)) return;
+  if (!writeKey) return false;
+  if (isBrowser() && suppressedInBrowser(body, ctx)) return false;
 
   const url = segmentApiUrl(body.type);
   const payload = JSON.stringify(buildSegmentPayload(body, writeKey));
@@ -474,15 +475,53 @@ function sendToSegment(body: SegmentBody, ctx: GateContext): void {
       // text/plain keeps the request CORS-simple; application/json would preflight,
       // which is unsafe during unload.
       const beacon = navigator?.sendBeacon?.bind(navigator);
-      if (beacon && beacon(url, new Blob([payload], { type: "text/plain" }))) return;
+      if (beacon && beacon(url, new Blob([payload], { type: "text/plain" }))) return true;
     } catch {
     }
     postTelemetry(url, payload, "text/plain");
-    return;
+    return true;
   }
 
-  if (body.type !== "track" || !serverBudgetAllows(body.event)) return;
+  if (body.type !== "track" || !serverBudgetAllows(body.event)) return false;
   postTelemetry(url, payload, "application/json");
+  return true;
+}
+
+/**
+ * The legacy site's `isInitialized`: analytics.js had loaded in this document. Its equivalent here is the
+ * document's first Sites page view leaving for Segment, which a bot or an exempt session never sends and
+ * which no page sends before it has hydrated. Decided per document, like the exempt-session gate.
+ */
+let legacyReady = false;
+let whenReady: Array<() => void> = [];
+
+export function legacyAnalyticsReady(): boolean {
+  return legacyReady;
+}
+
+/**
+ * Runs `fire` now when the document is ready, else once its first Sites page view is sent: the legacy
+ * `useDeferredTrack` queue. A document that never sends one (a bot, an exempt session) never runs it.
+ */
+export function whenLegacyAnalyticsReady(fire: () => void): void {
+  if (legacyReady) {
+    fire();
+    return;
+  }
+  whenReady.push(fire);
+}
+
+function markLegacyAnalyticsReady(): void {
+  if (legacyReady) return;
+  legacyReady = true;
+  const pending = whenReady;
+  whenReady = [];
+  for (const fire of pending) {
+    try {
+      fire();
+    } catch {
+    }
+  }
 }
 
 /** `AbortSignal.timeout` is Safari 16+: before it, an `AbortController` holds the deadline. */
@@ -556,7 +595,7 @@ function sanitizedPageProperties(properties: Record<string, unknown>): Record<st
 export function page(name: string, properties: Record<string, unknown>, ctx: TrackContext): void {
   try {
     if (!isBrowser()) return;
-    sendToSegment(
+    const sent = sendToSegment(
       {
         type: "page",
         name: withoutSensitivePath(name),
@@ -565,6 +604,7 @@ export function page(name: string, properties: Record<string, unknown>, ctx: Tra
       },
       ctx,
     );
+    if (sent && (ctx.source ?? "sites") === "sites") markLegacyAnalyticsReady();
   } catch {
   }
 }
