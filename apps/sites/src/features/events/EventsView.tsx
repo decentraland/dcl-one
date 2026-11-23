@@ -54,6 +54,7 @@ import {
   dayLabel,
   eventCreator,
   eventHref,
+  eventImage,
   eventPageShareUrl,
   eventTarget,
   eventUsers,
@@ -83,6 +84,8 @@ export type EventsViewProps = {
   platform: DetectedPlatform;
   /** The public origin share links and calendar entries point at. */
   origin: string;
+  /** The origin the browser loaded the page from: the request's on the server, the window's in the browser. */
+  pageOrigin: string;
   /** The loader's clock and its required-data outcome; null after a client navigation. */
   initial: { now: number; unavailable: boolean } | null;
 };
@@ -115,7 +118,7 @@ function useViewer(initialNow: number, platform: DetectedPlatform) {
   return { zone, now, columns };
 }
 
-export function EventsView({ sid, platform, origin, initial }: EventsViewProps) {
+export function EventsView({ sid, platform, origin, pageOrigin, initial }: EventsViewProps) {
   const { locale, text } = useEventsCopy();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -210,7 +213,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: item.event.id,
         title: item.event.name ?? text("Untitled event"),
-        image: item.event.image,
+        image: eventImage(item.event.image, pageOrigin),
         href,
         onOpen: open(href, item.event.id),
         users: item.users,
@@ -239,7 +242,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   const upcomingCards: UpcomingEventCardProps[] = upcomingEvents.map((event) => {
     const href = eventHref(event.id, search);
     return {
-      ...upcomingCardProps(event, { href, now, zone, origin, profiles, locale }),
+      ...upcomingCardProps(event, { href, now, zone, origin, pageOrigin, profiles, locale }),
       onOpen: open(href, event.id),
       remind: remindControl(reminders.get(event.id)),
     };
@@ -257,7 +260,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: `${event.id}@${occurrence.start}`,
         title: event.name ?? text("Untitled event"),
-        image: event.image,
+        image: eventImage(event.image, pageOrigin),
         href,
         onOpen: open(href, event.id),
         users,
@@ -288,8 +291,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const myCards = useMemo(
     () =>
-      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, profiles, locale }) : [],
-    [identity, mine.events, now, zone, profiles, locale],
+      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, pageOrigin, profiles, locale }) : [],
+    [identity, mine.events, now, zone, pageOrigin, profiles, locale],
   );
 
   const calendarStatus = calendar.data ? "ready" : calendar.isError || initial?.unavailable ? "unavailable" : "loading";
@@ -306,6 +309,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
               event={detail.data}
               zone={zone}
               origin={origin}
+              pageOrigin={pageOrigin}
               jumpIn={jumpIn}
               reminder={detail.data.live ? undefined : reminders.get(detail.data.id)}
               profiles={profiles}
