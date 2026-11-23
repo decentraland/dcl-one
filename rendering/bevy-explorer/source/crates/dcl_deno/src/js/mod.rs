@@ -324,7 +324,7 @@ pub(crate) fn scene_thread(
             let _ = state
                 .borrow_mut()
                 .take::<SceneResponseSender>()
-                .try_send(SceneResponse::Error(format!("{e:?}")));
+                .try_send(SceneResponse::Error(format!("{e}")));
             return;
         }
         Ok(script) => script,
@@ -358,11 +358,11 @@ pub(crate) fn scene_thread(
 
     if let Err(e) = result {
         // ignore failure to send failure
-        error!("[{scene_id:?}] onStart err: {e:?}");
+        error!("[{scene_id:?}] onStart err: {e}");
         let _ = state
             .borrow_mut()
             .take::<SceneResponseSender>()
-            .try_send(SceneResponse::Error(format!("{e:?}")));
+            .try_send(SceneResponse::Error(format!("{e}")));
         return;
     }
 
@@ -455,7 +455,7 @@ pub(crate) fn scene_thread(
         if let Some(e) = &err {
             reported_errors += 1;
             if reported_errors <= 10 {
-                error!("[{scene_id:?}] uncaught error: {e:?}");
+                error!("[{scene_id:?}] uncaught error: {e}");
                 if reported_errors == 10 {
                     error!("[{scene_id:?}] not logging any further uncaught errors.")
                 }
@@ -478,7 +478,7 @@ pub(crate) fn scene_thread(
         if silent_ticks >= 10 {
             let msg = err.map_or_else(
                 || "no renderer interaction for 10 consecutive ticks".to_owned(),
-                |e| format!("{e:?}"),
+                |e| format!("{e}"),
             );
             error!("[{scene_id:?}] {msg}: shutting down");
             let _ = state
