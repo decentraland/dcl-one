@@ -195,7 +195,8 @@ serves a profile for its wallet: it reads the realm description (`<api>/about`) 
 server (`content.publicUrl`) and the lambdas (`lambdas.publicUrl`), asks the lambdas for the
 wallet's profile, and deploys one to `POST <content.publicUrl>/entities` unless they serve
 exactly the profile it would deploy: the same name and every other field it sets, and no field it
-does not set (the lambdas' own `userId`, `ethAddress` and snapshots aside). A profile deployed over
+does not set (the lambdas' own `userId`, `ethAddress` and snapshots aside), numbers compared by
+value, so `1` and `1.0` are the same. A profile deployed over
 another one is stamped after it, since the content server keeps the newer of the two. The
 deployment is the one the explorer makes for its own profile: an entity
 file with no files attached, named by its CIDv1 and signed by the wallet. The profile is named

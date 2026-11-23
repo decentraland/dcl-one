@@ -422,7 +422,8 @@ pub async fn served_profile(
 /// Whether `served`, what the lambdas serve for visiting player `index`'s wallet `address`, is
 /// the profile this module deploys for it: one avatar, equal to [`visit_avatar`] in every field
 /// but those the lambdas set themselves (`userId` and `ethAddress`, the pointer, and the
-/// avatar's `snapshots`), with no field it does not set.
+/// avatar's `snapshots`), with no field it does not set. Numbers compare by value ([`same`]), so
+/// a server that writes `1.0` as `1` serves the same profile.
 pub fn serves_visit_profile(served: &serde_json::Value, address: &str, index: usize) -> bool {
     let without_what_the_lambdas_set = |avatar: &serde_json::Value| {
         let mut avatar = avatar.clone();
@@ -439,11 +440,36 @@ pub fn serves_visit_profile(served: &serde_json::Value, address: &str, index: us
         avatar
     };
     match served.get("avatars").and_then(serde_json::Value::as_array) {
-        Some(avatars) if avatars.len() == 1 => {
-            without_what_the_lambdas_set(&avatars[0])
-                == without_what_the_lambdas_set(&visit_avatar(address, index))
-        }
+        Some(avatars) if avatars.len() == 1 => same(
+            &without_what_the_lambdas_set(&avatars[0]),
+            &without_what_the_lambdas_set(&visit_avatar(address, index)),
+        ),
         _ => false,
+    }
+}
+
+/// Whether `a` and `b` are the same JSON: numbers by value (`1` and `1.0` alike), everything else
+/// exactly, objects with the same keys.
+pub fn same(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (a, b) {
+        // two integers exactly, anything else by its value as a float
+        (Value::Number(a), Value::Number(b)) => {
+            match (a.as_i64(), b.as_i64(), a.as_u64(), b.as_u64()) {
+                (Some(a), Some(b), _, _) => a == b,
+                (_, _, Some(a), Some(b)) => a == b,
+                _ => a.as_f64() == b.as_f64(),
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a, b))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| same(a, b)))
+        }
+        _ => a == b,
     }
 }
 

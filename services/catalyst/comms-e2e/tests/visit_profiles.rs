@@ -192,6 +192,64 @@ async fn a_profile_already_served_is_not_deployed_again() {
     assert_eq!(stand_in.posts(), 3);
 }
 
+/// `value` with every number written the other way: a whole float as an integer, an integer as a
+/// float, as a server that normalises numbers may serve them.
+fn renumbered(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Number(number) => match (number.as_i64(), number.as_f64()) {
+            (Some(whole), _) => serde_json::json!(whole as f64),
+            (None, Some(float)) if float.fract() == 0.0 => serde_json::json!(float as i64),
+            _ => value.clone(),
+        },
+        Value::Array(items) => Value::Array(items.iter().map(renumbered).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, field)| (key.clone(), renumbered(field)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+#[tokio::test]
+async fn a_profile_that_writes_its_numbers_another_way_is_already_served() {
+    let stand_in = content::start(None).await;
+    let client = profile::client().unwrap();
+    let endpoints = profile::endpoints(&client, &stand_in.api).await.unwrap();
+    let identity = visitor(20);
+    let avatar = renumbered(&profile::visit_avatar(&identity.address(), 20));
+    // alpha 1.0 is served as 1, the version 1 as 1.0
+    assert_eq!(
+        avatar["avatar"]["skin"]["color"]["a"].to_string(),
+        "1",
+        "{avatar}"
+    );
+    assert_eq!(avatar["version"].to_string(), "1.0", "{avatar}");
+    stand_in.serve_avatar(&identity.address(), avatar, now_ms());
+    assert_eq!(
+        profile::ensure(&client, &endpoints, &identity, 20)
+            .await
+            .unwrap(),
+        Ensured::AlreadyServed
+    );
+    assert_eq!(stand_in.posts(), 0);
+
+    // a number of another value is still another profile
+    let other = visitor(21);
+    let mut avatar = renumbered(&profile::visit_avatar(&other.address(), 21));
+    avatar["avatar"]["skin"]["color"]["a"] = serde_json::json!(0.5);
+    stand_in.serve_avatar(&other.address(), avatar, now_ms());
+    assert_eq!(
+        profile::ensure(&client, &endpoints, &other, 21)
+            .await
+            .unwrap(),
+        Ensured::Replaced(Deployed::Accepted)
+    );
+    assert_eq!(stand_in.posts(), 1);
+}
+
 /// A change someone else's profile for a visiting wallet makes to the avatar this tool deploys.
 type Tamper = fn(&mut serde_json::Value);
 
