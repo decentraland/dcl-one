@@ -29,7 +29,7 @@ use image::{codecs::jpeg::JpegEncoder, DynamicImage};
 use scene_runner::{update_world::scene_ui::HiddenSceneUis, vec3_to_parcel};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
-use tween::SystemTweenData;
+use tween::{SystemTween, SystemTweenData};
 
 use crate::active_scene::SceneResolver;
 
@@ -527,9 +527,15 @@ impl CaptureJob {
     }
 }
 
-/// The primary camera in a timed transition. `SystemTweenData` is on it only while one runs: an
+/// What the primary camera carries of a transition.
+type CameraTween = (Option<&'static SystemTween>, Has<SystemTweenData>);
+
+/// Whether the camera is in a timed transition. A timed `SystemTween` counts from the frame it is
+/// asked for, a frame before its `SystemTweenData` arrives, until both are removed at its end. An
 /// instant cut leaves its `SystemTween` on the camera for good, and is no transition to wait for.
-type CameraBlending = (With<PrimaryCamera>, With<SystemTweenData>);
+fn is_blending((tween, timed): (Option<&SystemTween>, bool)) -> bool {
+    timed || tween.is_some_and(|tween| tween.time > 0.0)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn drive_capture(
@@ -539,7 +545,7 @@ fn drive_capture(
     time: Res<Time<Real>>,
     frame_count: Res<FrameCount>,
     windows: Query<(Entity, &Window), With<PrimaryWindow>>,
-    tweening: Query<(), CameraBlending>,
+    camera_tweens: Query<CameraTween, With<PrimaryCamera>>,
     mut scene_uis: ResMut<HiddenSceneUis>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     resolver: SceneResolver,
@@ -555,7 +561,7 @@ fn drive_capture(
         job.settle_frames -= 1;
         return;
     }
-    if !job.camera_ready(!tweening.is_empty(), now) {
+    if !job.camera_ready(camera_tweens.iter().any(is_blending), now) {
         return;
     }
 
@@ -564,7 +570,7 @@ fn drive_capture(
             &mut commands,
             &mut gate,
             &mut store,
-            &mut scene_uis,
+            &mut scene_uis.reborrow(),
             Err("no primary window to capture".to_owned()),
         );
         return;
@@ -630,7 +636,13 @@ fn drive_capture(
             .ok()
             .map(|transform| vec3_to_parcel(transform.translation()));
         let result = build_reply(job, screen, parcel, &mut store);
-        finish(&mut commands, &mut gate, &mut store, &mut scene_uis, result);
+        finish(
+            &mut commands,
+            &mut gate,
+            &mut store,
+            &mut scene_uis.reborrow(),
+            result,
+        );
     } else if job
         .frames
         .last()
@@ -640,7 +652,7 @@ fn drive_capture(
             &mut commands,
             &mut gate,
             &mut store,
-            &mut scene_uis,
+            &mut scene_uis.reborrow(),
             Err(format!(
                 "the frames were not read back within {READBACK_TIMEOUT_SECONDS} s of the last capture"
             )),
@@ -649,13 +661,12 @@ fn drive_capture(
 }
 
 /// Reply, show what a world-only capture hid, and open the gate. `HiddenSceneUis` is written,
-/// and so applied again, only when this capture suspended it: the caller passes its `ResMut`
-/// undereferenced.
+/// and so applied again, only when this capture suspended it.
 fn finish(
     commands: &mut Commands,
     gate: &mut CaptureGate,
     store: &mut CaptureStore,
-    scene_uis: &mut impl std::ops::DerefMut<Target = HiddenSceneUis>,
+    scene_uis: &mut Mut<HiddenSceneUis>,
     result: Result<String, String>,
 ) {
     let Some(mut job) = gate.job.take() else {
@@ -1020,7 +1031,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.add_systems(Update, tween::update_system_tween);
-        let tween = |time| tween::SystemTween {
+        let tween = |time| SystemTween {
             target: Transform::from_xyz(1.0, 0.0, 0.0),
             time,
             fov: None,
@@ -1029,15 +1040,28 @@ mod tests {
             .world_mut()
             .spawn((Transform::default(), PrimaryCamera::default(), tween(0.0)))
             .id();
+        let mut cameras = app
+            .world_mut()
+            .query_filtered::<CameraTween, With<PrimaryCamera>>();
+        let mut blending = |app: &App| cameras.iter(app.world()).any(is_blending);
+        assert!(!blending(&app));
         app.update();
         app.update();
-        let mut blending = app.world_mut().query_filtered::<Entity, CameraBlending>();
-        assert_eq!(blending.iter(app.world()).count(), 0);
+        assert!(!blending(&app));
+        assert!(app.world().get::<SystemTween>(cut).is_some());
 
+        // a timed transition counts from the frame it is asked for, until it completes
         app.world_mut().entity_mut(cut).insert(tween(10.0));
+        assert!(blending(&app));
         app.update();
         app.update();
-        assert_eq!(blending.iter(app.world()).collect::<Vec<_>>(), vec![cut]);
+        assert!(blending(&app));
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(11));
+        app.update();
+        assert!(!blending(&app));
+        assert!(app.world().get::<SystemTween>(cut).is_none());
     }
 
     #[test]
@@ -1111,23 +1135,6 @@ mod tests {
         assert_eq!(store.frames.len(), 3);
     }
 
-    /// A `HiddenSceneUis` that records whether it was written, as a `ResMut` would.
-    struct Tracked(HiddenSceneUis, bool);
-
-    impl std::ops::Deref for Tracked {
-        type Target = HiddenSceneUis;
-        fn deref(&self) -> &HiddenSceneUis {
-            &self.0
-        }
-    }
-
-    impl std::ops::DerefMut for Tracked {
-        fn deref_mut(&mut self) -> &mut HiddenSceneUis {
-            self.1 = true;
-            &mut self.0
-        }
-    }
-
     /// Runs `finish` on a world-only or full-view sequence with `result`; returns the reply,
     /// whether the scene UI is still suspended, whether `HiddenSceneUis` was written, and the HUD
     /// markers left.
@@ -1136,13 +1143,10 @@ mod tests {
         result: Result<String, String>,
     ) -> (Result<String, String>, bool, bool, usize) {
         let mut world = World::new();
-        let mut scene_uis = Tracked(
-            HiddenSceneUis {
-                suspended: world_only,
-                ..Default::default()
-            },
-            false,
-        );
+        world.insert_resource(HiddenSceneUis {
+            suspended: world_only,
+            ..Default::default()
+        });
         let (tx, mut rx) = oneshot::channel();
         let mut queue = bevy::ecs::world::CommandQueue::default();
         let job = CaptureJob::new(
@@ -1163,23 +1167,24 @@ mod tests {
             frames: vec![("capture://1/frame-000.png".to_owned(), vec![1])],
         };
         let failed = result.is_err();
-        finish(
-            &mut Commands::new(&mut queue, &world),
-            &mut gate,
-            &mut store,
-            &mut scene_uis,
-            result,
-        );
+        // from here on, a change to the rule is `finish` writing it
+        world.clear_trackers();
+        let (suspended, written) =
+            world.resource_scope(|world, mut scene_uis: Mut<HiddenSceneUis>| {
+                finish(
+                    &mut Commands::new(&mut queue, world),
+                    &mut gate,
+                    &mut store,
+                    &mut scene_uis,
+                    result,
+                );
+                (scene_uis.suspended, scene_uis.is_changed())
+            });
         queue.apply(&mut world);
         assert!(gate.job.is_none());
         assert_eq!(store.frames.is_empty(), failed);
         let markers = world.query::<&WorldOnlyCapture>().iter(&world).count();
-        (
-            rx.try_recv().unwrap(),
-            scene_uis.0.suspended,
-            scene_uis.1,
-            markers,
-        )
+        (rx.try_recv().unwrap(), suspended, written, markers)
     }
 
     #[test]

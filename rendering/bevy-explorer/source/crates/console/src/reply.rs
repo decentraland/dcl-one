@@ -95,7 +95,8 @@ mod tests {
         let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value["refused"], "a capture is already in progress");
         assert_eq!(value["cause"]["holder"], "screenshot");
-        assert_eq!(refusal("busy", None), r#"{"refused":"busy"}"#);
+        let bare: Value = serde_json::from_str(&refusal("busy", None)).unwrap();
+        assert_eq!(bare, json!({"refused": "busy"}));
     }
 
     const SCREEN: Screen = Screen {
