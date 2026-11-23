@@ -42,9 +42,9 @@ describe("createCommunity", () => {
     });
 
     it("should reject with the status and the server's message", async () => {
-      const error = await createCommunity(draft, null, { identity, base: "https://node.test" }).catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(CatalystError);
-      expect(error).toMatchObject({ status: 401, message: "Create community failed (401): The user doesn't have any names" });
+      const created = createCommunity(draft, null, { identity, base: "https://node.test" });
+      await expect(created).rejects.toBeInstanceOf(CatalystError);
+      await expect(created).rejects.toMatchObject({ status: 401, message: "Create community failed (401): The user doesn't have any names" });
     });
   });
 
