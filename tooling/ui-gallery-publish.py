@@ -100,9 +100,12 @@ TYPES = {
     'mp4': 'video/mp4',
     'webm': 'video/webm',
 }
-# Pages are re-read soon, since a later build of the same head replaces them; Vite names every other file by its hash.
+# Files Vite names by their content hash under assets/ never change, so they are cached for a day. Every other file
+# keeps its name across builds and a later build of the same head replaces it, so it is re-read soon.
 PAGE_CACHE = 'public, max-age=300'
 ASSET_CACHE = 'public, max-age=86400, immutable'
+# Its characters are also literal in an aws s3 cp filter.
+HASHED = re.compile(r'assets/[\w.-]+-[\w-]{8}\.[a-z0-9]+')
 # The key guard's limits for an unpacked artifact, applied to ui-gallery/; the download itself is capped too.
 LIMITS = {'files': 5000, 'total_bytes': 256 * 1024 * 1024, 'file_bytes': 16 * 1024 * 1024, 'depth': 32}
 ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -563,7 +566,15 @@ def fetch(env, github=None):
     expected = env.get('ARTIFACT_DIGEST') or ''
     if not DIGEST.fullmatch(expected):
         raise Reject(f'ARTIFACT_DIGEST is not a sha256 digest: {expected!r}')
-    artifact = github.get(f'repos/{repository}/actions/artifacts/{artifact_id}')
+    try:
+        artifact = github.get(f'repos/{repository}/actions/artifacts/{artifact_id}')
+    except ApiError as error:
+        if error.status == 404:
+            # A re-run of the Shared UI library run replaced it: that run's own key scan publishes.
+            raise Skip(f'artifact {artifact_id} no longer exists; a newer run of {head} replaced it') from None
+        raise
+    if artifact.get('expired'):
+        raise Skip(f'artifact {artifact_id} has expired')
     if artifact.get('name') != f'ui-review-{head}' or (artifact.get('workflow_run') or {}).get('id') != run:
         raise Reject(f'artifact ID mismatch: artifact {artifact_id} is not ui-review-{head} of run {run}')
     if artifact.get('digest') != expected:
@@ -634,15 +645,24 @@ def upload(env, run=subprocess.run, today=utc_today):
     # The lifecycle rule counts from each object's creation, and every object is created on or after this date, even
     # when the upload crosses midnight UTC.
     expires = today() + datetime.timedelta(RETENTION_DAYS)
-    # One copy per type, so each object gets its type and cache header. cp never lists or deletes in the bucket and
-    # sets no ACL: the writer role may only put objects, and the bucket blocks public access.
+    # One copy per type and cache header, so each object gets both. cp never lists or deletes in the bucket and sets no
+    # ACL: the writer role may only put objects, and the bucket blocks public access.
+    hashed = {path for path in files if HASHED.fullmatch(path)}
     for extension in extensions:
-        command = ['aws', 's3', 'cp', str(site), destination, '--recursive', '--exclude', '*',
-                   '--include', f'*.{extension}', '--content-type', TYPES[extension],
-                   '--cache-control', PAGE_CACHE if extension == 'html' else ASSET_CACHE,
-                   '--region', values['UI_GALLERY_AWS_REGION'], '--only-show-errors']
-        if run(command).returncode:
-            raise Reject(f'the upload of the .{extension} files to {destination} failed')
+        typed = [path for path in files if PurePosixPath(path).suffix[1:] == extension]
+        named = sorted(path for path in typed if path in hashed)
+        groups = []
+        if named:
+            groups.append((ASSET_CACHE, [argument for path in named for argument in ('--include', path)]))
+        if len(named) < len(typed):
+            groups.append((PAGE_CACHE, ['--include', f'*.{extension}',
+                                        *[argument for path in named for argument in ('--exclude', path)]]))
+        for cache, filters in groups:
+            command = ['aws', 's3', 'cp', str(site), destination, '--recursive', '--exclude', '*', *filters,
+                       '--content-type', TYPES[extension], '--cache-control', cache,
+                       '--region', values['UI_GALLERY_AWS_REGION'], '--only-show-errors']
+            if run(command).returncode:
+                raise Reject(f'the upload of the .{extension} files to {destination} failed')
     print(f'Uploaded {len(files)} files to {destination}; the bucket keeps them until at least {expires.isoformat()}')
     return {'expires': expires.isoformat()}
 
@@ -678,9 +698,12 @@ def probe(env, request=answer, sleep=time.sleep):
         answers = [request(url) for url in targets]
         if all(status == 200 for status, _ in answers):
             headers = answers[0][1]
-            for name, expected in EXPECTED_HEADERS.items():
-                if expected.lower() not in headers.get(name, '').lower():
-                    annotate('warning', f'{page} is served without {name}: {expected}')
+            missing = [f'{name}: {expected}' for name, expected in EXPECTED_HEADERS.items()
+                       if expected.lower() not in headers.get(name, '').lower()]
+            if missing:
+                # The preview runs pull request scripts: no link to it without the distribution's protections.
+                raise Reject(f'{page} is served without {", ".join(missing)}: the distribution\'s headers policy '
+                             'drifted from dcl-one-infra')
             print(f'The preview answers at {page}')
             return {}
         if attempt < len(PROBE_DELAYS):

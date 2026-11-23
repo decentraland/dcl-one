@@ -47,7 +47,9 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
-          sparse-checkout: tooling/ui-gallery-publish.py
+          sparse-checkout: |
+            tooling/ui-gallery-publish.py
+            tooling/ui-gallery-receipt.py
           sparse-checkout-cone-mode: false
       - name: Verify the key scan, the pull request and the artifact
         id: verify
@@ -137,7 +139,9 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
-          sparse-checkout: tooling/ui-gallery-publish.py
+          sparse-checkout: |
+            tooling/ui-gallery-publish.py
+            tooling/ui-gallery-receipt.py
           sparse-checkout-cone-mode: false
       - name: Link the preview from the pull request
         env:

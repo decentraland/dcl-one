@@ -383,6 +383,14 @@ class FetchTest(unittest.TestCase):
             with self.subTest(api=api), self.assertRaisesRegex(publish.Reject, problem):
                 self.fetch(digest=DIGEST, api=api)
 
+    def test_skips_an_artifact_a_rerun_replaced_or_that_expired(self):
+        for api, reason in ((None, 'no longer exists'), (artifact(expired=True), 'has expired')):
+            with self.subTest(reason=reason), self.assertRaisesRegex(publish.Skip, reason):
+                responses = {} if api is None else {f'repos/{REPO}/actions/artifacts/{ARTIFACT}': api}
+                env = {'REPOSITORY': REPO, 'HEAD_SHA': HEAD, 'SCANNED_RUN_ID': str(RUN), 'ARTIFACT_ID': str(ARTIFACT),
+                       'ARTIFACT_DIGEST': DIGEST, 'WORK_DIR': str(Path(tempfile.mkdtemp()) / 'ui-gallery')}
+                publish.fetch(env, FakeGitHub(responses))
+
     def test_refuses_an_artifact_without_ui_gallery_index(self):
         for entries in ({name: content for name, content in ENTRIES.items() if name != 'ui-gallery/index.html'},
                         {name: content for name, content in ENTRIES.items() if not name.startswith('ui-gallery/')}):
@@ -433,7 +441,7 @@ class FetchTest(unittest.TestCase):
 
 
 def site(root, files=('index.html', 'frame.html', 'assets/index-B8BLG4hy.js', 'assets/index-BqURr6sZ.css',
-                      'assets/inter-latin.woff2')):
+                      'assets/inter-latin.woff2', 'assets/hero-C1aBwh_j.webp', 'icon.webp')):
     for path in files:
         (root / 'site' / path).parent.mkdir(parents=True, exist_ok=True)
         (root / 'site' / path).write_bytes(b'x')
@@ -454,14 +462,17 @@ class UploadTest(unittest.TestCase):
             outputs = publish.upload(self.env, today=lambda: datetime.date(2026, 11, 20),
                                      run=lambda command: commands.append(command) or SimpleNamespace(returncode=0))
         self.assertEqual(outputs, {'expires': '2026-11-25'})
-        typed = {command[command.index('--include') + 1]: (command[command.index('--content-type') + 1],
-                                                           command[command.index('--cache-control') + 1])
+        typed = {tuple(command[8:command.index('--content-type')]): (command[command.index('--content-type') + 1],
+                                                                       command[command.index('--cache-control') + 1])
                  for command in commands}
+        # Only the files Vite named by their hash are immutable; a fixed name is re-read soon.
         self.assertEqual(typed, {
-            '*.css': ('text/css; charset=utf-8', publish.ASSET_CACHE),
-            '*.html': ('text/html; charset=utf-8', publish.PAGE_CACHE),
-            '*.js': ('text/javascript; charset=utf-8', publish.ASSET_CACHE),
-            '*.woff2': ('font/woff2', publish.ASSET_CACHE),
+            ('--include', 'assets/index-BqURr6sZ.css'): ('text/css; charset=utf-8', publish.ASSET_CACHE),
+            ('--include', '*.html'): ('text/html; charset=utf-8', publish.PAGE_CACHE),
+            ('--include', 'assets/index-B8BLG4hy.js'): ('text/javascript; charset=utf-8', publish.ASSET_CACHE),
+            ('--include', '*.woff2'): ('font/woff2', publish.PAGE_CACHE),
+            ('--include', 'assets/hero-C1aBwh_j.webp'): ('image/webp', publish.ASSET_CACHE),
+            ('--include', '*.webp', '--exclude', 'assets/hero-C1aBwh_j.webp'): ('image/webp', publish.PAGE_CACHE),
         })
         for command in commands:
             self.assertEqual(command[:6], ['aws', 's3', 'cp', str(self.work / 'site'),
@@ -523,13 +534,11 @@ class ProbeTest(unittest.TestCase):
         with self.assertRaisesRegex(publish.Reject, 'did not answer 200'):
             self.probe([(403, {})] * 2 * (len(publish.PROBE_DELAYS) + 1))
 
-    def test_warns_when_the_distribution_drops_a_header_it_must_add(self):
+    def test_fails_when_the_distribution_drops_a_header_it_must_add(self):
         for name in publish.EXPECTED_HEADERS:
-            with self.subTest(name=name):
+            with self.subTest(name=name), self.assertRaisesRegex(publish.Reject, f'without {name}.*drifted'):
                 headers = {**SERVED, name: ''}
-                _, _, printed = self.probe([(200, headers), (200, headers)])
-                self.assertEqual(printed.count('::warning title=UI gallery::'), 1)
-                self.assertIn(f'without {name}', printed)
+                self.probe([(200, headers), (200, headers)])
 
 
 class CommentTest(unittest.TestCase):
@@ -735,9 +744,32 @@ class WorkflowTest(unittest.TestCase):
         for checkout in checkouts:
             self.assertIn('ref: ${{ github.workflow_sha }}', checkout)
             self.assertIn('persist-credentials: false', checkout)
-        # The publish job imports the receipt check's digest; the other jobs check out the publisher alone.
-        self.assertIn('sparse-checkout: |\n            tooling/ui-gallery-publish.py\n            '
-                      'tooling/ui-gallery-receipt.py\n', self.jobs()['publish'])
+        # The publisher imports the receipt check's digest, so every job checks out both.
+        for checkout in checkouts:
+            self.assertIn('sparse-checkout: |\n            tooling/ui-gallery-publish.py\n            '
+                          'tooling/ui-gallery-receipt.py\n', checkout)
+
+    def test_runs_from_the_files_its_jobs_check_out(self):
+        # Each job's sparse checkout alone, as the runner leaves it: an unconfigured run ends with a notice.
+        for job, body in self.jobs().items():
+            with self.subTest(job=job):
+                listed = re.search(r'sparse-checkout: (\|\n(?: {12}\S+\n)+|\S+\n)', body).group(1)
+                self.run_verify(re.findall(r'tooling/\S+', listed))
+
+    def run_verify(self, sparse):
+        with tempfile.TemporaryDirectory() as temp:
+            for path in sparse:
+                (Path(temp) / path).parent.mkdir(parents=True, exist_ok=True)
+                (Path(temp) / path).write_bytes((ROOT / path).read_bytes())
+            output = Path(temp) / 'output'
+            output.write_text('')
+            result = publish.subprocess.run(
+                [publish.sys.executable, '-I', 'tooling/ui-gallery-publish.py', 'verify'], cwd=temp,
+                capture_output=True, text=True, env={'GITHUB_OUTPUT': str(output), 'PATH': '/usr/bin:/bin'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('::notice title=UI gallery::No UI gallery preview: publication is not configured',
+                          result.stdout)
+            self.assertEqual(output.read_text(), 'publish=false\n')
 
     def test_uploads_the_gallery_digest_the_fetch_unpacked(self):
         publish_job = self.jobs()['publish']
