@@ -331,6 +331,9 @@ pub struct SceneDeployment<'a> {
     pub forward_to: Option<&'a str>,
     /// The storage allowance the publish is charged to, re-checked before commit.
     pub quota: Option<&'a super::quota::QuotaCharge>,
+    /// This node's public worlds base ([`super::Settings::worlds_public_url`]),
+    /// named by the change log's events.
+    pub public_base: &'a str,
 }
 
 pub(crate) struct DerivedSceneSettings {

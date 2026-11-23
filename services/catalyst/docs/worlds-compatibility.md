@@ -342,9 +342,18 @@ A difference not listed here is a gap, not a decision.
   5 deploys a second (burst 4) and 10 uploads in flight, which upstream does
   not; past them it answers 429 with the per-source upload refusal and
   `Retry-After: 5`, and a body over 360 MiB gets the app's 413 JSON.
-- **No deployment events.** Publishes and undeploys publish no SNS
-  `WorldDeploymentEvent`, `WORLD_SETTINGS_CHANGED`,
-  `WorldUndeploymentEvent` or `WorldScenesUndeploymentEvent`. Readers in this
+- **Events are recorded, not published.** Publishes, undeploys and settings,
+  spawn and access edits publish nothing to SNS. Each records the
+  `WorldDeploymentEvent`, `WorldSettingsChangedEvent`,
+  `WorldSpawnCoordinateSetEvent`, `WorldUndeploymentEvent` or
+  `WorldScenesUndeploymentEvent` upstream would publish, with its message
+  attributes, in `worlds.change_log` in its own transaction, and
+  `GET /changes` (behind `CATALYRST_WORLDS_ADMIN_TOKEN`) pages them for a
+  relay to publish. A deployment names `WORLDS_PUBLIC_URL` (default
+  `<PUBLIC_URL>/worlds-content-server`) as its content server and settings
+  thumbnails link under it. The timestamp is the database clock after the
+  world's row lock, not the time of publication. Mirrored worlds, access
+  allow-list, permission and block changes are not recorded. Readers in this
   tree (explore's places, the settings reads) read the worlds tables the
   write commits; a publish also updates the scene identities and queues the
   forward outbox in its transaction, and every publish and undeploy

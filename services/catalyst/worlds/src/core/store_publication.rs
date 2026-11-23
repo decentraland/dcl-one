@@ -2,8 +2,12 @@
 use super::*;
 
 /// `$delete` (a `DELETE FROM worlds.world_scenes ...`) moving the rows it
-/// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL).
+/// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL);
+/// with `RETURNED`, the statement returns their `entity_id, entity, parcels`.
 macro_rules! retiring {
+    ($delete:literal, RETURNED) => {
+        concat!(retiring!($delete), " RETURNING entity_id, entity, parcels")
+    };
     ($delete:literal) => {
         concat!(
             "WITH gone AS (",
@@ -140,6 +144,7 @@ pub async fn deploy_scene_with_on(
         replacement,
         forward_to,
         quota,
+        public_base,
     } = deployment;
     let mut s = scene_settings_from_entity(entity);
     if let Some(hash) = s.thumbnail_hash.take() {
@@ -202,6 +207,7 @@ pub async fn deploy_scene_with_on(
     if disabled {
         return Err(world_disabled(world));
     }
+    let emitted_at = crate::core::change_log::emission_clock(&mut tx).await?;
 
     // Under the world row's lock, so a concurrent publish cannot slip past.
     // A stored timestamp counts no later than the row's write (a future-dated
@@ -220,6 +226,8 @@ pub async fn deploy_scene_with_on(
         ));
     }
 
+    // A first publish seeds the settings; a later one refreshes them only when one changed.
+    let mut settings_refreshed = is_insert;
     if !is_insert {
         let sole_occupant: bool = sqlx::query_scalar(
             "SELECT count(*) FILTER (WHERE NOT (parcels && $2::text[])) = 0 FROM worlds.world_scenes WHERE world_name = $1",
@@ -230,7 +238,7 @@ pub async fn deploy_scene_with_on(
         .await?;
 
         if sole_occupant {
-            sqlx::query(
+            let refreshed = sqlx::query(
                 r#"UPDATE worlds.worlds SET
                      title = COALESCE($2, title),
                      description = COALESCE($3, description),
@@ -262,6 +270,7 @@ pub async fn deploy_scene_with_on(
             .bind(&s.thumbnail_hash)
             .execute(&mut *tx)
             .await?;
+            settings_refreshed = refreshed.rows_affected() > 0;
         }
     }
 
@@ -348,6 +357,25 @@ pub async fn deploy_scene_with_on(
         .await?;
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
+
+    {
+        use crate::core::change_log;
+        let event =
+            change_log::deployment(entity_id, deployment_auth_chain, public_base, emitted_at);
+        change_log::record(
+            &mut tx,
+            world,
+            &event,
+            &change_log::deployment_attributes(entity),
+        )
+        .await?;
+        if settings_refreshed
+            && let Some(settings) = super::settings::settings_on(&mut tx, world).await?
+        {
+            let event = change_log::settings_changed(world, public_base, &settings, emitted_at);
+            change_log::record(&mut tx, world, &event, &serde_json::json!({})).await?;
+        }
+    }
 
     if let Some(charge) = quota
         && let Some(max) = crate::core::quota::recheck_charge(&mut tx, charge, size).await?
@@ -496,31 +524,59 @@ pub(crate) fn entity_timestamp_value(entity: &Value) -> Result<f64, ApiError> {
         .ok_or_else(|| ApiError::bad_request("The entity is missing a valid timestamp"))
 }
 
+/// Which undeploy [`delete_scenes_locked`] runs, for its change log event.
+#[derive(Clone, Copy)]
+enum Undeploy {
+    /// `world_undeployment`, recorded whatever was removed.
+    World,
+    /// `world_scenes_undeployment`, recorded when a removed scene has a base parcel.
+    Scenes,
+}
+
+/// `sql` is a [`retiring!`] delete returning `entity_id, entity, parcels`.
 async fn delete_scenes_locked(
     pool: &PgPool,
     world: &WorldName,
+    undeploy: Undeploy,
     sql: &'static str,
     bind: impl FnOnce(
         sqlx::query::Query<'static, sqlx::Postgres, sqlx::postgres::PgArguments>,
     ) -> sqlx::query::Query<'static, sqlx::Postgres, sqlx::postgres::PgArguments>,
 ) -> Result<u64, ApiError> {
+    use crate::core::change_log;
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT name FROM worlds.worlds WHERE name = $1 FOR UPDATE")
         .bind(world.key())
         .execute(&mut *tx)
         .await?;
-    let affected = bind(sqlx::query(sql))
-        .execute(&mut *tx)
+    let emitted_at = change_log::emission_clock(&mut tx).await?;
+    let removed: Vec<change_log::RemovedScene> = bind(sqlx::query(sql))
+        .fetch_all(&mut *tx)
         .await?
-        .rows_affected();
+        .iter()
+        .map(|row| change_log::RemovedScene {
+            entity_id: row.get("entity_id"),
+            entity: row.get("entity"),
+            parcels: row.get("parcels"),
+        })
+        .collect();
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
     recompute_spawn(&mut tx, world).await?;
-    if affected > 0 {
+    if !removed.is_empty() {
         crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     }
+    match undeploy {
+        Undeploy::World => {
+            let event = change_log::world_undeployment(world, emitted_at);
+            change_log::record(&mut tx, world, &event, &serde_json::json!({})).await?;
+        }
+        Undeploy::Scenes => {
+            change_log::record_scenes_undeployment(&mut tx, world, emitted_at, &removed).await?;
+        }
+    }
     tx.commit().await?;
-    Ok(affected)
+    Ok(removed.len() as u64)
 }
 
 /// The spawn after scenes left the world (WCS `undeployScene`/`undeployWorld`):
@@ -619,7 +675,8 @@ pub async fn undeploy_scene(
             delete_scenes_locked(
                 pool,
                 world,
-                retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels) AND entity_id = ANY($3::text[])"),
+                Undeploy::Scenes,
+                retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels) AND entity_id = ANY($3::text[])", RETURNED),
                 move |q| q.bind(key).bind(parcel).bind(ids),
             )
             .await
@@ -628,8 +685,10 @@ pub async fn undeploy_scene(
             delete_scenes_locked(
                 pool,
                 world,
+                Undeploy::Scenes,
                 retiring!(
-                    "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels)"
+                    "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels)",
+                    RETURNED
                 ),
                 move |q| q.bind(key).bind(parcel),
             )
@@ -643,7 +702,11 @@ pub async fn undeploy_world(pool: &PgPool, world: &WorldName) -> Result<u64, Api
     delete_scenes_locked(
         pool,
         world,
-        retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1"),
+        Undeploy::World,
+        retiring!(
+            "DELETE FROM worlds.world_scenes WHERE world_name = $1",
+            RETURNED
+        ),
         move |q| q.bind(key),
     )
     .await

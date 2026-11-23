@@ -773,3 +773,55 @@ CREATE TABLE worlds.quota_blocks (
 -- GET /world/{name}/limits and GET /wallet/{wallet}/stats (core::quota::wallet_usage).
 CREATE INDEX worlds_owner_idx ON worlds.worlds (owner) WHERE owner IS NOT NULL;
 -- ==== end section: world-quota ====
+
+-- ==== section: change-log ====
+-- The worlds change feed (core::change_log, GET
+-- /worlds-content-server/changes): one row per event a worlds content server
+-- publishes to SNS for a world change made on this node, `event` being that
+-- message body and `attributes` its message attributes besides type and
+-- subType. Written only by the local write paths, in the transaction of the
+-- change they describe: a publish (`deployment`, plus
+-- `world_settings_changed` when it refreshed the settings), a whole-world or
+-- per-parcel undeploy (`world_undeployment`, `world_scenes_undeployment`),
+-- a settings edit (`world_settings_changed`, plus
+-- `world_spawn_coordinate_set` when the spawn moved) and an access edit
+-- (`world_settings_changed`). The worlds mirror, peer sync and the TS import
+-- never write it. Append-only; the `worlds-change-log-retention` job deletes
+-- rows older than 30 days.
+--
+-- Workload: a handful of rows per local publish, undeploy or settings edit
+-- (tens a day expected); a deployment body is the auth chain plus ~200
+-- bytes, a scenes undeployment at most 255 KiB. Read by a few relays polling
+-- pages of up to 1000 rows in (txid, id) order after their cursor, which
+-- `change_log_cursor_idx` serves; the retention pass reads
+-- `change_log_created_at_idx`.
+--
+-- `txid` is the writing transaction's id: a reader sees only rows of
+-- transactions older than every one still running
+-- (`txid < pg_snapshot_xmin(pg_current_snapshot())`), so a row is never
+-- skipped by a cursor that moved past a later commit, and the feed lags the
+-- oldest open write transaction of the cluster. Transaction ids do not
+-- survive a logical dump and restore: after one, empty the table so readers
+-- start again from its oldest row. No FK to worlds.worlds: a row outlives
+-- the world it names.
+CREATE TABLE worlds.change_log (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    txid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+    kind text NOT NULL,
+    world_name text NOT NULL,
+    event jsonb NOT NULL,
+    attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT change_log_pkey PRIMARY KEY (id),
+    CONSTRAINT change_log_kind_check CHECK (kind IN ('deployment', 'world_scenes_undeployment',
+        'world_undeployment', 'world_settings_changed', 'world_spawn_coordinate_set')),
+    CONSTRAINT change_log_world_name_lowercase CHECK (world_name = lower(world_name) AND world_name <> ''),
+    CONSTRAINT change_log_event_object CHECK (jsonb_typeof(event) = 'object'),
+    CONSTRAINT change_log_attributes_object CHECK (jsonb_typeof(attributes) = 'object')
+);
+
+-- The feed's page: (txid, id) after the cursor.
+CREATE INDEX change_log_cursor_idx ON worlds.change_log (txid, id);
+-- The retention pass.
+CREATE INDEX change_log_created_at_idx ON worlds.change_log (created_at);
+-- ==== end section: change-log ====

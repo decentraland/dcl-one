@@ -108,6 +108,20 @@ pub async fn get_world_settings(
     Ok(row.as_ref().map(settings_from_row))
 }
 
+/// The world's settings as `conn` sees them (the change log's settings event).
+pub(super) async fn settings_on(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+) -> Result<Option<WorldSettingsRow>, sqlx::Error> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {SETTINGS_COLUMNS} FROM worlds.worlds WHERE name = $1"
+    )))
+    .bind(world.key())
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.as_ref().map(settings_from_row))
+}
+
 /// One locked transaction: the row (`FOR UPDATE`) plus, when a spawn is being
 /// set, the world's bounding rectangle; the upsert, bumping the version only
 /// when a versioned settings column is in the patch. A patch to a setting the
@@ -118,8 +132,9 @@ pub async fn get_world_settings(
 /// ([`mirror_keeps_local`]). A new thumbnail's bytes (`thumbnail`, the blob
 /// `input.thumbnail_hash` names) are stored in the same transaction under the
 /// store lock's shared side (`gc::store_for_row`), so an unlink batch either
-/// ran before the store or sees the row. Returns the row and the previous
-/// spawn.
+/// ran before the store or sees the row. The change log records the
+/// settings and, when the spawn moved, the spawn event, linking the thumbnail
+/// under `public_base`. Returns the row and the previous spawn.
 pub async fn update_world_settings(
     pool: &PgPool,
     world: &WorldName,
@@ -127,6 +142,7 @@ pub async fn update_world_settings(
     set_by: Option<&Address>,
     input: &WorldSettingsUpdate,
     thumbnail: Option<(&catalyst_storage::Storage, bytes::Bytes)>,
+    public_base: &str,
 ) -> Result<(WorldSettingsRow, Option<String>), ApiError> {
     let mut tx = pool.begin().await?;
     if let Some((storage, bytes)) = thumbnail {
@@ -255,10 +271,24 @@ pub async fn update_world_settings(
     .bind(set_by)
     .fetch_one(&mut *tx)
     .await?;
+    let settings = settings_from_row(&row);
+
+    use crate::core::change_log;
+    let emitted_at = change_log::emission_clock(&mut tx).await?;
+    let event = change_log::settings_changed(world, public_base, &settings, emitted_at);
+    change_log::record(&mut tx, world, &event, &json!({})).await?;
+    if let Some(event) = change_log::spawn_coordinate_set(
+        world,
+        old_spawn.as_deref(),
+        settings.spawn_coordinates.as_deref(),
+        emitted_at,
+    ) {
+        change_log::record(&mut tx, world, &event, &json!({})).await?;
+    }
 
     crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     tx.commit().await?;
-    Ok((settings_from_row(&row), old_spawn))
+    Ok((settings, old_spawn))
 }
 
 pub async fn world_manifest(

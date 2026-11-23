@@ -435,6 +435,11 @@ pub async fn store_access_for_owner(
     }
     queue_access_recheck(&mut tx, world).await?;
     crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
+    // After the upsert's row lock.
+    let emitted_at = crate::core::change_log::emission_clock(&mut tx).await?;
+    let event =
+        crate::core::change_log::access_changed(world, access.access_type().as_str(), emitted_at);
+    crate::core::change_log::record(&mut tx, world, &event, &json!({})).await?;
     tx.commit().await?;
     Ok(())
 }

@@ -1053,6 +1053,7 @@ pub(super) async fn persist_publish_on(
             replacement,
             forward_to: state.forwarder.as_deref().map(|f| f.target()),
             quota: charge.as_ref(),
+            public_base: &state.settings.worlds_public_url,
         },
         completion,
     )

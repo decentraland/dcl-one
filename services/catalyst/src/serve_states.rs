@@ -239,6 +239,7 @@ pub(super) async fn worlds_states(
                 s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
+                    .with_worlds_public_url(config.worlds.worlds_public_url.as_deref())
                     .with_max_file_count(config.worlds.max_file_count)
                     .with_realm_name(worlds::node_realm_name(config))
                     .with_access_caps(

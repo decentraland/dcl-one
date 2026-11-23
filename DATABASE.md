@@ -3265,6 +3265,42 @@ survive re-adds. The existing world-row lock serializes publication; imports
 lock affected worlds and identities in order and retire only saved bindings
 whose backing scenes are gone. No grant history is inferred from parcel overlap.
 
+## Worlds change feed
+
+`worlds.change_log` (`schemas/20_worlds.sql`) holds the events a worlds
+content server publishes to SNS, for the world changes made on this node:
+each row is one message body (`event`) with its message attributes besides
+type and subType (`attributes`), so a relay can publish it unchanged
+(`core::change_log`, [decision](docs/adr/2026-11-23-worlds-change-feed.md)).
+
+Workload: written only by the local write paths, in the transaction of the
+change: a publish (`deployment`, and `world_settings_changed` when it seeded
+or changed the settings), a whole-world or per-parcel undeploy, a settings
+edit (`world_settings_changed`, and `world_spawn_coordinate_set` when the
+spawn moved) and an access edit. A handful of rows per change, tens a day
+expected; a deployment body is its auth chain plus about 200 bytes, a scenes
+undeployment at most 255 KiB. The worlds mirror, peer sync and the TS import
+never write it. Read by a few relays through `GET
+/worlds-content-server/changes`, pages of at most 1000 rows in `(txid, id)`
+order on `change_log_cursor_idx`. The fleet-wide hourly
+`worlds-change-log-retention` job deletes rows older than 30 days on
+`change_log_created_at_idx`, at most 100,000 a pass.
+
+Invariants:
+
+- A row commits with the change it describes, or not at all.
+- An event's `timestamp` is the database clock read once per transaction
+  after the world's row lock (`clock_timestamp()`; `now()` is the
+  transaction's start), so one world's events are timestamped in commit order.
+- `txid` is the writing transaction's id. A reader sees only rows of
+  transactions older than every one still running (`txid <
+  pg_snapshot_xmin(pg_current_snapshot())`), so a cursor never moves past a
+  row whose transaction commits later; the feed lags the cluster's oldest
+  open write transaction.
+- Transaction ids do not survive a logical dump and restore: after one,
+  empty the table, and readers start again from its oldest row.
+- No FK to `worlds.worlds`: a row outlives the world it names.
+
 ## Scene admin grants
 
 `social.scene_admins` (`schemas/40_social.sql`) holds the explicit admins of a

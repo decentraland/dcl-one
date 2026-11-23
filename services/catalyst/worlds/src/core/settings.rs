@@ -271,7 +271,7 @@ pub async fn update_world_settings(
             (state.storage.as_ref(), bytes::Bytes::from(bytes))
         });
         // The two spawn refusals are the store's only 400s: upstream's `ValidationError`s.
-        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input, thumbnail)
+        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input, thumbnail, &state.settings.worlds_public_url)
             .await
             .map_err(|e| match e.is_bad_request() {
                 true => SettingsError::invalid(e.public_message()),

@@ -454,6 +454,55 @@
         }
       }
     },
+    "/changes": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "`GET /changes` -- **admin**: the worlds change feed, the SNS events of the world changes made on this node.",
+        "description": "Each entry is one event a worlds content server publishes (`world/deployment`, `world/world_scenes_undeployment`, `world/world_undeployment`, `world/world_settings_changed`, `world/world_spawn_coordinate_set`) with its message attributes besides type and subType, recorded in the change's transaction. Entries come in cursor order and only once every older transaction has ended; rows are kept 30 days. `next` is the last entry's cursor while more are readable, null once caught up: poll again later with the last cursor taken. 400 for a malformed cursor or limit.",
+        "operationId": "list_world_changes",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The cursor of the last entry taken (`<txid>:<id>`); the oldest retained entry without it",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Entries per page (default 500, at most 1000)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldChangesPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed cursor or limit"
+          },
+          "401": {
+            "description": "Missing or wrong bearer"
+          }
+        }
+      }
+    },
     "/admin/forwarding/{entity_id}": {
       "get": {
         "tags": [
@@ -5333,6 +5382,48 @@
           "ens": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "WorldChangesPage": {
+        "type": "object",
+        "required": [
+          "changes",
+          "next"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "cursor",
+                "event",
+                "attributes"
+              ],
+              "properties": {
+                "cursor": {
+                  "type": "string"
+                },
+                "event": {
+                  "type": "object",
+                  "description": "The SNS message body"
+                },
+                "attributes": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "The SNS message attributes besides type and subType, such as a deployment's `isMultiplayer` and `priority`"
+                }
+              }
+            }
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }

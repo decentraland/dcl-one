@@ -516,6 +516,7 @@ async fn deploy(
             replacement,
             forward_to: None,
             quota: None,
+            public_base: "https://worlds.example/worlds-content-server",
         },
     )
     .await
@@ -2446,6 +2447,7 @@ async fn a_settings_thumbnail_waits_for_an_unlink_batch_and_stores_what_it_remov
             Some(&owner),
             &update,
             Some((f.storage.as_ref(), png.into())),
+            "https://worlds.example/worlds-content-server",
         );
         tokio::pin!(write);
         assert!(
@@ -2521,6 +2523,7 @@ async fn settings_version_tracks_settings_writes() {
             ..Default::default()
         },
         None,
+        "https://worlds.example/worlds-content-server",
     )
     .await
     .unwrap();
@@ -2538,6 +2541,7 @@ async fn settings_version_tracks_settings_writes() {
             ..Default::default()
         },
         None,
+        "https://worlds.example/worlds-content-server",
     )
     .await
     .unwrap();
@@ -2584,6 +2588,7 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         Some(&owner),
         &spawn_update("0,0"),
         None,
+        "https://worlds.example/worlds-content-server",
     )
     .await
     .expect_err("a world without scenes cannot take a spawn");
@@ -2620,6 +2625,7 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         Some(&owner),
         &spawn_update("5,5"),
         None,
+        "https://worlds.example/worlds-content-server",
     )
     .await
     .expect_err("a spawn outside the world shape is refused");
@@ -2645,6 +2651,7 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         Some(&owner),
         &spawn_update("0,1"),
         None,
+        "https://worlds.example/worlds-content-server",
     )
     .await
     .expect("in-shape spawn");
@@ -7730,6 +7737,7 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    public_base: "https://worlds.example/worlds-content-server",
                 },
             )
             .await
@@ -8488,6 +8496,7 @@ async fn concurrent_first_publishes_by_different_holders_report_the_replaced_own
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    public_base: "https://worlds.example/worlds-content-server",
                 },
             )
             .await
@@ -9071,6 +9080,7 @@ async fn concurrent_publishes_cannot_overrun_the_allowance_together() {
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: Some(&charge),
+                    public_base: "https://worlds.example/worlds-content-server",
                 },
             )
             .await
@@ -9164,6 +9174,7 @@ async fn a_quota_block_follows_the_live_name_holder() {
         .unwrap();
 }
 
+mod change_log;
 mod partial_uploads;
 mod reprocess_ab;
 
