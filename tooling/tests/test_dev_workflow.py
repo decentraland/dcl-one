@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from closed_pr_cache_fixture import CacheSweepCLI
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'
 CLEANUP = WORKFLOW.with_name('closed-pr-cache.yml')
@@ -322,31 +323,26 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 5, 'ref': 'refs/pull/150/merge'},
             {'id': 'unsafe', 'ref': 'refs/pull/150/merge'},
         ]}]
-        with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
-                                     'GITHUB_EVENT_NAME': 'pull_request'}), \
-                patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
-            exec(compile(script, str(CLEANUP), 'exec'), {})
-            request = listing.call_args.args[0]
-            self.assertIn('ref=refs/pull/150/merge', request)
-            self.assertIn('--paginate', request)
-            self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
-                'repos/decentraland/dcl-one/actions/caches/3',
-                'repos/decentraland/dcl-one/actions/caches/5',
-            ])
-            for number in ('', '0', '-1', '../main', '150; echo unsafe'):
-                with self.subTest(number=number), patch.dict(os.environ, {'PR_NUMBER': number}):
-                    listing.reset_mock()
-                    deletion.reset_mock()
-                    with self.assertRaises(ValueError):
-                        exec(compile(script, str(CLEANUP), 'exec'), {})
-                    listing.assert_not_called()
-                    deletion.assert_not_called()
+        cli = CacheSweepCLI(pages)
+        cli.sweep(event='pull_request', number='150')
+        request, = cli.listings
+        self.assertIn('ref=refs/pull/150/merge', request)
+        self.assertIn('--paginate', request)
+        self.assertEqual(cli.lookups, [])
+        self.assertEqual(cli.deletions, [
+            'repos/decentraland/dcl-one/actions/caches/3',
+            'repos/decentraland/dcl-one/actions/caches/5',
+        ])
+        for number in ('', '0', '-1', '../main', '150; echo unsafe'):
+            with self.subTest(number=number):
+                cli = CacheSweepCLI(pages)
+                with self.assertRaises(ValueError):
+                    cli.sweep(event='pull_request', number=number)
+                self.assertEqual(cli.commands, [])
 
     def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
         self.assertIn("cron: '17 * * * *'", source)
-        script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
         deps = 'v0-rust-dev-tests-'
         bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
@@ -376,20 +372,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
-        def api(args, **kwargs):
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': caches}])
-            if args[-1].endswith('/pulls/10'):
-                return json.dumps({'state': 'closed'})
-            if args[-1].endswith('/pulls/11'):
-                return json.dumps({'state': 'open'})
-            self.fail(f'Unexpected API call: {args}')
-        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
-                                     'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
-            exec(compile(script, str(CLEANUP), 'exec'), {})
-        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+        cli = CacheSweepCLI([{'actions_caches': caches}], states={'10': 'CLOSED', '11': 'OPEN'})
+        cli.sweep()
+        self.assertEqual(cli.deletions, [
             'repos/decentraland/dcl-one/actions/caches/1',
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
@@ -401,7 +386,29 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
         ])
-        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
+        self.assertEqual(len(cli.listings), 1)
+        self.assertEqual(cli.lookups, [['10', '11']], 'one GraphQL request for both PRs')
+
+    def test_scheduled_sweep_bounds_the_number_of_pr_aliases_per_query(self):
+        caches = [{'id': number, 'ref': f'refs/pull/{number}/merge'} for number in range(101, 0, -1)]
+        cli = CacheSweepCLI([{'actions_caches': caches}], states={'101': 'CLOSED'})
+        cli.sweep()
+        self.assertEqual(cli.lookups, [[str(number) for number in range(1, 101)], ['101']])
+        self.assertEqual(cli.deletions, ['repos/decentraland/dcl-one/actions/caches/101'])
+
+    def test_scheduled_sweep_preserves_prs_with_unknown_state_in_a_partial_reply(self):
+        caches = [{'id': number, 'ref': f'refs/pull/{number}/merge'} for number in (10, 11, 12)]
+        cli = CacheSweepCLI([{'actions_caches': caches}], states={'10': 'MERGED', '11': None})
+        cli.sweep()
+        self.assertEqual(cli.lookups, [['10', '11', '12']])
+        self.assertEqual(cli.deletions, ['repos/decentraland/dcl-one/actions/caches/10'])
+
+    def test_scheduled_sweep_skips_the_listing_when_the_rate_budget_is_low(self):
+        cli = CacheSweepCLI([], remaining=110)
+        with self.assertRaises(SystemExit) as stopped:
+            cli.sweep()
+        self.assertEqual(stopped.exception.code, 0)
+        self.assertEqual(cli.commands, [['gh', 'api', 'rate_limit']])
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         command = re.search(r'^          source=(.*)$', jobs()['smoke'], re.M).group(1)

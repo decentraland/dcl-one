@@ -12,6 +12,7 @@ import textwrap
 import unittest
 from unittest.mock import patch
 
+from closed_pr_cache_fixture import CacheSweepCLI
 
 SPEC = importlib.util.spec_from_file_location('image_cache', Path(__file__).parents[1] / 'image-cache.py')
 cache = importlib.util.module_from_spec(SPEC)
@@ -559,22 +560,10 @@ class WorkflowSetupTest(unittest.TestCase):
 
 class ImageRetentionTest(unittest.TestCase):
     def sweep(self, entries, closed=(), event='schedule', number=''):
-        workflow = Path(__file__).parents[2] / '.github/workflows/closed-pr-cache.yml'
-        source = workflow.read_text()
-        script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
-        calls = []
-        def api(args, **kwargs):
-            calls.append(args)
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': entries[:3]}, {'actions_caches': entries[3:]}])
-            pr = args[-1].rsplit('/', 1)[-1]
-            return json.dumps({'state': 'closed' if pr in closed else 'open'})
-        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': event, 'PR_NUMBER': number,
-                                     'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api), \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
-            exec(compile(script, str(workflow), 'exec'), {})
-        return {int(call.args[0][-1].rsplit('/', 1)[-1]) for call in deletion.call_args_list}
+        pages = [{'actions_caches': entries[:3]}, {'actions_caches': entries[3:]}]
+        cli = CacheSweepCLI(pages, states=dict.fromkeys(closed, 'CLOSED'))
+        cli.sweep(event=event, number=number)
+        return {int(endpoint.rsplit('/', 1)[-1]) for endpoint in cli.deletions}
 
     def entry(self, number, scope='main', group='catalyst', arch='amd64', **changes):
         ref = 'refs/heads/main' if scope == 'main' else f'refs/pull/{scope[3:]}/merge'
