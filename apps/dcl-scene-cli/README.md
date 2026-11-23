@@ -230,10 +230,11 @@ page (deep-link knobs, web **Player** via `?where=web&player=<url>`). abgen on 5
 answers one by its scene id or wearable id (empty `data` when none matches, as upstream), the
 routes the wearable preview page polls.
 
-The join block always prints the desktop deep link and the web URL; nothing launches unless asked.
-`--mobile` adds a scan-to-join QR code for the web URL (also served at `/mobile-preview`).
-`--explorer-alpha` opens the deep link in the desktop Explorer and `--web` opens the hosted web
-explorer in a browser (both off under `--ci` or `--no-client`, `--web` also under `--no-browser`).
+The join block always prints the desktop deep link and the web URL, and `start` opens the Bevy web
+player in a browser. `--explorer-alpha` opens the deep link in the desktop Explorer instead (add
+`--web`, alias `--bevy-web`, for both), and `--mobile` or `--talk` opens no web player. `--mobile`
+adds a scan-to-join QR code for the web URL (also served at `/mobile-preview`). `--ci` and
+`--no-client` launch nothing; `--no-browser` keeps the web player closed.
 `--dclenv zone` points the deep link's `dclenv` and the web explorer at decentraland.zone; `--realm`
 names another realm in the desktop deep links; `--position X,Y` picks the parcel the join links land
 on; `--hub`, `-n` and `--landscape-terrain-enabled` add the matching `=true` deep-link knobs. The

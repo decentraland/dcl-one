@@ -614,6 +614,7 @@ fn g24_tunnel_unreachable_warns_and_keeps_serving() {
     let mut cmd = cli(
         &[
             "start",
+            "--no-browser",
             "--dir",
             &dir,
             "--port",

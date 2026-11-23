@@ -205,6 +205,7 @@ async fn data_layer_rpc_edit_saves_composite_and_reloads() {
     let child = Command::new(BIN)
         .args([
             "start",
+            "--no-browser",
             "--dir",
             &scene.display().to_string(),
             "--port",

@@ -57,7 +57,7 @@ fn fresh_tmp(name: &str) -> PathBuf {
 fn start_command(log: &Path) -> Command {
     let log = std::fs::File::create(log).unwrap();
     let mut cmd = Command::new(BIN);
-    cmd.arg("start")
+    cmd.arg("start").arg("--no-browser")
         .env_remove("LIVEKIT_URL")
         .env_remove("LIVEKIT_API_KEY")
         .env_remove("LIVEKIT_API_SECRET")

@@ -135,6 +135,7 @@ async fn the_switch_attaches_and_drops_the_server_under_a_running_preview() {
     let child = Command::new(BIN)
         .args([
             "start",
+            "--no-browser",
             "--dir",
             &scene.display().to_string(),
             "--port",
