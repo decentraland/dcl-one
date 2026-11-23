@@ -5110,6 +5110,10 @@
           "kind": "regular"
         },
         {
+          "name": "chatMessageText.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "chatText.test.ts",
           "kind": "regular"
         },
@@ -6422,7 +6426,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
-      "sha256": "c5046f798d8b17d245f08db5351885b2b8d830a5ec26dae52452cf31d01264ee"
+      "sha256": "6b42afd746ba47678235229eca3e18e371f66f94dc17ce220cba7debdc9a175f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
@@ -6454,7 +6458,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "9392d4f92a63690dff384f8c8f798ada70c7e7f1eb7f50f9f20e4ab57c6d4b02"
+      "sha256": "7ae429f59fb2fc2fb07536be574975f5ad2d11d67187b383dbc5868c68bded73"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -6596,7 +6600,7 @@
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
-      "sha256": "528f3d3d9b5fb782901ae6f89f7bf9c09440e17ae4dde702fc17012c772a8d55"
+      "sha256": "11cf5a47f8b4ad82c18fbc58fffb0a9306c3b44e9febf567a4443eb52f24c781"
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
@@ -6692,7 +6696,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
-      "sha256": "f0cd01b6242a1f3a2d85744b4d7427b8b8508e769291f3b416b20e31ab4cd5c3"
+      "sha256": "fa145fec763af48e16b421b693e57b0be54dcd0eee2f381e9f55ef2994a76d0e"
     },
     {
       "path": "library/explorer-core/features/chat/lineIds.test.ts",
@@ -6704,7 +6708,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/translation.ts",
-      "sha256": "5f4da4df1edf9d67725224847b779c9ba9e96ea93c0b43fa45f399da0cdba275"
+      "sha256": "f7f05666183b6fbc2c5fea7a1344928256d6ddcff3795b8ffb7c9a0620c250aa"
     },
     {
       "path": "library/explorer-core/features/communities/notifications.ts",
@@ -9096,7 +9100,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "26a1460c5f6fd0080e6c2548b7167bddef278ece1ee9552fc3acdec0a2f404b0"
+      "sha256": "9dd8e4bd0874257710125b7dcaafb802db7fcd0bf9c715e4faad10a2e85c9309"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
@@ -9256,11 +9260,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "369daae42ab3bd746baa8465d919db92f1aa7d78a5b594e62454846b434361a2"
+      "sha256": "1f5de8f949194fbfd4d42c50b4c45b16edd1b5b39aa724d4226b97db56badfd5"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "976a5b141846355ad51ed4545bb02cb406c80f43acfaeb5d77b98a7d24d8ac25"
+      "sha256": "8475f4605ef40263c772068a820334a9ecbeef3165e50bbd9e0fa3208bd6f4c8"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9328,7 +9332,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatText.tsx",
-      "sha256": "d36b255137604cc2c16a4b74e8ba9aec3b4236836b7acc9175aecafef5bfdce2"
+      "sha256": "967b6d836c7e2d11cbdd3182989139e54b46e1467f4b3a5bdac1e9fe04e1e1fe"
     },
     {
       "path": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
@@ -10488,7 +10492,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "59d0a84cf0caa378dde9e03d36739ea97055854469afba4bea141a1e9ce489a9"
+      "sha256": "6db5d8eda817cb9e7c1530a5d5263c1747d9daefc9f16c089c7823d4b4a273eb"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10511,8 +10515,12 @@
       "sha256": "0ff4076d5e415178ab088270681186aeb6ae90979fb6756f0bbaac62256e3de5"
     },
     {
+      "path": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "sha256": "522bb35c14d8e7f3f591f35c95cfaff3434aa4d8f894d14e96ae308da3886c97"
+    },
+    {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "94b66c992600523352309fbe97b89a54c36148d6b112b6c30665ef9beb60bbee"
+      "sha256": "23e9d1606174f80044818121afb38d39e3d69c29b3ed0225677c54708c64bd25"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
@@ -10644,7 +10652,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "2442b196641ec0d749600aebbf732e84aa3605d0f613fd94f898c9a0791f8689"
+      "sha256": "abc75106488d4ed2bd1f6bedab34c7c1d3c2c10fe62b6cd21f335d00826ea3ef"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -11740,6 +11748,21 @@
     },
     {
       "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
       "to": "library/explorer-core/features/chat/chatParse.ts",
       "kind": "native:runtime"
     },
@@ -16056,6 +16079,21 @@
     {
       "from": "library/ui/apps/hud/design/Select.tsx",
       "to": "library/ui/apps/hud/design/Select.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "test:runtime"
     },
     {
@@ -37731,6 +37769,21 @@
     {
       "from": "library/ui/apps/hud/test/cancelKey.test.ts",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
       "kind": "test:runtime"
     },
     {
@@ -47856,6 +47909,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/cancelKey.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/chatMessageText.test.tsx",
       "kind": "type"
     },
     {

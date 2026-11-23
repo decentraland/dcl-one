@@ -9,7 +9,7 @@ import { fetchStore, LINK_TYPES, type LinkType } from "../../../seller/lib/store
 import { useShopWallet } from "../../../wallet/context";
 import { useProfile } from "../../hooks";
 import { useShopQuery } from "../../query";
-import { getAvatarBackgroundColor, getDisplayName } from "../../lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 import defaultCover from "./default-cover.jpeg?url";
 import discordIcon from "./icon-discord.svg?url";
 import facebookIcon from "./icon-facebook.svg?url";

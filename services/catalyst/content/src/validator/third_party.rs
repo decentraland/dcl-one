@@ -115,7 +115,11 @@ pub fn validate_third_party_merkle_proof_content(
         );
     }
 
-    let entity_bytes = match deployment.files.get(&entity.id) {
+    let entity_bytes = match deployment
+        .files
+        .get(&entity.id)
+        .and_then(UploadedFile::bytes)
+    {
         Some(bytes) => bytes,
         None => {
             return ValidationResponse::unavailable(format!(

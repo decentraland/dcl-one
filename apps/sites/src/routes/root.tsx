@@ -17,9 +17,8 @@ import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
 import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
+import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 
-import SignInModalHost from "@/features/components/auth/SignInModalHost";
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
@@ -27,12 +26,12 @@ import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/R
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
-import StatusPage from "@ui/components/StatusPage";
-import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
-import { ThumbnailPublicBase } from "@ui/data/thumbnail";
+import { StatusPage } from "@dcl/one-ui/apps/sites/status/StatusPage";
+import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
+import { ThumbnailPublicBase } from "@dcl/one-ui/components/AppChrome/thumbnail-public-base";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { pageSid, parseCookies, publicResponseContext, sessionMiddleware } from "@/core/lib/telemetry/session";
-import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
@@ -325,7 +324,6 @@ export default function App() {
           <RoutePending />
           <Outlet />
           <EmbedBridge />
-          <SignInModalHost />
         </ChromeNavBridge>
       </ChromeAuthBridge>
     </QueryClientProvider>

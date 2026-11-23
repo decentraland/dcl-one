@@ -6,7 +6,8 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { useId, useRef, useState } from 'react'
+import { useId, useRef, useState, useSyncExternalStore } from 'react'
+import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
   AnchoredMenu,
   ARM_MS,
@@ -1009,6 +1010,7 @@ function BrowsePageShowcase(): React.JSX.Element {
 /** The HUD scale against a few reference heights; the chosen one is outlined. */
 function HudScaleShowcase(): React.JSX.Element {
   const [res, setRes] = useState('1080')
+  const live = useSyncExternalStore(subscribeLiveScale, liveScale)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
       <p style={{ fontSize: 13, color: 'var(--ink-7)', margin: 0, lineHeight: 1.5 }}>
@@ -1016,8 +1018,8 @@ function HudScaleShowcase(): React.JSX.Element {
         logical px (device px ÷ DPR), so a Retina panel scales as any display of the same logical size.
       </p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 14 }}>Resolution</span>
-        <Select value={res} onChange={setRes} aria-label="Resolution" options={RESOLUTIONS} />
+        <span style={{ fontSize: 14 }}>Reference resolution</span>
+        <Select value={res} onChange={setRes} aria-label="Reference resolution" options={RESOLUTIONS} />
       </div>
       <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         {['720', '900', '1080', '1440'].map((h) => {
@@ -1049,12 +1051,25 @@ function HudScaleShowcase(): React.JSX.Element {
           )
         })}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>
-        Live viewport: {window.innerWidth}×{window.innerHeight}px → ×{Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(3)}
-      </div>
+      <output aria-label="Live HUD scale" style={{ fontSize: 12, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>
+        {live}
+      </output>
     </div>
   )
 }
+
+// The viewport and the `--ui-scale` the host installed for it (hudScale.ts, with its bounds), read again on every
+// resize and every scale change, so the line shows what the HUD is drawn at.
+function subscribeLiveScale(onChange: () => void): () => void {
+  window.addEventListener('resize', onChange)
+  const unsubscribe = subscribeHudScale(onChange)
+  return () => {
+    window.removeEventListener('resize', onChange)
+    unsubscribe()
+  }
+}
+const liveScale = (): string =>
+  `Live viewport: ${window.innerWidth}×${window.innerHeight}px → ×${getHudScale().toFixed(3)}`
 
 // A short scroller with a fixed-length thumb beside it.
 function ShowcaseScroller(): React.JSX.Element {

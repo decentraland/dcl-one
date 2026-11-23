@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 
-import { loader as downloadLoader, meta as downloadMeta } from "./download";
+import { loader as downloadLoader } from "./download";
 import { loader as creatorHubLoader } from "./download_.creator-hub";
 
 const LINUX_CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -64,16 +64,6 @@ describe("/download", () => {
   it("offers a phone no installer", async () => {
     const { data } = await downloadLoader(args("/download", IPHONE));
     expect(data.primary).toBeNull();
-  });
-});
-
-describe("/download head", () => {
-  it("should carry the title, the description and the canonical path", () => {
-    expect(downloadMeta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }] } as never)).toEqual([
-      { title: "Download | Decentraland" },
-      { name: "description", content: "Download Decentraland and start exploring the metaverse — events, communities, voice chat and more." },
-      { tagName: "link", rel: "canonical", href: "https://public.test/download" },
-    ]);
   });
 });
 

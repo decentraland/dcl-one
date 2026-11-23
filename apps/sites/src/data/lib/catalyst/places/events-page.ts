@@ -35,8 +35,21 @@ export const eventsPageKeys = {
     ["events", "place", "world" in target ? `world:${target.world}` : `position:${target.position.join(",")}`] as const,
 };
 
+/** The account-scoped event reads a write can change: My Events and the admin pages' reads. */
+const PRIVATE_EVENT_DOMAINS: readonly unknown[] = ["events", "event-admin"];
+
+/**
+ * After any event write: the public page's reads and every account's private event reads
+ * (`["private", account, "events" | "event-admin", ...]`), which sign-out alone clears.
+ */
 export function invalidateEventsAfterWrite(client: QueryClient) {
-  return client.invalidateQueries({ queryKey: eventsPageKeys.all });
+  return Promise.all([
+    client.invalidateQueries({ queryKey: eventsPageKeys.all }),
+    client.invalidateQueries({
+      queryKey: ["private"],
+      predicate: ({ queryKey }) => PRIVATE_EVENT_DOMAINS.includes(queryKey[2]),
+    }),
+  ]).then(() => undefined);
 }
 
 export type LiveNowData = { events: Event[]; places: Place[] };

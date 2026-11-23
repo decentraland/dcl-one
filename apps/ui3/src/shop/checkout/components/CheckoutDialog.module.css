@@ -497,6 +497,21 @@
 .errorText b {
   font-weight: 700;
 }
+/* A page that can clear the failure (another item's purchase still confirming). */
+.errorLink {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.334;
+  color: var(--ckm-soft-white);
+  text-decoration: underline;
+}
+.errorLink:hover {
+  color: var(--ckm-gray4);
+}
+.errorLink:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
 /* A status screen's centre (a purchase still confirming): the loader and what to expect. */
 .success {
   display: flex;

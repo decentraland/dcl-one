@@ -9,7 +9,7 @@ import type { CancelTravelPayload } from "../generated/bridge/CancelTravelPayloa
 import type { RetryConnectionPayload } from "../generated/bridge/RetryConnectionPayload";
 import type { OverlayPush } from "../generated/bridge/OverlayPush";
 import { OverlayPushSchema } from "../generated/bridge-schemas";
-import { checkOk } from "../validate";
+import { checkOk } from "@web-core/validate";
 import type { FriendEntry } from "../generated/bridge/FriendEntry";
 import type { FriendRef } from "../generated/bridge/FriendRef";
 import type { KillPortablePayload } from "../generated/bridge/KillPortablePayload";

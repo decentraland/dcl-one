@@ -108,7 +108,6 @@ pub struct State {
 pub type SharedState = Arc<State>;
 
 pub use crate::shared::signed_fetch::SignedPath;
-pub use index::spawn_job;
 
 pub(crate) fn signed_path(original: &axum::http::Uri, local: impl Into<String>) -> SignedPath {
     SignedPath::at(original, local)

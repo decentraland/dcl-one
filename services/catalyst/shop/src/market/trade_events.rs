@@ -446,7 +446,12 @@ const DIGEST_BATCH: i64 = 2_000;
 /// trade against its marketplace's domain. A trade whose row cannot be
 /// rebuilt gets a NULL digest and is logged (its V3 cancellation cannot be
 /// matched; the other legs still apply).
-async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow::Result<usize> {
+async fn fill_v3_digests(
+    pool: &PgPool,
+    net: ChainNet,
+    chain_id: i64,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<usize> {
     let v3: Vec<String> = deployments(chain_id)
         .iter()
         .filter(|(_, _, v3)| *v3)
@@ -485,6 +490,8 @@ async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow:
         });
     }
     if !rows.0.is_empty() {
+        // Each batch commits on its own, after the owner check.
+        let mut tx = pool.begin().await?;
         sqlx::query(
             "INSERT INTO shop.trade_chain_state (trade_id, network, digest, status, folded_block) \
              SELECT id, $1, d, 'open', -1 FROM UNNEST($2::uuid[], $3::text[]) AS u(id, d) \
@@ -493,8 +500,10 @@ async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow:
         .bind(net.db_name())
         .bind(&rows.0)
         .bind(&rows.1)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        owner.check(&mut tx).await?;
+        tx.commit().await?;
     }
     Ok(ids.len())
 }
@@ -583,8 +592,9 @@ pub async fn fold(
     chain_id: i64,
     since: Option<i64>,
     upto: i64,
+    owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
-    while fill_v3_digests(pool, net, chain_id).await? as i64 >= DIGEST_BATCH {}
+    while fill_v3_digests(pool, net, chain_id, owner).await? as i64 >= DIGEST_BATCH {}
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '1800s'")
         .execute(&mut *tx)
@@ -597,6 +607,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -622,6 +633,9 @@ impl TradeEventsIndex {
 impl ChainIndex for TradeEventsIndex {
     fn indexer(&self) -> &'static str {
         INDEXER_TRADE_EVENTS
+    }
+    fn chain_id(&self) -> i64 {
+        self.chain_id
     }
 
     fn net(&self) -> ChainNet {
@@ -668,6 +682,16 @@ impl ChainIndex for TradeEventsIndex {
         Ok(insert_events(conn, self.net, &rows).await?)
     }
 
+    async fn clear(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+        self.rewind(conn, to).await?;
+        // A rebuild trusts nothing derived: the digests are recomputed from
+        // the stored trades and every verdict refolded.
+        sqlx::query("DELETE FROM shop.trade_chain_state WHERE network = $1")
+            .bind(self.net.db_name())
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         sqlx::query("DELETE FROM shop.trade_event WHERE network = $1 AND block_number > $2")
             .bind(self.net.db_name())
@@ -683,17 +707,28 @@ impl ChainIndex for TradeEventsIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, upto: i64) -> anyhow::Result<bool> {
-        fold(pool, self.net, self.chain_id, since, upto).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        fold(pool, self.net, self.chain_id, since, upto, owner).await?;
         Ok(true)
     }
 }
 
-/// The networks whose trade verdicts readers may use at `now`.
-pub async fn ready_networks(pool: &PgPool, now: chrono::DateTime<Utc>) -> Vec<ChainNet> {
+/// The networks whose trade verdicts readers may use at `now`, each read on
+/// the chain `indexes` configures for it.
+pub async fn ready_networks(
+    pool: &PgPool,
+    indexes: &chain_walk::IndexSettings,
+    now: chrono::DateTime<Utc>,
+) -> Vec<ChainNet> {
     let mut out = Vec::new();
     for net in ChainNet::ALL {
-        if chain_walk::ready_cursor(pool, INDEXER_TRADE_EVENTS, net, now)
+        if chain_walk::ready_cursor_on(pool, INDEXER_TRADE_EVENTS, net, indexes.chain_id(net), now)
             .await
             .is_some()
         {
@@ -705,14 +740,25 @@ pub async fn ready_networks(pool: &PgPool, now: chrono::DateTime<Utc>) -> Vec<Ch
 
 /// The SQL predicate "the chain closed trade `t`" for the open-listing
 /// feeds, with the readiness rule inline (a bound `now_p`): a verdict of a
-/// network whose index is not published is ignored.
+/// network whose index is not published, or is bound to another chain than
+/// this process serves, is ignored ([`verdicts_ready_sql`]).
 pub fn closed_on_chain_sql(t: &str, now_p: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
                  JOIN shop.chain_cursor tcc ON tcc.indexer = 'trade_events' AND tcc.network = tcs.network \
                  WHERE tcs.trade_id = {t}.id AND tcs.status <> 'open' AND {ready})",
-        ready = chain_walk::ready_sql("tcc", now_p)
+        ready = verdicts_ready_sql("tcc", now_p)
     )
+}
+
+/// The readiness rule of the trade-events cursor as the verdict SQL reads
+/// it: [`chain_walk::ready_sql_on`] with the chains this process serves
+/// ([`super::catalog::served_chains`], the trade-events walk's
+/// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
+/// lends its verdicts.
+fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
+    let (ethereum, matic) = super::catalog::served_chains();
+    chain_walk::ready_sql_on(alias, now_p, ethereum, matic)
 }
 
 /// The chain verdict of trade `t` (`sold` | `cancelled`), NULL when open or
@@ -722,7 +768,7 @@ pub fn chain_status_sql(t: &str, now_p: &str) -> String {
         "(SELECT tcs.status FROM shop.trade_chain_state tcs \
           JOIN shop.chain_cursor tcc ON tcc.indexer = 'trade_events' AND tcc.network = tcs.network \
           WHERE tcs.trade_id = {t}.id AND tcs.status <> 'open' AND {ready})",
-        ready = chain_walk::ready_sql("tcc", now_p)
+        ready = verdicts_ready_sql("tcc", now_p)
     )
 }
 
@@ -815,6 +861,36 @@ pub(super) async fn bid_asset(
     })
 }
 
+/// The stored metadata of a `bid_received` notification, local or on-chain:
+/// the asset's seller is the recipient, `amount` the price as the
+/// description shows it.
+pub(crate) fn bid_received_metadata(
+    meta: &AssetMeta,
+    link: String,
+    price: &str,
+    amount: &str,
+    network: &str,
+) -> Value {
+    let mut m = serde_json::Map::new();
+    m.insert("image".into(), json!(meta.image));
+    m.insert("seller".into(), json!(meta.seller));
+    m.insert("category".into(), json!(meta.category));
+    insert_opt(&mut m, "rarity", &meta.rarity);
+    m.insert("link".into(), json!(link));
+    insert_opt(&mut m, "nftName", &meta.name);
+    m.insert("price".into(), json!(price));
+    m.insert("title".into(), json!("Bid Received"));
+    m.insert(
+        "description".into(),
+        json!(format!(
+            "You received a bid of {amount} MANA for this {}.",
+            meta.name.as_deref().unwrap_or_default()
+        )),
+    );
+    m.insert("network".into(), json!(network));
+    Value::Object(m)
+}
+
 /// marketplace-server's BID_RECEIVED event of a local bid as the old parser
 /// stored it, for the asset's seller (item creator or nft owner); `None`
 /// without a price or when the bidder is the seller.
@@ -830,32 +906,15 @@ pub(super) fn bid_received_notification(
         return None;
     }
     let recipient = crate::shared::identity::Address::parse(&meta.seller).ok()?;
-    let mut m = serde_json::Map::new();
-    m.insert("image".into(), json!(meta.image));
-    m.insert("seller".into(), json!(meta.seller));
-    m.insert("category".into(), json!(meta.category));
-    insert_opt(&mut m, "rarity", &meta.rarity);
-    m.insert(
-        "link".into(),
-        json!(format!("{marketplace_base}/account?section=bids")),
+    let metadata = bid_received_metadata(
+        meta,
+        format!("{marketplace_base}/account?section=bids"),
+        price,
+        &format_ether(price),
+        network,
     );
-    insert_opt(&mut m, "nftName", &meta.name);
-    m.insert("price".into(), json!(price));
-    m.insert("title".into(), json!("Bid Received"));
-    m.insert(
-        "description".into(),
-        json!(format!(
-            "You received a bid of {} MANA for this {}.",
-            format_ether(price),
-            meta.name.as_deref().unwrap_or_default()
-        )),
-    );
-    m.insert("network".into(), json!(network));
-    let mut n = crate::shared::notifications::NewNotification::now(
-        recipient,
-        "bid_received",
-        Value::Object(m),
-    );
+    let mut n =
+        crate::shared::notifications::NewNotification::now(recipient, "bid_received", metadata);
     n.id = uuid::Uuid::new_v5(
         &BID_NOTIFICATION_NS,
         format!("bid-created:{trade_id}").as_bytes(),
@@ -1165,7 +1224,8 @@ pub async fn get_trade_accepted_event(
             format!("Trade with hashed signature {hashed_signature} not found"),
         );
     };
-    if chain_walk::ready_cursor(&state.pool, INDEXER_TRADE_EVENTS, net, Utc::now())
+    let chain = state.settings.market.indexes.chain_id(net);
+    if chain_walk::ready_cursor_on(&state.pool, INDEXER_TRADE_EVENTS, net, chain, Utc::now())
         .await
         .is_none()
     {
@@ -1207,8 +1267,9 @@ pub async fn get_trade_accepted_event(
     }
 }
 
-/// The index's state for the operator status route and the tests.
-pub async fn status(pool: &PgPool) -> Value {
+/// The index's state for the operator status route and the tests, each
+/// network read on the chain `indexes` configures for it.
+pub async fn status(pool: &PgPool, indexes: &chain_walk::IndexSettings) -> Value {
     let mut out = serde_json::Map::new();
     for net in ChainNet::ALL {
         let c = chain_walk::cursor(pool, INDEXER_TRADE_EVENTS, net)
@@ -1219,7 +1280,8 @@ pub async fn status(pool: &PgPool) -> Value {
             net.db_name().to_string(),
             json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready_on(&c, indexes.chain_id(net), Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+            "chainId": c.chain_id, "quarantine": c.quarantine_reason,
         }))),
         );
     }

@@ -25,7 +25,7 @@ pub(super) fn imposters_bake_settings(config: &Config) -> explore::imposters::Ra
 /// The six write switches as `GET /writes` reports them.
 pub(super) fn write_switches(config: &Config) -> shared::writes::Switches {
     shared::writes::Switches {
-        content: config.writes.content_writes_enabled,
+        content: config.writes.content_writes(),
         create: config.create.create_writes_enabled,
         data: config.writes.data_writes_enabled,
         social: config.writes.social_writes_enabled,

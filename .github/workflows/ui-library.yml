@@ -53,7 +53,7 @@ jobs:
             changed=true
           else
             changed=false
-            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui library/explorer-core .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui library/explorer-core infra/packages/ui-gallery.nix flake.lock .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
             [ -z "$files" ] || changed=true
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
@@ -94,6 +94,25 @@ jobs:
           [ "$EVENT" != pull_request ] || base="$PR_BASE"
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$HEAD_SHA^"; fi
           node library/ui/figma/port-verification.mjs --base "$base" --head "$HEAD_SHA"
+
+  # The Nix package Sites serves at /ui-gallery/ builds only the files its fileset names, and a pull request that
+  # changes no packaging builds no image: a gallery change that imports a file outside the fileset fails here,
+  # not in the next Sites image.
+  ui-gallery-nix:
+    needs: key-guard
+    if: needs.key-guard.outputs.ui_changed == 'true'
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          lfs: false
+          persist-credentials: false
+      # The shared fonts are the package's only LFS input.
+      - run: git lfs pull --include "library/ui/foundations/typography/fonts/**"
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - run: nix build 'git+file:.?lfs=1#ui-gallery' --no-link -L
 
   library:
     needs: key-guard
@@ -152,6 +171,14 @@ jobs:
           wait "$root" || status=1
           wait "$nested" || status=1
           exit "$status"
+      # The hosted gallery Sites serves at /ui-gallery/ (infra/packages/ui-gallery.nix), built as that package builds
+      # it, rides in the scanned artifact: an image is published only with a successful key scan of these exact bytes
+      # (tooling/ui-gallery-receipt.py). The digest fails on a hidden path, which the upload would drop unscanned.
+      - name: Add the hosted gallery Sites serves to the scanned artifact
+        run: |
+          pnpm exec vite build --config gallery/vite.config.ts --mode hosted
+          node gallery/scripts/hosted-digest.mjs gallery/dist
+          cp -R gallery/dist figma/review/review-dist/ui-gallery
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist
@@ -160,7 +187,9 @@ jobs:
         with:
           name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
           path: library/ui/figma/review/review-dist
-          retention-days: 14
+          # A main build stays the receipt for its gallery bytes until the gallery changes again
+          # (tooling/ui-gallery-receipt.py), so it is kept longer.
+          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
       # The gallery's HUD canvas compiles the Explorer HUD, checked under the profile and the TypeScript 7 its hosts
       # use. Last, and run whatever check failed before it, so a type error here hides no other one; not after a
       # failed install, which leaves nothing to check with.

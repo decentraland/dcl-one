@@ -356,12 +356,16 @@ async fn settle() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
-/// Waits up to 10 s of real time for `done`, then settles. The wait never
-/// advances tokio time, so it also works while the clock is paused and
-/// rendering runs on blocking threads.
+/// Waits up to 10 s of real time for `done`, then settles; panics if it
+/// never holds. The wait never advances tokio time, so it also works while
+/// the clock is paused and rendering runs on blocking threads.
 async fn settle_until(done: impl Fn() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !done() && std::time::Instant::now() < deadline {
+    while !done() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "condition not met within 10 s"
+        );
         tokio::task::yield_now().await;
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -1077,7 +1081,12 @@ async fn a_presenter_added_during_creation_is_obeyed() {
             ),
         )
         .await;
-    settle().await;
+    settle_until(|| {
+        data_messages(&bot)
+            .last()
+            .is_some_and(|m| m.0["currentSlide"] == 1)
+    })
+    .await;
     assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 1);
 }
 
@@ -1095,7 +1104,7 @@ async fn overlay_updates_coalesce_into_one_broadcast() {
     }
     settle().await;
     assert_eq!(data_messages(&bot).len(), 1);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    settle_until(|| data_messages(&bot).len() >= 2).await;
     let messages = data_messages(&bot);
     assert_eq!(messages.len(), 2);
     assert_eq!(
@@ -1114,7 +1123,14 @@ async fn stop_announces_and_disconnects() {
             command_packet(json!({"type": "presentation:stop"}), "sc"),
         )
         .await;
-    settle().await;
+    settle_until(|| {
+        presenter.active_sessions() == 0
+            && bot.sent.lock().unwrap().last() == Some(&Sent::Shutdown)
+            && data_messages(&bot)
+                .last()
+                .is_some_and(|m| m.0["type"] == "presentation:stopped")
+    })
+    .await;
     let messages = data_messages(&bot);
     assert_eq!(
         messages.last().unwrap().0,
@@ -1129,7 +1145,7 @@ async fn stop_announces_and_disconnects() {
 async fn a_bot_that_disconnects_ends_its_session() {
     let (presenter, launcher, _) = presenting(1).await;
     launcher.exit_last();
-    settle().await;
+    settle_until(|| presenter.active_sessions() == 0).await;
     assert_eq!(presenter.active_sessions(), 0);
 }
 
@@ -1715,8 +1731,9 @@ async fn a_dropped_request_still_finishes_its_presentation() {
             .await
             .is_err()
     );
-    tokio::time::sleep(Duration::from_millis(300)).await;
     // The session runs: its commands are handled and it stops.
+    settle_until(|| presenter.active_sessions() == 1 && !launcher.bots.lock().unwrap().is_empty())
+        .await;
     assert_eq!(presenter.active_sessions(), 1);
     let (bot, events) = launcher.last();
     events
@@ -1725,7 +1742,10 @@ async fn a_dropped_request_still_finishes_its_presentation() {
             command_packet(json!({"type": "presentation:stop"}), ""),
         )
         .await;
-    settle().await;
+    settle_until(|| {
+        presenter.active_sessions() == 0 && bot.sent.lock().unwrap().last() == Some(&Sent::Shutdown)
+    })
+    .await;
     assert_eq!(presenter.active_sessions(), 0);
     assert_eq!(bot.sent.lock().unwrap().last(), Some(&Sent::Shutdown));
     // Its slot is free again.

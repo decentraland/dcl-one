@@ -8,10 +8,17 @@ import { parse } from 'yaml'
 // The Shared UI library workflow, which builds and checks the gallery.
 const library = path.resolve(import.meta.dirname, '../..')
 const repository = path.resolve(library, '../..')
-type Step = { id?: string; name?: string; run?: string; if?: string }
+type Step = {
+  id?: string
+  name?: string
+  run?: string
+  if?: string
+  uses?: string
+  with?: Record<string, unknown>
+}
 const workflow = parse(
   readFileSync(path.join(repository, '.github/workflows/ui-library.yml'), 'utf8')
-) as { jobs: Record<string, { steps: Step[] }> }
+) as { jobs: Record<string, { steps: Step[]; if?: string; needs?: string }> }
 const steps = (job: string) => workflow.jobs[job]!.steps
 
 describe('when a change reaches what the gallery compiles', () => {
@@ -38,5 +45,31 @@ describe('when the HUD canvas is type-checked in CI', () => {
     expect(check.if).toContain('!cancelled()')
     expect(check.if).toContain(`steps.${install.id}.outcome == 'success'`)
     expect(library.indexOf(check)).toBe(library.length - 1)
+  })
+})
+
+describe('when Sites serves the hosted gallery', () => {
+  it('should put the hosted build, refused with a hidden path, into the scanned artifact before the scans', () => {
+    const library = steps('library')
+    const index = library.findIndex((step) => step.run?.includes('--mode hosted'))
+    const hosted = library[index]!.run!
+    const urlScan = library.findIndex((step) => step.run?.includes('key-guard.mjs'))
+    const upload = library.find((step) => step.uses?.startsWith('actions/upload-artifact@'))!
+    expect(hosted).toContain('node gallery/scripts/hosted-digest.mjs gallery/dist\n')
+    expect(hosted.indexOf('hosted-digest.mjs')).toBeLessThan(hosted.indexOf('cp -R'))
+    expect(hosted).toContain(
+      `cp -R gallery/dist ${String(upload.with!.path).replace('library/ui/', '')}/ui-gallery`
+    )
+    expect(index).toBeGreaterThan(-1)
+    expect(index).toBeLessThan(urlScan)
+  })
+
+  it('should build the Nix package whenever the library job runs', () => {
+    const nix = workflow.jobs['ui-gallery-nix']!
+    expect(nix.if).toBe(workflow.jobs.library!.if)
+    expect(nix.needs).toBe('key-guard')
+    expect(
+      nix.steps.some((step) => step.run === "nix build 'git+file:.?lfs=1#ui-gallery' --no-link -L")
+    ).toBe(true)
   })
 })

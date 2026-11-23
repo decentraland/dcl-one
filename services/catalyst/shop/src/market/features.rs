@@ -29,6 +29,12 @@ pub const APP: &str = "dapps";
 /// Shop's paths would leave the same writes open one path over.
 pub const MARKETPLACE_FEATURES: &str = "shop-marketplace-features";
 
+/// Credits and MANA paying one line together (the Shop's Credits + MANA split): a Credits part (`creditsCents`) of one
+/// line of one unit, the rest pulled from the buyer's MANA in the same `useCredits`. Off, this node takes no Credits
+/// part on either credits authorize route, a replayed operation included, and its quotes mark no offer `splittable`.
+/// A whole price, and every credit already issued (its status, settlement, expiry and cancellation), are untouched.
+pub const CREDITS_MANA_SPLIT: &str = "shop-credits-mana-split";
+
 /// The outfit authoring allowlist (`shop::outfits`): the variant payload of `dapps-shop-outfit-creators`, the flag
 /// the Shop's pages read to show the studio.
 pub const OUTFIT_CREATORS: &str = "shop-outfit-creators";
@@ -78,7 +84,7 @@ impl DappsFlags {
     pub(super) fn new() -> Self {
         let on = cfg!(any(test, feature = "test-support"));
         Self {
-            snapshot: feature_flags::Snapshot::from_document(document(on)),
+            snapshot: feature_flags::Snapshot::from_document(document(on), false),
             fetched: Mutex::new(None),
             overrides: Mutex::new(None),
         }
@@ -86,6 +92,33 @@ impl DappsFlags {
 
     fn enabled(&self, feature: &str) -> bool {
         self.snapshot.enabled(APP, feature)
+    }
+
+    /// Whether this node takes a Credits part (see [`CREDITS_MANA_SPLIT`]).
+    pub fn credits_mana_split(&self) -> bool {
+        self.enabled(CREDITS_MANA_SPLIT)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DappsFlags {
+    /// Flags as a node holds them after reading `flags` (`dapps-` keys): for a test of a service that reads them.
+    pub fn for_tests(flags: &[(&str, bool)]) -> Arc<Self> {
+        let held = Self::new();
+        held.snapshot
+            .replace_sourced(json!({ "flags": {}, "variants": {} }), false);
+        for (feature, on) in flags {
+            held.set_for_tests(feature, *on);
+        }
+        Arc::new(held)
+    }
+
+    /// Turns one `dapps` flag (`shop-x`) on or off, keeping the rest of the document.
+    pub fn set_for_tests(&self, feature: &str, on: bool) {
+        let (doc, sourced) = self.snapshot.held();
+        let mut doc = (*doc).clone();
+        doc["flags"][format!("{APP}-{feature}")] = json!(on);
+        self.snapshot.replace_sourced(doc, sourced);
     }
 }
 
@@ -112,6 +145,16 @@ impl MarketplaceState {
     /// Whether this node offers the Marketplace's features (see [`MARKETPLACE_FEATURES`]).
     pub fn marketplace_features(&self) -> bool {
         self.dapps_flags.enabled(MARKETPLACE_FEATURES)
+    }
+
+    /// Whether this node takes a Credits part (see [`CREDITS_MANA_SPLIT`]).
+    pub fn credits_mana_split(&self) -> bool {
+        self.dapps_flags.credits_mana_split()
+    }
+
+    /// The flags as this node enforces them, for a service that reads them beside the market (the credits routes).
+    pub fn dapps_flags(&self) -> Arc<DappsFlags> {
+        self.dapps_flags.clone()
     }
 
     /// A `dapps` variant's payload value while its flag is on (`@dcl/features-component` `getFeatureVariant`);
@@ -161,13 +204,14 @@ impl MarketplaceState {
                 }
             }
         }
-        let base = self
+        let fetched = self
             .dapps_flags
             .fetched
             .lock()
             .as_ref()
-            .map(|(doc, _)| doc.clone())
-            .unwrap_or_else(|| document(false));
+            .map(|(doc, _)| doc.clone());
+        let sourced = fetched.is_some();
+        let base = fetched.unwrap_or_else(|| document(false));
         let read = feature_flags::local_overrides(&self.pool, APP).await;
         let overrides = match &read {
             Ok(overrides) => {
@@ -176,11 +220,14 @@ impl MarketplaceState {
             }
             Err(_) => self.dapps_flags.overrides.lock().clone(),
         };
-        let doc = match overrides {
-            Some(overrides) => feature_flags::apply_local_overrides(base, &overrides),
-            None => document(false),
+        let (doc, sourced) = match overrides {
+            Some(overrides) => (
+                feature_flags::apply_local_overrides(base, &overrides),
+                sourced,
+            ),
+            None => (document(false), false),
         };
-        self.dapps_flags.snapshot.replace(doc);
+        self.dapps_flags.snapshot.replace_sourced(doc, sourced);
         read.map(drop)
             .context("reading the dapps feature flag overrides")
     }
@@ -203,11 +250,13 @@ impl MarketplaceState {
 #[cfg(any(test, feature = "test-support"))]
 impl MarketplaceState {
     pub fn set_marketplace_features(&self, on: bool) {
-        self.dapps_flags.snapshot.replace(document(on));
+        self.dapps_flags
+            .snapshot
+            .replace_sourced(document(on), false);
     }
 
     pub fn set_dapps_document(&self, doc: Value) {
-        self.dapps_flags.snapshot.replace(doc);
+        self.dapps_flags.snapshot.replace_sourced(doc, false);
     }
 }
 
@@ -244,6 +293,26 @@ mod tests {
             format!("{APP}-{MARKETPLACE_FEATURES}"),
             "dapps-shop-marketplace-features"
         );
+    }
+
+    #[test]
+    fn the_split_key_is_the_one_the_pages_read_and_reads_off_until_it_says_true() {
+        // library/shop discovery/lib/rolloutFlags.ts: REMOTE_FLAG.creditsManaSplit, read as `dapps-` + key.
+        assert_eq!(
+            format!("{APP}-{CREDITS_MANA_SPLIT}"),
+            "dapps-shop-credits-mana-split"
+        );
+        // A node starts with it off, the Marketplace's test default notwithstanding; absent and not `true` read off.
+        assert!(!DappsFlags::new().credits_mana_split());
+        let flags = DappsFlags::for_tests(&[]);
+        assert!(!flags.credits_mana_split());
+        flags.snapshot.replace_sourced(
+            json!({ "flags": { "dapps-shop-credits-mana-split": "true" } }),
+            false,
+        );
+        assert!(!flags.credits_mana_split(), "only `true` turns it on");
+        flags.set_for_tests(CREDITS_MANA_SPLIT, true);
+        assert!(flags.credits_mana_split());
     }
 
     #[test]
@@ -323,8 +392,8 @@ mod tests {
 
     #[test]
     fn a_document_names_the_marketplace_only_when_it_is_on() {
-        let on = feature_flags::Snapshot::from_document(document(true));
-        let off = feature_flags::Snapshot::from_document(document(false));
+        let on = feature_flags::Snapshot::from_document(document(true), false);
+        let off = feature_flags::Snapshot::from_document(document(false), false);
         assert!(on.enabled(APP, MARKETPLACE_FEATURES));
         assert!(!off.enabled(APP, MARKETPLACE_FEATURES));
     }

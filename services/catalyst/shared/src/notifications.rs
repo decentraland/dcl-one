@@ -165,6 +165,14 @@ pub struct NewNotification {
     pub occurred_at: NaiveDateTime,
 }
 
+/// An exact previous notice identity that can carry a source's stable key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationAlias {
+    pub legacy_id: Uuid,
+    pub daily_id: Uuid,
+    pub kind: &'static str,
+}
+
 impl NewNotification {
     pub fn now(address: Address, kind: &str, metadata: Json) -> Self {
         Self {
@@ -241,6 +249,62 @@ where
     Ok(inserted as u64)
 }
 
+/// Inserts a notice and delivery once per source identity. Exact previous
+/// identities keep their row, payload and delivery; only their key is attached.
+/// The caller must retain the transaction through the source's own write.
+pub async fn insert_keyed_notification_once(
+    transaction: &mut sqlx::PgConnection,
+    notification: &NewNotification,
+    aliases: &[NotificationAlias],
+) -> Result<u64, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "notifications.user:{}",
+            notification.address.as_str()
+        ))
+        .execute(&mut *transaction)
+        .await?;
+    for alias in aliases {
+        sqlx::query(
+            "UPDATE social.notifications SET broadcast_key=$4
+             WHERE id=$1 AND address=$2 AND type=$3 AND broadcast_key IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM social.notifications
+                   WHERE address=$2 AND (broadcast_key=$4 OR id=$5)
+               )",
+        )
+        .bind(alias.legacy_id)
+        .bind(&notification.address)
+        .bind(alias.kind)
+        .bind(format!("user-notification:{}", alias.daily_id))
+        .bind(alias.daily_id)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    let sql = format!(
+        r#"
+        WITH ups AS (
+            INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT DO NOTHING
+            RETURNING id, address, type, true AS inserted
+        ),
+        {tail}
+        "#,
+        tail = *UPSERT_TAIL
+    );
+    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(notification.id)
+        .bind(&notification.address)
+        .bind(&notification.kind)
+        .bind(&notification.metadata)
+        .bind(format!("user-notification:{}", notification.id))
+        .bind(notification.occurred_at)
+        .fetch_one(transaction)
+        .await?;
+    Ok(inserted as u64)
+}
+
 async fn insert_batch<'e, E>(
     executor: E,
     batch: &[NewNotification],
@@ -252,8 +316,8 @@ where
     if batch.is_empty() {
         return Ok(0);
     }
-    // DO UPDATE may touch a row once per statement: the last of a repeated id
-    // wins; id order keeps overlapping batches locking rows in one order.
+    // Each statement touches an id once, taking the last entry.
+    // Id order keeps row locking consistent.
     let mut seen = std::collections::HashSet::new();
     let mut unique: Vec<&NewNotification> =
         batch.iter().rev().filter(|n| seen.insert(n.id)).collect();

@@ -1,3 +1,4 @@
+import plazaThumbnail from "@dcl/one-ui/apps/sites/assets/genesis-plaza.webp";
 import { eventText, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
 import type { EventCardCreator, UpcomingEventCardProps } from "@dcl/one-ui/apps/sites/events/types";
 
@@ -148,8 +149,10 @@ export function usersLabel(count: number, locale: EventsLocale = "en"): string {
   return eventText(locale, "{count} online", { count });
 }
 
+/** `fallback` marks Genesis Plaza shown only because nothing is live; it is not a live item. */
 export type LiveNowItem =
-  { kind: "event"; event: Event; users: number } | { kind: "place"; place: Place; users: number };
+  | { kind: "event"; event: Event; users: number }
+  | { kind: "place"; place: Place; users: number; fallback?: true };
 
 /** The busy place a live event runs in: the World it names, else the place covering its parcel. */
 function placeOf(event: Event, places: readonly Place[]): Place | undefined {
@@ -159,12 +162,56 @@ function placeOf(event: Event, places: readonly Place[]): Place | undefined {
   return places.find((place) => !place.world && place.positions.includes(parcel));
 }
 
+/** Genesis Plaza as source shows it when the feed does not list it: the Foundation's, on parcel 0,0, empty. */
+export const GENESIS_PLAZA: Place = {
+  id: "genesis-plaza",
+  title: "Genesis Plaza",
+  description: null,
+  image: plazaThumbnail,
+  owner: null,
+  positions: ["0,0"],
+  base_position: "0,0",
+  updated_at: null,
+  created_at: null,
+  contact_name: FOUNDATION_CONTACT_NAME,
+  categories: [],
+  highlighted: false,
+  highlighted_image: null,
+  user_count: 0,
+  user_visits: 0,
+  favorites: 0,
+  likes: 0,
+  like_rate: null,
+  world: false,
+  world_name: null,
+};
+
+/**
+ * Genesis Plaza: the Genesis City scene on parcel 0,0, else one source names so, else the stand-in. The
+ * parcel goes first: any scene may carry the name ("Genesis Plaza Afterparty"), only the plaza covers 0,0.
+ */
+function genesisPlaza(places: readonly Place[]): Place {
+  const city = places.filter((place) => !place.world);
+  return (
+    city.find((place) => place.positions.includes("0,0")) ??
+    city.find((place) => place.title?.toLowerCase().includes("genesis plaza")) ??
+    GENESIS_PLAZA
+  );
+}
+
 /**
  * Source's Live Now: places with at least `minUsers` players, each shown as the live event running
  * there when there is one: events first, then the other places, each busiest first. A live event counts its place's players, so an event in an
- * empty scene does not make the rail.
+ * empty scene does not make the rail. When nothing qualifies, Genesis Plaza still opens the rail, as source does.
  */
 export function liveNowItems(data: LiveNowData, minUsers = DEFAULT_MIN_USERS): LiveNowItem[] {
+  const items = busyItems(data, minUsers);
+  if (items.length) return items;
+  const plaza = genesisPlaza(data.places);
+  return [{ kind: "place", place: plaza, users: plaza.user_count ?? 0, fallback: true }];
+}
+
+function busyItems(data: LiveNowData, minUsers: number): LiveNowItem[] {
   const busy = data.places.filter((place) => (place.user_count ?? 0) >= minUsers);
   const used = new Set<string>();
   const events: LiveNowItem[] = [];

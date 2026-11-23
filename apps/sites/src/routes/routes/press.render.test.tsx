@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SitesLocaleContext,
   type SitesLocale,
-} from "@ui/web/frames/sites-locale";
+} from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import Press from "./press";
 
 vi.hoisted(() =>

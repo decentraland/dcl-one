@@ -14,6 +14,8 @@ use bytes::Bytes;
 
 use crate::storage::{OpenedContent, StorageError};
 
+pub(crate) mod catalyst;
+
 /// `file-type`'s `minimumBytes`, the most its signature checks read at one position. It is also
 /// the window a ranged GET sniffs (`MIME_SNIFF_BYTES` in `content-file-handler.ts`).
 pub(crate) const SAMPLE: u64 = 4100;
@@ -34,6 +36,11 @@ const MAX_DOC_TYPE: u64 = 8;
 /// The bytes `file-type` reads: up to `len` bytes from `start`, fewer only at the end.
 pub(crate) trait Source {
     async fn read_at(&mut self, start: u64, len: u64) -> Result<Bytes, StorageError>;
+
+    /// The bytes fetched from storage so far; an in-memory source fetches none.
+    fn fetched(&self) -> u64 {
+        0
+    }
 }
 
 impl Source for &[u8] {
@@ -44,31 +51,57 @@ impl Source for &[u8] {
     }
 }
 
-/// A stored file cut at `end`, read through a cache of the last block read.
+/// A stored file's bytes `base..end`, read from `base` through a cache of the last block read. A
+/// read that starts inside the cache and runs past it keeps the cached tail and fetches only from
+/// the cache's end, so a walk that moves forward fetches each byte once.
 pub(crate) struct Window<'a> {
     opened: &'a mut OpenedContent,
+    base: u64,
     end: u64,
     cached: (u64, Bytes),
     /// Whether the file was read anywhere but its first block.
     moved: bool,
+    /// The bytes fetched from storage by `read_at`.
+    fetched: u64,
 }
 
 impl<'a> Window<'a> {
     pub(crate) fn new(opened: &'a mut OpenedContent, end: u64) -> Self {
+        Self::range(opened, 0, end)
+    }
+
+    /// The bytes `base..end`, read as a stream that starts at `base`.
+    pub(crate) fn range(opened: &'a mut OpenedContent, base: u64, end: u64) -> Self {
         let end = end.min(opened.size);
         Self {
             opened,
+            base: base.min(end),
             end,
             cached: (0, Bytes::new()),
             moved: false,
+            fetched: 0,
         }
+    }
+
+    /// The window's bytes `start..end` in the file.
+    pub(crate) fn bounds(&self) -> (u64, u64) {
+        (self.base, self.end)
+    }
+
+    /// The whole stored file's size.
+    pub(crate) fn file_size(&self) -> u64 {
+        self.opened.size
     }
 
     /// The file's first `SAMPLE` bytes (or fewer), with the reader positioned after them, as
     /// `OpenedContent::into_body` expects.
     pub(crate) async fn into_head(self) -> Result<Bytes, StorageError> {
         let (start, cached) = self.cached;
-        if start == 0 && !self.moved && cached.len() as u64 == SAMPLE.min(self.end) {
+        if self.base == 0
+            && start == 0
+            && !self.moved
+            && cached.len() as u64 == SAMPLE.min(self.end)
+        {
             return Ok(cached);
         }
         self.opened.read_range(0, SAMPLE - 1).await
@@ -77,26 +110,44 @@ impl<'a> Window<'a> {
 
 impl Source for Window<'_> {
     async fn read_at(&mut self, start: u64, len: u64) -> Result<Bytes, StorageError> {
+        let start = self.base.saturating_add(start);
         let end = start.saturating_add(len).min(self.end);
         if start >= end {
             return Ok(Bytes::new());
         }
         let (at, cached) = &self.cached;
-        if *at <= start && end <= at + cached.len() as u64 {
+        let cache_end = at + cached.len() as u64;
+        if *at <= start && end <= cache_end {
             return Ok(cached.slice((start - at) as usize..(end - at) as usize));
         }
-        // The first read is the sample at 0; later ones fetch a block from where they start.
-        let size = if start == 0 && self.cached.1.is_empty() {
+        // The first read is the sample at the base; later ones fetch a block from where they
+        // start, or from the cache's end when they start inside it.
+        let (from, kept) = if *at <= start && start < cache_end {
+            (cache_end, cached.slice((start - at) as usize..))
+        } else {
+            (start, Bytes::new())
+        };
+        let size = if start == self.base && cached.is_empty() {
             SAMPLE.max(len)
         } else {
             self.moved = true;
-            BLOCK.max(len)
+            BLOCK.max(end - from)
         };
-        let last = start.saturating_add(size).min(self.end) - 1;
-        let block = self.opened.read_range(start, last).await?;
+        let last = from.saturating_add(size).min(self.end) - 1;
+        let block = self.opened.read_range(from, last).await?;
+        self.fetched += block.len() as u64;
+        let block = if kept.is_empty() {
+            block
+        } else {
+            [kept, block].concat().into()
+        };
         self.cached = (start, block);
         let got = (end - start).min(self.cached.1.len() as u64) as usize;
         Ok(self.cached.1.slice(..got))
+    }
+
+    fn fetched(&self) -> u64 {
+        self.fetched
     }
 }
 
@@ -127,10 +178,13 @@ impl<S: Source> Tokenizer<'_, S> {
 
     /// `ignore`: `false` where it runs past the end (`EndOfStreamError`).
     async fn ignore(&mut self, len: u64) -> Result<bool, StorageError> {
-        if len > 0 && self.src.read_at(self.pos + len - 1, 1).await?.is_empty() {
+        let Some(end) = self.pos.checked_add(len) else {
+            return Ok(false);
+        };
+        if len > 0 && self.src.read_at(end - 1, 1).await?.is_empty() {
             return Ok(false);
         }
-        self.pos += len;
+        self.pos = end;
         Ok(true)
     }
 }

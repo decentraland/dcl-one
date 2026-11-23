@@ -159,7 +159,7 @@ async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiE
     }
     let explorer = explorer
         .ok_or_else(|| ApiError::service_unavailable("credits explorer flags unavailable"))?;
-    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer);
+    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer, true);
     let allowlist = snapshot
         .variant_values("explorer", "alfa-marketplace-credits")
         .map(|list| {

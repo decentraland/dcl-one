@@ -1381,6 +1381,52 @@ async fn seed_parked_genesis(h: &Host, id: &str, parcels: &[String]) {
     }
 }
 
+/// The socket and the sweep read a Genesis scene's bans on its place, the
+/// key the gatekeeper writes, not on the entity id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_genesis_scene_refuses_a_wallet_banned_on_its_place() {
+    let Some(h) = host(false).await else { return };
+    let x = 40_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+    let id = format!("bafyBanned{}", Uuid::new_v4().simple());
+    let (base, side) = (format!("{x},1"), format!("{x},2"));
+    seed_parked_genesis(&h, &id, &[base.clone(), side.clone()]).await;
+    let key = SceneKey::GenesisParcel(Parcel::parse(&side).unwrap());
+    h.state.load(&key).await.unwrap();
+    let scene = h.state.hosted(&key).await.unwrap();
+    let wallet = Address::parse(&format!("0x{:040x}", Uuid::new_v4().as_u128())).unwrap();
+    let admit = || {
+        crate::scene_state::ws::admit(
+            &h.state,
+            &scene.identity,
+            &wallet,
+            None,
+            None,
+            chrono::Utc::now().naive_utc(),
+        )
+    };
+    let ban = |place: String| {
+        let pool = h.state.pool.clone();
+        let wallet = wallet.clone();
+        async move {
+            sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+                .bind(place)
+                .bind(&wallet)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    ban(id.clone()).await;
+    assert_eq!(admit().await, Ok(None), "the entity id keys no ban");
+    ban(base).await;
+    assert_eq!(
+        admit().await,
+        Err(crate::scene_state::ws::AdmissionRefused::Banned(
+            crate::comms::access::Ban::Scene
+        ))
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_scene_parked_by_an_oom_is_retired_and_stays_refused() {
     let Some(h) = host(false).await else { return };

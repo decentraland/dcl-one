@@ -2055,9 +2055,9 @@ async fn historical_contract_authentication_keeps_verified_principal_and_configu
         async fn verification_time_block(
             &self,
             started: i64,
-        ) -> Result<u64, catalyst::auth::AuthError> {
+        ) -> Result<Option<u64>, catalyst::auth::AuthError> {
             self.starts.lock().unwrap().push(started);
-            Ok(4)
+            Ok(Some(4))
         }
         async fn validate_signature_at_block(
             &self,

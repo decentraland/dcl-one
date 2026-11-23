@@ -1,7 +1,7 @@
 import type { loadBackpack, loadBackpackEmotes, loadOutfits } from "../catalyst/backpack";
 import type { fetchEvents } from "../catalyst/events";
 import type { PlaceView } from "../catalyst/places";
-import type { ScreenSection } from "./section";
+import type { ScreenSection } from "@web-core/freshness/section";
 
 export const PLAY_FEATURED_PARAMS = { limit: 6, only_highlighted: true, order_by: "most_active" } as const;
 export const PLAY_EVENTS_PARAMS = { list: "live", limit: 12 } as const;

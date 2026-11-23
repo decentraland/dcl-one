@@ -183,6 +183,12 @@ across workers:
 - `HierarchyPropagatePlugin`, `Propagate<C>`, `PropagateStop<C>`, `PropagateOver<C>` (upstream
   #17575): propagate a component down the hierarchy.
 - `children!` accepts more than twelve children (upstream #18865, #21099).
+- The multi-threaded executor decides which systems conflict once, when a schedule is built,
+  from their component access, and only tests bits while it runs (upstream #16885,
+  **throwaway**). Stock 0.16 compares archetype-level access for every waiting system on every
+  pass; in Genesis Plaza on the web that took about 5.4 ms a frame over the main schedules, and
+  takes about 2.5 ms with this. Two systems that could conflict on some archetype no longer run
+  together even when no entity has that archetype: add a `Without` filter to let them.
 - Ignored command errors build no `BevyError` (upstream #19718: `HandleError::ignore_error`,
   `queue_silenced`): the `try_*` entity commands and the relationship hooks drop their error
   instead of handing it to `ignore`. Building a `BevyError` captures a backtrace whenever

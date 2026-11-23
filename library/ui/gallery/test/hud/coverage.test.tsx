@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { Button as ButtonModule } from '../../../apps/hud/design/Button'
@@ -58,7 +58,9 @@ const AROUND_THE_ENTRY =
 
 function mountedBy(section: Pick<Section, 'name' | 'render'>): Set<string> {
   instrumentation.mounted.clear()
-  const view = render(<>{section.render()}</>)
+  // Mounted as an element, as the Showcase and the gallery mount it, so a section's hooks belong to the section.
+  const Render = section.render
+  const view = render(<Render />)
   const opener = OPENED_BY[section.name]
   if (opener) fireEvent.click(screen.getByRole('button', { name: opener }))
   const mounted = new Set(instrumentation.mounted)
@@ -134,6 +136,17 @@ describe('when the Showcase has a gap', () => {
       'Palette: lists VerifiedBadge, which is not a public component export',
       'Palette: lists showDialog, which is not a public component export'
     ])
+  })
+
+  it('should mount a section whose render calls a hook, as the hosts do', () => {
+    const hooked = {
+      name: 'Hooked',
+      render: () => {
+        const [label] = useState('Entry')
+        return <design.Button>{label}</design.Button>
+      }
+    }
+    expect(mountedBy(hooked).has('Button')).toBe(true)
   })
 
   it('should not count a component rendered around the design entry', () => {

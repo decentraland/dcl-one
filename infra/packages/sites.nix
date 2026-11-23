@@ -1,4 +1,4 @@
-{ lib, stdenv, runCommand, linkFarm, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs_26, nodejs-slim_26, makeWrapper, playWeb, shopSettlement ? null }:
+{ lib, stdenv, runCommand, linkFarm, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs_26, nodejs-slim_26, nodejs-slim_24, makeWrapper, playWeb, shopSettlement ? null }:
 let
   nodejs = nodejs_26;
   pnpm' = pnpm.override { nodejs-slim = nodejs-slim_26; };
@@ -11,6 +11,8 @@ let
     }) package.outputs
   ) [ nodejs nodejs-slim_26 ]);
   root = ../..;
+  # Built here rather than passed in, so wiring it changes no Explorer input (infra/packages/default.nix).
+  uiGallery = import ./ui-gallery.nix { inherit lib stdenv fetchPnpmDeps pnpmConfigHook pnpm nodejs-slim_24; };
   sites = root + /apps/sites;
   ui = root + /apps/ui3;
   version = (builtins.fromJSON (builtins.readFile (sites + /package.json))).version;
@@ -57,9 +59,9 @@ let
       (sites + /src) (sites + /scripts)
       (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /pnpm-workspace.yaml)
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
-      (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
+      (ui + /src) (ui + /public)
       (ui + /vite.validate.js) (ui + /package.json)
-      (root + /library/catalyst-api) (root + /library/shop) (root + /library/hashing/src)
+      (root + /library/catalyst-api) (root + /library/shop) (root + /library/hashing/src) (root + /library/web-core)
       (root + /library/ui/index.ts)
       (root + /library/ui/css-modules.d.ts)
       (root + /library/ui/content.helpers.ts)
@@ -67,8 +69,8 @@ let
       (root + /library/ui/components)
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
-      (lib.fileset.maybeMissing (root + /library/ui/foundations))
-      (lib.fileset.maybeMissing (root + /library/ui/apps/sites))
+      (root + /library/ui/foundations)
+      (root + /library/ui/apps/sites)
       (root + /library/ui/apps/hud) (root + /library/ui/apps/shop) (root + /library/explorer-core)
       (root + /library/ui/text-styles.ts)
     ];
@@ -139,7 +141,7 @@ let
   });
 in runCommand "foundation-sites${settlementSuffix}-${version}" {
   nativeBuildInputs = [ makeWrapper ];
-  passthru = { inherit app pnpmDeps runtimeDeps docsContent playWeb toolchain; shopSettlement = settlement; };
+  passthru = { inherit app pnpmDeps runtimeDeps docsContent playWeb uiGallery toolchain; shopSettlement = settlement; };
   meta.mainProgram = "sites-server";
 } ''
   # Assemble the server from its stable parts. Each stays its own store path, so the
@@ -162,6 +164,13 @@ in runCommand "foundation-sites${settlementSuffix}-${version}" {
     fi
     ln -s "$entry" "$out/build/client/play/"
   done
+  # /ui-gallery/ is the hosted component gallery (library/ui/gallery), static files the
+  # server answers before its routes. The Sites client must not own that path.
+  if [ -e ${app}/build/client/ui-gallery ]; then
+    echo "/ui-gallery exists in both the Sites client and the UI gallery build" >&2
+    exit 1
+  fi
+  ln -s ${uiGallery} "$out/build/client/ui-gallery"
   ln -s ${docsContent} "$out/content/docs"
   # react-router-serve resolves the client directory beside the server path it is given,
   # without following symlinks, so the assembled tree serves the Explorer files.
@@ -172,5 +181,6 @@ in runCommand "foundation-sites${settlementSuffix}-${version}" {
     --chdir "$out"
   test -s "$out/build/server/index.js"
   test -s "$out/build/client/play/sites-play.json"
+  test -s "$out/build/client/ui-gallery/index.html"
   test -s "$out/content/docs/manifest.json"
 ''
