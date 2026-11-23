@@ -1,5 +1,17 @@
 # Measured query workloads
 
+## Credit revocation sweep
+
+A disposable PostgreSQL 18 table held 200,000 revocations across two chains,
+including 4,000 pending or sent rows. After `ANALYZE`, the worker's hash-range
+page of 20 used 2,015 local buffer accesses with the creation-time partial
+index. It filtered and sorted 1,503 candidates. Adding the partial index on
+`(chain_id, credit_hash)` reduced the page to 22 buffer accesses under both
+custom and generic prepared plans. The upper-bound query went from 44 buffers
+to three with a custom plan and from 2,015 to three with a generic plan.
+The new index occupied 424 KiB. These synthetic plans measure read work and
+index size. Production cardinalities and write costs remain unmeasured.
+
 ## Seasonal photo progress
 
 A disposable PostgreSQL 18 fixture with 1,000,000 photo-goal receipts and

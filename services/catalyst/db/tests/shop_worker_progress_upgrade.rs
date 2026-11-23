@@ -75,6 +75,10 @@ async fn shop_worker_progress_upgrade_preserves_ledger_and_is_idempotent() {
         .execute(pool)
         .await
         .unwrap();
+    sqlx::query("DROP INDEX credits.revocations_chain_hash_idx")
+        .execute(pool)
+        .await
+        .unwrap();
     let before = ledger(pool).await;
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
@@ -82,6 +86,9 @@ async fn shop_worker_progress_upgrade_preserves_ledger_and_is_idempotent() {
     assert!(done.steps.is_empty());
     assert!(done.created.contains(&schema_migrate::Object::Relation(
         "shop.worker_progress".into()
+    )));
+    assert!(done.created.contains(&schema_migrate::Object::Index(
+        "credits.revocations_chain_hash_idx".into()
     )));
     assert_eq!(ledger(pool).await, before);
     sqlx::query("INSERT INTO shop.worker_progress (worker, scope) VALUES ('upgrade-test', 1)")

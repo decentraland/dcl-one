@@ -1009,38 +1009,71 @@ async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
         return;
     };
     let db = Database::new(own.pool.clone());
-    insert(&db, "1", LESSOR, "test-page-signature")
-        .await
-        .unwrap();
+    let mut ids = Vec::new();
+    for token in ["1", "2", "3"] {
+        let listing = insert(&db, token, LESSOR, &format!("signature-{token}"))
+            .await
+            .unwrap();
+        ids.push(listing.id);
+    }
+    // Each sort has its own order. Two listings share a maximum price across
+    // the page boundary, so the listing ID decides which one appears first.
+    sqlx::raw_sql("UPDATE signatures.rental_assets SET
+            search_text = CASE token_id WHEN 1 THEN 'B' WHEN 2 THEN 'A' ELSE 'C' END,
+            nft_created_at = timestamp '2020-01-01' - token_id::int * interval '1 day';
+        UPDATE signatures.rentals SET created_at = timestamp '2020-01-01' + token_id::int * interval '1 day';
+        UPDATE signatures.rental_periods p SET price_per_day = CASE
+            WHEN p.min_days = 30 AND r.token_id = 2 THEN 30
+            WHEN p.min_days = 30 THEN 20
+            WHEN r.token_id = 1 THEN 3 WHEN r.token_id = 2 THEN 1 ELSE 2 END
+        FROM signatures.rentals r WHERE r.id = p.rental_id;")
+        .execute(&own.pool).await.unwrap();
     for history in [false, true] {
-        for sort_by in [
-            "land_creation_date",
-            "name",
-            "max_rental_price",
-            "min_rental_price",
-            "created_at",
+        for (sort_by, ranks) in [
+            ("land_creation_date", [3, 2, 1]),
+            ("name", [2, 1, 3]),
+            ("max_rental_price", [20, 30, 20]),
+            ("min_rental_price", [3, 1, 2]),
+            ("created_at", [1, 2, 3]),
         ] {
-            for (offset, limit, expected) in [(0, 1, 1), (1, 1, 0), (2, 1, 0), (0, 0, 0)] {
-                let page = db
-                    .get_listings(&ListingQuery {
-                        sort_by: Some(sort_by.to_string()),
-                        sort_direction: Some("desc".to_string()),
-                        offset,
-                        limit,
-                        history,
-                        filter: ListingFilters {
-                            token_id: Some("1".to_string()),
-                            rental_days: vec![10],
-                            ..Default::default()
-                        },
-                    })
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    page.total, 1,
-                    "{sort_by}, history {history}, offset {offset}, limit {limit}"
-                );
-                assert_eq!(page.results.len(), expected);
+            for direction in ["asc", "desc"] {
+                let mut expected = [0, 1, 2];
+                expected.sort_by(|&a, &b| {
+                    let order = if direction == "asc" {
+                        ranks[a].cmp(&ranks[b])
+                    } else {
+                        ranks[b].cmp(&ranks[a])
+                    };
+                    order.then_with(|| ids[a].cmp(&ids[b]))
+                });
+                for (offset, limit) in [(0, 2), (2, 2), (3, 2), (4, 2), (0, 0)] {
+                    let page = db
+                        .get_listings(&ListingQuery {
+                            sort_by: Some(sort_by.to_string()),
+                            sort_direction: Some(direction.to_string()),
+                            offset,
+                            limit,
+                            history,
+                            filter: ListingFilters {
+                                rental_days: vec![10],
+                                ..Default::default()
+                            },
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(page.total, 3);
+                    let actual: Vec<_> = page.results.iter().map(|r| &r.id).collect();
+                    let wanted: Vec<_> = expected
+                        .iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
+                        .map(|&i| &ids[i])
+                        .collect();
+                    assert_eq!(
+                        actual, wanted,
+                        "{sort_by} {direction}, history {history}, offset {offset}, limit {limit}"
+                    );
+                }
             }
         }
     }
@@ -1052,7 +1085,7 @@ async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
             limit: 10,
             history: false,
             filter: ListingFilters {
-                token_id: Some("2".to_string()),
+                token_id: Some("4".to_string()),
                 ..Default::default()
             },
         })

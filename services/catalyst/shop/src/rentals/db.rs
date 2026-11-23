@@ -358,7 +358,7 @@ impl Database {
         }
 
         qb.push(
-            "ORDER BY r.contract_address, r.token_id, r.created_at DESC) AS rentals \
+            "ORDER BY r.contract_address, r.token_id, r.created_at DESC, r.id) AS rentals \
              ON a.contract_address = rentals.contract_address AND a.token_id = rentals.token_id \
              WHERE TRUE ",
         );
@@ -402,13 +402,14 @@ impl Database {
             Some("desc") => "desc",
             _ => "asc",
         };
-        let order = match q.sort_by.as_deref() {
-            Some("land_creation_date") => format!("ORDER BY page.metadata_created_at {dir} "),
-            Some("name") => format!("ORDER BY page.search_text {dir} "),
-            Some("max_rental_price") => format!("ORDER BY page.max_price_per_day {dir} "),
-            Some("min_rental_price") => format!("ORDER BY page.min_price_per_day {dir} "),
-            _ => format!("ORDER BY page.created_at {dir} "),
+        let sort_column = match q.sort_by.as_deref() {
+            Some("land_creation_date") => "page.metadata_created_at",
+            Some("name") => "page.search_text",
+            Some("max_rental_price") => "page.max_price_per_day",
+            Some("min_rental_price") => "page.min_price_per_day",
+            _ => "page.created_at",
         };
+        let order = format!("ORDER BY {sort_column} {dir}, page.id ASC ");
         qb.push(") SELECT page.*, counted.rentals_listings_count FROM (SELECT count(*) AS rentals_listings_count FROM filtered) counted LEFT JOIN LATERAL (SELECT page.*, true AS page_present FROM filtered page ");
         qb.push(&order);
         qb.push("LIMIT ")

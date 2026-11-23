@@ -2979,15 +2979,29 @@ still govern effects; the sweep cursor is not an external-call lease.
 The table has no foreign keys to individual obligations: completed or
 deleted source rows may disappear between pages. An empty remainder ends
 the cohort and starts another. Its size is one row per worker and chain,
-not one row per obligation. The schema object pass installs the new table from the bootstrap
-definition; no migration step is needed for a new table. No additional
-per-obligation indexes or timestamp writes are introduced.
+not one row per obligation. The schema object pass installs the new table
+from the bootstrap definition. The credit worker uses `credits.revocations_chain_hash_idx`
+on `(chain_id, credit_hash)` for both its upper bound and each hash-ordered
+page. Only pending and sent rows have entries. The partial index adds write
+work when revocations enter or leave those states. See [the measured query
+plans](METRICS.md#credit-revocation-sweep).
+
+The object pass creates the index in the migration transaction, which blocks
+writes to `credits.revocations` until commit. On a busy database it can be
+built before migration using the schema definition:
+
+```sql
+CREATE INDEX CONCURRENTLY revocations_chain_hash_idx ON credits.revocations
+    (chain_id, credit_hash) WHERE status IN ('pending', 'sent');
+```
+
+Verify the definition and `pg_index.indisvalid` before running migrate.
+The object pass checks its name. Drop an invalid index before retrying.
 
 Escrow reconciliation applies its missing-grant `NOT EXISTS` predicate
-before `LIMIT 500`, using the existing escrow-reference index and keeping
-the original invariant that any grant with that reference satisfies the
-check. Catalogue and rental pages count their filtered set independently
-of page offset in the same SQL statement; the count remains present even
+before `LIMIT 500`. Any grant with that reference satisfies the check. Catalogue
+and rental pages count their filtered set independently of page offset in
+the same SQL statement. The count remains present even
 when the page is empty. Both sides therefore use one snapshot and one
 filter definition. Production query latencies and cardinalities for these
 repairs remain unmeasured.
