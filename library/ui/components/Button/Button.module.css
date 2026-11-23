@@ -184,11 +184,9 @@
     --button-gap: var(--dcl-space-0);
     padding-inline: var(--dcl-space-0);
   }
-  @media not (pointer: coarse) {
-    .root[data-icon-only='true'][data-variant='secondaryLight'][data-viewport='responsive'][data-size='md'] {
-      min-width: var(--button-height);
-      min-height: var(--button-height);
-    }
+  .root[data-icon-only='true'][data-variant='secondaryLight'][data-viewport='responsive'][data-size='md'] {
+    min-width: var(--button-height);
+    min-height: var(--button-height);
   }
   .content {
     display: inline-flex;
