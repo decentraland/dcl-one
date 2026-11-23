@@ -192,8 +192,9 @@ A difference not listed here is a gap, not a decision.
   prefix is fixed; there is no `SCENE_ROOM_PREFIX` or `COMMS_ROOM_PREFIX`
   setting. The world lobby room keeps `world-<name>`.
 - **Room events.** Participant joins and leaves are published on the NATS
-  subject `comms.room_events.v1`. No `peer.<id>.world.join|leave` subjects
-  are published.
+  subject `comms.room_events.v1`; every `serve` applies World joins and leaves to
+  social online status, which treats being inside a World as online. No
+  `peer.<id>.world.join|leave` subjects are published.
 - **LiveKit webhook.** `POST /livekit-webhook` (also under
   `/worlds-content-server` and `/comms-gatekeeper`) is the gatekeeper's one
   webhook: a missing or bad signature answers 401, an event it cannot read

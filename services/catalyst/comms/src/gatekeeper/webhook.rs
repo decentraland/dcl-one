@@ -13,6 +13,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 
+use crate::protocol::bus::room_events::MAX_PARTICIPANT_SID_BYTES;
+
+use super::bus::PublishOutcome;
 use super::errors::{ApiError, unauthorized};
 use super::livekit::{address_from_identity, verify_webhook_token};
 use super::voice::{
@@ -166,7 +169,9 @@ impl ValidatedEvent {
             "participant_joined" | "participant_left" => {
                 let sid = participant_sid(event);
                 let identity = participant_identity(event);
-                if sid.as_ref().is_none_or(|sid| sid.len() > 128)
+                if sid
+                    .as_ref()
+                    .is_none_or(|sid| sid.len() > MAX_PARTICIPANT_SID_BYTES)
                     || room.as_ref().is_none_or(|room| room.len() > 512)
                     || identity
                         .as_ref()
@@ -406,17 +411,29 @@ pub async fn livekit_webhook(
             let watcher = p.watcher.as_ref();
             super::streaming::cast::refuse_on_join(&state, &p.room, &p.identity, watcher).await?;
         }
-        // The store orders sessions itself: a superseded event still counts there.
-        if prepared == Prepared::Superseded
+        if prepared != Prepared::Superseded {
+            return Ok(axum::http::StatusCode::OK.into_response());
+        }
+        // The store and World presence order sessions themselves: a superseded
+        // event (an old session's late leave) still counts there.
+        let room_event = match room_event(&state, &event).await {
+            Ok(room_event) => room_event,
+            Err(error) if state.room_event_store.is_some() => return Err(error),
+            Err(_) => None,
+        };
+        if let Some((room_event, _)) = &room_event
             && state.room_event_store.is_some()
-            && let Some(room_event) = room_event(&state, &event).await?
         {
-            store_room_event(&state, &room_event).await?;
+            store_room_event(&state, room_event).await?;
             // A failed store's redelivery can be superseded by then; the sink still gets it once.
             let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
             if owed && let Some(sink) = state.room_events.as_ref() {
-                sink.observe_room_event(&room_event);
+                sink.observe_room_event(room_event);
             }
+        }
+        drop((_first, _second));
+        if let Some((room_event, true)) = &room_event {
+            share_room_event(&state, room_event).await;
         }
         return Ok(axum::http::StatusCode::OK.into_response());
     }
@@ -452,8 +469,9 @@ pub async fn livekit_webhook(
         }
     }
     dispatch(&state, &event).await?;
-    if let Some(room_event) = room_event(&state, &event).await? {
-        if let Err(error) = store_room_event(&state, &room_event).await {
+    let room_event = room_event(&state, &event).await?;
+    if let Some((room_event, _)) = &room_event {
+        if let Err(error) = store_room_event(&state, room_event).await {
             state
                 .webhooks
                 .state
@@ -464,7 +482,7 @@ pub async fn livekit_webhook(
             return Err(error);
         }
         if let Some(sink) = state.room_events.as_ref() {
-            sink.observe_room_event(&room_event);
+            sink.observe_room_event(room_event);
         }
     }
     state
@@ -473,16 +491,22 @@ pub async fn livekit_webhook(
         .lock()
         .unwrap()
         .applied(&event, deadline);
+    // Applied and unlocked first: a slow publish cannot get the event redelivered.
+    drop((_first, _second));
+    if let Some((room_event, true)) = &room_event {
+        share_room_event(&state, room_event).await;
+    }
     Ok(axum::http::StatusCode::OK.into_response())
 }
 
 /// The participant event the store and the sink consume, with one resolved
-/// identity. A world scene's complete name is resolved without guessing a
-/// hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
+/// identity, and whether the room carries its canonical name (the only rooms
+/// occupancy reads count). A world scene's complete name is resolved without
+/// guessing a hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
 async fn room_event(
     state: &CommsState,
     event: &ValidatedEvent,
-) -> Result<Option<crate::protocol::bus::room_events::RoomEvent>, ApiError> {
+) -> Result<Option<(crate::protocol::bus::room_events::RoomEvent, bool)>, ApiError> {
     use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
     let Some(participant) = event.participant() else {
         return Ok(None);
@@ -497,35 +521,70 @@ async fn room_event(
     else {
         return Ok(None);
     };
-    Ok(Some(RoomEvent {
-        kind: if event.joined() {
-            RoomEventKind::Joined
-        } else {
-            RoomEventKind::Left
-        } as i32,
-        room: room.clone(),
-        room_type: if parsed.realm.is_world() {
-            RoomType::World
-        } else {
-            RoomType::Scene
-        } as i32,
-        realm_name: parsed
-            .realm
-            .world()
-            .map(|w| w.key())
-            .unwrap_or_else(|| parsed.realm.as_str())
-            .to_owned(),
-        scene_id: parsed
-            .scene_id
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("")
-            .to_owned(),
-        identity: participant.identity.clone(),
-        participant_sid: participant.sid.clone(),
-        event_time_ms: event.at as u64,
-        event_id: event.id.clone(),
-    }))
+    let canonical = parsed.room == *room;
+    Ok(Some((
+        RoomEvent {
+            kind: if event.joined() {
+                RoomEventKind::Joined
+            } else {
+                RoomEventKind::Left
+            } as i32,
+            room: room.clone(),
+            room_type: if parsed.realm.is_world() {
+                RoomType::World
+            } else {
+                RoomType::Scene
+            } as i32,
+            realm_name: parsed
+                .realm
+                .world()
+                .map(|w| w.key())
+                .unwrap_or_else(|| parsed.realm.as_str())
+                .to_owned(),
+            scene_id: parsed
+                .scene_id
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            identity: participant.identity.clone(),
+            participant_sid: participant.sid.clone(),
+            event_time_ms: event.at as u64,
+            event_id: event.id.clone(),
+        },
+        canonical,
+    )))
+}
+
+/// Applies the event to this replica's World presence, then publishes it for every
+/// other replica (and `multiplayer-hosting`). Never fails the webhook: each replica's
+/// periodic LiveKit read corrects a lost one.
+async fn share_room_event(
+    state: &CommsState,
+    event: &crate::protocol::bus::room_events::RoomEvent,
+) {
+    state.presence.apply_room_event(event);
+    let Ok(payload) = event.encode() else {
+        return;
+    };
+    let outcome = state
+        .bus
+        .publish(crate::protocol::bus::room_events::SUBJECT, payload)
+        .await;
+    let reason = match outcome {
+        PublishOutcome::Submitted => return,
+        PublishOutcome::NoConnection => "no_connection",
+        PublishOutcome::Failed => "failed",
+        PublishOutcome::Unconfirmed => "unconfirmed",
+    };
+    if state.bus.is_enabled() {
+        metrics::counter!("comms_room_event_publish_failed_total", "reason" => reason).increment(1);
+        tracing::debug!(
+            ?outcome,
+            event_id = event.event_id,
+            "room event not published"
+        );
+    }
 }
 
 /// Stores the event before the webhook is acknowledged; a failure is a 503.
@@ -780,6 +839,18 @@ mod tests {
         );
         assert_eq!(reason, DisconnectReason::ClientInitiated);
         assert_eq!(participant.room, "");
+    }
+
+    #[test]
+    fn participant_event_enforces_the_sid_byte_limit() {
+        let mut sid = "a".repeat(MAX_PARTICIPANT_SID_BYTES);
+        let event = participant_event("join", "participant_joined", &sid, 100);
+        let parsed = ValidatedEvent::parse(&event).unwrap();
+        assert_eq!(parsed.participant().unwrap().sid, sid);
+
+        sid.push('a');
+        let event = participant_event("join", "participant_joined", &sid, 100);
+        assert_eq!(ValidatedEvent::parse(&event).unwrap_err().code, 400);
     }
 
     #[test]

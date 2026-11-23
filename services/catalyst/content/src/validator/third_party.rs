@@ -87,6 +87,18 @@ pub fn validate_third_party_merkle_proof_content(
         ));
     }
 
+    let metadata_keys = match metadata_keys_in_property_order(deployment) {
+        Ok(keys) => keys,
+        Err(unavailable) => return unavailable,
+    };
+    if let Some(error) = full_commit_error(
+        &metadata_keys,
+        &tp_props.merkle_proof.hashing_keys,
+        item_label,
+    ) {
+        return ValidationResponse::fail(error);
+    }
+
     let all_content_in_files = tp_props.content.iter().all(|(file, hash)| {
         entity
             .content
@@ -121,25 +133,13 @@ pub fn validate_third_party_merkle_proof_content(
         .and_then(UploadedFile::bytes)
     {
         Some(bytes) => bytes,
-        None => {
-            return ValidationResponse::unavailable(format!(
-                "The entity file bytes for '{}' were not available to recompute the third-party \
-                 merkle proof hash, so the deployment could not be validated. Please retry.",
-                entity.id
-            ));
-        }
+        None => return entity_bytes_missing(&entity.id),
     };
 
     let hashing_keys = &tp_props.merkle_proof.hashing_keys;
     let generated = match entity_hash_from_entity_bytes(entity_bytes, hashing_keys) {
         Some(hash) => hash,
-        None => {
-            return ValidationResponse::unavailable(format!(
-                "The entity file bytes for '{}' could not be parsed to recompute the third-party \
-                 merkle proof hash, so the deployment could not be validated. Please retry.",
-                entity.id
-            ));
-        }
+        None => return entity_bytes_unparsable(&entity.id),
     };
 
     if !tp_props
@@ -154,10 +154,6 @@ pub fn validate_third_party_merkle_proof_content(
         );
     }
 
-    if tp_props.merkle_proof.proof.is_empty() {
-        return ValidationResponse::fail("The merkle proof is empty".to_string());
-    }
-
     if tp_props.merkle_proof.hashing_keys.is_empty() {
         return ValidationResponse::fail(
             "The hashing keys in the merkle proof are empty".to_string(),
@@ -165,6 +161,83 @@ pub fn validate_third_party_merkle_proof_content(
     }
 
     ValidationResponse::Ok
+}
+
+/// `hashingKeys` must be exactly the metadata's top-level fields other than
+/// `merkleProof`, each listed once, so the leaf commits every served field.
+/// Checked in the reference's order: a repeated key, then an uncommitted
+/// field, then a key that is not a field.
+fn full_commit_error(
+    metadata_keys: &[String],
+    hashing_keys: &[String],
+    item_label: &str,
+) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    if let Some(duplicate) = hashing_keys.iter().find(|key| !seen.insert(key.as_str())) {
+        return Some(format!(
+            "The third-party {item_label} merkle proof lists '{duplicate}' more than once in hashingKeys"
+        ));
+    }
+
+    let metadata_keys: Vec<&str> = metadata_keys
+        .iter()
+        .map(String::as_str)
+        .filter(|key| *key != "merkleProof")
+        .collect();
+
+    if let Some(uncommitted) = metadata_keys.iter().find(|key| !seen.contains(*key)) {
+        return Some(format!(
+            "The third-party {item_label} merkle proof must commit every metadata field; \
+             '{uncommitted}' is not in hashingKeys"
+        ));
+    }
+
+    if let Some(unknown) = hashing_keys
+        .iter()
+        .find(|key| !metadata_keys.contains(&key.as_str()))
+    {
+        return Some(format!(
+            "The third-party {item_label} merkle proof commits '{unknown}', which is not a metadata field"
+        ));
+    }
+
+    None
+}
+
+/// The metadata's top-level keys as `Object.keys` lists them after `JSON.parse`
+/// of the uploaded entity bytes, so the first uncommitted field reported is the
+/// reference's. Without readable bytes the decision is deferred, as in the hash step.
+fn metadata_keys_in_property_order(
+    deployment: &Deployment<'_>,
+) -> Result<Vec<String>, ValidationResponse> {
+    let entity_id = &deployment.entity.id;
+    let bytes = deployment
+        .files
+        .get(entity_id)
+        .and_then(UploadedFile::bytes)
+        .ok_or_else(|| entity_bytes_missing(entity_id))?;
+    serde_json::from_slice::<LegacyValue>(bytes)
+        .ok()
+        .and_then(|root| {
+            let entries = root.get("metadata")?.as_object()?;
+            let keys = jsjson::property_order(entries.iter().map(|(k, _)| k.as_str()), |k| k);
+            Some(keys.into_iter().map(str::to_owned).collect())
+        })
+        .ok_or_else(|| entity_bytes_unparsable(entity_id))
+}
+
+fn entity_bytes_missing(entity_id: &str) -> ValidationResponse {
+    ValidationResponse::unavailable(format!(
+        "The entity file bytes for '{entity_id}' were not available to recompute the third-party \
+         merkle proof hash, so the deployment could not be validated. Please retry."
+    ))
+}
+
+fn entity_bytes_unparsable(entity_id: &str) -> ValidationResponse {
+    ValidationResponse::unavailable(format!(
+        "The entity file bytes for '{entity_id}' could not be parsed to recompute the third-party \
+         merkle proof hash, so the deployment could not be validated. Please retry."
+    ))
 }
 
 pub fn verify_third_party_merkle_proof(proof: &MerkleProof, root: &[u8; 32]) -> bool {
@@ -351,6 +424,149 @@ mod tests {
         );
     }
 
+    /// WOODIE_0 with `edit` applied to its raw bytes, so the parsed metadata
+    /// and the hashed bytes agree.
+    fn edited_woodie(edit: (&str, &str)) -> OwnedDeployment {
+        let raw = std::str::from_utf8(WOODIE_0).unwrap();
+        assert!(raw.contains(edit.0), "fixture must contain {}", edit.0);
+        let edited = raw.replacen(edit.0, edit.1, 1);
+        deployment_from_raw(WOODIE_0_ID, edited.as_bytes())
+    }
+
+    const EXTRA_FIELD: (&str, &str) = (r#""metadata":{"#, r#""metadata":{"extraField":"x","#);
+    // Appended so the first occurrence keeps its position and the hash still matches.
+    const REPEATED_KEY: (&str, &str) = (r#""mappings"]"#, r#""mappings","name"]"#);
+    const PROOF_AS_KEY: (&str, &str) = (r#""hashingKeys":["#, r#""hashingKeys":["merkleProof","#);
+
+    fn validate_woodie(deployment: &OwnedDeployment, item_label: &str) -> ValidationResponse {
+        let required = if item_label == "emote" {
+            EMOTE_REQUIRED_HASHING_KEYS
+        } else {
+            WEARABLE_REQUIRED_HASHING_KEYS
+        };
+        validate_third_party_merkle_proof_content(&deployment.view(), required, item_label)
+    }
+
+    fn woodie_errors(deployment: &OwnedDeployment, item_label: &str) -> Vec<String> {
+        validate_woodie(deployment, item_label)
+            .errors()
+            .expect("must fail")
+            .to_vec()
+    }
+
+    #[test]
+    fn full_commit_accepts_a_proof_committing_every_field() {
+        for (id, raw) in [
+            (WOODIE_0_ID, WOODIE_0),
+            (WOODIE_1_ID, WOODIE_1),
+            (WOODIE_2_ID, WOODIE_2),
+        ] {
+            let deployment = deployment_from_raw(id, raw);
+            let result = validate_woodie(&deployment, "wearable");
+            assert!(result.is_ok(), "{id}: got {result}");
+        }
+    }
+
+    #[test]
+    // Regression guard: the rule must stay ungated.
+    fn full_commit_applies_regardless_of_timestamp() {
+        for timestamp in [0, 1_600_000_000_000, Timestamp::MAX] {
+            let mut deployment = edited_woodie(EXTRA_FIELD);
+            deployment.entity.timestamp = timestamp;
+            assert_eq!(
+                woodie_errors(&deployment, "wearable"),
+                vec![
+                    "The third-party wearable merkle proof must commit every metadata field; \
+                     'extraField' is not in hashingKeys"
+                ],
+                "timestamp {timestamp}"
+            );
+        }
+    }
+
+    #[test]
+    fn uncommitted_metadata_field_is_rejected_for_emotes() {
+        // Same rule and message shape through the emote entry point.
+        let edit = format!(r#"{}"emoteDataADR74":{{}},"#, EXTRA_FIELD.1);
+        let raw = std::str::from_utf8(WOODIE_0)
+            .unwrap()
+            .replacen(EXTRA_FIELD.0, &edit, 1)
+            .replacen(
+                r#""hashingKeys":["#,
+                r#""hashingKeys":["emoteDataADR74","#,
+                1,
+            );
+        let deployment = deployment_from_raw(WOODIE_0_ID, raw.as_bytes());
+        assert_eq!(
+            woodie_errors(&deployment, "emote"),
+            vec![
+                "The third-party emote merkle proof must commit every metadata field; \
+                 'extraField' is not in hashingKeys"
+            ]
+        );
+    }
+
+    #[test]
+    fn first_uncommitted_field_follows_javascript_property_order() {
+        // Insertion order, not sorted order; integer-like keys come first.
+        for (fields, expected) in [
+            (r#""zField":"x","aField":"y","#, "zField"),
+            (r#""zField":"x","7":"y","#, "7"),
+        ] {
+            let edit = format!("{}{fields}", EXTRA_FIELD.0);
+            let deployment = edited_woodie((EXTRA_FIELD.0, &edit));
+            assert_eq!(
+                woodie_errors(&deployment, "wearable"),
+                vec![format!(
+                    "The third-party wearable merkle proof must commit every metadata field; \
+                     '{expected}' is not in hashingKeys"
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn full_commit_is_deferred_without_entity_bytes() {
+        let mut deployment = edited_woodie(EXTRA_FIELD);
+        deployment.files.clear();
+        assert!(validate_woodie(&deployment, "wearable").is_unavailable());
+    }
+
+    #[test]
+    fn repeated_hashing_key_is_rejected() {
+        let deployment = edited_woodie(REPEATED_KEY);
+        assert_eq!(
+            woodie_errors(&deployment, "wearable"),
+            vec![
+                "The third-party wearable merkle proof lists 'name' more than once in hashingKeys"
+            ]
+        );
+    }
+
+    #[test]
+    fn merkle_proof_as_hashing_key_is_rejected() {
+        let deployment = edited_woodie(PROOF_AS_KEY);
+        assert_eq!(
+            woodie_errors(&deployment, "wearable"),
+            vec![
+                "The third-party wearable merkle proof commits 'merkleProof', which is not a \
+                 metadata field"
+            ]
+        );
+    }
+
+    #[test]
+    fn hashing_key_that_is_not_a_field_is_rejected() {
+        let deployment = edited_woodie((r#""hashingKeys":["#, r#""hashingKeys":["missingField","#));
+        assert_eq!(
+            woodie_errors(&deployment, "wearable"),
+            vec![
+                "The third-party wearable merkle proof commits 'missingField', which is not a \
+                 metadata field"
+            ]
+        );
+    }
+
     #[test]
     fn third_party_id_extraction() {
         assert_eq!(
@@ -504,6 +720,29 @@ mod tests {
             errors[0],
             "The third-party wearable merkle proof must commit the 'id' field"
         );
+    }
+
+    #[test]
+    fn a_one_leaf_tree_proof_has_no_siblings() {
+        let raw = String::from_utf8(WOODIE_0.to_vec()).unwrap();
+        let start = raw.find(r#""proof":["#).unwrap() + r#""proof":["#.len();
+        let end = start + raw[start..].find(']').unwrap();
+        let raw = format!("{}{}", &raw[..start], &raw[end..]).into_bytes();
+        let deployment = deployment_from_raw(WOODIE_0_ID, &raw);
+        let result = validate_third_party_merkle_proof_content(
+            &deployment.view(),
+            WEARABLE_REQUIRED_HASHING_KEYS,
+            "wearable",
+        );
+        assert!(
+            result.is_ok(),
+            "an empty proof is a one-leaf tree, got {result}"
+        );
+        let tp: ThirdPartyProps =
+            serde_json::from_value(deployment.entity.metadata.clone().unwrap()).unwrap();
+        let leaf =
+            super::super::merkle::to_node(tp.merkle_proof.index, &tp.merkle_proof.entity_hash);
+        assert!(verify_third_party_merkle_proof(&tp.merkle_proof, &leaf));
     }
 
     #[test]
