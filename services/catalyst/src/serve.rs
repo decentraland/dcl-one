@@ -133,6 +133,7 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
+            "worlds_allowance_read_failures_total 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }

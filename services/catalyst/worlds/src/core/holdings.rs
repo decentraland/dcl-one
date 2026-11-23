@@ -202,7 +202,14 @@ impl ChainHoldings {
         loop {
             match self.holdings(owner).await {
                 Ok(bytes) => return Ok(bytes),
-                Err(f) if !f.retry || attempt + 1 >= ATTEMPTS => return Err(f.message),
+                Err(f) if !f.retry || attempt + 1 >= ATTEMPTS => {
+                    super::metrics::allowance_read_failed();
+                    tracing::error!(
+                        attempts = attempt + 1,
+                        "world storage allowance read failed"
+                    );
+                    return Err(f.message);
+                }
                 Err(f) => {
                     let delay = RETRY_BASE_DELAY * 2u32.pow(attempt);
                     tracing::warn!(error = %f.message, attempt = attempt + 1, ?delay, "holdings read failed, retrying");
@@ -520,9 +527,14 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn a_reverted_call_is_an_error_not_a_zero_holding() {
         let (holdings, l1, _) = chains().await;
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
         l1.values
             .lock()
             .unwrap()
@@ -533,17 +545,32 @@ mod tests {
         // The failure is answered from memory for a while.
         assert!(holdings.allowance_bytes(&wallet()).await.is_err());
         assert_eq!(l1.requests(), 1);
+        assert!(
+            handle
+                .render()
+                .contains("worlds_allowance_read_failures_total 1")
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn an_rpc_fault_on_either_chain_is_retried_then_an_error() {
         let (holdings, _, l2) = chains().await;
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
         l2.faulty
             .lock()
             .unwrap()
             .push((contracts().l2_mana, BALANCE));
         assert!(holdings.allowance_bytes(&wallet()).await.is_err());
         assert_eq!(l2.requests(), ATTEMPTS as usize);
+        assert!(
+            handle
+                .render()
+                .contains("worlds_allowance_read_failures_total 1")
+        );
     }
 
     #[test]
