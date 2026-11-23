@@ -9,6 +9,7 @@ pub mod explorer_uplink;
 pub mod livekit;
 pub mod pulse;
 pub mod pulse_clock;
+pub mod pulse_enet;
 pub mod support;
 pub mod visit;
 pub mod webtransport;
@@ -43,6 +44,7 @@ pub const TAGS: &[&str] = &[
     "slow",
     "smoke",
     "swarm",
+    "timeouts",
     "uplink",
     "visit",
     "webtransport",
@@ -52,6 +54,7 @@ pub const TAGS: &[&str] = &[
 pub fn registry() -> Vec<&'static Scenario> {
     let mut all = pulse::all();
     all.extend(pulse_clock::all());
+    all.extend(pulse_enet::all());
     all.extend(crowd::all());
     all.extend(webtransport::all());
     all.extend(connections::all());
@@ -135,9 +138,9 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), names.len(), "a name twice in {names:?}");
-        // the README's groups: pulse 16 (pulse-handshake-clock and crowd-visit among them),
+        // the README's groups: pulse 20 (pulse-handshake-clock and crowd-visit among them),
         // connections 9, explorer 17
-        assert_eq!(names.len(), 42, "{names:?}");
+        assert_eq!(names.len(), 46, "{names:?}");
     }
 
     #[test]

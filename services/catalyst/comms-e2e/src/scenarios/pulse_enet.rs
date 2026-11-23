@@ -1,0 +1,635 @@
+//! How Pulse lets go of its ENet peers: when it is told to stop, and when a peer goes silent.
+//!
+//! Both are ENet's own behaviour, so these scenarios dial Pulse over ENet whatever transport the
+//! run names. Each states its rule as a function of what the clients observed
+//! ([`judge_stop`], [`judge_silence`]), so the rule is tested without a server.
+
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
+
+use anyhow::{Result, anyhow, bail};
+use catalyst_comms::pulse::hardening::DisconnectReason;
+use serde::Serialize;
+
+use super::support::{
+    SOON, expect_sees, leave, meeting_place, offset, stack_command, stay_connected,
+};
+use crate::engine::{Ctx, Needs, Scenario, ScenarioFuture};
+use crate::fault::{Direction, Fault, FaultLink};
+use crate::identity::Identity;
+use crate::pulse::{ConnectOptions, PulseBot, messages};
+use crate::stack::Stack;
+
+/// How long the stop scenario watches for the peers' disconnects: past the 30 s a client's own
+/// ENet timeout can take, so a peer that is never told still shows how it ended.
+const STOP_WATCH: Duration = Duration::from_secs(45);
+/// Peers signed in to Pulse when it is told to stop; one more has connected and not signed in.
+const SIGNED_IN: u32 = 3;
+/// How long Pulse may take to answer a handshake again after the restart command.
+const BACK_WITHIN: Duration = Duration::from_secs(60);
+
+/// How long after its link goes silent a peer may stay on the server: ENet's 5 s bound, plus up
+/// to 3 s for the ping that starts the count after the silence, the retransmission timer the
+/// bound is checked on and the tick that tells the observer.
+pub const SILENT_PEER_DROPPED_WITHIN: Duration = Duration::from_secs(8);
+/// How long a silent peer is watched for: past a 30 s upper bound, so a server that keeps it
+/// that long still gives a number.
+const SILENCE_WATCH: Duration = Duration::from_secs(45);
+/// How long ENet measures the round trip of the path before the path goes silent.
+const MEASURE_ROUND_TRIP: Duration = Duration::from_secs(5);
+
+fn run_graceful_stop(ctx: Ctx) -> ScenarioFuture {
+    Box::pin(graceful_stop(ctx))
+}
+
+fn run_silent_peer(ctx: Ctx) -> ScenarioFuture {
+    Box::pin(silent_peer(ctx, Duration::ZERO))
+}
+
+fn run_silent_peer_120ms(ctx: Ctx) -> ScenarioFuture {
+    Box::pin(silent_peer(ctx, Duration::from_millis(120)))
+}
+
+fn run_silent_peer_300ms(ctx: Ctx) -> ScenarioFuture {
+    Box::pin(silent_peer(ctx, Duration::from_millis(300)))
+}
+
+pub static GRACEFUL_STOP: Scenario = Scenario {
+    name: "pulse-graceful-stop",
+    tags: &["pulse", "restart"],
+    guards: &["dcl-one #1553"],
+    summary: "Three ENet peers signed in and one connected but not signed in when the stack file's `pulse_restart_command` stops Pulse: each is told Graceful (1) before the command returns, and Pulse accepts a handshake again afterwards",
+    needs: Needs {
+        pulse_restart: true,
+        ..Needs::NONE
+    },
+    hostile: true,
+    default_repeat: 1,
+    run: run_graceful_stop,
+};
+
+pub static SILENT_PEER: Scenario = Scenario {
+    name: "pulse-silent-peer",
+    tags: &["pulse", "faults", "timeouts", "slow"],
+    guards: &["dcl-one #1553"],
+    summary: "An ENet peer on a plain loopback path goes silent (its link drops everything both ways): an observer sees it leave within 8 s, and again for a second peer on the slot the first left. With a round trip near zero, ENet's retransmission count already ends a silent peer at its 5 s lower bound, whatever the upper one",
+    needs: Needs::NONE,
+    hostile: false,
+    default_repeat: 1,
+    run: run_silent_peer,
+};
+
+pub static SILENT_PEER_120MS: Scenario = Scenario {
+    name: "pulse-silent-peer-120ms-round-trip",
+    tags: &["pulse", "faults", "timeouts", "slow"],
+    guards: &["dcl-one #1553"],
+    summary: "As `pulse-silent-peer` on a path with a 120 ms round trip that ENet measures for 5 s before the silence: an observer sees each silent peer, on its first use of a slot and on the recycled slot, leave within 8 s",
+    needs: Needs::NONE,
+    hostile: false,
+    default_repeat: 1,
+    run: run_silent_peer_120ms,
+};
+
+pub static SILENT_PEER_300MS: Scenario = Scenario {
+    name: "pulse-silent-peer-300ms-round-trip",
+    tags: &["pulse", "faults", "timeouts", "slow"],
+    guards: &["dcl-one #1553"],
+    summary: "As `pulse-silent-peer` on a path with a 300 ms round trip that ENet measures for 5 s before the silence: an observer sees each silent peer, on its first use of a slot and on the recycled slot, leave within 8 s",
+    needs: Needs::NONE,
+    hostile: false,
+    default_repeat: 1,
+    run: run_silent_peer_300ms,
+};
+
+/// The scenarios of this group, in the order a run takes them.
+pub fn all() -> Vec<&'static Scenario> {
+    vec![
+        &SILENT_PEER,
+        &SILENT_PEER_120MS,
+        &SILENT_PEER_300MS,
+        &GRACEFUL_STOP,
+    ]
+}
+
+/// The stack file's `pulse_restart_command`, ready to start.
+pub fn pulse_restart_command(stack: &Stack) -> Result<tokio::process::Command> {
+    stack_command(
+        stack,
+        stack.pulse_restart_command.as_deref(),
+        "pulse_restart_command",
+    )
+}
+
+/// Dials Pulse over ENet at `target` (Pulse itself or a fault link in front of it), signs in and
+/// stands at `world` in `realm`.
+async fn enter_on_enet(
+    ctx: &Ctx,
+    name: &str,
+    identity: &Identity,
+    target: SocketAddr,
+    realm: &str,
+    world: [f32; 3],
+) -> Result<PulseBot> {
+    let bot = connect_on_enet(ctx, name, target, None).await?;
+    bot.accepted(ctx, identity).await?;
+    bot.teleport(realm, world)?;
+    Ok(bot)
+}
+
+async fn connect_on_enet(
+    ctx: &Ctx,
+    name: &str,
+    target: SocketAddr,
+    deadline: Option<Duration>,
+) -> Result<PulseBot> {
+    PulseBot::connect(
+        ctx,
+        name,
+        target,
+        ConnectOptions {
+            bind: ctx.source_address(),
+            deadline,
+            ..ConnectOptions::default()
+        },
+    )
+    .await
+}
+
+// ---------------------------------------------------------------------------------------------
+// pulse-graceful-stop
+
+/// How one peer's connection ended after the stop command started, as the peer saw it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct StopSeen {
+    pub peer: String,
+    /// The peer had signed in to Pulse; `false` for one that had only connected.
+    pub signed_in: bool,
+    /// The disconnect code the peer received; 0 is its own ENet timeout. `None`: still connected
+    /// when the watch ended.
+    pub code: Option<u32>,
+    /// When the peer saw its connection end, from the start of the stop command.
+    pub after_ms: Option<u64>,
+}
+
+/// The stop rule: every peer watched was told `Graceful` before the stop command returned. The
+/// command returns once Pulse listens again, so a notice Pulse sends as it stops arrives while
+/// the command runs. How long the command takes to reach Pulse is the stack's own and is not
+/// judged.
+pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), String> {
+    if seen.is_empty() {
+        return Err("no peer was watched through the stop".to_owned());
+    }
+    let graceful = DisconnectReason::Graceful.code();
+    let command_ms = command_took.as_millis() as u64;
+    let wrong: Vec<String> = seen
+        .iter()
+        .filter(|peer| {
+            peer.code != Some(graceful) || peer.after_ms.is_none_or(|after| after > command_ms)
+        })
+        .map(|peer| {
+            let state = if peer.signed_in {
+                "signed in"
+            } else {
+                "not signed in"
+            };
+            let ended = match (peer.code, peer.after_ms) {
+                (Some(code), Some(after)) => {
+                    format!("{} after {after} ms", messages::reason(code))
+                }
+                _ => "still connected at the end of the watch".to_owned(),
+            };
+            format!("{} ({state}): {ended}", peer.peer)
+        })
+        .collect();
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "every ENet peer must be told {} before the stop command returns ({command_ms} ms after it started); {}",
+            messages::reason(graceful),
+            wrong.join("; ")
+        ))
+    }
+}
+
+/// Watches `peers` from `started` until each has seen its connection end or `watch` has passed.
+async fn watch_disconnects(
+    peers: &[(PulseBot, bool)],
+    started: Instant,
+    watch: Duration,
+) -> Vec<StopSeen> {
+    let mut ended: Vec<Option<(u32, u64)>> = vec![None; peers.len()];
+    loop {
+        for ((bot, _), slot) in peers.iter().zip(ended.iter_mut()) {
+            if slot.is_none()
+                && let Some(code) = bot.view().disconnect
+            {
+                *slot = Some((code, started.elapsed().as_millis() as u64));
+            }
+        }
+        if ended.iter().all(Option::is_some) || started.elapsed() >= watch {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    peers
+        .iter()
+        .zip(ended)
+        .map(|((bot, signed_in), ended)| StopSeen {
+            peer: bot.name().to_owned(),
+            signed_in: *signed_in,
+            code: ended.map(|(code, _)| code),
+            after_ms: ended.map(|(_, after)| after),
+        })
+        .collect()
+}
+
+async fn graceful_stop(ctx: Ctx) -> Result<()> {
+    let mut command = pulse_restart_command(ctx.stack())?;
+    let program = command
+        .as_std()
+        .get_program()
+        .to_string_lossy()
+        .into_owned();
+    let realm = ctx.realm("stop");
+    let here = meeting_place(&ctx);
+    let target = ctx.stack().pulse_enet;
+
+    let mut peers: Vec<(PulseBot, bool)> = Vec::new();
+    for index in 0..SIGNED_IN {
+        let bot = enter_on_enet(
+            &ctx,
+            &format!("signed-in-{index}"),
+            &ctx.identity(index),
+            target,
+            &realm,
+            offset(here, index as f32, 1.0),
+        )
+        .await?;
+        peers.push((bot, true));
+    }
+    // the server has handled every handshake and teleport: the first peer holds the others
+    for index in 1..SIGNED_IN {
+        expect_sees(
+            &ctx,
+            &peers[0].0,
+            &format!("signed-in-{index}"),
+            &ctx.identity(index).address(),
+            SOON,
+        )
+        .await?;
+    }
+    // connected and never signed in: Pulse holds it as awaiting authentication
+    let pending = connect_on_enet(&ctx, "not-signed-in", target, None).await?;
+    peers.push((pending, false));
+    {
+        let bots: Vec<&PulseBot> = peers.iter().map(|(bot, _)| bot).collect();
+        stay_connected(
+            &ctx,
+            "every peer is connected before the stop",
+            &bots,
+            Duration::from_millis(200),
+        )
+        .await?;
+    }
+
+    ctx.record("runner", "pulse restart", &program);
+    let started = Instant::now();
+    let mut child = command
+        .spawn()
+        .map_err(|error| anyhow!("starting the Pulse restart command `{program}`: {error}"))?;
+    let (seen, status) = tokio::join!(watch_disconnects(&peers, started, STOP_WATCH), async {
+        // The child is killed if this future is dropped (the scenario deadline).
+        let status = tokio::time::timeout(Duration::from_secs(180), child.wait()).await;
+        (status, started.elapsed())
+    });
+    let (status, command_took) = status;
+    ctx.note("stop", &seen);
+    ctx.note("restart_command_ms", command_took.as_millis() as u64);
+    for (bot, _) in peers {
+        bot.close();
+    }
+
+    // whatever the peers saw, the stack is left answering as it was found
+    let back = pulse_answers_again(&ctx, &ctx.identity(SIGNED_IN + 1)).await;
+    judge_stop(&seen, command_took).map_err(|error| anyhow!(error))?;
+    let status =
+        status.map_err(|_| anyhow!("the Pulse restart command did not return within 180 s"))??;
+    if !status.success() {
+        bail!("the Pulse restart command failed: {status}");
+    }
+    back
+}
+
+/// Waits until Pulse accepts a handshake again, then leaves.
+async fn pulse_answers_again(ctx: &Ctx, identity: &Identity) -> Result<()> {
+    let started = Instant::now();
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let entered = async {
+            let bot = connect_on_enet(
+                ctx,
+                &format!("after-restart-{attempt}"),
+                ctx.stack().pulse_enet,
+                Some(Duration::from_secs(3)),
+            )
+            .await?;
+            bot.accepted(ctx, identity).await?;
+            Ok::<PulseBot, anyhow::Error>(bot)
+        }
+        .await;
+        match entered {
+            Ok(bot) => {
+                ctx.note("pulse_back_after_ms", started.elapsed().as_millis() as u64);
+                return leave(ctx, bot).await;
+            }
+            Err(error) if started.elapsed() < BACK_WITHIN => {
+                ctx.record("runner", "Pulse not back yet", format!("{error:#}"));
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(error) => {
+                bail!(
+                    "Pulse does not accept a handshake {} s after the restart command: {error:#}",
+                    BACK_WITHIN.as_secs()
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// pulse-silent-peer
+
+/// What the observer saw of one silent peer.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SilenceSeen {
+    pub peer: String,
+    /// The subject id the observer knew the peer by: Pulse's slot for it.
+    pub subject: u32,
+    /// When the observer stopped holding the peer, from the moment its link went silent.
+    /// `None`: still held when the watch ended.
+    pub dropped_after_ms: Option<u64>,
+}
+
+/// The silence rule: two silent peers, the second on the slot the first left, each dropped from
+/// the observer's view within `within` of its link going silent.
+pub fn judge_silence(seen: &[SilenceSeen], within: Duration) -> Result<(), String> {
+    let [first, recycled] = seen else {
+        return Err(format!(
+            "two silent peers must be watched, the second on the first one's slot; {} were",
+            seen.len()
+        ));
+    };
+    let mut wrong = Vec::new();
+    if recycled.subject != first.subject {
+        wrong.push(format!(
+            "{} took subject {}, not the slot {} {} left, so the recycled slot was not exercised",
+            recycled.peer, recycled.subject, first.subject, first.peer
+        ));
+    }
+    let within_ms = within.as_millis() as u64;
+    for peer in seen {
+        match peer.dropped_after_ms {
+            Some(after) if after <= within_ms => {}
+            Some(after) => wrong.push(format!(
+                "{} (subject {}) was dropped {after} ms after its link went silent",
+                peer.peer, peer.subject
+            )),
+            None => wrong.push(format!(
+                "{} (subject {}) was still held when the watch ended",
+                peer.peer, peer.subject
+            )),
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the observer must see a silent peer leave within {within_ms} ms of its link going silent, on its slot's first use and on the recycled slot; {}",
+            wrong.join("; ")
+        ))
+    }
+}
+
+/// When `observer` stopped holding `wallet`, or `None` if it still does after `watch`.
+async fn until_gone(observer: &PulseBot, wallet: &str, watch: Duration) -> Result<Option<Instant>> {
+    let end = Instant::now() + watch;
+    loop {
+        observer.expect_alive()?;
+        if observer.view().count_of(wallet) == 0 {
+            return Ok(Some(Instant::now()));
+        }
+        if Instant::now() >= end {
+            return Ok(None);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn silent_peer(ctx: Ctx, round_trip: Duration) -> Result<()> {
+    let realm = ctx.realm("silence");
+    let here = meeting_place(&ctx);
+    let pulse = ctx.stack().pulse_enet;
+    ctx.note("round_trip_ms", round_trip.as_millis() as u64);
+    let observer = enter_on_enet(
+        &ctx,
+        "observer",
+        &ctx.identity(0),
+        pulse,
+        &realm,
+        offset(here, 0.0, 2.0),
+    )
+    .await?;
+
+    let mut seen = Vec::new();
+    for (index, label) in [(1, "first-use"), (2, "recycled-slot")] {
+        let link = FaultLink::udp(
+            &ctx,
+            &format!("{label}-link"),
+            "127.0.0.1:0".parse()?,
+            pulse,
+        )
+        .await?;
+        if !round_trip.is_zero() {
+            link.set(
+                Direction::Both,
+                Fault::Link {
+                    delay: round_trip / 2,
+                    jitter: Duration::ZERO,
+                    loss: 0.0,
+                },
+            );
+        }
+        let identity = ctx.identity(index);
+        let wallet = identity.address();
+        let peer = enter_on_enet(
+            &ctx,
+            label,
+            &identity,
+            link.address(),
+            &realm,
+            offset(here, 1.0, 1.0),
+        )
+        .await?;
+        let subject = expect_sees(&ctx, &observer, label, &wallet, SOON + round_trip * 4).await?;
+        stay_connected(
+            &ctx,
+            &format!("{label} stays connected while ENet measures the round trip"),
+            &[&peer, &observer],
+            MEASURE_ROUND_TRIP,
+        )
+        .await?;
+
+        link.set(Direction::Both, Fault::Stall);
+        let silent = Instant::now();
+        let gone = until_gone(&observer, &wallet, SILENCE_WATCH).await?;
+        let dropped_after_ms = gone.map(|at| at.duration_since(silent).as_millis() as u64);
+        ctx.note(&format!("{label}_subject"), subject.subject_id);
+        ctx.note(&format!("{label}_dropped_after_ms"), dropped_after_ms);
+        seen.push(SilenceSeen {
+            peer: label.to_owned(),
+            subject: subject.subject_id,
+            dropped_after_ms,
+        });
+        // its farewell is lost on the silent link, which goes with it
+        peer.close();
+        drop(link);
+    }
+    let left = leave(&ctx, observer).await;
+    judge_silence(&seen, SILENT_PEER_DROPPED_WITHIN).map_err(|error| anyhow!(error))?;
+    left
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stopped(peer: &str, signed_in: bool, code: Option<u32>, after_ms: Option<u64>) -> StopSeen {
+        StopSeen {
+            peer: peer.to_owned(),
+            signed_in,
+            code,
+            after_ms,
+        }
+    }
+
+    #[test]
+    fn a_stop_passes_only_when_every_peer_is_told_graceful_before_the_command_returns() {
+        let graceful = DisconnectReason::Graceful.code();
+        // a command that took 5.6 s to stop Pulse and bring it back, the notices 2.1 s into it
+        let command_took = Duration::from_millis(5617);
+        let told = vec![
+            stopped("signed-in-0", true, Some(graceful), Some(2102)),
+            stopped("signed-in-1", true, Some(graceful), Some(5617)),
+            stopped("not-signed-in", false, Some(graceful), Some(2102)),
+        ];
+        assert_eq!(judge_stop(&told, command_took), Ok(()));
+
+        // a server that closes without a word: each client times out on its own (code 0)
+        let silent = vec![
+            stopped("signed-in-0", true, Some(0), Some(5400)),
+            stopped("not-signed-in", false, Some(0), Some(5410)),
+        ];
+        let failure = judge_stop(&silent, command_took).unwrap_err();
+        assert!(
+            failure.contains("signed-in-0 (signed in): 0 (no reason given) after 5400 ms"),
+            "{failure}"
+        );
+        assert!(
+            failure.contains("not-signed-in (not signed in)"),
+            "{failure}"
+        );
+
+        // told after the command returned, told another reason, never told
+        for wrong in [
+            stopped("late", true, Some(graceful), Some(5618)),
+            stopped(
+                "other",
+                true,
+                Some(DisconnectReason::DuplicateSession.code()),
+                Some(10),
+            ),
+            stopped("never", false, None, None),
+        ] {
+            let mut seen = told.clone();
+            seen.push(wrong.clone());
+            let failure = judge_stop(&seen, command_took).unwrap_err();
+            assert!(failure.contains(&wrong.peer), "{failure}");
+            assert!(!failure.contains("signed-in-0"), "{failure}");
+        }
+        assert!(judge_stop(&[], command_took).is_err());
+    }
+
+    fn silence(peer: &str, subject: u32, dropped_after_ms: Option<u64>) -> SilenceSeen {
+        SilenceSeen {
+            peer: peer.to_owned(),
+            subject,
+            dropped_after_ms,
+        }
+    }
+
+    #[test]
+    fn a_silent_peer_must_go_within_the_bound_on_both_uses_of_a_slot() {
+        let within = SILENT_PEER_DROPPED_WITHIN;
+        let fixed = [
+            silence("first-use", 4, Some(5_300)),
+            silence("recycled-slot", 4, Some(5_250)),
+        ];
+        assert_eq!(judge_silence(&fixed, within), Ok(()));
+
+        // a 30 s upper bound on a path with a round trip: kept well past 8 s
+        let kept = [
+            silence("first-use", 4, Some(21_900)),
+            silence("recycled-slot", 4, Some(8_001)),
+        ];
+        let failure = judge_silence(&kept, within).unwrap_err();
+        assert!(
+            failure.contains("first-use (subject 4) was dropped 21900 ms"),
+            "{failure}"
+        );
+        assert!(
+            failure.contains("recycled-slot (subject 4) was dropped 8001 ms"),
+            "{failure}"
+        );
+
+        // the second peer did not take the first one's slot: the case was not exercised
+        let elsewhere = [
+            silence("first-use", 4, Some(5_000)),
+            silence("recycled-slot", 7, Some(5_000)),
+        ];
+        let failure = judge_silence(&elsewhere, within).unwrap_err();
+        assert!(failure.contains("not the slot 4"), "{failure}");
+
+        let held = [
+            silence("first-use", 4, Some(5_000)),
+            silence("recycled-slot", 4, None),
+        ];
+        assert!(
+            judge_silence(&held, within)
+                .unwrap_err()
+                .contains("still held")
+        );
+        assert!(judge_silence(&fixed[..1], within).is_err());
+    }
+
+    #[test]
+    fn the_stop_scenario_is_hostile_and_needs_the_pulse_restart_command() {
+        assert!(GRACEFUL_STOP.hostile);
+        let bare = Stack::pulse_only("127.0.0.1:9".parse().unwrap());
+        let missing = GRACEFUL_STOP.needs.missing(&bare).unwrap();
+        assert!(missing.contains("pulse_restart_command"), "{missing}");
+        let named = Stack::parse(
+            "pulse_enet = \"127.0.0.1:9\"\npulse_restart_command = [\"restart-pulse\"]\n",
+        )
+        .unwrap();
+        assert!(GRACEFUL_STOP.needs.missing(&named).is_none());
+        let command = pulse_restart_command(&named).unwrap();
+        assert_eq!(command.as_std().get_program(), "restart-pulse");
+        assert!(pulse_restart_command(&bare).is_err());
+        for scenario in [&SILENT_PEER, &SILENT_PEER_120MS, &SILENT_PEER_300MS] {
+            assert!(!scenario.hostile, "{}", scenario.name);
+            assert!(scenario.needs.missing(&bare).is_none(), "{}", scenario.name);
+        }
+    }
+}

@@ -101,6 +101,7 @@ serve_metrics = "http://127.0.0.1:5211/metrics"
 moderator_token_env = "CE2E_MODERATOR_TOKEN"       # the name of a variable, never the token
 scene_listener_key_env = "CE2E_LISTENER_KEY"       # the wallet Pulse admits as a scene listener
 restart_command = ["restart-the-api-process"]      # for stationary-credentials
+pulse_restart_command = ["restart-pulse"]          # for pulse-graceful-stop
 
 [pulse_webtransport]
 url = "https://127.0.0.1:5212/"
@@ -151,7 +152,7 @@ itself. Neither the gatekeeper client nor the room-service client follows a redi
 
 | Group | Scenarios, each with its other tags | Need |
 |---|---|---|
-| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-handshake-clock` (`refusals`, `probe`: fails unless a handshake signed at this machine's now gets in; measures how far the server's clock is behind or ahead, read across its 60 s window), `pulse-crowd` (`crowd`), `crowd-visit` (`crowd`, `visit`), `pulse-webtransport-bursts` (`webtransport`, `slow`) | Pulse. All but the last run on either transport (`--transport`). `crowd-visit` also needs a visit plan and the API (the realm description), see below. |
+| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-handshake-clock` (`refusals`, `probe`: fails unless a handshake signed at this machine's now gets in; measures how far the server's clock is behind or ahead, read across its 60 s window), `pulse-crowd` (`crowd`), `crowd-visit` (`crowd`, `visit`), `pulse-webtransport-bursts` (`webtransport`, `slow`), `pulse-silent-peer`, `pulse-silent-peer-120ms-round-trip`, `pulse-silent-peer-300ms-round-trip` (`faults`, `timeouts`, `slow`), `pulse-graceful-stop` (`restart`) | Pulse. All but the last five run on either transport (`--transport`): `pulse-webtransport-bursts` runs on WebTransport, the ENet peer scenarios on ENet. `crowd-visit` also needs a visit plan and the API (the realm description), see below; `pulse-graceful-stop` needs `pulse_restart_command`. |
 | `connections` | `connect-full-stack` (`connect`), `second-device-takeover` (`session`, `races`: Pulse ends the older device; the archipelago keeps one socket per session key and leaves the older socket open), `stale-socket-reconnect` (`session`, `faults`), `assignment-order` (`assignment`, `races`), `mints-under-churn` (`gatekeeper`, `races`), `ban-eviction` (`moderation`, `slow`), `stationary-credentials` (`restart`, `slow`), `livekit-same-identity` (`livekit`), `crowd-discovery` (`crowd`) | The API; LiveKit for the room joins, which are left out, with a note, without a LiveKit client |
 | `explorer` | `explorer-uplink-stall` (`battle`, `faults`), `explorer-out-of-grid` (`battle`), `explorer-past-the-east-edge` (`battle`), `explorer-sleep-wake` (`battle`, `faults`), `explorer-port-unreachable` (`battle`, `faults`), `explorer-two-devices` (`races`), `explorer-resync` (`faults`). Probes: `explorer-replaced-by-another-device`, `explorer-replaces-another-device` (`probe`, `races`), `explorer-long-uplink-stall`, `explorer-reconnect-outside-grid` (`probe`, `faults`). The uplink over a slow path: `explorer-uplink-cadence` (`uplink`), `explorer-walk-800ms-round-trip`, `explorer-walk-1200ms-round-trip`, `explorer-walk-lossy-link`, `explorer-queued-stall-1200ms-round-trip`, `explorer-queued-stall-2000ms-round-trip` (`uplink`, `faults`) | The API and a headless explorer build |
 
@@ -225,6 +226,25 @@ no profile.
   next visit deploys its own profile over whatever else it finds served.
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
+
+**ENet peers.** Four scenarios check how Pulse lets go of its ENet peers, from what the clients
+saw. `pulse-graceful-stop` connects three peers that sign in and one that does not, then runs the
+stack file's `pulse_restart_command`, which stops Pulse as a deployment does (SIGTERM, or Ctrl+C
+to its console on Windows), starts it again and returns once it listens. Each of the four must
+receive a disconnect with `Graceful` (1) before the command returns; the report notes each
+peer's code and time (`stop`) and how long the command took (`restart_command_ms`), and the
+scenario then waits for Pulse to accept a handshake again. It is hostile: it stops a process of the stack. The `pulse-silent-peer` scenarios put a
+peer behind a fault link, let ENet measure the path's round trip for 5 s, then drop everything
+on the link both ways: an observer must see the peer leave within 8 s (ENet's 5 s bound, plus the
+ping that starts the count, the retransmission timer the bound is checked on and a tick), and
+then the same for a second peer, which must take the slot the first left (the observer knows a
+peer's slot as its subject id). The round trip is in the name (none on plain loopback) and in
+the report (`round_trip_ms`, `first-use_dropped_after_ms`, `recycled-slot_dropped_after_ms`). It
+matters: ENet ends a silent peer once a retransmission has been sent six times and the lower
+bound has passed, or once the upper bound has passed, and each retransmission waits twice as
+long as the one before, starting from about the round trip. On a path with a round trip near
+zero the six sends are over long before 5 s, so a server whose upper bound is 30 s also ends the
+peer at about 5 s, and only a path with a longer round trip tells the two bounds apart.
 
 The `uplink` scenarios walk the explorer back and forth and read its movement from the Pulse
 link's history, not from the explorer: datagrams of 20 bytes or more are messages (movement while
