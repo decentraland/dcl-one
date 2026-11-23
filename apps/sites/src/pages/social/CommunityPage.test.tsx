@@ -25,6 +25,7 @@ const net = vi.hoisted(() => ({
 }));
 const auth = vi.hoisted(() => ({ identity: null as null | { signer: string } }));
 const signIn = vi.hoisted(() => ({ openSignIn: vi.fn() }));
+const page = vi.hoisted(() => vi.fn());
 const reminders = vi.hoisted(() => ({ failed: null as string | null, onSignIn: null as null | (() => void) }));
 const events = vi.hoisted(() => ({ fetchEvent: vi.fn() }));
 const telemetry = vi.hoisted(() => ({ track: vi.fn() }));
@@ -37,7 +38,7 @@ vi.mock("@/data/lib/catalyst/places/events", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/events")>()),
   ...events,
 }));
-vi.mock("@/core/lib/telemetry/track", () => telemetry);
+vi.mock("@/core/lib/telemetry/track", () => ({ ...telemetry, page, adoptSitesSegmentConfig: vi.fn() }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: auth.identity }) }));
 vi.mock("@/features/components/auth/signin-store", () => signIn);
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
@@ -116,8 +117,9 @@ type Entry = string | { pathname: string; search: string; state: unknown };
 function show(path: Entry = `/social/communities/${ID}`, sid = SID, seed?: (client: QueryClient) => void) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed?.(client);
+  // Under a root route with a session, as in the app, so the page view goes out.
   const router = createMemoryRouter(
-    [{ path: "/social/communities/:id", element: <CommunityPage id={ID} now={0} sid={sid} /> }],
+    [{ id: "root", path: "/", loader: () => ({ sid: "s" }), HydrateFallback: () => null, children: [{ path: "/social/communities/:id", element: <CommunityPage id={ID} now={0} sid={sid} /> }] }],
     { initialEntries: [path] },
   );
   render(
@@ -166,6 +168,19 @@ type Member = { memberAddress: string; role: string; name: string; profilePictur
 type Router = ReturnType<typeof show>;
 
 describe("CommunityPage", () => {
+  describe("while the community has not been read", () => {
+    beforeEach(() => {
+      net.fetchCommunity.mockImplementation(() => new Promise(() => {}));
+      show();
+    });
+
+    it("should send no page view", async () => {
+      await waitFor(() => expect(net.fetchCommunity).toHaveBeenCalled());
+      await act(async () => {});
+      expect(page).not.toHaveBeenCalled();
+    });
+  });
+
   describe("when the visitor is signed out", () => {
     describe("and the community is public", () => {
       beforeEach(() => {
@@ -185,6 +200,15 @@ describe("CommunityPage", () => {
           expect(screen.getByText("Owner")).toBeTruthy();
           expect(await screen.findByText("No Upcoming Events")).toBeTruthy();
           expect(screen.getByRole("tab", { name: "Members", selected: true })).toBeTruthy();
+        });
+
+        it("should send one page view named after the community", async () => {
+          await waitFor(() => expect(page).toHaveBeenCalledOnce());
+          expect(page).toHaveBeenCalledWith(
+            "Decentraland Foundation",
+            { communityId: ID, privacy: "public", membersCount: 1340 },
+            { sid: "s" },
+          );
         });
 
         describe("and the visitor clicks Sign in to join", () => {

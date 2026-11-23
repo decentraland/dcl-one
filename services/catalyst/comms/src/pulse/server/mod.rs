@@ -274,9 +274,10 @@ impl PulseServer {
         )
     }
 
-    /// Sets the shared pre-auth limits before starting a scenario fixture.
-    #[cfg(feature = "test-support")]
-    pub fn with_pre_auth_limits_for_test(mut self, per_ip_cap: i64, global_budget: i64) -> Self {
+    /// Replaces the pre-auth admission limits. For a server that has admitted no connection yet:
+    /// the replacement starts with nothing in flight.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_pre_auth_limits(mut self, per_ip_cap: i64, global_budget: i64) -> Self {
         self.pre_auth = PreAuthAdmission::new(per_ip_cap, global_budget);
         self
     }
