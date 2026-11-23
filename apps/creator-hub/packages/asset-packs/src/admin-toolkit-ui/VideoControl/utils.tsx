@@ -3,7 +3,7 @@ import type { AdminTools } from '../../definitions';
 import { LIVEKIT_STREAM_SRC, VIDEO_URL_TYPE } from '../../definitions';
 import { getExplorerComponents } from '../../components';
 import { state } from '../store';
-import { getAdminMessageBus } from '../admin-message-bus';
+import { getAdminMessageBus, type VideoSource } from '../admin-message-bus';
 import { getAdminConfigOrNull } from '../config';
 import { DEFAULT_VOLUME } from '.';
 
@@ -13,7 +13,8 @@ interface VideoPlayerControls {
   restart(): void;
   setVolume(volume: number): void;
   setVolumeExact(volume: number): void;
-  setSource(url: string): void;
+  /** `source`: the section that puts the room's stream on the screen. */
+  setSource(url: string, source?: Exclude<VideoSource, 'video-url'>): void;
   setLoop(loop: boolean): void;
 }
 
@@ -85,8 +86,8 @@ export function createVideoPlayerControls(entity: Entity, engine: IEngine): Vide
       const clamped = Math.max(0, Math.min(1, volume));
       getAdminMessageBus().emitSetVideo(entity, { volume: clamped, position: undefined });
     },
-    setSource: url => {
-      getAdminMessageBus().emitSetVideo(entity, { src: url, playing: true });
+    setSource: (url, source) => {
+      getAdminMessageBus().emitSetVideo(entity, { src: url, playing: true, source });
     },
     setLoop(loop) {
       getAdminMessageBus().emitSetVideo(entity, { loop, position: undefined });
@@ -126,14 +127,18 @@ export function findActiveCastScreenIndex(engine: IEngine): number | undefined {
   return undefined;
 }
 
-export function isDclCast(url: string) {
-  return url.startsWith(CAST_SRC_PREFIX) && state.videoControl.selectedStream === 'dcl-cast';
-}
-
-export function isLiveStream(url: string): boolean {
-  return url.startsWith(LIVEKIT_STREAM_SRC) && state.videoControl.selectedStream === 'live';
+/** The speaker's track that the selected screen plays; none while it plays the room's stream. */
+export function selectedTrack(engine: IEngine): string | undefined {
+  const src = useSelectedVideoPlayer(engine)?.[1].src;
+  return src?.startsWith(CAST_SRC_PREFIX) && src !== LIVEKIT_STREAM_SRC ? src : undefined;
 }
 
 export function isVideoUrl(url: string): boolean {
   return url.startsWith(VIDEO_URL_TYPE);
+}
+
+/** What the URL section's control does. With nothing typed it shows the screen's state, the same on every panel. */
+export function urlAction(src: string | undefined, typed: string) {
+  if (!src || !isVideoUrl(src)) return 'Activate';
+  return typed && typed !== src ? 'Update' : 'Deactivate';
 }

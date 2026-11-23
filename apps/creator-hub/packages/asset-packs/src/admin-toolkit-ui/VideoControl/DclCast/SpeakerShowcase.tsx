@@ -1,5 +1,5 @@
 import ReactEcs, { Dropdown, UiEntity, Label } from '@dcl/react-ecs';
-import { getContentUrl } from '../../constants';
+import { getAssetsUrl } from '../../constants';
 import { Button } from '../../Button';
 import { Modal } from '../../Modal';
 import { getSourceLabel, isPresentationBot, type FlattenedTrack, type Participant } from '../api';
@@ -17,13 +17,13 @@ const SPEAKERS_PER_PAGE = 10;
 
 const ICONS = {
   get BACK() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/chevron-back.png`;
+    return `${getAssetsUrl()}/icons/chevron-back.png`;
   },
   get NEXT() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/chevron-forward.png`;
+    return `${getAssetsUrl()}/icons/chevron-forward.png`;
   },
   get STAR() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/star.png`;
+    return `${getAssetsUrl()}/icons/star.png`;
   },
 };
 

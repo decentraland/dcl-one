@@ -9,12 +9,25 @@ import { selectVideoPlayer, selectVideoSubTab } from '../actions';
 import { COLORS } from '../theme';
 import { VideoControl } from './index';
 
-const mocks = vi.hoisted(() => ({ emitSetVideo: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  emitSetVideo: vi.fn(),
+  src: (_screen: unknown): string | undefined => undefined,
+}));
 
 // The panel publishes source changes through the admin message bus, which needs the scene's comms.
+// The bus also tells the panel what a screen plays: here that is the screen's own address.
 vi.mock('../admin-message-bus', () => ({
-  getAdminMessageBus: () => ({ emitSetVideo: mocks.emitSetVideo }),
+  getAdminMessageBus: () => ({
+    emitSetVideo: mocks.emitSetVideo,
+    source: (screen: unknown) => {
+      const src = mocks.src(screen);
+      if (!src) return undefined;
+      return src.startsWith('livekit-video://') ? 'live' : 'video-url';
+    },
+  }),
 }));
+// The Cast state needs the scene's runtime; no presentation runs in these tests.
+vi.mock('../cast', () => ({ cast: () => ({ state: { tag: 'idle' } }) }));
 // The DCL Cast and Stream panels call remote services; these tests only switch to them and back.
 vi.mock('./DclCast', () => ({ default: () => null }));
 vi.mock('./LiveStream', () => ({ LiveStream: () => null }));
@@ -39,6 +52,7 @@ function createPanel(screens: { src: string }[]) {
     VideoPlayer.create(screen, { src, playing: true });
     return screen;
   });
+  mocks.src = screen => VideoPlayer.getOrNull(screen as Entity)?.src;
   AdminTools.create(engine.addEntity(), {
     videoControl: {
       isEnabled: true,

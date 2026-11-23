@@ -161,6 +161,9 @@ prebuilt-registry wire contracts and strict declaration check; this development 
 Node, Python 3 and the installed SDK TypeScript dependency. SDK CI runs it after installation.
 The normal scene build uses these bindings without npm.
 
+The vendored SDK has no `@dcl/sdk/cast` module, so the vendored smart-item chunk holds the asset pack
+from before its Admin Toolkit imported that module. Refresh both chunks with the `@dcl/sdk` release
+that has the module. A scene that installs such an SDK gets the `@dcl/sdk/cast` key from its own build.
 
 The built-in pipeline bundles to `bin/index.js`, type-checks beside the build with incremental tsc
 (`.dcl-cache/`), and encodes `main.crdt` in Rust (`DCL_ONE_CRDT_VERIFY=1` compares with node).

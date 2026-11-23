@@ -1,6 +1,7 @@
 import type { DeepReadonlyObject, Entity, IEngine } from '@dcl/ecs';
 import type { AdminTools } from '../definitions';
 import { getComponents } from '../definitions';
+import { setItemFolder } from './constants';
 
 // `rewardsControl` is left out: nothing reads it, and the scripted Admin Tools no longer passes it.
 type AdminConfigInput = Omit<AdminTools, 'rewardsControl'>;
@@ -19,9 +20,11 @@ type AdminConfig = DeepReadonlyObject<AdminConfigInput>;
 let injectedConfig: AdminConfig | undefined;
 let injectedEntity: Entity | undefined;
 
-export function setAdminConfig(config: AdminConfigInput, entity: Entity) {
+/** `folder` is the scene folder of the item's own files, which hold the panel's pictures. */
+export function setAdminConfig(config: AdminConfigInput, entity: Entity, folder?: string) {
   injectedConfig = config;
   injectedEntity = entity;
+  setItemFolder(folder);
 }
 
 /** Drops the config `entity` injected, e.g. when its Admin Tools item is removed. */
@@ -29,6 +32,7 @@ export function clearAdminConfig(entity: Entity) {
   if (injectedEntity !== entity) return;
   injectedConfig = undefined;
   injectedEntity = undefined;
+  setItemFolder(undefined);
 }
 
 export function getAdminConfigOrNull(engine: IEngine): AdminConfig | null {

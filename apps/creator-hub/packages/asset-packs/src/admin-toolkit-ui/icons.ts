@@ -1,9 +1,8 @@
-import { getContentUrl } from './constants';
+import { getAssetsUrl } from './constants';
 
 // Line icons for the admin toolkit, rasterized to white glyphs (tinted via
 // uiBackground.color). Sources live in
-// packs/smart_items/assets/admin_toolkit/assets/icons/reskin and are served
-// from the asset bucket.
+// packs/smart_items/assets/admin_toolkit/assets/icons/reskin.
 export type IconName =
   | 'users'
   | 'tv'
@@ -35,5 +34,5 @@ export type IconName =
   | 'stop';
 
 export function icon(name: IconName): string {
-  return `${getContentUrl()}/admin_toolkit/assets/icons/reskin/${name}.png`;
+  return `${getAssetsUrl()}/icons/reskin/${name}.png`;
 }

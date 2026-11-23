@@ -328,7 +328,9 @@ const FOLLOW: Handlers = {
       // Any wallet in the room can publish on the topic: only the bot states the slides.
       if (!p.sender.startsWith(BOT)) continue
       const j = json(p.data)
-      if (j?.type === 'presentation:stopped') show = { tag: 'detected' }
+      // A stop that names another presentation is a replaced one's: the current one goes on.
+      const other = show.tag === 'showing' && typeof j?.id === 'string' && j.id !== show.slides.id
+      if (j?.type === 'presentation:stopped' && !other) show = { tag: 'detected' }
       if (j?.type !== 'presentation:state' || typeof j.id !== 'string') continue
       const videos = Array.isArray(j.slideVideos) ? j.slideVideos.length : 0
       const slides = { id: j.id, file: String(j.fileName ?? ''), slide: j.currentSlide | 0, count: j.slideCount | 0 }

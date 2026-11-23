@@ -6,7 +6,9 @@ import { COLORS, RADIUS, SPACING, TYPE } from '../theme';
 import { SectionHeader, FieldLabel, ActivePill, Divider } from '../Primitives';
 import { Segmented } from '../Controls';
 import { selectVideoSubTab, selectVideoPlayer } from '../actions';
-import { getVideoPlayers, isVideoUrl, useSelectedVideoPlayer } from './utils';
+import { getAdminMessageBus } from '../admin-message-bus';
+import { cast } from '../cast';
+import { getVideoPlayers, useSelectedVideoPlayer } from './utils';
 import { VideoControlURL } from './VideoUrl';
 import { LiveStream } from './LiveStream';
 import DclCast from './DclCast';
@@ -25,35 +27,31 @@ const SECTION_PADDING = {
 export function VideoControl({
   engine,
   state,
-  playerAddress,
 }: {
   engine: IEngine;
   state: State;
-  playerAddress: string | undefined;
+  /** @deprecated Not read: the Cast state knows the player. */
+  playerAddress?: string;
 }) {
   const [selectedEntity, selectedVideo] = useSelectedVideoPlayer(engine) ?? [];
   const videoPlayers = getVideoPlayers(engine);
   const selected = state.videoControl.selectedTab;
 
+  // What the screen plays is the scene's state, the same for every admin: the panel opens on its
+  // section and goes to it when any admin changes it. A presentation is run from DCL Cast.
+  const active = selectedEntity && getAdminMessageBus().source(selectedEntity);
+  const following = cast().state;
+  const presenting = following.tag === 'following' && following.show.tag !== 'none';
   ReactEcs.useEffect(() => {
-    // An explicit DCL Cast context (auto-open on a presentation, or an active cast
-    // stream) wins over src-derivation, so the panel lands on DCL Cast even when no
-    // scene screen is casting yet. Otherwise reflect the selected screen's source.
-    if (state.videoControl.selectedStream === 'dcl-cast') {
-      selectVideoSubTab('dcl-cast');
-      return;
-    }
-    selectVideoSubTab(selectedVideo && isVideoUrl(selectedVideo.src) ? 'video-url' : 'live');
-  }, [state.videoControl.selectedVideoPlayer, state.videoControl.selectedStream]);
-
-  const isActive = !!(selectedVideo?.src && selectedVideo.src.length > 0);
+    selectVideoSubTab(presenting ? 'dcl-cast' : (active ?? 'live'));
+  }, [state.videoControl.selectedVideoPlayer, active, presenting]);
 
   return (
     <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
       <UiEntity uiTransform={{ flexDirection: 'column', width: '100%', padding: SECTION_PADDING }}>
         <SectionHeader
           title="Video screens"
-          right={isActive && <ActivePill />}
+          right={active && <ActivePill />}
         />
 
         {videoPlayers.length > 1 && (
@@ -125,7 +123,6 @@ export function VideoControl({
                 state={state}
                 entity={selectedEntity}
                 video={selectedVideo}
-                playerAddress={playerAddress}
               />
             )}
           </UiEntity>

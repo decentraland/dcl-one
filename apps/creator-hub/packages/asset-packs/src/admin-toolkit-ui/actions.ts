@@ -1,7 +1,7 @@
 import type { Entity } from '@dcl/ecs';
 import { state } from './store';
-import { TabType, type PresentationState } from './types';
-import type { DclCastResponse, FlattenedTrack, Participant } from './VideoControl/api';
+import { TabType, type State } from './types';
+import type { FlattenedTrack, Participant } from './VideoControl/api';
 import type { SceneAdmin } from './ModerationControl';
 
 // Named view-state transitions — the only writers of shared panel/view state.
@@ -34,6 +34,16 @@ export function setActiveTab(tab: TabType): void {
 // --- Video Control sub-view ---
 export function selectVideoSubTab(tab: 'video-url' | 'live' | 'dcl-cast'): void {
   state.videoControl.selectedTab = tab;
+  state.videoControl.ask = undefined;
+}
+
+// --- Stream key --- a confirmation to open (or none), and the key in clear for a short time.
+export function ask(what: State['videoControl']['ask']): void {
+  state.videoControl.ask = what;
+}
+
+export function showKey(shown: boolean): void {
+  state.videoControl.keyShownUntil = shown ? Date.now() + 30_000 : 0;
 }
 
 export function selectVideoPlayer(index: number): void {
@@ -66,12 +76,11 @@ export function setSmartItemVisibility(entity: Entity, visible: boolean): void {
   state.smartItemsControl = { ...state.smartItemsControl, smartItems: next };
 }
 
-// --- Presentation lifecycle ---
-// Called on the detector's presentation-started edge. Deterministic regardless of
-// the current panel/tab/casting-screen because the sub-view is shared state, not a
-// mount-derived local. Pass the casting screen index (findActiveCastScreenIndex) if
-// one is live so the panel points at it; never auto-activates a screen. The full
-// DCL Cast panel renders the presentation controls inline, so no minimize step.
+// --- Presentation ---
+// Called when a presentation starts. Deterministic regardless of the current panel/tab/casting
+// screen because the sub-view is shared state, not a mount-derived local. Pass the casting screen
+// index (findActiveCastScreenIndex) if one is live so the panel points at it; never auto-activates
+// a screen. The DCL Cast section shows the presentation controls.
 export function showPresentation(castScreenIndex?: number): void {
   openPanel();
   // Force VIDEO_CONTROL open — not setActiveTab, which would toggle it closed if
@@ -81,31 +90,6 @@ export function showPresentation(castScreenIndex?: number): void {
   if (castScreenIndex !== undefined) {
     selectVideoPlayer(castScreenIndex);
   }
-  setStream('dcl-cast');
-}
-
-// Called on presentation end (bot 'stopped' or track gone). Clears the slide state;
-// leaves panel/tab as-is.
-export function dismissPresentation(): void {
-  clearPresentationState();
-}
-
-// Detector-driven slide/video state (arrives over the 'presentation' comms topic).
-export function setPresentationState(presentation: PresentationState): void {
-  state.videoControl.presentationState = presentation;
-}
-
-export function clearPresentationState(): void {
-  state.videoControl.presentationState = undefined;
-}
-
-export function setStream(stream: 'live' | 'dcl-cast' | undefined): void {
-  state.videoControl.selectedStream = stream;
-}
-
-// Cast room info (streaming key, room id) fetched from getDclCastInfo.
-export function setDclCastInfo(info: DclCastResponse): void {
-  state.videoControl.dclCast = info;
 }
 
 // --- Speaker Showcase / Share Presentation modals ---
@@ -133,10 +117,6 @@ export function closeShowcase(): void {
   showcase.onSelectTrack = undefined;
   showcase.onSetDefault = undefined;
   showcase.onClose = undefined;
-}
-
-export function setShowcaseActiveTrack(sid: string | undefined): void {
-  state.videoControl.showcase.activeTrackSid = sid;
 }
 
 export function openSharePresentation(onClose: () => void): void {

@@ -2,16 +2,16 @@ import type { IEngine } from '@dcl/ecs';
 // oxlint-disable-next-line no-unused-vars
 import ReactEcs, { Label, UiEntity } from '@dcl/react-ecs';
 import { getComponents } from '../definitions';
-import { getContentUrl } from './constants';
+import { getAssetsUrl } from './constants';
 import { COLORS, RADIUS, TYPE } from './theme';
 import type { State } from './types';
 
 const ICONS = {
   get BTN_CLOSE_TEXT_ANNOUNCEMENT() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/text-announcement-close-button.png`;
+    return `${getAssetsUrl()}/icons/text-announcement-close-button.png`;
   },
   get CHAT_MESSAGE_ICON() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/text-announcement-chat-message.png`;
+    return `${getAssetsUrl()}/icons/text-announcement-chat-message.png`;
   },
 };
 

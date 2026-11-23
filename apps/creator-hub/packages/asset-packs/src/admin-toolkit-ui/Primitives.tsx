@@ -1,5 +1,5 @@
 // oxlint-disable-next-line typescript/consistent-type-imports -- ReactEcs is the JSX factory
-import ReactEcs, { Label, UiEntity, type UiTransformProps } from '@dcl/react-ecs';
+import ReactEcs, { Input, Label, UiEntity, type UiTransformProps } from '@dcl/react-ecs';
 import { type Color4 } from '@dcl/sdk/math';
 import { COLORS, RADIUS, SPACING, TYPE } from './theme';
 import { icon, type IconName } from './icons';
@@ -126,6 +126,50 @@ export function FieldLabel({ text }: { text: string }) {
       color={COLORS.textSecondary}
       uiTransform={{ margin: { bottom: SPACING.sm } }}
     />
+  );
+}
+
+// A one-line text input. The Bevy explorer draws an input's text at the top left of the input's
+// box, so the box is one line high and this frame centres it.
+export function TextField({
+  value,
+  placeholder,
+  onChange,
+  invalid,
+  uiTransform,
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  invalid?: boolean;
+  uiTransform?: UiTransformProps;
+}) {
+  return (
+    <UiEntity
+      uiTransform={{
+        height: 40,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: invalid ? COLORS.danger : COLORS.inputBorder,
+        padding: { left: SPACING.xl, right: SPACING.xl },
+        ...uiTransform,
+      }}
+      uiBackground={{ color: COLORS.inputBackground }}
+    >
+      <Input
+        onChange={onChange}
+        value={value}
+        fontSize={TYPE.body}
+        textAlign="middle-left"
+        placeholder={placeholder}
+        placeholderColor={COLORS.inputPlaceholder}
+        color={COLORS.inputText}
+        uiBackground={{ color: COLORS.transparent }}
+        uiTransform={{ width: '100%', height: TYPE.body * 1.5 }}
+      />
+    </UiEntity>
   );
 }
 

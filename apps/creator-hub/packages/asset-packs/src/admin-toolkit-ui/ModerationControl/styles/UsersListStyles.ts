@@ -1,17 +1,17 @@
 import { Color4 } from '@dcl/ecs-math';
 import type { UiTransformProps } from '@dcl/react-ecs';
-import { getContentUrl } from '../../constants';
+import { getAssetsUrl } from '../../constants';
 import { COLORS, RADIUS } from '../../theme';
 
 const ICONS = {
   get VERIFIED_USER() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/admin-panel-verified-user.png`;
+    return `${getAssetsUrl()}/icons/admin-panel-verified-user.png`;
   },
   get PERSON() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/person-outline.png`;
+    return `${getAssetsUrl()}/icons/person-outline.png`;
   },
   get BAN() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/ban.png`;
+    return `${getAssetsUrl()}/icons/ban.png`;
   },
 };
 

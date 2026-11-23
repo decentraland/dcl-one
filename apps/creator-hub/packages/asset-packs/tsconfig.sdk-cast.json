@@ -1,0 +1,16 @@
+{
+  // The installed @dcl/sdk has no `cast` module yet. `pnpm run sdk:cast` compiles the tree's module
+  // into the installed package, where tsc and the scene bundler find `@dcl/sdk/cast`, as they will in
+  // the SDK release that has it. Remove this file and the script when the workspace installs that release.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "inlineSourceMap": false,
+    "removeComments": false,
+    "rootDir": "../../../../library/js-sdk-toolchain/packages/@dcl/sdk/src/cast",
+    "outDir": "../../node_modules/@dcl/sdk/cast",
+    // The module is outside this workspace, where no node_modules answers its imports.
+    "paths": { "@dcl/ecs": ["../../node_modules/@dcl/ecs"] }
+  },
+  "include": ["../../../../library/js-sdk-toolchain/packages/@dcl/sdk/src/cast"]
+}

@@ -16,7 +16,7 @@ import {
   setActiveTab,
   togglePanel,
   isPreview,
-  getContentUrl,
+  getAssetsUrl,
   getAdminConfig,
   isAllowedAdmin,
   getSceneAdminsCache,
@@ -27,6 +27,7 @@ import {
   TextAnnouncementsControl,
   TextAnnouncements,
   SpeakerShowcase,
+  selectedTrack,
   SharePresentationModal,
   ModalUserList,
   UserListType,
@@ -46,10 +47,10 @@ import {
 
 const ADMIN_ICONS = {
   get control() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/admin-panel-control-button.png`;
+    return `${getAssetsUrl()}/icons/admin-panel-control-button.png`;
   },
   get background() {
-    return `${getContentUrl()}/admin_toolkit/assets/backgrounds/admin-tool-background.png`;
+    return `${getAssetsUrl()}/backgrounds/admin-tool-background.png`;
   },
 };
 
@@ -237,17 +238,14 @@ export function renderAdminPanel(
       state.videoControl.showcase.onClose && (
         <SpeakerShowcase
           participants={state.videoControl.participants}
-          activeTrackSid={state.videoControl.showcase.activeTrackSid}
+          activeTrackSid={selectedTrack(engine)}
           onSelectTrack={state.videoControl.showcase.onSelectTrack}
           onSetDefault={state.videoControl.showcase.onSetDefault}
           onClose={state.videoControl.showcase.onClose}
         />
       ),
     state.videoControl.sharePresentation.show && state.videoControl.sharePresentation.onClose && (
-      <SharePresentationModal
-        onClose={state.videoControl.sharePresentation.onClose}
-        streamingKey={state.videoControl.dclCast?.streamingKey ?? ''}
-      />
+      <SharePresentationModal onClose={state.videoControl.sharePresentation.onClose} />
     ),
   ];
 }

@@ -19,13 +19,14 @@ export { TabType } from './types';
 export type { State } from './types';
 export { setActiveTab, togglePanel, openPanel } from './actions';
 export { isPreview } from './fetch-utils';
-export { getContentUrl } from './constants';
+export { getAssetsUrl, getContentUrl } from './constants';
 export { VideoControl } from './VideoControl';
 export { ModerationControl } from './ModerationControl';
 export { SmartItemsControl } from './SmartItemsControl';
 export { TextAnnouncementsControl } from './TextAnnouncementsControl';
 export { TextAnnouncements } from './TextAnnouncements';
 export { SpeakerShowcase } from './VideoControl/DclCast/SpeakerShowcase';
+export { selectedTrack } from './VideoControl/utils';
 export { default as SharePresentationModal } from './VideoControl/DclCast/SharePresentationModal';
 export { ModalUserList, UserListType } from './ModerationControl/UsersList';
 export {

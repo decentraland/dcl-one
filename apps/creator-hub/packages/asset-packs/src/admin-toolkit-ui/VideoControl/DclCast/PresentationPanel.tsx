@@ -1,42 +1,53 @@
 // oxlint-disable-next-line no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { Label, UiEntity } from '@dcl/react-ecs';
+import type { Show } from '@dcl/sdk/cast';
 import { Button } from '../../Button';
-import type { PresentationState } from '../../types';
 import { COLORS, RADIUS, SPACING, TYPE } from '../../theme';
 import { icon } from '../../icons';
-import {
-  nextSlide,
-  prevSlide,
-  playPresentationVideo,
-  pausePresentationVideo,
-  stopPresentation,
-} from '../api';
+import { cast } from '../../cast';
 
-const PresentationPanel = ({
-  presentationState,
-  idPrefix = 'presentation_panel',
-  onStopSharing,
-}: {
-  presentationState: PresentationState | undefined;
-  idPrefix?: string;
-  onStopSharing?: () => void;
-}) => {
-  const isVideoPlaying =
-    presentationState?.videoState === 'playing' || presentationState?.videoState === 'loading';
-  const hasSlideVideo = (presentationState?.slideVideos?.length ?? 0) > 0;
+const CONTROL = {
+  flexGrow: 1,
+  flexBasis: 0,
+  minWidth: 0,
+  height: 34,
+  borderRadius: RADIUS.md,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+  padding: { left: 4, right: 4 },
+  margin: { right: SPACING.md },
+};
+const ICON = { width: 15, height: 15 };
 
-  const ctrl = {
-    flexGrow: 1,
-    flexBasis: 0,
-    minWidth: 0,
-    height: 34,
-    borderRadius: RADIUS.md,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    padding: { left: 4, right: 4 },
-    margin: { right: SPACING.md },
-  };
-  const iconTf = { width: 15, height: 15 };
+/**
+ * A presentation that is on: the stop control always, the slide controls once the bot states the
+ * slides (an explorer that does not deliver the bot's packets never reaches `showing`).
+ */
+const PresentationPanel = ({ show }: { show: Exclude<Show, { tag: 'none' }> }) => {
+  const slides = show.tag === 'showing' ? show.slides : undefined;
+  // The pause shows only while the bot says that the video plays: a presenter that plays no video
+  // (its state stays `idle`) never offers a control that it does not obey.
+  const playing = slides?.video === 'playing' || slides?.video === 'loading';
+  const { send } = cast();
+
+  const stop = (
+    <Button
+      id="dcl_cast_stop"
+      onlyIcon
+      variant="primary"
+      icon={icon('stop')}
+      iconTransform={ICON}
+      iconBackground={{ color: COLORS.white }}
+      uiTransform={{
+        width: 36,
+        height: 34,
+        borderRadius: RADIUS.md,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      onMouseDown={() => send({ do: 'stop' })}
+    />
+  );
 
   return (
     <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
@@ -60,73 +71,59 @@ const PresentationPanel = ({
             color={COLORS.success}
           />
         </UiEntity>
-        <Label
-          value={`Slide ${(presentationState?.currentSlide ?? 0) + 1} of ${
-            presentationState?.slideCount ?? 0
-          }`}
-          fontSize={TYPE.label}
-          color={COLORS.textSecondary}
-        />
+        {slides ? (
+          <Label
+            value={`Slide ${slides.slide + 1} of ${slides.count}`}
+            fontSize={TYPE.label}
+            color={COLORS.textSecondary}
+          />
+        ) : (
+          stop
+        )}
       </UiEntity>
 
-      <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-        <Button
-          id={`${idPrefix}_prev`}
-          value="Prev"
-          variant="secondary"
-          fontSize={TYPE.body}
-          color={COLORS.textTertiary}
-          icon={icon('arrowL')}
-          iconTransform={{ ...iconTf, margin: { right: 5 } }}
-          iconBackground={{ color: COLORS.textTertiary }}
-          uiTransform={ctrl}
-          onMouseDown={() => prevSlide()}
-        />
-        <Button
-          id={`${idPrefix}_next`}
-          value="Next"
-          variant="secondary"
-          fontSize={TYPE.body}
-          color={COLORS.textTertiary}
-          iconRight={icon('arrowR')}
-          iconRightTransform={{ ...iconTf, margin: { left: 5 } }}
-          iconRightBackground={{ color: COLORS.textTertiary }}
-          uiTransform={ctrl}
-          onMouseDown={() => nextSlide()}
-        />
-        <Button
-          id={`${idPrefix}_play`}
-          value={isVideoPlaying ? 'Pause video' : 'Play video'}
-          variant="secondary"
-          fontSize={TYPE.body}
-          color={COLORS.textTertiary}
-          disabled={!hasSlideVideo}
-          icon={isVideoPlaying ? icon('pause') : icon('play')}
-          iconTransform={{ ...iconTf, margin: { right: 5 } }}
-          iconBackground={{ color: COLORS.textTertiary }}
-          uiTransform={ctrl}
-          onMouseDown={() => (isVideoPlaying ? pausePresentationVideo() : playPresentationVideo(0))}
-        />
-        <Button
-          id={`${idPrefix}_stop`}
-          onlyIcon
-          variant="primary"
-          icon={icon('stop')}
-          iconTransform={iconTf}
-          iconBackground={{ color: COLORS.white }}
-          uiTransform={{
-            width: 36,
-            height: 34,
-            borderRadius: RADIUS.md,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          onMouseDown={() => {
-            stopPresentation();
-            onStopSharing?.();
-          }}
-        />
-      </UiEntity>
+      {slides && (
+        <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+          <Button
+            id="dcl_cast_prev"
+            value="Prev"
+            variant="secondary"
+            fontSize={TYPE.body}
+            color={COLORS.textTertiary}
+            icon={icon('arrowL')}
+            iconTransform={{ ...ICON, margin: { right: 5 } }}
+            iconBackground={{ color: COLORS.textTertiary }}
+            uiTransform={CONTROL}
+            onMouseDown={() => send({ do: 'slide', to: 'prev' })}
+          />
+          <Button
+            id="dcl_cast_next"
+            value="Next"
+            variant="secondary"
+            fontSize={TYPE.body}
+            color={COLORS.textTertiary}
+            iconRight={icon('arrowR')}
+            iconRightTransform={{ ...ICON, margin: { left: 5 } }}
+            iconRightBackground={{ color: COLORS.textTertiary }}
+            uiTransform={CONTROL}
+            onMouseDown={() => send({ do: 'slide', to: 'next' })}
+          />
+          <Button
+            id="dcl_cast_play"
+            value={playing ? 'Pause video' : 'Play video'}
+            variant="secondary"
+            fontSize={TYPE.body}
+            color={COLORS.textTertiary}
+            disabled={!slides.videos}
+            icon={icon(playing ? 'pause' : 'play')}
+            iconTransform={{ ...ICON, margin: { right: 5 } }}
+            iconBackground={{ color: COLORS.textTertiary }}
+            uiTransform={CONTROL}
+            onMouseDown={() => send(playing ? { do: 'pause' } : { do: 'play', video: 0 })}
+          />
+          {stop}
+        </UiEntity>
+      )}
     </UiEntity>
   );
 };

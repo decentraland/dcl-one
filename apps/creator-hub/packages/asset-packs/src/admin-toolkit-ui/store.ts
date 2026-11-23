@@ -15,14 +15,12 @@ export const state: State = {
   activeTab: TabType.NONE,
   videoControl: {
     selectedVideoPlayer: undefined,
-    selectedStream: undefined,
     selectedTab: undefined,
-    dclCast: undefined,
-    presentationState: undefined,
+    ask: undefined,
+    keyShownUntil: 0,
     participants: [],
     showcase: {
       show: false,
-      activeTrackSid: undefined,
       onSelectTrack: undefined,
       onSetDefault: undefined,
       onClose: undefined,

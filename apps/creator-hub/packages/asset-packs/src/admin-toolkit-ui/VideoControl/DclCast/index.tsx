@@ -1,148 +1,58 @@
+// oxlint-disable-next-line no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity } from '@dcl/react-ecs';
 import type { DeepReadonlyObject, Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
-import { getComponents } from '../../../definitions';
+import { LIVEKIT_STREAM_SRC } from '../../../definitions';
 import type { State } from '../../types';
-import { Button } from '../../Button';
-import { LoadingDots } from '../../Loading';
-import { LIVEKIT_STREAM_SRC } from '../LiveStream';
-import {
-  getDclCastInfo,
-  getActiveStreams,
-  groupTracksByParticipant,
-  resetStreamKey,
-  ensurePresenterRole,
-  type FlattenedTrack,
-} from '../api';
-import { CAST_SRC_PREFIX, createVideoPlayerControls } from '../utils';
-import {
-  openShowcase,
-  closeShowcase,
-  setShowcaseActiveTrack,
-  openSharePresentation,
-  closeSharePresentation,
-  setStream,
-  setParticipants,
-  setDclCastInfo,
-} from '../../actions';
+import { clearInterval, setInterval } from '../../utils';
+import { getActiveStreams, groupTracksByParticipant, type FlattenedTrack } from '../api';
+import { createVideoPlayerControls } from '../utils';
+import { openShowcase, closeShowcase, setParticipants } from '../../actions';
+import { cast, keyView, needsLinks } from '../../cast';
 import { COLORS, SPACING, TYPE } from '../../theme';
 import { SectionHeader, Icon } from '../../Primitives';
+import { Confirm, KeyStatus } from '../KeyStatus';
 import DclCastInfo from './DclCastInfo';
-import { getDclCastStyles, getDclCastColors } from './styles';
-
-async function handleGetDclCastInfo() {
-  const [error, data] = await getDclCastInfo();
-  if (error) {
-    console.error(error);
-    return null;
-  } else {
-    if (data) {
-      setDclCastInfo(data);
-      return data;
-    }
-  }
-}
 
 const DclCast = ({
   engine,
   state,
   entity,
   video,
-  playerAddress,
 }: {
   engine: IEngine;
   state: State;
   entity: Entity;
   video: DeepReadonlyObject<PBVideoPlayer> | undefined;
-  playerAddress: string | undefined;
 }) => {
-  const { VideoControlState } = getComponents(engine);
+  if (state.videoControl.ask) return <Confirm />;
   const controls = createVideoPlayerControls(entity, engine);
-  const styles = getDclCastStyles();
-  const colors = getDclCastColors();
-  const [isLoading, setIsLoading] = ReactEcs.useState(false);
-  const [error, setError] = ReactEcs.useState(false);
+  if (needsLinks()) cast().send({ do: 'link' });
+  const view = keyView();
+  const links = view.tag === 'key' && view.key.links;
 
   const onShowShowcaseModal = async () => {
-    const latestTracks = await getActiveStreams();
-    if (!latestTracks) return;
-
-    setParticipants(groupTracksByParticipant(latestTracks));
+    const refresh = async () => {
+      const tracks = await getActiveStreams();
+      if (tracks) setParticipants(groupTracksByParticipant(tracks));
+    };
+    await refresh();
+    const timer = setInterval(engine, refresh, 1000);
     openShowcase({
-      onSelectTrack: (track: FlattenedTrack) => {
-        controls.setSource(track.sid);
-        setShowcaseActiveTrack(track.sid);
-        setStream('dcl-cast');
+      onSelectTrack: (track: FlattenedTrack) => controls.setSource(track.sid, 'dcl-cast'),
+      onSetDefault: () => controls.setSource(LIVEKIT_STREAM_SRC, 'dcl-cast'),
+      onClose: () => {
+        clearInterval(engine, timer);
+        closeShowcase();
       },
-      onSetDefault: () => {
-        controls.setSource(LIVEKIT_STREAM_SRC);
-        setShowcaseActiveTrack(undefined);
-        setStream('dcl-cast');
-      },
-      onClose: () => closeShowcase(),
     });
   };
-
-  const fetchDclCastInfo = async () => {
-    setIsLoading(true);
-    setError(false);
-
-    const result = await handleGetDclCastInfo();
-
-    if (!result) {
-      setError(true);
-    } else if (video?.src?.startsWith(CAST_SRC_PREFIX) && !state.videoControl.selectedStream) {
-      setStream('dcl-cast');
-    }
-
-    setIsLoading(false);
-  };
-
-  const onSharePresentation = () => {
-    openSharePresentation(() => closeSharePresentation());
-  };
-
-  const handleResetRoomId = async () => {
-    setIsLoading(true);
-    const [error, data] = await resetStreamKey();
-    if (error) {
-      setIsLoading(false);
-      setError(true);
-    } else {
-      const videoControl = VideoControlState.getMutable(state.adminToolkitUiEntity);
-      videoControl.endsAt = data?.endsAt;
-      fetchDclCastInfo();
-    }
-  };
-
-  ReactEcs.useEffect(() => {
-    // ensurePresenterRole requires the stream/room that fetchDclCastInfo creates,
-    // so it must run after that call resolves, not in parallel with it (PR #1356).
-    fetchDclCastInfo().then(() => {
-      if (playerAddress) {
-        ensurePresenterRole(playerAddress);
-      }
-    });
-  }, []);
-
-  // Sync selectedStream when video.src arrives after mount (late-joiner fix)
-  const videoSrc = video?.src;
-  ReactEcs.useEffect(() => {
-    if (videoSrc?.startsWith(CAST_SRC_PREFIX) && !state.videoControl.selectedStream) {
-      setStream('dcl-cast');
-    }
-  }, [videoSrc]);
 
   return (
-    <UiEntity uiTransform={styles.fullContainer}>
-      <UiEntity
-        uiTransform={{
-          flexDirection: 'column',
-          width: '100%',
-        }}
-      >
-        <SectionHeader
-          title="DCL Cast room"
-          right={
+    <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
+      <SectionHeader
+        title="DCL Cast room"
+        right={
+          view.tag === 'key' && (
             <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
               <Icon
                 name="clock"
@@ -152,77 +62,44 @@ const DclCast = ({
               />
               <UiEntity
                 uiText={{
-                  value: `Expires in ${state.videoControl.dclCast?.expiresInDays ?? 0} days`,
+                  value: `Expires in ${view.expires}`,
                   fontSize: TYPE.label,
                   color: COLORS.textSecondary,
                 }}
               />
             </UiEntity>
-          }
+          )
+        }
+      />
+      <UiEntity
+        uiTransform={{
+          width: '100%',
+          height: 36,
+          margin: { top: SPACING.lg, bottom: SPACING.xl },
+        }}
+        uiText={{
+          value: 'Stream camera and screen from the browser to a screen in your scene.',
+          fontSize: TYPE.label,
+          color: COLORS.textSecondary,
+          textAlign: 'top-left',
+          textWrap: 'wrap',
+        }}
+      />
+      <KeyStatus
+        engine={engine}
+        view={view}
+        get={(view.tag === 'none' || (view.tag === 'key' && !links)) && 'Get Cast links'}
+        onGet={() => cast().send({ do: 'link' })}
+      />
+      {links && (
+        <DclCastInfo
+          links={links}
+          entity={entity}
+          engine={engine}
+          video={video}
+          onShowShowcaseModal={onShowShowcaseModal}
         />
-        <UiEntity
-          uiTransform={{
-            width: '100%',
-            height: 36,
-            margin: { top: SPACING.lg, bottom: SPACING.xl },
-          }}
-          uiText={{
-            value: 'Stream camera and screen from the browser to a screen in your scene.',
-            fontSize: TYPE.label,
-            color: COLORS.textSecondary,
-            textAlign: 'top-left',
-            textWrap: 'wrap',
-          }}
-        />
-        {isLoading && (
-          <LoadingDots
-            uiTransform={styles.loadingContainer}
-            engine={engine}
-          />
-        )}
-        {error && (
-          <UiEntity uiTransform={styles.columnCentered}>
-            <UiEntity
-              uiText={{
-                value: '<b>Failed to fetch DCL Cast info</b>',
-                fontSize: TYPE.subtitle,
-                color: COLORS.textPrimary,
-              }}
-              uiTransform={styles.marginBottomSmall}
-            />
-            <UiEntity
-              uiText={{
-                value: 'Please retry.',
-                fontSize: TYPE.body,
-                color: COLORS.textSecondary,
-              }}
-            />
-            <Button
-              id="dcl_cast_retry"
-              value="<b>Retry</b>"
-              variant="secondary"
-              fontSize={TYPE.button}
-              color={colors.white}
-              onMouseDown={() => {
-                fetchDclCastInfo();
-              }}
-              uiTransform={styles.retryButton}
-            />
-          </UiEntity>
-        )}
-
-        {!isLoading && !error && (
-          <DclCastInfo
-            state={state}
-            entity={entity}
-            engine={engine}
-            video={video}
-            onResetRoomId={handleResetRoomId}
-            onShowShowcaseModal={onShowShowcaseModal}
-            onSharePresentation={onSharePresentation}
-          />
-        )}
-      </UiEntity>
+      )}
     </UiEntity>
   );
 };

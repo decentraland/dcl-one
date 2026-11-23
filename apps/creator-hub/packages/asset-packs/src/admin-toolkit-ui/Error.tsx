@@ -1,6 +1,6 @@
 // oxlint-disable-next-line no-unused-vars
 import ReactEcs, { UiEntity, Label, type UiTransformProps } from '@dcl/react-ecs';
-import { getContentUrl } from './constants';
+import { getAssetsUrl } from './constants';
 import { COLORS, TYPE } from './theme';
 
 interface ErrorProps {
@@ -8,7 +8,7 @@ interface ErrorProps {
   uiTransform?: UiTransformProps;
 }
 
-export const getErrorIcon = () => `${getContentUrl()}/admin_toolkit/assets/icons/error.png`;
+export const getErrorIcon = () => `${getAssetsUrl()}/icons/error.png`;
 
 export function Error({ text, uiTransform }: ErrorProps) {
   return (

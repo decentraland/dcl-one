@@ -160,6 +160,17 @@ jobs:
           acl: 'public-read'
           cache-control: 'max-age=0,private'
 
+      # The package imports @dcl/sdk/cast from the SDK of the scene. While the workspace compiles the
+      # module of this repository (tsconfig.sdk-cast.json), no @dcl/sdk release has it.
+      - name: Require an @dcl/sdk release that has cast
+        if: ${{ github.ref == 'refs/heads/main' }}
+        working-directory: apps/creator-hub/packages/asset-packs
+        run: |
+          if [ -e tsconfig.sdk-cast.json ]; then
+            echo "::error::@dcl/asset-packs imports @dcl/sdk/cast, which the installed @dcl/sdk does not have; see the package README, \"@dcl/sdk/cast comes from this repository\""
+            exit 1
+          fi
+
       - name: publish to npm registry
         if: ${{ github.ref == 'refs/heads/main' }}
         uses: ./.github/actions/creator-hub-npm-publish

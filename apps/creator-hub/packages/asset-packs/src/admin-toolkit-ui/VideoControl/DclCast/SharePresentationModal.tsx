@@ -1,47 +1,38 @@
-import ReactEcs, { Input, Label, UiEntity } from '@dcl/react-ecs';
+import ReactEcs, { Label, UiEntity } from '@dcl/react-ecs';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';
-import { getPresentationBotToken, startPresentation } from '../api';
-import { COLORS, RADIUS, TYPE } from '../../theme';
+import { cast, refusal } from '../../cast';
+import { TYPE } from '../../theme';
+import { TextField } from '../../Primitives';
 import { getDclCastColors } from './styles';
+
+const PRESENT = ['present', 'slides'];
 
 const SharePresentationModal = ({
   onClose,
-  streamingKey,
 }: {
   onClose: () => void;
-  streamingKey: string;
+  /** @deprecated Not read: the Cast state holds the key. */
+  streamingKey?: string;
 }) => {
   const colors = getDclCastColors();
   const [url, setUrl] = ReactEcs.useState('');
-  const [isLoading, setIsLoading] = ReactEcs.useState(false);
-  const [error, setError] = ReactEcs.useState('');
+  const [sent, setSent] = ReactEcs.useState(false);
+  const [empty, setEmpty] = ReactEcs.useState(false);
+  const following = cast().state;
+  const isLoading = following.tag === 'following' && PRESENT.includes(following.write?.of ?? '');
+  const error = empty ? 'Please enter a URL' : sent ? refusal(following, PRESENT) : '';
 
-  const handleShare = async () => {
-    if (!url.trim()) {
-      setError('Please enter a URL');
-      return;
-    }
+  // The answer is the next state: the modal closes when the presentation started.
+  ReactEcs.useEffect(() => {
+    if (sent && !isLoading && !error) onClose();
+  }, [sent, isLoading, error]);
 
-    setIsLoading(true);
-    setError('');
-
-    const [tokenError, tokenData] = await getPresentationBotToken(streamingKey);
-    if (tokenError || !tokenData) {
-      setError(tokenError ?? 'Failed to get presentation token');
-      setIsLoading(false);
-      return;
-    }
-
-    const [presentationError] = await startPresentation(url.trim(), tokenData.token, tokenData.url);
-    if (presentationError) {
-      setError(presentationError);
-      setIsLoading(false);
-      return;
-    }
-
-    setIsLoading(false);
-    onClose();
+  const handleShare = () => {
+    setEmpty(!url.trim());
+    if (!url.trim()) return;
+    cast().send({ do: 'present', file: url.trim() });
+    setSent(true);
   };
 
   return (
@@ -64,33 +55,17 @@ const SharePresentationModal = ({
           color={colors.lightGray}
           uiTransform={{ margin: { bottom: 8 } }}
         />
-        <UiEntity
-          uiTransform={{
-            flexDirection: 'row',
-            width: '100%',
-            alignItems: 'center',
+        <TextField
+          onChange={value => {
+            setEmpty(false);
+            setSent(false);
+            setUrl(value);
           }}
-        >
-          <Input
-            onChange={value => {
-              setError('');
-              setUrl(value);
-            }}
-            value={url}
-            fontSize={TYPE.body}
-            placeholder="https://example.com/slides.pdf"
-            placeholderColor={COLORS.inputPlaceholder}
-            color={COLORS.inputText}
-            uiBackground={{ color: COLORS.inputBackground }}
-            uiTransform={{
-              width: '100%',
-              borderWidth: 1,
-              borderRadius: RADIUS.sm,
-              borderColor: error ? colors.danger : COLORS.inputBorder,
-              height: 48,
-            }}
-          />
-        </UiEntity>
+          value={url}
+          placeholder="https://example.com/slides.pdf"
+          invalid={!!error}
+          uiTransform={{ width: '100%' }}
+        />
         {!!error && (
           <Label
             value={error}

@@ -98,7 +98,8 @@ export class AdminTools {
     // NOTE: this smart item's composite keeps an `asset-packs::Placeholder`, which is what makes
     // the scene an "editor scene" so `@dcl/sdk-commands` bundles `initAssetPacks` — the thing that
     // registers the asset-pack components (VideoControlState, TextAnnouncements, …) the UI needs.
-    setAdminConfig(this.buildConfig(), this.entity);
+    // `src` is the folder of this file in the scene. It holds the panel's pictures.
+    setAdminConfig(this.buildConfig(), this.entity, this.src);
 
     // The Admin Toolkit is a CLIENT-ONLY feature: it renders a React UI, opens a text-comms
     // MessageBus, and calls the comms-gatekeeper scene-admin/scene-bans endpoints. SDK7 runs the
