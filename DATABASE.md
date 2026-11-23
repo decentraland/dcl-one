@@ -2872,6 +2872,18 @@ Invariants:
   has. It removes each entity row that it moved. It can run again: it moves
   only rows that have an entity key, and never changes the key of a row that
   is on a parcel or a world-scene identity.
+- A Genesis grant on its scene's least parcel, while the scene's place is
+  another declared base, is read by no request of that scene, and no script
+  moves it: the same row can be a grant made for an earlier scene whose base
+  was that parcel and that the place removal cleanup has not revoked, which
+  this scene does not inherit. A database that holds
+  Genesis grants on parcel keys when it takes the release can hold such
+  rows. The operator lists them with the check in
+  `infra/containers/README.md` "Scene admin upgrade" (active Genesis
+  deployments whose `social.scene_base_parcel` over `{v,scene,base}` differs
+  from the one over no declared base, joined to the active grants on the
+  latter) and sets `place_id` to the place on each row made for the listed
+  scene.
 - A row keeps the entity key when its entity is not deployed, or has no
   parcel that parses. A world scene with no active identity reads its grants
   by entity id, so a retired world scene still reads such a row inside its
@@ -2935,7 +2947,9 @@ Invariants:
   not supported after the move; restore the matching backup. A row of an
   entity that is not deployed, or has no parcel that parses, keeps its key,
   and no request reads it. A local preview scene, which has no deployment,
-  keeps its entity id.
+  keeps its entity id. A ban on a scene's least parcel while the scene's
+  place is another declared base stays where it is, as an admin grant does
+  ("Scene admin grants"); the same operator check lists it.
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
 
