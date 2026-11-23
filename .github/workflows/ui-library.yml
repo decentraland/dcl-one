@@ -154,15 +154,11 @@ jobs:
       - run: pnpm review:build --base ./
       # The runtime gallery builds into review-dist/gallery, so the one artifact below carries both routes.
       - run: pnpm exec vite build --config gallery/vite.config.ts
-      # The hosted gallery (the gallery alone, without the Figma reference) builds into review-dist/hosted, inside the
-      # same artifact: ui-gallery-publish.yml publishes that directory once the key scan has cleared the artifact.
-      - run: pnpm exec vite build --config gallery/vite.config.ts --mode hosted --outDir "$PWD/figma/review/review-dist/hosted"
       # The same output, served at the root and under a nested prefix: the generated Review navigates and renders;
       # every runtime example draws in its iframe canvas, media queries follow its width, and the generated route
-      # opens the generated Review. The hosted gallery is checked as the bucket serves it, under a prefix as deep as
-      # ui-gallery/pr/<n>/<sha>/. The three gallery checks run side by side, each with its own server and browser
-      # profile, and the step fails when any does.
-      - name: Check both routes and the hosted gallery
+      # opens the generated Review. The two gallery checks run side by side, each with its own server and browser
+      # profile, and the step fails when either does.
+      - name: Check both routes at the root and under a nested prefix
         run: |
           for prefix in / /nested/prefix/; do
             node figma/review/scripts/check-build.mjs figma/review/review-dist --prefix "$prefix"
@@ -171,12 +167,9 @@ jobs:
           root=$!
           node gallery/scripts/check-build.mjs figma/review/review-dist --prefix /nested/prefix/ &
           nested=$!
-          node gallery/scripts/check-build.mjs figma/review/review-dist/hosted --hosted --prefix /ui-gallery/pr/0/head/ &
-          hosted=$!
           status=0
           wait "$root" || status=1
           wait "$nested" || status=1
-          wait "$hosted" || status=1
           exit "$status"
       # The hosted gallery Sites serves at /ui-gallery/ (infra/packages/ui-gallery.nix), built as that package builds
       # it, rides in the scanned artifact: an image is published only with a successful key scan of these exact bytes
@@ -186,6 +179,10 @@ jobs:
           pnpm exec vite build --config gallery/vite.config.ts --mode hosted
           node gallery/scripts/hosted-digest.mjs gallery/dist
           cp -R gallery/dist figma/review/review-dist/ui-gallery
+      # The same bytes as a pull request preview serves them (ui-gallery-publish.yml): opened as index.html under a
+      # prefix as deep as ui-gallery/pr/<n>/<sha>/. check-build only reads the build it serves.
+      - name: Check the hosted gallery under a preview prefix
+        run: node gallery/scripts/check-build.mjs gallery/dist --hosted --prefix /ui-gallery/pr/1/0000000000000000000000000000000000000000/
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist

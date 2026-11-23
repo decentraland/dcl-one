@@ -2,12 +2,17 @@
 """Publish the hosted UI gallery of a pull request once the key scan has cleared it.
 
 ui-gallery-publish.yml runs this from the default branch when the Shared UI library key scan completes. Nothing it
-reads from a pull request is executed: the Review artifact is data, bound to the digest the scan downloaded.
+reads from a pull request is executed: the Review artifact is data, bound to the digest the scan downloaded. What it
+publishes is the artifact's `ui-gallery/`: the hosted gallery build the Shared UI library run adds to it, the one Sites
+serves, under the digest gallery/scripts/hosted-digest.mjs and tooling/ui-gallery-receipt.py compute.
 
   verify   the key scan that triggered the run downloaded and scanned the Review artifact of an open pull request
-           from this repository at its current head; prints the pull request, the head and the artifact id and digest
-  fetch    downloads that artifact by id, checks its digest and unpacks hosted/ (before any credential exists)
-  upload   copies hosted/ to s3://$UI_GALLERY_BUCKET/ui-gallery/pr/<n>/<sha>/ with explicit content types
+           from this repository at its current head, and that pull request changes a file under library/ui; prints
+           the pull request, the head, the artifact id and digest, and the repository variables the later jobs use
+  fetch    downloads that artifact by id, checks its digest and layout and unpacks ui-gallery/ (before any
+           credential); prints the gallery digest of the unpacked files, which must equal the artifact's
+  upload   copies those files, still at that gallery digest, to s3://$UI_GALLERY_BUCKET/ui-gallery/pr/<n>/<sha>/
+           with explicit content types
   probe    waits until the preview answers 200 through $UI_GALLERY_BASE_URL
   comment  creates or updates the one gallery comment on the pull request
 
@@ -16,12 +21,14 @@ Review artifact) ends with a notice and publishes nothing. Evidence that does no
 """
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -29,6 +36,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
+
+
+def _receipt():
+    """tooling/ui-gallery-receipt.py, the Sites image's receipt check: its digest of a hosted gallery, over files and
+    over an artifact's ui-gallery/, is the one this publisher binds to."""
+    path = Path(__file__).with_name('ui-gallery-receipt.py')
+    spec = importlib.util.spec_from_file_location('ui_gallery_receipt', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+receipt = _receipt()
 
 SCAN_WORKFLOW = '.github/workflows/ui-library-key-scan.yml'
 SCANNED_WORKFLOW = '.github/workflows/ui-library.yml'
@@ -38,8 +59,10 @@ FORMATS = {
     'UI_GALLERY_ROLE_ARN': re.compile(r'arn:aws(?:-[a-z]+)*:iam::\d{12}:role/[\w+=,.@/-]{1,512}'),
     'UI_GALLERY_BUCKET': re.compile(r'(?!.*\.\.)[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'),
     'UI_GALLERY_AWS_REGION': re.compile(r'[a-z]{2}(?:-[a-z]+)+-\d{1,2}'),
-    # An origin without a trailing slash: the preview is <origin>/ui-gallery/pr/<n>/<sha>/index.html.
-    'UI_GALLERY_BASE_URL': re.compile(r'https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+'),
+    # The distribution's own CloudFront domain, never a host under a site of ours: previews run pull request scripts,
+    # which must share no cookie with dcl.dev. An origin without a trailing slash: the preview is
+    # <origin>/ui-gallery/pr/<n>/<sha>/index.html.
+    'UI_GALLERY_BASE_URL': re.compile(r'https://[a-z0-9]+\.cloudfront\.net'),
 }
 # The bucket's lifecycle rule expires ui-gallery/pr/ objects this many days after their upload.
 RETENTION_DAYS = 5
@@ -47,6 +70,13 @@ MARKER = '<!-- ui-gallery-preview -->'
 BOT = 'github-actions[bot]'
 SHA = re.compile(r'[0-9a-f]{40}')
 DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
+GALLERY_DIGEST = re.compile(r'[0-9a-f]{64}')
+# Only a pull request that changes a file under this tree gets a preview. The library job also runs for the other trees
+# the gallery compiles (library/explorer-core) and for its build inputs, which alone get no link.
+LIBRARY = 'library/ui/'
+# GitHub lists at most this many files of a pull request.
+LISTED_FILES = 3000
+GALLERY = receipt.PREFIX
 # Every file type the hosted gallery may hold and the type it is served with; any other file fails the fetch.
 TYPES = {
     'html': 'text/html; charset=utf-8',
@@ -71,7 +101,7 @@ TYPES = {
 # Pages are re-read soon, since a later build of the same head replaces them; Vite names every other file by its hash.
 PAGE_CACHE = 'public, max-age=300'
 ASSET_CACHE = 'public, max-age=86400, immutable'
-# The key guard's limits for an unpacked artifact, applied to hosted/; the download itself is capped too.
+# The key guard's limits for an unpacked artifact, applied to ui-gallery/; the download itself is capped too.
 LIMITS = {'files': 5000, 'total_bytes': 256 * 1024 * 1024, 'file_bytes': 16 * 1024 * 1024, 'depth': 32}
 ARCHIVE_BYTES = 512 * 1024 * 1024
 PROBE_DELAYS = (5, 10, 15, 20, 20, 20, 20)
@@ -110,18 +140,25 @@ class GitHub:
             raise ApiError(path, int(status.group(1)) if status else None, message or 'gh api failed')
         return result.stdout
 
+    def _json(self, arguments, path):
+        try:
+            return json.loads(self._call(arguments, path) or b'null')
+        except json.JSONDecodeError as error:
+            raise ApiError(path, None, f'answered with invalid JSON: {error}') from None
+
     def get(self, path, **query):
-        return json.loads(self._call(['--method', 'GET', *query_fields(query)], path))
+        return self._json(['--method', 'GET', *query_fields(query)], path)
 
     def pages(self, path, key=None, **query):
-        pages = json.loads(self._call(['--paginate', '--slurp', '--method', 'GET', *query_fields(query)], path))
+        """Every item of a paginated list: the pages themselves, or each page's `key` array."""
+        pages = self._json(['--paginate', '--slurp', '--method', 'GET', *query_fields(query)], path)
         return [item for page in pages for item in (page if key is None else page.get(key, []))]
 
     def text(self, path):
         return self._call([], path).decode('utf-8', errors='replace')
 
     def send(self, method, path, **fields):
-        return json.loads(self._call(['--method', method, *query_fields(fields)], path) or b'null')
+        return self._json(['--method', method, *query_fields(fields)], path)
 
     def download(self, path, target, limit):
         size = 0
@@ -134,7 +171,12 @@ class GitHub:
                     raise Reject(f'{path} is larger than {limit} bytes')
                 sink.write(chunk)
             error = process.stderr.read().decode(errors='replace').strip()
-            if process.wait(timeout=60):
+            try:
+                status = process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise ApiError(path, None, 'the download did not finish within 60 seconds') from None
+            if status:
                 raise ApiError(path, None, error or 'download failed')
 
 
@@ -215,10 +257,13 @@ def check_scan_run(github, run, repository, default_branch, attempt):
 
 def scan_job(jobs):
     """The scan's key-scan job, which ran every step: its one conditional step downloads the Review artifact, and it
-    runs only when the scanned range changes the UI library."""
-    names = sorted(job.get('name') for job in jobs)
-    if names != ['key-scan', 'prepare']:
-        raise Reject(f'the key scan ran the jobs {names}, not prepare and key-scan')
+    runs only when the scanned range changes the UI library. An attempt that re-ran only some jobs may list key-scan
+    alone."""
+    names = [job.get('name') for job in jobs]
+    if set(names) - {'prepare', 'key-scan'} or any(names.count(name) > 1 for name in names):
+        raise Reject(f'the key scan ran the jobs {sorted(map(str, names))}, not prepare and key-scan')
+    if 'key-scan' not in names:
+        raise Skip('the key-scan job did not run in this attempt: nothing was scanned')
     job = next(job for job in jobs if job.get('name') == 'key-scan')
     if job.get('conclusion') != 'success':
         raise Skip(f'the key-scan job concluded {job.get("conclusion")}: nothing was scanned')
@@ -325,6 +370,16 @@ def open_pull_request(github, repository, run, head):
     return pull['number']
 
 
+def changes_library(github, repository, pull):
+    """The pull request adds, changes, removes or renames a file under library/ui."""
+    files = github.pages(f'repos/{repository}/pulls/{pull}/files', per_page=100)
+    if any(str(item.get(key) or '').startswith(LIBRARY) for item in files for key in ('filename', 'previous_filename')):
+        return
+    if len(files) >= LISTED_FILES:
+        raise Skip(f'pull request #{pull} lists {len(files)} files, the most GitHub returns, none under {LIBRARY}')
+    raise Skip(f'pull request #{pull} changes no file under {LIBRARY}: only a library/ui change gets a preview')
+
+
 def check_artifact(github, repository, repository_id, scanned):
     name = f'ui-review-{scanned["head"]}'
     artifact = github.get(f'repos/{repository}/actions/artifacts/{scanned["artifact"]}')
@@ -347,7 +402,9 @@ def check_artifact(github, repository, repository_id, scanned):
 
 def verify(env, github=None):
     github = github or GitHub()
-    configuration(env)
+    # The later jobs use these values from this job's outputs: the publish job names the ui-gallery environment, where
+    # vars.* would read environment variables first, so it must not read them again.
+    values = configuration(env)
     repository, default_branch = env['REPOSITORY'], env['DEFAULT_BRANCH']
     repository_id, scan_id, attempt = (number(env, name) for name in ('REPOSITORY_ID', 'SCAN_RUN_ID',
                                                                       'SCAN_RUN_ATTEMPT'))
@@ -360,11 +417,14 @@ def verify(env, github=None):
     check_scanned_run(github, run, repository, scanned['head'])
     library_built(github.pages(f'repos/{repository}/actions/runs/{scanned["run"]}/jobs', 'jobs'))
     pull = open_pull_request(github, repository, run, scanned['head'])
+    changes_library(github, repository, pull)
     check_artifact(github, repository, repository_id, scanned)
     print(f'Pull request #{pull} at {scanned["head"]}: the key scan cleared artifact {scanned["artifact"]} '
           f'({scanned["digest"]}) of run {scanned["run"]}')
     return {'publish': 'true', 'pr': pull, 'head': scanned['head'], 'run': scanned['run'],
-            'artifact': scanned['artifact'], 'digest': scanned['digest']}
+            'artifact': scanned['artifact'], 'digest': scanned['digest'], 'role': values['UI_GALLERY_ROLE_ARN'],
+            'bucket': values['UI_GALLERY_BUCKET'], 'region': values['UI_GALLERY_AWS_REGION'],
+            'base': values['UI_GALLERY_BASE_URL']}
 
 
 # --- fetch ----------------------------------------------------------------------------------------------------------
@@ -377,14 +437,67 @@ def sha256(path):
     return f'sha256:{digest.hexdigest()}'
 
 
-def unpack_hosted(archive, site):
-    """Writes the regular files under hosted/ into the empty directory site and returns their paths. The archive is
-    pull request output: a path that is absolute, climbs or repeats, a link, an unknown file type or a breach of a
-    limit fails the whole archive."""
+LOCAL_HEADER = struct.Struct('<IHHHHHIIIHH')  # signature, version, flags, method, time, date, crc, sizes, lengths
+LOCAL_SIGNATURE = 0x04034b50
+DESCRIPTOR_SIGNATURE = b'PK\x07\x08'
+
+
+def check_layout(data, bundle):
+    """The entries lie back to back from the archive's first byte to its central directory, in the directory's order,
+    as upload-artifact writes them: each local header names the directory's file and method, each deflate stream ends
+    exactly at its recorded size, and each data descriptor matches. This reader extracts by the central directory; the
+    key scan's download reads the local headers from the front. With this layout both meet the same files."""
+    position = 0
+    for info in bundle.infolist():
+        name = info.filename.encode('utf-8' if info.flag_bits & 0x800 else 'cp437')
+        if info.header_offset != position or position + LOCAL_HEADER.size > len(data):
+            raise Reject(f'the artifact holds bytes outside its entries before {info.filename!r}')
+        signature, _, flags, method, _, _, crc, compressed, size, name_length, extra_length = \
+            LOCAL_HEADER.unpack_from(data, position)
+        start = position + LOCAL_HEADER.size + name_length + extra_length
+        if (signature != LOCAL_SIGNATURE or flags != info.flag_bits or method != info.compress_type
+                or data[position + LOCAL_HEADER.size:position + LOCAL_HEADER.size + name_length] != name):
+            raise Reject(f'the local header of {info.filename!r} differs from the central directory')
+        if method != zipfile.ZIP_DEFLATED:
+            raise Reject(f'{info.filename!r} is not deflated, as upload-artifact writes every file')
+        end = start + info.compress_size
+        inflate, pending, produced, chunk = zlib.decompressobj(-zlib.MAX_WBITS), data[start:end], 0, 1 << 20
+        while True:
+            output = inflate.decompress(pending, chunk)
+            produced += len(output)
+            pending = inflate.unconsumed_tail
+            if produced > info.file_size or (not pending and len(output) < chunk):
+                break
+        if end > len(data) or produced != info.file_size or not inflate.eof or inflate.unused_data:
+            raise Reject(f'the compressed data of {info.filename!r} does not end at its recorded size')
+        position = end
+        if flags & 0x08:
+            position += 4 if data[position:position + 4] == DESCRIPTOR_SIGNATURE else 0
+            recorded = (info.CRC, info.compress_size, info.file_size)
+            if position + 12 <= len(data) and struct.unpack_from('<III', data, position) == recorded:
+                position += 12
+            elif position + 20 <= len(data) and struct.unpack_from('<IQQ', data, position) == recorded:
+                position += 20
+            else:
+                raise Reject(f'the data descriptor of {info.filename!r} differs from the central directory')
+        elif (crc, compressed, size) != (info.CRC, info.compress_size, info.file_size):
+            raise Reject(f'the local header of {info.filename!r} differs from the central directory')
+    if position != bundle.start_dir:
+        raise Reject('the artifact holds bytes between its last entry and its central directory')
+
+
+def unpack_gallery(archive, site):
+    """Writes the regular files under ui-gallery/ into the empty directory site and returns their paths and their
+    gallery digest, which must equal the digest of ui-gallery/ in the archive. The archive is pull request output: a
+    layout check_layout refuses, a path that is absolute, climbs, repeats or is hidden, a link, an unknown file type
+    or a breach of a limit fails the whole archive."""
     site.mkdir(parents=True)
     files, total, seen = [], 0, set()
+    root = GALLERY.rstrip('/')
     try:
+        data = Path(archive).read_bytes()
         with zipfile.ZipFile(archive) as bundle:
+            check_layout(data, bundle)
             for info in bundle.infolist():
                 name = info.filename
                 parts = name.rstrip('/').split('/')
@@ -394,14 +507,14 @@ def unpack_hosted(archive, site):
                 if name in seen:
                     raise Reject(f'the artifact repeats {name!r}')
                 seen.add(name)
-                if parts[0] != 'hosted' or info.is_dir():
+                if parts[0] != root or info.is_dir():
                     continue
                 kind = stat.S_IFMT(info.external_attr >> 16)
                 if kind not in (0, stat.S_IFREG):
                     raise Reject(f'{name} is not a regular file')
                 relative = parts[1:]
                 if not relative or len(relative) > LIMITS['depth']:
-                    raise Reject(f'{name} is not a file within {LIMITS["depth"]} levels of hosted/')
+                    raise Reject(f'{name} is not a file within {LIMITS["depth"]} levels of {GALLERY}')
                 extension = PurePosixPath(relative[-1]).suffix[1:]
                 if extension not in TYPES:
                     raise Reject(f'{name} has no content type: {sorted(TYPES)} are served')
@@ -409,17 +522,22 @@ def unpack_hosted(archive, site):
                 if info.file_size > LIMITS['file_bytes'] or total > LIMITS['total_bytes']:
                     raise Reject(f'{name} exceeds the size limits of the hosted gallery')
                 if len(files) >= LIMITS['files']:
-                    raise Reject('hosted/ holds too many files')
+                    raise Reject(f'{GALLERY} holds too many files')
                 target = site.joinpath(*relative)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with bundle.open(info) as source, open(target, 'xb') as sink:
                     shutil.copyfileobj(source, sink)
                 files.append('/'.join(relative))
-    except (zipfile.BadZipFile, OSError, RuntimeError, EOFError) as error:
+        if 'index.html' not in files:
+            raise Reject(f'the artifact has no {GALLERY}index.html: its run built no hosted gallery')
+        scanned, unpacked = receipt.artifact_digest(data), receipt.tree_digest(site)
+    except receipt.ReceiptError as error:
+        raise Reject(f'the artifact holds no publishable {GALLERY}: {error}') from None
+    except (zipfile.BadZipFile, zlib.error, struct.error, OSError, RuntimeError, EOFError) as error:
         raise Reject(f'the artifact cannot be unpacked safely: {error}') from None
-    if 'index.html' not in files:
-        raise Reject('the artifact has no hosted/index.html: its run built no hosted gallery')
-    return files
+    if unpacked != scanned:
+        raise Reject(f'digest mismatch: the unpacked gallery is {unpacked}, the artifact holds {scanned}')
+    return files, scanned
 
 
 def fetch(env, github=None):
@@ -444,9 +562,9 @@ def fetch(env, github=None):
     actual = sha256(archive)
     if actual != expected:
         raise Reject(f'digest mismatch: the downloaded artifact is {actual}, the key scan cleared {expected}')
-    files = unpack_hosted(archive, work / 'site')
-    print(f'hosted/ of artifact {artifact_id} ({expected}): {len(files)} files')
-    return {}
+    files, gallery = unpack_gallery(archive, work / 'site')
+    print(f'{GALLERY} of artifact {artifact_id} ({expected}): {len(files)} files, gallery digest {gallery}')
+    return {'gallery': gallery}
 
 
 # --- upload and probe -----------------------------------------------------------------------------------------------
@@ -455,15 +573,31 @@ def site_files(site):
     return sorted(path.relative_to(site).as_posix() for path in site.rglob('*') if path.is_file())
 
 
-def upload(env, run=subprocess.run, today=None):
+def utc_today():
+    return datetime.datetime.now(datetime.timezone.utc).date()
+
+
+def upload(env, run=subprocess.run, today=utc_today):
     values = configuration(env, ('UI_GALLERY_BUCKET', 'UI_GALLERY_AWS_REGION'), required=True)
     prefix = preview_prefix(number(env, 'PR_NUMBER'), head_sha(env))
+    expected = env.get('GALLERY_DIGEST') or ''
+    if not GALLERY_DIGEST.fullmatch(expected):
+        raise Reject(f'GALLERY_DIGEST is not a sha256 digest: {expected!r}')
     site = Path(env['WORK_DIR']) / 'site'
     files = site_files(site)
     extensions = sorted({PurePosixPath(path).suffix[1:] for path in files})
     if 'index.html' not in files or any(extension not in TYPES for extension in extensions):
         raise Reject(f'{site} is not an unpacked hosted gallery')
+    try:
+        actual = receipt.tree_digest(site)
+    except receipt.ReceiptError as error:
+        raise Reject(f'{site} is not an unpacked hosted gallery: {error}') from None
+    if actual != expected:
+        raise Reject(f'digest mismatch: {site} is {actual}, the fetch unpacked {expected}')
     destination = f's3://{values["UI_GALLERY_BUCKET"]}/{prefix}/'
+    # The lifecycle rule counts from each object's creation, and every object is created on or after this date, even
+    # when the upload crosses midnight UTC.
+    expires = today() + datetime.timedelta(RETENTION_DAYS)
     # One copy per type, so each object gets its type and cache header. cp never lists or deletes in the bucket and
     # sets no ACL: the writer role may only put objects, and the bucket blocks public access.
     for extension in extensions:
@@ -473,8 +607,7 @@ def upload(env, run=subprocess.run, today=None):
                    '--region', values['UI_GALLERY_AWS_REGION'], '--only-show-errors']
         if run(command).returncode:
             raise Reject(f'the upload of the .{extension} files to {destination} failed')
-    expires = (today or datetime.datetime.now(datetime.timezone.utc).date()) + datetime.timedelta(RETENTION_DAYS)
-    print(f'Uploaded {len(files)} files to {destination}; the bucket expires them after {expires.isoformat()}')
+    print(f'Uploaded {len(files)} files to {destination}; the bucket keeps them until at least {expires.isoformat()}')
     return {'expires': expires.isoformat()}
 
 

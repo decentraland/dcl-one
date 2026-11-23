@@ -1,15 +1,18 @@
 name: UI gallery publish
 
-# Publishes the hosted UI gallery of a pull request that changes the shared UI library, once the key scan has
+# Publishes the hosted UI gallery of a pull request that changes a file under library/ui, once the key scan has
 # cleared its Review artifact, and links it from one comment on the pull request. The decision record is
 # docs/adr/2026-11-20-ui-gallery-previews.md. It runs from the default branch only: workflow_run always uses main's
 # copy of this file, every job checks out this workflow's commit, and the pull request reaches it only as the
 # artifact bytes the scan read.
 #   verify   holds no credential. tooling/ui-gallery-publish.py proves the scan run, the scanned pull request run,
-#            the open pull request at that head, and the artifact id and digest the scan downloaded. Until the
-#            repository variables and the ui-gallery environment exist it ends with a notice.
-#   publish  checks the downloaded bytes against that digest and unpacks hosted/ before any credential exists, then
-#            assumes UI_GALLERY_ROLE_ARN through OIDC (environment ui-gallery, main only), copies the files to
+#            the open pull request at that head and its library/ui change, and the artifact id and digest the scan
+#            downloaded. Until the repository variables and the ui-gallery environment exist it ends with a notice.
+#            It is the only job that reads vars: publish names the ui-gallery environment, where vars.* would prefer
+#            environment variables, so the later jobs use the repository values verify checked, from its outputs.
+#   publish  checks the downloaded bytes against that digest and unpacks the artifact's ui-gallery/ (the hosted build
+#            Sites serves) before any credential exists, then assumes the writer role through OIDC (environment
+#            ui-gallery, main only), copies the files, still at the gallery digest of the scanned bytes, to
 #            ui-gallery/pr/<n>/<sha>/ and waits until the preview answers.
 #   comment  creates or updates the pull request's one gallery comment.
 on:
@@ -35,6 +38,10 @@ jobs:
       run: ${{ steps.verify.outputs.run }}
       artifact: ${{ steps.verify.outputs.artifact }}
       digest: ${{ steps.verify.outputs.digest }}
+      role: ${{ steps.verify.outputs.role }}
+      bucket: ${{ steps.verify.outputs.bucket }}
+      region: ${{ steps.verify.outputs.region }}
+      base: ${{ steps.verify.outputs.base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,9 +84,12 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
-          sparse-checkout: tooling/ui-gallery-publish.py
+          sparse-checkout: |
+            tooling/ui-gallery-publish.py
+            tooling/ui-gallery-receipt.py
           sparse-checkout-cone-mode: false
       - name: Check the artifact bytes and unpack the hosted gallery
+        id: fetch
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -91,8 +101,8 @@ jobs:
         run: python3 -I tooling/ui-gallery-publish.py fetch
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.UI_GALLERY_ROLE_ARN }}
-          aws-region: ${{ vars.UI_GALLERY_AWS_REGION }}
+          role-to-assume: ${{ needs.verify.outputs.role }}
+          aws-region: ${{ needs.verify.outputs.region }}
           role-duration-seconds: 900
       - name: Upload the hosted gallery
         id: upload
@@ -100,15 +110,16 @@ jobs:
           PR_NUMBER: ${{ needs.verify.outputs.pr }}
           HEAD_SHA: ${{ needs.verify.outputs.head }}
           WORK_DIR: ${{ runner.temp }}/ui-gallery
-          UI_GALLERY_BUCKET: ${{ vars.UI_GALLERY_BUCKET }}
-          UI_GALLERY_AWS_REGION: ${{ vars.UI_GALLERY_AWS_REGION }}
+          GALLERY_DIGEST: ${{ steps.fetch.outputs.gallery }}
+          UI_GALLERY_BUCKET: ${{ needs.verify.outputs.bucket }}
+          UI_GALLERY_AWS_REGION: ${{ needs.verify.outputs.region }}
         run: python3 -I tooling/ui-gallery-publish.py upload
       - name: Wait until the preview answers
         env:
           PR_NUMBER: ${{ needs.verify.outputs.pr }}
           HEAD_SHA: ${{ needs.verify.outputs.head }}
           WORK_DIR: ${{ runner.temp }}/ui-gallery
-          UI_GALLERY_BASE_URL: ${{ vars.UI_GALLERY_BASE_URL }}
+          UI_GALLERY_BASE_URL: ${{ needs.verify.outputs.base }}
         run: python3 -I tooling/ui-gallery-publish.py probe
 
   comment:
@@ -135,5 +146,5 @@ jobs:
           PR_NUMBER: ${{ needs.verify.outputs.pr }}
           HEAD_SHA: ${{ needs.verify.outputs.head }}
           EXPIRES: ${{ needs.publish.outputs.expires }}
-          UI_GALLERY_BASE_URL: ${{ vars.UI_GALLERY_BASE_URL }}
+          UI_GALLERY_BASE_URL: ${{ needs.verify.outputs.base }}
         run: python3 -I tooling/ui-gallery-publish.py comment

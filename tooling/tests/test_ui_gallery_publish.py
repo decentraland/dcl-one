@@ -26,9 +26,9 @@ VARIABLES = {
     'UI_GALLERY_ROLE_ARN': 'arn:aws:iam::123456789012:role/ui-gallery-writer',
     'UI_GALLERY_BUCKET': 'example-ui-gallery',
     'UI_GALLERY_AWS_REGION': 'us-east-1',
-    'UI_GALLERY_BASE_URL': 'https://ui-gallery.example.com',
+    'UI_GALLERY_BASE_URL': 'https://d111111abcdef8.cloudfront.net',
 }
-PAGE = f'https://ui-gallery.example.com/ui-gallery/pr/{PULL}/{HEAD}/index.html'
+PAGE = f'https://d111111abcdef8.cloudfront.net/ui-gallery/pr/{PULL}/{HEAD}/index.html'
 
 
 def scan_log(review=f'ui-review-{HEAD}', run=RUN, artifact=ARTIFACT, expected=DIGEST, downloaded=None, after=()):
@@ -100,6 +100,8 @@ def world():
         f'{runs}/{RUN}/jobs': [{'name': 'key-guard', 'conclusion': 'success'},
                                {'name': 'library', 'conclusion': 'success'}],
         f'repos/{REPO}/pulls': [pull_request()],
+        f'repos/{REPO}/pulls/{PULL}/files': [{'filename': 'library/explorer-core/lib/x.ts'},
+                                             {'filename': 'library/ui/src/Button.tsx'}],
         f'repos/{REPO}/actions/artifacts/{ARTIFACT}': artifact(),
         f'{runs}/{RUN}/artifacts': [artifact()],
     }
@@ -147,8 +149,10 @@ class VerifyTest(unittest.TestCase):
             return publish.verify(environment(**env), FakeGitHub(responses))
 
     def test_names_the_artifact_the_scan_downloaded_for_the_open_pull_request_at_its_head(self):
-        self.assertEqual(self.verify(), {'publish': 'true', 'pr': PULL, 'head': HEAD, 'run': RUN,
-                                         'artifact': ARTIFACT, 'digest': DIGEST})
+        self.assertEqual(self.verify(), {
+            'publish': 'true', 'pr': PULL, 'head': HEAD, 'run': RUN, 'artifact': ARTIFACT, 'digest': DIGEST,
+            'role': VARIABLES['UI_GALLERY_ROLE_ARN'], 'bucket': VARIABLES['UI_GALLERY_BUCKET'],
+            'region': VARIABLES['UI_GALLERY_AWS_REGION'], 'base': VARIABLES['UI_GALLERY_BASE_URL']})
 
     def test_skips_before_any_api_call_while_a_variable_is_missing(self):
         for name in VARIABLES:
@@ -160,9 +164,13 @@ class VerifyTest(unittest.TestCase):
                     self.assertEqual(github.calls, [])
 
     def test_refuses_a_malformed_variable(self):
-        for name, value in (('UI_GALLERY_BASE_URL', 'https://ui-gallery.example.com/'),
-                            ('UI_GALLERY_BASE_URL', 'http://ui-gallery.example.com'),
-                            ('UI_GALLERY_BASE_URL', 'https://ui-gallery.example.com/path'),
+        for name, value in (('UI_GALLERY_BASE_URL', 'https://d111111abcdef8.cloudfront.net/'),
+                            ('UI_GALLERY_BASE_URL', 'http://d111111abcdef8.cloudfront.net'),
+                            ('UI_GALLERY_BASE_URL', 'https://d111111abcdef8.cloudfront.net/path'),
+                            # A host under a site of ours would share its cookies with the preview's scripts.
+                            ('UI_GALLERY_BASE_URL', 'https://ui-gallery.dcl.dev'),
+                            ('UI_GALLERY_BASE_URL', 'https://d111111abcdef8.cloudfront.net.dcl.dev'),
+                            ('UI_GALLERY_BASE_URL', 'https://x.d111111abcdef8.cloudfront.net'),
                             ('UI_GALLERY_ROLE_ARN', 'ui-gallery-writer'), ('UI_GALLERY_BUCKET', 'Example_Bucket'),
                             ('UI_GALLERY_BUCKET', ' example-ui-gallery'), ('UI_GALLERY_AWS_REGION', 'us east 1')):
             with self.subTest(name=name, value=value), self.assertRaisesRegex(publish.Reject, name):
@@ -215,6 +223,34 @@ class VerifyTest(unittest.TestCase):
         with self.assertRaisesRegex(publish.Skip, 'no UI change'):
             self.verify(lambda r: r[f'repos/{REPO}/actions/runs/{RUN}/jobs'][1].update(conclusion='skipped'))
 
+    def test_publishes_only_a_pull_request_that_changes_library_ui(self):
+        files = f'repos/{REPO}/pulls/{PULL}/files'
+        # A file moved out of library/ui changes it too.
+        moved = [{'filename': 'docs/Button.md', 'previous_filename': 'library/ui/Button.md'}]
+        self.assertEqual(self.verify(lambda r: r.update({files: moved}))['publish'], 'true')
+        cases = {
+            'library/explorer-core only': ([{'filename': 'library/explorer-core/lib/hudAutomation.ts'}],
+                                           'changes no file under library/ui/'),
+            'a sibling tree with the same prefix': ([{'filename': 'library/ui-extra/x.ts'}], 'changes no file'),
+            'the gallery build inputs only': ([{'filename': 'flake.lock'},
+                                               {'filename': 'infra/packages/ui-gallery.nix'}], 'changes no file'),
+            'no files': ([], 'changes no file'),
+            'more files than GitHub lists': ([{'filename': f'apps/x{n}.ts'} for n in range(publish.LISTED_FILES)],
+                                             'the most GitHub returns'),
+        }
+        for case, (listed, reason) in cases.items():
+            with self.subTest(case=case), self.assertRaisesRegex(publish.Skip, reason):
+                self.verify(lambda r: r.update({files: listed}))
+
+    def test_accepts_a_rerun_attempt_that_lists_only_the_key_scan_job(self):
+        jobs = f'repos/{REPO}/actions/runs/{SCAN}/attempts/{ATTEMPT}/jobs'
+        self.assertEqual(self.verify(lambda r: r.update({jobs: scan_jobs()[1:]}))['publish'], 'true')
+        with self.assertRaisesRegex(publish.Skip, 'did not run in this attempt'):
+            self.verify(lambda r: r.update({jobs: scan_jobs()[:1]}))
+        for listed in (scan_jobs() + scan_jobs()[1:], scan_jobs() + [{'id': 1, 'name': 'other'}]):
+            with self.subTest(listed=listed), self.assertRaisesRegex(publish.Reject, 'not prepare and key-scan'):
+                self.verify(lambda r: r.update({jobs: listed}))
+
     def test_skips_a_closed_pull_request(self):
         for pulls in ([pull_request(state='closed')], []):
             with self.subTest(pulls=pulls), self.assertRaisesRegex(publish.Skip, 'no open pull request'):
@@ -263,26 +299,46 @@ class VerifyTest(unittest.TestCase):
             publish.scanned_artifact(scan_log(review=None, after=forged), REPO)
 
 
-def archive(entries):
-    """A zip of the given entries: name -> bytes, or name -> (bytes, unix mode)."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w') as bundle:
+class Stream(io.RawIOBase):
+    """A write-only stream that cannot seek, so zipfile writes a data descriptor after each entry, as upload-artifact
+    does."""
+
+    def __init__(self):
+        self.data = bytearray()
+
+    def writable(self):
+        return True
+
+    def write(self, data):
+        self.data += data
+        return len(data)
+
+
+def archive(entries, method=zipfile.ZIP_DEFLATED, descriptors=False):
+    """A zip of the given entries: name -> bytes, or name -> (bytes, unix mode). Deflated, as upload-artifact writes
+    every file."""
+    sink = Stream() if descriptors else io.BytesIO()
+    with zipfile.ZipFile(sink, 'w', compression=method) as bundle:
         for name, content in entries.items():
             content, mode = content if isinstance(content, tuple) else (content, stat.S_IFREG | 0o644)
             info = zipfile.ZipInfo(name)
             info.external_attr = mode << 16
+            info.compress_type = method
             bundle.writestr(info, content)
-    return buffer.getvalue()
+    return bytes(sink.data) if descriptors else sink.getvalue()
 
 
 ENTRIES = {'index.html': b'review', 'gallery/index.html': b'gallery', 'dcl-ui-review/x.js': b'review',
-           'hosted/index.html': b'<!doctype html>', 'hosted/frame.html': b'<!doctype html>',
-           'hosted/assets/index-B8BLG4hy.js': b'export {}', 'hosted/assets/inter-latin.woff2': b'font'}
+           'ui-gallery/index.html': b'<!doctype html>', 'ui-gallery/frame.html': b'<!doctype html>',
+           'ui-gallery/hud.html': b'<!doctype html>', 'ui-gallery/assets/index-B8BLG4hy.js': b'export {}',
+           'ui-gallery/assets/inter-latin.woff2': b'font', 'ui-gallery/assets/hero.webp': b'image'}
+GALLERY_FILES = ['assets/hero.webp', 'assets/index-B8BLG4hy.js', 'assets/inter-latin.woff2', 'frame.html', 'hud.html',
+                 'index.html']
 
 
 class FetchTest(unittest.TestCase):
-    def fetch(self, entries=ENTRIES, digest=None, api=None):
-        data = archive(entries)
+    def fetch(self, entries=ENTRIES, digest=None, api=None, data=None):
+        data = data if data is not None else archive(entries)
         cleared = digest or 'sha256:' + hashlib.sha256(data).hexdigest()
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -292,13 +348,17 @@ class FetchTest(unittest.TestCase):
                'ARTIFACT_DIGEST': cleared, 'WORK_DIR': str(work)}
         responses = {f'repos/{REPO}/actions/artifacts/{ARTIFACT}': api or artifact(digest=cleared)}
         with patch('sys.stdout', new=io.StringIO()):
-            publish.fetch(env, FakeGitHub(responses, data))
+            self.outputs = publish.fetch(env, FakeGitHub(responses, data))
         return work
 
-    def test_unpacks_only_hosted_from_the_cleared_bytes(self):
-        work = self.fetch()
-        self.assertEqual(publish.site_files(work / 'site'),
-                         ['assets/index-B8BLG4hy.js', 'assets/inter-latin.woff2', 'frame.html', 'index.html'])
+    def test_unpacks_only_ui_gallery_from_the_cleared_bytes_at_its_scanned_gallery_digest(self):
+        for descriptors in (False, True):
+            with self.subTest(descriptors=descriptors):
+                data = archive(ENTRIES, descriptors=descriptors)
+                work = self.fetch(data=data)
+                self.assertEqual(publish.site_files(work / 'site'), GALLERY_FILES)
+                self.assertEqual(self.outputs, {'gallery': publish.receipt.artifact_digest(data)})
+                self.assertEqual(self.outputs['gallery'], publish.receipt.tree_digest(work / 'site'))
 
     def test_refuses_bytes_that_differ_from_the_cleared_digest(self):
         with self.assertRaisesRegex(publish.Reject, 'digest mismatch: the downloaded artifact'):
@@ -311,15 +371,45 @@ class FetchTest(unittest.TestCase):
             with self.subTest(api=api), self.assertRaisesRegex(publish.Reject, problem):
                 self.fetch(digest=DIGEST, api=api)
 
-    def test_refuses_an_artifact_without_hosted_index(self):
-        entries = {name: content for name, content in ENTRIES.items() if name != 'hosted/index.html'}
-        with self.assertRaisesRegex(publish.Reject, 'no hosted/index.html'):
-            self.fetch(entries)
+    def test_refuses_an_artifact_without_ui_gallery_index(self):
+        for entries in ({name: content for name, content in ENTRIES.items() if name != 'ui-gallery/index.html'},
+                        {name: content for name, content in ENTRIES.items() if not name.startswith('ui-gallery/')}):
+            with self.subTest(entries=sorted(entries)), self.assertRaisesRegex(publish.Reject,
+                                                                               'no ui-gallery/index.html'):
+                self.fetch(entries)
+
+    def test_refuses_a_hidden_file_the_artifact_upload_would_have_dropped_unscanned(self):
+        with self.assertRaisesRegex(publish.Reject, 'hidden'):
+            self.fetch({**ENTRIES, 'ui-gallery/.well-known/security.txt': b'x'})
+
+    def test_refuses_an_archive_whose_entries_a_streaming_reader_would_read_differently(self):
+        data = archive(ENTRIES)
+        first = data.index(b'ui-gallery/index.html')
+        cases = {
+            'bytes outside its entries': b'PK\x03\x04junk' + data,
+            'bytes between its last entry': self.insert_before_directory(data),
+            'differs from the central directory': data[:first] + b'ui-gallery/indey.html' + data[first + 21:],
+            'is not deflated': archive(ENTRIES, method=zipfile.ZIP_STORED),
+        }
+        for reason, bytes_ in cases.items():
+            with self.subTest(reason=reason), self.assertRaisesRegex(publish.Reject, reason):
+                self.fetch(data=bytes_)
+
+    @staticmethod
+    def insert_before_directory(data):
+        start = zipfile.ZipFile(io.BytesIO(data)).start_dir
+        padded = data[:start] + b'\0' * 16 + data[start:]
+        # Move the end record's central directory offset past the padding, so the archive itself still opens.
+        end = padded.rindex(b'PK\x05\x06')
+        offset = int.from_bytes(padded[end + 16:end + 20], 'little') + 16
+        return padded[:end + 16] + offset.to_bytes(4, 'little') + padded[end + 20:]
 
     def test_refuses_an_unsafe_or_unknown_entry_and_writes_nothing_outside_the_site(self):
-        for name, content in (('../escape.js', b'x'), ('hosted/../../escape.js', b'x'), ('/hosted/abs.js', b'x'),
-                              ('hosted/assets\\x.js', b'x'), ('hosted/run.sh', b'x'), ('hosted/.env', b'x'),
-                              ('hosted/assets/link.js', (b'/etc/passwd', stat.S_IFLNK | 0o777)), ('hosted', b'x')):
+        for name, content in (('../escape.js', b'x'), ('ui-gallery/../../escape.js', b'x'),
+                              ('/ui-gallery/abs.js', b'x'), ('ui-gallery/assets\\x.js', b'x'),
+                              ('ui-gallery/run.sh', b'x'), ('ui-gallery/.env', b'x'),
+                              ('ui-gallery/assets/link.js', (b'/etc/passwd', stat.S_IFLNK | 0o777)),
+                              ('ui-gallery', b'x')):
             with self.subTest(name=name):
                 with self.assertRaises(publish.Reject):
                     self.fetch({**ENTRIES, name: content})
@@ -341,12 +431,13 @@ class UploadTest(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.work = site(Path(temp.name))
-        self.env = {'PR_NUMBER': str(PULL), 'HEAD_SHA': HEAD, 'WORK_DIR': str(self.work), **VARIABLES}
+        self.env = {'PR_NUMBER': str(PULL), 'HEAD_SHA': HEAD, 'WORK_DIR': str(self.work), **VARIABLES,
+                    'GALLERY_DIGEST': publish.receipt.tree_digest(self.work / 'site')}
 
     def test_copies_each_type_with_its_content_type_and_cache_header(self):
         commands = []
         with patch('sys.stdout', new=io.StringIO()):
-            outputs = publish.upload(self.env, today=datetime.date(2026, 11, 20),
+            outputs = publish.upload(self.env, today=lambda: datetime.date(2026, 11, 20),
                                      run=lambda command: commands.append(command) or SimpleNamespace(returncode=0))
         self.assertEqual(outputs, {'expires': '2026-11-25'})
         typed = {command[command.index('--include') + 1]: (command[command.index('--content-type') + 1],
@@ -368,6 +459,22 @@ class UploadTest(unittest.TestCase):
     def test_fails_when_a_copy_fails(self):
         with self.assertRaisesRegex(publish.Reject, 'upload of the .css files'):
             publish.upload(self.env, run=lambda command: SimpleNamespace(returncode=1))
+
+    def test_uploads_nothing_unless_the_files_are_still_the_unpacked_gallery(self):
+        commands = []
+        run = lambda command: commands.append(command) or SimpleNamespace(returncode=0)
+        for value in ('', None, 'sha256:' + 'b' * 64):
+            with self.subTest(value=value), self.assertRaisesRegex(publish.Reject, 'GALLERY_DIGEST'):
+                publish.upload({**self.env, 'GALLERY_DIGEST': value} if value is not None else
+                               {name: item for name, item in self.env.items() if name != 'GALLERY_DIGEST'}, run=run)
+        (self.work / 'site/assets/extra.js').write_bytes(b'added after the fetch')
+        with self.assertRaisesRegex(publish.Reject, 'digest mismatch'):
+            publish.upload(self.env, run=run)
+        (self.work / 'site/assets/extra.js').unlink()
+        (self.work / 'site/.hidden.js').write_bytes(b'x')
+        with self.assertRaisesRegex(publish.Reject, 'hidden'):
+            publish.upload(self.env, run=run)
+        self.assertEqual(commands, [])
 
 
 class ProbeTest(unittest.TestCase):
@@ -434,6 +541,17 @@ class CommentTest(unittest.TestCase):
                 self.comment(pull=pull)
 
 
+class GitHubTest(unittest.TestCase):
+    def test_an_answer_that_is_not_json_is_an_api_error(self):
+        github = publish.GitHub()
+        with patch.object(github, '_call', return_value=b'<html>rate limited</html>'):
+            for call in (lambda: github.get('x'), lambda: github.pages('x', 'items'), lambda: github.send('POST', 'x')):
+                with self.assertRaisesRegex(publish.ApiError, 'invalid JSON'):
+                    call()
+        with patch.object(github, '_call', return_value=b''):
+            self.assertIsNone(github.send('PATCH', 'x'))
+
+
 class MainTest(unittest.TestCase):
     def run_main(self, env, command='verify'):
         temp = tempfile.TemporaryDirectory()
@@ -496,6 +614,19 @@ class WorkflowTest(unittest.TestCase):
         for checkout in checkouts:
             self.assertIn('ref: ${{ github.workflow_sha }}', checkout)
             self.assertIn('persist-credentials: false', checkout)
+        # The publish job imports the receipt check's digest; the other jobs check out the publisher alone.
+        self.assertIn('sparse-checkout: |\n            tooling/ui-gallery-publish.py\n            '
+                      'tooling/ui-gallery-receipt.py\n', self.jobs()['publish'])
+
+    def test_uploads_the_gallery_digest_the_fetch_unpacked(self):
+        publish_job = self.jobs()['publish']
+        self.assertIn('id: fetch\n', publish_job)
+        upload = publish_job[publish_job.index('id: upload'):publish_job.index('ui-gallery-publish.py upload')]
+        self.assertIn('GALLERY_DIGEST: ${{ steps.fetch.outputs.gallery }}', upload)
+
+    def test_reads_the_repository_variables_in_verify_only(self):
+        jobs = self.jobs()
+        self.assertEqual([name for name, body in jobs.items() if 'vars.' in body], ['verify'])
 
 
 if __name__ == '__main__':
