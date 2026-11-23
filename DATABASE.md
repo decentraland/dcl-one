@@ -994,7 +994,8 @@ they do not establish equal latency with the source's combined lookup.
 Community ranking reads current membership, posts, places and thumbnail facts in
 pages of 100 communities. Five lifetime counters on `social.communities` retain
 photos, ended events, event attendees, ended streams and ended voice chats. The
-ranking job updates local authoritative communities only. Mirrored ranking scores
+ranking job updates scores for local authoritative communities and preserves their
+`updated_at` timestamps for import conflict resolution. Mirrored ranking scores
 remain upstream facts. `ranking_tracking_since` bounds local event occurrences
 eligible for collection; zero counter defaults do not reconstruct history. The
 social-service-ea import copies the lifetime counters and moves
