@@ -271,7 +271,7 @@ impl Database {
     ) -> Result<PaginatedResponse<RentalListing>, sqlx::Error> {
         let f = &q.filter;
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(format!(
-            "SELECT {LISTING_OUTER_COLUMNS}, COUNT(*) OVER() AS rentals_listings_count \
+            "WITH filtered AS (SELECT {LISTING_OUTER_COLUMNS}, rentals.max_price_per_day, rentals.min_price_per_day \
              FROM signatures.rental_assets a JOIN ("
         ));
         qb.push(LISTING_INNER_SELECT.replace(
@@ -358,7 +358,7 @@ impl Database {
         }
 
         qb.push(
-            "ORDER BY r.contract_address, r.token_id, r.created_at DESC) AS rentals \
+            "ORDER BY r.contract_address, r.token_id, r.created_at DESC, r.id) AS rentals \
              ON a.contract_address = rentals.contract_address AND a.token_id = rentals.token_id \
              WHERE TRUE ",
         );
@@ -402,25 +402,32 @@ impl Database {
             Some("desc") => "desc",
             _ => "asc",
         };
-        let order = match q.sort_by.as_deref() {
-            Some("land_creation_date") => format!("ORDER BY a.nft_created_at {dir} "),
-            Some("name") => format!("ORDER BY a.search_text {dir} "),
-            Some("max_rental_price") => format!("ORDER BY rentals.max_price_per_day {dir} "),
-            Some("min_rental_price") => format!("ORDER BY rentals.min_price_per_day {dir} "),
-            _ => format!("ORDER BY rentals.created_at {dir} "),
+        let sort_column = match q.sort_by.as_deref() {
+            Some("land_creation_date") => "page.metadata_created_at",
+            Some("name") => "page.search_text",
+            Some("max_rental_price") => "page.max_price_per_day",
+            Some("min_rental_price") => "page.min_price_per_day",
+            _ => "page.created_at",
         };
-        qb.push(order);
+        let order = format!("ORDER BY {sort_column} {dir}, page.id ASC ");
+        qb.push(") SELECT page.*, counted.rentals_listings_count FROM (SELECT count(*) AS rentals_listings_count FROM filtered) counted LEFT JOIN LATERAL (SELECT page.*, true AS page_present FROM filtered page ");
+        qb.push(&order);
         qb.push("LIMIT ")
             .push_bind(q.limit)
             .push(" OFFSET ")
             .push_bind(q.offset);
+        qb.push(") page ON true ").push(order);
 
         let rows = qb.build().fetch_all(&self.pool).await?;
         let total: i64 = rows
             .first()
             .map(|r| r.try_get::<i64, _>("rentals_listings_count").unwrap_or(0))
             .unwrap_or(0);
-        let results: Vec<RentalListing> = rows.iter().map(row_to_listing).collect();
+        let results: Vec<RentalListing> = rows
+            .iter()
+            .filter(|r| r.get::<Option<bool>, _>("page_present") == Some(true))
+            .map(row_to_listing)
+            .collect();
         Ok(PaginatedResponse::new(results, total, q.limit, q.offset))
     }
 

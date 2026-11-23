@@ -470,8 +470,9 @@ pub async fn community_kick_player(
     ))
 }
 
-/// Removes `target` from the community room: the LiveKit participant
-/// (best-effort, logged) and the presence row (the failure that counts).
+/// Removes `target` from the community room: the LiveKit participant and the
+/// presence row. The row is deleted even when the removal fails, and that
+/// failure is returned; an absent participant is not a failure.
 pub async fn kick_from_community_room(
     state: &CommsState,
     community_id: CommunityId,
@@ -485,6 +486,12 @@ pub async fn kick_from_community_room(
     );
     if let Err(e) = removed {
         tracing::warn!(error = %e, room = %room_name, addr = %target, "failed to remove community voice participant");
+        if let Err(db) = deleted {
+            tracing::warn!(error = %db, room = %room_name, addr = %target, "failed to delete community voice presence row");
+        }
+        return Err(ApiError::internal(format!(
+            "livekit remove participant: {e}"
+        )));
     }
     deleted?;
     Ok(())

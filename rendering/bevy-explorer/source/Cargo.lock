@@ -6544,6 +6544,7 @@ dependencies = [
  "livekit-api",
  "pico-args",
  "prost 0.11.9",
+ "serde_json",
  "tokio",
  "wallet",
 ]

@@ -223,6 +223,51 @@ describe('when the chat sends a turn', () => {
 
     expect(params.share).toBeUndefined();
   });
+
+  describe('and the chat has no id yet', () => {
+    const newChat = () => {
+      const store = setup({ consent: granted });
+      store.dispatch(
+        aiActions.setSessionState({ sessions: [], currentSessionId: '', messages: [] }),
+      );
+      return store;
+    };
+
+    it('should give the chat an id and send every turn of it under that id', async () => {
+      const store = newChat();
+      const first = await sendIn(store);
+      store.dispatch(aiActions.setBusy(false));
+      await store.dispatch(aiActions.send({ text: 'and a window' }));
+      const second = vi.mocked(ai.send).mock.calls[1][1];
+
+      expect(first.sessionId).toMatch(/\S/);
+      expect(second.sessionId).toBe(first.sessionId);
+      expect(store.getState().ai.currentSessionId).toBe(first.sessionId);
+    });
+
+    it('should exclude and erase the chat by the id its turns were sent under', async () => {
+      vi.mocked(api.eraseConversation).mockResolvedValue(ok({ deleted: 1 }));
+      const store = newChat();
+      const { sessionId } = await sendIn(store);
+      store.dispatch(aiActions.applyEvent({ kind: 'started', turnId: 't1' }));
+      store.dispatch(
+        aiActions.applyEvent({
+          kind: 'done',
+          turnId: 't1',
+          ok: true,
+          mutations: 0,
+          recordId: 'r1',
+        }),
+      );
+
+      store.dispatch(aiActions.setConversationShared(false));
+
+      expect(aiSharing.setConversationShared).toHaveBeenCalledWith(sessionId, false);
+      await vi.waitFor(() =>
+        expect(api.eraseConversation).toHaveBeenCalledWith(ADDRESS, sessionId, expect.any(String)),
+      );
+    });
+  });
 });
 
 describe('when the creator decides', () => {

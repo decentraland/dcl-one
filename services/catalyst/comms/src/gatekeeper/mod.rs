@@ -810,8 +810,20 @@ impl CommsState {
     /// is operator configuration, commonly a private address).
     /// Read-only local recovery runs in every serving replica, independently
     /// of fleet-wide jobs and the primary connector assignment subscriber.
+    /// Every replica applies any replica's World room events to its online view.
     pub fn spawn_presence_recovery(self: &Arc<Self>, jobs: &Jobs) {
-        self.presence.spawn_recovery(self.clone(), jobs);
+        use crate::protocol::bus::room_events::{RoomEvent, SUBJECT};
+        let presence = self.presence.clone();
+        let events = self.bus.subscribe(
+            SUBJECT,
+            None,
+            Arc::new(move |_, payload| {
+                if let Ok(event) = RoomEvent::decode(payload) {
+                    presence.apply_room_event(&event);
+                }
+            }),
+        );
+        self.presence.spawn_recovery(self.clone(), events, jobs);
     }
 
     pub fn room_service(&self) -> livekit::RoomServiceClient<'_> {
