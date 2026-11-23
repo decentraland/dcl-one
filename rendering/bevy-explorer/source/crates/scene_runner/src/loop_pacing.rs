@@ -6,7 +6,8 @@
 //! ([`frame_deadline`], scene loop mode `both`, the default, or `deadline`,
 //! `dcl_wasm::scene_loop_mode`) instead ends the loop a frame target after the frame's start, less what the frame still needs
 //! after the loop: the 90th percentile of that tail over the last frames ([`TailEstimate`]) plus
-//! a margin. Natively the scene loop is unchanged; only the wasm build reads the mode.
+//! a margin. The tail is the frame's work, without its waits for the render worker
+//! ([`frame_tail`]). Natively the scene loop is unchanged; only the wasm build reads the mode.
 
 use std::time::Duration;
 
@@ -52,9 +53,8 @@ pub fn frame_deadline(
         .clamp(earliest_end, latest_end)
 }
 
-/// The frame's time from the scene loop's end to the end of the app's update (the rest of the
-/// frame's schedules, extract, and the handoff to the render worker), over the last
-/// [`TAIL_FRAMES`] frames.
+/// The frame's work after the scene loop ([`frame_tail`]: the rest of the frame's schedules and
+/// extract), over the last [`TAIL_FRAMES`] frames.
 #[derive(Clone, Debug, Default)]
 pub struct TailEstimate {
     ring: [Duration; TAIL_FRAMES],
@@ -99,27 +99,50 @@ pub struct WebLoopPacing {
     pub wait_lateness: TailEstimate,
 }
 
-/// `First`: the frame's start, and the previous frame's tail: from its scene loop's end to its
-/// handoff to the render worker, which the pipelined-rendering diagnostics stamp at the end of the
-/// app's update.
+/// The frame's work after its scene loop: from the loop's end to the handoff to the render
+/// worker, less the frame's waits for that worker (`waits`). None for a handoff before the loop's
+/// end, an older frame's.
+pub fn frame_tail(loop_end: Instant, handoff: Instant, waits: Duration) -> Option<Duration> {
+    handoff
+        .checked_duration_since(loop_end)
+        .map(|tail| tail.saturating_sub(waits))
+}
+
+/// `First`: the frame's start, and the previous frame's tail ([`frame_tail`]): the handoff and the
+/// waits come from the pipelined-rendering diagnostics, which record them together at the end of
+/// the app's update. The waits, for the render app to come back (`WAIT_RENDER`) and for the render
+/// worker's animation frame to take the handoff (`WAIT_HANDOFF`), shrink as the loop runs longer,
+/// so they are not part of what the loop must leave.
 #[cfg(target_arch = "wasm32")]
 pub fn web_frame_start(
     mut pacing: bevy::prelude::ResMut<WebLoopPacing>,
     store: Option<bevy::prelude::Res<bevy::diagnostic::DiagnosticsStore>>,
 ) {
-    use bevy::render::pipelined_rendering::diagnostics::WAIT_HANDOFF;
+    use bevy::{
+        diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore},
+        render::pipelined_rendering::diagnostics::{WAIT_HANDOFF, WAIT_RENDER},
+    };
+
+    fn last<'a>(
+        store: Option<&'a DiagnosticsStore>,
+        path: &DiagnosticPath,
+    ) -> Option<&'a DiagnosticMeasurement> {
+        store?.get(path)?.measurement()
+    }
 
     let now = Instant::now();
     pacing.frame_start = Some(now);
-    let handoff = store
-        .as_ref()
-        .and_then(|store| store.get(&WAIT_HANDOFF))
-        .and_then(|diagnostic| diagnostic.measurement())
+    let store = store.as_deref();
+    let handoff = last(store, &WAIT_HANDOFF)
         // bevy's own Instant: carried over as its age
         .and_then(|measurement| now.checked_sub(measurement.time.elapsed()));
+    let waits = [WAIT_RENDER, WAIT_HANDOFF]
+        .iter()
+        .filter_map(|path| last(store, path))
+        .map(|measurement| Duration::from_secs_f64(measurement.value.max(0.0) / 1000.0))
+        .sum();
     if let (Some(handoff), Some(loop_end)) = (handoff, pacing.loop_end.take()) {
-        // a handoff before the loop's end is an older frame's: none was measured
-        if let Some(tail) = handoff.checked_duration_since(loop_end) {
+        if let Some(tail) = frame_tail(loop_end, handoff, waits) {
             pacing.tail.push(tail);
         }
     }
@@ -194,6 +217,20 @@ mod tests {
         // no tail and a loop that starts with the frame: at most a frame target
         assert_eq!(frame_deadline(s, s, T, Duration::ZERO), s + T);
         assert_eq!(frame_deadline(s + ms(3.0), s, T, Duration::ZERO), s + T);
+    }
+
+    #[test]
+    fn the_tail_leaves_out_the_waits_for_the_render_worker() {
+        let loop_end = Instant::now();
+        // 3 ms of work after the loop, 6 ms waiting for the animation frame
+        let handoff = loop_end + ms(9.0);
+        assert_eq!(frame_tail(loop_end, handoff, ms(6.0)), Some(ms(3.0)));
+        assert_eq!(
+            frame_tail(loop_end, handoff, ms(12.0)),
+            Some(Duration::ZERO)
+        );
+        // the last handoff was an older frame's
+        assert_eq!(frame_tail(handoff, loop_end, ms(1.0)), None);
     }
 
     #[test]
