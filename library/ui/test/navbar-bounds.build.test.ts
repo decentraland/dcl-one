@@ -141,14 +141,14 @@ async function bounds(selector: string, vertical = true): Promise<Bounds> {
     `(()=>{const root=document.querySelector(${JSON.stringify(selector)});if(!root)throw Error('Bounds root missing');const box=root.getBoundingClientRect();const overflow=[...root.querySelectorAll('*')].map(el=>{const b=el.getBoundingClientRect(),s=getComputedStyle(el);return{name:el.getAttribute('aria-label')||el.tagName,right:b.right-box.right,bottom:b.bottom-box.bottom,left:box.left-b.left,top:box.top-b.top,w:b.width,h:b.height,visible:s.visibility!=='hidden'&&s.display!=='none'}}).filter(el=>el.visible&&el.w>0&&el.h>0&&(el.right>${tolerance}||el.left>${tolerance}${vertical ? `||el.top>${tolerance}||el.bottom>${tolerance}` : ''}));return{width:box.width,height:box.height,overflow}})()`
   )
 }
-describe('native public NavBar bounds, independently of captured Review selection', () => {
+describe('when native public NavBar bounds are measured independently of captured Review selection', () => {
   it('should cover every native auth, surface and balance mode plus app composition', () => {
     expect(nativeNavBarCases).toHaveLength(18)
     expect(new Set(nativeNavBarCases.map((value) => value.id)).size).toBe(18)
   })
   for (const width of [390, 768, 1024, 1440])
     it.each(nativeNavBarCases)(
-      '$id keeps closed-header descendants inside their root at ' + width + 'px',
+      'should keep $id closed-header descendants inside their root at ' + width + 'px',
       async (example) => {
         await openCase(example.id, width)
         const result = await bounds('#native-bounds-root>div>nav')
@@ -375,28 +375,30 @@ describe('when the public Sites navigation runs with browser input', () => {
     }
   })
 
-  it.each([390, 1440].flatMap((width) => [true, false].map((success) => ({ width, success }))))(
-    'should keep profile actions in place at $width px when MANA requests settle (success=$success)',
-    async ({ width, success }) => {
-      await openCase('in-solid-3', width, true, 900, 'balances')
-      await click('button[aria-label="Account: Ada"]')
-      const actionTop =
-        'document.querySelector(\'nav a[href="/profile"]\').getBoundingClientRect().top'
-      const before = await evaluate<number>(actionTop)
-      await evaluate(`(async () => {
+  describe('and the MANA requests settle', () => {
+    it.each([390, 1440].flatMap((width) => [true, false].map((success) => ({ width, success }))))(
+      'should keep profile actions in place at $width px (success=$success)',
+      async ({ width, success }) => {
+        await openCase('in-solid-3', width, true, 900, 'balances')
+        await click('button[aria-label="Account: Ada"]')
+        const actionTop =
+          'document.querySelector(\'nav a[href="/profile"]\').getBoundingClientRect().top'
+        const before = await evaluate<number>(actionTop)
+        await evaluate(`(async () => {
         window.dispatchEvent(new CustomEvent('fixture:load-profile-balances', {detail: ${JSON.stringify(success ? { mana: 123.45, polygonMana: 67.89 } : {})}}))
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       })()`)
-      expect(
-        await evaluate(`(() => {
+        expect(
+          await evaluate(`(() => {
         const account = document.querySelector('[aria-label="Account: Ada"]')
         const panel = document.getElementById(account.getAttribute('aria-controls'))
         return !!panel.querySelector('[data-balance="polygonMana"]')
       })()`)
-      ).toBe(success)
-      expect(await evaluate<number>(actionTop)).toBeCloseTo(before, 0)
-    }
-  )
+        ).toBe(success)
+        expect(await evaluate<number>(actionTop)).toBeCloseTo(before, 0)
+      }
+    )
+  })
 
   for (const preference of ['no-preference', 'reduce']) {
     it(`should fill the Pixel viewport below the header and honor ${preference} motion`, async () => {

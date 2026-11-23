@@ -1269,7 +1269,7 @@ fn debug_write_imposters(
     done: Query<&SceneImposter, Without<RetryImposter>>,
     pending: Query<&SceneImposter, With<RetryImposter>>,
 ) {
-    if tick.0.is_multiple_of(100) {
+    if !tick.0.is_multiple_of(100) {
         return;
     }
 

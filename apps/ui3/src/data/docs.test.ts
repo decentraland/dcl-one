@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { DOCS_BASE, docsBase, docsUrl } from "./docs";
+import { DOCS_BASE, docsBase, docsUrl } from "@web-core/docs";
 
 const env = (globalThis as { process: { env: Record<string, string | undefined> } }).process.env;
 

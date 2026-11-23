@@ -33,7 +33,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   and do not add cross-browser hedges.
 - **No threads as you know them.** `TaskPool::spawn` runs on the JS event loop: no `Send`,
   no blocking, no `std::thread`, no busy-waiting. Use `web_time` for clocks. The engine worker
-  runs the app world; the render world lives in its own worker.
+  runs the app world; the render world lives in its own worker. The scene loop may sleep for a
+  bounded wait between passes (`SCENE_REPLY_POLL`) because it runs on the engine worker; other
+  systems and tasks may not block.
 - **The log level is compiled in.** `RUST_LOG` does nothing at runtime on wasm. A debug log you
   want to see needs a rebuild with the filter changed.
 - **Engine switches are page params, not launch options.** A web-only knob is a `?param=` the

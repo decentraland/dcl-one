@@ -23,6 +23,9 @@ pub mod profile;
 pub mod pulse;
 pub mod recovery;
 pub mod room_connection;
+mod scene_bans;
+mod scene_crdt;
+pub mod scene_messages;
 pub mod scene_rooms;
 pub mod scene_topics;
 pub mod signed_login;
@@ -55,8 +58,9 @@ use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
 pub use moderation::{
-    AdmissionView, BanScope, BlockedOrBanned, MetadataError, SceneAdmission, SceneRoomModeration,
+    AdmissionView, BanScope, BlockedOrBanned, SceneAdmission, SceneRoomModeration,
 };
+pub use scene_bans::SceneBanGate;
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},
@@ -576,6 +580,8 @@ fn process_realm_change(
 #[serde(rename_all = "camelCase")]
 pub struct SetCurrentScene {
     pub realm_name: String,
+    #[serde(skip)]
+    pub realm_about_url: String,
     pub scene_id: String,
 }
 
@@ -631,29 +637,40 @@ fn connect_scene_room(
     contexts: Query<Entity, With<global_crdt::GlobalCrdtState>>,
     current_realm: Res<CurrentRealm>,
     world_secret: Res<ipfs::world_access::WorldCommsSecret>,
-    rooms: Query<(Entity, &SceneRoomTarget)>,
+    rooms: Query<(
+        Entity,
+        &SceneRoomTarget,
+        Option<&room_connection::RoomRecovery>,
+    )>,
 ) {
     use room_connection::{CredentialRequest, NeedsAdapter, RoomContext};
     if disabled.0 {
         scene.clear();
         return;
     }
-    if wallet.is_changed() {
-        admission.set_if_neq(SceneAdmission::unknown());
+    if wallet.is_changed() || current_realm.is_changed() {
+        admission.select_scene(&current_realm.about_url, wallet.address(), "");
     }
     let event = scene.read().last().cloned();
     if current_realm.is_changed() && event.is_none() {
-        for (entity, _) in &rooms {
+        for (entity, target, recovery) in &rooms {
+            if let Some(recovery) = recovery {
+                admission.remember_retry(&target.scene.scene_id, recovery.retry.due);
+            }
             commands.entity(entity).despawn();
         }
         current.0 = None;
-        admission.set_if_neq(SceneAdmission::unknown());
         return;
     }
     let desired = event.or_else(|| {
         wallet
             .is_changed()
-            .then(|| rooms.iter().next().map(|(_, target)| target.scene.clone()))
+            .then(|| {
+                rooms
+                    .iter()
+                    .next()
+                    .map(|(_, target, _)| target.scene.clone())
+            })
             .flatten()
     });
     let Some(ev) = desired else {
@@ -661,16 +678,23 @@ fn connect_scene_room(
     };
     if !wallet.is_changed()
         && !current_realm.is_changed()
-        && rooms.iter().any(|(_, target)| target.scene == ev)
+        && rooms.iter().any(|(_, target, _)| target.scene == ev)
     {
         return;
     }
-    for (entity, _) in &rooms {
+    for (entity, target, recovery) in &rooms {
+        if let Some(recovery) = recovery {
+            admission.remember_retry(&target.scene.scene_id, recovery.retry.due);
+        }
         commands.entity(entity).despawn();
     }
     current.0 = None;
-    admission.set_if_neq(SceneAdmission::unknown());
-    if ev.scene_id.is_empty() || wallet.address().is_none() {
+    admission.select_scene(&current_realm.about_url, wallet.address(), &ev.scene_id);
+    if ev.scene_id.is_empty()
+        || ev.realm_about_url != current_realm.about_url
+        || wallet.address().is_none()
+    {
+        admission.select_scene(&current_realm.about_url, wallet.address(), "");
         return;
     }
     let Ok(context) = contexts.single() else {
@@ -689,7 +713,10 @@ fn connect_scene_room(
             return;
         }
         if let Some(entity) = manager.connect_scene(adapter, context) {
-            admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
+            admission.observe(
+                SceneAdmission::allowed(&ev.scene_id)
+                    .for_session(&ev.realm_about_url, wallet.address().unwrap()),
+            );
             commands.entity(entity).insert((
                 SceneRoom(ev.scene_id.clone()),
                 SceneRoomTarget {
@@ -718,12 +745,12 @@ fn connect_scene_room(
     let meta = scene_room_metadata(
         &ev.realm_name,
         &ev.scene_id,
-        adapter::allows_device_identifier(&url).then_some(config.user_id.as_str()),
+        common::base_domain::device_identifier_domain(&url).map(|_| config.user_id.as_str()),
         wallet.is_any_guest(),
         common::structs::server_mode() || world.is_some(),
         world_secret.0.as_deref().filter(|_| world.is_some()),
     );
-    commands.spawn((
+    let mut room = commands.spawn((
         SceneRoom(ev.scene_id.clone()),
         SceneRoomTarget {
             scene: ev.clone(),
@@ -738,6 +765,14 @@ fn connect_scene_room(
         },
         NeedsAdapter,
     ));
+    if let Some(due) = admission.retry_due(&ev.scene_id) {
+        let mut recovery = room_connection::RoomRecovery {
+            failure: Some(room_connection::FailureKind::Denied),
+            ..default()
+        };
+        recovery.retry.due = due;
+        room.insert((recovery, room_connection::BanRecheck));
+    }
 }
 
 /// Signed metadata of a scene-room credential request. Always the explorer's own handshake

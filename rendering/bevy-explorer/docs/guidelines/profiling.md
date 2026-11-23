@@ -62,7 +62,7 @@ numbers.
   `perf/swapchain_present_wait_ms` and `gpu/frame_time`.
 - **Bottleneck.** Which stage bounds the frame rate, from the smoothed values with a 20 %
   margin: `frame_rate_limiter` when the frame's pacing wait is a fifth of the frame or more (the
-  limiter's sleep natively; on the web, where the scene loop never sleeps, the app loop's time
+  limiter's sleep natively; on the web, where there is no limiter sleep, the app loop's time
   outside the app's update, `pipelined/main_update` minus the main world's schedules: its frame
   timer, the cap, then the animation frame that runs the next update);
   `swapchain_present_wait` when the present wait takes a fifth of the frame or more (vsync; on

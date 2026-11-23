@@ -73,6 +73,9 @@ export function fakeWallet(opts: { key?: Hex; chainId?: number } = {}): FakeWall
   return wallet;
 }
 
+/** A stub's answer that never comes: the read stalls (an RPC that does not respond). */
+export const STALL = Symbol("stall");
+
 export type ContractStub = { abi: Abi; answer: (functionName: string, args: readonly unknown[]) => unknown };
 
 /**
@@ -83,6 +86,8 @@ export function fakeChain(opts: {
   contracts?: Record<string, ContractStub>;
   reverted?: Set<string>;
   pending?: Set<string>;
+  /** Receipts whose read never answers (a stalled RPC). */
+  stalled?: Set<string>;
   calls?: { chainId: ChainId; method: string; params: unknown[] }[];
 }): () => void {
   const contracts = Object.fromEntries(Object.entries(opts.contracts ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
@@ -94,10 +99,12 @@ export function fakeChain(opts: {
       if (!stub) throw new Error(`no stub for ${to}`);
       const decoded = decodeFunctionData({ abi: stub.abi, data });
       const result = stub.answer(decoded.functionName, decoded.args ?? []);
+      if (result === STALL) return new Promise(() => {});
       return encodeFunctionResult({ abi: stub.abi, functionName: decoded.functionName, result } as never);
     }
     if (method === "eth_getTransactionReceipt") {
       const [hash] = params as [string];
+      if (opts.stalled?.has(hash)) return new Promise(() => {});
       if (opts.pending?.has(hash)) return null;
       return { status: opts.reverted?.has(hash) ? "0x0" : "0x1", transactionHash: hash };
     }

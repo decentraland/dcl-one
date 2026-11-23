@@ -11,6 +11,8 @@
 // sits behind this contract so it can be swapped (e.g. for ACP) without touching the
 // panel or the IPC surface.
 
+import type { RecordingResult, RecordingToolsStatus } from './recording';
+
 export type AiProvider = 'claude' | 'codex' | 'cursor' | 'gemini';
 
 // One selectable backend, as reported to the chat UI. `available` is false when the
@@ -165,7 +167,8 @@ export interface AiSendParams {
   // of stripping it to force subscription billing. From the `useApiKeyFromEnv` setting.
   apiKeyFromEnv?: boolean;
   // Which local session this turn belongs to. Main keys the provider resume id by
-  // (projectDir, sessionId), so each saved conversation resumes its own CLI thread.
+  // (projectDir, sessionId), so each saved conversation resumes its own CLI thread. It is also
+  // the shared turn's `conversationId`; main records no turn without one.
   sessionId?: string;
   // Present only when the user opted in to sharing and this conversation isn't excluded.
   // Main still checks the saved consent and the signed-in address before recording.
@@ -258,6 +261,44 @@ export function assetMentionKey(mention: AiAssetMention): string {
   return 'path' in mention ? `path:${mention.path}` : `emote:${mention.builtInEmote}`;
 }
 
+/** One finished session folder waiting to go out with the next message. */
+export type AiRecordingSession = Pick<
+  RecordingResult,
+  'dir' | 'durationMs' | 'actionCount' | 'context' | 'transcriptionError'
+>;
+
+/** Every recording made since the last message, as one attachment: the sessions oldest first,
+ *  with their lengths and action counts summed for the chip.
+ *
+ * @property transcriptionError Set when any of the sessions could not be transcribed.
+ */
+export type AiPendingRecording = {
+  sessions: AiRecordingSession[];
+  durationMs: number;
+  actionCount: number;
+  transcriptionError?: string;
+};
+
+// What the Record button shows. The recorder runs in the editor window; the assistant panel and
+// the detached window render it from here and send presses back (`toggleRecording`).
+export type RecorderStatus = 'idle' | 'starting' | 'recording' | 'stopping';
+export interface AiRecorderState {
+  status: RecorderStatus;
+  // Epoch ms when the current recording started (for the live timer).
+  startedAt: number | null;
+  // The input device's name, for the tooltip.
+  micLabel: string;
+  // Actions captured so far in the running recording.
+  actionCount: number;
+  /** Epoch ms when the recording being transcribed was stopped; null while none is. */
+  stoppedAt: number | null;
+  // Speech-to-text download progress while it installs on first use.
+  tools: RecordingToolsStatus | null;
+  /** How the recording being transcribed was ended: its Stop or its Send button. Either way it
+   *  is sent once transcribed; null while none is being transcribed. */
+  endedWith: 'stop' | 'send' | null;
+}
+
 export interface AiMirrorState {
   providers: AiProviderInfo[];
   provider: AiProvider;
@@ -267,6 +308,9 @@ export interface AiMirrorState {
   detecting: boolean;
   selection: { id: number; name: string }[];
   assetMentions: AiAssetMention[];
+  recording: AiPendingRecording | null;
+  recorder?: AiRecorderState;
+  draftPrompt?: { text: string; nonce: number; mode: 'append' | 'replace'; send?: boolean } | null;
   billingDismissed: boolean;
   sessions: { id: string; title: string; updatedAt: number }[];
   currentSessionId: string;
@@ -305,8 +349,11 @@ export type AiRemoteCommand =
   | { type: 'deleteSession'; id: string }
   | { type: 'clearSelection' }
   | { type: 'removeAssetMention'; mention: AiAssetMention }
-  // The detached window's close button: shut the assistant entirely (close the window AND the
-  // inline panel), instead of just docking back — so close is consistent whether detached or not.
+  | { type: 'removeRecording' }
+  | { type: 'toggleRecording' }
+  | { type: 'cancelRecording' }
+  | { type: 'sendRecording' }
+  | { type: 'consumeDraftPrompt' }
   | { type: 'closeAssistant' }
   // Opt-in conversation sharing: the consent card's answer, its "not now", and the chip's
   // per-conversation switch.

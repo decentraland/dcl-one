@@ -34,6 +34,15 @@ class EngineCacheTests(unittest.TestCase):
         self.write('library/hashing/README.md', 'prose')
         subprocess.run(['git', 'add', 'library/hashing/README.md'], cwd=self.root, check=True)
         self.assertEqual(artifact.inputs(self.root), web_after)
+        # The bridge scene's install copies Creator Hub's zip-extract: the same rules.
+        folder = 'apps/creator-hub/packages/zip-extract/'
+        self.write(folder + 'README.md', 'prose')
+        subprocess.run(['git', 'add', folder], cwd=self.root, check=True)
+        self.assertEqual(artifact.inputs(self.root), web_after)
+        self.write(folder + 'index.js', 'implementation')
+        subprocess.run(['git', 'add', folder], cwd=self.root, check=True)
+        self.assertNotEqual(artifact.inputs(self.root), web_after)
+        self.assertEqual(artifact.engine_inputs(self.root), engine_before)
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

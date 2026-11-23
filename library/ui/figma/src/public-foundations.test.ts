@@ -91,132 +91,218 @@ describe('when public foundation provenance is checked', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('should accept materialized bytes whose LFS identities and origins match', () => {
-    expect(publicFoundationProblems(root, lock)).toEqual([])
-  })
-  it('should reject an absent public table', () => {
-    delete lock.publicFoundations
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'public foundations have no pinned file table'
-    )
-  })
-  it('should reject changed bytes before they are staged', async () => {
-    await put('colors/colors.ts', 'changed')
-    expect(publicFoundationProblems(root, lock)).toContain('changed public file: colors/colors.ts')
-  })
-  it('should reject a missing file', async () => {
-    await rm(path.join(root, relative, 'colors/colors.ts'))
-    expect(publicFoundationProblems(root, lock)).toContain('missing public file: colors/colors.ts')
-  })
-  it('should reject an extra untracked file', async () => {
-    await put('extra.ts', '')
-    expect(publicFoundationProblems(root, lock)).toContain('extra public file: extra.ts')
-  })
-  it('should reject an unmaterialized LFS pointer', async () => {
-    await put(
-      'typography/fonts/font0.woff2',
-      git('show', ':' + relative + 'typography/fonts/font0.woff2').toString()
-    )
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'unmaterialized public file: typography/fonts/font0.woff2'
-    )
-  })
-  it('should reject a different LFS object identity', () => {
-    const file = relative + 'typography/fonts/font0.woff2'
-    git(
-      'update-index',
-      '--cacheinfo',
-      '100644,' +
-        git('rev-parse', ':' + relative + 'colors/colors.ts')
-          .toString()
-          .trim() +
-        ',' +
-        file
-    )
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'font LFS identity mismatch: typography/fonts/font0.woff2'
-    )
-  })
-  it('should reject omitting a declared font from both the table and directory', async () => {
-    delete lock.publicFoundations!.files['typography/fonts/font0.woff2']
-    await rm(path.join(root, relative, 'typography/fonts/font0.woff2'))
-    expect(publicFoundationProblems(root, lock)).toContain('font manifest differs: font0.woff2')
+  describe('and the materialized bytes, LFS identities and origins match', () => {
+    it('should report no problem', () => {
+      expect(publicFoundationProblems(root, lock)).toEqual([])
+    })
   })
 
-  it('should reject a wrong npm origin', () => {
-    lock.publicFoundations!.files['typography/fonts/font0.woff2']!.origin.version = '0.0.0'
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'wrong npm origin: typography/fonts/font0.woff2'
-    )
-  })
-  it('should reject a different generated origin', () => {
-    lock.publicFoundations!.files['colors/colors.ts']!.origin.revision = 'b'.repeat(40)
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'wrong generated origin: colors/colors.ts'
-    )
-  })
-  it('should reject labeling generated code as handwritten source', () => {
-    lock.publicFoundations!.files['colors/colors.ts']!.origin = {
-      kind: 'source',
-      repository: 'https://github.com/decentraland/dcl-one'
-    }
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'generated origin classification differs: colors/colors.ts'
-    )
-  })
-  it('should reject a malformed staged manifest without throwing', async () => {
-    await put('source.json', 'not-json')
-    git('add', relative + 'source.json')
-    lock.publicFoundations!.files['source.json']!.sha256 = digest('not-json')
-    expect(publicFoundationProblems(root, lock)).toContain('foundation manifests are malformed')
+  describe('and the public table is absent', () => {
+    beforeEach(() => {
+      delete lock.publicFoundations
+    })
+
+    it('should report that there is no pinned file table', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'public foundations have no pinned file table'
+      )
+    })
   })
 
-  it('should reject symlinked foundation manifests without reading their target', async () => {
-    await rm(path.join(root, relative, 'source.json'))
-    await symlink(
-      path.join(root, relative, 'typography/font-source.json'),
-      path.join(root, relative, 'source.json')
-    )
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'public output contains a symlink: source.json'
-    )
+  describe('and a file changed before it was staged', () => {
+    beforeEach(async () => {
+      await put('colors/colors.ts', 'changed')
+    })
+
+    it('should report the changed public file', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'changed public file: colors/colors.ts'
+      )
+    })
   })
 
-  it('should reject a pointer with a correct digest but wrong byte size', () => {
-    git(
-      'update-index',
-      '--cacheinfo',
-      '100644,' +
-        execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
-          input: `version https://git-lfs.github.com/spec/v1\noid sha256:${digest('font0')}\nsize 999\n`
-        })
-          .toString()
-          .trim() +
-        ',' +
-        relative +
-        'typography/fonts/font0.woff2'
-    )
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'font LFS identity mismatch: typography/fonts/font0.woff2'
-    )
+  describe('and a file is missing', () => {
+    beforeEach(async () => {
+      await rm(path.join(root, relative, 'colors/colors.ts'))
+    })
+
+    it('should report the missing public file', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'missing public file: colors/colors.ts'
+      )
+    })
   })
 
-  it('should reject a non-font index pointer even when its LFS digest matches', () => {
-    git(
-      'update-index',
-      '--cacheinfo',
-      '100644,' +
-        execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
-          input: `version https://git-lfs.github.com/spec/v1\noid sha256:${digest('export const palette = {}')}\nsize 25\n`
-        })
-          .toString()
-          .trim() +
-        ',' +
-        relative +
-        'colors/colors.ts'
-    )
-    expect(publicFoundationProblems(root, lock)).toContain(
-      'public index bytes differ: colors/colors.ts'
-    )
+  describe('and an extra untracked file exists', () => {
+    beforeEach(async () => {
+      await put('extra.ts', '')
+    })
+
+    it('should report the extra public file', () => {
+      expect(publicFoundationProblems(root, lock)).toContain('extra public file: extra.ts')
+    })
+  })
+
+  describe('and a font is an unmaterialized LFS pointer', () => {
+    beforeEach(async () => {
+      await put(
+        'typography/fonts/font0.woff2',
+        git('show', ':' + relative + 'typography/fonts/font0.woff2').toString()
+      )
+    })
+
+    it('should report the unmaterialized public file', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'unmaterialized public file: typography/fonts/font0.woff2'
+      )
+    })
+  })
+
+  describe('and a font is indexed with a different LFS object identity', () => {
+    beforeEach(() => {
+      const file = relative + 'typography/fonts/font0.woff2'
+      git(
+        'update-index',
+        '--cacheinfo',
+        '100644,' +
+          git('rev-parse', ':' + relative + 'colors/colors.ts')
+            .toString()
+            .trim() +
+          ',' +
+          file
+      )
+    })
+
+    it('should report a font LFS identity mismatch', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'font LFS identity mismatch: typography/fonts/font0.woff2'
+      )
+    })
+  })
+
+  describe('and a declared font is omitted from both the table and the directory', () => {
+    beforeEach(async () => {
+      delete lock.publicFoundations!.files['typography/fonts/font0.woff2']
+      await rm(path.join(root, relative, 'typography/fonts/font0.woff2'))
+    })
+
+    it('should report that the font manifest differs', () => {
+      expect(publicFoundationProblems(root, lock)).toContain('font manifest differs: font0.woff2')
+    })
+  })
+
+  describe('and a font has a wrong npm origin', () => {
+    beforeEach(() => {
+      lock.publicFoundations!.files['typography/fonts/font0.woff2']!.origin.version = '0.0.0'
+    })
+
+    it('should report the wrong npm origin', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'wrong npm origin: typography/fonts/font0.woff2'
+      )
+    })
+  })
+
+  describe('and generated code has a different generated origin', () => {
+    beforeEach(() => {
+      lock.publicFoundations!.files['colors/colors.ts']!.origin.revision = 'b'.repeat(40)
+    })
+
+    it('should report the wrong generated origin', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'wrong generated origin: colors/colors.ts'
+      )
+    })
+  })
+
+  describe('and generated code is labeled as handwritten source', () => {
+    beforeEach(() => {
+      lock.publicFoundations!.files['colors/colors.ts']!.origin = {
+        kind: 'source',
+        repository: 'https://github.com/decentraland/dcl-one'
+      }
+    })
+
+    it('should report that the generated origin classification differs', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'generated origin classification differs: colors/colors.ts'
+      )
+    })
+  })
+
+  describe('and the staged manifest is malformed', () => {
+    beforeEach(async () => {
+      await put('source.json', 'not-json')
+      git('add', relative + 'source.json')
+      lock.publicFoundations!.files['source.json']!.sha256 = digest('not-json')
+    })
+
+    it('should report malformed foundation manifests without throwing', () => {
+      expect(publicFoundationProblems(root, lock)).toContain('foundation manifests are malformed')
+    })
+  })
+
+  describe('and a foundation manifest is a symlink', () => {
+    beforeEach(async () => {
+      await rm(path.join(root, relative, 'source.json'))
+      await symlink(
+        path.join(root, relative, 'typography/font-source.json'),
+        path.join(root, relative, 'source.json')
+      )
+    })
+
+    it('should report the symlink without reading its target', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'public output contains a symlink: source.json'
+      )
+    })
+  })
+
+  describe('and a font pointer has a correct digest but a wrong byte size', () => {
+    beforeEach(() => {
+      git(
+        'update-index',
+        '--cacheinfo',
+        '100644,' +
+          execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+            input: `version https://git-lfs.github.com/spec/v1\noid sha256:${digest('font0')}\nsize 999\n`
+          })
+            .toString()
+            .trim() +
+          ',' +
+          relative +
+          'typography/fonts/font0.woff2'
+      )
+    })
+
+    it('should report a font LFS identity mismatch', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'font LFS identity mismatch: typography/fonts/font0.woff2'
+      )
+    })
+  })
+
+  describe('and a non-font file is indexed as a pointer with a matching LFS digest', () => {
+    beforeEach(() => {
+      git(
+        'update-index',
+        '--cacheinfo',
+        '100644,' +
+          execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+            input: `version https://git-lfs.github.com/spec/v1\noid sha256:${digest('export const palette = {}')}\nsize 25\n`
+          })
+            .toString()
+            .trim() +
+          ',' +
+          relative +
+          'colors/colors.ts'
+      )
+    })
+
+    it('should report that the public index bytes differ', () => {
+      expect(publicFoundationProblems(root, lock)).toContain(
+        'public index bytes differ: colors/colors.ts'
+      )
+    })
   })
 })

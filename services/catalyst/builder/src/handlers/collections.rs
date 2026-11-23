@@ -710,8 +710,8 @@ mod tests {
             let pool = pool.clone();
             async move {
                 sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
-                     VALUES ('committee', 'matic', 0, 100, 100, 100, {folded_at}, true) \
+                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
+                     VALUES ('committee', 'matic', 0, 100, 100, 100, {folded_at}, true, 137) \
                      ON CONFLICT (indexer, network) DO UPDATE SET folded_at = EXCLUDED.folded_at, last_block = EXCLUDED.last_block"
                 )))
                 .execute(&pool)
@@ -737,6 +737,26 @@ mod tests {
             "past the published block"
         );
         assert!(is_committee(&state, &admin).await.unwrap());
+
+        // A cursor not bound to Polygon, or in quarantine, admits no member.
+        for (sql, why) in [
+            (
+                "UPDATE shop.chain_cursor SET chain_id = NULL WHERE indexer = 'committee'",
+                "an unadopted cursor",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'committee'",
+                "a cursor in quarantine",
+            ),
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+            assert!(!is_committee(&state, &member).await.unwrap(), "{why}");
+        }
+        sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'committee'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(is_committee(&state, &member).await.unwrap());
 
         sqlx::query("UPDATE shop.chain_cursor SET last_block = 200 WHERE indexer = 'committee'")
             .execute(&pool)
@@ -827,8 +847,8 @@ mod tests {
         assert!(committee(&body).is_empty(), "unpublished index: {body}");
 
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
-             VALUES ('committee', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true)",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
+             VALUES ('committee', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true, 137)",
         )
         .execute(&pool)
         .await

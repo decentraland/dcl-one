@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, HTMLAttributes } from 'react'
+import { ConnectionStatus, type ConnectionStatusValue } from './ConnectionStatus'
 import styles from './ProfilePic.module.css'
 
 export type ProfilePicSize = 76 | 72 | 60 | 48 | 40 | 32 | 28 | 24 | 20
@@ -14,6 +15,9 @@ export type ProfilePicProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> 
   size?: ProfilePicSize
   /** Uses the 48px portrait below the desktop breakpoint. */
   compactOnMobile?: boolean
+  /** The connection dot is shown from 32px up. */
+  status?: ConnectionStatusValue
+  statusLabel?: string
   /** The member's own name colour, behind the picture and the initial. It is member data, not a palette choice. */
   nameColor?: string
 }
@@ -33,6 +37,8 @@ export function ProfilePic({
   alt = name,
   size = 72,
   compactOnMobile = false,
+  status,
+  statusLabel,
   nameColor,
   className,
   style,
@@ -73,6 +79,9 @@ export function ProfilePic({
           </span>
         )}
       </span>
+      {status && size >= 32 && (
+        <ConnectionStatus className={styles.status} status={status} label={statusLabel} />
+      )}
     </span>
   )
 }

@@ -14,7 +14,6 @@ import { fetchPhoto, fetchUserPhotos, formatPhotoDate } from "./photos";
 
 const OWNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const PATH = `/camera-reel-service/api/users/${OWNER}/images`;
-const identity = { signer: OWNER } as AuthIdentity;
 const ID = "7f554ad3-ea9c-4153-89cd-5b1f6c03bfbb";
 
 function image(id: string, overrides: Record<string, unknown> = {}) {
@@ -40,160 +39,281 @@ function image(id: string, overrides: Record<string, unknown> = {}) {
 
 const page = (images: unknown[], currentImages = images.length) => ({ images, currentImages, maxImages: 500 });
 
+let identity: AuthIdentity;
+
 beforeEach(() => {
-  vi.mocked(getJSON).mockResolvedValue(page([image("a")]));
-  vi.mocked(signedGetJSON).mockResolvedValue(page([image("a")]));
+  identity = { signer: OWNER } as AuthIdentity;
 });
-afterEach(() => vi.resetAllMocks());
+afterEach(() => {
+  vi.resetAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("fetchUserPhotos", () => {
-  it("reads the node's camera reel for the lowercased wallet, one page, unsigned", async () => {
-    const result = await fetchUserPhotos(` ${OWNER.toUpperCase().replace("0X", "0x")} `, { limit: 24, offset: 48 });
+  let result: Awaited<ReturnType<typeof fetchUserPhotos>>;
 
-    expect(getJSON).toHaveBeenCalledWith(PATH, expect.objectContaining({ query: { limit: 24, offset: 48 } }));
-    expect(signedGetJSON).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      items: [
-        {
-          id: "a",
-          url: "https://reel.example/a.jpg",
-          thumbnailUrl: "https://reel.example/a-thumbnail.jpg",
-          isPublic: true,
-          dateTime: "1794327859",
-          realm: "main",
-          scene: { name: "Genesis Plaza", x: "0", y: "1" },
-          author: { name: "Alice", address: OWNER },
-          people: [{ name: "kurd", address: "0xe5104e449950180c459447f2971c8a760456b635", isGuest: false }],
-        },
-      ],
-      received: 1,
-      total: 1,
+  beforeEach(() => {
+    vi.mocked(getJSON).mockResolvedValue(page([image("a")]));
+    vi.mocked(signedGetJSON).mockResolvedValue(page([image("a")]));
+  });
+
+  describe("when the read is unsigned", () => {
+    beforeEach(async () => {
+      result = await fetchUserPhotos(` ${OWNER.toUpperCase().replace("0X", "0x")} `, { limit: 24, offset: 48 });
+    });
+
+    it("should read one page of the node's camera reel for the lowercased wallet", () => {
+      expect(getJSON).toHaveBeenCalledWith(PATH, expect.objectContaining({ query: { limit: 24, offset: 48 } }));
+    });
+
+    it("should not sign the read", () => {
+      expect(signedGetJSON).not.toHaveBeenCalled();
+    });
+
+    it("should map the page's photos", () => {
+      expect(result).toEqual({
+        items: [
+          {
+            id: "a",
+            url: "https://reel.example/a.jpg",
+            thumbnailUrl: "https://reel.example/a-thumbnail.jpg",
+            isPublic: true,
+            dateTime: "1794327859",
+            realm: "main",
+            scene: { name: "Genesis Plaza", x: "0", y: "1" },
+            author: { name: "Alice", address: OWNER },
+            people: [{ name: "kurd", address: "0xe5104e449950180c459447f2971c8a760456b635", isGuest: false }],
+          },
+        ],
+        received: 1,
+        total: 1,
+      });
     });
   });
 
-  it("signs the read with the owner's identity, so private snapshots are listed", async () => {
-    vi.mocked(signedGetJSON).mockResolvedValue(page([image("p", { isPublic: false })], 7));
+  describe("when the owner's identity is given", () => {
+    beforeEach(async () => {
+      vi.mocked(signedGetJSON).mockResolvedValueOnce(page([image("p", { isPublic: false })], 7));
+      result = await fetchUserPhotos(OWNER, { limit: 24 }, { identity });
+    });
 
-    const result = await fetchUserPhotos(OWNER, { limit: 24 }, { identity });
+    it("should sign the read with it", () => {
+      expect(signedGetJSON).toHaveBeenCalledWith(PATH, expect.objectContaining({ identity, query: { limit: 24, offset: 0 } }));
+    });
 
-    expect(signedGetJSON).toHaveBeenCalledWith(PATH, expect.objectContaining({ identity, query: { limit: 24, offset: 0 } }));
-    expect(getJSON).not.toHaveBeenCalled();
-    expect(result.items[0]?.isPublic).toBe(false);
-    expect(result.total).toBe(7);
+    it("should not make an unsigned read", () => {
+      expect(getJSON).not.toHaveBeenCalled();
+    });
+
+    it("should list private snapshots", () => {
+      expect(result.items[0]?.isPublic).toBe(false);
+    });
+
+    it("should answer the reel's total", () => {
+      expect(result.total).toBe(7);
+    });
   });
 
-  it("keeps a row that lacks fields the tab does not read", async () => {
-    const legacy = image("old");
-    const { placeId: _placeId, ...metadata } = legacy.metadata;
-    vi.mocked(getJSON).mockResolvedValue(page([{ ...legacy, metadata: { ...metadata, visiblePeople: [{ userName: "", userAddress: "0x1", isGuest: true }] } }]));
+  describe("when a row lacks fields the tab does not read", () => {
+    beforeEach(async () => {
+      const legacy = image("old");
+      const { placeId: _placeId, ...metadata } = legacy.metadata;
+      vi.mocked(getJSON).mockResolvedValueOnce(page([{ ...legacy, metadata: { ...metadata, visiblePeople: [{ userName: "", userAddress: "0x1", isGuest: true }] } }]));
+      result = await fetchUserPhotos(OWNER, { limit: 24 });
+    });
 
-    const result = await fetchUserPhotos(OWNER, { limit: 24 });
+    it("should keep the row", () => {
+      expect(result.items.map((photo) => photo.id)).toEqual(["old"]);
+    });
 
-    expect(result.items.map((photo) => photo.id)).toEqual(["old"]);
-    expect(result.items[0]?.people).toEqual([{ name: "", address: "0x1", isGuest: true }]);
+    it("should keep its people", () => {
+      expect(result.items[0]?.people).toEqual([{ name: "", address: "0x1", isGuest: true }]);
+    });
   });
 
-  it("leaves out a row that does not parse or whose image is not http(s), and still counts it as received", async () => {
-    vi.mocked(getJSON).mockResolvedValue(
-      page([image("a"), { id: "broken" }, image("js", { url: "javascript:alert(1)" }), image("b")], 9),
-    );
+  describe("when a row does not parse or its image is not http(s)", () => {
+    beforeEach(async () => {
+      vi.mocked(getJSON).mockResolvedValueOnce(
+        page([image("a"), { id: "broken" }, image("js", { url: "javascript:alert(1)" }), image("b")], 9),
+      );
+      result = await fetchUserPhotos(OWNER, { limit: 24 });
+    });
 
-    const result = await fetchUserPhotos(OWNER, { limit: 24 });
+    it("should leave it out", () => {
+      expect(result.items.map((photo) => photo.id)).toEqual(["a", "b"]);
+    });
 
-    expect(result.items.map((photo) => photo.id)).toEqual(["a", "b"]);
-    expect(result.received).toBe(4);
-    expect(result.total).toBe(9);
-    expect(warnInvalid).toHaveBeenCalledTimes(2);
+    it("should still count it as received", () => {
+      expect(result.received).toBe(4);
+    });
+
+    it("should answer the reel's total", () => {
+      expect(result.total).toBe(9);
+    });
+
+    it("should warn about each invalid row", () => {
+      expect(warnInvalid).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it("falls back to the full image when the thumbnail is not http(s)", async () => {
-    vi.mocked(getJSON).mockResolvedValue(page([image("a", { thumbnailUrl: "" })]));
+  describe("when the thumbnail is not http(s)", () => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockResolvedValueOnce(page([image("a", { thumbnailUrl: "" })]));
+    });
 
-    const [photo] = (await fetchUserPhotos(OWNER, { limit: 24 })).items;
-
-    expect(photo?.thumbnailUrl).toBe("https://reel.example/a.jpg");
+    it("should fall back to the full image", async () => {
+      const [photo] = (await fetchUserPhotos(OWNER, { limit: 24 })).items;
+      expect(photo?.thumbnailUrl).toBe("https://reel.example/a.jpg");
+    });
   });
 
-  it.each([
+  describe.each([
     ["no images array", { currentImages: 1 }],
     ["no total", { images: [] }],
     ["not an object", "nope"],
-  ])("throws a typed error when the response has %s", async (_case, body) => {
-    vi.mocked(getJSON).mockResolvedValue(body);
+  ])("when the response has %s", (_case, body) => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockResolvedValue(body);
+    });
 
-    await expect(fetchUserPhotos(OWNER, { limit: 24 })).rejects.toBeInstanceOf(CatalystError);
+    it("should throw a typed error", async () => {
+      await expect(fetchUserPhotos(OWNER, { limit: 24 })).rejects.toBeInstanceOf(CatalystError);
+    });
+
+    it("should say the response is not a gallery", async () => {
+      await expect(fetchUserPhotos(OWNER, { limit: 24 })).rejects.toThrow("the response did not have the gallery shape");
+    });
   });
 
-  it("leaves out a row whose scene has no location", async () => {
-    const row = image("a");
-    vi.mocked(getJSON).mockResolvedValue(page([{ ...row, metadata: { ...row.metadata, scene: { name: "Plaza" } } }, image("b")]));
+  describe("when a row's scene has no location", () => {
+    beforeEach(async () => {
+      const row = image("a");
+      vi.mocked(getJSON).mockResolvedValueOnce(page([{ ...row, metadata: { ...row.metadata, scene: { name: "Plaza" } } }, image("b")]));
+      result = await fetchUserPhotos(OWNER, { limit: 24 });
+    });
 
-    const result = await fetchUserPhotos(OWNER, { limit: 24 });
+    it("should leave it out", () => {
+      expect(result.items.map((photo) => photo.id)).toEqual(["b"]);
+    });
 
-    expect(result.items.map((photo) => photo.id)).toEqual(["b"]);
-    expect(warnInvalid).toHaveBeenCalledTimes(1);
+    it("should warn about it", () => {
+      expect(warnInvalid).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("passes a failed signed read through", async () => {
-    vi.mocked(signedGetJSON).mockRejectedValue(new CatalystError("Catalyst returned 401", PATH, 401));
+  describe("when the signed read fails", () => {
+    beforeEach(() => {
+      vi.mocked(signedGetJSON).mockRejectedValueOnce(new CatalystError("Catalyst returned 401", PATH, 401));
+    });
 
-    await expect(fetchUserPhotos(OWNER, { limit: 24 }, { identity })).rejects.toMatchObject({ status: 401 });
+    it("should pass the failure through", async () => {
+      await expect(fetchUserPhotos(OWNER, { limit: 24 }, { identity })).rejects.toMatchObject({ status: 401, message: "Catalyst returned 401" });
+    });
   });
 
-  it("passes a failed read through", async () => {
-    vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 503", PATH, 503));
+  describe("when the read fails", () => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockRejectedValueOnce(new CatalystError("Catalyst returned 503", PATH, 503));
+    });
 
-    await expect(fetchUserPhotos(OWNER, { limit: 24 })).rejects.toMatchObject({ status: 503 });
+    it("should pass the failure through", async () => {
+      await expect(fetchUserPhotos(OWNER, { limit: 24 })).rejects.toMatchObject({ status: 503, message: "Catalyst returned 503" });
+    });
   });
 });
 
 describe("fetchPhoto", () => {
-  it("reads one snapshot's metadata by id", async () => {
-    vi.mocked(getJSON).mockResolvedValue(image("x"));
+  describe("when the id is a snapshot id", () => {
+    let photo: Awaited<ReturnType<typeof fetchPhoto>>;
 
-    const photo = await fetchPhoto(ID.toUpperCase());
+    beforeEach(async () => {
+      vi.mocked(getJSON).mockResolvedValueOnce(image("x"));
+      photo = await fetchPhoto(ID.toUpperCase());
+    });
 
-    expect(getJSON).toHaveBeenCalledWith(`/camera-reel-service/api/images/${ID}/metadata`, expect.anything());
-    expect(photo?.id).toBe("x");
+    it("should read the snapshot's metadata by its lowercased id", () => {
+      expect(getJSON).toHaveBeenCalledWith(`/camera-reel-service/api/images/${ID}/metadata`, expect.anything());
+    });
+
+    it("should answer the snapshot", () => {
+      expect(photo?.id).toBe("x");
+    });
   });
 
-  it.each(["..", "", "x/../../users", `${ID}/x`])("never requests an id that is not one: %j", async (id) => {
-    expect(await fetchPhoto(id)).toBeNull();
-    expect(getJSON).not.toHaveBeenCalled();
+  describe.each(["..", "", "x/../../users", `${ID}/x`])("when the id %j is not one", (id) => {
+    it("should answer null", async () => {
+      expect(await fetchPhoto(id)).toBeNull();
+    });
+
+    it("should never request it", async () => {
+      await fetchPhoto(id);
+      expect(getJSON).not.toHaveBeenCalled();
+    });
   });
 
-  it("is null for a snapshot the service does not have, or cannot show", async () => {
-    vi.mocked(getJSON).mockRejectedValueOnce(new CatalystError("Catalyst returned 404", "/x", 404)).mockResolvedValueOnce({ id: "broken" });
+  describe("when the service does not have the snapshot", () => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockRejectedValueOnce(new CatalystError("Catalyst returned 404", "/x", 404));
+    });
 
-    expect(await fetchPhoto(ID)).toBeNull();
-    expect(await fetchPhoto(ID)).toBeNull();
+    it("should be null", async () => {
+      expect(await fetchPhoto(ID)).toBeNull();
+    });
   });
 
-  it("passes any other failure through", async () => {
-    vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 503", "/x", 503));
+  describe("when the service cannot show the snapshot", () => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockResolvedValueOnce({ id: "broken" });
+    });
 
-    await expect(fetchPhoto(ID)).rejects.toMatchObject({ status: 503 });
+    it("should be null", async () => {
+      expect(await fetchPhoto(ID)).toBeNull();
+    });
+  });
+
+  describe("when the read fails otherwise", () => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockRejectedValueOnce(new CatalystError("Catalyst returned 503", "/x", 503));
+    });
+
+    it("should pass the failure through", async () => {
+      await expect(fetchPhoto(ID)).rejects.toMatchObject({ status: 503, message: "Catalyst returned 503" });
+    });
   });
 });
 
 describe("formatPhotoDate", () => {
-  it("reads Unix seconds and ISO dates as the profile site prints them", () => {
-    expect(formatPhotoDate("1794327859")).toBe(new Date(1794327859 * 1000).toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric" }));
-    expect(formatPhotoDate("2026-11-08T12:00:00Z")).toBe("November 08, 2026");
-    expect(formatPhotoDate(" 1794327859 ")).toBe(formatPhotoDate("1794327859"));
+  describe("when the date is in Unix seconds", () => {
+    it("should print it as the profile site does", () => {
+      expect(formatPhotoDate("1794327859")).toBe(new Date(1794327859 * 1000).toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric" }));
+    });
+
+    describe("and it has surrounding spaces", () => {
+      it("should print it the same", () => {
+        expect(formatPhotoDate(" 1794327859 ")).toBe(formatPhotoDate("1794327859"));
+      });
+    });
   });
 
-  it("prints the UTC day whatever the browser's time zone, as the server renders it", () => {
-    const zone = process.env.TZ;
-    process.env.TZ = "Asia/Tokyo";
-    try {
+  describe("when the date is ISO", () => {
+    it("should print it as the profile site does", () => {
+      expect(formatPhotoDate("2026-11-08T12:00:00Z")).toBe("November 08, 2026");
+    });
+  });
+
+  describe("when the browser's time zone is ahead of UTC", () => {
+    beforeEach(() => {
+      vi.stubEnv("TZ", "Asia/Tokyo");
+    });
+
+    it("should print the UTC day, as the server renders it", () => {
       expect(formatPhotoDate("2026-11-08T23:30:00Z")).toBe("November 08, 2026");
-    } finally {
-      process.env.TZ = zone;
-    }
+    });
   });
 
-  it.each(["", "   ", "not a date"])("is empty for %j", (value) => {
-    expect(formatPhotoDate(value)).toBe("");
+  describe("when the date is empty or invalid", () => {
+    it.each(["", "   ", "not a date"])("should be empty for %j", (value) => {
+      expect(formatPhotoDate(value)).toBe("");
+    });
   });
 });

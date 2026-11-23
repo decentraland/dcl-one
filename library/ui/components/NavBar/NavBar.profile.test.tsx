@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NavBar, type NavBarProps } from './NavBar'
 
 describe('when the Sites profile panel is open', () => {
@@ -40,6 +40,10 @@ describe('when the Sites profile panel is open', () => {
     body = panel.querySelector<HTMLImageElement>('img[src="/body.png"]')!
   })
 
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
   it('should render only the supplied profile balances beside the body snapshot', () => {
     expect(body).toBeInTheDocument()
     expect(panel.querySelector('[data-balance="mana"]')).toHaveTextContent('MANA: 101.1')
@@ -47,10 +51,18 @@ describe('when the Sites profile panel is open', () => {
     expect(panel.querySelector('[data-balance="credits"]')).toBeNull()
   })
 
-  it('should leave the panel without balances when only the header has Credits', () => {
-    widget.rerender(<NavBar {...props} accountMenuBalances={undefined} />)
-    expect(panel.querySelector('[data-balance]')).toBeNull()
-    expect(widget.container.querySelector('[data-balance="credits"]')).toBeInTheDocument()
+  describe('and only the header has Credits', () => {
+    beforeEach(() => {
+      widget.rerender(<NavBar {...props} accountMenuBalances={undefined} />)
+    })
+
+    it('should leave the panel without balances', () => {
+      expect(panel.querySelector('[data-balance]')).toBeNull()
+    })
+
+    it('should keep the Credits balance in the header', () => {
+      expect(widget.container.querySelector('[data-balance="credits"]')).toBeInTheDocument()
+    })
   })
 
   it('should copy the full user ID and announce success', async () => {
@@ -69,13 +81,18 @@ describe('when the Sites profile panel is open', () => {
     expect(screen.getByText('0x1234...5678')).toBeVisible()
   })
 
-  it('should show the localized copy confirmation', async () => {
-    widget.rerender(<NavBar {...props} labels={{ userIdCopied: 'ID de usuario copiado' }} />)
-    await user.click(screen.getByRole('button', { name: 'Copy user ID' }))
-    expect(
-      screen.getByText('ID de usuario copiado', { selector: '[aria-hidden="true"]' })
-    ).toBeVisible()
-    expect(screen.getByRole('status')).toHaveTextContent('ID de usuario copiado')
+  describe('and a localized copy confirmation is supplied', () => {
+    beforeEach(() => {
+      widget.rerender(<NavBar {...props} labels={{ userIdCopied: 'ID de usuario copiado' }} />)
+    })
+
+    it('should show the localized copy confirmation', async () => {
+      await user.click(screen.getByRole('button', { name: 'Copy user ID' }))
+      expect(
+        screen.getByText('ID de usuario copiado', { selector: '[aria-hidden="true"]' })
+      ).toBeVisible()
+      expect(screen.getByRole('status')).toHaveTextContent('ID de usuario copiado')
+    })
   })
 
   it('should drop an unavailable body snapshot', () => {

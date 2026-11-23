@@ -199,6 +199,278 @@ async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_cal
     db.drop().await;
 }
 
+/// `data` as the ABI encodes the one `string` of a data log.
+fn abi_string(document: &str) -> String {
+    let bytes = document.as_bytes();
+    let mut padded = bytes.to_vec();
+    padded.resize(bytes.len().div_ceil(32) * 32, 0);
+    let body: String = padded.iter().map(|b| format!("{b:02x}")).collect();
+    format!("0x{:064x}{:064x}{body}", 32, bytes.len())
+}
+
+fn create_estate(block: u64, index: u32, owner: &str, estate: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address: ESTATE,
+        topics: vec![
+            TOPIC_CREATE_ESTATE.into(),
+            topic_addr(owner),
+            topic_uint(estate),
+        ],
+        data: abi_string(document),
+    }
+}
+
+fn data_update(block: u64, index: u32, address: &'static str, asset: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address,
+        topics: vec![
+            TOPIC_UPDATE.into(),
+            topic_token(asset),
+            topic_addr(ALICE),
+            topic_addr(ALICE),
+        ],
+        data: abi_string(document),
+    }
+}
+
+async fn estate_data_rows(pool: &PgPool) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT estate_id::text, name FROM land_authz.estate_data_event ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The indexer keeps the Estate registry's version-0 data documents (and
+/// not the LAND registry's, which share the `Update` topic, nor one that
+/// does not parse); a minted estate holding no LAND answers its latest
+/// document's name and description, or empty strings without one.
+#[tokio::test]
+async fn a_dissolved_estate_answers_its_latest_data_document() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            create_estate(s + 10, 1, ALICE, "501", "0,\"First\",\"first words\""),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            transfer(s + 12, 0, ESTATE, ZERO_ADDR, ALICE, "500"),
+            add_land(s + 12, 1, "500", TOKEN_37_55),
+            data_update(
+                s + 20,
+                0,
+                ESTATE,
+                "501",
+                "0,\"Dissolved\",\"Once an estate\"",
+            ),
+            data_update(s + 21, 0, ESTATE, "501", "not a document"),
+            data_update(s + 22, 0, LAND, TOKEN_37_55, "0,\"A parcel\",\"\""),
+            data_update(s + 23, 0, ESTATE, "500", "0,\"Kept\","),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "unready"
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![
+            ("501".into(), Some("First".into())),
+            ("501".into(), Some("Dissolved".into())),
+            ("500".into(), Some("Kept".into())),
+        ],
+        "the estates' version-0 documents only"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "Dissolved".into(),
+            description: "Once an estate".into(),
+        })
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        DissolvedEstate::Dissolved(EstateData::default()),
+        "no document: empty strings"
+    );
+    assert_eq!(
+        state.dissolved_estate("500").await,
+        DissolvedEstate::NotDissolved,
+        "holds LAND"
+    );
+    assert_eq!(
+        state.dissolved_estate("999").await,
+        DissolvedEstate::NotDissolved,
+        "never minted"
+    );
+
+    // A reorg past the documents drops them with the log.
+    reorg_from(&chain, s + 20, vec![]);
+    chain.head.store(s + 55, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.reorg_rewound_to.is_some(), "{out:?}");
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![("501".into(), Some("First".into()))]
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "First".into(),
+            description: "first words".into(),
+        })
+    );
+    db.drop().await;
+}
+
+/// A registry switch keeps the old registry's documents and never reads
+/// them: an estate id the configured registry minted without a document
+/// answers empty strings, not the name the old registry's estate of that id
+/// carried.
+#[tokio::test]
+async fn a_registry_switch_leaves_the_old_registrys_documents_unread() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            create_estate(s + 11, 1, ALICE, "502", "0,\"New\",\"new words\""),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let configured = Settings {
+        rpc_url: Some(serve(chain).await),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    // A published index of other registries, whose estates 501 and 502 are
+    // dissolved and named.
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: OLD_ESTATE.into(),
+        replay_from_block: None,
+        ..configured.clone()
+    };
+    let old_last = (s + 40) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true, \
+         full_replay_started = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
+         VALUES ($1, 501, $2, 0), ($1, 502, $2, 1)",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 2)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event \
+             (block_number, log_index, token_address, estate_id, name, description) \
+         VALUES ($2, 0, $1, 501, 'Old 501', 'old words'), ($2, 1, $1, 502, 'Old 502', 'old words')",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    let old_state = state_over(pool.clone(), old, None);
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "Old 501".into(),
+            description: "old words".into(),
+        }),
+        "the old registries' reader answers its own document"
+    );
+
+    let state = state_over(pool.clone(), configured, None);
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "not its cursor"
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    let kept: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT token_address, estate_id::text, name FROM land_authz.estate_data_event \
+         ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            (ESTATE.into(), "502".into(), Some("New".into())),
+            (OLD_ESTATE.into(), "501".into(), Some("Old 501".into())),
+            (OLD_ESTATE.into(), "502".into(), Some("Old 502".into())),
+        ],
+        "the old registry's rows stay"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData::default()),
+        "the old registry's later document names no estate of this one"
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "New".into(),
+            description: "new words".into(),
+        }),
+        "its own document, though the old registry's is later"
+    );
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown
+    );
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -2267,7 +2539,7 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         Verdict::Denied
     );
 
-    // The freshness window: a stopped indexer falls back after 30 minutes,
+    // The freshness window: the deploy reader falls back after 30 minutes,
     // and a pass with nothing new re-publishes.
     sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '31 minutes'")
         .execute(&db.pool)
@@ -3504,10 +3776,18 @@ async fn live_rpc_reads_and_decodes_the_first_land_logs() {
         logs.len(),
         events.len()
     );
+    let rights_logs = logs
+        .iter()
+        .filter(|log| {
+            !log.topics
+                .first()
+                .is_some_and(|t| crate::events::is_data_topic(t))
+        })
+        .count();
     assert_eq!(
         events.len(),
-        logs.len(),
-        "every log of the seven topics decodes"
+        rights_logs,
+        "every log of the rights topics decodes"
     );
 }
 
@@ -4254,6 +4534,18 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
     db.drop().await;
 }
 
+#[test]
+fn land_index_retry_waits_fit_inside_the_public_fold_window() {
+    let schedule = index_schedule(Duration::from_secs(240));
+    let after_two_failures =
+        schedule.interval + schedule.wait_after_failure(1) + schedule.wait_after_failure(2);
+    assert_eq!(
+        LAMBDAS_FOLD_WINDOW.to_std().unwrap() - after_two_failures,
+        Duration::from_secs(60)
+    );
+    assert_eq!(schedule.wait_after_failure(10), Duration::from_secs(150));
+}
+
 #[tokio::test]
 async fn readiness_and_status_use_database_freshness_boundaries() {
     let Some(db) = ScratchDb::create().await else {
@@ -4267,6 +4559,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
             .await
             .is_some()
     );
+    seed_rights(&db.pool).await;
     let state = state_over(db.pool.clone(), settings, None);
     assert!(state.ready().await.is_some());
     let app = router(state.clone());
@@ -4292,19 +4585,138 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
     assert_eq!(body["ready"], false);
     assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() < 0);
-    for (minutes, expected) in [(29, true), (31, false)] {
+    for (minutes, expected) in [(9, true), (11, false), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
             indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
                 .await
                 .is_some(),
-            expected
+            minutes < 30
         );
-        assert_eq!(state.ready().await.is_some(), expected);
+        assert_eq!(state.ready().await.is_some(), minutes < 30);
         let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
         assert_eq!(body["ready"], expected);
+        assert_eq!(body["readyWindowSecs"], 600);
         assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() >= minutes as i64 * 60);
+        let (status, _, _) = get_json(&app, "/lambdas/parcels/1/2/operators").await;
+        assert_eq!(
+            status,
+            if expected {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+        );
     }
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC',now()) - interval '11 minutes'")
+        .execute(&db.pool).await.unwrap();
+    let actor = DANA;
+    let decision = can_deploy(&state, (1, 1), actor).await.unwrap();
+    assert_eq!(
+        decision.verdict,
+        Verdict::Granted(LandRightLeg::UpdateManager)
+    );
+    let (status, headers, body) = post_json(
+        &app,
+        &format!("/lambdas/users/{actor}/parcels/permissions"),
+        json!({ "parcels": ["1,1"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[crate::routes::SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["elements"][0]["permissions"]["updateManager"], true);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn public_land_routes_use_the_land_subgraph_only_after_the_fold_expires() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    seed_rights(&db.pool).await;
+
+    async fn graphql(axum::Json(request): axum::Json<Value>) -> axum::Json<Value> {
+        let query = request["query"].as_str().unwrap();
+        let variables = &request["variables"];
+        let data = if query.contains("fetchOperatorsOfParcel") {
+            assert_eq!(variables, &json!({ "x": 1, "y": 1 }));
+            json!({
+                "estates": [],
+                "parcels": [{ "owner": { "address": ALICE }, "updateOperator": DANA }]
+            })
+        } else if query.contains("fetchAuthorizations") {
+            assert_eq!(variables["address"], ALICE);
+            json!({ "authorizations": [] })
+        } else {
+            assert!(query.contains("fetchParcelsByUpdateOperator"));
+            assert_eq!(variables["updateOperator"], DANA);
+            json!({ "parcels": [{
+                "id": "0x1", "x": "1", "y": "1", "owner": { "id": ALICE }, "updateOperator": DANA
+            }] })
+        };
+        axum::Json(json!({ "data": data }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", post(graphql)))
+            .await
+            .unwrap();
+    });
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        crate::http::Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            land_subgraph_url: Some(url),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+    let app = router(state_over(db.pool.clone(), settings, Some(market)));
+    let operators = "/lambdas/parcels/1/1/operators";
+    let permissions = format!("/lambdas/users/{ALICE}/parcels/1/1/permissions");
+    let lands = format!("/lambdas/users/{DANA}/lands-permissions");
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], BOB);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["owner"], false);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["elements"][0]["x"], "3");
+
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-interval '11 minutes'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], ALICE);
+    assert_eq!(body["updateOperator"], DANA);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-subgraph");
+    assert_eq!(body["owner"], true);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["totalAmount"], 1);
+    assert_eq!(body["elements"][0]["id"], "0x1");
+
+    server.abort();
     db.drop().await;
 }
 

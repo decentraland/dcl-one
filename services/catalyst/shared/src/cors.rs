@@ -12,6 +12,8 @@
 //! [`decentraland_cors`] is the same answer for the Decentraland front-end
 //! origins only ([`is_decentraland_origin`]); any other origin gets no
 //! allow-origin or credentials, and its preflight no methods or headers.
+//! [`cors_without_credentials`] is [`cors_middleware`] without
+//! `Access-Control-Allow-Credentials`, for routes authorized by signed fetch.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -25,7 +27,12 @@ const ALLOW_HEADERS: &str = "Cache-Control,Content-Type,Origin,Accept,User-Agent
 const MAX_AGE: &str = "86400";
 
 pub async fn cors_middleware(req: Request, next: Next) -> Response {
-    cors(req, next, |_| true).await
+    cors(req, next, |_| true, true).await
+}
+
+/// [`cors_middleware`] that never sends `Access-Control-Allow-Credentials`.
+pub async fn cors_without_credentials(req: Request, next: Next) -> Response {
+    cors(req, next, |_| true, false).await
 }
 
 /// [`cors_middleware`] for the origins [`is_decentraland_origin`] lists: a
@@ -33,7 +40,7 @@ pub async fn cors_middleware(req: Request, next: Next) -> Response {
 /// requested headers; any other origin gets a 204 preflight without
 /// allow-origin, methods or headers, and no allow-origin on other answers.
 pub async fn decentraland_cors(req: Request, next: Next) -> Response {
-    cors(req, next, is_decentraland_origin).await
+    cors(req, next, is_decentraland_origin, true).await
 }
 
 /// The Decentraland front-end origins (the `CORS_ORIGIN` list the old relay,
@@ -85,7 +92,12 @@ pub fn is_decentraland_origin(origin: &str) -> bool {
         || prefixed(host.strip_suffix("decentraland1.vercel.app"), '-')
 }
 
-async fn cors(req: Request, next: Next, allows: impl Fn(&str) -> bool) -> Response {
+async fn cors(
+    req: Request,
+    next: Next,
+    allows: impl Fn(&str) -> bool,
+    credentials: bool,
+) -> Response {
     let origin = req
         .headers()
         .get(header::ORIGIN)
@@ -122,7 +134,7 @@ async fn cors(req: Request, next: Next, allows: impl Fn(&str) -> bool) -> Respon
         );
         h.insert(header::VARY, HeaderValue::from_static("Origin"));
         if let Some(origin) = origin {
-            allow_origin(&mut resp, origin);
+            allow_origin(&mut resp, origin, credentials);
         }
         add_security_headers(&mut resp);
         return resp;
@@ -135,7 +147,7 @@ async fn cors(req: Request, next: Next, allows: impl Fn(&str) -> bool) -> Respon
             .insert(header::VARY, HeaderValue::from_static("Origin"));
     }
     if let Some(origin) = origin {
-        allow_origin(&mut resp, origin);
+        allow_origin(&mut resp, origin, credentials);
         let h = resp.headers_mut();
         if !h.contains_key(header::ACCESS_CONTROL_EXPOSE_HEADERS) {
             h.insert(
@@ -149,13 +161,15 @@ async fn cors(req: Request, next: Next, allows: impl Fn(&str) -> bool) -> Respon
     resp
 }
 
-fn allow_origin(resp: &mut Response, origin: HeaderValue) {
+fn allow_origin(resp: &mut Response, origin: HeaderValue, credentials: bool) {
     let h = resp.headers_mut();
     h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-    h.insert(
-        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
-        HeaderValue::from_static("true"),
-    );
+    if credentials {
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            HeaderValue::from_static("true"),
+        );
+    }
 }
 
 fn add_security_headers(resp: &mut Response) {
@@ -265,6 +279,21 @@ const REGISTRY: HttpServerCors = HttpServerCors {
 /// only when the request carries an `Origin`, and never exposed headers.
 pub async fn registry_cors(req: Request, next: Next) -> Response {
     REGISTRY.run(req, next).await
+}
+
+/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
+/// no exposed headers; a preflight is 204 with no `Allow-Methods`, origin
+/// `*` for a request with `Origin`, and the requested headers reflected
+/// with their `Vary` when the request names them.
+const LAMBDAS: HttpServerCors = HttpServerCors {
+    methods: None,
+    max_age: "36000",
+    nosniff: true,
+    preflight_echoes_request: true,
+};
+
+pub async fn lambdas_cors(req: Request, next: Next) -> Response {
+    LAMBDAS.run(req, next).await
 }
 
 #[cfg(test)]
@@ -394,6 +423,55 @@ mod tests {
                 .is_none()
         );
         assert_eq!(resp.headers().get(header::VARY).unwrap(), "Origin");
+    }
+
+    #[tokio::test]
+    async fn without_credentials_reflects_the_origin_and_signed_fetch_headers() {
+        let app = Router::new()
+            .route("/x", get(|| async { "ok" }).delete(|| async { "gone" }))
+            .layer(axum::middleware::from_fn(cors_without_credentials));
+        let requested = "x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata,x-confirm-delete-all,content-type";
+        let preflight = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/x")
+            .header(header::ORIGIN, "https://example.org")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "DELETE")
+            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(preflight).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let h = resp.headers();
+        assert_eq!(
+            h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            "https://example.org"
+        );
+        assert_eq!(
+            h.get(header::ACCESS_CONTROL_ALLOW_HEADERS).unwrap(),
+            requested
+        );
+        assert!(
+            h.get(header::ACCESS_CONTROL_ALLOW_METHODS)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .split(',')
+                .any(|m| m == "DELETE")
+        );
+        assert_eq!(h.get(header::VARY).unwrap(), "Origin");
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+
+        let resp = app
+            .oneshot(req(Method::GET, Some("https://example.org")))
+            .await
+            .unwrap();
+        let h = resp.headers();
+        assert_eq!(
+            h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            "https://example.org"
+        );
+        assert_eq!(h.get(header::ACCESS_CONTROL_EXPOSE_HEADERS).unwrap(), "*");
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
     }
 
     #[test]

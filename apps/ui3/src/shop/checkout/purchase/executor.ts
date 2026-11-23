@@ -23,24 +23,47 @@ import { prepareResume, resumePlan, type GroupEvent } from "@shop/cart/machine";
 import type { CartGroup } from "@shop/cart/partition";
 import type { CartStore } from "../../cart/store";
 import type { GroupFailure, GroupProgress, PurchaseState } from "@shop/model/purchase";
-import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases } from "@shop/credits/credits";
+import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases, type SignedSession } from "@shop/credits/credits";
 import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
-import { isPendingTxError, isRevertedTxError } from "../chain/wallet";
+import { accountCodeKind, isPendingTxError, isRevertedTxError, isWalletRefusal, RefusedBeforeWallet } from "../chain/wallet";
 import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, ensureAuthorization, type ShopAuthorization } from "../lib/authorizations";
 import { friendlyError, isRejection, relayLimitText } from "../lib/errors";
 import { isWrongNetworkError } from "../lib/network";
 import { canPayGasItself } from "../lib/wallet-kind";
 import { requireContracts } from "../chain/contracts";
-import { checkoutLineFor, purchaseTargetFor, toUnits, type ResolvedLine } from "./cart";
-import { buyManyWithCredits, groupPurchases, type AnyPurchase } from "./credits";
+import { checkoutLineFor, purchaseTargetFor, toUnits, tradeManaPrice, type ResolvedLine } from "./cart";
+import { buyManyWithCredits, CallNotKeptError, groupPurchases, type AnyPurchase, type BuiltUseCredits } from "./credits";
 import { buyManyGasless, isSettlementPending, waitForSettlement } from "./gasless";
-import { acceptPayingMana, manaSpenderFor, mintPayingMana, purchaseFor, type MintToBuy } from "./mana";
+import { acceptPayingMana, manaSpenderFor, mintPayingMana, purchaseFor, splitTerms, type MintToBuy } from "./mana";
 import type { RailContext } from "./rail";
 import { createSpendGuard, type SpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending, isMetaTxReverted } from "./tx-confirm";
 
 export type ApprovalRequest = { auth: ShopAuthorization; index: number; total: number; requiredWei: bigint; keyId: string };
+
+/**
+ * Paying ONE unit with Credits and MANA together: a credit for the Credits part (`creditsCents` of the line's whole quote),
+ * and the rest pulled from the buyer's MANA in the same useCredits. `confirmedWei`: the most MANA the buyer agreed to pay;
+ * `session`: the signed session the node authorizes a part for. The credit must be exactly the node's share of the sale's
+ * MANA (`splitTerms`), and both caps are encoded from it. It goes only through the fee-free relay, never from the wallet
+ * instead. The MANA allowance for the gap is the caller's to have in place before the group runs.
+ */
+export type SplitPlan = {
+  creditsCents: number;
+  confirmedWei: bigint;
+  session: SignedSession;
+  /**
+   * The credit the node issued, once checked to be the share it must be: before anything is signed for it. False: the
+   * caller couldn't keep the purchase's record, so nothing is signed or sent and the credit is released.
+   */
+  onCredit?: (credit: { id: string; expiresAt: number }) => boolean | void;
+  /**
+   * The exact bytes the sale is about to send (the relayed execution as signed), before they go: false when the caller
+   * couldn't keep their identity, and then nothing is sent and the credit is released.
+   */
+  onEnvelope?: (bytes: Hex) => boolean | void;
+};
 
 export type CheckoutDeps = {
   ctx: RailContext;
@@ -48,7 +71,35 @@ export type CheckoutDeps = {
   /** A self-custody wallet approves MANA spending explicitly; resolves true once the approval is granted. */
   requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
   guard?: SpendGuard;
+  /** A credits group of one unit paid with Credits and MANA together (see SplitPlan); absent, credits pay it all. */
+  split?: SplitPlan;
+  /**
+   * A credits group paid by its credits (no `split`): its credit and its useCredits as built, before anything is signed for
+   * it, so the caller can keep what an execution must carry to count as this group's. False: the caller couldn't keep it,
+   * and then nothing is signed or sent and the credit is released. Called again with the same terms if the wallet sends it
+   * after the relay couldn't.
+   */
+  onCreditsCall?: (call: { creditId: string; expiresAt: number; built: BuiltUseCredits }) => boolean | void;
+  /**
+   * With `onCreditsCall`: the exact bytes the group's transaction is about to carry (the relayed execution as signed, or the
+   * useCredits the wallet is handed), before they go. False: the caller couldn't keep their identity, and nothing is sent.
+   * A group kept this way is its caller's to attribute: a revert of the hash it was answered is never taken as its own here.
+   */
+  onCreditsEnvelope?: (bytes: Hex) => boolean | void;
+  /**
+   * With `onCreditsCall`: the group won't be kept after all, because its transaction is about to be sent by a contract
+   * account (a smart wallet), whose transaction carries its own call to itself, not the useCredits the group was kept with.
+   * The caller drops what it kept, and the group is followed as any Credits group is. False: the caller couldn't do that,
+   * and nothing is sent.
+   */
+  onCreditsUnkept?: () => boolean | void;
 };
+
+/** The MANA a unit's sale moves: a mint's price, or a MANA listing's after its coupon; null for a USD-pegged one. */
+export function splitPriceOf(unit: ResolvedLine): bigint | null {
+  if (unit.acquisition === "trade") return tradeManaPrice(unit.trade, unit.coupon);
+  return BigInt(unit.priceWei);
+}
 
 export type TopUpNeeded = { requiredCents: number; balanceCents: number };
 
@@ -70,6 +121,34 @@ function dispatchSafe(store: CartStore, keyId: string, event: GroupEvent): void 
 
 function progressOf(store: CartStore, keyId: string): GroupProgress | null {
   return store.getSnapshot().checkout?.groups.find((g) => g.keyId === keyId) ?? null;
+}
+
+/** How long a read of the buyer's account may take before a kept group stops, nothing sent. */
+export const ACCOUNT_READ_MS = 10_000;
+
+/** Thrown before the wallet is handed anything when what the buyer's account is couldn't be read: nothing was sent. */
+class AccountUnreadError extends Error {
+  constructor() {
+    super("We couldn't check your wallet's account, so nothing was sent and nothing was charged. Try again.");
+    this.name = "AccountUnreadError";
+  }
+}
+
+/**
+ * What `ctx.buyer`'s account is on `chainId`, as `accountCodeKind` classifies the bytecode read; `unknown` too for a read
+ * that fails or takes longer than ACCOUNT_READ_MS.
+ */
+async function accountKind(ctx: RailContext, chainId: number): Promise<"eoa" | "contract" | "unknown"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => (timer = setTimeout(() => resolve("late"), ACCOUNT_READ_MS)));
+  try {
+    const code = await Promise.race([ctx.reader.code(chainId as Parameters<RailContext["reader"]["code"]>[0], ctx.buyer), late]);
+    return accountCodeKind(code);
+  } catch {
+    return "unknown";
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function failureFor(e: unknown, kind?: GroupFailure["kind"]): GroupFailure {
@@ -103,9 +182,22 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
   const guard = (deps.guard ??= createSpendGuard());
   const keyId = group.keyId;
   const units = toUnits(lines);
+  const split = deps.split;
+  // A split is one unit, at a fixed MANA price, through the relay: anything else stops before a credit is asked for.
+  const splitPrice = split && units.length === 1 ? splitPriceOf(units[0]!) : null;
+  if (split && (units.length !== 1 || splitPrice === null || !(ctx.gasless ?? gaslessEnabled()))) {
+    const failure: GroupFailure = {
+      kind: "refused",
+      message: units.length !== 1 ? "Credits and MANA together pay for one item at a time." : splitPrice === null ? "This item can't be paid with Credits and MANA together." : "Credits and MANA together need the fee-free relay, which isn't available right now.",
+    };
+    dispatchSafe(store, keyId, { type: "failed", failure });
+    return { status: "failed", failure, released: [] };
+  }
   let auth: CreditBatchAuthorization;
   try {
-    auth = await authorizeUsdCreditGroup(units.map(checkoutLineFor), "website", ctx.client);
+    auth = split
+      ? await authorizeUsdCreditGroup([{ ...checkoutLineFor(units[0]!), creditsCents: split.creditsCents }], "website", ctx.client, split.session)
+      : await authorizeUsdCreditGroup(units.map(checkoutLineFor), "website", ctx.client);
   } catch (e) {
     const short = insufficientCredits(e);
     const message = short
@@ -122,7 +214,27 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
   const creditId = auth.credit.id;
   dispatchSafe(store, keyId, { type: "authorized", creditIds: [creditId] });
   const credit = { ...auth.credit };
-  const purchases: AnyPurchase[] = units.map((u) => purchaseFor(purchaseTargetFor(u), [credit], auth.maxCreditedValue));
+  let purchases: AnyPurchase[];
+  if (split) {
+    // The credit is checked against the share it must be before anything is signed; the gap is what the buyer confirmed at most.
+    let terms: { creditWei: bigint; gapWei: bigint };
+    try {
+      const unit = units[0]!;
+      terms = splitTerms({ priceWei: splitPrice!, quotedCents: unit.quote.method === "credits" ? unit.quote.quoted : 0, partCents: split.creditsCents, credit, confirmedWei: split.confirmedWei });
+    } catch (e) {
+      const failure: GroupFailure = { kind: "refused", message: `${e instanceof Error ? e.message : "The terms changed."} Nothing was charged; check the price again.` };
+      dispatchSafe(store, keyId, { type: "failed", failure });
+      return { status: "failed", failure, released: await release(deps, [creditId]) };
+    }
+    if (split.onCredit?.({ id: credit.id, expiresAt: Math.floor(Number(credit.expiresAt)) }) === false) {
+      const failure: GroupFailure = { kind: "refused", message: "This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged." };
+      dispatchSafe(store, keyId, { type: "failed", failure });
+      return { status: "failed", failure, released: await release(deps, [creditId]) };
+    }
+    purchases = [{ ...purchaseFor(purchaseTargetFor(units[0]!), [credit], terms.creditWei.toString()), maxUncreditedValue: terms.gapWei.toString() }];
+  } else {
+    purchases = units.map((u) => purchaseFor(purchaseTargetFor(u), [credit], auth.maxCreditedValue));
+  }
   if (groupPurchases(purchases).length !== 1) {
     const failure: GroupFailure = { kind: "error", message: "These items no longer settle together. Review your cart again." };
     dispatchSafe(store, keyId, { type: "failed", failure });
@@ -144,21 +256,48 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     dispatchSafe(store, keyId, { type: "observed" });
   };
   const chainId = group.key.chainId;
+  let kept = !split && deps.onCreditsCall != null;
+  const onBuilt = (built: BuiltUseCredits) => (kept ? deps.onCreditsCall!({ creditId, expiresAt: Math.floor(Number(credit.expiresAt)), built }) : undefined);
+  // The bytes a kept group sends, kept before they go: only a revert of these very bytes can be its own.
+  const keepEnvelope = (bytes: Hex): void => {
+    if (deps.onCreditsEnvelope?.(bytes) === false) throw new CallNotKeptError();
+  };
   // The fee-free way was tried and couldn't run, so the wallet's own transaction is its fallback.
   let fellBack = false;
+  // The relay found the buyer's account to be a contract (a smart wallet).
+  let smartWallet = false;
+  // The wallet was handed the group's transaction (not the relay's signature): from here it may have sent it.
+  let walletHandedOff = false;
   // Why it couldn't run, when the relay said (its daily limits), for the buyer to read beside the fallback's failure.
   let feeFreeNote: string | null = null;
   try {
     let settled = false;
     if (ctx.gasless ?? gaslessEnabled()) {
       try {
-        await buyManyGasless(ctx, { purchases, onSigned: handoff, onBroadcast: ({ txHash: h }) => broadcast(h) });
+        await buyManyGasless(ctx, {
+          purchases,
+          onBuilt,
+          onSigned: handoff,
+          ...(split?.onEnvelope
+            ? {
+                onSignedCall: (call: { data: Hex }) => {
+                  if (split.onEnvelope!(call.data) === false) throw new Error("This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.");
+                },
+              }
+            : kept && deps.onCreditsEnvelope
+              ? { onSignedCall: (call: { data: Hex }) => keepEnvelope(call.data) }
+              : {}),
+          onBroadcast: ({ txHash: h }) => broadcast(h),
+        });
         await waitForSettlement(ctx.reader, chainId, txHash!, ctx.wait);
         settled = true;
       } catch (e) {
-        const canFallBack = isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
+        // A split never falls back to the wallet: it goes through the relay or not at all.
+        const canFallBack = !split && isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
         if (!canFallBack) throw e;
         fellBack = true;
+        // The relay read the account and found it a contract: that answer stands, it is never read again.
+        if (e.reason === "contract-account") smartWallet = true;
         feeFreeNote = relayLimitText(e);
         if (handedOff) {
           // The relay parsed our request and refused it: provably not broadcast. The direct rail is a new hand-off.
@@ -171,13 +310,43 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
       }
     }
     if (!settled) {
-      await buyManyWithCredits(ctx, { purchases, onHandoff: handoff, onBroadcast: ({ txHash: h }) => broadcast(h) });
+      // A contract account's transaction is a call to itself, which carries no useCredits to read: such a group is
+      // followed as any Credits group is, never kept by a call it can't be found by. What the account is must be known
+      // before the wallet is handed anything: the relay's answer, else a read that says so; one that can't, stops it.
+      if (kept) {
+        const account = smartWallet ? "contract" : await accountKind(ctx, chainId);
+        if (account === "unknown") throw new AccountUnreadError();
+        if (account === "contract") {
+          if (deps.onCreditsUnkept?.() === false) throw new CallNotKeptError();
+          kept = false;
+        }
+      }
+      await buyManyWithCredits(ctx, {
+        purchases,
+        onBuilt,
+        ...(kept && deps.onCreditsEnvelope ? { onDispatch: keepEnvelope } : {}),
+        onHandoff: () => {
+          walletHandedOff = true;
+          handoff();
+        },
+        onBroadcast: ({ txHash: h }) => broadcast(h),
+      });
     }
     guard.submitFinished(creditId);
     dispatchSafe(store, keyId, { type: "confirmed", ...(txHash ? { txHash } : {}) });
     return { status: "confirmed", txHash };
   } catch (e) {
     guard.submitFinished(creditId);
+    // Stopped before anything went: the caller couldn't keep the call or its bytes (refused), or what the account is couldn't
+    // be read (an error, which trying again reads anew). Nothing was sent, and the credit goes back.
+    if ((e instanceof CallNotKeptError || e instanceof AccountUnreadError) && txHash === null) {
+      const failure: GroupFailure = { kind: e instanceof AccountUnreadError ? "error" : "refused", message: e.message };
+      dispatchSafe(store, keyId, { type: "failed", failure });
+      return { status: "failed", failure, released: await release(deps, [creditId]) };
+    }
+    // A split's revert, or a kept group's, is its caller's to attribute first: a reverted receipt for the hash the relay
+    // answered may be some other transaction's, while this purchase's own can still land. Nothing is released here.
+    if ((split || kept) && isRevertedTxError(e) && txHash) return { status: "pending", txHash };
     if (isRevertedTxError(e) && txHash) {
       guard.reverted(txHash);
       const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain and nothing was bought. The Credits held for it are released once the authorization expires and that is confirmed on chain." };
@@ -190,6 +359,14 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
       return { status: "pending", txHash: null };
     }
     if (txHash) return { status: "pending", txHash };
+    // A kept group the wallet was handed, answered without a hash and without a refusal that proves nothing was sent: the
+    // buyer's own in the wallet (4001, ACTION_REJECTED), or the page's guard refusing the request before passing it on.
+    // Anything else (a disconnect, an abort or a "cancelled" after it broadcast, a timeout) may be on its way: held, its
+    // credit kept, for its caller to find out by the node's record. What the buyer is told is another matter.
+    if (kept && walletHandedOff && !isWalletRefusal(e) && !(e instanceof RefusedBeforeWallet)) {
+      guard.unobservable(creditId);
+      return { status: "pending", txHash: null };
+    }
     const failure = handedOff ? { ...failureFor(e), kind: "rejected" as const } : failureFor(e);
     if (isWrongNetworkError(e)) {
       failure.message = friendlyError(e, FALLBACK);

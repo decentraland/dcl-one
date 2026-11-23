@@ -27,6 +27,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use catalyst_shared::json_number::{integral_i64, integral_u64};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::json;
@@ -249,79 +250,6 @@ pub struct TradeChecksInput {
     pub allowed_proof: Option<Vec<String>>,
     #[serde(rename = "externalChecks", default)]
     pub external_checks: Option<Vec<ExternalCheckInput>>,
-}
-
-/// ajv's `type: 'number'`: `137` and `137.0` are one chain id; a fraction is refused.
-enum JsonNumber {
-    Unsigned(u64),
-    Signed(i64),
-    Float(f64),
-}
-
-impl<'de> Deserialize<'de> for JsonNumber {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let number = serde_json::Number::deserialize(deserializer)?;
-        if let Some(v) = number.as_u64() {
-            Ok(Self::Unsigned(v))
-        } else if let Some(v) = number.as_i64() {
-            Ok(Self::Signed(v))
-        } else {
-            number
-                .as_f64()
-                .map(Self::Float)
-                .ok_or_else(|| serde::de::Error::custom("number is outside the supported range"))
-        }
-    }
-}
-
-impl JsonNumber {
-    fn integral<E: serde::de::Error>(value: f64) -> Result<f64, E> {
-        if value.is_finite() && value.fract() == 0.0 {
-            Ok(value)
-        } else {
-            Err(E::custom(format!("{value} is not an integer")))
-        }
-    }
-    fn into_i64<E: serde::de::Error>(self) -> Result<i64, E> {
-        match self {
-            JsonNumber::Unsigned(v) => {
-                i64::try_from(v).map_err(|_| E::custom(format!("{v} does not fit in an i64")))
-            }
-            JsonNumber::Signed(v) => Ok(v),
-            JsonNumber::Float(v) => {
-                let v = Self::integral(v)?;
-                if v >= -(2f64.powi(63)) && v < 2f64.powi(63) {
-                    Ok(v as i64)
-                } else {
-                    Err(E::custom(format!("{v} does not fit in an i64")))
-                }
-            }
-        }
-    }
-    fn into_u64<E: serde::de::Error>(self) -> Result<u64, E> {
-        match self {
-            JsonNumber::Unsigned(v) => Ok(v),
-            JsonNumber::Signed(v) => {
-                u64::try_from(v).map_err(|_| E::custom(format!("{v} is negative")))
-            }
-            JsonNumber::Float(v) => {
-                let v = Self::integral(v)?;
-                if (0.0..2f64.powi(64)).contains(&v) {
-                    Ok(v as u64)
-                } else {
-                    Err(E::custom(format!("{v} does not fit in a u64")))
-                }
-            }
-        }
-    }
-}
-
-fn integral_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
-    JsonNumber::deserialize(d)?.into_i64()
-}
-
-fn integral_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-    JsonNumber::deserialize(d)?.into_u64()
 }
 
 #[derive(Debug, Deserialize)]

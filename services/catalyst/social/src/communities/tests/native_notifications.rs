@@ -136,7 +136,8 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
         "request",
         "invite",
         "accept-request",
-        "start-voice",
+        "start-voice-world",
+        "start-voice-pulse",
     ] {
         let (owner, target) = (wallet(), wallet());
         let id = rig
@@ -258,7 +259,7 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
                 )
                 .await
             }
-            "start-voice" => {
+            "start-voice-world" | "start-voice-pulse" => {
                 let ctx = crate::rpc::context::Context::new(
                     Default::default(),
                     crate::rpc::db::Db::new(rig.pool.clone()),
@@ -268,21 +269,13 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
                     )),
                 );
                 ctx.set_communities(rig.state.clone());
-                use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
-                    IslandData, IslandStatusMessage,
-                };
-                use prost::Message as _;
-                ctx.topology()
-                    .receive(
-                        &IslandStatusMessage {
-                            data: vec![IslandData {
-                                peers: vec![target.address.to_string()],
-                                ..Default::default()
-                            }],
-                        }
-                        .encode_to_vec(),
-                    )
-                    .unwrap();
+                if operation == "start-voice-world" {
+                    ctx.topology()
+                        .apply_world_event("PA_target", target.address.as_str(), true);
+                } else {
+                    // Keep Pulse presence through a slow database round trip.
+                    ctx.topology().hold_for_tests([target.address.as_str()]);
+                }
                 crate::rpc::service::ops::start_community_voice_chat(
                     &ctx,
                     owner.address.as_str(),
@@ -341,7 +334,7 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
                 metadata["memberAddress"] = json!(target.address.as_str());
                 vec![("community_request_to_join_accepted", &target.address)]
             }
-            "start-voice" => {
+            "start-voice-world" | "start-voice-pulse" => {
                 metadata["thumbnailUrl"] = json!("");
                 vec![("community_voice_chat_started", &target.address)]
             }

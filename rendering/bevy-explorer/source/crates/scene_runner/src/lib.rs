@@ -8,7 +8,11 @@ use web_time::SystemTime;
 
 use bevy::{
     diagnostic::FrameCount,
-    ecs::{query::Has, schedule::ScheduleLabel, system::SystemParam},
+    ecs::{
+        query::Has,
+        schedule::{ExecutorKind, ScheduleLabel},
+        system::SystemParam,
+    },
     math::{FloatOrd, Vec3A, Vec3Swizzles},
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -126,6 +130,16 @@ pub struct SceneUpdates {
 impl SceneUpdates {
     pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
         self.receiver.get()
+    }
+
+    /// The scene the next loop pass would start, if any. Priority scenes bypass the
+    /// thread limit (but still occupy slots, preventing non-priority scenes from
+    /// running). Non-priority scenes respect the limit.
+    fn next_scene_to_start(&self, scene_threads: usize) -> Option<Entity> {
+        let &(ent, _) = self.scene_queue.front()?;
+        (self.jobs_in_flight.len() < scene_threads
+            || self.priority_scenes.values().any(|&e| e == ent))
+        .then_some(ent)
     }
 }
 
@@ -273,6 +287,10 @@ pub struct SceneLoopSchedule {
     #[cfg(not(target_arch = "wasm32"))]
     sleeper: SpinSleeper,
 }
+
+/// The time from the start of one scene loop pass to the start of the next while the loop
+/// can only wait for replies.
+const SCENE_REPLY_POLL: Duration = Duration::from_micros(250);
 
 // left px, top px, right px, bottom px
 #[derive(Default, Resource)]
@@ -432,6 +450,9 @@ impl Plugin for SceneRunnerPlugin {
         );
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
+        // most passes find nothing to do, so handing each system to a worker costs more
+        // than running it
+        scene_schedule.set_executor_kind(ExecutorKind::SingleThreaded);
 
         scene_schedule.configure_sets(
             (
@@ -506,6 +527,7 @@ fn run_scene_loop(world: &mut World) {
         world.resource::<AppConfig>(),
         refresh_hz,
     ) as f64;
+    let scene_threads = world.resource::<AppConfig>().scene_threads;
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
@@ -522,6 +544,13 @@ fn run_scene_loop(world: &mut World) {
     let latest_end = start_loop_time + frame_target_duration.max(Duration::from_millis(1));
     let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
     loop_schedule.next_frame_end = target_end_time + frame_target_duration;
+    // a native sleep can wake late by the sleeper's accuracy, so no wait for replies ends
+    // closer to the deadline than that
+    #[cfg(not(target_arch = "wasm32"))]
+    let last_wait_end =
+        target_end_time - Duration::new(0, loop_schedule.sleeper.native_accuracy_ns());
+    #[cfg(target_arch = "wasm32")]
+    let last_wait_end = target_end_time;
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
@@ -537,9 +566,25 @@ fn run_scene_loop(world: &mut World) {
             && (world.resource::<SceneUpdates>().eligible_jobs > 0
                 || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
     {
+        let pass_start = Instant::now();
         schedule.run(world);
         run_once = true;
         scene_schedule_run_count += 1;
+
+        // with no scene to start, only a reply can give the next pass anything to do
+        let updates = world.resource::<SceneUpdates>();
+        if !updates.jobs_in_flight.is_empty()
+            && updates.next_scene_to_start(scene_threads).is_none()
+        {
+            let next_pass = (pass_start + SCENE_REPLY_POLL).min(last_wait_end);
+            if let Some(wait) = next_pass.checked_duration_since(Instant::now()) {
+                // the sleep the sleeper's accuracy is for
+                #[cfg(not(target_arch = "wasm32"))]
+                spin_sleep::native_sleep(wait);
+                #[cfg(target_arch = "wasm32")]
+                std::thread::sleep(wait);
+            }
+        }
     }
     let loop_end_time = Instant::now();
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
@@ -1326,18 +1371,10 @@ fn send_scene_updates(
             .collect();
     }
 
-    // Peek at the next scene before popping. Priority scenes bypass the thread
-    // limit (but still occupy slots, preventing non-priority scenes from
-    // running). Non-priority scenes respect the limit.
-    let Some(&(ent, _)) = updates.scene_queue.front() else {
+    // peek at the next scene before popping
+    let Some(ent) = updates.next_scene_to_start(config.scene_threads) else {
         return;
     };
-
-    if updates.jobs_in_flight.len() >= config.scene_threads
-        && !updates.priority_scenes.values().any(|&e| e == ent)
-    {
-        return;
-    }
 
     updates.scene_queue.pop_front();
 
@@ -1787,38 +1824,61 @@ fn update_scene_room(
     mut writer: EventWriter<SetCurrentScene>,
     mut last: Local<Option<SetCurrentScene>>,
     realm: Res<CurrentRealm>,
+    preview: Res<PreviewMode>,
+    bans: comms::SceneBanGate,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     scenes: Query<&RendererSceneContext>,
 ) {
-    let (Some(realm), Some(scene)) = (
-        realm.config.realm_name.as_ref(),
-        player
-            .single()
-            .ok()
-            .and_then(|p| containing_scene.get_parcel(p))
-            .and_then(|scene| scenes.get(scene).ok()),
-    ) else {
+    let scene_id = player.single().ok().and_then(|player| {
+        if let Some(scene) = containing_scene
+            .get_parcel(player)
+            .and_then(|entity| scenes.get(entity).ok())
+        {
+            return Some(scene.hash.as_ref());
+        }
+        if preview.is_preview || realm.is_local() {
+            return None;
+        }
+        let (transform, out_of_world) = containing_scene.transforms.get(player).ok()?;
+        let Some(PointerResult::Exists { hash, .. }) = containing_scene
+            .pointers
+            .get(vec3_to_parcel(transform.translation()))
+        else {
+            return None;
+        };
+        // A banned parcel has no live scene to identify it. Its pointer must select the room
+        // even when the player arrives from another scene, so fresh admission can restore it.
+        let banned = bans.is_banned(hash);
+        let previous = last.as_ref().is_some_and(|previous| {
+            previous.realm_about_url == realm.about_url && previous.scene_id == *hash
+        });
+        (banned || (!out_of_world && previous)).then_some(hash.as_str())
+    });
+    let (Some(realm_name), Some(scene_id)) = (realm.config.realm_name.as_ref(), scene_id) else {
         if last.take().is_some() {
             debug!("clear scene room");
             writer.write(SetCurrentScene {
                 realm_name: default(),
+                realm_about_url: default(),
                 scene_id: default(),
             });
         }
         return;
     };
 
-    if last
-        .as_ref()
-        .is_some_and(|ev| &ev.realm_name == realm && *ev.scene_id == *scene.hash)
-    {
+    if last.as_ref().is_some_and(|ev| {
+        &ev.realm_name == realm_name
+            && ev.realm_about_url == realm.about_url
+            && ev.scene_id == scene_id
+    }) {
         return;
     }
 
     let ev = SetCurrentScene {
-        realm_name: realm.to_owned(),
-        scene_id: scene.hash.to_string(),
+        realm_name: realm_name.to_owned(),
+        realm_about_url: realm.about_url.clone(),
+        scene_id: scene_id.to_owned(),
     };
 
     *last = Some(ev.clone());

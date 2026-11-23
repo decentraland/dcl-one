@@ -1,0 +1,8 @@
+/* The gallery and canvas documents: the page surface everything sits on. */
+html,
+body {
+  margin: 0;
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  font-family: Inter, system-ui, sans-serif;
+}
