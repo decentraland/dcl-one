@@ -87,6 +87,17 @@ function Fixture() {
         aria-label="Copy link"
         startIcon={<svg />}
       />
+      <Button data-case="default-medium" size="md" startIcon={<svg />}>
+        Default medium
+      </Button>
+      <Button
+        data-case="static-icon"
+        size="md"
+        variant="secondaryLight"
+        iconOnly
+        aria-label="Static copy link"
+        startIcon={<svg />}
+      />
       <output>{calls}</output>
       <span id="target">Destination</span>
     </main>

@@ -20,6 +20,8 @@ describe('when an upcoming event offers a reminder', () => {
         live={false}
         location={{ label: '0,0', world: false }}
         remind={{ active, pending, onToggle }}
+        calendarHref="https://example.com/calendar"
+        shareUrl="https://example.com/event"
         onClose={onClose}
       />
     )
@@ -48,9 +50,22 @@ describe('when an upcoming event offers a reminder', () => {
     expect(onToggle).toHaveBeenCalledTimes(1)
 
     rerender(showReminder(true))
-    expect(screen.getByRole('button', { name: 'Remind me', pressed: true })).toHaveFocus()
+    const active = screen.getByRole('button', { name: 'Remind me', pressed: true })
+    expect(active).toHaveFocus()
+    expect(active).toHaveAttribute('data-variant', 'primary')
     await user.keyboard('{Enter}')
     expect(onToggle).toHaveBeenCalledTimes(2)
+  })
+
+  it('should align Calendar and Copy with the responsive reminder action', () => {
+    render(showReminder(false))
+
+    const calendar = screen.getByRole('link', { name: 'Add to calendar' })
+    const copy = screen.getByRole('button', { name: 'Copy link' })
+    expect(calendar).toHaveAttribute('href', 'https://example.com/calendar')
+    expect(calendar).toHaveAttribute('target', '_blank')
+    expect(calendar).toHaveAttribute('data-viewport', 'responsive')
+    expect(copy).toHaveAttribute('data-viewport', 'responsive')
   })
 
   it('should allow keyboard activation again when a save settles without changing the reminder', async () => {
@@ -65,5 +80,28 @@ describe('when an upcoming event offers a reminder', () => {
     expect(button).not.toHaveAttribute('aria-disabled', 'true')
     await user.keyboard(' ')
     expect(onToggle).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('when an event does not offer a reminder', () => {
+  beforeEach(() => {
+    render(
+      <EventDetailModal
+        title="Open studio"
+        image={null}
+        live
+        location={{ label: '0,0', world: false }}
+        calendarHref="https://example.com/calendar"
+        shareUrl="https://example.com/event"
+        onClose={vi.fn()}
+      />
+    )
+  })
+
+  it('should keep the existing Calendar and Copy controls', () => {
+    const calendar = screen.getByRole('link', { name: 'Add to calendar' })
+    const copy = screen.getByRole('button', { name: 'Copy link' })
+    expect(calendar).not.toHaveAttribute('data-viewport')
+    expect(copy).not.toHaveAttribute('data-viewport')
   })
 })

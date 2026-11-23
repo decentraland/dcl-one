@@ -52,10 +52,12 @@ describe('when Button owns content layout in a production bundle', () => {
     it('should align labelled and square icon actions on desktop and mobile', async () => {
       await ready()
       try {
-        for (const [width, height] of [
-          [1440, 40],
-          [390, 48]
+        for (const [width, height, touch] of [
+          [1440, 40, false],
+          [390, 48, false],
+          [1440, 48, true]
         ] as const) {
+          await b.session.send('Emulation.setTouchEmulationEnabled', { enabled: touch })
           await b.session.send('Emulation.setDeviceMetricsOverride', {
             width,
             height: 900,
@@ -76,9 +78,20 @@ describe('when Button owns content layout in a production bundle', () => {
           ).toBe(height)
         }
       } finally {
+        await b.session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
         await b.session.send('Emulation.clearDeviceMetricsOverride')
       }
     })
+  })
+  it('should preserve the default medium icon size and static icon target', async () => {
+    await ready()
+    expect(
+      await b.evaluate(`(() => {
+        const primary = document.querySelector('[data-case="default-medium"] svg')
+        const icon = document.querySelector('[data-case="static-icon"]')
+        return [primary.getBoundingClientRect().width, icon.offsetWidth, icon.offsetHeight]
+      })()`)
+    ).toEqual([17.5, 48, 48])
   })
   it('should preserve intrinsic shrink wrapping and place fill icons at both content edges', async () => {
     await ready()

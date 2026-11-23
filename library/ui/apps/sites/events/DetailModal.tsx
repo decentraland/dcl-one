@@ -55,7 +55,7 @@ type PlaceDetailModalProps = {
 }
 
 /** Copies the share link; says so for a moment, or shows the link when the clipboard refuses. */
-function CopyLink({ url, matchReminder = false }: { url: string; matchReminder?: boolean }) {
+function CopyLink({ url, responsive = false }: { url: string; responsive?: boolean }) {
   const { text } = useEventsCopy()
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   useEffect(() => {
@@ -76,13 +76,13 @@ function CopyLink({ url, matchReminder = false }: { url: string; matchReminder?:
   const label = text('Copy link')
   return (
     <>
-      {matchReminder ? (
+      {responsive ? (
         <SharedButton
           {...reminderActionSize}
           variant="secondaryLight"
           iconOnly
           aria-label={label}
-          startIcon={<GeneralCopy size={24} aria-hidden="true" />}
+          startIcon={<GeneralCopy aria-hidden="true" />}
           onClick={copy}
         />
       ) : (
@@ -101,7 +101,7 @@ function CopyLink({ url, matchReminder = false }: { url: string; matchReminder?:
   )
 }
 
-function CalendarLink({ href, matchReminder }: { href: string; matchReminder: boolean }) {
+function CalendarLink({ href, responsive }: { href: string; responsive: boolean }) {
   const { text } = useEventsCopy()
   const link = {
     href,
@@ -109,13 +109,13 @@ function CalendarLink({ href, matchReminder }: { href: string; matchReminder: bo
     rel: 'noopener noreferrer',
     'aria-label': text('Add to calendar')
   }
-  return matchReminder ? (
+  return responsive ? (
     <SharedButton
       {...link}
       {...reminderActionSize}
       variant="secondaryLight"
       iconOnly
-      startIcon={<GeneralAddToCalendar size={24} aria-hidden="true" />}
+      startIcon={<GeneralAddToCalendar aria-hidden="true" />}
     />
   ) : (
     <a {...link} className={styles.iconButton}>
@@ -244,7 +244,7 @@ function EventDetailModal(props: EventDetailModalProps) {
             <SharedButton
               {...reminderActionSize}
               variant={reminder.active ? 'primary' : 'secondaryLight'}
-              startIcon={<GeneralBell size={20} aria-hidden="true" />}
+              startIcon={<GeneralBell aria-hidden="true" />}
               aria-pressed={reminder.active}
               aria-disabled={reminder.pending}
               onClick={reminder.onToggle}
@@ -253,9 +253,9 @@ function EventDetailModal(props: EventDetailModalProps) {
             </SharedButton>
           ) : null}
           {calendarHref ? (
-            <CalendarLink href={calendarHref} matchReminder={Boolean(reminder)} />
+            <CalendarLink href={calendarHref} responsive={Boolean(reminder)} />
           ) : null}
-          {shareUrl ? <CopyLink url={shareUrl} matchReminder={Boolean(reminder)} /> : null}
+          {shareUrl ? <CopyLink url={shareUrl} responsive={Boolean(reminder)} /> : null}
           {props.actions}
         </div>
       </Hero>
