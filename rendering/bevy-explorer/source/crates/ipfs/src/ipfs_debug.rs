@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
@@ -17,15 +18,17 @@ pub struct IpfsDebugPlugin;
 
 impl Plugin for IpfsDebugPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<FileLog>();
         app.add_systems(Startup, setup);
         app.add_systems(
             Update,
             (
-                toggle_display.run_if(input_just_pressed(KeyCode::F1)),
+                toggle_display
+                    .run_if(input_just_pressed(KeyCode::F1))
+                    .before(receive_debug),
                 update_text_from_atomics,
                 (
                     receive_debug,
-                    trim_files_list,
                     scroll_bottom.run_if(in_state(IpfsFileGridState::Tail)),
                 )
                     .chain()
@@ -81,6 +84,11 @@ struct FileCell;
 #[derive(Component, Deref)]
 struct AtomicSource(&'static AtomicU32);
 
+/// The last `FILE_GRID_ROWS` files, one string per grid column. The grid holds cells for them
+/// only while the overlay shows: hidden cells would still cost UI layout every frame.
+#[derive(Resource, Default)]
+struct FileLog(VecDeque<[String; CELL_PER_ROW]>);
+
 fn setup(mut commands: Commands) {
     commands.spawn((
         UiRoot,
@@ -126,6 +134,7 @@ fn setup(mut commands: Commands) {
                 FileGrid,
                 Node {
                     display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::auto(CELL_PER_ROW as u16),
                     max_width: Val::Vw(75.),
                     max_height: Val::Vh(75.),
                     row_gap: Val::Px(4.),
@@ -160,55 +169,44 @@ fn setup(mut commands: Commands) {
     ));
 }
 
-fn toggle_display(ui_root: Single<&mut Node, With<UiRoot>>) {
+fn toggle_display(
+    mut commands: Commands,
+    ui_root: Single<&mut Node, With<UiRoot>>,
+    file_grid: Single<Entity, With<FileGrid>>,
+    log: Res<FileLog>,
+) {
     debug!("Toggling Ipfs Debug overlay");
     let mut node = ui_root.into_inner();
-    node.display = match &node.display {
-        Display::None => Display::Flex,
-        _ => Display::None,
-    };
+    if node.display == Display::None {
+        node.display = Display::Flex;
+        for row in &log.0 {
+            spawn_row(&mut commands, *file_grid, row);
+        }
+    } else {
+        node.display = Display::None;
+        commands.entity(*file_grid).despawn_related::<Children>();
+    }
 }
 
 fn update_text_from_atomics(atomic_sources: Query<(&mut Text, &AtomicSource)>) {
     for (mut text, atomic_source) in atomic_sources {
-        **text = atomic_source.load(Ordering::Relaxed).to_string();
-    }
-}
-
-fn trim_files_list(
-    mut commands: Commands,
-    file_grid: Single<&Children, With<FileGrid>>,
-    mut nodes: Query<&mut Node, With<FileCell>>,
-) {
-    let children = file_grid.into_inner();
-    let excess = (children.len() / CELL_PER_ROW).saturating_sub(FILE_GRID_ROWS);
-
-    if excess > 0 {
-        trace!("Trimming {} excess rows", excess);
-
-        for child in &children[0..(excess * CELL_PER_ROW)] {
-            commands.entity(*child).despawn();
-        }
-
-        for child in &children[(excess * CELL_PER_ROW)..] {
-            let Ok(mut node) = nodes.get_mut(*child) else {
-                unreachable!("All children of FileGrid must be FileCell.");
-            };
-
-            node.grid_row =
-                GridPlacement::start(node.grid_row.get_start().unwrap() - excess as i16);
+        let value = atomic_source.load(Ordering::Relaxed).to_string();
+        if text.0 != value {
+            text.0 = value;
         }
     }
 }
 
 fn receive_debug(
     mut commands: Commands,
+    ui_root: Single<&Node, With<UiRoot>>,
     file_grid: Single<(Entity, Option<&Children>), With<FileGrid>>,
     mut ipfs_debug_receiver: ResMut<IpfsDebugReceiver>,
+    mut log: ResMut<FileLog>,
 ) {
+    let shown = ui_root.display != Display::None;
     let (file_grid, children) = file_grid.into_inner();
-    let mut next_row =
-        (children.map(|children| children.len()).unwrap_or_default() / CELL_PER_ROW + 1) as i16;
+    let mut cells = children.map_or(0, |children| children.len());
 
     loop {
         let debug = match ipfs_debug_receiver.try_recv() {
@@ -220,71 +218,59 @@ fn receive_debug(
             }
         };
 
-        trace!("Spawning row {}", next_row);
-        commands.spawn((
-            FileCell,
-            ChildOf(file_grid),
-            Node {
-                grid_row: GridPlacement::start(next_row),
-                grid_column: GridPlacement::start(1),
-                ..Default::default()
-            },
-            Text::new(debug.path.display().to_string()),
-            TextFont {
-                font_size: CELL_FONT_SIZE,
-                ..Default::default()
-            },
-        ));
-        commands.spawn((
-            FileCell,
-            ChildOf(file_grid),
-            Node {
-                grid_row: GridPlacement::start(next_row),
-                grid_column: GridPlacement::start(2),
-                ..Default::default()
-            },
-            Text::new(format!("{:?}", debug.status)),
-            TextFont {
-                font_size: CELL_FONT_SIZE,
-                ..Default::default()
-            },
-        ));
-        commands.spawn((
-            FileCell,
-            ChildOf(file_grid),
-            Node {
-                grid_row: GridPlacement::start(next_row),
-                grid_column: GridPlacement::start(3),
-                ..Default::default()
-            },
-            Text::new(format!("{:?}", debug.duration)),
-            TextFont {
-                font_size: CELL_FONT_SIZE,
-                ..Default::default()
-            },
-        ));
-        commands.spawn((
-            FileCell,
-            ChildOf(file_grid),
-            Node {
-                grid_row: GridPlacement::start(next_row),
-                grid_column: GridPlacement::start(4),
-                ..Default::default()
-            },
-            Text::new(format!("{}b", debug.length)),
-            TextFont {
-                font_size: CELL_FONT_SIZE,
-                ..Default::default()
-            },
-        ));
+        let row = [
+            debug.path.display().to_string(),
+            format!("{:?}", debug.status),
+            format!("{:?}", debug.duration),
+            format!("{}b", debug.length),
+        ];
+        if shown {
+            spawn_row(&mut commands, file_grid, &row);
+            cells += CELL_PER_ROW;
+        }
+        log.0.push_back(row);
+        if log.0.len() > FILE_GRID_ROWS {
+            log.0.pop_front();
+        }
+    }
 
-        next_row += 1;
+    // cells are placed in spawn order, so trimming the oldest rows needs no renumbering
+    let Some(children) = children else {
+        return;
+    };
+    let excess = cells.saturating_sub(FILE_GRID_ROWS * CELL_PER_ROW);
+    if excess > 0 {
+        trace!("Trimming {} excess cells", excess);
+        for child in children.iter().take(excess) {
+            commands.entity(child).despawn();
+        }
     }
 }
 
-fn scroll_bottom(file_grid: Single<&mut ScrollPosition, With<FileGrid>>) {
-    let mut scroll_position = file_grid.into_inner();
-    scroll_position.offset_y += 512.;
+fn spawn_row(commands: &mut Commands, file_grid: Entity, row: &[String; CELL_PER_ROW]) {
+    for cell in row {
+        commands.spawn((
+            FileCell,
+            ChildOf(file_grid),
+            Node::default(),
+            Text::new(cell.clone()),
+            TextFont {
+                font_size: CELL_FONT_SIZE,
+                ..Default::default()
+            },
+        ));
+    }
+}
+
+fn scroll_bottom(
+    ui_root: Single<&Node, With<UiRoot>>,
+    file_grid: Single<&mut ScrollPosition, With<FileGrid>>,
+) {
+    if ui_root.display == Display::None {
+        return;
+    }
+    // layout clamps the offset to the content, so this pins the grid to its last row
+    file_grid.into_inner().offset_y = f32::MAX;
 }
 
 fn scroll_file_grid(
@@ -307,6 +293,7 @@ fn clear_file_grid(
     mut trigger: Trigger<Pointer<Pressed>>,
     mut commands: Commands,
     file_grid: Single<Entity, With<FileGrid>>,
+    mut log: ResMut<FileLog>,
 ) {
     if trigger.target() != trigger.observer() {
         return;
@@ -314,6 +301,7 @@ fn clear_file_grid(
     trigger.propagate(false);
 
     commands.entity(*file_grid).despawn_related::<Children>();
+    log.0.clear();
 }
 
 fn go_to_bottom(mut trigger: Trigger<Pointer<Pressed>>, mut commands: Commands) {
