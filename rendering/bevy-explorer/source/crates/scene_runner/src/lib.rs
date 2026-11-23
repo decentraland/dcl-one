@@ -579,8 +579,20 @@ fn run_scene_loop(world: &mut World) {
     #[cfg(not(target_arch = "wasm32"))]
     let last_wait_end =
         target_end_time - Duration::new(0, loop_schedule.sleeper.native_accuracy_ns());
+    // web: a timed wait can wake late too, by as much as the recent timed waits did
     #[cfg(target_arch = "wasm32")]
-    let last_wait_end = target_end_time;
+    let last_wait_end = if mode.loop_waits_for_replies() {
+        let lateness = world
+            .resource::<loop_pacing::WebLoopPacing>()
+            .wait_lateness
+            .p90()
+            .unwrap_or_default();
+        target_end_time
+            .checked_sub(lateness)
+            .unwrap_or(start_loop_time)
+    } else {
+        target_end_time
+    };
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
@@ -618,7 +630,13 @@ fn run_scene_loop(world: &mut World) {
                 // deadline, so a reply that arrives meanwhile ends the wait
                 #[cfg(target_arch = "wasm32")]
                 if mode.loop_waits_for_replies() {
-                    dcl_wasm::scene_replies::REPLIES.wait(replies_seen, wait);
+                    if dcl_wasm::scene_replies::REPLIES.wait(replies_seen, wait) {
+                        let late = Instant::now().saturating_duration_since(next_pass);
+                        world
+                            .resource_mut::<loop_pacing::WebLoopPacing>()
+                            .wait_lateness
+                            .push(late);
+                    }
                 } else {
                     std::thread::sleep(wait);
                 }

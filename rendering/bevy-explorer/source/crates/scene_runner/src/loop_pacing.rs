@@ -93,6 +93,10 @@ pub struct WebLoopPacing {
     pub frame_start: Option<Instant>,
     pub loop_end: Option<Instant>,
     pub tail: TailEstimate,
+    /// How much later than asked the loop's last timed-out waits for a reply woke: the same
+    /// window and percentile, over waits instead of frames. No timed wait ends closer to the
+    /// deadline than its 90th percentile.
+    pub wait_lateness: TailEstimate,
 }
 
 /// `First`: the frame's start, and the previous frame's tail: from its scene loop's end to its

@@ -111,8 +111,11 @@ deadline than the spin sleeper's accuracy, because a native sleep can wake that 
 spins through that last stretch. On the web a timed wait can end a millisecond or more late, so
 in every `?sceneLoop=` mode but `legacy` a reply also ends the wait: each relay counts what it
 forwards to the engine and wakes the loop (`dcl_wasm::scene_replies`). A reply that arrives
-before the deadline is then received in the same frame. The loop's schedule runs on the
-single-threaded executor: a pass is a chain of systems that mostly find nothing to do.
+before the deadline is then received in the same frame. In those modes the loop also records
+how late each timed-out wait woke, and no timed wait ends closer to the deadline than the 90th
+percentile of the last 32 (`WebLoopPacing::wait_lateness`; zero until 8 are recorded); it spins
+through the rest, as on native. The loop's schedule runs on the single-threaded executor: a
+pass is a chain of systems that mostly find nothing to do.
 
 Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the
