@@ -27,7 +27,7 @@ describe('when bucketing a field into `+ Add property`', () => {
   });
 
   it('should never offer a core prop, which always has its own row', () => {
-    expect(isAddableField(field('UiEntity', 'Size'), null, NONE)).toBe(false);
+    expect(isAddableField(field('UiEntity', 'Resize'), null, NONE)).toBe(false);
   });
 
   it('should not offer a prop bound to a variable', () => {
@@ -54,7 +54,7 @@ describe('when bucketing an inline-addable field', () => {
 
   it('should never show a stub for a field that is not inline-addable', () => {
     expect(isInlineStub(field('Input', 'Placeholder Colour'), null)).toBe(false);
-    expect(isInlineStub(field('UiEntity', 'Size'), null)).toBe(false);
+    expect(isInlineStub(field('UiEntity', 'Resize'), null)).toBe(false);
   });
 
   it('should seed Border with a visible weight, not just a colour', () => {

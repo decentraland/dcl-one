@@ -41,10 +41,22 @@ export const LengthVecField = React.memo(function LengthVecField({
   const aspectLocked = !!field.aspectLockable && !!aspectLockedMap[entity as unknown as number];
   const subs = field.facadeSubFields?.(componentValue) ?? field.subFields ?? [];
 
-  const firstUnitKey = subs[0] ? `${subs[0].path}Unit` : '';
-  const firstUnitRaw = (componentValue?.[firstUnitKey] as number | undefined) ?? YGU_UNDEFINED;
-  const unit = firstUnitRaw === YGU_UNDEFINED ? YGU_POINT : firstUnitRaw;
-  const numbersDisabled = fieldDisabled || unit === YGU_AUTO;
+  const unitOf = (path: string) => {
+    const raw = (componentValue?.[`${path}Unit`] as number | undefined) ?? YGU_UNDEFINED;
+    return raw === YGU_UNDEFINED ? YGU_POINT : raw;
+  };
+
+  const switchUnit = (nextUnit: number) => {
+    const parent = measureParentBox(entity);
+    const patch: Record<string, unknown> = {};
+    for (const sub of subs) {
+      const cur = (componentValue?.[sub.path] as number | undefined) ?? 0;
+      const dim = parent ? parent[axisForPath(sub.path)] : 0;
+      patch[sub.path] = convertLength(cur, unitOf(sub.path), nextUnit, dim);
+      patch[`${sub.path}Unit`] = nextUnit;
+    }
+    onPatch(patch);
+  };
 
   return (
     <BindableField
@@ -54,6 +66,7 @@ export const LengthVecField = React.memo(function LengthVecField({
     >
       {subs.map(sub => {
         const v = (componentValue?.[sub.path] as number | undefined) ?? 0;
+        const unit = unitOf(sub.path);
         const subBound = bindings?.[`${field.componentId}.${sub.path}`];
         return (
           <BindableSubField
@@ -66,7 +79,18 @@ export const LengthVecField = React.memo(function LengthVecField({
               type="number"
               leftLabel={sub.leftLabel}
               value={String(v)}
-              disabled={numbersDisabled}
+              disabled={fieldDisabled || unit === YGU_AUTO}
+              rightContent={
+                <span className="ui-designer-unit-control">
+                  <Dropdown
+                    options={UNIT_OPTIONS}
+                    value={unit}
+                    aria-label={`${sub.leftLabel} unit`}
+                    disabled={fieldDisabled}
+                    onChange={e => switchUnit(Number(e.target.value))}
+                  />
+                </span>
+              }
               onChange={e => {
                 const next = clampNumber(e.target.value);
                 const patch: Record<string, unknown> = {
@@ -81,7 +105,7 @@ export const LengthVecField = React.memo(function LengthVecField({
                     : 0;
                   if (other && curThis > 0 && curOther > 0) {
                     patch[other.path] = Math.max(0, Math.round(next * (curOther / curThis)));
-                    patch[`${other.path}Unit`] = unit;
+                    patch[`${other.path}Unit`] = unitOf(other.path);
                   }
                 }
                 onPatch(patch);
@@ -90,8 +114,8 @@ export const LengthVecField = React.memo(function LengthVecField({
           </BindableSubField>
         );
       })}
-      <div className="ui-designer-unit-selector">
-        {field.aspectLockable ? (
+      {field.aspectLockable ? (
+        <div className="ui-designer-unit-selector">
           <button
             type="button"
             className="ui-designer-vec-lock ui-designer-toggle"
@@ -101,26 +125,8 @@ export const LengthVecField = React.memo(function LengthVecField({
             title={aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
             onClick={() => dispatch(setAspectLocked({ entity, locked: !aspectLocked }))}
           />
-        ) : null}
-        <Dropdown
-          options={UNIT_OPTIONS}
-          value={unit}
-          aria-label="Unit"
-          disabled={fieldDisabled}
-          onChange={e => {
-            const nextUnit = Number(e.target.value);
-            const parent = measureParentBox(entity);
-            const patch: Record<string, unknown> = {};
-            for (const sub of subs) {
-              const cur = (componentValue?.[sub.path] as number | undefined) ?? 0;
-              const dim = parent ? parent[axisForPath(sub.path)] : 0;
-              patch[sub.path] = convertLength(cur, unit, nextUnit, dim);
-              patch[`${sub.path}Unit`] = nextUnit;
-            }
-            onPatch(patch);
-          }}
-        />
-      </div>
+        </div>
+      ) : null}
     </BindableField>
   );
 });

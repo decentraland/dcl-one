@@ -116,8 +116,6 @@ const Dropdown = React.forwardRef<HTMLInputElement, Props>((props, parentRef) =>
     popoverRef: optionListRef,
     open: showOptions,
     onDismiss: handleCloseDropdown,
-    // A trigger dropdown sizes its menu to the content, so let the hook measure it.
-    width: isField ? containerSize.width : undefined,
     align: menuAlign,
     gap: 1,
   });
@@ -355,7 +353,7 @@ const Dropdown = React.forwardRef<HTMLInputElement, Props>((props, parentRef) =>
                 style={{
                   top: menuPosition.top,
                   left: menuPosition.left,
-                  width: isField ? containerSize.width : undefined,
+                  minWidth: isField ? containerRef.current?.offsetWidth : undefined,
                 }}
                 options={options}
                 searchable={searchable}
