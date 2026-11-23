@@ -2,7 +2,7 @@
 import { StrictMode, type ComponentProps, type ReactNode } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider, useLoaderData } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { track } from "@/core/lib/telemetry/track";
@@ -46,14 +46,27 @@ function show(search: string) {
   window.history.replaceState({}, "", `/download_success${search}`);
   const loaderData = data(search);
   const router = createMemoryRouter(
-    [{ id: "success", path: "*", element: <DownloadSuccessRoute {...({ loaderData } as ComponentProps<typeof DownloadSuccessRoute>)} /> }],
+    [
+      {
+        id: "success",
+        path: "*",
+        loader: ({ request }) => data(new URL(request.url).search),
+        Component: function Success() {
+          const current = useLoaderData<typeof data>();
+          return <DownloadSuccessRoute {...({ loaderData: current } as ComponentProps<typeof DownloadSuccessRoute>)} />;
+        },
+      },
+    ],
     { initialEntries: [`/download_success${search}`], hydrationData: { loaderData: { success: loaderData } } },
   );
-  return render(
-    <StrictMode>
-      <RouterProvider router={router} />
-    </StrictMode>,
-  );
+  return {
+    router,
+    ...render(
+      <StrictMode>
+        <RouterProvider router={router} />
+      </StrictMode>,
+    ),
+  };
 }
 
 const setHidden = (hidden: boolean) =>
@@ -113,10 +126,10 @@ describe("arriving from a download control", () => {
 
   it("holds the Windows installer for the legacy fixed time and reports it as the anchor fallback", async () => {
     show("?os=Windows&place=download-page&arch=amd64");
-    await act(() => vi.advanceTimersByTimeAsync(3999));
-    expect(sent("download_success")).toHaveLength(0);
-    await act(() => vi.advanceTimersByTimeAsync(1));
-    expect(sent("download_success")[0]).toMatchObject({ delivery_mode: "anchor_fallback", os: "Windows", arch: "amd64", filename: "Decentraland_installer.exe" });
+    await act(() => vi.advanceTimersByTimeAsync(4000));
+    const [success] = sent("download_success");
+    expect(success).toMatchObject({ delivery_mode: "anchor_fallback", os: "Windows", arch: "amd64", filename: "Decentraland_installer.exe" });
+    expect(success!.duration_ms).toBeGreaterThanOrEqual(4000);
     expect(head).not.toHaveBeenCalled();
   });
 
@@ -135,6 +148,39 @@ describe("arriving from a download control", () => {
     unmount();
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(names()).toEqual(["download_success_arrived", "download_started"]);
+  });
+
+  it("cancels a pending HEAD and the hold when the visitor leaves, sending no outcome", async () => {
+    let signal: AbortSignal | undefined;
+    head.mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_, reject) => {
+          signal = init.signal!;
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    const { unmount } = show("?os=macOS&place=landing-hero");
+    expect(signal?.aborted).toBe(false);
+    unmount();
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(signal?.aborted).toBe(true);
+    expect(names()).toEqual(["download_success_arrived", "download_started"]);
+  });
+
+  it("cancels the old attempt when the artifact changes on the mounted page; the new one reports once", async () => {
+    let signal: AbortSignal | undefined;
+    head.mockImplementation((_url: string, init: RequestInit) => {
+      signal = init.signal!;
+      return new Promise(() => {});
+    });
+    const { router } = show("?os=macOS&place=landing-hero");
+    await act(() => router.navigate("/download_success?os=Windows&place=landing-hero"));
+    expect(signal?.aborted).toBe(true);
+    expect(requests).toEqual([INSTALLER("macos"), INSTALLER("windows")]);
+    await act(() => vi.advanceTimersByTimeAsync(4000));
+    expect(names()).toEqual(["download_success_arrived", "download_started", "download_started", "download_success"]);
+    expect(sent("download_started").map((p) => p.href)).toEqual([INSTALLER("macos"), INSTALLER("windows")]);
+    expect(sent("download_success")[0]).toMatchObject({ href: INSTALLER("windows"), delivery_mode: "anchor_fallback" });
   });
 
   it("snapshots the funnel on every hide, with the outcomes fired so far", async () => {

@@ -45,7 +45,8 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
   const revisit = useRef<number | null>(null);
   const fired = useRef({ startedFired: false, successFired: false, failedFired: false });
   const mounted = useRef(false);
-  const started = useRef<string | null>(null);
+  const started = useRef<{ href: string; controller: AbortController } | null>(null);
+  const attempts = useRef(new Set<AbortController>());
   const retrying = useRef(false);
 
   const facts = () => {
@@ -53,7 +54,11 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     return { sid, userId, arch, anonUserId: resolveAnonUserId(anonUserId, sid), authenticated: Boolean(userId), revisit: revisit.current ?? 0 };
   };
 
-  const attempt = async (attemptPlace: FunnelPlace, href: string) => {
+  // Each attempt owns its cancellation, as the legacy page's AbortController did: aborting it cancels the HEAD
+  // request and the hold, and the attempt then reports no outcome.
+  const attempt = async (attemptPlace: FunnelPlace, href: string, controller = new AbortController()) => {
+    const { signal } = controller;
+    attempts.current.add(controller);
     const { sid, userId, arch, anonUserId, authenticated, revisit: visit } = facts();
     const extra = funnelExtra(resolveMacArch(latest.current.macArch));
     const tracker = createDownloadTracker(
@@ -63,15 +68,16 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     try {
       fired.current.startedFired = true;
       tracker.started();
-      const delivery = await deliverInstaller(href, os, latest.current.dispatch);
-      // Leaving the page before the hold ends sends no outcome, as the legacy page's abort did.
-      if (!mounted.current) return;
+      const delivery = await deliverInstaller(href, os, latest.current.dispatch, signal);
+      if (signal.aborted) return;
       fired.current.successFired = true;
       tracker.success(installerFilename(href), delivery);
     } catch (error) {
-      if (!mounted.current) return;
+      if (signal.aborted) return;
       fired.current.failedFired = true;
       tracker.failed(error instanceof Error ? error.message : "Download failed");
+    } finally {
+      attempts.current.delete(controller);
     }
   };
 
@@ -79,6 +85,11 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // StrictMode remounts synchronously; only a real unmount is still unmounted once this microtask runs.
+      queueMicrotask(() => {
+        if (mounted.current) return;
+        for (const controller of attempts.current) controller.abort();
+      });
     };
   }, []);
 
@@ -92,10 +103,11 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
   }, []);
 
   useEffect(() => {
-    // Locale changes keep this attempt; a different artifact starts another.
-    if (started.current === input.href) return;
-    started.current = input.href;
-    void attempt(place, input.href);
+    // Locale changes keep this attempt; a different artifact cancels it and starts another.
+    if (started.current?.href === input.href) return;
+    started.current?.controller.abort();
+    started.current = { href: input.href, controller: new AbortController() };
+    void attempt(place, input.href, started.current.controller);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input.href]);
 

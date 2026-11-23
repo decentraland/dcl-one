@@ -24,11 +24,18 @@ export function installerFilename(url: string): string {
   return last.includes(".") ? last : "launcher";
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Resolves after `ms`, or at once when the attempt is aborted. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const id = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => (clearTimeout(id), resolve()), { once: true });
+  });
+}
 
-async function contentLength(url: string): Promise<number | null> {
+async function contentLength(url: string, signal: AbortSignal): Promise<number | null> {
   try {
-    const response = await fetch(url, { method: "HEAD", mode: "cors", credentials: "omit", cache: "no-store" });
+    const response = await fetch(url, { method: "HEAD", mode: "cors", credentials: "omit", cache: "no-store", signal });
     if (!response.ok) return null;
     const size = parseInt(response.headers.get("content-length") ?? "", 10);
     return Number.isFinite(size) && size > 0 ? size : null;
@@ -38,22 +45,25 @@ async function contentLength(url: string): Promise<number | null> {
 }
 
 /** The hold for a file of the HEAD's size at an assumed broadband speed, clamped; the minimum when unknown. */
-export async function estimateHoldMs(url: string): Promise<number> {
-  const size = await contentLength(url);
+export async function estimateHoldMs(url: string, signal: AbortSignal): Promise<number> {
+  const size = await contentLength(url, signal);
   if (size === null) return MIN_HOLD_MS;
   const transferMs = (size / ((ASSUMED_DOWNLINK_MBPS * 1024 * 1024) / 8)) * 1000;
   return Math.min(MAX_HOLD_MS, Math.max(MIN_HOLD_MS, transferMs + SAFETY_MARGIN_MS));
 }
 
-/** Requests the installer through a hidden anchor and resolves when the hold for its delivery has passed. */
-export async function deliverInstaller(url: string, os: FunnelOs, dispatch: (url: string) => void): Promise<Delivery> {
+/**
+ * Requests the installer through a hidden anchor and resolves when the hold for its delivery has passed. Aborting
+ * `signal` cancels the HEAD request and the hold; the caller then reports no outcome, as the legacy page did.
+ */
+export async function deliverInstaller(url: string, os: FunnelOs, dispatch: (url: string) => void, signal: AbortSignal): Promise<Delivery> {
   const startedAt = Date.now();
   dispatch(url);
   if (os === "macOS") {
-    const hold = await estimateHoldMs(url);
-    await sleep(Math.max(0, hold - (Date.now() - startedAt)));
+    const hold = await estimateHoldMs(url, signal);
+    await sleep(Math.max(0, hold - (Date.now() - startedAt)), signal);
     return { mode: "anchor_native" };
   }
-  await sleep(FALLBACK_HOLD_MS);
+  await sleep(FALLBACK_HOLD_MS, signal);
   return { mode: "anchor_fallback" };
 }
