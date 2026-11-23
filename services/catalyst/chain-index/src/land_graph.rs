@@ -309,6 +309,14 @@ pub async fn parcels_by_update_operator(
     state: &ChainIndex,
     update_operator: &str,
 ) -> Result<Arc<Vec<Value>>, String> {
+    update_operator_pages(state, update_operator, MAX_PAGES).await
+}
+
+async fn update_operator_pages(
+    state: &ChainIndex,
+    update_operator: &str,
+    max_pages: usize,
+) -> Result<Arc<Vec<Value>>, String> {
     let Some(url) = state.settings.land_subgraph_url.as_deref() else {
         return Err("no LAND subgraph is configured (LAND_SUBGRAPH_URL)".to_string());
     };
@@ -319,7 +327,7 @@ pub async fn parcels_by_update_operator(
         .get_or_fetch(operator.clone(), || async move {
             let mut elements = Vec::new();
             let mut skip = 0i64;
-            for _ in 0..MAX_PAGES {
+            for _ in 0..max_pages {
                 let data = graph_query(
                     state,
                     url,
@@ -339,7 +347,7 @@ pub async fn parcels_by_update_operator(
                 }
                 skip += THE_GRAPH_PAGE_SIZE;
             }
-            Err(format!("no terminal parcel page after {MAX_PAGES} pages"))
+            Err(format!("no terminal parcel page after {max_pages} pages"))
         })
         .await
 }
@@ -637,6 +645,8 @@ mod tests {
             json!({"estates": [], "parcels": [{"owner": null}]}),
             json!({"estates": [], "parcels": []}),
             json!({}),
+            json!({"parcels": vec![Value::Null; THE_GRAPH_PAGE_SIZE as usize + 1]}),
+            json!({"parcels": vec![Value::Null; THE_GRAPH_PAGE_SIZE as usize]}),
             json!({"parcels": []}),
         ])));
         let captured = replies.clone();
@@ -672,6 +682,18 @@ mod tests {
                 .await
                 .unwrap_err(),
             "subgraph response without parcels"
+        );
+        assert_eq!(
+            update_operator_pages(&state, "operator", 1)
+                .await
+                .unwrap_err(),
+            "subgraph returned more parcels than requested"
+        );
+        assert_eq!(
+            update_operator_pages(&state, "operator", 1)
+                .await
+                .unwrap_err(),
+            "no terminal parcel page after 1 pages"
         );
         assert!(
             parcels_by_update_operator(&state, "operator")
