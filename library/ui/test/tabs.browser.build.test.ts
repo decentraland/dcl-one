@@ -199,10 +199,45 @@ describe('when a tab is selected', () => {
     await click('#underline [role=tab]:nth-child(2)')
     await click('#pill [role=tab]:nth-child(2)')
     const [, underline] = await bars('#underline [role=tab]')
-    expect(underline!.animations).toContain('background-size')
+    expect(underline!.animations).toContain('--tab-scale')
     expect(underline!.position).toBe('50% 100%')
     const [, pill] = await bars('#pill [role=tab]')
     expect(pill!.animations.some((name) => name.includes('pillPop'))).toBe(true)
+  })
+
+  // As the Explorer HUD's underline: the outgoing bar shrinks to its centre while the incoming one grows, both on
+  // the 200ms spring, so 25ms in the old bar is about half its width (the HUD's scaleX reads 0.512 there).
+  it('should shrink the outgoing bar to its centre while the new one grows', async () => {
+    await media([{ name: 'prefers-reduced-motion', value: 'no-preference' }])
+    for (const selector of ['#underline', '#compact']) {
+      await ready(1440)
+      await evaluate(
+        `document.addEventListener('click',()=>setTimeout(()=>document.getAnimations().forEach(a=>a.pause())),{capture:true,once:true})`
+      )
+      await click(selector + ' [role=tab]:nth-child(2)')
+      const at = (ms: number) =>
+        evaluate<{ size: number; at: number }[]>(
+          `(async()=>{
+            document.getAnimations().forEach(a=>{a.pause();a.currentTime=${ms}})
+            await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))
+            return [...document.querySelectorAll(${JSON.stringify(selector + ' [role=tab]')})].slice(0,2).map(e=>{const s=getComputedStyle(e);return{size:parseFloat(s.backgroundSize),at:parseFloat(s.backgroundPositionX)}})
+          })()`
+        )
+      // 25ms in, both bars are about half their width, centred.
+      const [outgoing, incoming] = await at(25)
+      expect(outgoing!.size).toBeGreaterThan(40)
+      expect(outgoing!.size).toBeLessThan(60)
+      expect(incoming!.size).toBeGreaterThan(40)
+      expect(incoming!.size).toBeLessThan(60)
+      expect([outgoing!.at, incoming!.at]).toEqual([50, 50])
+      // 100ms in, the spring has carried the outgoing bar past zero: it is still drawn (the HUD's scaleX is -0.087),
+      // and the incoming one is full width.
+      const [late, grown] = await at(100)
+      expect(late!.size).toBeGreaterThan(5)
+      expect(late!.size).toBeLessThan(12)
+      expect(grown!.size).toBeGreaterThanOrEqual(100)
+      await evaluate('document.getAnimations().forEach(a=>a.finish())')
+    }
   })
 
   it('should apply the selected state at once when motion is reduced', async () => {
