@@ -1500,7 +1500,7 @@ jobs:
   # draft and an unmerged close must not leave a pass or a skip behind.
   gate:
     name: Explorer CI gate
-    needs: [source, changes, fmt, toml, clippy, test, headless-smoke, build-deploy-web, package-web, images-compile, images]
+    needs: [source, changes, fmt, toml, clippy, test, relay-wake, headless-smoke, build-deploy-web, package-web, images-compile, images]
     if: ${{ always() && !(github.event.action == 'closed' && github.event.pull_request.merged) }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
