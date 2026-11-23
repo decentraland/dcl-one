@@ -5,6 +5,7 @@ import { fs, editor, consoleWindow, misc, pkg } from '#preload';
 
 import { type Project } from '/shared/types/projects';
 import type { AiAssetMention } from '/shared/types/ai';
+import type { RecordedEvent } from '/shared/types/recording';
 import { PACKAGES } from '/shared/types/pkg';
 import { getPath } from '../';
 import type { Severity } from '../../store/snackbar/types';
@@ -15,6 +16,7 @@ import { actions as snackbarActions } from '../../store/snackbar';
 import { createGenericNotification } from '../../store/snackbar/utils';
 import { actions as workspaceActions } from '../../store/workspace';
 import { actions as optimizerActions } from '../../store/optimizer';
+import { forwardRecordedEvents } from '../../recording/session';
 
 type NotificationRequest = {
   severity: Severity;
@@ -41,6 +43,7 @@ export enum Method {
   SET_CONSOLE_WINDOW_OPEN = 'set_console_window_open',
   NOTIFY_SCENE_METADATA = 'notify_scene_metadata',
   NOTIFY_READY = 'notify_ready',
+  RECORD_EVENTS = 'record_events',
 }
 
 export type Params = {
@@ -59,6 +62,7 @@ export type Params = {
   [Method.SET_CONSOLE_WINDOW_OPEN]: { open: boolean };
   [Method.NOTIFY_SCENE_METADATA]: { title: string; scene?: Project['scene'] };
   [Method.NOTIFY_READY]: Record<string, never>;
+  [Method.RECORD_EVENTS]: { events: RecordedEvent[] };
 };
 
 export type Result = {
@@ -80,6 +84,7 @@ export type Result = {
   [Method.SET_CONSOLE_WINDOW_OPEN]: void;
   [Method.NOTIFY_SCENE_METADATA]: void;
   [Method.NOTIFY_READY]: void;
+  [Method.RECORD_EVENTS]: void;
 };
 
 export type SceneRpcServerCallbacks = {
@@ -87,6 +92,11 @@ export type SceneRpcServerCallbacks = {
   // reloaded iframe).
   onReady?: () => void;
 };
+
+/** Whether an entry of an inspector `record_events` batch is shaped like an event at all. */
+function isRecordedEvent(event: unknown): event is RecordedEvent {
+  return typeof event === 'object' && event !== null && !Array.isArray(event);
+}
 
 /** Identifies a layout regardless of the order its parcels are listed in. */
 const layoutKey = (scene: { base: string; parcels: string[] } | undefined) =>
@@ -98,6 +108,10 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
 
     this.handle('notify_ready', async () => {
       callbacks.onReady?.();
+    });
+
+    this.handle('record_events', async ({ events }) => {
+      if (Array.isArray(events)) forwardRecordedEvents(events.filter(isRecordedEvent));
     });
 
     // The layout the editor reported last, seeded with the one it opened with. A notice
@@ -210,7 +224,7 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
         );
         return;
       }
-      store.dispatch(aiActions.setDraftPrompt(text));
+      store.dispatch(aiActions.setDraftPrompt({ text, mode: 'replace' }));
     });
 
     // A double-click on a Local Assets entry. Only lands while the chat is visible (the reducer

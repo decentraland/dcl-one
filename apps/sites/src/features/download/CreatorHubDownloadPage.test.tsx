@@ -11,7 +11,7 @@ import { track } from "@/core/lib/telemetry/track";
 import CreatorHubDownloadPage from "./CreatorHubDownloadPage";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../creators/components/SubNav", () => ({ SubNav: () => null }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({

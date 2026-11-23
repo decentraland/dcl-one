@@ -95,7 +95,7 @@ export function ProfileMemberActions({ address: rawAddress, name }: { address: s
       retry={retry}
       act={act}
       setBlock={setBlock}
-      onSignIn={() => openSignIn({ inPlace: true })}
+      onSignIn={() => openSignIn()}
       onDismissNotice={() => setNotice(null)}
     />
   );

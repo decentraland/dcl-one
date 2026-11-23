@@ -2,40 +2,36 @@ use std::borrow::Cow;
 
 use alloy_core::primitives::Address;
 use bevy::prelude::*;
-use bevy_console::ConsoleCommand;
-use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use dcl_types::{scene_message_fits, CommsMessageType};
 
 use crate::{scene_crdt::filter_scene_crdt, SceneRoomModeration};
 
-pub(crate) struct SceneMessagesPlugin;
-
-impl Plugin for SceneMessagesPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<SceneMessageTraffic>()
-            .add_console_command::<SceneCommsCommand, _>(scene_comms_command)
-            .add_debug_section(DebugSection {
-                title: "Scene message policy",
-                query: "/scene_comms_state",
-                fields: &[
-                    ("Banned sender drops", "bannedSenderDrops"),
-                    ("Filtered inbound CRDT", "filteredInboundCrdt"),
-                    ("Filtered outbound CRDT", "filteredOutboundCrdt"),
-                    ("Invalid or oversized messages", "invalidMessages"),
-                    ("Binary payload limit (bytes)", "binaryPayloadLimit"),
-                ],
-                actions: &[],
-                inputs: &[],
-            });
-    }
-}
-
+/// Scene message policy and topic-routing counters, exposed together by `/scene_topics`.
 #[derive(Resource, Default)]
 pub struct SceneMessageTraffic {
+    pub(crate) published: u64,
+    pub(crate) publish_dropped: u64,
+    pub(crate) received: u64,
+    pub(crate) receive_dropped: u64,
     pub(crate) banned_senders: u64,
     pub(crate) filtered_inbound: u64,
-    pub filtered_outbound: u64,
-    pub invalid: u64,
+    pub(crate) filtered_outbound: u64,
+    pub(crate) invalid: u64,
+}
+
+impl SceneMessageTraffic {
+    /// Topic publishes (sent, dropped).
+    pub fn publishes(&self) -> (u64, u64) {
+        (self.published, self.publish_dropped)
+    }
+
+    pub fn record_publish(&mut self, sent: bool) {
+        if sent {
+            self.published += 1;
+        } else {
+            self.publish_dropped += 1;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,16 +41,16 @@ pub(crate) enum PeerTrust {
     Trusted,
 }
 
-/// Absent metadata grants ordinary peer permissions.
+/// Without a trusted source or development realm, absent metadata grants peer permissions.
 pub(crate) fn peer_trust(
     moderation: Option<&SceneRoomModeration>,
     sender: Option<Address>,
-    authoritative: bool,
+    trusted_source: bool,
 ) -> PeerTrust {
     if moderation.is_some_and(|state| sender.is_some_and(|sender| state.is_banned(sender))) {
         return PeerTrust::Banned;
     }
-    if authoritative
+    if trusted_source
         || moderation.is_some_and(|state| sender.is_some_and(|sender| state.is_admin(sender)))
     {
         PeerTrust::Trusted
@@ -70,11 +66,21 @@ pub(crate) fn filter_scene_message(data: &[u8], trusted: bool) -> Option<Cow<'_,
 }
 
 /// Engine egress enforces the local ban and the receiver's binary framing limit.
-pub fn outbound(data: &[u8], sender_banned: bool) -> Option<Cow<'_, [u8]>> {
+pub fn outbound<'a>(
+    data: &'a [u8],
+    sender_banned: bool,
+    traffic: &mut SceneMessageTraffic,
+) -> Option<Cow<'a, [u8]>> {
     if sender_banned {
         return None;
     }
-    filter_message(data, true, dcl_types::MAX_BINARY_MESSAGE_BYTES)
+    let filtered = filter_message(data, true, dcl_types::MAX_BINARY_MESSAGE_BYTES);
+    match &filtered {
+        None => traffic.invalid += 1,
+        Some(Cow::Owned(_)) => traffic.filtered_outbound += 1,
+        _ => (),
+    }
+    filtered
 }
 
 fn filter_message(data: &[u8], trusted: bool, binary_limit: usize) -> Option<Cow<'_, [u8]>> {
@@ -96,28 +102,6 @@ fn filter_message(data: &[u8], trusted: bool, binary_limit: usize) -> Option<Cow
         }
     }
     Some(Cow::Borrowed(data))
-}
-
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/scene_comms_state")]
-struct SceneCommsCommand;
-
-fn scene_comms_command(
-    mut input: ConsoleCommand<SceneCommsCommand>,
-    traffic: Res<SceneMessageTraffic>,
-) {
-    if let Some(Ok(_)) = input.take() {
-        input.reply_ok(
-            serde_json::json!({
-                "bannedSenderDrops": traffic.banned_senders,
-                "filteredInboundCrdt": traffic.filtered_inbound,
-                "filteredOutboundCrdt": traffic.filtered_outbound,
-                "invalidMessages": traffic.invalid,
-                "binaryPayloadLimit": dcl_types::MAX_BINARY_MESSAGE_BYTES,
-            })
-            .to_string(),
-        );
-    }
 }
 
 #[cfg(test)]
@@ -142,20 +126,46 @@ mod tests {
     }
 
     #[test]
+    fn outbound_counts_filtering_and_invalid_frames_in_the_shared_traffic() {
+        let mut traffic = SceneMessageTraffic::default();
+        let mut frame = vec![CommsMessageType::Binary as u8, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::PHYSICS_COMBINED_FORCE.0,
+            1,
+            0,
+        ] {
+            frame.extend(word.to_le_bytes());
+        }
+        assert_eq!(
+            outbound(&frame, false, &mut traffic).unwrap().as_ref(),
+            &[2, 1]
+        );
+        assert!(outbound(&[2, 1, 0], false, &mut traffic).is_none());
+        assert!(outbound(&frame, true, &mut traffic).is_none());
+        assert_eq!((traffic.filtered_outbound, traffic.invalid), (1, 1));
+    }
+
+    #[test]
     fn ingress_accepts_older_peers_while_egress_reserves_receiver_framing() {
+        let mut traffic = SceneMessageTraffic::default();
         let mut frame = vec![0; dcl_types::MAX_BINARY_MESSAGE_BYTES + 1];
         frame[0] = CommsMessageType::Binary as u8;
         assert!(filter_scene_message(&frame, false).is_some());
-        assert!(outbound(&frame, false).is_some());
-        assert!(outbound(&frame, true).is_none());
+        assert!(outbound(&frame, false, &mut traffic).is_some());
+        assert!(outbound(&frame, true, &mut traffic).is_none());
         assert_eq!(frame.len() - 1 + 1 + 42, 13 * 1024);
         frame.push(0);
         assert!(filter_scene_message(&frame, true).is_some());
         assert!(!scene_message_fits(&frame));
-        assert!(outbound(&frame, false).is_none());
+        assert!(outbound(&frame, false, &mut traffic).is_none());
         frame.resize(dcl_types::MAX_COMMS_MESSAGE_BYTES + 1, 0);
         assert!(filter_scene_message(&frame, true).is_some());
         frame.push(0);
         assert!(filter_scene_message(&frame, true).is_none());
+        assert_eq!(traffic.invalid, 1);
+        assert_eq!(traffic.filtered_outbound, 0);
     }
 }

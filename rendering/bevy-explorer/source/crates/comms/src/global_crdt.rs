@@ -1368,7 +1368,8 @@ pub struct SceneMessageBus<'w, 's> {
     binary_senders: Local<'s, HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
     scene_rooms: SceneRooms<'w, 's>,
     scene_topics: SceneTopicRouter<'w, 's>,
-    traffic: ResMut<'w, crate::scene_messages::SceneMessageTraffic>,
+    realm: Res<'w, common::structs::CurrentRealm>,
+    preview: Res<'w, common::structs::PreviewMode>,
 }
 
 impl SceneMessageBus<'_, '_> {
@@ -1381,17 +1382,20 @@ impl SceneMessageBus<'_, '_> {
     ) {
         if !self.scene_rooms.carries(transport, &scene.scene_id) {
             if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
-                self.scene_topics.drop_without_room();
+                self.scene_topics.drop_topic_message();
             }
             return;
         }
         let trusted = match crate::scene_messages::peer_trust(
             self.scene_rooms.moderation(&scene.scene_id),
             address.as_h160(),
-            authoritative,
+            authoritative || self.preview.is_preview || self.realm.is_local(),
         ) {
             crate::scene_messages::PeerTrust::Banned => {
-                self.traffic.banned_senders += 1;
+                self.scene_topics.traffic.banned_senders += 1;
+                if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
+                    self.scene_topics.drop_topic_message();
+                }
                 return;
             }
             crate::scene_messages::PeerTrust::Peer => false,
@@ -1399,11 +1403,14 @@ impl SceneMessageBus<'_, '_> {
         };
         let Some(filtered) = crate::scene_messages::filter_scene_message(&scene.data, trusted)
         else {
-            self.traffic.invalid += 1;
+            self.scene_topics.traffic.invalid += 1;
+            if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
+                self.scene_topics.drop_topic_message();
+            }
             return;
         };
         if let std::borrow::Cow::Owned(filtered) = filtered {
-            self.traffic.filtered_inbound += 1;
+            self.scene_topics.traffic.filtered_inbound += 1;
             scene.data = filtered;
         }
         let Some((&kind, _)) = scene.data.split_first() else {
@@ -1843,7 +1850,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.init_resource::<DiscardPlayerUpdates>();
-        app.init_resource::<crate::scene_messages::SceneMessageTraffic>();
+        app.init_resource::<common::structs::PreviewMode>();
         app.add_event::<RpcCallEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<PlayerPositionEvent>();
@@ -1986,6 +1993,10 @@ mod tests {
                 .banned_senders,
             3
         );
+        let traffic = app
+            .world()
+            .resource::<crate::scene_messages::SceneMessageTraffic>();
+        assert_eq!((traffic.received, traffic.receive_dropped), (1, 1));
         app.world_mut()
             .get_mut::<crate::SceneRoomModeration>(room)
             .unwrap()
@@ -1994,6 +2005,64 @@ mod tests {
         queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
         app.update();
         assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn development_peers_can_sync_video_without_admins_but_bans_still_win() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        for development in ["production", "preview", "local"] {
+            let (mut app, context) = presence_app();
+            app.world_mut()
+                .resource_mut::<common::structs::PreviewMode>()
+                .is_preview = development == "preview";
+            if development == "local" {
+                app.world_mut()
+                    .resource_mut::<common::structs::CurrentRealm>()
+                    .config
+                    .local_scene_parcels = Some(vec!["0,0".into()]);
+            }
+            let peer = Address::repeat_byte(0xab);
+            let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+            queue_joined(&mut app, context, room, peer);
+            let (sender, mut rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+            let scene = app.world_mut().spawn_empty().id();
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: "bafyscene".into(),
+                },
+                call: RpcCall::SubscribeBinaryBus { sender },
+            });
+            app.update();
+            for envelope in [vec![1], vec![3, 0]] {
+                let mut frame = vec![CommsMessageType::Binary as u8];
+                frame.extend_from_slice(&envelope);
+                for word in [24_u32, 1, 1, SceneComponentId::VIDEO_PLAYER.0, 1, 0] {
+                    frame.extend(word.to_le_bytes());
+                }
+                queue_scene_message(&mut app, context, room, peer, frame.clone());
+                app.update();
+                assert_eq!(
+                    rx.try_recv().unwrap().1,
+                    if development == "production" {
+                        envelope
+                    } else {
+                        frame[1..].to_vec()
+                    },
+                    "{development}"
+                );
+            }
+            let mut frame = vec![2, 1];
+            for word in [24_u32, 1, 1, SceneComponentId::VIDEO_PLAYER.0, 1, 0] {
+                frame.extend(word.to_le_bytes());
+            }
+            let mut moderation = crate::SceneRoomModeration::default();
+            moderation.banned_addresses.insert(peer);
+            app.world_mut().entity_mut(room).insert(moderation);
+            queue_scene_message(&mut app, context, room, peer, frame);
+            app.update();
+            assert!(rx.try_recv().is_err(), "a ban must win in {development}");
+        }
     }
 
     #[test]

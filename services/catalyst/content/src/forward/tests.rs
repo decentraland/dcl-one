@@ -7,7 +7,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use bytes::Bytes;
@@ -23,8 +22,7 @@ use crate::auth::verify::verify_auth_chain_async;
 use crate::auth::{AuthChain, hash_bytes_v1};
 use crate::create_entity::extract_auth_chain_from_fields;
 use crate::write_deployer::{DeployFailure, WriteDeployer};
-
-const HARDHAT_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+use catalyst_shared::test_keys::{ENTITY_KEY, signed_chain};
 
 async fn temp_storage() -> (Arc<Storage>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!(
@@ -279,16 +277,7 @@ impl Signed {
             .unwrap(),
         );
         let entity_id = hash_bytes_v1(&entity);
-        let key: PrivateKeySigner = HARDHAT_KEY.parse().unwrap();
-        let signature = key
-            .sign_message(entity_id.as_bytes())
-            .await
-            .unwrap()
-            .to_string();
-        let chain = json!([
-            { "type": "SIGNER", "payload": format!("{:#x}", key.address()) },
-            { "type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": signature }
-        ]);
+        let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &entity_id).await).unwrap();
         Self {
             entity_id,
             entity,

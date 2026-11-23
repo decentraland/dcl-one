@@ -346,6 +346,7 @@ impl BatchDeployer {
                     context: DeploymentContext::Synced,
                     report: report.as_ref(),
                     retry_state: None,
+                    discard_overtaken: false,
                 },
             )
             .await;
@@ -521,6 +522,7 @@ mod tests {
         let (storage, tmp) = temp_storage("batch").await;
         let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             2,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         ));
@@ -751,6 +753,7 @@ mod tests {
             .unwrap();
         let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             2,
             crate::sync_deployer::SyncValidation::Content(Arc::new(
                 crate::validator::Sources::new(
@@ -1010,6 +1013,7 @@ mod tests {
         let (storage, tmp) = temp_storage("access-passed").await;
         let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::Content(Arc::new(
                 crate::validator::Sources::new(

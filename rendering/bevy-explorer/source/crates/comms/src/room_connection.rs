@@ -1131,12 +1131,13 @@ mod tests {
         crate::livekit::apply_scene_room_metadata(
             &mut app.world_mut().commands(),
             room,
-            r#"{"bannedAddresses":[]}"#,
+            r#"{"bannedAddresses":[],"sceneAdmins":[]}"#,
         );
         crate::livekit::apply_scene_room_metadata(
             &mut app.world_mut().commands(),
             room,
-            &serde_json::json!({"bannedAddresses":[address.to_string()]}).to_string(),
+            &serde_json::json!({"bannedAddresses":[address.to_string()],"sceneAdmins":[]})
+                .to_string(),
         );
         app.update();
         assert_eq!(

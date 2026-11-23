@@ -24,6 +24,7 @@
 - [Opt-in UASTC texture upload](adr/2026-11-06-opt-in-uastc-texture-upload.md)
 - [Shared UI library](adr/2026-10-30-shared-ui-library.md)
 - [Shared UI import name](adr/2026-11-09-shared-ui-import-name.md)
+- [Hand-written mappings are checked against a tracked manifest](adr/2026-11-20-figma-mapping-manifest.md)
 - [Explorer HUD UI in `library/ui/apps/hud`](adr/2026-11-10-shared-explorer-hud-ui.md)
 - [Explorer vendored Bevy (superseded)](adr/2026-11-05-explorer-vendored-bevy.md)
 - [Explorer sources as upstream commits and patches](adr/2026-11-14-explorer-sources-as-patches.md)

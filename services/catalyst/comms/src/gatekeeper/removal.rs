@@ -240,10 +240,11 @@ fn sfu(error: RoomServiceError) -> anyhow::Error {
     anyhow!("LiveKit request failed: {error:?}")
 }
 
-/// The `<world>:<base>` key of a world scene intent queued before the
-/// `schemas/releases/world-scene-ban-keys.sql` release,
-/// which names the scene's entity id (bans moved, queued intents did not).
-async fn legacy_world_ban_key(
+/// The stable key of a scene intent queued before the release that moved its
+/// bans, which names the scene's entity id (bans moved, queued intents did
+/// not): `<world>:<base>` after `schemas/releases/world-scene-ban-keys.sql`,
+/// a Genesis scene's place after `schemas/releases/genesis-scene-ban-keys.sql`.
+async fn legacy_ban_key(
     state: &CommsState,
     row: &Intent,
 ) -> Result<Option<crate::access::SceneBanKey>> {
@@ -255,6 +256,29 @@ async fn legacy_world_ban_key(
         return Ok(None);
     };
     let rooms = row.scope.as_array().map(Vec::as_slice).unwrap_or_default();
+    let genesis = rooms
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(crate::rooms::parse_room)
+        .find_map(|room| match room {
+            crate::rooms::ParsedRoom::Local(local) if local.scene_id.as_ref() == Some(&scene) => {
+                Some(local)
+            }
+            _ => None,
+        });
+    if let Some(local) = genesis {
+        return match local
+            .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+            .await
+        {
+            Ok(key) => Ok(key),
+            Err(crate::rooms::ResolveError::Db(error)) => {
+                Err(anyhow!("scene identity unavailable: {error:?}"))
+            }
+            // An overwritten scene: no ban is read for it.
+            Err(_) => Ok(None),
+        };
+    }
     let Some(world) = rooms
         .iter()
         .filter_map(Value::as_str)
@@ -308,7 +332,7 @@ async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result
             {
                 return Ok(true);
             }
-            Ok(match legacy_world_ban_key(state, row).await? {
+            Ok(match legacy_ban_key(state, row).await? {
                 Some(key) => {
                     state
                         .moderation

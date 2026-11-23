@@ -10,6 +10,31 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
+- **Toon avatars are fogged.** Like everything else; Unity's toon computes a fog factor its
+  fragment never applies.
+- **Toon avatars take only the sun.** No point or spot light reaches them, as in Unity, whose
+  toon additional-light loop is commented out.
+- **The toon ambient floor is the sky envmap's irradiance.** It stands in for Unity's
+  spherical harmonics, read up and down, and without the world's dielectric factor, as Unity reads
+  `ShadeSH9` raw. Avatars in shade sit about 4% above a white world surface; that matches Unity
+  and is not to be removed.
+- **Without the sky envmap, toon avatars take the view's flat ambient.** Such a view (the
+  Backpack preview, a photo booth) has no Trilight ambient. The Backpack is lit flat; a booth
+  carries a one-light-unit key light, or its avatars would sit at the night floor.
+- **Face features are lit by the ambient alone.** As Unity's facial shader: no sun and no bands,
+  so they are brighter than the body at noon and darker at night. A view without the sky envmap
+  takes the noon horizon colour, since its flat ambient would light them twentyfold. They keep
+  the body's outline, which Unity's face shader does not draw.
+- **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
+  width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
+  overlap shallower than the edge threshold gets no line, so a curved surface draws none on
+  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+- **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
+  and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
+  front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
+  alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
+  wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
 - **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
@@ -382,20 +407,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the admins come from the room's metadata and count only while the room is connected, as there.
 - **Scene message trust is enforced in the engine.** Room metadata rejects banned senders
   across the string bus, binary bus and topics. New rooms without metadata grant ordinary peer
-  permissions. Later updates retain lists whose fields are missing or non-array; explicit
-  arrays apply their valid addresses and warn about skipped entries; an empty array clears
+  permissions. Preview and local scene development trust peers, as Unity Explorer does for
+  local scene development, so shared VideoPlayer sources sync without room admins; bans still
+  outrank that trust. Metadata arrives as full snapshots. Missing or non-array lists retain
+  their last good values defensively; explicit arrays apply their valid addresses and warn about skipped entries; an empty array clears
   its list. An entirely unusable non-empty ban array retains known bans; an entirely unusable
   admin array clears admin trust.
   Binary SDK CRDT batches and state responses exclude VideoControlState and the combined physics
-  force/impulse components in both directions; incoming VideoPlayer edits require a room admin
-  or the authoritative server. This protects the video source; peers can still move, hide or
-  delete its entity. A non-admin state response omits VideoPlayer, so late joiners need a trusted
+  force/impulse components in both directions; incoming VideoPlayer edits require a trusted
+  development realm, a room admin or the authoritative server. This protects the video source;
+  peers can still move, hide or delete its entity. A non-admin state response omits VideoPlayer, so late joiners need a trusted
   sender to supply it. Filtering covers SDK envelopes 1 and 3. Auth-server SDK envelopes are
   opaque: those clients accept CRDT only from the authoritative server, but local-only component
   filtering for that generation is unverified. Malformed recognized CRDT packets are dropped.
   Outgoing binary payloads are limited to 13,269 bytes, reserving a sender-length byte and 42
   address bytes in Unity Explorer's 13 KiB receiver frame. Incoming binary payloads retain the
   30,000-byte bus limit for older peers. Strings retain 30,000 bytes; topics retain 13 KiB.
+  Rejecting banned senders' scene messages is a deliberate divergence from Unity Explorer's
+  scene pipe, which gates component trust through admin status and does not check its ban list.
 - **Scene bans retain their admission owner.** A recognized scene/world refusal or local ban
   in room metadata unloads the matching parcel scene, without moving the player or unloading
   portable experiences. Refusals persist per scene across parcel changes within the wallet and
@@ -407,6 +436,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   requests fresh admission; other room types retain their existing denial behavior. Preview,
   local and headless scene lifecycles are exempt from local-player unloading. Teleport arrival
   onto a refused parcel completes without waiting for the deliberately absent scene root.
+  Unloading is a deliberate divergence from Unity Explorer's minimap ban mark: it prevents
+  refused scene scripts from running while the player is nearby. A later platform refusal is
+  reported independently of the retained scene/world ban, so device bans reach platform status
+  even while the user stays on a scene that already refused them.
 - **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the
@@ -626,6 +659,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     the image turns black when the source gives up or a non-looping source ends, and keeps the
     last frame while a reopen is pending, so a short drop shows no black flash; the failed source
     is detached meanwhile. A non-looping source that ends reports `VsNone`, as in unity-explorer.
+    A source the scene clears (an empty `src`, such as the Admin Toolkit's Deactivate) shows black
+    at once on native and web, whatever played before.
 
   Native (FFmpeg) has no reopen: its first error ends playback. A non-looping source that ends
   there reports `VsPaused` and keeps its last frame, where the web reports `VsNone` and clears it.
@@ -998,3 +1033,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   have to be pulled by every Explorer build and matched by every check that hashes the build's
   inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
   (`crates/assets/src/assets/landscape`) reaches tens of MB.
+- **Avatar processing has no frame budget.** `process_avatar` processes every avatar whose parts
+  are written, whole, in the frame it becomes ready, outside the instantiation slice. It was
+  measured before deciding (web build in Chrome, 60 fps target, 64 and 200 demo avatars in base
+  wearables spawned at once and then re-dressed three times). The scene spawner writes avatar
+  parts under the slice, so avatars become ready one or two a frame, at most five: the longest
+  frame of avatar processing took 1.7 ms against a slice of 4.17 ms, and an avatar takes 0.35 ms
+  at the median. That is well under a slice of its own, so a gate would only move a millisecond
+  or two of work to a later frame. The `instantiation/avatar_processing` diagnostic and the
+  Instantiation section of the debug panel show the smoothed cost; with `spawn_timing=debug` in
+  the log filter, each frame that took a millisecond or more is logged. Reopen with a
+  measurement of a frame of avatar processing over the slice, taken on an idle machine: with a
+  compile running alongside, single avatars took up to 43 ms in frames of 100 to 500 ms. Not
+  measured: what the scene spawner, glTF processing and avatar processing take together in a
+  frame (avatars become ready in frames where the spawner has used the slice, so at worst about
+  a slice plus the avatar work); the commands `process_avatar` queues, which are applied after
+  it; wearables much heavier than the base set; a target above 60 fps (the slice is 1.7 ms at
+  144 fps); and the native client.

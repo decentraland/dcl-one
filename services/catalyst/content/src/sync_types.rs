@@ -120,6 +120,14 @@ pub enum SyncError {
     #[error("Sync stopped")]
     Stopped,
 
+    /// A failed entity a newer active entity overtook on one of its pointers: with history
+    /// pruning on, the retry discards it instead of storing it as a superseded row.
+    #[error("Entity {entity_id} was overtaken by a newer deployment")]
+    Overtaken { entity_id: String },
+    /// A peer answered 404 for a content file.
+    #[error("{0}")]
+    NotFound(String),
+
     #[error("{0}")]
     Other(String),
 }

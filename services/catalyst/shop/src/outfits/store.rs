@@ -197,11 +197,18 @@ impl Outfits {
     }
 
     /// Content-addressed: a hash collision is the same bytes, so a conflict is a no-op.
+    /// Stores `bytes` (the blob `thumbnail.blob_cid` names) and the row in one
+    /// transaction, under the store lock's shared side (`gc::store_for_row`):
+    /// an unlink batch either ran before the existence check or sees the row.
     pub async fn put_thumbnail(
         &self,
+        storage: &crate::storage::Storage,
+        bytes: bytes::Bytes,
         thumbnail: &OutfitThumbnail,
         author: &str,
-    ) -> sqlx::Result<()> {
+    ) -> Result<(), crate::storage::gc::GcError> {
+        let mut tx = self.pool.begin().await?;
+        crate::storage::gc::store_for_row(&mut tx, storage, &thumbnail.blob_cid, bytes).await?;
         sqlx::query(
             "INSERT INTO shop.outfit_thumbnails (hash, blob_cid, content_type, size, author_address, created_at) \
              VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (hash) DO NOTHING",
@@ -212,8 +219,9 @@ impl Outfits {
         .bind(thumbnail.size)
         .bind(author.to_ascii_lowercase())
         .bind(now_ms())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
     }
 

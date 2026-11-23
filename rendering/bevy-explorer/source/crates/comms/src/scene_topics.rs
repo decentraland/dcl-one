@@ -1,5 +1,5 @@
 //! Scene topic messages (`~system/CommsApi`): each scene's inbox, delivery of received messages
-//! and the traffic counts. `restricted_actions` sends them, with the message bus.
+//! and the shared scene-message diagnostics. `restricted_actions` sends them, with the message bus.
 
 use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_console::ConsoleCommand;
@@ -10,7 +10,7 @@ use common::{
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use dcl_types::{CommsMessageType, MAX_TOPIC_MESSAGE_BYTES};
 
-use crate::{scene_rooms::SceneRooms, SceneRoom};
+use crate::{scene_messages::SceneMessageTraffic, scene_rooms::SceneRooms, SceneRoom};
 
 pub struct SceneTopicsPlugin;
 
@@ -19,7 +19,7 @@ impl Plugin for SceneTopicsPlugin {
         app.add_plugins(SceneTopicsRoutingPlugin)
             .add_console_command::<SceneTopicsCommand, _>(scene_topics_command)
             .add_debug_section(DebugSection {
-                title: "Scene topic messages",
+                title: "Scene messages",
                 query: "/scene_topics",
                 fields: &[
                     ("Scene rooms", "sceneRooms"),
@@ -32,9 +32,14 @@ impl Plugin for SceneTopicsPlugin {
                         "Publishes dropped (not a topic message, or no room for the scene)",
                         "publishDropped",
                     ),
+                    ("Banned sender drops", "bannedSenderDrops"),
+                    ("Filtered inbound CRDT", "filteredInboundCrdt"),
+                    ("Filtered outbound CRDT", "filteredOutboundCrdt"),
+                    ("Invalid or oversized messages", "invalidMessages"),
+                    ("Binary payload limit (bytes)", "binaryPayloadLimit"),
                     ("Received", "received"),
                     (
-                        "Received but dropped (too large, no room or no subscribed scene)",
+                        "Received but dropped (banned, invalid, no room or no subscribed scene)",
                         "receiveDropped",
                     ),
                 ],
@@ -48,7 +53,7 @@ pub(crate) struct SceneTopicsRoutingPlugin;
 
 impl Plugin for SceneTopicsRoutingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SceneTopicTraffic>().add_systems(
+        app.init_resource::<SceneMessageTraffic>().add_systems(
             Update,
             subscribe_scene_topics.in_set(SceneSets::RestrictedActions),
         );
@@ -60,31 +65,6 @@ impl Plugin for SceneTopicsRoutingPlugin {
 struct SceneTopicInbox {
     hash: String,
     sender: RpcStreamSender<(String, Vec<u8>)>,
-}
-
-/// A message dropped because a scene's inbox is full is only logged: the engine can't see a
-/// remote scene's channel fill up.
-#[derive(Resource, Default)]
-pub struct SceneTopicTraffic {
-    published: u64,
-    publish_dropped: u64,
-    received: u64,
-    receive_dropped: u64,
-}
-
-impl SceneTopicTraffic {
-    /// Topic publishes (sent, dropped).
-    pub fn publishes(&self) -> (u64, u64) {
-        (self.published, self.publish_dropped)
-    }
-
-    pub fn record_publish(&mut self, sent: bool) {
-        if sent {
-            self.published += 1;
-        } else {
-            self.publish_dropped += 1;
-        }
-    }
 }
 
 /// Whether a scene's publish is a topic message within the size limit. The scene runtime is
@@ -111,7 +91,7 @@ fn subscribe_scene_topics(mut commands: Commands, mut events: EventReader<RpcCal
 #[derive(SystemParam)]
 pub struct SceneTopicRouter<'w, 's> {
     inboxes: Query<'w, 's, &'static SceneTopicInbox>,
-    traffic: ResMut<'w, SceneTopicTraffic>,
+    pub(crate) traffic: ResMut<'w, SceneMessageTraffic>,
 }
 
 impl SceneTopicRouter<'_, '_> {
@@ -132,13 +112,13 @@ impl SceneTopicRouter<'_, '_> {
         }
     }
 
-    pub fn drop_without_room(&mut self) {
+    pub(crate) fn drop_topic_message(&mut self) {
         self.traffic.received += 1;
         self.traffic.receive_dropped += 1;
     }
 }
 
-/// Read the scene room scene topic messages use and how many went out and came in.
+/// Scene-room routing, topic traffic and engine message policy counters.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_topics")]
 struct SceneTopicsCommand;
@@ -148,7 +128,7 @@ fn scene_topics_command(
     rooms: Query<(Entity, &SceneRoom)>,
     scene_rooms: SceneRooms,
     inboxes: Query<&SceneTopicInbox>,
-    traffic: Res<SceneTopicTraffic>,
+    traffic: Res<SceneMessageTraffic>,
 ) {
     if let Some(Ok(_)) = input.take() {
         // A client holds one scene room at a time; a headless server holds one per hosted scene.
@@ -166,6 +146,11 @@ fn scene_topics_command(
                 "publishDropped": traffic.publish_dropped,
                 "received": traffic.received,
                 "receiveDropped": traffic.receive_dropped,
+                "bannedSenderDrops": traffic.banned_senders,
+                "filteredInboundCrdt": traffic.filtered_inbound,
+                "filteredOutboundCrdt": traffic.filtered_outbound,
+                "invalidMessages": traffic.invalid,
+                "binaryPayloadLimit": dcl_types::MAX_BINARY_MESSAGE_BYTES,
                 "unavailable": {"room": "No scene room", "running": "No scene room"},
             })
             .to_string(),
@@ -214,7 +199,7 @@ mod tests {
             live.try_recv().unwrap(),
             ("0x1".to_owned(), vec![1, 0, b't'])
         );
-        let traffic = app.world().resource::<SceneTopicTraffic>();
+        let traffic = app.world().resource::<SceneMessageTraffic>();
         assert_eq!((traffic.received, traffic.receive_dropped), (1, 0));
     }
 
@@ -224,7 +209,7 @@ mod tests {
         let mut other = spawn_inbox(&mut app, "bafyother");
         deliver(&mut app, "bafyscene", vec![1, 0, b't']);
         assert!(other.try_recv().is_err());
-        let traffic = app.world().resource::<SceneTopicTraffic>();
+        let traffic = app.world().resource::<SceneMessageTraffic>();
         assert_eq!((traffic.received, traffic.receive_dropped), (1, 1));
     }
 }

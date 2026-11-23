@@ -1,6 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 
-import { toStoredIdentity, type StoredAuthIdentity } from "@ui/data/auth/identity";
+import { toStoredIdentity, type StoredAuthIdentity } from "@web-core/auth/identity";
 
 import { signedFetch } from "./signer";
 import type { AuthIdentity } from "./types";

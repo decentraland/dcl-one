@@ -29,35 +29,43 @@ export const AUTO_TRANSLATE_LABEL = 'Auto-Translate'
 /** Marks the menu's layer, so the chat knows that focus moving into it has not left the chat. */
 export const MENU_LAYER = 'data-chat-menu'
 
-export function ConversationMenu({ channel, entries = [] }: { channel: string; entries?: ConversationMenuEntry[] }): React.JSX.Element {
+/** A menu anchored to the button that opens it, painted in its own layer (the chat panel clips
+ *  what it paints). `anchor` places the menu from the button's rectangle and the HUD's scale; the
+ *  open menu follows the button when the window or the HUD's scale changes. A press outside or
+ *  Escape closes it; closing from inside gives the focus back to the button. */
+export function useAnchoredMenu(anchor: (button: DOMRect, scale: number) => { left: number; top: number }, onDismiss?: () => void): {
+  open: boolean
+  at: { left: number; top: number } | null
+  button: React.RefObject<HTMLButtonElement | null>
+  menu: React.RefObject<HTMLDivElement | null>
+  toggle: () => void
+  close: () => void
+} {
   const [open, setOpen] = useState(false)
   const [at, setAt] = useState<{ left: number; top: number } | null>(null)
-  const [page, setPage] = useState<'root' | 'ping'>('root')
-  const prefs = usePingPrefs()
-  const translating = autoTranslates(useTranslationPrefs(), channel)
   const button = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
+  const anchorRef = useRef(anchor)
+  anchorRef.current = anchor
+  const dismissRef = useRef(onDismiss)
+  dismissRef.current = onDismiss
   const dismiss = useCallback(() => {
     setOpen(false)
-    setPage('root')
+    dismissRef.current?.()
   }, [])
-  // closed from inside (a row, Escape): focus goes back to the button the menu was opened from
   const close = useCallback(() => {
     if (menu.current?.contains(document.activeElement)) button.current?.focus()
     dismiss()
   }, [dismiss])
-  // 46px left of the kebab and 13px above it, in the HUD's scaled pixels
   const place = useCallback(() => {
     const r = button.current?.getBoundingClientRect()
-    const scale = getHudScale()
-    setAt(r != null ? { left: r.left - 45 * scale, top: r.top - 14 * scale } : { left: 0, top: 0 })
+    setAt(r != null ? anchorRef.current(r, getHudScale()) : { left: 0, top: 0 })
   }, [])
   const toggle = (): void => {
     if (open) return close()
     place()
     setOpen(true)
   }
-  // the kebab moves when the window or the HUD's scale changes: the open menu follows it
   useEffect(() => {
     if (!open) return
     window.addEventListener('resize', place)
@@ -67,11 +75,11 @@ export function ConversationMenu({ channel, entries = [] }: { channel: string; e
       off()
     }
   }, [open, place])
-  // keyboard focus moves into the menu when it opens and when its page changes
+  // keyboard focus moves into the menu when it opens
   useEffect(() => {
     if (!open) return
     menu.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
-  }, [open, page])
+  }, [open])
   useEffect(() => {
     if (!open) return
     const onDown = (e: PointerEvent): void => {
@@ -87,6 +95,22 @@ export function ConversationMenu({ channel, entries = [] }: { channel: string; e
       off()
     }
   }, [open, close, dismiss])
+  return { open, at, button, menu, toggle, close }
+}
+
+// 46px left of the kebab and 13px above it, in the HUD's scaled pixels
+const besideKebab = (r: DOMRect, scale: number): { left: number; top: number } => ({ left: r.left - 45 * scale, top: r.top - 14 * scale })
+
+export function ConversationMenu({ channel, entries = [] }: { channel: string; entries?: ConversationMenuEntry[] }): React.JSX.Element {
+  const [page, setPage] = useState<'root' | 'ping'>('root')
+  const prefs = usePingPrefs()
+  const translating = autoTranslates(useTranslationPrefs(), channel)
+  const { open, at, button, menu, toggle, close } = useAnchoredMenu(besideKebab, () => setPage('root'))
+  // keyboard focus moves into the menu when its page changes
+  useEffect(() => {
+    if (!open) return
+    menu.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus()
+  }, [open, page, menu])
   // the conversation's own setting; none means the default from the Chat settings tab applies
   const override = prefs.channels[channel]
   const items: ContextMenuItem[] =

@@ -42,8 +42,9 @@ use comms::{
     global_crdt::{CrdtContexts, ForeignPlayer},
     preview::handle_preview_socket,
     profile::{CurrentUserProfile, ProfileManager, UserProfile},
+    scene_messages::SceneMessageTraffic,
     scene_rooms::SceneRooms,
-    scene_topics::{is_topic_frame, SceneTopicTraffic},
+    scene_topics::is_topic_frame,
     NetworkMessage, NetworkMessageRecipient,
 };
 use console::DoAddConsoleCommand;
@@ -1744,8 +1745,7 @@ fn send_scene_messages(
     mut events: EventReader<RpcCallEvent>,
     scene_rooms: SceneRooms,
     scenes: Query<&RendererSceneContext>,
-    mut topic_traffic: ResMut<SceneTopicTraffic>,
-    mut traffic: ResMut<comms::scene_messages::SceneMessageTraffic>,
+    mut traffic: ResMut<SceneMessageTraffic>,
     (wallet, realm, admission): (Res<Wallet>, Res<CurrentRealm>, Res<comms::SceneAdmission>),
 ) {
     for ev in events.read() {
@@ -1764,7 +1764,7 @@ fn send_scene_messages(
             }
             RpcCall::PublishSceneTopic { data } => {
                 if !is_topic_frame(data) {
-                    topic_traffic.record_publish(false);
+                    traffic.record_publish(false);
                     continue;
                 }
                 (data, NetworkMessageRecipient::All, true)
@@ -1778,14 +1778,8 @@ fn send_scene_messages(
                     .moderation(hash)
                     .is_some_and(|state| state.is_banned(address))
         });
-        let filtered = comms::scene_messages::outbound(data, denied);
-        if !denied && filtered.is_none() {
-            traffic.invalid += 1;
-        }
+        let filtered = comms::scene_messages::outbound(data, denied, &mut traffic);
         let sent = filtered.is_some_and(|filtered| {
-            if matches!(filtered, std::borrow::Cow::Owned(_)) {
-                traffic.filtered_outbound += 1;
-            }
             scene_rooms.transport(hash).is_some_and(|transport| {
                 let message = rfc4::Packet {
                     message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
@@ -1801,7 +1795,7 @@ fn send_scene_messages(
             })
         });
         if topic {
-            topic_traffic.record_publish(sent);
+            traffic.record_publish(sent);
         }
     }
 }
@@ -2770,8 +2764,7 @@ mod scene_message_tests {
         app.init_resource::<SceneRoomConnection>()
             .init_resource::<ServerSceneRooms>()
             .init_resource::<common::structs::CurrentRealm>()
-            .init_resource::<SceneTopicTraffic>()
-            .init_resource::<comms::scene_messages::SceneMessageTraffic>()
+            .init_resource::<SceneMessageTraffic>()
             .init_resource::<comms::SceneAdmission>()
             .init_resource::<Wallet>();
         app.add_systems(Update, send_scene_messages);
@@ -2877,7 +2870,7 @@ mod scene_message_tests {
     }
 
     fn topic_publishes(app: &App) -> (u64, u64) {
-        app.world().resource::<SceneTopicTraffic>().publishes()
+        app.world().resource::<SceneMessageTraffic>().publishes()
     }
 
     fn both() -> [Vec<u8>; 2] {
@@ -2918,11 +2911,6 @@ mod scene_message_tests {
         }
         app.update();
         assert_eq!(sent(&mut room_rx).len(), 2);
-        let traffic = app
-            .world()
-            .resource::<comms::scene_messages::SceneMessageTraffic>();
-        assert_eq!(traffic.invalid, 2);
-        assert_eq!(traffic.filtered_outbound, 1);
     }
 
     #[test]

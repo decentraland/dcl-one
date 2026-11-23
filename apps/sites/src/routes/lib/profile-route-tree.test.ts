@@ -16,13 +16,13 @@ beforeAll(async () => {
 const profileRoutes = () => tree.filter((entry) => entry.file.includes("routes/profile"));
 
 describe("profile route tree", () => {
-  it("keeps every profile route at the top level, so a tab page runs only its own loader", () => {
+  it("should keep every profile route at the top level, so a tab page runs only its own loader", () => {
     const nested = profileRoutes().filter((entry) => (entry.children ?? []).length > 0);
 
     expect(nested.map((entry) => entry.file)).toEqual([]);
   });
 
-  it("serves each profile path from exactly one route", () => {
+  it("should serve each profile path from exactly one route", () => {
     const paths = profileRoutes()
       .map((entry) => entry.path)
       .sort();

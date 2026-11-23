@@ -16,6 +16,21 @@ pub enum AuthLinkType {
     EcdsaEip1654Ephemeral,
     #[serde(rename = "ECDSA_EIP_1654_SIGNED_ENTITY")]
     EcdsaEip1654SignedEntity,
+    /// A scoped login (ADR-162), accepted only where a service is configured.
+    #[serde(rename = "ECDSA_SCOPED_EPHEMERAL")]
+    EcdsaScopedEphemeral,
+    /// A contract wallet's scoped login (ADR-162).
+    #[serde(rename = "ECDSA_EIP_1654_SCOPED_EPHEMERAL")]
+    EcdsaEip1654ScopedEphemeral,
+}
+
+impl AuthLinkType {
+    pub fn is_scoped(self) -> bool {
+        matches!(
+            self,
+            Self::EcdsaScopedEphemeral | Self::EcdsaEip1654ScopedEphemeral
+        )
+    }
 }
 
 impl std::fmt::Display for AuthLinkType {
@@ -26,6 +41,8 @@ impl std::fmt::Display for AuthLinkType {
             Self::EcdsaSignedEntity => write!(f, "ECDSA_SIGNED_ENTITY"),
             Self::EcdsaEip1654Ephemeral => write!(f, "ECDSA_EIP_1654_EPHEMERAL"),
             Self::EcdsaEip1654SignedEntity => write!(f, "ECDSA_EIP_1654_SIGNED_ENTITY"),
+            Self::EcdsaScopedEphemeral => write!(f, "ECDSA_SCOPED_EPHEMERAL"),
+            Self::EcdsaEip1654ScopedEphemeral => write!(f, "ECDSA_EIP_1654_SCOPED_EPHEMERAL"),
         }
     }
 }
@@ -87,6 +104,14 @@ pub fn parse_ephemeral_payload(payload: &str) -> Result<(String, String, i64), A
 pub fn split_ephemeral_payload(
     payload: &str,
 ) -> Result<(String, String, Result<i64, String>), AuthError> {
+    split_ephemeral_payload_with(payload, parse_expiration)
+}
+
+/// [`split_ephemeral_payload`] with the expiration read by `parse`.
+pub(crate) fn split_ephemeral_payload_with(
+    payload: &str,
+    parse: fn(&str) -> Option<i64>,
+) -> Result<(String, String, Result<i64, String>), AuthError> {
     let message = payload.replace('\r', "");
     let parts: Vec<&str> = message.split('\n').collect();
 
@@ -113,17 +138,21 @@ pub fn split_ephemeral_payload(
 
     let expiration_str = &parts[2][expiration_prefix.len()..];
 
-    let expiration = parse_expiration(expiration_str).ok_or_else(|| expiration_str.to_string());
+    let expiration = parse(expiration_str).ok_or_else(|| expiration_str.to_string());
 
     Ok((message, ephemeral_address, expiration))
 }
 
-/// The date shapes `new Date(payload)` accepts in the clients that produced them: ISO 8601
-/// (`Date.toISOString()`, with or without an offset or fractional seconds), the RFC 2822
-/// form of `Date.toUTCString()`, and `Date.toString()` -- `Thu Feb 13 2020 15:31:10 GMT-0300
-/// (Argentina Standard Time)`, which the 2020 web client wrote into its ephemeral payloads.
-/// Its parenthesised zone name is informational and dropped; the offset has no colon.
+/// An ephemeral expiration as `Date.parse` reads it ([`crate::js_date`]), else as one of
+/// the shapes stored entities carry that it does not: an RFC 3339 date-time with lowercase
+/// separators or surrounding whitespace, and the other chrono forms below.
 pub fn parse_expiration(s: &str) -> Option<i64> {
+    crate::js_date::parse(s).or_else(|| parse_stored_expiration(s))
+}
+
+/// The shapes read before `Date.parse`: entities mirrored from a peer keep exactly these,
+/// and an expiration outside them stays the peer's word.
+pub(crate) fn parse_stored_expiration(s: &str) -> Option<i64> {
     let s = s.trim();
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return Some(dt.timestamp_millis());
@@ -333,13 +362,7 @@ mod tests {
 
     #[test]
     fn parse_expiration_rejects_unknown_shapes() {
-        for s in [
-            "",
-            "next Tuesday",
-            "Thu Feb 13 2020",
-            "13/02/2020 15:31",
-            "1581618670000",
-        ] {
+        for s in ["", "next Tuesday", "13/02/2020 15:31", "1581618670000"] {
             assert_eq!(parse_expiration(s), None, "{s:?}");
         }
         let payload = "Decentraland Login\nEphemeral address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266\nExpiration: next Tuesday";
@@ -351,6 +374,21 @@ mod tests {
         let (_, addr, expiration) = split_ephemeral_payload(payload).unwrap();
         assert_eq!(addr, "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         assert_eq!(expiration, Err("next Tuesday".to_string()));
+    }
+
+    /// `Date.parse` reads a date with no time as midnight, as the old node did.
+    #[test]
+    fn parse_expiration_accepts_what_date_parse_accepts() {
+        assert_eq!(parse_expiration("Thu Feb 13 2020"), Some(1_581_552_000_000));
+        assert_eq!(parse_expiration("2020-02-13"), Some(1_581_552_000_000));
+        assert_eq!(
+            parse_expiration("Feb 13, 2020 3:31 PM"),
+            Some(1_581_607_860_000)
+        );
+        assert_eq!(
+            parse_expiration("2020-02-13t18:31:10z"),
+            Some(1_581_618_670_000)
+        );
     }
 
     #[test]

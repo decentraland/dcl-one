@@ -48,15 +48,30 @@ pub struct SceneAdapterResponse {
 
 /// The room a scene token joins comes from the signed metadata only: the
 /// signed `realmName` (as upstream's `oldValidate`) and `sceneId`.
-fn signed_scene_target(metadata: &Value) -> Result<(String, String), ApiError> {
+fn signed_scene_target(metadata: &Value, node_realm: &str) -> Result<(String, String), ApiError> {
     let realm_name = scene::meta_str(metadata, "realmName")
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realmName"))?;
-    let realm_name =
-        crate::world_identity::signed_realm_name(&realm_name, scene::signed_realm_url(metadata));
+    let realm_name = crate::world_identity::signed_realm_name(
+        &realm_name,
+        scene::signed_realm_url(metadata),
+        node_realm,
+    );
     let scene_id = scene::meta_str(metadata, "sceneId").ok_or_else(|| {
         ApiError::bad_request("Access denied, invalid signed-fetch request, no sceneId")
     })?;
     Ok((realm_name, scene_id))
+}
+
+/// The `.dcl.eth` world a bare signed realm name can stand for
+/// ([`bare_world`]): the Unity explorer signs that name as realm and as
+/// scene, with no realm URL. It signs this node's Genesis City realm
+/// (`node_realm`) the same way: that name, and a realm name beside a scene
+/// id, keep their shared room.
+fn stripped_world(realm_name: &str, scene_id: &str, node_realm: &str) -> Option<WorldName> {
+    if realm_name != scene_id || realm_name.eq_ignore_ascii_case(node_realm) {
+        return None;
+    }
+    crate::world_identity::bare_world(realm_name, node_realm)
 }
 
 async fn record_connection(
@@ -77,9 +92,9 @@ async fn record_connection(
 
 /// POST /get-scene-adapter: the wallet's own signed fetch (the scene signer is
 /// refused); the realm and scene come from the signed metadata only, the body
-/// is ignored; a Genesis scene id must be a scene active here and not
-/// denylisted (else 404; a local preview passes with `ALLOW_LOCAL_PREVIEW`); the
-/// platform ban
+/// is ignored, a world's bare name reads as that world ([`stripped_world`]); a
+/// Genesis scene id must be a scene active here and not denylisted (else 404; a
+/// local preview passes with `ALLOW_LOCAL_PREVIEW`); the platform ban
 /// (device-widened) then the scene ban refuse before the world access check
 /// (`worlds::policy::Policy::can_access`, a local call; a shared-secret
 /// world reads the secret from the signed metadata's `secret` field, the
@@ -106,17 +121,36 @@ pub async fn get_scene_adapter(
     if state.deny_list.is_denied(identity.as_str()).await {
         return Err(unauthorized(super::world_mint::DENY_LISTED));
     }
-    let (realm_name, scene_id) = signed_scene_target(&sf.metadata)?;
+    let (mut realm_name, mut scene_id) =
+        signed_scene_target(&sf.metadata, &state.settings.realm_name)?;
+    if let Some(world) = stripped_world(&realm_name, &scene_id, &state.settings.realm_name)
+        && let Some(active) = state
+            .scenes
+            .world_active_scene(&world)
+            .await
+            .map_err(|error| ApiError::internal(error.to_string()))?
+        && active.local
+    {
+        realm_name = world.display().to_string();
+        scene_id = active.scene_id.into_string();
+    }
     let is_world = is_world_realm_name(&realm_name);
     let resolved = scene::resolve_adapter_room(&state, &realm_name, &scene_id).await?;
-    if !is_world {
-        scene::require_genesis_deployment(&state, &resolved).await?;
-    }
+    let genesis = if is_world {
+        None
+    } else {
+        scene::require_genesis_deployment(&state, &resolved).await?
+    };
     let resolved_scene_id = resolved
         .scene_id
         .as_ref()
         .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?
         .as_str();
+    // A Genesis scene's bans are on the place of the deployment found.
+    let ban_key = genesis.as_ref().unwrap_or(&resolved).ban_key();
+    let ban_key = ban_key
+        .as_ref()
+        .map_or(resolved_scene_id, |key| key.as_str());
     let device_id = device_identifier(&sf.metadata);
     let secret = scene::meta_str(&sf.metadata, "secret");
     let started = if let Some(world) = resolved.realm.world() {
@@ -143,7 +177,7 @@ pub async fn get_scene_adapter(
             // Record only an admitted connection: a refused one must not replace the recorded device.
             let gate = state
                 .moderation
-                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
+                .connection_gate(&identity, device_id.as_deref(), ban_key)
                 .await;
             if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;
@@ -248,7 +282,7 @@ pub async fn get_server_scene_adapter(
         Some(expected) if identity == *expected => {}
         _ => return Err(unauthorized("Access denied, invalid server public key")),
     }
-    let realm_name = scene::realm_name_from_metadata(&sf.metadata)
+    let realm_name = scene::realm_name_from_metadata(&sf.metadata, &state.settings.realm_name)
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realm"))?;
     let scene_id = scene::meta_str(&sf.metadata, "sceneId").ok_or_else(|| {
         ApiError::bad_request("Access denied, invalid signed-fetch request, no sceneId")
@@ -401,16 +435,38 @@ mod tests {
     #[test]
     fn room_comes_from_signed_realm_name_and_scene_id_only() {
         let meta = serde_json::json!({ "realmName": "main", "sceneId": "meta-scene" });
-        let (realm, scene) = signed_scene_target(&meta).unwrap();
+        let (realm, scene) = signed_scene_target(&meta, "main").unwrap();
         assert_eq!((realm.as_str(), scene.as_str()), ("main", "meta-scene"));
 
         let server_name_only =
             serde_json::json!({ "realm": { "serverName": "main" }, "sceneId": "s" });
         assert_eq!(
-            signed_scene_target(&server_name_only).unwrap_err().code,
+            signed_scene_target(&server_name_only, "main")
+                .unwrap_err()
+                .code,
             401
         );
         let no_scene = serde_json::json!({ "realmName": "main" });
-        assert_eq!(signed_scene_target(&no_scene).unwrap_err().code, 400);
+        assert_eq!(
+            signed_scene_target(&no_scene, "main").unwrap_err().code,
+            400
+        );
+    }
+
+    #[test]
+    fn a_bare_name_signed_as_realm_and_scene_can_name_a_world() {
+        let world =
+            |realm, scene| stripped_world(realm, scene, "node").map(|w| w.display().to_string());
+        assert_eq!(world("Label", "Label").as_deref(), Some("Label.dcl.eth"));
+        for (realm, scene) in [
+            ("main", "bafkreiscene"),
+            ("Node", "Node"),
+            ("LocalPreview", "LocalPreview"),
+            ("Main", "Main"),
+            ("a.dcl.eth", "a.dcl.eth"),
+            (" a", " a"),
+        ] {
+            assert_eq!(world(realm, scene), None, "{realm}");
+        }
     }
 }

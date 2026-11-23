@@ -4,7 +4,8 @@
 //! nor publish a per-server cursor before the marking pass proved the snapshots complete;
 //! a node interrupted mid-bootstrap must restart from what it persisted, replaying
 //! rather than skipping, without duplicating what it already holds; and a peer held back
-//! in snapshot bootstrap keeps the node unready until its snapshots are fully deployed.
+//! in snapshot bootstrap publishes no cursor until its snapshots are fully deployed, while
+//! the node is `Syncing` and retries it in the background.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -215,6 +216,7 @@ async fn node_with(
         pool.clone(),
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
             catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),
@@ -415,11 +417,12 @@ async fn an_interrupted_bootstrap_restarts_from_the_persisted_cursor_without_dup
     assert_eq!(status.sync_frontier_ms(), Some(frontier));
 }
 
-/// The peer's snapshot list is unreadable, so the node owes it every snapshot it could not
-/// read: both phased announcements are withheld and `/about` stays 503 with nothing deployed,
-/// until the straggler retry reads a clean list, deploys the catch-up and publishes Syncing.
+/// The peer's snapshot list is unreadable, so it stays in snapshot bootstrap: nothing of it is
+/// deployed and its cursor is never published, but it does not hold the node, which is
+/// `Syncing` once the bootstrap pass ended. The straggler retry reads a clean list later and
+/// deploys the catch-up.
 #[tokio::test]
-async fn a_peer_held_back_in_snapshot_bootstrap_keeps_the_node_unready() {
+async fn a_peer_held_back_in_snapshot_bootstrap_is_retried_without_holding_the_node() {
     let Some(db) = super::db::scratch_database().await else {
         return;
     };
@@ -457,7 +460,20 @@ async fn a_peer_held_back_in_snapshot_bootstrap_keeps_the_node_unready() {
     let cursor_while_held = repo.get_server_sync_cursor(&peer.url).await.unwrap();
 
     peer.clean.store(true, Ordering::SeqCst);
-    wait_for(&orchestrator, SyncState::Syncing).await;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while deployed_types(&pool).await.len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the straggler retry deploys the held peer's catch-up");
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while !settled(repo.get_server_sync_cursor(&peer.url).await.unwrap(), now) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the caught-up peer publishes its cursor");
     orchestrator.stop().await;
     drop(handle);
     peer.http.abort();
@@ -470,8 +486,8 @@ async fn a_peer_held_back_in_snapshot_bootstrap_keeps_the_node_unready() {
 
     assert_eq!(
         state_while_held,
-        SyncState::Bootstrapping,
-        "a node that owes its only peer's snapshots is not partially synced either"
+        SyncState::Syncing,
+        "a held peer is retried in the background without holding the node"
     );
     assert!(types_while_held.is_empty(), "{types_while_held:?}");
     assert_eq!(

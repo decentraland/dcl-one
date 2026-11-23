@@ -8,7 +8,7 @@
 
 /* `[data-shop-tokens]`: a Shop surface portaled outside the chrome (Buy now's dialog) keeps the same tokens. */
 .shop-chrome,
-.site-layout:has(.shop-chrome),
+[data-site-layout]:has(.shop-chrome),
 [data-shop-tokens] {
   --shop-text: #161518;
   --shop-muted: #716b7c;
@@ -85,20 +85,20 @@
 
 @media (max-width: 991px) {
   .shop-chrome,
-  .site-layout:has(.shop-chrome),
+  [data-site-layout]:has(.shop-chrome),
   [data-shop-tokens] {
     --shop-nav-h: var(--native-site-header-h, 64px);
   }
 }
 @media (max-width: 768px) {
   .shop-chrome,
-  .site-layout:has(.shop-chrome),
+  [data-site-layout]:has(.shop-chrome),
   [data-shop-tokens] {
     --shop-gutter: 16px;
   }
 }
 
-.site-layout:has(.shop-chrome) {
+[data-site-layout]:has(.shop-chrome) {
   position: relative;
   isolation: isolate;
   background: var(--shop-field) fixed;
@@ -110,7 +110,7 @@
   from { background-position: 0 0; }
   to { background-position: -610px -610px; }
 }
-.site-layout:has(.shop-chrome)::before {
+[data-site-layout]:has(.shop-chrome)::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -124,24 +124,24 @@
   mask-image: radial-gradient(75% 70% at 50% 45%, transparent 25%, #000 85%);
 }
 @media (prefers-reduced-motion: reduce) {
-  .site-layout:has(.shop-chrome)::before { animation: none; }
+  [data-site-layout]:has(.shop-chrome)::before { animation: none; }
 }
 
 /* The site nav is a dark wash over the page field that deepens once the page scrolls, painted on ::before as
    upstream's is, with ui2's outlined SIGN IN. */
-.site-layout:has(.shop-chrome) .site-layout__navigation {
+[data-site-layout]:has(.shop-chrome) [data-site-layout-navigation] {
   --site-nav-bg: rgba(22, 21, 24, 0.4);
   --site-nav-line: transparent;
   --site-nav-pad: 54px;
   --font-sans: Inter, system-ui, sans-serif;
   font-family: var(--font-sans);
 }
-body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation { --site-nav-bg: rgba(22, 21, 24, 0.8); }
-.site-layout:has(.shop-chrome) .dtb {
+body[data-shop-scrolled] [data-site-layout]:has(.shop-chrome) [data-site-layout-navigation] { --site-nav-bg: rgba(22, 21, 24, 0.8); }
+[data-site-layout]:has(.shop-chrome) .dtb {
   background: transparent;
   border-bottom: 0;
 }
-.site-layout:has(.shop-chrome) .dtb::before {
+[data-site-layout]:has(.shop-chrome) .dtb::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -152,8 +152,8 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
   transition: background 0.25s ease;
   pointer-events: none;
 }
-.site-layout:has(.shop-chrome) .dtb__menu.is-open { background: rgb(22, 21, 24); }
-.site-layout:has(.shop-chrome) .dtb__signin {
+[data-site-layout]:has(.shop-chrome) .dtb__menu.is-open { background: rgb(22, 21, 24); }
+[data-site-layout]:has(.shop-chrome) .dtb__signin {
   padding: 8px 22px;
   border-color: #fcfcfc;
   color: #fcfcfc;
@@ -161,14 +161,14 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
   letter-spacing: 0.46px;
   text-transform: uppercase;
 }
-.site-layout:has(.shop-chrome) .dtb__signin:hover { background: rgba(255, 255, 255, 0.12); border-color: #fcfcfc; }
+[data-site-layout]:has(.shop-chrome) .dtb__signin:hover { background: rgba(255, 255, 255, 0.12); border-color: #fcfcfc; }
 @media (max-width: 991px) {
-  .site-layout:has(.shop-chrome) .dtb { gap: 24px; padding: 12px 16px; }
-  .site-layout:has(.shop-chrome) .dtb__brand img { width: 40px; height: 40px; }
-  .site-layout:has(.shop-chrome) .dtb__burger { background: rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fcfcfc; }
+  [data-site-layout]:has(.shop-chrome) .dtb { gap: 24px; padding: 12px 16px; }
+  [data-site-layout]:has(.shop-chrome) .dtb__brand img { width: 40px; height: 40px; }
+  [data-site-layout]:has(.shop-chrome) .dtb__burger { background: rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fcfcfc; }
 }
 @media (max-width: 768px) {
-  .site-layout:has(.shop-chrome) .site-layout__navigation { --site-nav-bg: rgba(22, 21, 24, 0.75); }
+  [data-site-layout]:has(.shop-chrome) [data-site-layout-navigation] { --site-nav-bg: rgba(22, 21, 24, 0.75); }
 }
 
 .shop-chrome *,

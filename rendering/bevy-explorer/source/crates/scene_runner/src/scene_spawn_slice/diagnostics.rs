@@ -1,7 +1,7 @@
 //! The instantiation slice in the runtime debug panel: the slice in effect, what primitives and
-//! materials charged it, how long the scene spawner and glTF processing take, what bevy's scene
-//! spawner has queued and is writing, how many glTF models are spawning or being processed, and
-//! how many first meshes and materials wait.
+//! materials charged it, how long the scene spawner, glTF processing and avatar processing take,
+//! what bevy's scene spawner has queued and is writing, how many glTF models are spawning or being
+//! processed, and how many first meshes and materials wait.
 
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ use serde_json::json;
 
 use super::{
     processing_share, slice,
-    spawn_timing::{GLTF_PROCESSING, SCENE_SPAWNER},
+    spawn_timing::{AVATAR_PROCESSING, GLTF_PROCESSING, SCENE_SPAWNER},
     InstantiationCharges, ProcessingDeadline,
 };
 use crate::{
@@ -43,6 +43,10 @@ impl Plugin for InstantiationDebugPanelPlugin {
                     ),
                     ("Scene spawner per frame, smoothed (ms)", "spawner"),
                     ("glTF processing per frame, smoothed (ms)", "processing"),
+                    (
+                        "Avatar processing per frame, smoothed (ms)",
+                        "avatarProcessing",
+                    ),
                     ("Scene instances queued", "queued"),
                     (
                         "Instance being written (entities written / in all)",
@@ -95,6 +99,7 @@ fn instantiation_state(
             "charged": milliseconds(charges.last_frame),
             "spawner": smoothed(&SCENE_SPAWNER),
             "processing": smoothed(&GLTF_PROCESSING),
+            "avatarProcessing": smoothed(&AVATAR_PROCESSING),
             "queued": progress.queued,
             "writing": progress.writing.map(|(written, total)| [written, total]),
             "models": models.iter().count(),
@@ -105,6 +110,7 @@ fn instantiation_state(
                 "processingShare": whole,
                 "spawner": "Nothing measured yet.",
                 "processing": "Nothing measured yet.",
+                "avatarProcessing": "Nothing measured yet.",
                 "writing": "No scene instance is part-written.",
             },
         })

@@ -142,10 +142,7 @@ impl Plugin for CommsPlugin {
 
         // Pulse movement transport. Inert until a `pulse::plugin::PulseConfig` resource is
         // inserted; the driver (native ENet thread / wasm no-op) is selected at compile time.
-        app.add_plugins((
-            pulse::plugin::PulsePlugin,
-            scene_messages::SceneMessagesPlugin,
-        ));
+        app.add_plugins(pulse::plugin::PulsePlugin);
 
         app.add_systems(
             Update,
@@ -748,7 +745,7 @@ fn connect_scene_room(
     let meta = scene_room_metadata(
         &ev.realm_name,
         &ev.scene_id,
-        adapter::allows_device_identifier(&url).then_some(config.user_id.as_str()),
+        common::base_domain::device_identifier_domain(&url).map(|_| config.user_id.as_str()),
         wallet.is_any_guest(),
         common::structs::server_mode() || world.is_some(),
         world_secret.0.as_deref().filter(|_| world.is_some()),

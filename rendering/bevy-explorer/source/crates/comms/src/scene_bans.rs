@@ -62,10 +62,13 @@ pub(crate) fn apply_scene_bans(
             continue;
         }
         if metadata.is_banned(address) {
-            admission.observe(
-                SceneAdmission::from_room_ban(&target.scene.scene_id)
-                    .for_session(&realm.about_url, address),
-            );
+            // An unchanged room ban must not hide a later platform-scoped admission refusal.
+            if !admission.is_scene_banned(&realm.about_url, address, &target.scene.scene_id) {
+                admission.observe(
+                    SceneAdmission::from_room_ban(&target.scene.scene_id)
+                        .for_session(&realm.about_url, address),
+                );
+            }
             if observed_ban.map(|ban| ban.0) != Some(address) {
                 commands
                     .entity(entity)
@@ -140,6 +143,34 @@ mod tests {
                 app.world().get::<BanRecheck>(room).is_some(),
                 mode == "current"
             );
+            if mode == "current" {
+                app.world_mut().resource_mut::<SceneAdmission>().observe(
+                    SceneAdmission::from_refusal(
+                        403,
+                        Some("Access denied, platform-banned user"),
+                        false,
+                        "scene",
+                    )
+                    .for_session("", address),
+                );
+                app.world_mut()
+                    .get_mut::<SceneRoomModeration>(room)
+                    .unwrap()
+                    .scene_admins
+                    .insert(Address::repeat_byte(2));
+                app.update();
+                assert!(matches!(
+                    app.world().resource::<SceneAdmission>().view(),
+                    crate::AdmissionView::Refused {
+                        scope: crate::BanScope::Platform,
+                        ..
+                    }
+                ));
+                assert!(app
+                    .world()
+                    .resource::<SceneAdmission>()
+                    .is_scene_banned("", address, "scene"));
+            }
             app.world_mut()
                 .get_mut::<SceneRoomModeration>(room)
                 .unwrap()

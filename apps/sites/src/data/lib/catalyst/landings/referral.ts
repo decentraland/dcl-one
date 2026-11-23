@@ -9,6 +9,7 @@ const AvatarSchema = z.object({
   name: z.string().optional(),
   ethAddress: z.string().optional(),
   hasClaimedName: z.boolean().optional(),
+  avatar: z.object({ snapshots: z.object({ face256: z.string().nullish() }).nullish() }).nullish(),
 });
 
 const ProfileLambdaSchema = z.object({
@@ -38,16 +39,25 @@ export type ReferrerVM = {
   address: string | null;
   hasClaimedName: boolean;
   resolved: boolean;
+  /** The avatar's 256px face snapshot as the profile names it; the invite's card resolves it through `faceUrl`. */
+  face256: string | null;
 };
 
 function toReferrerVM(profile: ProfileLambda, address: string): ReferrerVM {
   const a = profile.avatars[0];
   const name = a?.name?.trim() || null;
-  return { name, address, hasClaimedName: Boolean(a?.hasClaimedName && name), resolved: Boolean(a) };
+  const face = a?.avatar?.snapshots?.face256?.trim();
+  return {
+    name,
+    address,
+    hasClaimedName: Boolean(a?.hasClaimedName && name),
+    resolved: Boolean(a),
+    face256: face || null,
+  };
 }
 
 export function referrerFromAddress(address: string | null): ReferrerVM {
-  return { name: null, address, hasClaimedName: false, resolved: false };
+  return { name: null, address, hasClaimedName: false, resolved: false, face256: null };
 }
 
 /** The wallet an invite names: the address itself, or the owner of the NAME. */

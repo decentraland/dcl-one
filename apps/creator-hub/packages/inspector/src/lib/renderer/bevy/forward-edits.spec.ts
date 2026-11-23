@@ -314,25 +314,82 @@ describe('createForwardEditBridge', () => {
       expect(value.visibleMeshesCollisionMask & 1).toBe(1);
     });
 
-    it('should NOT forward a placeholder when the entity has an authored GltfContainer', async () => {
-      const GltfContainer = components.GltfContainer(ctx.engine);
-      const entity = ctx.engine.addEntity();
-      ctx.Name.create(entity, { value: 'Real Model' });
-      GltfContainer.create(entity, { src: 'assets/real.glb', visibleMeshesCollisionMask: 3 });
-      ctx.editorComponents.Placeholder.create(entity, { src: 'assets/placeholder.glb' });
-      await ctx.engine.update(1);
-      await Promise.resolve();
-      await Promise.resolve();
+    describe('and the entity also has an authored GltfContainer (an invisible wall)', () => {
+      const drain = async () => {
+        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setTimeout(r, 0));
+      };
+      const gltfSrcs = () =>
+        sent
+          .filter(s => s.cmd === 'set_component' && s.args[1] === 'GltfContainer')
+          .map(s => JSON.parse(s.args[2]).src as string);
 
-      // The only GltfContainer set is the authored model; the placeholder src
-      // never overrides it.
-      const gltfWrites = sent.filter(
-        s => s.cmd === 'set_component' && s.args[1] === 'GltfContainer',
-      );
-      expect(gltfWrites.every(s => JSON.parse(s.args[2]).src === 'assets/real.glb')).toBe(true);
-      expect(gltfWrites.some(s => JSON.parse(s.args[2]).src === 'assets/placeholder.glb')).toBe(
-        false,
-      );
+      it('should forward the placeholder, never the authored model, while frozen', async () => {
+        const GltfContainer = components.GltfContainer(ctx.engine);
+        const entity = ctx.engine.addEntity();
+        ctx.Name.create(entity, { value: 'Invisible Wall' });
+        GltfContainer.create(entity, {
+          src: 'assets/wall_collider.glb',
+          invisibleMeshesCollisionMask: 2,
+        });
+        ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
+        await ctx.engine.update(1);
+        await drain();
+
+        expect(gltfSrcs().length).toBeGreaterThan(0);
+        expect(new Set(gltfSrcs())).toEqual(new Set(['assets/wall.glb']));
+      });
+
+      it('should keep the placeholder when the authored model is edited while frozen', async () => {
+        const GltfContainer = components.GltfContainer(ctx.engine);
+        const entity = ctx.engine.addEntity();
+        ctx.Name.create(entity, { value: 'Invisible Wall' });
+        GltfContainer.create(entity, { src: 'assets/wall_collider.glb' });
+        ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
+        await ctx.engine.update(1);
+        await drain();
+        sent.length = 0;
+
+        GltfContainer.getMutable(entity).invisibleMeshesCollisionMask = 3;
+        await ctx.engine.update(1);
+        await drain();
+
+        expect(gltfSrcs()).toEqual([]);
+      });
+
+      it('should restore the authored model when the placeholder is removed', async () => {
+        const GltfContainer = components.GltfContainer(ctx.engine);
+        const entity = ctx.engine.addEntity();
+        ctx.Name.create(entity, { value: 'Invisible Wall' });
+        GltfContainer.create(entity, { src: 'assets/wall_collider.glb' });
+        ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
+        await ctx.engine.update(1);
+        await drain();
+        sent.length = 0;
+
+        ctx.editorComponents.Placeholder.deleteFrom(entity);
+        await ctx.engine.update(1);
+        await drain();
+
+        expect(gltfSrcs()).toEqual(['assets/wall_collider.glb']);
+        expect(sent.some(s => s.cmd === 'delete_component')).toBe(false);
+      });
+
+      it('should replay only the placeholder after a scene reload', async () => {
+        const GltfContainer = components.GltfContainer(ctx.engine);
+        const entity = ctx.engine.addEntity();
+        ctx.Name.create(entity, { value: 'Invisible Wall' });
+        GltfContainer.create(entity, { src: 'assets/wall_collider.glb' });
+        ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
+        await ctx.engine.update(1);
+        await drain();
+        sent.length = 0;
+
+        bridge.reconcileAfterReload();
+        await drain();
+
+        expect(gltfSrcs()).toEqual(['assets/wall.glb']);
+      });
     });
 
     it('should delete the engine GltfContainer when the placeholder is removed', async () => {
@@ -387,12 +444,15 @@ describe('createForwardEditBridge', () => {
       expect(JSON.parse(write!.args[2]).src).toBe('assets/placeholder.glb');
     });
 
-    it('should leave an authored GltfContainer alone on Play', async () => {
+    it('should swap an authored GltfContainer back in on Play and the placeholder on freeze', async () => {
       const GltfContainer = components.GltfContainer(ctx.engine);
       const entity = ctx.engine.addEntity();
-      ctx.Name.create(entity, { value: 'Real Model' });
-      GltfContainer.create(entity, { src: 'assets/real.glb' });
-      ctx.editorComponents.Placeholder.create(entity, { src: 'assets/placeholder.glb' });
+      ctx.Name.create(entity, { value: 'Invisible Wall' });
+      GltfContainer.create(entity, {
+        src: 'assets/wall_collider.glb',
+        invisibleMeshesCollisionMask: 2,
+      });
+      ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
       await ctx.engine.update(1);
       await drain();
       sent.length = 0;
@@ -402,6 +462,18 @@ describe('createForwardEditBridge', () => {
       expect(sent.some(s => s.cmd === 'delete_component' && s.args[1] === 'GltfContainer')).toBe(
         false,
       );
+      const played = sent.filter(s => s.cmd === 'set_component' && s.args[1] === 'GltfContainer');
+      expect(played).toHaveLength(1);
+      expect(JSON.parse(played[0].args[2])).toMatchObject({
+        src: 'assets/wall_collider.glb',
+        invisibleMeshesCollisionMask: 2,
+      });
+
+      sent.length = 0;
+      bridge.setSceneFrozen(true);
+      await drain();
+      const frozen = sent.filter(s => s.cmd === 'set_component' && s.args[1] === 'GltfContainer');
+      expect(frozen.map(s => JSON.parse(s.args[2]).src)).toEqual(['assets/wall.glb']);
     });
 
     it('should not forward a Placeholder written while the scene runs', async () => {
@@ -435,7 +507,6 @@ describe('createForwardEditBridge', () => {
 
   describe('when entities are attached to the camera', () => {
     let hide: boolean;
-    let inspectReply: string | null;
 
     const drain = async () => {
       await new Promise(r => setTimeout(r, 0));
@@ -464,7 +535,6 @@ describe('createForwardEditBridge', () => {
 
     beforeEach(() => {
       hide = true;
-      inspectReply = null;
       bridge.disconnect();
       bridge = createForwardEditBridge({
         context: ctx,
@@ -473,9 +543,7 @@ describe('createForwardEditBridge', () => {
         hideCameraAttachments: () => hide,
         send: async (cmd, args) => {
           sent.push({ cmd, args });
-          if (cmd !== 'inspect_component') return '';
-          if (inspectReply === null) throw new Error('entity has no component');
-          return inspectReply;
+          return '';
         },
       });
     });
@@ -545,57 +613,6 @@ describe('createForwardEditBridge', () => {
 
       expect(scan.mock.calls.some(([component]) => component === ctx.Transform)).toBe(false);
       scan.mockRestore();
-    });
-
-    it('should restore the visibility the running scene gave an attachment after Pause → Play', async () => {
-      hide = false;
-      const child = addEntity('Gun', ctx.engine.CameraEntity);
-      await ctx.engine.update(1);
-      await drain();
-      bridge.setSceneFrozen(false);
-
-      // Pause with the free camera: the scene code had hidden the item.
-      inspectReply = JSON.stringify({ visible: false });
-      hide = true;
-      bridge.setSceneFrozen(true);
-      bridge.refreshCameraAttachments();
-      await drain();
-      expect(sent.some(s => s.cmd === 'inspect_component' && s.args[0] === String(child))).toBe(
-        true,
-      );
-      expect(lastVisibility(child)).toBe(false);
-
-      hide = false;
-      bridge.setSceneFrozen(false);
-      bridge.refreshCameraAttachments();
-      await drain();
-      expect(lastVisibility(child)).toBe(false);
-    });
-
-    it('should show an attachment on Play when the paused scene had no visibility for it', async () => {
-      hide = false;
-      const child = addEntity('Gun', ctx.engine.CameraEntity);
-      await ctx.engine.update(1);
-      await drain();
-      bridge.setSceneFrozen(false);
-
-      hide = true;
-      bridge.setSceneFrozen(true);
-      bridge.refreshCameraAttachments();
-      await drain();
-
-      hide = false;
-      bridge.setSceneFrozen(false);
-      bridge.refreshCameraAttachments();
-      await drain();
-      expect(lastVisibility(child)).toBe(true);
-    });
-
-    it('should not read runtime visibility before the scene has run', async () => {
-      addEntity('Gun', ctx.engine.CameraEntity);
-      await ctx.engine.update(1);
-      await drain();
-      expect(sent.some(s => s.cmd === 'inspect_component')).toBe(false);
     });
 
     it('should hide them again when overrides are replayed after a reload', async () => {
@@ -1021,6 +1038,599 @@ describe('createForwardEditBridge', () => {
       const write = sent.find(s => s.cmd === 'set_component' && s.args[1] === 'ParticleSystem');
       expect(write).toBeDefined();
       expect(JSON.parse(write!.args[2]).playbackState).toBe(0); // resumes as authored
+    });
+  });
+
+  describe('when the engine copy of the scene has state its code made', () => {
+    // The scene's main() made a flashlight (600) parented to the camera, a sound
+    // (601) parented to the player, a lamp (602) on the ground, and a night sky
+    // with a disabled root light on the root entity.
+    const NIGHT = {
+      '0': {
+        Skybox: { stars: { brightness: 6 } },
+        SkyboxTime: { fixedTime: 5400 },
+        LightSource: { active: false },
+      },
+      '600': {
+        Transform: { ...IDENTITY, position: { x: 0, y: 0, z: 0.5 }, parent: 2 },
+        LightSource: { active: true, intensity: 150000 },
+      },
+      '601': { Transform: { ...IDENTITY, position: { x: 0, y: 0, z: 0 }, parent: 1 } },
+      '602': {
+        Transform: { ...IDENTITY, position: { x: 4, y: 1, z: 4 }, parent: 0 },
+        LightSource: { active: true },
+      },
+    };
+    let frozen: boolean;
+    let stopped: boolean;
+    let hide: boolean;
+    let snapshot: unknown;
+
+    const drain = async () => {
+      for (let i = 0; i < 4; i++) await new Promise(r => setTimeout(r, 0));
+    };
+    const lastVisibility = (entity: number): boolean | undefined => {
+      const writes = sent.filter(
+        s =>
+          s.cmd === 'set_component' &&
+          s.args[0] === String(entity) &&
+          s.args[1] === 'VisibilityComponent',
+      );
+      const last = writes[writes.length - 1];
+      return last ? JSON.parse(last.args[2]).visible : undefined;
+    };
+    const rootDeletes = () =>
+      sent
+        .filter(s => s.cmd === 'delete_component' && s.args[0] === '0')
+        .map(s => s.args[1])
+        .sort();
+    const rootSets = () =>
+      Object.fromEntries(
+        sent
+          .filter(s => s.cmd === 'set_component' && s.args[0] === '0')
+          .map(s => [s.args[1], JSON.parse(s.args[2])]),
+      );
+    const clock = () => sent.filter(s => s.cmd === 'time').map(s => s.args.join(' '));
+    // `hide` follows the editor's rule: stopped and the free camera.
+    const play = () => {
+      frozen = false;
+      stopped = false;
+      hide = false;
+      bridge.setSceneFrozen(false);
+      bridge.refreshCameraAttachments();
+    };
+    const pause = () => {
+      frozen = true;
+      bridge.setSceneFrozen(true);
+      bridge.refreshCameraAttachments();
+    };
+    const stop = () => {
+      frozen = true;
+      stopped = true;
+      hide = true;
+      bridge.reconcileAfterReload();
+    };
+
+    beforeEach(() => {
+      frozen = true;
+      stopped = true;
+      hide = true;
+      snapshot = NIGHT;
+      bridge.disconnect();
+      bridge = createForwardEditBridge({
+        context: ctx,
+        engineWindow,
+        shouldForward: () => true,
+        isFrozen: () => frozen,
+        isStopped: () => stopped,
+        hideCameraAttachments: () => hide,
+        send: async (cmd, args) => {
+          sent.push({ cmd, args });
+          if (cmd === 'crdt_snapshot') return JSON.stringify(snapshot);
+          if (cmd === 'time' && args.length === 0) {
+            return 'time 1:30 -> 1:30, speed 12 (elapsed: 5400)';
+          }
+          return '';
+        },
+      });
+    });
+
+    describe('and the scene is stopped with the free camera', () => {
+      it('should hide the entities its code parented to the camera or the player, not the others', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+
+        expect(lastVisibility(600)).toBe(false);
+        expect(lastVisibility(601)).toBe(false);
+        expect(lastVisibility(602)).toBeUndefined();
+      });
+
+      it('should never drop the attachment or touch the attached LightSource', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+
+        expect(
+          sent.some(
+            s =>
+              s.args[0] === '600' && (s.args[1] === 'AvatarAttach' || s.args[1] === 'LightSource'),
+          ),
+        ).toBe(false);
+      });
+    });
+
+    describe('and the editor drives the player camera while stopped', () => {
+      it('should forward the attachments as the scene made them', async () => {
+        hide = false;
+        bridge.refreshEngineScene();
+        await drain();
+
+        expect(lastVisibility(600)).toBeUndefined();
+      });
+    });
+
+    describe('and the camera mode changes while stopped', () => {
+      it('should hide the attachments in the free camera and show them in the player camera', async () => {
+        hide = false;
+        bridge.refreshEngineScene();
+        await drain();
+
+        hide = true;
+        bridge.refreshCameraAttachments();
+        await drain();
+        expect(lastVisibility(600)).toBe(false);
+
+        hide = false;
+        bridge.refreshCameraAttachments();
+        await drain();
+        expect(lastVisibility(600)).toBe(true);
+      });
+
+      it('should give back the visibility the scene code set when it shows them again', async () => {
+        snapshot = {
+          ...NIGHT,
+          '600': { ...NIGHT['600'], VisibilityComponent: { visible: false } },
+        };
+        bridge.refreshEngineScene();
+        await drain();
+
+        hide = false;
+        bridge.refreshCameraAttachments();
+        await drain();
+        expect(lastVisibility(600)).toBe(false);
+      });
+    });
+
+    describe('and the scene runs', () => {
+      it('should show the attachments again and not read the engine copy', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        sent.length = 0;
+
+        play();
+        bridge.refreshEngineScene();
+        await drain();
+
+        expect(lastVisibility(600)).toBe(true);
+        expect(sent.some(s => s.cmd === 'crdt_snapshot')).toBe(false);
+      });
+    });
+
+    describe('and an authored entity carries an AvatarAttach', () => {
+      it('should hide it only when it follows the local player', async () => {
+        const AvatarAttach = components.AvatarAttach(ctx.engine);
+        const local = ctx.engine.addEntity();
+        AvatarAttach.create(local, { anchorPointId: 0 });
+        const other = ctx.engine.addEntity();
+        AvatarAttach.create(other, {
+          anchorPointId: 0,
+          avatarId: '0x0000000000000000000000000000000000000001',
+        });
+        await ctx.engine.update(1);
+        await drain();
+
+        expect(lastVisibility(local)).toBe(false);
+        expect(lastVisibility(other)).toBeUndefined();
+      });
+    });
+
+    describe('and the scene is stopped', () => {
+      it('should remove only the root lighting the scene set and pin the editor clock', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+
+        expect(rootDeletes()).toEqual(['LightSource', 'Skybox', 'SkyboxTime']);
+        expect(clock()).toEqual(['12 0']);
+      });
+    });
+
+    describe('and the scene starts to run (Play)', () => {
+      it('should put back the scene values as they were, a disabled root light included, and run the clock', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        sent.length = 0;
+
+        play();
+        await drain();
+
+        expect(rootSets()).toEqual({
+          LightSource: { active: false },
+          Skybox: { stars: { brightness: 6 } },
+          SkyboxTime: { fixedTime: 5400 },
+        });
+        expect(rootDeletes()).toEqual([]);
+        expect(clock()).toEqual(['--resume']);
+      });
+
+      it('should not send a component the scene never set', async () => {
+        snapshot = { '0': { SkyboxTime: { fixedTime: 5400 } } };
+        bridge.refreshEngineScene();
+        await drain();
+        sent.length = 0;
+
+        play();
+        await drain();
+
+        expect(Object.keys(rootSets())).toEqual(['SkyboxTime']);
+      });
+
+      it('should not apply the editor lighting when a read started before Play lands after it', async () => {
+        bridge.refreshEngineScene();
+        play();
+        await drain();
+
+        expect(rootDeletes()).toEqual([]);
+        expect(clock()).toEqual(['--resume']);
+      });
+    });
+
+    describe('and the scene is paused after running', () => {
+      it('should keep the scene lighting and hold the clock where the sky is', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        play();
+        await drain();
+        sent.length = 0;
+
+        pause();
+        bridge.refreshEngineScene();
+        await drain();
+
+        expect(sent.some(s => s.cmd === 'crdt_snapshot')).toBe(false);
+        expect(rootDeletes()).toEqual([]);
+        expect(rootSets()).toEqual({});
+        expect(clock()).toEqual(['', '1.5 0']);
+      });
+
+      it('should keep the attachments shown', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        play();
+        await drain();
+
+        pause();
+        await drain();
+
+        expect(lastVisibility(600)).toBe(true);
+      });
+
+      it('should only run the clock again on Play, leaving the lighting the scene has now', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        play();
+        await drain();
+        pause();
+        await drain();
+        sent.length = 0;
+
+        play();
+        await drain();
+
+        expect(rootSets()).toEqual({});
+        expect(clock()).toEqual(['--resume']);
+      });
+
+      it('should show a root LightSource edit at once', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        play();
+        await drain();
+        pause();
+        await drain();
+        sent.length = 0;
+
+        const LightSource = components.LightSource(ctx.engine);
+        LightSource.create(ctx.engine.RootEntity, { active: true, intensity: 3 });
+        await ctx.engine.update(1);
+        await drain();
+
+        expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 3 });
+      });
+    });
+
+    describe('and an invisible item pairs a collider model with a placeholder', () => {
+      let wall: number;
+      const gltfWrites = () =>
+        sent.filter(
+          s =>
+            (s.cmd === 'set_component' || s.cmd === 'delete_component') &&
+            s.args[0] === String(wall) &&
+            s.args[1] === 'GltfContainer',
+        );
+
+      beforeEach(async () => {
+        const GltfContainer = components.GltfContainer(ctx.engine);
+        const entity = ctx.engine.addEntity();
+        wall = entity;
+        ctx.Name.create(entity, { value: 'Invisible Wall' });
+        GltfContainer.create(entity, {
+          src: 'assets/wall_collider.glb',
+          invisibleMeshesCollisionMask: 2,
+        });
+        ctx.editorComponents.Placeholder.create(entity, { src: 'assets/wall.glb' });
+        await ctx.engine.update(1);
+        await drain();
+        play();
+        await drain();
+        sent.length = 0;
+      });
+
+      describe('and the scene is paused after running', () => {
+        beforeEach(async () => {
+          pause();
+          await drain();
+        });
+
+        it('should leave the collider model in place, not the placeholder', () => {
+          expect(gltfWrites()).toEqual([]);
+        });
+
+        describe('and it plays again', () => {
+          beforeEach(async () => {
+            play();
+            await drain();
+          });
+
+          it('should not reload the model', () => {
+            expect(gltfWrites()).toEqual([]);
+          });
+        });
+
+        describe('and the scene is stopped', () => {
+          beforeEach(async () => {
+            stop();
+            await drain();
+          });
+
+          it('should show the placeholder again', () => {
+            expect(gltfWrites().map(s => JSON.parse(s.args[2]).src)).toEqual(['assets/wall.glb']);
+          });
+        });
+      });
+    });
+
+    describe('and the editor agent finishes booting', () => {
+      describe('and the scene is running', () => {
+        beforeEach(async () => {
+          play();
+          await drain();
+          sent.length = 0;
+          bridge.syncSceneClock();
+          await drain();
+        });
+
+        it('should run the day clock again', () => {
+          expect(clock()).toEqual(['--resume']);
+        });
+      });
+
+      describe('and the scene is stopped', () => {
+        beforeEach(async () => {
+          bridge.syncSceneClock();
+          await drain();
+        });
+
+        it('should leave the clock to the editor lighting', () => {
+          expect(clock()).toEqual([]);
+        });
+      });
+    });
+
+    describe('and the scene code parents an authored entity to the camera', () => {
+      let torch: number;
+
+      beforeEach(async () => {
+        const entity = ctx.engine.addEntity();
+        torch = entity;
+        ctx.Name.create(entity, { value: 'Torch' });
+        ctx.Transform.create(entity, {
+          ...IDENTITY,
+          position: { x: 4, y: 1, z: 4 },
+          parent: ctx.engine.RootEntity,
+        });
+        await ctx.engine.update(1);
+        snapshot = {
+          ...NIGHT,
+          [String(entity)]: {
+            Transform: { ...IDENTITY, position: { x: 0, y: 0, z: 0 }, parent: 2 },
+          },
+        };
+        stop();
+        await drain();
+      });
+
+      it('should hide it while stopped with the free camera', () => {
+        expect(lastVisibility(torch)).toBe(false);
+      });
+
+      describe('and the entity is then reparented in the inspector', () => {
+        beforeEach(async () => {
+          const other = ctx.engine.addEntity();
+          ctx.Transform.getMutable(torch as never).parent = other;
+          await ctx.engine.update(1);
+          await drain();
+        });
+
+        it('should show it where the inspector put it', () => {
+          expect(lastVisibility(torch)).toBe(true);
+        });
+      });
+
+      describe('and the scene runs (Play)', () => {
+        it('should show it, as the composite has it', async () => {
+          play();
+          await drain();
+          expect(lastVisibility(torch)).toBe(true);
+        });
+      });
+    });
+
+    describe('and the scene code parents an authored entity to the camera and hides it', () => {
+      let flashlight: number;
+
+      beforeEach(async () => {
+        const entity = ctx.engine.addEntity();
+        flashlight = entity;
+        ctx.Name.create(entity, { value: 'Flashlight' });
+        ctx.Transform.create(entity, {
+          ...IDENTITY,
+          position: { x: 4, y: 1, z: 4 },
+          parent: ctx.engine.RootEntity,
+        });
+        await ctx.engine.update(1);
+        snapshot = {
+          ...NIGHT,
+          [String(entity)]: {
+            Transform: { ...IDENTITY, position: { x: 0, y: 0, z: 0 }, parent: 2 },
+            VisibilityComponent: { visible: false },
+          },
+        };
+        stop();
+        await drain();
+      });
+
+      describe('and the scene runs (Play)', () => {
+        it('should keep it hidden, as the scene code left it', async () => {
+          play();
+          await drain();
+          expect(lastVisibility(flashlight)).toBe(false);
+        });
+      });
+    });
+
+    describe('and the scene is stopped and reset (Stop)', () => {
+      it('should apply the editor lighting and hide the attachments again on the reloaded scene', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        play();
+        await drain();
+        pause();
+        await drain();
+        sent.length = 0;
+
+        stop();
+        await drain();
+
+        expect(rootDeletes()).toEqual(['LightSource', 'Skybox', 'SkyboxTime']);
+        expect(clock()).toEqual(['12 0']);
+        expect(lastVisibility(600)).toBe(false);
+      });
+    });
+
+    describe('and the inspector edits the root LightSource', () => {
+      it('should save it but show it only on Play, with the edited value', async () => {
+        bridge.refreshEngineScene();
+        await drain();
+        const LightSource = components.LightSource(ctx.engine);
+        LightSource.create(ctx.engine.RootEntity, { active: true, intensity: 3 });
+        await ctx.engine.update(1);
+        await drain();
+        expect(rootSets()).toEqual({});
+
+        play();
+        await drain();
+        expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 3 });
+      });
+
+      describe('and the scene is then stopped, and its code sets its own root light', () => {
+        it('should show the value the scene code set on the next Play', async () => {
+          bridge.refreshEngineScene();
+          await drain();
+          const LightSource = components.LightSource(ctx.engine);
+          LightSource.create(ctx.engine.RootEntity, { active: true, intensity: 3 });
+          await ctx.engine.update(1);
+          await drain();
+          play();
+          await drain();
+
+          stop();
+          snapshot = { '0': { LightSource: { active: true, intensity: 7 } } };
+          bridge.refreshEngineScene();
+          await drain();
+          sent.length = 0;
+          play();
+          await drain();
+
+          expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 7 });
+        });
+      });
+
+      describe('and it is edited again while the Stop reload runs', () => {
+        it('should show the latest edit on the next Play, not the reloaded value', async () => {
+          bridge.refreshEngineScene();
+          await drain();
+          const LightSource = components.LightSource(ctx.engine);
+          LightSource.create(ctx.engine.RootEntity, { active: true, intensity: 3 });
+          await ctx.engine.update(1);
+          await drain();
+
+          bridge.noteReloadStarted();
+          LightSource.getMutable(ctx.engine.RootEntity).intensity = 5;
+          await ctx.engine.update(1);
+          await drain();
+          stop();
+          snapshot = { '0': { LightSource: { active: true, intensity: 3 } } };
+          bridge.refreshEngineScene();
+          await drain();
+          sent.length = 0;
+          play();
+          await drain();
+
+          expect(rootSets().LightSource).toMatchObject({ active: true, intensity: 5 });
+        });
+      });
+    });
+  });
+
+  describe('when forwarding arms after the initial load', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should apply the same editor lighting as a Stop, without waiting for an edit', async () => {
+      vi.useFakeTimers();
+      const armSent: Array<{ cmd: string; args: string[] }> = [];
+      const armed = createForwardEditBridge({
+        context: ctx,
+        engineWindow,
+        send: async (cmd, args) => {
+          armSent.push({ cmd, args });
+          return cmd === 'crdt_snapshot'
+            ? JSON.stringify({ '0': { EnvironmentFog: { density: 0.4 } } })
+            : '';
+        },
+      });
+      expect(armSent).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(3000);
+
+      const snapshotAt = armSent.findIndex(s => s.cmd === 'crdt_snapshot');
+      const deleteAt = armSent.findIndex(
+        s => s.cmd === 'delete_component' && s.args.join(' ') === '0 EnvironmentFog',
+      );
+      expect(snapshotAt).toBeGreaterThanOrEqual(0);
+      expect(deleteAt).toBeGreaterThan(snapshotAt);
+      expect(armSent.some(s => s.cmd === 'time' && s.args.join(' ') === '12 0')).toBe(true);
+      armed.disconnect();
     });
   });
 

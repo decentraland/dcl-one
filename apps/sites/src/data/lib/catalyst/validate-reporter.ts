@@ -1,4 +1,4 @@
-import { setValidationReporter } from "@ui/validate";
+import { setValidationReporter } from "@web-core/validate";
 
 import { reportSchemaDrift } from "./schema-drift";
 

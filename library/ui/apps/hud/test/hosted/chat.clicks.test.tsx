@@ -27,6 +27,27 @@ describe('chat chrome clicks', () => {
     expect(screen.getByPlaceholderText('Search emoji')).toBeInTheDocument()
   })
 
+  it('typing, the emoji panel, a picked emoji and the buttons each sound', async () => {
+    const { chat } = renderActiveChat({ playSound: vi.fn() })
+    const played = (): string[] => vi.mocked(chat.playSound).mock.calls.map((c) => c[0])
+    await userEvent.type(screen.getByRole('textbox'), 'hi')
+    expect(played()).toEqual(['chatInput', 'chatInput'])
+    vi.mocked(chat.playSound).mockClear()
+    // the emoji toggle has the close press; the panel opening has the swish
+    await userEvent.click(screen.getByRole('button', { name: 'Emoji' }))
+    expect(played()).toEqual(['buttonHover', 'buttonClose', 'chatEmoji'])
+    vi.mocked(chat.playSound).mockClear()
+    // a category tab presses without a highlight
+    await userEvent.click(screen.getByRole('button', { name: 'Food and drink' }))
+    expect(played()).toEqual(['buttonPress'])
+    vi.mocked(chat.playSound).mockClear()
+    const group = EMOJI_GROUPS[0]
+    await userEvent.click(screen.getByTitle(group.emojis[0].expression))
+    // the emoji's own press and the swish: a cell of the grid has no highlight, and the text the
+    // chat drops in is not the user's typing
+    expect(played()).toEqual(['buttonPress', 'chatEmoji'])
+  }, 20_000)
+
   it('the members button reveals the nearby overlay', async () => {
     renderActiveChat({ members: [{ address: '0x1', name: 'Alice' }] })
     await userEvent.click(screen.getByRole('button', { name: '1 nearby' }))

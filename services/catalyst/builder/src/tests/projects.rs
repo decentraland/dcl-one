@@ -1109,3 +1109,116 @@ async fn an_existing_database_gains_the_project_tables_in_place() {
     .await
     .unwrap();
 }
+
+/// A blob found stored is not unlinked between `PUT .../blobs/{hash}`'s
+/// existence check and its row: the upload waits while an unlink batch holds
+/// the exclusive store lock, then stores again what the batch removed.
+#[tokio::test]
+async fn a_blob_upload_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(pool) = crate::db::scratch::pool(2).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let bytes = unique("staged project blob");
+    let hash = hash_bytes_v1(&bytes);
+    blobs.store(&hash, bytes.clone().into()).await.unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let owner = owner_address(OWNER_KEY);
+    let upload = crate::projects::accept_blob(&pool, &blobs, &owner, &hash, bytes.into());
+    tokio::pin!(upload);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut upload)
+            .await
+            .is_err(),
+        "the upload waits for the unlink batch"
+    );
+    blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+    assert!(upload.await.is_ok());
+    assert!(
+        blobs.exist(&hash).await.unwrap(),
+        "the row names a stored file"
+    );
+    sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// Behind an unlink batch that outlasts the store lock wait, the upload
+/// answers 503 instead of holding its connection.
+#[tokio::test]
+async fn a_blob_upload_behind_a_long_unlink_batch_answers_503() {
+    // A database of its own: the held lock would turn other tests' uploads away.
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let bytes = unique("blocked project blob");
+    let hash = hash_bytes_v1(&bytes);
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let owner = owner_address(OWNER_KEY);
+    let upload = crate::projects::accept_blob(&pool, &blobs, &owner, &hash, bytes.into());
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(10), upload)
+        .await
+        .expect("bounded wait");
+    batch.commit().await.unwrap();
+    match answered {
+        Err(crate::projects::ProjectError::Api(e)) => assert_eq!(e.status(), 503),
+        other => panic!("expected a 503, got {:?}", other.map(|_| ())),
+    }
+    assert!(!blobs.exist(&hash).await.unwrap(), "nothing was stored");
+}
+
+/// The catalogue build's walk holds no lock, so an unlink batch may remove a
+/// file it found stored: the row write waits for the batch under the store
+/// lock's shared side, stores the file again and names it.
+#[tokio::test]
+async fn the_catalogue_build_stores_again_what_an_unlink_batch_removed() {
+    // A database of its own: the catalogue is one row.
+    let Some(pool) = crate::db::scratch::isolated_pool(3).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let packs = std::env::temp_dir().join(format!("catalog-race-{}", uuid::Uuid::new_v4()));
+    let asset = packs.join("p1/assets/a1");
+    std::fs::create_dir_all(&asset).unwrap();
+    std::fs::write(packs.join("p1/data.json"), r#"{"id":"p1","name":"Pack"}"#).unwrap();
+    std::fs::write(asset.join("data.json"), r#"{"id":"a1","name":"Asset"}"#).unwrap();
+    let model = unique("catalogue model");
+    std::fs::write(asset.join("model.glb"), &model).unwrap();
+    let hash = hash_bytes_v1(&model);
+    blobs.store(&hash, model.into()).await.unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let packs_dir = packs.to_string_lossy().into_owned();
+    let build = crate::catalog::build(&pool, &blobs, &packs_dir);
+    tokio::pin!(build);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut build)
+            .await
+            .is_err(),
+        "the row write waits for the unlink batch"
+    );
+    blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+    build.await.unwrap();
+    assert!(blobs.exist(&hash).await.unwrap(), "stored again");
+    let named: bool = sqlx::query_scalar(
+        "SELECT packs::text LIKE '%' || $1 || '%' FROM builder.asset_catalog WHERE id = 1",
+    )
+    .bind(&hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(named, "the row names it");
+    let _ = std::fs::remove_dir_all(&packs);
+}

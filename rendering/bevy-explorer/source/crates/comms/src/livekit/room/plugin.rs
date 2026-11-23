@@ -194,8 +194,8 @@ fn classify_connect_error(error: crate::livekit::web::RoomError) -> AdmissionErr
         })
 }
 
-/// Metadata patches apply to the room's current lists when commands execute, so consecutive
-/// partial updates in one frame retain each other's fields.
+/// Applies full room metadata snapshots in order. Missing or malformed lists retain their
+/// last good value; explicit arrays use the moderation parser's validation policy.
 pub(crate) fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
     let metadata = metadata.to_owned();
     commands
@@ -224,22 +224,6 @@ pub(crate) fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity,
                 entity.remove::<crate::scene_bans::MetadataSceneBan>();
             }
         });
-}
-
-fn apply_scene_room_metadata_change(commands: &mut Commands, entity: Entity, event: &RoomEvent) {
-    let RoomEvent::RoomMetadataChanged {
-        metadata,
-        #[cfg(not(target_arch = "wasm32"))]
-        old_metadata,
-        ..
-    } = event
-    else {
-        return;
-    };
-    // The native SDK's current snapshot can already include this change at Connected.
-    #[cfg(not(target_arch = "wasm32"))]
-    apply_scene_room_metadata(commands, entity, old_metadata);
-    apply_scene_room_metadata(commands, entity, metadata);
 }
 
 /// Marker for a room that hit a terminal disconnect (kicked / identity conflict) while
@@ -392,9 +376,9 @@ fn process_room_events(
                         participant: participant.into(),
                     });
                 }
-                RoomEvent::RoomMetadataChanged { .. } => {
+                RoomEvent::RoomMetadataChanged { metadata, .. } => {
                     if scene_room {
-                        apply_scene_room_metadata_change(&mut commands, entity, &room_event);
+                        apply_scene_room_metadata(&mut commands, entity, &metadata);
                     }
                 }
                 RoomEvent::TrackPublished {
@@ -1045,42 +1029,6 @@ mod metadata_tests {
     use super::*;
     use crate::SceneRoomModeration;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn scene_metadata_keeps_connect_snapshot_before_an_immediate_partial_change() {
-        let banned = Address::repeat_byte(1);
-        let admin = Address::repeat_byte(2);
-        let replacement = Address::repeat_byte(3);
-        let initial = serde_json::json!({
-            "bannedAddresses": [banned.to_string()], "sceneAdmins": [admin.to_string()]
-        })
-        .to_string();
-        for bans in [vec![replacement.to_string()], vec![]] {
-            let latest = serde_json::json!({"bannedAddresses": bans}).to_string();
-            let mut world = World::new();
-            let room = world.spawn_empty().id();
-            // Connected reads the SDK's already-updated room metadata.
-            apply_scene_room_metadata(&mut world.commands(), room, &latest);
-            apply_scene_room_metadata_change(
-                &mut world.commands(),
-                room,
-                &RoomEvent::RoomMetadataChanged {
-                    old_metadata: initial.clone(),
-                    metadata: latest,
-                },
-            );
-            world.flush();
-            let state = world.get::<SceneRoomModeration>(room).unwrap();
-            assert_eq!(state.scene_admins, [admin].into_iter().collect());
-            assert_eq!(
-                state.banned_addresses,
-                bans.iter()
-                    .map(|address| address.as_h160().unwrap())
-                    .collect()
-            );
-        }
-    }
-
     #[test]
     fn scene_metadata_ban_kick_preserves_denial_and_retry_deadline() {
         use crate::room_connection::{BanRecheck, BAN_RECHECK_SECS};
@@ -1239,7 +1187,7 @@ mod metadata_tests {
     }
 
     #[test]
-    fn queued_scene_room_metadata_updates_accumulate_in_order() {
+    fn queued_scene_room_metadata_snapshots_apply_in_order() {
         let banned = Address::repeat_byte(1);
         let admin = Address::repeat_byte(2);
         let mut world = World::new();
@@ -1247,12 +1195,13 @@ mod metadata_tests {
         apply_scene_room_metadata(
             &mut world.commands(),
             room,
-            &serde_json::json!({"bannedAddresses": [banned.to_string()]}).to_string(),
+            &serde_json::json!({"bannedAddresses": [banned.to_string()], "sceneAdmins": []})
+                .to_string(),
         );
         apply_scene_room_metadata(
             &mut world.commands(),
             room,
-            &serde_json::json!({"sceneAdmins": [admin.to_string()]}).to_string(),
+            &serde_json::json!({"bannedAddresses": [banned.to_string()], "sceneAdmins": [admin.to_string()]}).to_string(),
         );
         world.flush();
         assert_eq!(

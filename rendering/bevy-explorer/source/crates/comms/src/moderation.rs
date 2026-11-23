@@ -29,6 +29,10 @@ enum Admission {
     Refused {
         scene_id: String,
     },
+    PlatformRefused {
+        scene_id: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +102,16 @@ impl SceneAdmission {
             401 if is_world && message.starts_with(WORLD_BANNED_PREFIX) => BanScope::World,
             _ => return Self::unknown(),
         };
+        let message = message.trim_end_matches('.').to_owned();
+        if scope == BanScope::Platform {
+            return Self {
+                current: Admission::PlatformRefused {
+                    scene_id: scene_id.to_owned(),
+                    message,
+                },
+                ..Self::default()
+            };
+        }
         Self {
             current: Admission::Refused {
                 scene_id: scene_id.to_owned(),
@@ -106,7 +120,7 @@ impl SceneAdmission {
                 scene_id.to_owned(),
                 SceneRefusal {
                     scope,
-                    message: message.trim_end_matches('.').to_owned(),
+                    message,
                     retry_due: 0.0,
                 },
             )]),
@@ -129,9 +143,6 @@ impl SceneAdmission {
             self.refusals.clear();
             self.session = session;
         }
-        // Platform refusals are reported by the platform-ban owner, not retained as scene bans.
-        self.refusals
-            .retain(|_, refusal| refusal.scope != BanScope::Platform);
         self.current = if self.refusals.contains_key(scene_id) {
             Admission::Refused {
                 scene_id: scene_id.to_owned(),
@@ -151,12 +162,6 @@ impl SceneAdmission {
         }
         for (scene_id, mut refusal) in next.refusals {
             if let Some(previous) = self.refusals.get(&scene_id) {
-                // A platform refusal does not re-admit a scene already refused by its own policy.
-                if refusal.scope == BanScope::Platform
-                    && matches!(previous.scope, BanScope::Scene | BanScope::World)
-                {
-                    continue;
-                }
                 refusal.retry_due = refusal.retry_due.max(previous.retry_due);
             }
             self.refusals.insert(scene_id, refusal);
@@ -209,6 +214,11 @@ impl SceneAdmission {
         match &self.current {
             Admission::Unknown => AdmissionView::Unknown,
             Admission::Allowed { scene_id } => AdmissionView::Allowed { scene_id },
+            Admission::PlatformRefused { scene_id, message } => AdmissionView::Refused {
+                scope: BanScope::Platform,
+                message,
+                scene_id,
+            },
             Admission::Refused { scene_id } => {
                 let refusal = &self.refusals[scene_id];
                 AdmissionView::Refused {
@@ -222,13 +232,18 @@ impl SceneAdmission {
 
     /// The gatekeeper refused the current scene's player as banned.
     pub fn is_refused(&self) -> bool {
-        matches!(self.current, Admission::Refused { .. })
+        matches!(
+            self.current,
+            Admission::Refused { .. } | Admission::PlatformRefused { .. }
+        )
     }
 
     pub fn scene_id(&self) -> Option<&str> {
         match &self.current {
             Admission::Unknown => None,
-            Admission::Allowed { scene_id } | Admission::Refused { scene_id } => Some(scene_id),
+            Admission::Allowed { scene_id }
+            | Admission::Refused { scene_id }
+            | Admission::PlatformRefused { scene_id, .. } => Some(scene_id),
         }
     }
 }
@@ -385,6 +400,15 @@ mod tests {
                 SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "scene")
                     .for_session("realm", address),
             );
+            assert!(matches!(
+                admission.view(),
+                AdmissionView::Refused {
+                    scope: BanScope::Platform,
+                    scene_id: "scene",
+                    message: PLATFORM_BANNED,
+                }
+            ));
+            assert!(admission.is_scene_banned("realm", address, "scene"));
             admission.select_scene("realm", Some(address), "other");
             admission.select_scene("realm", Some(address), "scene");
             assert!(admission.is_scene_banned("realm", address, "scene"));
