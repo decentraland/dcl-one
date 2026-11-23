@@ -19,6 +19,8 @@ import { Dialog } from './Dialog'
 import { useEventsCopy } from './locale'
 import styles from './DetailModal.module.css'
 
+const reminderActionSize = { size: 'md', viewport: 'responsive' } as const
+
 type Location = { label: string; world: boolean; jumpIn?: JumpIn }
 
 type EventDetailModalProps = {
@@ -53,7 +55,7 @@ type PlaceDetailModalProps = {
 }
 
 /** Copies the share link; says so for a moment, or shows the link when the clipboard refuses. */
-function CopyLink({ url }: { url: string }) {
+function CopyLink({ url, matchReminder = false }: { url: string; matchReminder?: boolean }) {
   const { text } = useEventsCopy()
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   useEffect(() => {
@@ -61,25 +63,33 @@ function CopyLink({ url }: { url: string }) {
     const timer = setTimeout(() => setState('idle'), 2000)
     return () => clearTimeout(timer)
   }, [state])
+  function copy() {
+    if (!navigator.clipboard) {
+      setState('failed')
+      return
+    }
+    void navigator.clipboard.writeText(url).then(
+      () => setState('copied'),
+      () => setState('failed')
+    )
+  }
+  const label = text('Copy link')
   return (
     <>
-      <button
-        type="button"
-        className={styles.iconButton}
-        aria-label={text('Copy link')}
-        onClick={() => {
-          if (!navigator.clipboard) {
-            setState('failed')
-            return
-          }
-          void navigator.clipboard.writeText(url).then(
-            () => setState('copied'),
-            () => setState('failed')
-          )
-        }}
-      >
-        <GeneralCopy size={20} aria-hidden="true" />
-      </button>
+      {matchReminder ? (
+        <SharedButton
+          {...reminderActionSize}
+          variant="secondaryLight"
+          iconOnly
+          aria-label={label}
+          startIcon={<GeneralCopy size={24} aria-hidden="true" />}
+          onClick={copy}
+        />
+      ) : (
+        <button type="button" className={styles.iconButton} aria-label={label} onClick={copy}>
+          <GeneralCopy size={20} aria-hidden="true" />
+        </button>
+      )}
       <span role="status" className={state === 'idle' ? styles.visuallyHidden : styles.copyNotice}>
         {state === 'copied'
           ? text('Copied!')
@@ -88,6 +98,29 @@ function CopyLink({ url }: { url: string }) {
             : ''}
       </span>
     </>
+  )
+}
+
+function CalendarLink({ href, matchReminder }: { href: string; matchReminder: boolean }) {
+  const { text } = useEventsCopy()
+  const link = {
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    'aria-label': text('Add to calendar')
+  }
+  return matchReminder ? (
+    <SharedButton
+      {...link}
+      {...reminderActionSize}
+      variant="secondaryLight"
+      iconOnly
+      startIcon={<GeneralAddToCalendar size={24} aria-hidden="true" />}
+    />
+  ) : (
+    <a {...link} className={styles.iconButton}>
+      <GeneralAddToCalendar size={20} aria-hidden="true" />
+    </a>
   )
 }
 
@@ -180,6 +213,7 @@ function EventDetailModal(props: EventDetailModalProps) {
     calendarHref,
     shareUrl
   } = props
+  const reminder = live ? undefined : remind
   return (
     <Dialog labelledBy={titleId} onClose={props.onClose}>
       <Hero
@@ -206,31 +240,22 @@ function EventDetailModal(props: EventDetailModalProps) {
         </div>
         <div className={styles.actions}>
           {live && jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
-          {!live && remind ? (
+          {reminder ? (
             <SharedButton
-              variant={remind.active ? 'primary' : 'secondaryLight'}
-              size="md"
+              {...reminderActionSize}
+              variant={reminder.active ? 'primary' : 'secondaryLight'}
               startIcon={<GeneralBell size={20} aria-hidden="true" />}
-              aria-pressed={remind.active}
-              className={styles.reminder}
-              aria-disabled={remind.pending}
-              onClick={remind.onToggle}
+              aria-pressed={reminder.active}
+              aria-disabled={reminder.pending}
+              onClick={reminder.onToggle}
             >
               {text('Remind me')}
             </SharedButton>
           ) : null}
           {calendarHref ? (
-            <a
-              className={styles.iconButton}
-              href={calendarHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={text('Add to calendar')}
-            >
-              <GeneralAddToCalendar size={20} aria-hidden="true" />
-            </a>
+            <CalendarLink href={calendarHref} matchReminder={Boolean(reminder)} />
           ) : null}
-          {shareUrl ? <CopyLink url={shareUrl} /> : null}
+          {shareUrl ? <CopyLink url={shareUrl} matchReminder={Boolean(reminder)} /> : null}
           {props.actions}
         </div>
       </Hero>

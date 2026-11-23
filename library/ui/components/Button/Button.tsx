@@ -46,7 +46,8 @@ export type ButtonProps = NativeProps &
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
-    viewport?: 'desktop' | 'mobile'
+    /** Responsive uses the mobile dimensions below 768px. */
+    viewport?: 'desktop' | 'mobile' | 'responsive'
     loading?: boolean
     leadingIcon?: ReactNode
     trailingIcon?: ReactNode

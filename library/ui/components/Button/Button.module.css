@@ -33,6 +33,7 @@
     cursor: pointer;
   }
   .root[data-size='lg'] {
+    --button-mobile-height: 52px;
     --button-height: 48px;
     --button-gap: var(--dcl-space-8);
     padding-inline: var(--dcl-space-24);
@@ -40,6 +41,7 @@
     font-size: var(--dcl-font-size-button-lg);
   }
   .root[data-size='md'] {
+    --button-mobile-height: 48px;
     --button-height: 40px;
     --button-gap: var(--dcl-space-8);
     font-size: var(--dcl-font-size-button-md);
@@ -47,20 +49,20 @@
     border-radius: var(--dcl-radius-md);
   }
   .root[data-size='sm'] {
+    --button-mobile-height: 44px;
     --button-height: 32px;
     --button-gap: var(--dcl-space-4);
     font-size: var(--dcl-font-size-button-sm);
     padding-inline: var(--dcl-space-12);
     border-radius: var(--dcl-radius-sm);
   }
-  .root[data-viewport='mobile'][data-size='lg'] {
-    --button-height: 52px;
+  .root[data-viewport='mobile']:not([data-size='xl']) {
+    --button-height: var(--button-mobile-height);
   }
-  .root[data-viewport='mobile'][data-size='md'] {
-    --button-height: 48px;
-  }
-  .root[data-viewport='mobile'][data-size='sm'] {
-    --button-height: 44px;
+  @media (max-width: 767px) {
+    .root[data-viewport='responsive']:not([data-size='xl']) {
+      --button-height: var(--button-mobile-height);
+    }
   }
   .root[data-variant='secondary'] {
     --button-background: var(--dcl-transparencies-white-10);
@@ -81,7 +83,7 @@
   .root[data-variant='secondaryLight']:is([data-size='lg'], [data-size='md']) {
     --button-spinner-size: 23px;
   }
-  .root[data-variant='secondaryLight'][data-size='md'] {
+  .root:is([data-variant='primary'], [data-variant='secondaryLight'])[data-size='md'] {
     --button-icon-size: 20px;
   }
   .root[data-variant='secondaryLight'][data-size='sm'] {
@@ -162,7 +164,7 @@
   .root:disabled {
     opacity: 0.4;
   }
-  .root[data-icon-only='true']:not([data-variant='dark']) {
+  .root[data-icon-only='true']:not([data-variant='dark'], [data-variant='secondaryLight']) {
     --button-background: transparent;
     --button-hover: var(--dcl-bg-hover);
     --button-pressed: var(--dcl-bg-hover);
@@ -174,6 +176,13 @@
     min-width: max(48px, var(--button-height));
     min-height: max(48px, var(--button-height));
     padding-inline: var(--dcl-space-8);
+  }
+  .root[data-icon-only='true'][data-variant='secondaryLight'] {
+    --button-icon-size: 24px;
+    --button-gap: var(--dcl-space-0);
+    min-width: var(--button-height);
+    min-height: var(--button-height);
+    padding-inline: var(--dcl-space-0);
   }
   .content {
     display: inline-flex;

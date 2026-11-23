@@ -35,7 +35,7 @@ describe('when Button owns content layout in a production bundle', () => {
   it('should size the secondary-light icon and loading indicator for each button size', async () => {
     await ready()
     const metrics = await b.evaluate(
-      `Array.from(document.querySelectorAll('[data-variant="secondaryLight"]'), button => [
+      `Array.from(document.querySelectorAll('[data-variant="secondaryLight"][aria-busy="true"]'), button => [
         button.dataset.size,
         button.querySelector('svg').getBoundingClientRect().width,
         button.querySelector('[data-loading-indicator]').offsetWidth
@@ -47,6 +47,38 @@ describe('when Button owns content layout in a production bundle', () => {
       ['md', 20, 23],
       ['sm', 16, 18]
     ])
+  })
+  describe('and an action group uses responsive medium buttons', () => {
+    it('should align labelled and square icon actions on desktop and mobile', async () => {
+      await ready()
+      try {
+        for (const [width, height] of [
+          [1440, 40],
+          [390, 48]
+        ] as const) {
+          await b.session.send('Emulation.setDeviceMetricsOverride', {
+            width,
+            height: 900,
+            deviceScaleFactor: 1,
+            mobile: false
+          })
+          expect(
+            await b.evaluate(`['responsive-label', 'responsive-icon'].map(name => {
+              const button = document.querySelector('[data-case="' + name + '"]')
+              return [button.offsetHeight, button.querySelector('svg').getBoundingClientRect().width]
+            })`)
+          ).toEqual([
+            [height, 20],
+            [height, 24]
+          ])
+          expect(
+            await b.evaluate(`document.querySelector('[data-case="responsive-icon"]').offsetWidth`)
+          ).toBe(height)
+        }
+      } finally {
+        await b.session.send('Emulation.clearDeviceMetricsOverride')
+      }
+    })
   })
   it('should preserve intrinsic shrink wrapping and place fill icons at both content edges', async () => {
     await ready()

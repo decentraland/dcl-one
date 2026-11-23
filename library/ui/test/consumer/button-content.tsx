@@ -75,6 +75,18 @@ function Fixture() {
           Remind me
         </Button>
       ))}
+      <Button data-case="responsive-label" viewport="responsive" size="md" startIcon={<svg />}>
+        Remind me
+      </Button>
+      <Button
+        data-case="responsive-icon"
+        viewport="responsive"
+        size="md"
+        variant="secondaryLight"
+        iconOnly
+        aria-label="Copy link"
+        startIcon={<svg />}
+      />
       <output>{calls}</output>
       <span id="target">Destination</span>
     </main>

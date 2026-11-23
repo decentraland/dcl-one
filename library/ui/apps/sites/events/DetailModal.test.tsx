@@ -41,6 +41,7 @@ describe('when an upcoming event offers a reminder', () => {
     rerender(showReminder(false, true))
     expect(button).toHaveFocus()
     expect(button).toHaveAttribute('aria-disabled', 'true')
+    // jsdom keeps focus on native disabled controls. Chromium blurs them.
     expect(button).not.toBeDisabled()
     await user.keyboard('{Enter} ')
     await user.click(button)
@@ -52,7 +53,7 @@ describe('when an upcoming event offers a reminder', () => {
     expect(onToggle).toHaveBeenCalledTimes(2)
   })
 
-  it('should allow a keyboard retry from the same control after a failed save', async () => {
+  it('should allow keyboard activation again when a save settles without changing the reminder', async () => {
     const user = userEvent.setup()
     const { rerender } = render(showReminder(false))
     const button = screen.getByRole('button', { name: 'Remind me', pressed: false })
