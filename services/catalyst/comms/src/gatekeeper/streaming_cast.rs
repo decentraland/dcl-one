@@ -365,8 +365,8 @@ pub(crate) enum Keys<'a> {
 }
 
 /// [`keep_or_revoke`] on each credential `keys` selects; one that cannot be
-/// decided keeps its key for the next recheck.
-pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) {
+/// decided keeps its key for the next recheck. Returns how many it revoked.
+pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> usize {
     let after;
     let (filter, value) = match keys {
         Keys::Room(room) => ("room_id = $1", room),
@@ -394,14 +394,22 @@ pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) {
     .await
     {
         Ok(rows) => rows,
-        Err(error) => return tracing::warn!(%error, "stream keys not read for a recheck"),
+        Err(error) => {
+            tracing::warn!(%error, "stream keys not read for a recheck");
+            return 0;
+        }
     };
+    let mut revoked = 0;
     for access in &rows {
         if let Keys::After(cursor) = keys {
             cursor.lock().unwrap().clone_from(&access.place_id);
         }
-        if let Err(error) = keep_or_revoke(state, access).await {
-            tracing::warn!(place_id = %access.place_id, %error, "stream key recheck undecided; the key stays");
+        match keep_or_revoke(state, access).await {
+            Ok(true) => {}
+            Ok(false) => revoked += 1,
+            Err(error) => {
+                tracing::warn!(place_id = %access.place_id, %error, "stream key recheck undecided; the key stays");
+            }
         }
     }
     if let Keys::After(cursor) = keys
@@ -409,6 +417,7 @@ pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) {
     {
         cursor.lock().unwrap().clear();
     }
+    revoked
 }
 
 /// The check a notification asks for, `wake` being its payload: `scene:<entity
@@ -535,21 +544,32 @@ enum Publisher {
 
 /// Classifies `identity`, a participant of `room`: a streamer of any place
 /// (only keys of `room` mint streamers into it, and a key moved to another
-/// place keeps its minting place in the identity) or a bot of `room`.
+/// place keeps its minting place in the identity), read from the right as
+/// [`tagged_access`] reads it, since a preview place id holds colons; or a
+/// bot of `room`.
 fn classify_publisher(identity: &str, room: &str) -> Publisher {
-    let rest = identity
-        .strip_prefix("stream:")
-        .and_then(|r| r.split_once(':').map(|(_, rest)| rest))
-        .map(|rest| format!(":{rest}"));
-    let rest = rest
-        .as_deref()
-        .or_else(|| {
-            identity
-                .strip_prefix("presentation-bot:")
-                .and_then(|r| r.strip_prefix(room))
-        })
-        .and_then(|r| r.strip_prefix(':'));
-    let Some(rest) = rest else {
+    if let Some(rest) = identity.strip_prefix("stream:") {
+        let Some((head, uuid)) = rest.rsplit_once(':') else {
+            return Publisher::Other;
+        };
+        if Uuid::parse_str(uuid).is_err() {
+            return Publisher::Other;
+        }
+        return match head.rsplit_once(':') {
+            Some((place, access)) if !place.is_empty() => match Uuid::parse_str(access) {
+                Ok(access) => Publisher::Tagged(access),
+                // `stream:<place with colons>:<uuid>`, minted before tagging.
+                Err(_) => Publisher::Untagged,
+            },
+            _ if head.is_empty() => Publisher::Other,
+            _ => Publisher::Untagged,
+        };
+    }
+    let Some(rest) = identity
+        .strip_prefix("presentation-bot:")
+        .and_then(|r| r.strip_prefix(room))
+        .and_then(|r| r.strip_prefix(':'))
+    else {
         return Publisher::Other;
     };
     match rest.split_once(':') {
@@ -662,10 +682,7 @@ async fn watch_place(
                 let scenes = match state.scenes.world_scene_count(&world).await {
                     Ok(scenes) => scenes,
                     Err(ResolveError::Db(error)) => {
-                        let store = "worlds.world_scenes";
-                        return Err(
-                            AuthorityNotEstablished::store_unavailable(store, &error).into()
-                        );
+                        return Err(super::scene_identity_unavailable(&error));
                     }
                     Err(_) => return Err(not_found()),
                 };
@@ -688,13 +705,7 @@ async fn watch_place(
         };
         let resolved = match resolved {
             Ok(resolved) => resolved,
-            Err(ResolveError::Db(error)) => {
-                return Err(AuthorityNotEstablished::store_unavailable(
-                    "worlds.world_scenes",
-                    &error,
-                )
-                .into());
-            }
+            Err(ResolveError::Db(error)) => return Err(super::scene_identity_unavailable(&error)),
             Err(_) => return Err(not_found()),
         };
         if resolved.realm != realm {
@@ -2142,4 +2153,48 @@ pub async fn demote_presenter(
     Ok(Json(
         json!({ "message": "Participant demoted from presenter" }),
     ))
+}
+
+#[cfg(test)]
+mod publisher_tests {
+    use super::*;
+
+    /// A streamer is read from the right, whatever its place holds; a bot
+    /// only in its own room.
+    #[test]
+    fn publishers_classify_by_credential_whatever_their_place() {
+        let (access, uuid) = (Uuid::new_v4(), Uuid::new_v4());
+        let room = "scene:LocalPreview:bafkreiscene";
+        for place in [
+            "8f9e1529-cb0d-5b49-927e-b6fea90116c3",
+            "scene:LocalPreview:bafkreiscene",
+        ] {
+            assert_eq!(
+                classify_publisher(&format!("stream:{place}:{access}:{uuid}"), room),
+                Publisher::Tagged(access),
+                "{place}"
+            );
+            assert_eq!(
+                classify_publisher(&format!("stream:{place}:{uuid}"), room),
+                Publisher::Untagged,
+                "{place}"
+            );
+        }
+        assert_eq!(
+            classify_publisher(&format!("presentation-bot:{room}:{access}:{uuid}"), room),
+            Publisher::Tagged(access)
+        );
+        for other in [
+            format!("presentation-bot:another-room:{access}:{uuid}"),
+            format!("stream:{access}:not-a-uuid"),
+            format!("stream::{uuid}"),
+            "0x0000000000000000000000000000000000000001".to_owned(),
+        ] {
+            assert_eq!(
+                classify_publisher(&other, room),
+                Publisher::Other,
+                "{other}"
+            );
+        }
+    }
 }

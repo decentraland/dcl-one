@@ -8,10 +8,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::{CommsState, errors::ApiError};
+use crate::Address;
 use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlaces};
 use crate::interfaces::{StreamingNotification, StreamingNotificationKind};
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::{Address, AuthorityNotEstablished};
 
 const BATCH: i64 = 20;
 const RECONCILE_BATCH: i64 = 20;
@@ -290,7 +290,13 @@ async fn world_key_context(
             positions: serde_json::json!([]),
         })
     };
-    // The scene's own footprint, so the holders of its parcels are told.
+    // The scene's own footprint, so the holders of its parcels are told; the
+    // room names the scene, not its parcels, so the resolver reads them. A
+    // resolver that cannot be read fails the preparation, and the job tries
+    // the key again later (fail closed: never a notice with fewer holders).
+    // A room whose scene is gone keeps the catalogue row's footprint, or none
+    // (`positions = []`) without a catalogue row: parcel grantees are then
+    // not told.
     let request = crate::rooms::RoomRequest::NamedWorldScene { room };
     match state.scenes.resolve(request).await {
         Ok(resolved) => {
@@ -306,9 +312,7 @@ async fn world_key_context(
             }
         }
         Err(crate::rooms::ResolveError::Db(error)) => {
-            return Err(
-                AuthorityNotEstablished::store_unavailable("worlds.world_scenes", &error).into(),
-            );
+            return Err(super::scene_identity_unavailable(&error));
         }
         Err(_) => {}
     }

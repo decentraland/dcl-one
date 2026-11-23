@@ -2313,6 +2313,36 @@ mod stream_access {
             (status, body["streaming_key"].as_str()),
             (StatusCode::OK, Some("collided-world-key"))
         );
+
+        // When the room's scene already has a key of its own, the old key
+        // cannot move: the minting scene revokes it, and the other scene's
+        // own key stays.
+        let (status, body) = call_at(&app, &admin_key, "DELETE", PATH, &side_meta).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        settled(&pool, &place_id).await;
+        let stranded: Uuid = sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
+             VALUES ($1, 'rtmp://ingest.local/live', 'stranded-world-key', '', $2, $3, timezone('UTC', now()), \
+                     timezone('UTC', now()) + interval '4 days', true) RETURNING id",
+        )
+        .bind(&place_id)
+        .bind(&scene_room)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (status, body) = call_at(&app, &admin_key, "POST", PATH, &side_meta).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let stranded_active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(stranded)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!stranded_active, "the key that could not move is revoked");
+        assert_eq!(credential(place_id.clone()).await.unwrap().1, side_room);
+        assert_eq!(credential(main_place.clone()).await.unwrap().0, collided);
     }
 
     /// The answer to `signer`'s `GET /scene-stream-access` for the scene of
@@ -2420,8 +2450,22 @@ mod stream_access {
                     resolve(&pool, room).await.is_ok(),
                     "the replaced scene's room resolves"
                 );
-                let key = key_of(&app, &pool, &owner_key, &metadata, &old).await;
-                assert_eq!(key, (StatusCode::NOT_FOUND, false), "{timestamp}");
+                if timestamp == 3000 {
+                    // A revocation signed from the scene standing there now
+                    // ends the old scene's key too.
+                    let (status, body) = call(&app, &admin_key, "DELETE", &metadata).await;
+                    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+                    let active = "SELECT EXISTS (SELECT FROM social.scene_stream_access WHERE room_id = $1 AND active)";
+                    let active: bool = sqlx::query_scalar(active)
+                        .bind(&old)
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                    assert!(!active, "the replaced scene's key is revoked");
+                } else {
+                    let key = key_of(&app, &pool, &owner_key, &metadata, &old).await;
+                    assert_eq!(key, (StatusCode::NOT_FOUND, false), "{timestamp}");
+                }
             }
             // Granted once: the place keeps the admin at the next redeploy.
             if timestamp == 2000 {

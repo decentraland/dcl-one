@@ -1565,6 +1565,52 @@ async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
     }
 }
 
+/// A key under this scene's place that streams into a room no other scene
+/// holds cannot move: the stream link revokes it and mints this scene's key,
+/// creating one ingress.
+#[tokio::test]
+async fn a_stream_link_revokes_a_key_under_its_place_that_cannot_move() {
+    let Some(pool) = scratch().await else { return };
+    let world = WorldName::parse(&format!("caststrand{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
+    let scene_id = format!("bafkreistrand{}", tag());
+    let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
+    let h = harness(
+        pool.clone(),
+        Some(room.clone()),
+        PermissionDecision::Allowed,
+        None,
+    )
+    .await;
+    let scene_place = room.deployment.as_ref().unwrap().place_key();
+    let elsewhere = crate::rooms::worlds_service_scene_room(
+        &world,
+        &SceneId::parse(&format!("bafkreigone{}", tag())).unwrap(),
+    );
+    let stranded = seed_access(
+        &pool,
+        &scene_place,
+        Some(&elsewhere),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let metadata = json!({
+        "signer": SCENE_SIGNER,
+        "sceneId": scene_id,
+        "parcel": "3,4",
+        "realm": {"serverName": world.display(), "hostname": "worlds-content-server.example", "protocol": "v3"},
+    });
+    let minted = stream_link(&h, KEY, &metadata).await;
+    assert_ne!(minted, stranded);
+    assert!(!key_is_active(&pool, &stranded).await, "revoked");
+    assert!(key_is_active(&pool, &minted).await);
+    assert_eq!(
+        h.livekit.ingresses.load(Ordering::SeqCst),
+        1,
+        "one ingress minted"
+    );
+}
+
 /// A key stored under the world's catalogue place before keys were per
 /// scene is the key of the scene whose room it streams into: a stream link
 /// reuses it while it holds, and replaces it under the scene's place once it

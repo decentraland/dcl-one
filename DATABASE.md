@@ -2853,8 +2853,9 @@ Invariants:
   imported world-scene identity is a place UUID and can equal the catalogue id
   a world's single key was stored under, so the room, not the place, decides.
   Before a world scene stores a key under its place, such a row moves to the
-  place of the scene of its room, which keeps its stream; one whose room has
-  no scene keeps the place and the mint answers 409.
+  place of the scene of its room, which keeps its stream; when it cannot (its
+  room has no scene, or that scene has a key of its own) it is revoked, before
+  any ingress is minted.
 - A key minted under the world's catalogue place before keys were per scene
   stays the key of the scene whose room it streams into: that scene reads,
   resets and revokes it, and its replacement is stored under the scene's place.

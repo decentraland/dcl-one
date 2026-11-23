@@ -8,8 +8,9 @@
 //! stored for the catalogue place based on its base parcel, a world scene's
 //! for its place (`ActiveDeployment::place_key`), as upstream keys it on the
 //! world scene's place ([`KeyTarget`]). Remove also takes the scene standing
-//! on the signed parcel now, so a key can still be revoked after a redeploy,
-//! by the admins of that scene. List, add and reset are refused to
+//! on the signed parcel now, and every verb first rechecks the place's keys,
+//! so the key of a scene a redeploy replaced is revoked by the admins of the
+//! scene standing there now. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -430,10 +431,7 @@ async fn revocation_target<'a>(
             Some(deployment) => Ok(KeyTarget::deployed(state, world, deployment, current.room)),
             None => Err(not_found()),
         },
-        Err(crate::rooms::ResolveError::Db(error)) => {
-            tracing::warn!(%error, "scene resolver unavailable for a stream key revocation");
-            Err(service_unavailable("Scene identity is unavailable"))
-        }
+        Err(crate::rooms::ResolveError::Db(error)) => Err(scene_identity_unavailable(&error)),
         Err(_) => Err(not_found()),
     }
 }
@@ -480,11 +478,16 @@ async fn revocation_authority<'a>(
 
 /// Rechecks the keys a verb may answer ([`cast::recheck_keys`]): the place's,
 /// and, for a world scene, the one streaming into its room.
-pub(super) async fn recheck_target(state: &SharedState, place_id: &str, world_room: Option<&str>) {
-    cast::recheck_keys(state, cast::Keys::Place(place_id)).await;
+pub(super) async fn recheck_target(
+    state: &SharedState,
+    place_id: &str,
+    world_room: Option<&str>,
+) -> usize {
+    let mut revoked = cast::recheck_keys(state, cast::Keys::Place(place_id)).await;
     if let Some(room) = world_room {
-        cast::recheck_keys(state, cast::Keys::Room(room)).await;
+        revoked += cast::recheck_keys(state, cast::Keys::Room(room)).await;
     }
+    revoked
 }
 
 /// The place's active credential when it is still valid for `room`, else a
@@ -503,8 +506,8 @@ async fn issue_access(
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     // A key whose minter lost the place is never the one answered.
     recheck_target(state, place_id, world_room).await;
-    if world_room.is_some() {
-        free_scene_place(state, place_id, room).await?;
+    if world_room.is_some() && !free_scene_place(state, place_id, room).await? {
+        return Err(concurrent_change());
     }
     if let Some(existing) = active_access(&state.pool, place_id, world_room).await? {
         match renewal(&existing, room, now_utc()) {
@@ -662,23 +665,36 @@ async fn active_access(
     place_id: &str,
     world_room: Option<&str>,
 ) -> Result<Option<AccessRow>, sqlx::Error> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access \
-         WHERE active AND CASE WHEN $2::text IS NULL THEN place_id = $1 ELSE room_id = $2 END \
-         ORDER BY place_id = $1 DESC, created_at DESC LIMIT 1"
-    )))
-    .bind(place_id)
-    .bind(world_room)
-    .fetch_optional(pool)
-    .await
+    match world_room {
+        None => sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access WHERE place_id = $1 AND active"
+        )))
+        .bind(place_id)
+        .fetch_optional(pool)
+        .await,
+        Some(room) => sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access WHERE room_id = $2 AND active \
+                 ORDER BY place_id = $1 DESC, created_at DESC LIMIT 1"
+        )))
+        .bind(place_id)
+        .bind(room)
+        .fetch_optional(pool)
+        .await,
+    }
 }
 
 /// Before a world scene stores a key under its place: a key already there
-/// that streams into another scene's room (a world key stored under a
-/// catalogue id that this scene's imported identity equals) moves to the
-/// place of that room's scene, which keeps its stream. A key that cannot move
-/// keeps the place, and the mint answers 409 as for any held place.
-async fn free_scene_place(state: &CommsState, place_id: &str, room: &str) -> Result<(), ApiError> {
+/// that streams into another room is another scene's (a world key stored
+/// under a catalogue id that this scene's imported identity equals). It
+/// moves to the place of its room's scene, which keeps its stream; when it
+/// cannot (its room has no scene, or that scene has a key of its own), it is
+/// revoked. Whether the place is free: false only when that revocation met a
+/// concurrent change, and then nothing is minted.
+async fn free_scene_place(
+    state: &SharedState,
+    place_id: &str,
+    room: &str,
+) -> Result<bool, ApiError> {
     let held: Option<(Uuid, Option<String>)> = sqlx::query_as(
         "SELECT id, room_id FROM social.scene_stream_access \
          WHERE active AND place_id = $1 AND room_id IS DISTINCT FROM $2",
@@ -687,40 +703,53 @@ async fn free_scene_place(state: &CommsState, place_id: &str, room: &str) -> Res
     .bind(room)
     .fetch_optional(&state.pool)
     .await?;
-    let Some((id, Some(other))) = held else {
-        return Ok(());
+    let Some((id, other)) = held else {
+        return Ok(true);
     };
-    let owner = match state
-        .scenes
-        .resolve(RoomRequest::NamedWorldScene { room: &other })
-        .await
-    {
-        Ok(resolved) => resolved.deployment.map(|deployment| deployment.place_key()),
-        Err(crate::rooms::ResolveError::Db(error)) => {
-            return Err(
-                AuthorityNotEstablished::store_unavailable("worlds.world_scenes", &error).into(),
-            );
+    let owner = match other.as_deref() {
+        Some(other) => match state
+            .scenes
+            .resolve(RoomRequest::NamedWorldScene { room: other })
+            .await
+        {
+            Ok(resolved) => resolved.deployment.map(|deployment| deployment.place_key()),
+            Err(crate::rooms::ResolveError::Db(error)) => {
+                return Err(scene_identity_unavailable(&error));
+            }
+            Err(_) => None,
+        },
+        None => None,
+    };
+    if let Some(owner) = owner.filter(|owner| owner != place_id) {
+        let moved = sqlx::query(
+            "UPDATE social.scene_stream_access SET place_id = $3 WHERE id = $1 AND active AND place_id = $2 \
+             AND NOT EXISTS (SELECT 1 FROM social.scene_stream_access WHERE active AND place_id = $3)",
+        )
+        .bind(id)
+        .bind(place_id)
+        .bind(&owner)
+        .execute(&state.pool)
+        .await;
+        match moved {
+            Ok(done) if done.rows_affected() == 1 => return Ok(true),
+            Ok(_) => {}
+            // A concurrent mint took the other place.
+            Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {}
+            Err(error) => return Err(error.into()),
         }
-        Err(_) => None,
-    };
-    let Some(owner) = owner.filter(|owner| owner != place_id) else {
-        return Ok(());
-    };
-    let moved = sqlx::query(
-        "UPDATE social.scene_stream_access SET place_id = $3 WHERE id = $1 AND active AND place_id = $2 \
-         AND NOT EXISTS (SELECT 1 FROM social.scene_stream_access WHERE active AND place_id = $3)",
-    )
-    .bind(id)
-    .bind(place_id)
-    .bind(&owner)
-    .execute(&state.pool)
-    .await;
-    match moved {
-        Ok(_) => Ok(()),
-        // A concurrent mint took the other place: this key keeps its place.
-        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Ok(()),
-        Err(error) => Err(error.into()),
     }
+    if !jobs::enqueue(state, id, jobs::CleanupCommand::Revoke).await? {
+        return Ok(false);
+    }
+    tracing::info!(place_id, access_id = %id, "revoked a key held under this scene's place for another room");
+    settle_cleanup(state, id, place_id);
+    Ok(true)
+}
+
+/// A scene resolver whose store cannot be read: 503, as every authority
+/// source that cannot be read.
+pub(super) fn scene_identity_unavailable(error: &sqlx::Error) -> ApiError {
+    AuthorityNotEstablished::store_unavailable("worlds.world_scenes", error).into()
 }
 
 /// Mints (or reuses) the room's ingress and records it as the place's
@@ -985,8 +1014,11 @@ async fn reset_access(
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let result = async {
-        if world_room.is_some() {
-            free_scene_place(state, place_id, room).await?;
+        // A key the place no longer holds (its scene redeployed, its minter
+        // without the place) is never the one reset.
+        recheck_target(state, place_id, world_room).await;
+        if world_room.is_some() && !free_scene_place(state, place_id, room).await? {
+            return Err(concurrent_change());
         }
         let row = active_access(&state.pool, place_id, world_room)
             .await?
@@ -1022,9 +1054,17 @@ async fn remove_access(
     place_id: &str,
     world_room: Option<&str>,
 ) -> Result<Response, ApiError> {
-    let row = active_access(&state.pool, place_id, world_room)
-        .await?
-        .ok_or_else(|| ApiError::not_found("no active stream access for this scene"))?;
+    // A key the recheck ends (its scene replaced by a redeploy, its minter
+    // without the place) is revoked by this request: 204 as for the others.
+    let revoked = recheck_target(state, place_id, world_room).await;
+    let Some(row) = active_access(&state.pool, place_id, world_room).await? else {
+        return match revoked {
+            0 => Err(ApiError::not_found(
+                "no active stream access for this scene",
+            )),
+            _ => Ok(StatusCode::NO_CONTENT.into_response()),
+        };
+    };
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
         return Err(concurrent_change());
     }

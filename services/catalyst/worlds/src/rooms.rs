@@ -605,6 +605,22 @@ mod tests {
         SceneId::parse(id).unwrap()
     }
 
+    /// The count a Cast watcher reads: the world's scenes, up to two.
+    #[tokio::test]
+    async fn a_world_counts_its_scenes_up_to_two() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = unique_world();
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 0);
+        seed_world_scene(&pool, &world, "CountA", &["0,0"], None, false, 0).await;
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 1);
+        seed_world_scene(&pool, &world, "CountB", &["5,5"], None, false, 1).await;
+        seed_world_scene(&pool, &world, "CountC", &["9,9"], None, false, 2).await;
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 2);
+        assert_eq!(world_scene_count(&pool, &unique_world()).await.unwrap(), 0);
+    }
+
     #[tokio::test]
     async fn canonical_room_lookup_preserves_exact_identity_and_rejects_retired_spelling() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
