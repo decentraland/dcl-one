@@ -1464,15 +1464,21 @@ pub async fn serve(
 }
 
 /// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
-/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
-/// written, since upstream concatenates `${url}/contents/` literally. This node's
-/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
-/// route the node serves (the nested `/content` route does not match `//`).
+/// upstream Stats uses one URL for both. Trailing slashes are stripped from
+/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does since
+/// archipelago-workers#141, so `{base}/contents/{hash}` never holds `//` (the nested
+/// `/content` route does not match it). Unlike upstream, whitespace is trimmed and
+/// an all-slash `CONTENT_URL` falls back to this node's `/content`.
 fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
-    match configured.map(str::trim).filter(|url| !url.is_empty()) {
-        Some(url) => url.to_string(),
-        None => content_public_url.trim_end_matches('/').to_string(),
-    }
+    let strip = |url: &str| {
+        url.trim()
+            .trim_end_matches(|c: char| c == '/' || c.is_whitespace())
+            .to_string()
+    };
+    configured
+        .map(strip)
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| strip(content_public_url))
 }
 
 #[cfg(test)]
@@ -1480,7 +1486,7 @@ mod stats_content_url_tests {
     use super::stats_content_url;
 
     #[test]
-    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+    fn trailing_slashes_are_stripped_from_the_node_default_and_the_operator_value() {
         assert_eq!(
             stats_content_url(None, "https://node.example/content/"),
             "https://node.example/content"
@@ -1490,11 +1496,36 @@ mod stats_content_url_tests {
             "https://node.example/content"
         );
         assert_eq!(
+            stats_content_url(Some("/"), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
             stats_content_url(
                 Some("https://cdn.example/content/"),
-                "https://cdn.example/content/"
+                "https://node.example/content/"
             ),
-            "https://cdn.example/content/"
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/// "),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/ /"),
+                "https://node.example/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content"),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
         );
     }
 }

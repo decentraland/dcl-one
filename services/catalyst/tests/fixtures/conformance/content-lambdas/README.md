@@ -44,8 +44,8 @@ A backlog item whose behaviour matches in this tree keeps its id and reads "Stat
 
 The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 2, GAP 5, DIVERGENT 2, MISSING 4, the four ABR admin routes outside catalyst parity; `/queues/status` is forwarded, outside parity scope), 16 backlog items (7 with no work, 9 open), no P0.
 
-Every upstream route has a route at the same path in this tree, except `GET /lambdas/about`: only the root
-`/about` exists here.
+The Lambdas about handler is exposed at both `GET /about` and `GET /lambdas/about`.
+`GET /lamb2/status` serves the legacy gateway's process status path.
 
 Most rows are DIVERGENT on one field, header or error branch rather than on the whole response. Each file
 lists its own dcl-one-only routes at the end.
