@@ -168,6 +168,11 @@ describe('creditsUrl', () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
       expect(creditsUrl()).toBe('https://node.example/credits')
     })
+
+    it.each(['dcl.dev', 'dcl.live'])("should be the node's credits on a %s page", host => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = `https://${host}`
+      expect(creditsUrl(host)).toBe(`https://${host}/credits`)
+    })
   })
 
   describe('when the page is on a Decentraland host', () => {

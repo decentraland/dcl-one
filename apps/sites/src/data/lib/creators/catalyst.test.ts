@@ -110,6 +110,11 @@ describe('peerUrl', () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
       expect(peerUrl()).toBe('https://node.example')
     })
+
+    it.each(['dcl.dev', 'dcl.live'])('should be the node on a %s page', host => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = `https://${host}`
+      expect(peerUrl(host)).toBe(`https://${host}`)
+    })
   })
 
   describe('when the page is on a Decentraland host', () => {
