@@ -284,3 +284,85 @@ describe('when the Add Node menu opens from the NODES row', () => {
     ).toContain('background-color: var(--palette-whiteTransparent-subtle);');
   });
 });
+
+describe('when an empty state invites the next step', () => {
+  const pulsing = (name: 'New GUI' | 'Add Node') =>
+    screen.getByLabelText(name).getAttribute('data-pulsing');
+
+  it('should pulse the GUIS + while the scene has no GUI', () => {
+    mocks.roots = [];
+    mocks.filename = null;
+    mocks.tree = null;
+    renderRail();
+
+    expect(pulsing('New GUI')).toBe('true');
+  });
+
+  it('should stop pulsing the GUIS + once a GUI exists', () => {
+    mocks.roots = [{ name: 'GUI', filename: 'src/ui/GUI.tsx', topLevel: true }];
+    renderRail();
+
+    expect(pulsing('New GUI')).toBeNull();
+  });
+
+  it('should pulse the NODES + while the selected GUI is empty', () => {
+    mocks.roots = [{ name: 'GUI', filename: 'src/ui/GUI.tsx', topLevel: true }];
+    mocks.emptyRoot = true;
+    mocks.tree = null;
+    renderRail();
+
+    expect(pulsing('Add Node')).toBe('true');
+    expect(pulsing('New GUI')).toBeNull();
+  });
+
+  it('should stop pulsing the NODES + once the GUI has a node', () => {
+    mocks.roots = [{ name: 'GUI', filename: 'src/ui/GUI.tsx', topLevel: true }];
+    renderRail();
+
+    expect(pulsing('Add Node')).toBeNull();
+  });
+
+  describe('and the stylesheet draws the rings', () => {
+    const stylesheet = readFileSync(join(__dirname, '..', 'UIDesigner.css'), 'utf8');
+    const rules = Array.from(
+      stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/g),
+      ([, selector, body]) => ({
+        selector: selector.replace(/\s+/g, ' ').trim(),
+        body: body.replace(/\s+/g, ' ').trim(),
+      }),
+    );
+    const firstRule = (selector: string) => rules.find(r => r.selector === selector)?.body;
+    const RING = '.ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add';
+
+    it('should centre a 65px and a 31px Blue Light 1 ring on the chip, pulsing every 1.6s', () => {
+      const shared = firstRule(`${RING}::before, ${RING}::after`)!;
+      expect(shared).toContain('background-color: var(--palette-info-light);');
+      expect(shared).toContain('mix-blend-mode: color-dodge;');
+      expect(shared).toContain('pointer-events: none;');
+      expect(shared).toContain('animation: ui-designer-rail-pulse 1.6s ease-out infinite;');
+      expect(firstRule(`${RING}::before`)).toContain('width: 65px;');
+      expect(firstRule(`${RING}::before`)).toContain('left: calc(50% - 32.5px);');
+      expect(firstRule(`${RING}::after`)).toContain('width: 31px;');
+      expect(firstRule(`${RING}::after`)).toContain('left: calc(50% - 15.5px);');
+    });
+
+    it('should hold the rings still at the drawn look under reduced motion', () => {
+      const reduced = stylesheet.slice(
+        stylesheet.indexOf('@media (prefers-reduced-motion: reduce)'),
+      );
+
+      expect(reduced).toContain(`${RING}::before`);
+      expect(reduced).toMatch(/animation: none;/);
+    });
+
+    it('should let the rings paint past the rail edge rather than clip them', () => {
+      expect(stylesheet).toMatch(
+        /\.ui-designer-left-rail \{[^}]*overflow: clip;[^}]*overflow-clip-margin: 29px;[^}]*\}/,
+      );
+      const appPanel = firstRule('[data-panel]:has(> .composite-inspector .ui-designer-left-rail)');
+      expect(appPanel).toContain('overflow: visible !important;');
+      expect(appPanel).toContain('position: relative;');
+      expect(appPanel).toContain('z-index: 1;');
+    });
+  });
+});

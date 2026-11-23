@@ -163,6 +163,19 @@
   overflow: hidden;
 }
 
+.ui-designer-left-rail {
+  position: relative;
+  z-index: 1;
+  overflow: clip;
+  overflow-clip-margin: 29px;
+}
+
+[data-panel]:has(> .composite-inspector .ui-designer-left-rail) {
+  overflow: visible !important;
+  position: relative;
+  z-index: 1;
+}
+
 /* The shared <Box> wrapper inserts an extra <div class="content"> between
    the rail and our flex children. Make it transparent to the flex layout
    so palette/tree/properties partition the rail height correctly.
@@ -252,6 +265,55 @@
 
 .ui-designer-rail-header[aria-expanded="true"] .ui-designer-rail-add {
   background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add {
+  position: relative;
+}
+
+.ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add::before,
+.ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add::after {
+  content: "";
+  position: absolute;
+  border-radius: var(--r-pill);
+  background-color: var(--palette-info-light);
+  opacity: 0.3;
+  mix-blend-mode: color-dodge;
+  pointer-events: none;
+  animation: ui-designer-rail-pulse 1.6s ease-out infinite;
+}
+
+.ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add::before {
+  width: 65px;
+  height: 65px;
+  left: calc(50% - 32.5px);
+  top: calc(50% - 32.5px);
+}
+
+.ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add::after {
+  width: 31px;
+  height: 31px;
+  left: calc(50% - 15.5px);
+  top: calc(50% - 15.5px);
+}
+
+@keyframes ui-designer-rail-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add::before,
+  .ui-designer-rail-header[data-pulsing="true"] .ui-designer-rail-add::after {
+    animation: none;
+  }
 }
 
 .ui-designer-right-rail-tabpanel {

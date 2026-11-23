@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { IoListOutline } from 'react-icons/io5';
 
 import { Container } from '../../../Container';
 import { analytics, Event } from '../../../../lib/logic/analytics';
 import { isValidIdentifier } from '../../../../lib/sdk/operations/validators';
 import { CheckboxField, Dropdown, TextField } from '../../../ui';
-import { EmptyState } from '../../EmptyState';
 import type { BindVariable } from '../../code/bindings';
 import {
   addBindVariable,
@@ -91,16 +89,6 @@ const CodeVariablesPanelComponent: React.FC = () => {
   const [type, setType] = useState('string');
   const [def, setDef] = useState('');
 
-  if (!filename) {
-    return (
-      <EmptyState
-        icon={<IoListOutline />}
-        title="No GUI selected"
-        message="Create or select a GUI to declare variables you can bind fields to."
-      />
-    );
-  }
-
   const importedVars = bindingSurface.variables.filter(v => v.imported);
   const stateVars = bindingSurface.variables.filter(
     v => !v.imported && v.expr === `state.${v.name}`,
@@ -127,7 +115,7 @@ const CodeVariablesPanelComponent: React.FC = () => {
     >
       <div className="ui-designer-code-variables">
         <div className="ui-designer-code-variables-hint">
-          GUI's data · <code>{filename.split('/').pop()}</code>
+          GUI's data · <code>{filename?.split('/').pop()}</code>
         </div>
 
         {stateVars.length === 0 && markerVars.length === 0 && importedVars.length === 0 ? (

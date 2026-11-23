@@ -2380,14 +2380,14 @@ The rules are 1.36:1 on Charcoal and Shadow — decorative separators; the 2px B
 
 ### Empty states (UI Editor — Screens)
 
-Boards No GUI `1555:4037` (canvas `EmptyState` `I3413:15395;21032:43762;3523:138896`) and No Node `3421:36758` (`EmptyState` `I3421:36762;21032:43762;3523:138913`, component `3523:138913`); right-panel empty `RightPanel2D` `3961:10285` (`property1 = Empty`). Read November 12, 2026. Code: inspector `EmptyState/EmptyState.tsx` (`EmptyState`, `EmptyStateChip`), `EmptyState/GuiIcon.tsx`, `Canvas/Canvas.tsx` (canvas empty state, `EmptyRootDropZone`), `RightPanel/PropertyPanel/PropertyPanel.tsx` (no-selection state), `UIDesigner.css`; the GUIS / NODES `+` rows are in [HierarchySections](#hierarchysections-ui-editor--components).
+Boards No GUI `1555:4037` (canvas `EmptyState` `I3413:15395;21032:43762;3523:138896`) and No Node `3421:36758` (`EmptyState` `I3421:36762;21032:43762;3523:138913`, component `3523:138913`); right-panel empty `RightPanel2D` `3961:10285` (`property1 = Empty`). Read November 17, 2026. Code: inspector `EmptyState/EmptyState.tsx` (`EmptyState` with `variant` `canvas` / `panel` / `inline`, `EmptyStateChip` with `tone` `muted` / `strong`), `EmptyState/NoGuiGlyph.tsx`, `EmptyState/EmptyGuiGlyph.tsx`, `Canvas/CanvasEmptyStates.tsx` (`NoGuiState`, `EmptyGuiState`), `RightPanel/RightPanel.tsx` (the Empty panel), `UIDesigner.css` (the pulse); the GUIS / NODES `+` rows are in [HierarchySections](#hierarchysections-ui-editor--components).
 
 Both canvas empty states are a column centred in the canvas, 500 tall, gap 20, centred text. The bottom panel is `Blocked` in both (see BottomPanel2D); the right panel shows the no-selection state in both.
 
 | Part | No GUI (`1555:4037`) | No Node (`3421:36758`) | Token | Contrast (on Onix Dark 1) | A11y |
 | --- | --- | --- | --- | --- | --- |
 | Column | 468 wide | 614 wide | — | — | — |
-| Glyph `GUIEmptyImg` | 91 × 50, Cloudy Sky `#716B7C` | 50 × 50, Cloudy Sky | `--palette-neutral-gray2` (`--ui-designer-glyph`) | 2.75:1, decorative | `aria-hidden="true"`; no library icon (code `GuiIcon.tsx`) |
+| Glyph `GUIEmptyImg` | 91 × 50, Cloudy Sky `#716B7C` | 50 × 50, Cloudy Sky | `--palette-neutral-gray2` (`--ui-designer-glyph`) | 2.75:1, decorative | `aria-hidden="true"`; local illustrations, not library icons (`NoGuiGlyph`, `EmptyGuiGlyph`) |
 | Title | "Start building your UI" | "This GUI is empty" | Inter 600 24 (`H2 Semi`) Snow `#FCFCFC` → `--palette-neutral-softWhite` | 13.73:1 | `<h2>` ✱ |
 | Body | "Click the [GUIs +] button in the left panel to add UI elements. Then, select elements such as **text, buttons, and images** from the [Nodes] section to design what players will see in your scene." | "Click the [Nodes +] button in the left panel to add your first UI element." | Inter 400 14 (`H7 Regular`) Gray `#CFCDD4` → `--palette-neutral-gray4`; bold runs Inter 600 | 8.95:1 | `<p>` |
 | Chips (`[…]` above) | "GUIs +", "Nodes": Inter 600 14 **Gray**, a 54 × 18 box, 1px White 20, 6px radius | "Nodes +": Inter 600 14 **Snow**, a 64 × 24 box, 1px White 20, 6px radius | `--palette-whiteTransparent-soft` | chip outline 1.92:1, decorative (the text carries it) | `EmptyStateChip`, plain text, not a button |
@@ -2401,14 +2401,19 @@ Both canvas empty states are a column centred in the canvas, 500 tall, gap 20, c
 - No GUI (`3470:13253`): "Pressing the [+ New GUI] button from the canvas is equivalent to press the button from the hierarchy panel. It will open a menu to select if to add a new regular GUI or the Mobile HUD. If the user chooses **'GUI'**, while selected can add nodes to it. New GUIs are named: GUI, GUI1, GUI2, etc" · "The pulse animation on the GUIS [+] button appears for the first time use only. Disappears after clicking it or the [+ New GUI] button from the canvas." · "In the assets panel (bottom) the Nodes buttons are dimmed down until a GUI exists."
 - No Node (`3470:13276`): "Pressing the [+ Add Node] button from the canvas is equivalent to press the button from the hierarchy panel: opens the menu." · "New Nodes are named: Container, Container1, Container2, etc" · "The pulse animation on the Nodes [+] button appears for the first time use only. Disappears after clicking it or the [+ Add Node] button from the canvas."
 
-Drift (checked): the code's no-GUI state matches the copy and chips; its empty-GUI state reads "This GUI is empty" / "Drag a widget from the palette here to add your first element." / "+ Add element" (a dashed drop zone) instead of the No Node copy and ADD NODE button; the no-selection body reads "…its properties." without "and logic"; the GUIS / NODES `+` rows don't play the first-run pulse.
+Code (checked): both canvas states, the right panel's Empty and the pulse match every row and decision above (ships in the empty-states spoke). The canvas behind them is the Viewport fill, tracked with the panel colours (decentraland/creator-hub#1790).
 
 **Decisions**
 
 | Topic | Rule |
 | --- | --- |
 | Copy | Figma's copy is used exactly as drawn (user decision). |
-| Pulse | ✱ The drawn rings (65 and 31, Blue Light 1 at 30%, color-dodge) scale out and fade over 1.6s ease-out, looping until a GUI or a node is added; under `prefers-reduced-motion`, the static rings with no animation (user decision). |
+| Pulse | ✱ The drawn rings (65 and 31, Blue Light 1 at 30%, color-dodge) scale out and fade over 1.6s ease-out, looping; under `prefers-reduced-motion`, the static rings with no animation (user decision). They play in every empty state, in any scene and session, with nothing stored: on the GUIS `+` while the scene has no GUI, on the NODES `+` while the selected GUI has no node (user decision). The notes' "first time use only" doesn't apply. They paint unclipped, crossing the rail's edge as the boards draw them (user decision): the 2D rail's resizable panel (`[data-panel]` holding `.ui-designer-left-rail`) lets them overflow and sits above the canvas (`overflow: visible`, `position: relative`, `z-index: 1`); the rule matches nothing in 3D. |
+| Right panel | Whenever no node is selected (no GUI, an empty GUI, or a GUI with nodes and none selected) the right panel is the tab-less Empty panel (`3961:10285`); PROPERTIES \| LOGIC return as soon as any node is selected, on the tab last used (user decision). |
+| Buttons | "NEW GUI" creates a GUI, as the GUIS `+` does; "ADD NODE" (named "Add Node") opens the Add Node menu, as the NODES `+` does (AddNodeMenu → Openers). Both are the Secondary `Button-Contained-Text-Icon` with a 14px label, as the boards draw it; ✱ keyboard focus is the 1px inset Snow `--focus-ring`. |
+| Drop | The 1px Blue Light 1 inset outline (`--palette-info-light`) marks where the dragged item will land, and only there (Canvas drop, user decision). Over an empty GUI the target is always the whole canvas area: the content block draws none, and a drop anywhere on the canvas writes the GUI's first node. |
+| New GUI | New GUI creates a GUI directly; there's no type menu, because a scene has a single MobileHUD, which appears with its first GUI (user decision). |
+| Glyphs | Both `GUIEmptyImg` drawings are local illustrations from Figma's frame exports, filled `currentColor` at Cloudy Sky (`--ui-designer-glyph`); they aren't icon-set members. |
 | Empty Image | ✱ An Image with no texture yet paints nothing on the canvas, as in-world: only its dotted node marker, and the selection frame while selected (user decision). No board draws an Image without a texture. |
 
 ### Canvas drop (UI Editor — Screens)
@@ -2418,7 +2423,12 @@ No board or component in the UI Editor file draws drop feedback on the 2D canvas
 | State | Rule | Token | A11y |
 | --- | --- | --- | --- |
 | Image dropped on the canvas | creates an **Image** node at the drop point, its texture the dropped image (user decision) | — | the new node is selected and announced like a palette add ✱ |
-| ✱ drag over a valid target | not drawn; nearest drawn value: the GUI root frame's 1px Blue Light 1 border | `--palette-info-light` | — |
+| drag over the canvas | not drawn; the outline marks the drop target and only it (user decision). The target is the innermost regular node under the pointer, and the item is inserted into it. A top-level drop in a non-empty GUI lands on the root node, outlined at the GUI frame. An empty GUI's target is the whole canvas area. One outline at a time; it follows the pointer and is gone when the drag leaves the canvas or drops | `--palette-info-light` | — |
+| look | a 1px Blue Light 1 inset `box-shadow`, with no dashed line and no fill, winning on empty containers too (user decision) | `--palette-info-light` | — |
+| outside the GUI frame | open canvas outside the frame of a non-empty GUI accepts no drop and shows no outline (user decision) | — | — |
+| leaf nodes | Label, Button, Input and Dropdown accept children: the hovered leaf is outlined and the item nests inside it (user decision) | `--palette-info-light` | — |
+| write-guarded nodes | a node with dynamic props shows no outline, and a drop on it does nothing (user decision). Opaque nodes, component instances and platform-variant wrappers pass the drop to their nearest regular ancestor, which is outlined | — | — |
+| selection during a palette drag | while a palette item is dragged over the canvas, the selected node's ring is transparent and its resize handles and floating toolbar (+, duplicate, delete) are hidden, so the drop outline is the only highlight; they return after the drop or a cancel. Moving a node on the canvas keeps them (user decision) | — | — |
 
 Drift (checked): the canvas accepts only palette and component drags (`UI_DESIGNER_DND_TYPE`); an image or Local Assets drop does nothing.
 
@@ -2588,13 +2598,14 @@ Shared by every node variant:
 
 A11y: the TabBar is `role="tablist"` with `role="tab" aria-selected` tabs and arrow-key movement ✱; each section header is a `<button aria-expanded>` ✱; the Empty state is plain text, the panel a `role="region"` named "Properties" ✱.
 
-Code (checked): the Empty state renders an `IoOptionsOutline` icon and the body "Select a **node** to start editing its properties." (drift: Figma draws no icon, the body ends "its properties and logic.", and "node" is regular weight).
+Code (checked): the Empty variant renders as drawn, with no TabBar and no icon, whenever no node is selected (`RightPanel.tsx`, ships in the empty-states spoke).
 
 **Decisions** (user decisions; the record for this panel, so grep here before asking again):
 
 | Topic | Rule |
 | --- | --- |
 | Copy | Figma's copy is used exactly as drawn (user decision). |
+| Empty panel | The Empty variant shows whenever no node is selected, with no TabBar: no GUI, an empty GUI, or a GUI with nodes and none selected; the tabs return with any selected node, on the tab last used (user decision). |
 | Logic tab layout | NodeLogic1 (`21143:4292`): the input rows, then a divider, the hint "Open the component to add or edit its inputs, variables, and events.", and the "Open PrefabName" button at the end. NodeLogic2 (`21151:7668`, the button under the header) is not followed. |
 
 ### Logic panel (UI Editor — Panels)
@@ -3158,6 +3169,7 @@ The MobileHUD row heads the GUIS list (`NodeType/Mobile` 16 in the label's colou
 | Topic | Rule |
 | --- | --- |
 | Selection fill | GUI rows select White 10, tree rows Blue Dark 3, each as drawn. |
+| New GUI names | New GUIs are named "GUI", "GUI1", "GUI2", … as the No GUI note (`3470:13253`) says: the file `src/ui/GUI.tsx` and the component `GUI`. Existing scenes keep their files (user decision). |
 | Row actions | The eye only, on hover and keyboard focus, and at rest while hidden (Figma's `<GUIEntries>`). Delete stays in the context menu and on Delete / Backspace, never in the row (user decision). |
 | Copy | Figma's copy is used exactly as drawn (user decision). |
 | Tooltips | ✱ Figma draws none; the rows keep their three native tooltips: a GUI row's "Drag onto the canvas to nest <GUI> as a component", its eye's top-level / nested-only explanation, and MobileHUD's "Customize the mobile touch-screen controls" (user decision). |
@@ -4611,7 +4623,6 @@ Code that doesn't follow Figma or these conventions yet. Every row is open: no P
 | Toolbar, Icons | Toolbar glyphs still drawn from `react-icons` (the 2D toolbar's `Bi*`, `AiOutlineInfoCircle`, `BsCaretDown`) | `Toolbar/`, `UIDesigner/Toolbar/` | inspector specialist | open |
 | Button-Contained-Text (Buttons) | Disabled buttons draw at Figma's whole-node 20%, so the label is about 1.8:1, and most give no reason they're disabled (Accept, Create tag, REMOVE SELECTED, Apply Layout, Confirm carry no `title` or helper text) | inspector forms using a disabled `Button` | inspector specialist | open |
 | Button, Checkbox | Figma's Terciary is `Button variant="ghost"` (ui3) while `CheckboxField` spells Figma's Tertiary `color="tertiary"` (not a Button axis): one Figma word, two code spellings. Whether the checkbox follows the Button's API is the user's call | `ui/CheckboxField`, `Button` | user decision, then inspector specialist | open |
-| Viewport (Viewport) | The empty-canvas "New GUI" `Button` draws the shared Snow `--focus-ring` while its canvas neighbours (+, zoom, device toggle) draw the panel accent; candidate: one scoped `outline-color: var(--ui-designer-control-accent)` rule (7.36:1 on the canvas) | `UIDesigner` Canvas empty state | inspector specialist | open |
 | Text-Input (Text Field) | The large URL field's error message renders about 11px where Figma's Text-Input error is 14px | `ui/TextField` large error `Message` | inspector specialist | open |
 | Feedback tokens | CleanAssets' warning text reads `var(--primary)`, which `vars.css` defines as `var(--brand)` (brand pink, the value decentraland-ui v6 gave it before the inspector dropped that library); pink is CTA-only. Candidates: `--warning-main` or `--error-light` | `CleanAssets/CleanAssets.css` | design call, then inspector specialist | open |
 | Slider (Slider) | A disabled `RangeHourField` (Skybox "Auto") looks enabled: white thumb and full gradient. Its time input shows focus with `:focus` + `--base-01` instead of `:focus-visible` + `--focus-ring`. It restyles with literals and `!important`, and `--slider-track-height` is declared on `:root` in `RangeField.css`, outside `vars.css`; the sky gradient stays as a deviation | `ui/RangeHourField`, `ui/RangeField` | inspector specialist | open |

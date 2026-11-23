@@ -9,7 +9,7 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { useDrop } from 'react-dnd';
+import { useDragLayer, useDrop } from 'react-dnd';
 import { useStore } from 'react-redux';
 import { IoAddOutline, IoCopyOutline } from 'react-icons/io5';
 import { cx } from '../../../lib/utils/cx';
@@ -34,10 +34,8 @@ import {
 } from '../../../redux/ui-designer';
 import { getUIDesignerSnapEnabled, getUIDesignerTool } from '../../../redux/ui';
 import { UIDesignerTool } from '../../../redux/ui/types';
-import { Button } from '../../Button';
 import { YGPT_ABSOLUTE, YGPT_RELATIVE } from '../../../lib/sdk/ui-transform-constants';
 import { UI_DESIGNER_DND_TYPE, type UIDesignerDragItem } from '../shared/dnd';
-import { EmptyState, EmptyStateChip, GuiIcon } from '../EmptyState';
 import { WidgetPicker } from '../LeftPanel/WidgetPicker';
 import type { UiScreenInset } from '../code/aggregator';
 import { dragPinHold } from '../shared/align-presets';
@@ -46,9 +44,7 @@ import { insetRect } from '../shared/safe-areas';
 import { useUINodeActions } from '../shared/useUINodeActions';
 import { useUINodeTree } from '../shared/useUINodeTree';
 import {
-  createRoot as createCodeRoot,
   spliceMove,
-  spliceSetRootChild,
   spliceUiTransformPosition,
   spliceUiTransformPositions,
   spliceUiTransformResize,
@@ -70,7 +66,8 @@ import {
 } from '../shared/node-registry';
 import { loadMobileHudConfig, useMobileHudConfig } from '../MobileHud/mobile-hud-store';
 import { DesktopIcon, TrashIcon } from '../icons';
-import { applyCanvasDrop } from './drop';
+import { EmptyGuiState, NoGuiState } from './CanvasEmptyStates';
+import { applyCanvasDrop, isPaletteDrag, showsDropOutline } from './drop';
 import {
   armGroupClickSuppression,
   clearGroupDrag,
@@ -906,7 +903,7 @@ const CanvasNode: React.FC<CanvasNodeProps> = ({ node, hidden }) => {
       ref={setRef}
       className={cx('ui-designer-canvas-node', {
         selected: isSelected,
-        'drop-over': isOver,
+        'drop-over': showsDropOutline(isOver, node),
         dragging: isDragging || isReordering,
         reordering: isReordering,
         resizing: isResizing,
@@ -1177,60 +1174,14 @@ const CanvasNodeView: React.FC<CanvasNodeProps> = ({ node }) => {
   );
 };
 
-const EmptyRootDropZone: React.FC = () => {
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [{ isOver }, drop] = useDrop<UIDesignerDragItem, unknown, { isOver: boolean }>(
-    () => ({
-      accept: UI_DESIGNER_DND_TYPE,
-      drop: (item, monitor) => {
-        if (monitor.didDrop()) return;
-        if (item.source === 'palette') void spliceSetRootChild(item.type, item.preset);
-      },
-      collect: monitor => ({ isOver: monitor.isOver({ shallow: true }) }),
-    }),
-    [],
-  );
-  return (
-    <div
-      ref={drop}
-      className={cx('ui-designer-canvas-empty', { over: isOver })}
-    >
-      <div className="ui-designer-canvas-emptyroot">
-        <p className="ui-designer-canvas-emptyroot-title">This GUI is empty</p>
-        <p className="ui-designer-canvas-emptyroot-hint">
-          Drag a widget from the palette here to add your first element.
-        </p>
-        <button
-          ref={btnRef}
-          type="button"
-          className="ui-designer-canvas-emptyroot-add"
-          aria-haspopup="dialog"
-          aria-expanded={pickerOpen}
-          onClick={() => setPickerOpen(true)}
-        >
-          + Add element
-        </button>
-        {pickerOpen ? (
-          <WidgetPicker
-            parent={null}
-            anchorRef={btnRef}
-            onDismiss={() => setPickerOpen(false)}
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-};
-
 const CanvasComponent: React.FC = () => {
   const tree = useUINodeTree();
   const { bindingSurface, emptyRoot, roots, filename } = useCodeState();
+  const paletteDragging = useDragLayer(isPaletteDrag);
   const resolveVar = useMemo(() => {
     const map = buildResolveMap(bindingSurface.variables);
     return (expr: string) => map[expr];
   }, [bindingSurface]);
-  const createRoot = useCallback(() => void createCodeRoot(), []);
   const selectedNode = useAppSelector(getSelectedNode);
   const [scale, setScale] = useState(getCanvasScale());
   const [zoomInputValue, setZoomInputValue] = useState<string | null>(null);
@@ -1390,7 +1341,10 @@ const CanvasComponent: React.FC = () => {
     <VarPreviewContext.Provider value={resolveVar}>
       <div
         ref={viewportRef}
-        className={cx('ui-designer-canvas-viewport', { panning: isPanning })}
+        className={cx('ui-designer-canvas-viewport', {
+          panning: isPanning,
+          'palette-dragging': paletteDragging,
+        })}
         onMouseDown={handlePanStart}
         onContextMenu={e => e.preventDefault()}
       >
@@ -1478,33 +1432,9 @@ const CanvasComponent: React.FC = () => {
               </div>
             </>
           ) : emptyRoot ? (
-            <EmptyRootDropZone />
+            <EmptyGuiState />
           ) : (
-            <div className="ui-designer-canvas-empty">
-              <EmptyState
-                icon={<GuiIcon />}
-                title="Start building your UI"
-                message={
-                  <>
-                    Click the <EmptyStateChip>GUIs +</EmptyStateChip> button in the left panel to
-                    add UI elements. Then, select elements such as{' '}
-                    <strong>text, buttons, and images</strong> from the{' '}
-                    <EmptyStateChip>Nodes</EmptyStateChip> section to design what players will see
-                    in your scene.
-                  </>
-                }
-                action={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={createRoot}
-                  >
-                    <IoAddOutline aria-hidden="true" />
-                    New GUI
-                  </Button>
-                }
-              />
-            </div>
+            <NoGuiState />
           )}
         </div>
         {tree || mobileHudSelected ? (

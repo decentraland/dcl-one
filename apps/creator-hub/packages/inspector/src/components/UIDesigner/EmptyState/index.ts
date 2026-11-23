@@ -1,2 +1,3 @@
 export { EmptyState, EmptyStateChip } from './EmptyState';
-export { GuiIcon } from './GuiIcon';
+export { NoGuiGlyph } from './NoGuiGlyph';
+export { EmptyGuiGlyph } from './EmptyGuiGlyph';

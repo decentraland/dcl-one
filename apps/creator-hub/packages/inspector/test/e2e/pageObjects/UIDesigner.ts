@@ -97,7 +97,10 @@ class UIDesignerPageObject {
     const button = page.locator(`${this.emptyStateSelector} button`);
     await actUntil(
       () => button.click(),
-      () => page.locator(this.emptyStateSelector).waitFor({ state: 'detached', timeout: 3_000 }),
+      () =>
+        page
+          .locator('.ui-designer-canvas-empty--no-gui')
+          .waitFor({ state: 'detached', timeout: 3_000 }),
     );
   }
 
