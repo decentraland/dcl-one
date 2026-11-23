@@ -110,4 +110,3 @@ and admins with notices. Before introducing any limit:
 - decide whether to bound issuance, to coalesce notices, or both;
 - get explicit compatibility approval for any new 429 response on those
   routes, recorded in the conformance file, since clients do not expect it.
-
