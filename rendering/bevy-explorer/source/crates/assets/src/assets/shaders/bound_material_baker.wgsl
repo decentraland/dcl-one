@@ -8,7 +8,7 @@
     pbr_types,
 }
 #import boimp::shared::{compose_over, pack_pbrinput, pack_props, passes_depth_check, unpack_props};
-#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount}
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_PLAIN_EMISSIVE, SCENE_ALPHA_TEXTURE}
 
 struct BakeDims {
     width: u32,
@@ -16,6 +16,8 @@ struct BakeDims {
 
 @group(3) @binding(0) var<storage, read_write> bake_buffer: array<vec2<u32>>;
 @group(3) @binding(1) var<uniform> bake_dims: BakeDims;
+@group(2) @binding(102) var scene_alpha_texture: texture_2d<f32>;
+@group(2) @binding(103) var scene_alpha_sampler: sampler;
 
 @fragment
 fn fragment(
@@ -32,6 +34,15 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front_m);
     var out: FragmentOutput;
 
+#ifdef VERTEX_UVS
+    // the alpha texture's brightness scales the alpha, not its own alpha channel
+    if (scene_bounds.flags & SCENE_ALPHA_TEXTURE) != 0u {
+        let alpha_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+        let alpha_texel = textureSampleBias(scene_alpha_texture, scene_alpha_sampler, alpha_uv, view.mip_bias);
+        pbr_input.material.base_color.a *= saturate(length(alpha_texel.rgb));
+    }
+#endif
+
     // apply emmissive multiplier
     // dcl uses default 2.0 intensity. we also override bevy_pbr base emissive rules so that 
     // - if emissive texture is supplied but color is not, we use the texture (bevy by default multiplies emissive color and emissive texture, so color must be white to pass the texture through)
@@ -41,6 +52,7 @@ fn fragment(
     // x                no                  x * base color
     // 0                t                   2 * t
     // x != 0           t                   x * t
+    // an SDK material (SCENE_PLAIN_EMISSIVE) differs in one row: x with no texture stays x
     var emissive: vec4<f32> = material.emissive;
 #ifdef VERTEX_UVS
     if ((material.flags & STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u) {
@@ -64,14 +76,14 @@ fn fragment(
             bias.mip_bias,
         ).rgb, emissive.a);
     } else {
-        if dot(emissive, emissive) != 0.0 {
+        if dot(emissive, emissive) != 0.0 && (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) == 0u {
             // emissive is set, no emissive texture, use base color texture as emissive texture
             emissive = emissive * pbr_input.material.base_color;
         }
     }
 #endif
-    // scale up for lumens
-    pbr_input.material.emissive = emissive * 10.0;
+    // as bound_material.wgsl
+    pbr_input.material.emissive = emissive * 5.0;
     pbr_input.material.emissive.a = min(pbr_input.material.emissive.a, 1.0);
 
     let world_position = pbr_input.world_position.xyz;

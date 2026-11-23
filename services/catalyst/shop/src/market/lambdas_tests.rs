@@ -110,7 +110,9 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 fn matic_collections(query: &str) -> Value {
     if query.contains("urn_in") {
         // The ownership document of the profiles: the owner holds the hat, token 10.
-        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
+        let mut data = empty_owner_aliases(query);
+        data["o0"] = json!([{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }]);
+        data
     } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
@@ -126,8 +128,27 @@ fn matic_collections(query: &str) -> Value {
     }
 }
 
-fn eth_collections(_: &str) -> Value {
+fn eth_collections(query: &str) -> Value {
+    if query.contains("o0: nfts(") {
+        return empty_owner_aliases(query);
+    }
     json!({ "nfts": [] })
+}
+
+fn empty_owner_aliases(query: &str) -> Value {
+    let mut data = json!({});
+    for alias in query
+        .split_whitespace()
+        .filter_map(|word| word.strip_suffix(':'))
+    {
+        if alias
+            .strip_prefix('o')
+            .is_some_and(|n| n.parse::<usize>().is_ok())
+        {
+            data[alias] = json!([]);
+        }
+    }
+    data
 }
 
 fn marketplace_graph(query: &str) -> Value {

@@ -236,6 +236,10 @@ impl ItemsComponent {
             _ => (None, None),
         };
 
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
         let rows = sqlx::query_as::<_, ItemDbRow>(
             r#"
             SELECT
@@ -259,10 +263,22 @@ impl ItemsComponent {
         .bind(q.name.as_deref())
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
 
-        let total = rows.first().map(|r| r.total_count).unwrap_or(0);
+        let total = if let Some(row) = rows.first() {
+            row.total_count
+        } else {
+            sqlx::query_scalar(
+                "SELECT count(*) FROM builder.items i WHERE i.collection_id = $1
+                 AND ($2::text IS NULL OR i.name ILIKE '%' || $2 || '%')",
+            )
+            .bind(collection_id)
+            .bind(q.name.as_deref())
+            .fetch_one(&mut *tx)
+            .await?
+        };
+        tx.commit().await?;
         let items = rows.into_iter().map(ItemDbRow::into_row).collect();
         Ok((items, total))
     }

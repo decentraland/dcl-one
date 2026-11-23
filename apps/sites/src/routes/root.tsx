@@ -51,6 +51,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // (core/lib/telemetry/track.ts); unset, the client's track() is a no-op.
   const segmentWriteKey = process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
   const segmentApiHost = process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
+  // The Shop's own public write key (no fallback to Sites'); unset, Shop events are a no-op.
+  const shopSegmentWriteKey = process.env.SHOP_SEGMENT_WRITE_KEY || process.env.VITE_SHOP_SEGMENT_WRITE_KEY || "";
   const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
   const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
@@ -70,6 +72,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     magicApiKey,
     segmentWriteKey,
     segmentApiHost,
+    shopSegmentWriteKey,
     docsBase,
     commitHash,
     pulseServer,
@@ -129,7 +132,7 @@ export function meta({ error }: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; shopSegmentWriteKey?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
@@ -141,6 +144,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     magicApiKey: data?.magicApiKey ?? "",
     SEGMENT_WRITE_KEY: data?.segmentWriteKey ?? "",
     SEGMENT_API_HOST: data?.segmentApiHost ?? "",
+    SHOP_SEGMENT_WRITE_KEY: data?.shopSegmentWriteKey ?? "",
     docsBase: data?.docsBase ?? "",
     commitHash: data?.commitHash ?? "",
     pulseServer: data?.pulseServer ?? "",
