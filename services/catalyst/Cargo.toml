@@ -186,6 +186,7 @@ ts-rs = "12"
 livekit = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", features = ["rustls-tls-webpki-roots"] }
 
 # Dev-only, shared by the member crates' tests.
+socketioxide = { version = "0.18.9", default-features = false }
 tokio-tungstenite = "0.30.0"
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 

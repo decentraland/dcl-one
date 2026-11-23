@@ -8,7 +8,7 @@
 
 use crate::shared::routing::{delete, erase, get, post};
 use axum::Extension;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
@@ -30,6 +30,8 @@ use crate::shared::client_ip::{
 mod accounts;
 mod contract_checks;
 mod identities;
+mod socket;
+pub(crate) use socket::{SocketBindings, router as socket_router};
 mod validation;
 
 pub(crate) use accounts::MagicDeletion;
@@ -276,7 +278,7 @@ pub struct CreateRequestBody {
     pub unknown_fields: Map<String, Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CreateRequestResponse {
     #[serde(rename = "requestId")]
     pub request_id: String,
@@ -400,17 +402,25 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|error| {
-                if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                    payload_too_large()
-                } else {
-                    bad_request("Invalid request body")
-                }
-            })
+        let body = Bytes::from_request(req, state).await.map_err(|error| {
+            if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                payload_too_large()
+            } else {
+                invalid_json_body()
+            }
+        })?;
+        serde_json::from_slice(&body)
+            .map(Self)
+            .map_err(|_| invalid_json_body())
     }
+}
+
+fn invalid_json_body() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "Bad request", "message": "Invalid JSON body" })),
+    )
+        .into_response()
 }
 
 async fn enforce_body_cap(req: Request, next: Next) -> Response {
@@ -940,18 +950,7 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
     // the outcome; the record then frees its slot and keeps only the 410.
     // A concurrent poller waits on the row lock, finds it no longer signed
     // and returns nothing.
-    let delivered: sqlx::Result<Option<String>> = sqlx::query_scalar(
-        "UPDATE explore_api.auth_requests AS r \
-         SET status = 'fulfilled', outcome = NULL, params = '[]', challenge = '' \
-         FROM (SELECT request_id, outcome FROM explore_api.auth_requests \
-               WHERE request_id = $1 AND status = 'signed' AND expiration >= $2 FOR UPDATE) AS signed \
-         WHERE r.request_id = signed.request_id \
-         RETURNING signed.outcome::text",
-    )
-    .bind(&id)
-    .bind(naive(now_micros()))
-    .fetch_optional(&state.pool)
-    .await;
+    let delivered = claim_outcome(&state.pool, &id, now_micros()).await;
     match delivered {
         Ok(Some(outcome)) => (
             StatusCode::OK,
@@ -969,6 +968,25 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
         },
         Err(err) => internal_error("auth-api: delivering the outcome", err),
     }
+}
+
+async fn claim_outcome<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
+    id: &str,
+    now: DateTime<Utc>,
+) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(
+        "UPDATE explore_api.auth_requests AS r \
+         SET status = 'fulfilled', outcome = NULL, params = '[]', challenge = '' \
+         FROM (SELECT request_id, outcome FROM explore_api.auth_requests \
+               WHERE request_id = $1 AND status = 'signed' AND expiration >= $2 FOR UPDATE) AS signed \
+         WHERE r.request_id = signed.request_id \
+         RETURNING signed.outcome::text",
+    )
+    .bind(id)
+    .bind(naive(now))
+    .fetch_optional(conn)
+    .await
 }
 
 async fn post_request_outcome(
@@ -2083,6 +2101,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn socket_io_pushes_validation_and_outcome_written_by_another_replica() {
+        use tower::ServiceExt;
+
+        let Some((db, socket_state)) = replica().await else {
+            return;
+        };
+        let socket_router = crate::api::router(socket_state.clone());
+        let http_router = crate::api::router(other_replica(&db).await);
+        let endpoint = "/auth-api/socket.io/?EIO=4&transport=polling";
+        let exchange = |method: &'static str, uri: String, body: String| {
+            let app = socket_router.clone();
+            async move {
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::ORIGIN, "https://decentraland.org")
+                            .header(header::CONTENT_TYPE, "text/plain")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = axum::body::to_bytes(response.into_body(), 65_536)
+                    .await
+                    .unwrap();
+                String::from_utf8(bytes.to_vec()).unwrap()
+            }
+        };
+        let open = exchange("GET", endpoint.into(), String::new()).await;
+        let handshake: Value = serde_json::from_str(open.strip_prefix('0').unwrap()).unwrap();
+        let session = format!("{endpoint}&sid={}", handshake["sid"].as_str().unwrap());
+        exchange("POST", session.clone(), "40".into()).await;
+        assert!(
+            exchange("GET", session.clone(), String::new())
+                .await
+                .starts_with("40")
+        );
+
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let chain = delegated(&format!("{:#x}", ephemeral.address()));
+        let request = json!(["request", {
+            "method": "eth_sendTransaction", "params": [{}], "authChain": chain
+        }]);
+        exchange("POST", session.clone(), format!("421{request}")).await;
+        let ack = loop {
+            let packet = exchange("GET", session.clone(), String::new()).await;
+            if packet != "2" {
+                break packet;
+            }
+            exchange("POST", session.clone(), "3".into()).await;
+        };
+        let reply: Value = serde_json::from_str(
+            ack.strip_prefix("431")
+                .unwrap_or_else(|| panic!("expected request acknowledgement, got {ack:?}")),
+        )
+        .unwrap();
+        let id = reply[0]["requestId"].as_str().unwrap();
+
+        let path = format!("/auth-api/v2/requests/{id}");
+        let (status, _) = call(
+            &http_router,
+            json_post(&format!("{path}/validation"), vec![]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        socket_state.auth_sockets.push(&socket_state).await.unwrap();
+        let push = exchange("GET", session.clone(), String::new()).await;
+        let event: Value = serde_json::from_str(push.strip_prefix("42").unwrap()).unwrap();
+        assert_eq!(
+            event,
+            json!(["request-validation-status", { "requestId": id, "code": reply[0]["code"] }])
+        );
+
+        let sender = "0x1234567890123456789012345678901234567890";
+        let outcome = serde_json::to_vec(&json!({ "sender": sender, "result": null })).unwrap();
+        let (status, _) = call(&http_router, json_post(&format!("{path}/outcome"), outcome)).await;
+        assert_eq!(status, StatusCode::OK);
+        socket_state.auth_sockets.push(&socket_state).await.unwrap();
+        let push = exchange("GET", session, String::new()).await;
+        let event: Value = serde_json::from_str(push.strip_prefix("42").unwrap()).unwrap();
+        assert_eq!(
+            event,
+            json!(["outcome", { "requestId": id, "sender": sender, "result": null }])
+        );
+        let (status, _) = call(&http_router, get_req(&format!("/auth-api/requests/{id}"))).await;
+        assert_eq!(status, StatusCode::GONE);
+        db.teardown().await;
+    }
+
+    #[tokio::test]
     async fn a_null_result_is_delivered_as_null() {
         let Some((_db, state)) = replica().await else {
             return;
@@ -2975,8 +3086,29 @@ mod tests {
             ] {
                 let (status, body) = call(&app, request).await;
                 assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
-                assert_eq!(body, json!({ "error": "Invalid request body" }));
+                assert_eq!(
+                    body,
+                    json!({ "error": "Bad request", "message": "Invalid JSON body" })
+                );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn request_json_is_decoded_without_a_json_content_type() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = app(&state);
+        for content_type in [None, Some("text/plain")] {
+            let mut request = Request::builder().method("POST").uri("/auth-api/requests");
+            if let Some(content_type) = content_type {
+                request = request.header(header::CONTENT_TYPE, content_type);
+            }
+            let request = request
+                .body(Body::from(r#"{"method":"eth_sendTransaction"}"#))
+                .unwrap();
+            let (status, body) = call(&app, request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body, json!({ "error": "params is required" }));
         }
     }
 
