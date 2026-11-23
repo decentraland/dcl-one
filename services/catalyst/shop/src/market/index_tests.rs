@@ -6389,9 +6389,16 @@ mod supervisor {
         let url = serve(chain.clone()).await;
         let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
         let namespace = format!("shared-lease-loss-{}", std::process::id());
+        // Only sales' lease is meant to go, and on `second`, whose short
+        // keepalive notices it. The walk and nft's lease are on `first`: a
+        // lease statement that outlasts 200 ms on a loaded runner would end
+        // nft's acquisition too, and sales would walk the window alone.
         let first = Jobs::with_leases(
             db.pool.clone(),
-            lease_settings(&namespace, Duration::from_millis(100)),
+            LeaseSettings {
+                keepalive: Duration::from_secs(30),
+                ..lease_settings(&namespace, Duration::from_millis(100))
+            },
         )
         .with_first_pass_now(true);
         let second = Jobs::with_leases(
@@ -6409,17 +6416,28 @@ mod supervisor {
         });
         let mut projections = nft_and_sales(&url);
         projections[1].make = hooked_sales(&hooks);
-        chain_jobs::spawn_with(
-            &first,
-            supervisor(&st, ChainNet::Matic, projections),
-            Some(leases),
-        );
+        // As in `a_commit_past_the_deadline_recovers_from_wherever_the_cursor_is`:
+        // on a short cadence one projection's close can outlast the other's
+        // interval on a slow machine, and sales then walks the new window
+        // alone. On this one each stands idle when the other comes due.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
+        let sup = supervisor(&st, ChainNet::Matic, projections);
+        let stats = sup.stats.clone();
+        chain_jobs::spawn_with(&first, sup, Some(leases));
         for indexer in [INDEXER_NFT, INDEXER_SALES] {
             eventually("each walked alone to the head", || async {
                 published(&db.pool, indexer, ChainNet::Matic).await
             })
             .await;
         }
+        let walks = stats.walks.load(Ordering::SeqCst);
+        eventually("nft and sales walk together", || async {
+            stats.walks.load(Ordering::SeqCst) > walks
+        })
+        .await;
         let before = cursor(&db.pool, INDEXER_SALES, ChainNet::Matic)
             .await
             .unwrap()
@@ -6598,6 +6616,16 @@ mod supervisor {
                 }) as Arc<dyn ChainIndex>
             })
         };
+        // Only a shared walk holds a member to its deadline: sales walking
+        // the window alone would wait in its commit for good. On a short
+        // cadence, one projection's close can outlast the other's interval
+        // on a slow machine, and the other then walks alone. On this one,
+        // each stands idle when the other comes due, and the two walk each
+        // window together.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
         let mut sup = supervisor(&st, ChainNet::Matic, projections);
         sup.member_deadline = Duration::from_millis(300);
         let stats = sup.stats.clone();
@@ -6610,6 +6638,11 @@ mod supervisor {
             .await;
         }
         for (round, landed) in [(1u64, false), (2, true)] {
+            let walks = stats.walks.load(Ordering::SeqCst);
+            eventually("nft and sales walk together again", || async {
+                stats.walks.load(Ordering::SeqCst) > walks
+            })
+            .await;
             let start = last_block(&db.pool, INDEXER_SALES).await;
             let sales = sale_events(&db.pool).await;
             let entered = hooks.write_entered.load(Ordering::SeqCst);
@@ -10359,6 +10392,15 @@ mod compare_sources_tests {
         assert_eq!(r.compared, [(101, 200), (201, 300), (301, 400)]);
         assert!(r.uncovered.is_empty());
         assert_eq!(r.totals.missing + r.totals.extra + r.totals.mismatch, 0);
+        // The fixture's three logs, one per window, on both sides.
+        assert_eq!((r.totals.rpc_logs, r.totals.portal_logs), (3, 3));
+        assert_eq!(
+            r.windows
+                .iter()
+                .map(|w| (w.outcome.rpc_logs, w.outcome.portal_logs))
+                .collect::<Vec<_>>(),
+            [(1, 1), (1, 1), (1, 1)]
+        );
         assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages >= 3);
         assert_eq!(r.windows[0].filter_fingerprint.len(), 64);
         db.drop().await;
@@ -10410,6 +10452,7 @@ mod compare_sources_tests {
         let r = compare(&db, &rpc, &portal, 101, 400).await;
         assert_eq!((r.outcome, r.exit_code()), ("different", 1));
         assert_eq!(r.totals.missing, 1);
+        assert_eq!((r.totals.rpc_logs, r.totals.portal_logs), (3, 2));
         assert!(r.different && !r.incomplete);
         db.drop().await;
     }

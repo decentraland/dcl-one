@@ -76,7 +76,7 @@ fn webtransport_stream_and_datagram_roundtrip() {
         matches!(e, Event::Connect { .. })
     })
     .expect("Connect event");
-    let Event::Connect { peer, ip } = connect else {
+    let Event::Connect { peer, ip, .. } = connect else {
         unreachable!()
     };
     assert_eq!(peer as u32, SLOT_BASE, "first WT peer takes the base slot");

@@ -319,7 +319,7 @@ pub struct Context<'a> {
 /// kind.
 pub async fn validate(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, types::UploadedFile>,
     ctx: &Context<'_>,
 ) -> Result<(), Vec<ValidationError>> {
     let deployment = Deployment {
@@ -374,7 +374,7 @@ pub async fn validate_current_access(
 /// (their bytes are not read).
 pub async fn validate_staging(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, types::UploadedFile>,
     ctx: &Context<'_>,
     include_access: bool,
 ) -> Result<(), Vec<ValidationError>> {

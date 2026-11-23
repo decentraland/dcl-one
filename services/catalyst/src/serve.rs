@@ -280,7 +280,7 @@ pub async fn serve(
         escrow_lease_ownership: config.validator.content_escrow_lease_ownership_enabled,
         ..content::validator::Settings::parse(
             config.validator.ignore_blockchain_access_checks,
-            config.writes.content_writes_enabled,
+            config.writes.content_writes(),
             config.validator.additional_decentraland_address.as_deref(),
             &config.node.eth_network,
             config.content.eth_rpc_url()?,
@@ -302,7 +302,7 @@ pub async fn serve(
         eip1654.clone(),
         validator_settings,
     ));
-    if (config.writes.content_writes_enabled || judges_peer_entities)
+    if (config.writes.content_writes() || judges_peer_entities)
         && !config.validator.ignore_blockchain_access_checks
     {
         content_validator
@@ -610,10 +610,22 @@ pub async fn serve(
     .with_land_authz(Some(land.clone()))
     .with_denylist(content.denylist.clone())
     .with_forwarder(content_forwarder);
-    content.attach_writes(config.writes.content_writes_enabled, Arc::new(deployer));
+    content.attach_writes(config.writes.content_writes(), Arc::new(deployer));
+    // Spool directories of POST /entities requests a crashed process left;
+    // older than any live request, so a running replica's are never touched.
+    {
+        let spool_root = content.spool_root.clone();
+        let stale_after = catalyst_storage::gc::orphan_age_floor(
+            config.worlds.multipart_upload_timeout_ms,
+            config.worlds.deployment_processing_timeout_ms,
+        );
+        tokio::spawn(async move {
+            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+        });
+    }
     // Expired partial uploads (content::partial_deployments) are reclaimed
     // only where they can be made: a node taking local writes.
-    if config.writes.content_writes_enabled {
+    if config.writes.content_writes() {
         content::partial_deployments::spawn(
             &jobs,
             pool.clone(),
@@ -644,10 +656,24 @@ pub async fn serve(
         );
     }
     content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
-    if config.writes.content_writes_enabled {
+    let gateway_cap = content::create_entity::gateway_cap_warning(&content.settings);
+    for warning in config
+        .content
+        .upload_limit_warnings()
+        .into_iter()
+        .chain(gateway_cap)
+    {
+        tracing::warn!("{warning}");
+    }
+    if config.writes.content_writes() {
         tracing::warn!(
             denylisted,
             "CONTENT_WRITES_ENABLED=true: this node is the authority for local deployments and unpublishes"
+        );
+    } else if config.writes.read_only {
+        tracing::info!(
+            denylisted,
+            "READ_ONLY=true: POST /entities and DELETE /scenes/{{coord}} answer 404, whatever CONTENT_WRITES_ENABLED says"
         );
     } else {
         tracing::info!(

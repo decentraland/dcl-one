@@ -48,7 +48,6 @@ let
     "${workspaceDir}/vendor/basisu"
     "${explorerDir}/vendor/rpc-rust"
     "${explorerDir}/vendor/bevy_dui"
-    "${explorerDir}/vendor/boimp"
   ] tree;
   thirdParty = patchedSources // inTree;
 

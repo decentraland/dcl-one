@@ -24,7 +24,7 @@ use super::checker::{
     BlockchainChecker, validate_item_access, validate_outfits_access, validate_profile_access,
 };
 use super::fake_chain::{self, FakeChain, Query, Reply};
-use super::types::OwnedDeployment;
+use super::types::{OwnedDeployment, UploadedFile};
 use super::*;
 use crate::auth::hash_bytes_v1;
 use crate::http::Outbound;
@@ -88,23 +88,15 @@ async fn signed(
     uploads: &[Vec<u8>],
 ) -> (
     Entity,
-    HashMap<String, bytes::Bytes>,
+    HashMap<String, UploadedFile>,
     crate::auth::AuthChain,
     String,
 ) {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
+    use catalyst_shared::test_keys::{ENTITY_KEY, address_of, signed_chain};
     let bytes = serde_json::to_vec(&entity).unwrap();
     let id = hash_bytes_v1(&bytes);
-    let key: PrivateKeySigner = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        .parse()
-        .unwrap();
-    let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
-    let signer = format!("{:#x}", key.address());
-    let chain = serde_json::from_value(json!([
-        {"type": "SIGNER", "payload": signer},
-        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
-    ]))
-    .unwrap();
+    let signer = address_of(ENTITY_KEY);
+    let chain = signed_chain(ENTITY_KEY, &id).await;
     let parsed = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
     let mut files = HashMap::from([(id.clone(), bytes.into())]);
     for upload in uploads {

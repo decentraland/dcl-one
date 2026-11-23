@@ -472,7 +472,7 @@ fn gltf_with_scene(default_scene: Option<Handle<Scene>>) -> Gltf {
     }
 }
 
-fn app_with_avatar_scenes() -> App {
+pub(crate) fn app_with_avatar_scenes() -> App {
     let mut app = app_with_emote_downloads();
     app.add_plugins((TransformPlugin, ScenePlugin))
         .register_type::<Name>()
@@ -490,7 +490,8 @@ fn app_with_avatar_scenes() -> App {
         .init_asset::<SkinnedMeshInverseBindposes>()
         .init_asset::<AnimationGraph>()
         .init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>()
-        .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
+        .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>()
+        .init_resource::<crate::processing_timing::AvatarProcessingRun>();
     app.finish();
     app.cleanup();
     app
@@ -529,7 +530,7 @@ fn broken_body_gltf(app: &mut App, failure: BodyGltfFailure) -> Handle<Gltf> {
     }
 }
 
-fn usable_body_gltf(world: &mut World) -> Handle<Gltf> {
+pub(crate) fn usable_body_gltf(world: &mut World) -> Handle<Gltf> {
     let mut scene = World::new();
     let armature = scene
         .spawn((
@@ -550,7 +551,7 @@ fn usable_body_gltf(world: &mut World) -> Handle<Gltf> {
         .add(gltf_with_scene(Some(scene)))
 }
 
-fn register_test_body(world: &mut World, urn: WearableUrn, gltf: Handle<Gltf>) {
+pub(crate) fn register_test_body(world: &mut World, urn: WearableUrn, gltf: Handle<Gltf>) {
     world
         .run_system_once(move |mut wearables: CollectibleManager<Wearable>| {
             // The base body supplies all geometry; no default garment needs to resolve in this fixture.
@@ -603,7 +604,7 @@ fn test_wearable_data(urn: &WearableUrn) -> CollectibleData<Wearable> {
     }
 }
 
-fn avatar_build(world: &mut World, owner: Entity) -> Entity {
+pub(crate) fn avatar_build(world: &mut World, owner: Entity) -> Entity {
     world
         .query::<(Entity, &AvatarDefinition, &ChildOf)>()
         .iter(world)
