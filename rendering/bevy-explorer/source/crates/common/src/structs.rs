@@ -2031,14 +2031,17 @@ pub struct PlayerTeleported {
     pub position: Vec3,
 }
 
-/// The local player's parcel changed, or the scene the realm lists at it did. `old` is the parcel
-/// before (`None` for the first; `parcel` itself when only the scene changed). `scene`: `None`
-/// unresolved, `Some(None)` an empty parcel, `Some(Some(hash))` a scene.
+/// The local player's parcel changed, the scene the realm lists at it did, or the player entered
+/// or left the world. `old` is the parcel before (`None` for the first; `parcel` itself when only
+/// the scene or `in_world` changed). `scene`: `None` unresolved, `Some(None)` an empty parcel,
+/// `Some(Some(hash))` a scene. `in_world` is read with the parcel: false behind the loading
+/// screen ([`OutOfWorld`]).
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct PlayerParcelChanged {
     pub old: Option<IVec2>,
     pub parcel: IVec2,
     pub scene: Option<Option<String>>,
+    pub in_world: bool,
 }
 
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional

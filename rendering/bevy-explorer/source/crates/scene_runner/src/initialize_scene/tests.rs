@@ -721,11 +721,12 @@ fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
 }
 
 // A new parcel reports the one before; a change of the scene listed at the parcel the player
-// stands on (a new realm at the same parcel) reports the parcel again, with the new scene.
+// stands on (a new realm at the same parcel), or entering the world, reports the parcel again.
+// A player placed this frame is reported at the new parcel, with whether it is in world.
 #[test]
-fn the_player_parcel_reports_moves_and_scene_changes() {
+fn the_player_parcel_reports_moves_scene_changes_and_entering_the_world() {
     #[derive(Resource, Default)]
-    struct Seen(Vec<(Option<IVec2>, IVec2, Option<Option<String>>)>);
+    struct Seen(Vec<(Option<IVec2>, IVec2, Option<Option<String>>, bool)>);
     let mut app = App::new();
     app.init_resource::<ScenePointers>()
         .init_resource::<Seen>()
@@ -736,18 +737,25 @@ fn the_player_parcel_reports_moves_and_scene_changes() {
                 report_player_parcel,
                 |mut changes: EventReader<PlayerParcelChanged>, mut seen: ResMut<Seen>| {
                     for change in changes.read() {
-                        seen.0
-                            .push((change.old, change.parcel, change.scene.clone()));
+                        seen.0.push((
+                            change.old,
+                            change.parcel,
+                            change.scene.clone(),
+                            change.in_world,
+                        ));
                     }
                 },
             )
                 .chain(),
         );
+    // behind the loading screen; its global transform is stale and never read
     let player = app
         .world_mut()
         .spawn((
             PrimaryUser::default(),
-            GlobalTransform::from_xyz(8.0, 0.0, -8.0),
+            Transform::from_xyz(8.0, 0.0, -8.0),
+            GlobalTransform::from_xyz(-100.0, 0.0, 100.0),
+            OutOfWorld,
         ))
         .id();
     app.update();
@@ -758,16 +766,23 @@ fn the_player_parcel_reports_moves_and_scene_changes() {
         pointers.set_all_scenes_known();
     }
     app.update();
-    *app.world_mut().get_mut::<GlobalTransform>(player).unwrap() =
-        GlobalTransform::from_xyz(24.0, 0.0, -8.0);
+    // placed at the spawn point on the next parcel and let in
+    app.world_mut()
+        .get_mut::<Transform>(player)
+        .unwrap()
+        .translation = Vec3::new(24.0, 0.0, -8.0);
+    app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+    app.update();
+    app.world_mut().entity_mut(player).insert(OutOfWorld);
     app.update();
 
     assert_eq!(
         app.world().resource::<Seen>().0,
         [
-            (None, IVec2::ZERO, None),
-            (Some(IVec2::ZERO), IVec2::ZERO, Some(None)),
-            (Some(IVec2::ZERO), IVec2::X, Some(None)),
+            (None, IVec2::ZERO, None, false),
+            (Some(IVec2::ZERO), IVec2::ZERO, Some(None), false),
+            (Some(IVec2::ZERO), IVec2::X, Some(None), true),
+            (Some(IVec2::X), IVec2::X, Some(None), false),
         ]
     );
 }

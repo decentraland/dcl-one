@@ -405,7 +405,7 @@ impl SegmentConfig {
     /// The fields a client event goes out with: these, plus the wallet's chain read now. `None`
     /// when the node would refuse the event: no usable chain (a guest, before login, an expired
     /// delegation) or a wallet that is not the identity these fields name.
-    pub fn client_event_common(
+    pub(crate) fn client_event_common(
         &self,
         wallet: &wallet::Wallet,
     ) -> Option<SegmentEventCommonExplorerFields> {
@@ -413,7 +413,6 @@ impl SegmentConfig {
         if !address.eq_ignore_ascii_case(&self.common.dcl_eth_address) {
             return None;
         }
-        // checked before the clone: a player without a chain retries a pending move every frame
         let auth_chain = login_auth_chain(wallet, Utc::now())?;
         let mut common = self.common.clone();
         common.auth_chain = Some(auth_chain);
@@ -427,6 +426,37 @@ impl SegmentConfig {
 
     pub fn update_position(&mut self, position: String) {
         self.common.position = position;
+    }
+}
+
+/// A client event held until there is a usable chain (`vertical_height_reached`, a pending
+/// `move_to_parcel`) is tried again only after the wallet or [`SegmentConfig`] changes: only a
+/// login, a new delegation or a new identity makes an unusable chain usable.
+#[derive(Default)]
+pub(crate) struct ChainRetry {
+    unusable: bool,
+}
+
+impl ChainRetry {
+    /// Every run, before anything returns early, so that no change is missed.
+    pub(crate) fn observe(&mut self, wallet: Option<&Res<wallet::Wallet>>, config_changed: bool) {
+        if config_changed || wallet.is_some_and(|wallet| wallet.is_changed()) {
+            self.unusable = false;
+        }
+    }
+
+    /// [`SegmentConfig::client_event_common`], or `None` while the last unusable chain stands.
+    pub(crate) fn client_event_common(
+        &mut self,
+        config: &SegmentConfig,
+        wallet: Option<&wallet::Wallet>,
+    ) -> Option<SegmentEventCommonExplorerFields> {
+        if self.unusable {
+            return None;
+        }
+        let common = wallet.and_then(|wallet| config.client_event_common(wallet));
+        self.unusable = common.is_none();
+        common
     }
 }
 

@@ -1312,23 +1312,28 @@ pub fn process_realm_change(
     }
 }
 
-/// The player's parcel, and the scene the realm lists there, as analytics reports them.
+/// The player's parcel, the scene the realm lists there and whether the player is in world, as
+/// analytics reports them.
 fn report_player_parcel(
-    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    // `GlobalTransform` lags a placement until `PostUpdate`; `in_world` must match the parcel
+    player: Query<(&Transform, Has<OutOfWorld>), With<PrimaryUser>>,
     pointers: Res<ScenePointers>,
     mut last: Local<Option<PlayerParcelChanged>>,
     mut changes: EventWriter<PlayerParcelChanged>,
 ) {
-    let Ok(player) = player.single() else {
+    let Ok((player, out_of_world)) = player.single() else {
         return;
     };
-    let parcel = vec3_to_parcel(player.translation());
+    let parcel = vec3_to_parcel(player.translation);
+    let in_world = !out_of_world;
     let scene = pointers.get(parcel).map(|pointer| match pointer {
         PointerResult::Nothing => None,
         PointerResult::Exists { hash, .. } => Some(hash.as_str()),
     });
     if last.as_ref().is_some_and(|last| {
-        last.parcel == parcel && last.scene.as_ref().map(Option::as_deref) == scene
+        last.parcel == parcel
+            && last.scene.as_ref().map(Option::as_deref) == scene
+            && last.in_world == in_world
     }) {
         return;
     }
@@ -1336,6 +1341,7 @@ fn report_player_parcel(
         old: last.as_ref().map(|last| last.parcel),
         parcel,
         scene: scene.map(|scene| scene.map(str::to_owned)),
+        in_world,
     };
     changes.write(change.clone());
     *last = Some(change);

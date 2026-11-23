@@ -3,7 +3,9 @@
 //! since the last report, and `vertical_height_reached` once per login after a total elevation
 //! gain of 500 m on foot. Only movement under the player's own control counts.
 //! `move_to_parcel` goes with the parcel reports ([`crate::primary_player_parcel_position`]).
-//! Each goes out only with a usable auth chain ([`SegmentConfig::client_event_common`]).
+//! Each goes out only with a usable auth chain ([`SegmentConfig::client_event_common`]); the
+//! elevation event, held until there is one, is tried again only when that can change
+//! ([`ChainRetry`]).
 
 use bevy::prelude::*;
 use common::structs::{
@@ -17,7 +19,7 @@ use crate::{
         SegmentEvent, SegmentEventUsedEmote, SegmentEventVerticalHeightReached,
         SegmentEventWalkedDistance, UNAUTHENTICATED,
     },
-    segment_system::{SegmentConfig, SegmentMetricsEvents},
+    segment_system::{ChainRetry, SegmentConfig, SegmentMetricsEvents},
 };
 
 /// The avatar has no footstep events, so a step is this much grounded walking at the player's own
@@ -194,14 +196,18 @@ pub(crate) fn report_badge_events(
     wallet: Option<Res<Wallet>>,
     mut emotes: EventReader<PlayerEmoteTriggered>,
     mut teleports: EventReader<PlayerTeleported>,
-    mut locals: Local<(StepCounter, ElevationGain, EmoteThrottle)>,
+    mut locals: Local<(StepCounter, ElevationGain, EmoteThrottle, ChainRetry)>,
 ) {
+    let (steps, elevation, throttle, retry) = &mut *locals;
+    retry.observe(
+        wallet.as_ref(),
+        config.as_ref().is_some_and(|config| config.is_changed()),
+    );
     let (Some(config), Some(mut metrics)) = (config, metrics) else {
         emotes.clear();
         teleports.clear();
         return;
     };
-    let (steps, elevation, throttle) = &mut *locals;
     // read per event: a refreshed delegation is used, an expired one is not
     let client_common = || wallet.as_ref().and_then(|w| config.client_event_common(w));
     let address = config.common().dcl_eth_address.clone();
@@ -240,7 +246,7 @@ pub(crate) fn report_badge_events(
         }
     }
     if let Some(height) = elevation.tick(&address, dynamics.own_displacement.y, footing) {
-        if let Some(common) = client_common() {
+        if let Some(common) = retry.client_event_common(&config, wallet.as_deref()) {
             metrics.add_event(
                 SegmentEvent::VerticalHeightReached(SegmentEventVerticalHeightReached { height }),
                 &common,
@@ -339,6 +345,56 @@ mod tests {
             ..dynamics(Vec3::new(0.025, 0.13, 0.0), Vec3::ZERO)
         };
         assert_eq!(footing(&jumping), Footing::Airborne);
+    }
+
+    // Past the threshold without a usable chain the event is not tried again every frame, only
+    // once the wallet changes; then it goes out once.
+    #[test]
+    fn the_elevation_event_is_tried_again_when_the_wallet_changes() {
+        let root = wallet::local_guest::new_root_key();
+        let (ephemeral, delegates) =
+            wallet::local_guest::sign_identity(&root, chrono::Utc::now().timestamp_millis())
+                .unwrap();
+        let mut config = SegmentConfig::new("user".into(), "s".into(), "1.0".into(), None, false);
+        config.update_identity(format!("{:#x}", root.address()), false);
+        let (sender, mut receiver) = common::rpc::RpcStreamSender::channel();
+        let mut metrics = SegmentMetricsEvents::default();
+        metrics.add_listener(sender);
+        let mut wallet = Wallet::default();
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .insert_resource(metrics)
+            .insert_resource(config)
+            .insert_resource(wallet.clone())
+            .add_event::<PlayerEmoteTriggered>()
+            .add_event::<PlayerTeleported>()
+            .add_systems(Update, report_badge_events);
+        // a 9 m rise a frame on foot passes the threshold within 60 frames
+        app.world_mut().spawn((
+            PrimaryUser::default(),
+            dynamics(Vec3::new(0.025, 9.0, 0.0), Vec3::ZERO),
+        ));
+        let mut reached = || {
+            std::iter::from_fn(|| receiver.try_recv().ok())
+                .filter(|event| event.event == "vertical_height_reached")
+                .count()
+        };
+        for _ in 0..60 {
+            app.update();
+        }
+        assert_eq!(reached(), 0);
+
+        // the shared wallet signs in without the resource being marked changed
+        wallet.finalize(root.address(), ephemeral, delegates, false);
+        app.update();
+        app.update();
+        assert_eq!(reached(), 0);
+
+        app.world_mut().resource_mut::<Wallet>().set_changed();
+        app.update();
+        app.world_mut().resource_mut::<Wallet>().set_changed();
+        app.update();
+        assert_eq!(reached(), 1);
     }
 
     // The node counts one emote a minute, so the rest are not sent; a new login starts over.

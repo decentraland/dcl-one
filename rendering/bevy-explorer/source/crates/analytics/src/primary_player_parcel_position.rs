@@ -1,12 +1,12 @@
 //! The primary player's parcel changes, as the scene runner reports them ([`PlayerParcelChanged`]):
 //! `Explorer Move To Parcel` and the reported position on every new parcel, and the node's
 //! `move_to_parcel` per login and realm, with the scene there, once in world and with a usable
-//! auth chain ([`SegmentConfig::client_event_common`]).
+//! auth chain ([`ChainRetry`]).
 
 use crate::data_definition::{
     SegmentEvent, SegmentEventExplorerMoveToParcel, SegmentEventMoveToParcel,
 };
-use crate::segment_system::{SegmentConfig, SegmentMetricsEvents};
+use crate::segment_system::{ChainRetry, SegmentConfig, SegmentMetricsEvents};
 use bevy::prelude::*;
 use common::structs::{OutOfWorld, PlayerParcelChanged, PrimaryUser};
 use wallet::Wallet;
@@ -31,8 +31,9 @@ impl ParcelTracker {
     }
 }
 
-/// The player's parcel and the scene there, as last reported.
-type ReportedParcel = (IVec2, Option<Option<String>>);
+/// The player's parcel, the scene there and whether the player was in world there, as last
+/// reported.
+type ReportedParcel = (IVec2, Option<Option<String>>, bool);
 
 /// A move made without a usable chain goes out from the last parcel sent once there is one.
 pub(crate) fn report_parcel_changes(
@@ -41,9 +42,10 @@ pub(crate) fn report_parcel_changes(
     mut config: ResMut<SegmentConfig>,
     mut metrics: ResMut<SegmentMetricsEvents>,
     wallet: Option<Res<Wallet>>,
-    mut state: Local<(Option<ReportedParcel>, ParcelTracker)>,
+    mut state: Local<(Option<ReportedParcel>, ParcelTracker, ChainRetry)>,
 ) {
-    let (reported, tracker) = &mut *state;
+    let (reported, tracker, retry) = &mut *state;
+    retry.observe(wallet.as_ref(), config.is_changed());
     for change in changes.read() {
         if change.old != Some(change.parcel) {
             // the spawn is not a move from anywhere
@@ -61,11 +63,13 @@ pub(crate) fn report_parcel_changes(
             );
             config.update_position(next);
         }
-        *reported = Some((change.parcel, change.scene.clone()));
+        *reported = Some((change.parcel, change.scene.clone(), change.in_world));
     }
 
-    // a realm change holds the player out of world at the old realm's parcel
-    let Some((parcel, scene)) = reported.as_ref() else {
+    // the parcel must have been reported in world: a player placed at the spawn point was out of
+    // world at the loading-screen parcel. A realm change holds the player out of world at the old
+    // realm's parcel before it is reported.
+    let Some((parcel, scene, true)) = reported.as_ref() else {
         return;
     };
     if in_world.single().is_err() {
@@ -75,7 +79,7 @@ pub(crate) fn report_parcel_changes(
     let Some(old) = tracker.moved(address, realm, *parcel) else {
         return;
     };
-    let Some(common) = wallet.and_then(|wallet| config.client_event_common(&wallet)) else {
+    let Some(common) = retry.client_event_common(&config, wallet.as_deref()) else {
         return;
     };
     tracker.sent(address, realm, *parcel);
@@ -106,11 +110,18 @@ mod tests {
         (app, player, receiver)
     }
 
-    fn change(app: &mut App, old: Option<IVec2>, parcel: IVec2, scene: Option<Option<&str>>) {
+    fn change(
+        app: &mut App,
+        old: Option<IVec2>,
+        parcel: IVec2,
+        scene: Option<Option<&str>>,
+        in_world: bool,
+    ) {
         app.world_mut().send_event(PlayerParcelChanged {
             old,
             parcel,
             scene: scene.map(|scene| scene.map(str::to_owned)),
+            in_world,
         });
         app.update();
     }
@@ -121,15 +132,32 @@ mod tests {
             .collect()
     }
 
+    fn moves(
+        receiver: &mut RpcStreamReceiver<AnalyticsEvent>,
+    ) -> Vec<(String, String, Option<String>)> {
+        sent(receiver)
+            .into_iter()
+            .filter(|(event, _)| event == "move_to_parcel")
+            .map(|(_, properties)| {
+                (
+                    properties["old_parcel"].as_str().unwrap().to_owned(),
+                    properties["new_parcel"].as_str().unwrap().to_owned(),
+                    properties["scene_hash"].as_str().map(str::to_owned),
+                )
+            })
+            .collect()
+    }
+
     // The run's first parcel is the spawn, a move from nowhere; the next is a move from it. A
-    // change of the scene alone is no move.
+    // change of the scene alone, or entering the world, is no move.
     #[test]
     fn the_spawn_parcel_is_not_a_move_from_anywhere() {
         let config = SegmentConfig::new("user".into(), "s".into(), "1.0".into(), None, false);
         let (mut app, _, mut receiver) = app(config);
-        change(&mut app, None, IVec2::ZERO, None);
-        change(&mut app, Some(IVec2::ZERO), IVec2::X, None);
-        change(&mut app, Some(IVec2::X), IVec2::X, Some(None));
+        change(&mut app, None, IVec2::ZERO, None, false);
+        change(&mut app, Some(IVec2::ZERO), IVec2::X, None, false);
+        change(&mut app, Some(IVec2::X), IVec2::X, Some(None), false);
+        change(&mut app, Some(IVec2::X), IVec2::X, Some(None), true);
 
         let from: Vec<_> = sent(&mut receiver)
             .into_iter()
@@ -153,22 +181,9 @@ mod tests {
         let (wallet, config) = signed_in(Utc::now().timestamp_millis(), false);
         let (mut app, player, mut receiver) = app(config);
         app.insert_resource(Wallet::default());
-        let moves = |receiver: &mut RpcStreamReceiver<AnalyticsEvent>| -> Vec<_> {
-            sent(receiver)
-                .into_iter()
-                .filter(|(event, _)| event == "move_to_parcel")
-                .map(|(_, properties)| {
-                    (
-                        properties["old_parcel"].as_str().unwrap().to_owned(),
-                        properties["new_parcel"].as_str().unwrap().to_owned(),
-                        properties["scene_hash"].as_str().map(str::to_owned),
-                    )
-                })
-                .collect()
-        };
 
-        change(&mut app, None, IVec2::ZERO, Some(Some("genesis")));
-        change(&mut app, Some(IVec2::ZERO), IVec2::X, Some(None));
+        change(&mut app, None, IVec2::ZERO, Some(Some("genesis")), true);
+        change(&mut app, Some(IVec2::ZERO), IVec2::X, Some(None), true);
         assert_eq!(moves(&mut receiver), []);
 
         app.insert_resource(wallet);
@@ -179,16 +194,30 @@ mod tests {
             [("(NaN, NaN)".to_owned(), "(1, 0)".to_owned(), None)]
         );
 
+        // the realm changes before the scene runner reports the player out of world
         app.world_mut().entity_mut(player).insert(OutOfWorld);
         app.world_mut()
             .resource_mut::<SegmentConfig>()
             .update_realm("https://worlds.example/world/a.dcl.eth/".into());
         app.update();
-        change(&mut app, Some(IVec2::X), IVec2::X, Some(Some("world")));
+        change(
+            &mut app,
+            Some(IVec2::X),
+            IVec2::X,
+            Some(Some("world")),
+            false,
+        );
         assert_eq!(moves(&mut receiver), []);
 
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
         app.update();
+        change(
+            &mut app,
+            Some(IVec2::X),
+            IVec2::X,
+            Some(Some("world")),
+            true,
+        );
         app.update();
         assert_eq!(
             moves(&mut receiver),
@@ -198,5 +227,64 @@ mod tests {
                 Some("world".to_owned())
             )]
         );
+    }
+
+    // A player let out of the loading screen is placed at a spawn point on another parcel. The
+    // frame it is in world, the last report can still be the loading-screen parcel, made out of
+    // world: no move goes for it, only the move to the spawn parcel once reported.
+    #[test]
+    fn a_move_goes_for_the_spawn_parcel_not_the_loading_screen_parcel() {
+        let (wallet, config) = signed_in(Utc::now().timestamp_millis(), false);
+        let (mut app, player, mut receiver) = app(config);
+        app.insert_resource(wallet);
+        app.world_mut().entity_mut(player).insert(OutOfWorld);
+
+        change(&mut app, None, IVec2::ZERO, Some(Some("loading")), false);
+        app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+        app.update();
+        assert_eq!(moves(&mut receiver), []);
+
+        change(
+            &mut app,
+            Some(IVec2::ZERO),
+            IVec2::X,
+            Some(Some("spawn")),
+            true,
+        );
+        assert_eq!(
+            moves(&mut receiver),
+            [(
+                "(NaN, NaN)".to_owned(),
+                "(1, 0)".to_owned(),
+                Some("spawn".to_owned())
+            )]
+        );
+    }
+
+    // Without a usable chain a pending move is not tried again every frame, only once the wallet
+    // changes: a chain that became usable unseen waits for that change.
+    #[test]
+    fn a_pending_move_is_tried_again_when_the_wallet_changes() {
+        let root = wallet::local_guest::new_root_key();
+        let (ephemeral, delegates) =
+            wallet::local_guest::sign_identity(&root, Utc::now().timestamp_millis()).unwrap();
+        let mut config = SegmentConfig::new("user".into(), "s".into(), "1.0".into(), None, false);
+        config.update_identity(format!("{:#x}", root.address()), false);
+        let (mut app, _, mut receiver) = app(config);
+        let mut wallet = Wallet::default();
+        app.insert_resource(wallet.clone());
+        change(&mut app, None, IVec2::ZERO, Some(None), true);
+        app.update();
+        assert_eq!(moves(&mut receiver), []);
+
+        // the shared wallet signs in without the resource being marked changed
+        wallet.finalize(root.address(), ephemeral, delegates, false);
+        app.update();
+        app.update();
+        assert_eq!(moves(&mut receiver), []);
+
+        app.world_mut().resource_mut::<Wallet>().set_changed();
+        app.update();
+        assert_eq!(moves(&mut receiver).len(), 1);
     }
 }
