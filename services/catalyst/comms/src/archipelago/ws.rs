@@ -447,6 +447,7 @@ async fn handle_socket(
                                         // a peer's cluster is unchanged: a client that reconnects
                                         // standing still is given a room only because of this.
                                         state.gatekeeper.announce_session(&signer, &session);
+                                        state.logins.credit(&signer, &challenge_to_sign);
                                         stage = Stage::Completed;
                                         drop(pending.take());
                                         handshake_deadline = tokio::time::Instant::now() + handshake_timeout;

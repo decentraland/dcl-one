@@ -165,7 +165,7 @@ pub struct State {
     /// `None` reads such chains as unverifiable.
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
-    pub referral: referral::Referral,
+    pub referral: Arc<referral::Referral>,
     /// The wallet topology (Pulse islands and World rooms), attached with the
     /// social RPC's (`serve`): who `onlyOnline` counts as online. Unattached, no one is.
     pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
@@ -262,9 +262,25 @@ impl State {
         http: &crate::http::Outbound,
         explore: crate::explore::SharedState,
     ) -> Self {
+        let referral = Arc::new(referral::Referral::new(
+            pool.clone(),
+            http.clone(),
+            settings.referral.clone(),
+        ));
+        Self::with_referral(pool, storage, settings, eip1654, explore, referral)
+    }
+
+    /// As [`State::new`] over the process's one `referral`, which comms also
+    /// credits logins to.
+    pub fn with_referral(
+        pool: PgPool,
+        storage: Arc<Storage>,
+        settings: Settings,
+        eip1654: Option<Arc<dyn Eip1654Validator>>,
+        explore: crate::explore::SharedState,
+        referral: Arc<referral::Referral>,
+    ) -> Self {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
-        let referral =
-            referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
             pool,

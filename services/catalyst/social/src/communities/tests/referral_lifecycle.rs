@@ -268,7 +268,9 @@ async fn referral_http_response_and_committed_rejection_survive_a_stalled_slack_
         &crate::http::Outbound::for_tests(),
         State::explore_for_tests(&pool),
     );
-    state.referral.set_test_slack_endpoint(endpoint);
+    Arc::get_mut(&mut state.referral)
+        .unwrap()
+        .set_test_slack_endpoint(endpoint);
     let app = router(Arc::new(state));
     let (referrer, invited) = (wallet(), wallet());
     let case = Case::new("post", "/v1/referral-progress")

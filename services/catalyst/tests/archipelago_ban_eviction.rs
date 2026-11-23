@@ -118,9 +118,14 @@ async fn start_server(cfg: Settings, bans: &Bans) -> (u16, AppState, Jobs) {
 /// The connector beside `gatekeeper`, whose LiveKit mints its grants and evicts its kicks.
 async fn start_server_beside(cfg: Settings, gatekeeper: SharedState) -> (u16, AppState, Jobs) {
     let jobs = Jobs::new();
-    let state = connector::build_state(cfg, gatekeeper, &jobs)
-        .await
-        .expect("state");
+    let state = connector::build_state(
+        cfg,
+        gatekeeper,
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
+        &jobs,
+    )
+    .await
+    .expect("state");
     connector::spawn_jobs(&state, &jobs);
     state.gatekeeper.spawn_jobs(&jobs);
     let port = archipelago::serve(state.clone()).await;

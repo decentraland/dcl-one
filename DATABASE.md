@@ -1280,6 +1280,15 @@ The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
 
+Clients that do not call that route are credited from the archipelago
+connector: each completed `/ws` challenge handshake runs the same login
+recording for its wallet, on a spawned task after the welcome (at most 16 at
+once and 4,096 waiting; a 5-second timeout per attempt; three attempts with
+the same login ID). Its login ID is a UUID v5 of the handshake's single-use
+challenge, and its occurrence is the server's time. Each handshake adds one
+indexed invited-wallet lookup; the receipts, quota and locks below are shared
+by both sources. Only the primary `serve` runs `/ws`.
+
 Most logins have no referral attribution and require only the indexed invited
 wallet lookup. For an attributed wallet, `social.referral_login_receipts` stores
 one receipt keyed by `(invited_user, login_id)` in the same transaction as the

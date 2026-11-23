@@ -66,9 +66,16 @@ impl Projection {
         let cluster = configured.cluster.clone();
         let gatekeeper = Arc::new(configured.with_cluster_for_test(cluster).unwrap());
         let jobs = catalyst::jobs::Jobs::new();
-        let state = catalyst::comms::archipelago::build_state(config(), gatekeeper, &jobs)
-            .await
-            .unwrap();
+        let state = catalyst::comms::archipelago::build_state(
+            config(),
+            gatekeeper,
+            std::sync::Arc::new(
+                catalyst::comms::interfaces::test_support::RecordedLogins::default(),
+            ),
+            &jobs,
+        )
+        .await
+        .unwrap();
         assert!(state.control_v4.is_available());
         state.gatekeeper.start_island_feed(&jobs, state.clone());
         let social = Arc::new(catalyst::social::rpc::State::new(

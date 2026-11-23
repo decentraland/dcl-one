@@ -2,7 +2,9 @@
 //! The invited user is always the signed-fetch signer: POST records the
 //! attribution (first referrer wins), PATCH marks the signer as signed up,
 //! GET reports the signer's own stats as a referrer. Login events grant
-//! progress after the configured distinct UTC login days. `POST
+//! progress after the configured distinct UTC login days; they come from
+//! the signed `POST /v1/client-login` and from each completed `/ws`
+//! challenge handshake (`comms::archipelago::logins`). `POST
 //! /v1/referral-email` stores the contact email of a referrer at the IRL-swag
 //! tier, checked as upstream's `setReferralEmail` checks it.
 
@@ -937,6 +939,32 @@ pub async fn create_referral(
         .map_err(|_| CommError::bad_request("Invalid referrer address"))?;
     state.referral.create(&referrer, &invited, &ip).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A wallet that signed a fresh `/ws` challenge logged in now; the login id
+/// is the handshake's.
+#[async_trait::async_trait]
+impl crate::comms::interfaces::LoginRecorder for Referral {
+    async fn record_login(
+        &self,
+        wallet: &str,
+        login_id: uuid::Uuid,
+    ) -> Result<(), crate::comms::interfaces::LoginRecordError> {
+        use crate::comms::interfaces::LoginRecordError;
+        let now = chrono::Utc::now().timestamp_millis();
+        let Err(error) = self.record_authenticated_login(wallet, login_id, now).await else {
+            return Ok(());
+        };
+        let reason = format!("{error:?}");
+        if axum::response::IntoResponse::into_response(error)
+            .status()
+            .is_server_error()
+        {
+            Err(LoginRecordError::Transient(reason))
+        } else {
+            Err(LoginRecordError::Refused(reason))
+        }
+    }
 }
 
 /// Explorer reports both fresh and restored authenticated login occurrences.

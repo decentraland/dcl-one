@@ -112,9 +112,14 @@ pub fn allow_policy() -> Arc<dyn AccessPolicy> {
 
 /// The connector takes its dependencies from this gatekeeper, as production does.
 pub async fn build(settings: Settings, gatekeeper: SharedState) -> AppState {
-    archipelago::build_state(settings, gatekeeper, &catalyst::jobs::Jobs::new())
-        .await
-        .expect("state")
+    archipelago::build_state(
+        settings,
+        gatekeeper,
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
+        &catalyst::jobs::Jobs::new(),
+    )
+    .await
+    .expect("state")
 }
 
 pub async fn state_with(settings: Settings, pool: PgPool, mut gatekeeper: SharedState) -> AppState {

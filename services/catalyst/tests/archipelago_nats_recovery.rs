@@ -51,6 +51,7 @@ async fn state_over(
     let state = catalyst::comms::archipelago::build_state(
         cfg,
         archipelago::gatekeeper(Some(link.clone())),
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
         jobs,
     )
     .await
@@ -580,9 +581,14 @@ async fn real_state(
         )
         .unwrap()
         .with_bus(bus);
-    catalyst::comms::archipelago::build_state(config(), Arc::new(state), jobs)
-        .await
-        .unwrap()
+    catalyst::comms::archipelago::build_state(
+        config(),
+        Arc::new(state),
+        std::sync::Arc::new(catalyst::comms::interfaces::test_support::RecordedLogins::default()),
+        jobs,
+    )
+    .await
+    .unwrap()
 }
 
 async fn real_lookup(

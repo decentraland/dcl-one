@@ -13,6 +13,7 @@ pub mod control_v4;
 pub mod enforcement;
 pub mod feed;
 pub mod handlers;
+pub mod logins;
 pub mod observations;
 mod reconciliation;
 pub mod registry;
@@ -48,9 +49,11 @@ pub fn hash_dynamic(bytes: &[u8]) -> [u8; 32] {
 /// with the rest. A test hands in a gatekeeper over an in-process bus and drives the feed
 /// through it. The gatekeeper's island subscriber starts afterwards, with the returned state
 /// as its sockets (`CommsState::start_island_feed`).
+/// `logins` is credited for every wallet that completes the challenge handshake.
 pub async fn build_state(
     settings: Settings,
     gatekeeper: crate::gatekeeper::SharedState,
+    logins: Arc<dyn crate::interfaces::LoginRecorder>,
     jobs: &Jobs,
 ) -> Result<AppState> {
     let pool = gatekeeper.pool.clone();
@@ -135,6 +138,7 @@ pub async fn build_state(
         replica_id,
         ban_checker,
         deny_list,
+        logins: logins::LoginCredits::new(logins),
     });
     feed::start(&state, jobs);
     Ok(state)
@@ -226,9 +230,14 @@ pub(crate) mod test_support {
         let gatekeeper = Arc::new(comms_state(pool).with_bus(bus).with_ban_status(Arc::new(
             crate::gatekeeper::moderation::test_support::StubBanStatus::default(),
         )));
-        build_state(settings, gatekeeper, jobs)
-            .await
-            .expect("state")
+        build_state(
+            settings,
+            gatekeeper,
+            std::sync::Arc::new(crate::interfaces::test_support::RecordedLogins::default()),
+            jobs,
+        )
+        .await
+        .expect("state")
     }
 
     /// `settings` over `bus` with the gatekeeper's island subscriber running on `jobs` and
@@ -355,9 +364,14 @@ mod tests {
         let jobs = crate::jobs::Jobs::new();
         let gatekeeper =
             Arc::new(super::test_support::comms_state(pool.clone()).with_bus(bus.clone()));
-        let state = super::build_state(Settings::for_tests(), gatekeeper, &jobs)
-            .await
-            .unwrap();
+        let state = super::build_state(
+            Settings::for_tests(),
+            gatekeeper,
+            std::sync::Arc::new(crate::interfaces::test_support::RecordedLogins::default()),
+            &jobs,
+        )
+        .await
+        .unwrap();
         let snapshot = Snapshot {
             peers: (0..2)
                 .map(|i| Peer {
