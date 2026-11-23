@@ -81,7 +81,8 @@ pub const HISTOGRAM_BUCKETS: [(&str, &[f64]); 5] = [
 /// The entity types `@dcl/schemas` names; deployments-to-sqs reported any other as `other`.
 const ENTITY_TYPES: [&str; 6] = ["scene", "wearable", "profile", "store", "emote", "outfits"];
 
-/// `entity_type` from a peer's JSON, clamped to a known type or `other`.
+/// `entityType` (the deployments-to-sqs series) from a peer's JSON, clamped to a known type or
+/// `other`. The content server's `entity_type` label goes through [`crate::series::entity_type`].
 pub fn entity_type_label(entity_type: &str) -> &'static str {
     ENTITY_TYPES
         .into_iter()
@@ -220,7 +221,7 @@ impl InFlight {
     }
 
     fn labeled(gauge: &'static str, entity_type: &str) -> Self {
-        let entity_type = entity_type_label(entity_type);
+        let entity_type = crate::series::entity_type(entity_type);
         gauge!(gauge, "entity_type" => entity_type).increment(1.0);
         Self { gauge, entity_type }
     }
@@ -249,10 +250,14 @@ pub fn entity_downloaded(entity_type: &str, ok: bool) {
 
 /// A downloaded entity's validation and hand-off to the batch writer ended after `elapsed`.
 pub fn entity_deployed(entity_type: &str, elapsed: Duration, ok: bool) {
-    let entity_type = entity_type_label(entity_type);
     let failed = if ok { "false" } else { "true" };
-    histogram!(DEPLOYMENT_TIME, "entity_type" => entity_type, "failed" => failed)
-        .record(elapsed.as_secs_f64());
+    histogram!(
+        DEPLOYMENT_TIME,
+        "entity_type" => crate::series::entity_type(entity_type),
+        "failed" => failed
+    )
+    .record(elapsed.as_secs_f64());
+    let entity_type = entity_type_label(entity_type);
     if ok {
         counter!(DEPLOYMENT_SUCCESS, "entityType" => entity_type).increment(1);
     } else {

@@ -408,6 +408,12 @@ impl SnapshotGenerator {
             if cancel.is_some_and(CancellationToken::is_cancelled) {
                 return Err(GenerationError::Cancelled);
             }
+            // Why the window is written, as `dcl_content_server_snapshot_generation_time` labels it.
+            let mut reason = if rebuild {
+                "unknown"
+            } else {
+                "cover_time_range"
+            };
             if let Some(candidate) = saved.iter().find(|s| !rebuild && s.time_range == *interval) {
                 let outdated = candidate.outdated
                     || snapshot_is_outdated(pool, interval, candidate.generation_timestamp)
@@ -426,6 +432,13 @@ impl SnapshotGenerator {
                             warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
                             false
                         });
+                reason = if outdated {
+                    "is_outdated"
+                } else if inactive {
+                    "inactive_entities"
+                } else {
+                    "snapshots_not_stored"
+                };
                 if !outdated && !inactive {
                     match self.reusable(candidate).await {
                         Reuse::Verified => {
@@ -441,7 +454,15 @@ impl SnapshotGenerator {
                     }
                 }
             }
-            let written = generate_window(pool, &self.content.storage, *interval, cancel).await?;
+            let started = Instant::now();
+            let written = generate_window(pool, &self.content.storage, *interval, cancel).await;
+            crate::series::snapshot_generated(
+                started,
+                written.is_ok(),
+                time_range::interval_size_label(interval),
+                reason,
+            );
+            let written = written?;
             self.verified.lock().insert(written.hash);
             summary.generated += 1;
             summary.entities_written += written.entities;

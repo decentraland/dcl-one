@@ -436,7 +436,7 @@ async fn read_form(
             let file_name = field.file_name().unwrap_or("undefined").to_string();
             let mut part = match spool.part().await {
                 Ok(part) => part,
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e, "write_error"))),
             };
             // The files before it, this one and the request's directory.
             let charged = (files.len() as u64 + 2) * SPOOL_FILE_OVERHEAD_BYTES;
@@ -461,12 +461,12 @@ async fn read_form(
                     return Ok(Form::Refused(source_busy()));
                 }
                 if let Err(e) = part.write(&chunk).await {
-                    return Ok(Form::Refused(spool_unavailable(&e)));
+                    return Ok(Form::Refused(spool_unavailable(&e, "write_error")));
                 }
             }
             match part.finish(name).await {
                 Ok(spooled) => files.push(spooled),
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e, "write_error"))),
             }
         } else {
             if field_count >= max_fields {
@@ -499,10 +499,12 @@ async fn read_form(
 }
 
 /// Upstream's 503 for a spool the disk refuses (full, failing): the cause
-/// is logged, the client told to retry.
-fn spool_unavailable(e: &std::io::Error) -> Response {
+/// is logged, the client told to retry. `reason` is `folder`, `write_error`
+/// or `read_error`.
+fn spool_unavailable(e: &std::io::Error, reason: &'static str) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
     metrics::counter!("upload_spool_failures_total", "route" => SPOOL_ROUTE).increment(1);
+    crate::series::upload_spool_failed(reason);
     with_retry_after(
         super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, SPOOL_UNAVAILABLE_MESSAGE),
         header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
@@ -545,6 +547,17 @@ async fn uploads_of(
         .get("entityId")
         .and_then(|id| parts.iter().position(|part| part.names(id)));
     let received: u64 = parts.iter().map(|part| part.len() as u64).sum();
+    // A partial batch refused here is counted as its staging answer.
+    let partial = fields.get("partial").map(String::as_str) == Some("true");
+    let refused = |kind| {
+        if partial {
+            crate::series::partial_answered(kind, None);
+        }
+    };
+    let budget_exhausted_after = |received| {
+        refused("busy");
+        budget_exhausted_after(received)
+    };
     if !memory.grow(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES) {
         return Err(budget_exhausted_after(received));
     }
@@ -554,7 +567,10 @@ async fn uploads_of(
         if !memory.grow(memory.bytes() + part.len() as u64) {
             return Err(budget_exhausted_after(received));
         }
-        let bytes = Bytes::from(part.read().await.map_err(|e| spool_unavailable(&e))?);
+        let bytes = Bytes::from(part.read().await.map_err(|e| {
+            refused("error");
+            spool_unavailable(&e, "read_error")
+        })?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
             .map(|parsed| {
                 let hashes = crate::validator::rules::inspected_hashes(&parsed);
@@ -887,7 +903,9 @@ pub async fn create_entity(
         return Ok(source_busy());
     };
     let received = Arc::new(AtomicU64::new(0));
-    let multipart = Multipart::from_request(counting_body(request, Arc::clone(&received)), &())
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let body = counting_body(request, Arc::clone(&received), Arc::clone(&aborted));
+    let multipart = Multipart::from_request(body, &())
         .await
         .map_err(|_| invalid(NOT_MULTIPART_MESSAGE))?;
     if declared_length(&headers)
@@ -908,6 +926,7 @@ pub async fn create_entity(
         },
         started: request_started,
         received: &received,
+        aborted: &aborted,
     };
     deploy_form(
         &state,
@@ -933,15 +952,19 @@ fn source_busy() -> Response {
 }
 
 /// `request` with its body's bytes added to `received` as they arrive.
+/// A failed chunk is the connection closed or broken under the body: one
+/// client abort, counted once in `aborted`.
 fn counting_body(
     request: axum::extract::Request,
     received: Arc<AtomicU64>,
+    aborted: Arc<std::sync::atomic::AtomicBool>,
 ) -> axum::extract::Request {
     request.map(|body| {
-        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| {
-            if let Ok(chunk) = chunk {
+        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| match chunk {
+            Ok(chunk) => {
                 received.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             }
+            Err(_) => crate::series::body_aborted(&aborted),
         }))
     })
 }
@@ -1002,6 +1025,8 @@ struct Request<'a> {
     started: std::time::Instant,
     /// The body's bytes read so far.
     received: &'a AtomicU64,
+    /// Set once the client's close was counted ([`crate::series::body_aborted`]).
+    aborted: &'a Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
@@ -1026,8 +1051,8 @@ async fn deploy_form(
     // Removed, with every file in it, when this request ends however it
     // ends, after the deploy stored what it keeps.
     let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE, true).await {
-        Ok(spool) => spool,
-        Err(e) => return Ok(spool_unavailable(&e)),
+        Ok(spool) => spool.on_cleanup_failure(crate::series::upload_spool_cleanup_failed),
+        Err(e) => return Ok(spool_unavailable(&e, "folder")),
     };
     let is_partial = |fields: &BTreeMap<String, String>| {
         fields.get("partial").map(String::as_str) == Some("true")
@@ -1058,7 +1083,11 @@ async fn deploy_form(
         },
     );
     let timeout = settings.multipart_upload_timeout;
-    let Ok(form) = tokio::time::timeout(timeout, read).await else {
+    let receiving = crate::series::ReceivingBody::start(Arc::clone(request.aborted));
+    let read = tokio::time::timeout(timeout, read).await;
+    receiving.settled();
+    let Ok(form) = read else {
+        crate::series::multipart_timed_out();
         return Ok(upload_timed_out(
             timeout,
             request.received.load(Ordering::Relaxed),
@@ -1093,6 +1122,7 @@ async fn deploy_form(
     let deploy = deploy_regular(state, &deployer, request, fields, uploads, entity);
     let Ok(answer) = tokio::time::timeout(settings.deployment_processing_timeout, deploy).await
     else {
+        crate::series::deployment_answered("error");
         // Counted: the client may have chosen what stalled (its contract
         // wallet's RPC), and the deploy may yet have committed.
         return Ok(processing_timed_out(settings.deployment_processing_timeout));
@@ -1126,6 +1156,10 @@ async fn deploy_regular(
         .clone();
     let auth_chain = auth_chain_of(&fields)?;
     let failed = |failure: DeployFailure, refundable: bool| {
+        crate::series::deployment_answered(match failure {
+            DeployFailure::Rejected(..) => "validation_error",
+            DeployFailure::Unavailable(_) | DeployFailure::Unverifiable(_) => "error",
+        });
         tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
         let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
         let response = deployment_failure_response(failure);
@@ -1153,6 +1187,7 @@ async fn deploy_regular(
                 return Ok(failed(failure, refundable));
             }
             tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
+            crate::series::deployment_answered("success");
             return Ok(Answer::Decided(created_response(creation_timestamp)));
         }
         Ok(None) => {}
@@ -1197,6 +1232,7 @@ async fn deploy_regular(
     {
         Ok(creation_timestamp) => {
             tracing::info!(entity_id = %entity_id, "POST /entities - Deployment successful");
+            crate::series::deployment_answered("success");
             state.deployments_cache.clear();
             tracing::debug!(
                 target: "catalyst_perf",
@@ -1322,7 +1358,7 @@ mod tests {
         let min = super::super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
         let most = min + entity.len() as u64 + 3000;
 
-        let budget = super::super::upload_admission::UploadBudget::new(most);
+        let budget = super::super::upload_admission::UploadBudget::new("memory", most);
         let mut memory = budget.try_reserve(0).unwrap();
         let (uploads, read) = uploads_of(&fields, parts.clone(), &mut memory)
             .await
@@ -1337,7 +1373,7 @@ mod tests {
         );
         drop(memory);
 
-        let small = super::super::upload_admission::UploadBudget::new(most - 1);
+        let small = super::super::upload_admission::UploadBudget::new("memory", most - 1);
         let mut memory = small.try_reserve(0).unwrap();
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
         let guard = metrics::set_default_local_recorder(&recorder);

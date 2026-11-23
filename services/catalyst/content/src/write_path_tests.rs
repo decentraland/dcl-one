@@ -1530,6 +1530,8 @@ async fn a_profile_with_nul_metadata_preserves_the_write_error_and_active_profil
 #[tokio::test]
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(4).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let (alice, bob) = (PrivateKeySigner::random(), PrivateKeySigner::random());
     let contract =
         format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]).to_string() + "00000000";
@@ -1645,6 +1647,35 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         state.deploy_quota.counted_for(PROFILE_CLIENT_IP),
         6,
         "the 400s and 200s all count"
+    );
+    let rendered = recorder.handle().render();
+    let sample = |name: &str, labels: &[(&str, &str)]| {
+        crate::series::test_support::sample(&rendered, name, labels)
+    };
+    use crate::series::{DEPLOYMENTS_ENDPOINT, TOTAL_DEPLOYMENTS};
+    assert_eq!(
+        sample(DEPLOYMENTS_ENDPOINT, &[("kind", "success")]),
+        Some(3.0)
+    );
+    assert_eq!(
+        sample(DEPLOYMENTS_ENDPOINT, &[("kind", "validation_error")]),
+        Some(3.0)
+    );
+    assert_eq!(
+        sample(
+            TOTAL_DEPLOYMENTS,
+            &[("entity_type", "profile"), ("deployment_context", "LOCAL")]
+        ),
+        Some(3.0),
+        "each stored profile counts once"
+    );
+    assert_eq!(
+        sample(
+            crate::series::RATE_LIMITER_KEYS,
+            &[("entity_type", "profile"), ("cache_type", "deployment")]
+        ),
+        Some(1.0),
+        "the last deploy's pointer, after the window was cleared"
     );
 
     let mut scope: HashMap<String, String> = HashMap::new();
@@ -2097,6 +2128,8 @@ async fn the_upload_limits_follow_their_configuration() {
 /// `Retry-After`, the client told to retry.
 #[tokio::test]
 async fn an_unwritable_spool_answers_503() {
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let blocker =
         std::env::temp_dir().join(format!("catalyst-spool-blocker-{}", uuid::Uuid::new_v4()));
     std::fs::write(&blocker, b"a file, not a folder").unwrap();
@@ -2116,6 +2149,24 @@ async fn an_unwritable_spool_answers_503() {
     );
     assert_eq!(headers[header::RETRY_AFTER], "30");
     assert_eq!(node.state.spool_budget.reserved(), 0);
+    let rendered = recorder.handle().render();
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::UPLOAD_SPOOL_FAILURES,
+            &[("reason", "folder")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::UPLOAD_BUDGET_ACTIVE,
+            &[("budget", "disk")]
+        ),
+        Some(0.0),
+        "the refused request let its share go"
+    );
     let _ = std::fs::remove_file(&blocker);
 }
 
@@ -2239,6 +2290,8 @@ async fn a_spent_quota_is_answered_before_the_upload_budget() {
 /// before its body is read; another client is admitted.
 #[tokio::test]
 async fn a_source_past_its_uploads_in_flight_is_turned_away() {
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let settings = Settings {
         max_concurrent_uploads_per_source: 1,
         ..Settings::for_tests()
@@ -2268,6 +2321,14 @@ async fn a_source_past_its_uploads_in_flight_is_turned_away() {
         StatusCode::BAD_REQUEST,
         "admitted once its upload ends"
     );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::UPLOAD_BUDGET_REJECTIONS,
+            &[("budget", "source"), ("reason", "source_concurrency")]
+        ),
+        Some(1.0)
+    );
 }
 
 /// A body still arriving at the upload timeout answers upstream's 408 with
@@ -2275,6 +2336,8 @@ async fn a_source_past_its_uploads_in_flight_is_turned_away() {
 #[tokio::test]
 async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
     use futures::StreamExt;
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let settings = Settings {
         multipart_upload_timeout: std::time::Duration::from_millis(50),
         ..Settings::for_tests()
@@ -2310,6 +2373,63 @@ async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
         0,
         "an unread form is not counted"
     );
+    let rendered = recorder.handle().render();
+    assert_eq!(
+        crate::series::test_support::sample(&rendered, crate::series::MULTIPART_TIMEOUTS, &[]),
+        Some(1.0)
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::MULTIPART_ABORTS,
+            &[("reason", "client_closed")]
+        ),
+        None,
+        "a timed-out body is not a client abort"
+    );
+}
+
+/// A client that closes its connection while its body is received counts
+/// one `dcl_multipart_upload_aborts_total{reason="client_closed"}`.
+#[tokio::test]
+async fn a_client_closing_mid_body_counts_one_abort() {
+    use tokio::io::AsyncWriteExt;
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let node = deploying_node("client-abort", Settings::for_tests()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, node.router()).into_future());
+
+    let part = "--b\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n\
+                --b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\
+                Content-Type: application/octet-stream\r\n\r\npartial bytes";
+    let head = format!(
+        "POST /content/entities HTTP/1.1\r\nHost: localhost\r\n\
+         Content-Type: multipart/form-data; boundary=b\r\nContent-Length: 100000\r\n\
+         X-Real-IP: 203.0.113.60\r\n\r\n{part}"
+    );
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    client.write_all(head.as_bytes()).await.unwrap();
+    client.flush().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    drop(client);
+
+    let aborts = || {
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::MULTIPART_ABORTS,
+            &[("reason", "client_closed")],
+        )
+    };
+    for _ in 0..100 {
+        if aborts().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(aborts(), Some(1.0));
+    server.abort();
 }
 
 /// An unsynced copy taking only scenes: a form with no typed entity file is

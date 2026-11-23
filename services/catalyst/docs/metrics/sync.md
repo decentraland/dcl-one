@@ -18,7 +18,8 @@ The series are defined in `content/src/sync/metrics.rs`. Fixed label sets render
   single origin. A download that follows a redirect is still counted under the peer that was asked,
   not under the redirect target. The target is chosen by the peer and is not bounded.
 - `entity_type` and `entityType` are one of `scene`, `wearable`, `profile`, `store`, `emote` or
-  `outfits`. Any other value from a peer is reported as `other`.
+  `outfits`. Any other value from a peer is reported as `unknown` in `entity_type`, as the content
+  server's own series do (`content.md`), and as `other` in `entityType`, as deployments-to-sqs did.
 
 ## snapshots-fetcher
 

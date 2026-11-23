@@ -63,6 +63,7 @@ pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
     let mut builder = PrometheusBuilder::new();
     for (name, buckets) in WORLDS_BUCKETS
         .into_iter()
+        .chain(crate::content::series::BUCKETS)
         .chain(crate::content::sync::metrics::HISTOGRAM_BUCKETS)
     {
         builder = builder.set_buckets_for_metric(Matcher::Full(name.into()), buckets)?;
@@ -297,5 +298,57 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The content and sync series render once each, through the exporter serve installs: no
+    /// name is registered by both, no histogram gets two bucket sets, and the merged
+    /// exposition has no duplicate HELP or TYPE line.
+    #[test]
+    fn content_and_sync_series_are_registered_once() {
+        use crate::content::{series, sync::metrics as sync};
+        let render = |register: &dyn Fn()| {
+            let recorder = prometheus_builder().unwrap().build_recorder();
+            let handle = recorder.handle();
+            metrics::with_local_recorder(&recorder, register);
+            handle.render()
+        };
+        let names = |rendered: &str| -> std::collections::BTreeSet<String> {
+            rendered
+                .lines()
+                .filter_map(|l| l.strip_prefix("# TYPE "))
+                .filter_map(|l| l.split(' ').next())
+                .map(str::to_owned)
+                .collect()
+        };
+        let content = names(&render(&series::register_series));
+        let synced = names(&render(&sync::register_series));
+        assert!(!content.is_empty() && !synced.is_empty());
+        let shared: Vec<_> = content.intersection(&synced).collect();
+        assert!(shared.is_empty(), "registered by both: {shared:?}");
+
+        let bucketed: Vec<&str> = series::BUCKETS
+            .iter()
+            .chain(sync::HISTOGRAM_BUCKETS.iter())
+            .map(|(name, _)| *name)
+            .collect();
+        let unique: std::collections::BTreeSet<_> = bucketed.iter().collect();
+        assert_eq!(
+            unique.len(),
+            bucketed.len(),
+            "a histogram with two bucket sets"
+        );
+
+        let both = render(&|| {
+            series::register_series();
+            sync::register_series();
+        });
+        let mut seen = std::collections::BTreeSet::new();
+        for line in both
+            .lines()
+            .filter(|l| l.starts_with("# HELP ") || l.starts_with("# TYPE "))
+        {
+            assert!(seen.insert(line), "duplicate line {line}:\n{both}");
+        }
+        assert_eq!(names(&both), &content | &synced);
     }
 }

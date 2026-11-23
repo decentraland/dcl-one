@@ -133,8 +133,40 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
+            "dcl_deployments_endpoint_counter{kind=\"success\"} 0",
+            "dcl_partial_upload_cleanup_runs_total{outcome=\"deferred\"} 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
+        }
+    }
+
+    /// The serve exporter renders every content histogram as a histogram with its buckets.
+    #[test]
+    fn serve_renders_the_content_histograms_with_their_buckets() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            for (name, _) in crate::content::series::BUCKETS {
+                metrics::histogram!(name).record(1.0);
+            }
+        });
+        let rendered = handle.render();
+        for (name, buckets) in crate::content::series::BUCKETS {
+            assert!(
+                rendered.contains(&format!("# TYPE {name} histogram")),
+                "{name}: {rendered}"
+            );
+            let prefix = format!("{name}_bucket{{le=\"");
+            let le: Vec<&str> = rendered
+                .lines()
+                .filter_map(|line| line.strip_prefix(&prefix))
+                .filter_map(|line| line.split('"').next())
+                .collect();
+            let mut expected: Vec<String> = buckets.iter().map(f64::to_string).collect();
+            expected.push("+Inf".to_string());
+            assert_eq!(le, expected, "{name}");
         }
     }
 }
@@ -620,7 +652,8 @@ pub async fn serve(
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            let swept = catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::series::upload_spool_reclaimed(swept);
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed

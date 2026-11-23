@@ -284,18 +284,15 @@ impl BatchDeployer {
         content_servers: &[String],
         report: Option<&Arc<DeploymentReport>>,
     ) -> Result<(), SyncError> {
-        let skip = match self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
-            Some(skip) => Some(skip),
-            None if self.deployed_bloom.read().maybe_contains(&entity.entity_id)
-                && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp)
-                    .await? =>
-            {
-                Some(Skip::AlreadyDeployed)
-            }
-            None => None,
-        };
-        if let Some(skip) = skip {
+        if let Some(skip) = self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
             skipped(&entity, skip, report);
+            return Ok(());
+        }
+        let deployed = self.deployed_bloom.read().maybe_contains(&entity.entity_id)
+            && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp).await?;
+        crate::series::bloom_filter_checked(deployed, 1);
+        if deployed {
+            skipped(&entity, Skip::AlreadyDeployed, report);
             return Ok(());
         }
         self.schedule_undeployed(entity, content_servers, report)
@@ -328,15 +325,17 @@ impl BatchDeployer {
                 .collect()
         };
         if hits.is_empty() {
+            crate::series::bloom_filter_checked(false, records.len());
             return Ok(());
         }
         let deployed = deployed_entity_ids(&self.pool, &hits).await?;
         records.retain(|e| {
-            let held = deployed.contains(&e.entity_id);
-            if held {
+            let known = deployed.contains(&e.entity_id);
+            crate::series::bloom_filter_checked(known, 1);
+            if known {
                 skipped(e, Skip::AlreadyDeployed, report);
             }
-            !held
+            !known
         });
         Ok(())
     }

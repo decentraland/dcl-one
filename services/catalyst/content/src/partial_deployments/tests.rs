@@ -281,6 +281,8 @@ fn entity_file(scene: &Scene) -> (String, Bytes) {
 #[tokio::test]
 async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     require_test_db!(Some(node) = Node::new("roundtrip", Limits::default()).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let router = node.router();
     let signer = PrivateKeySigner::random();
     let mut scene = make_scene(&signer, &[b"partial-a", b"partial-b"], "scene").await;
@@ -351,6 +353,62 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
         Some(scene.bytes.clone())
     );
 
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["creationTimestamp"], created,
+        "a replay answers the stored timestamp"
+    );
+
+    use crate::series::*;
+    let rendered = recorder.handle().render();
+    let sample =
+        |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
+    for kind in ["accepted", "validation_error", "finalized", "replayed"] {
+        assert_eq!(
+            sample(PARTIAL_STAGING, &[("kind", kind)]),
+            Some(1.0),
+            "{kind}"
+        );
+    }
+    assert_eq!(sample(PARTIAL_STARTED, &[]), Some(1.0));
+    assert_eq!(sample(PARTIAL_COMPLETED, &[]), Some(1.0));
+    assert_eq!(
+        sample(PARTIAL_BATCHES, &[("outcome", "incomplete")]),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(&format!("{PARTIAL_BATCHES_PER_UPLOAD}_count"), &[]),
+        Some(1.0)
+    );
+    assert_eq!(sample(&format!("{PARTIAL_DURATION}_count"), &[]), Some(1.0));
+    for stage in [
+        "hash",
+        "validate",
+        "lock_wait",
+        "inventory",
+        "accounting",
+        "store",
+        "progress",
+    ] {
+        assert!(
+            sample(
+                &format!("{PARTIAL_STAGE_DURATION}_count"),
+                &[("stage", stage)]
+            )
+            .is_some_and(|n| n >= 1.0),
+            "{stage}: {rendered}"
+        );
+    }
+    assert_eq!(
+        sample(
+            &format!("{PARTIAL_STAGE_DURATION}_count"),
+            &[("stage", "finalize_deploy")]
+        ),
+        Some(2.0),
+        "the refused completion and the publication"
+    );
+
     let req = Request::post("/content/entities/active")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(json!({"pointers": scene.pointers}).to_string()))
@@ -364,13 +422,6 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
             .await
             .unwrap();
     assert_eq!(rows, 0, "a published upload leaves no pending row");
-
-    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body["creationTimestamp"], created,
-        "a replay answers the stored timestamp"
-    );
 }
 
 /// A replay batch, which may carry no entity file, is answered the stored
@@ -1209,6 +1260,8 @@ async fn a_superseded_upload_is_left_to_the_cleanup_job_and_refused_as_overtaken
 async fn a_busy_store_lock_ends_the_cleanup_run() {
     // A database of its own: only this run's waits are on its store lock.
     require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(6).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let tmp = std::env::temp_dir().join(format!(
         "catalyst-partial-deferred-{}",
         uuid::Uuid::new_v4().simple()
@@ -1255,6 +1308,22 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
         ids.len()
     );
     assert_eq!(pending_among(&pool, &ids).await, 0);
+    use crate::series::*;
+    let rendered = recorder.handle().render();
+    let sample =
+        |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "deferred")]),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "success")]),
+        Some(1.0)
+    );
+    assert_eq!(sample(LOCK_WRITER_TIMEOUTS, &[]), Some(1.0));
+    assert_eq!(sample(PARTIAL_EXPIRED, &[]), Some(ids.len() as f64));
+    assert_eq!(sample(PARTIAL_PENDING, &[("state", "expired")]), Some(0.0));
+    assert!(sample(PARTIAL_CLEANUP_LAST_SUCCESS, &[]).is_some_and(|t| t > 0.0));
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -1322,6 +1391,8 @@ async fn an_unreadable_content_list_ends_the_cleanup_run() {
 #[tokio::test]
 async fn an_unlink_failure_keeps_only_its_upload() {
     require_test_db!(Some(pool) = crate::db::scratch::isolated_pool(4).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
     let tmp = std::env::temp_dir().join(format!(
         "catalyst-partial-unlink-{}",
         uuid::Uuid::new_v4().simple()
@@ -1357,6 +1428,23 @@ async fn an_unlink_failure_keeps_only_its_upload() {
         1
     );
     assert_eq!(pending_among(&pool, &ids).await, 0);
+    use crate::series::*;
+    let rendered = recorder.handle().render();
+    let sample =
+        |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "error")]),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "success")]),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(PARTIAL_CLEANUP_FAILURES, &[("reason", "storage")]),
+        Some(1.0)
+    );
+    assert_eq!(sample(PARTIAL_EXPIRED, &[]), Some(2.0));
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -1855,18 +1943,20 @@ fn pointer_quotas_name_the_full_parcels() {
         oldest: 1_000,
         deployer_oldest: Some(2_000),
     };
-    let (message, retry) = check_pointer_quotas(&[usage(4, 0)], 4, 1_000, 60_000).unwrap();
+    let (reason, message, retry) = check_pointer_quotas(&[usage(4, 0)], 4, 1_000, 60_000).unwrap();
     assert_eq!(
         message,
         "Too many partial uploads in progress for parcels 1,1 (max 4 per parcel). Complete an upload or wait for one to expire."
     );
     assert_eq!(retry, 60);
-    let (message, retry) = check_pointer_quotas(&[usage(3, 3)], 4, 1_000, 60_000).unwrap();
+    assert_eq!(reason, "uploads_per_pointer");
+    let (reason, message, retry) = check_pointer_quotas(&[usage(3, 3)], 4, 1_000, 60_000).unwrap();
     assert_eq!(
         message,
         "Too many partial uploads in progress for this account on parcels 1,1 (max 3 per parcel). Complete an upload or wait for one to expire."
     );
     assert_eq!(retry, 61);
+    assert_eq!(reason, "uploads_per_pointer_account");
     assert!(check_pointer_quotas(&[usage(2, 2)], 4, 1_000, 60_000).is_none());
 }
 
@@ -1929,8 +2019,8 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         scene.bytes.clone(),
         scene.chain.clone(),
         &hashes,
-        pending.created_at,
-        pending.created_at + limits.ttl_ms,
+        (pending.created_at, pending.created_at + limits.ttl_ms),
+        1,
     )
     .await
     .err()
@@ -1971,8 +2061,8 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         scene.bytes.clone(),
         scene.chain.clone(),
         &hashes,
-        pending.created_at,
-        pending.created_at + limits.ttl_ms,
+        (pending.created_at, pending.created_at + limits.ttl_ms),
+        1,
     )
     .await
     .err()
@@ -2027,8 +2117,8 @@ async fn terminal_pointer_contention_waits_then_retains_the_upload() {
             scene.bytes.clone(),
             scene.chain.clone(),
             &hashes,
-            pending.created_at,
-            pending.created_at + limits.ttl_ms,
+            (pending.created_at, pending.created_at + limits.ttl_ms),
+            1,
         ),
     )
     .await

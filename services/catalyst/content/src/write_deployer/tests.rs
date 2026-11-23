@@ -291,9 +291,15 @@ async fn rate_limiter_ttl_and_size() {
     small.record(&p("a"));
     small.record(&p("b"));
     small.record(&p("c"));
-    assert!(
-        small.is_limited(&p("unrelated")),
+    assert_eq!(
+        small.limit(&p("unrelated")),
+        Some("max_size"),
         "over max_size trips bucket"
+    );
+    assert_eq!(
+        small.limit(&p("a")),
+        Some("ttl"),
+        "a pointer hit is named first"
     );
 }
 
@@ -303,8 +309,9 @@ fn a_reservation_holds_its_pointers_until_released() {
     let ptrs = vec!["0,0".to_string(), "0,1".to_string(), "0,0".to_string()];
 
     let held = rl.reserve("scene", &ptrs, false).unwrap();
-    assert!(
-        rl.reserve("scene", &ptrs[1..2], false).is_none(),
+    assert_eq!(
+        rl.reserve("scene", &ptrs[1..2], false).err(),
+        Some("ttl"),
         "a held pointer refuses a second reservation"
     );
     held.release();
@@ -330,8 +337,9 @@ fn a_reservation_holds_its_pointers_until_released() {
         .unwrap()
         .entries
         .clear();
-    assert!(
-        rl.reserve("profile", &profile, true).is_none(),
+    assert_eq!(
+        rl.reserve("profile", &profile, true).err(),
+        Some("unchanged_ttl"),
         "the unchanged bucket refuses on its own"
     );
     assert!(
