@@ -1144,10 +1144,21 @@ class SelectionTest(unittest.TestCase):
                 result = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if result[lane]}, expected)
 
-    def test_the_relay_wake_browser_test_follows_its_crate_tools_and_workflow(self):
+    def test_the_relay_wake_browser_test_follows_its_crates_bevy_fork_tools_and_workflow(self):
         cases = {
             'rendering/bevy-explorer/source/crates/dcl_wasm/src/relay_wake.rs': True,
             'rendering/bevy-explorer/source/crates/dcl_wasm/Cargo.toml': True,
+            'rendering/bevy-explorer/source/crates/common/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/console/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/dcl_component/build.rs': True,
+            'rendering/bevy-explorer/source/crates/dcl_js/src/modules/EngineApi.js': True,
+            'rendering/bevy-explorer/source/crates/dcl_types/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/platform/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/system_api_types/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/system_bridge/src/lib.rs': True,
+            'library/protocol/proto/decentraland/sdk/components/transform.proto': True,
+            'rendering/bevy-explorer/patches/bevy/series/0080-web-worker.patch': True,
+            'rendering/bevy-explorer/patches/bevy/source.toml': True,
             'rendering/bevy-explorer/source/Cargo.toml': True,
             'rendering/bevy-explorer/source/.cargo/config.toml': True,
             'apps/bevy-explorer/install-web-tools.py': True,
@@ -1156,6 +1167,8 @@ class SelectionTest(unittest.TestCase):
             'flake.lock': True,
             ci.WORKFLOW: True,
             'rendering/bevy-explorer/source/crates/scene_runner/src/lib.rs': False,
+            'rendering/bevy-explorer/source/crates/dcl_deno/src/lib.rs': False,
+            'rendering/bevy-explorer/patches/wgpu/source.toml': False,
             'rendering/bevy-explorer/source/deploy/web/engine/sandbox_worker.js': False,
             'apps/bevy-explorer/build-web.py': False,
         }

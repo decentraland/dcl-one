@@ -114,9 +114,14 @@ HEADLESS_JOBS = {
     'Headless packages / build (windows-amd64, win32-x64, windows-2025, x86_64-pc-windows-msvc)',
 }
 # What the browser test of the relay wake (job "Relay wake in the browser") compiles and runs with:
-# its crate, the workspace's manifests and Cargo configuration, the tools and the workflow. It is
-# not a lane: on main it follows the web lane's baseline.
-RELAY_WAKE_INPUTS = (SOURCE + 'crates/dcl_wasm/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
+# its crate and the workspace crates it depends on, the protocol that dcl_component's build script
+# compiles, the Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the
+# fork's revision), the workspace's manifests and Cargo configuration, the tools and the workflow.
+# It is not a lane: on main it follows the web lane's baseline.
+RELAY_WAKE_CRATES = ('dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform',
+                     'system_api_types', 'system_bridge')
+RELAY_WAKE_INPUTS = (*(SOURCE + 'crates/' + crate + '/' for crate in RELAY_WAKE_CRATES), 'library/protocol/proto/',
+                     PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
                      '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
                      'tooling/bevy-target-cache.py', WORKFLOW, *TOOLS_INPUTS)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
