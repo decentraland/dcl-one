@@ -1,4 +1,4 @@
-import { useContext, useId, type ReactNode } from "react";
+import { useContext, useId, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { NavCreditsBalance } from "@dcl/one-ui";
@@ -14,6 +14,7 @@ import { subscribeSiteNewsletter } from "@web-core/newsletter";
 
 import { sitesShopClient } from "@/data/lib/auth/shop-client";
 
+import { useChromeClicks } from "./chrome-clicks";
 import SitesTopBar from "./SitesTopBar";
 import styles from "./SitesLayout.module.css";
 
@@ -30,11 +31,25 @@ type SitesLayoutProps = {
   secondaryNavigation?: { title: string; active?: string; items: readonly SitesSectionItem[] };
 };
 
+const CREDITS_HREF = "/shop/credits";
+
 function SitesCreditsChip({ account }: { account: string }) {
   const { data, isLoading, isError } = useQuery(creditsBalanceQuery(account, sitesShopClient()));
+  const clicks = useChromeClicks();
   if (isLoading || isError) return null;
   const shown = formatCreditsBalance(data?.credits ?? 0);
-  return <NavCreditsBalance as={Link} to="/shop/credits" label={shown} aria-label={`${shown} credits`} />;
+  const onClick = (event: MouseEvent<HTMLAnchorElement>) =>
+    clicks.navbarLink(CREDITS_HREF, event, { signedIn: true });
+  return (
+    <NavCreditsBalance
+      as={Link}
+      to={CREDITS_HREF}
+      label={shown}
+      aria-label={`${shown} credits`}
+      onClick={onClick}
+      onAuxClick={onClick}
+    />
+  );
 }
 
 export default function SitesLayout({
@@ -50,6 +65,7 @@ export default function SitesLayout({
   secondaryNavigation,
 }: SitesLayoutProps) {
   const pageId = useId();
+  const clicks = useChromeClicks();
   const auth = useChromeAuth();
   const profile = useContext(ProfileNavigationContext);
   const isIn = signedIn ?? auth.signedIn;
@@ -80,7 +96,13 @@ export default function SitesLayout({
       <div className={styles.body}>
         <a className={styles.skip} href={`#${pageId}`}>Skip to content</a>
         <div className={styles.page} id={pageId} tabIndex={-1}>{children}</div>
-        <SitesFooter footerCopy={footerCopy} docsUrl={docsUrl} onSubscribe={subscribeSiteNewsletter} />
+        <SitesFooter
+          footerCopy={footerCopy}
+          docsUrl={docsUrl}
+          onSubscribe={subscribeSiteNewsletter}
+          onSocialClick={clicks.footerSocial}
+          onLinkClick={clicks.footerLink}
+        />
       </div>
     </SiteLayout>
   );

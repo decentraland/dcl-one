@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useContext, useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   chromeLinkProps,
   useChromeNav,
@@ -117,7 +117,15 @@ function FootChevron() {
   )
 }
 
-function Connect({ className, label }: { className: string; label: string }) {
+function Connect({
+  className,
+  label,
+  onSocialClick
+}: {
+  className: string
+  label: string
+  onSocialClick: ((platform: string) => void) | undefined
+}) {
   return (
     <div className={className}>
       <p className={styles.foottitle}>{label}</p>
@@ -130,6 +138,7 @@ function Connect({ className, label }: { className: string; label: string }) {
             aria-label={name}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => onSocialClick?.(name)}
           >
             <svg
               viewBox={`0 0 ${w} ${h}`}
@@ -147,10 +156,16 @@ function Connect({ className, label }: { className: string; label: string }) {
   )
 }
 
-function footerLinkProps(href: string, go: ChromeNavigate | undefined) {
-  return /^https?:/.test(href)
-    ? { href, target: '_blank', rel: 'noopener noreferrer' }
-    : chromeLinkProps(href, go)
+function footerLinkProps(href: string, go: ChromeNavigate | undefined, onClick: () => void) {
+  if (/^https?:/.test(href)) return { href, target: '_blank', rel: 'noopener noreferrer', onClick }
+  const props = chromeLinkProps(href, go)
+  return {
+    ...props,
+    onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      onClick()
+      props.onClick(event)
+    }
+  }
 }
 
 type NewsletterState =
@@ -162,11 +177,17 @@ type NewsletterState =
 export default function SitesFooter({
   footerCopy = sitesFooterCopy.en,
   docsUrl,
-  onSubscribe
+  onSubscribe,
+  onSocialClick,
+  onLinkClick
 }: {
   footerCopy?: FooterCopy
   docsUrl: (path?: string) => string
   onSubscribe: (email: string) => Promise<void>
+  /** A social icon was clicked, with the platform's name (`Discord`, `GitHub`, `X`, ...). */
+  onSocialClick?: (platform: string) => void
+  /** A Getting Started or Resources link was clicked, with its label in the shown language. */
+  onLinkClick?: (label: string) => void
 }) {
   const { navigate: go } = useChromeNav()
   const [openCol, setOpenCol] = useState<string | null>(null)
@@ -279,7 +300,11 @@ export default function SitesFooter({
               </p>
             )}
           </div>
-          <Connect className={`${styles.connect} ${styles.connectDesktop}`} label={copy.connect} />
+          <Connect
+            className={`${styles.connect} ${styles.connectDesktop}`}
+            label={copy.connect}
+            onSocialClick={onSocialClick}
+          />
         </div>
 
         <div className={styles.footcols}>
@@ -287,7 +312,11 @@ export default function SitesFooter({
             <div key={col.id} className={styles.footcol}>
               <p className={styles.foottitle}>{col.title}</p>
               {col.links.map((link) => (
-                <a key={link.href} {...footerLinkProps(link.href, go)} className={styles.footlink}>
+                <a
+                  key={link.href}
+                  {...footerLinkProps(link.href, go, () => onLinkClick?.(link.label))}
+                  className={styles.footlink}
+                >
                   {link.label}
                 </a>
               ))}
@@ -312,7 +341,7 @@ export default function SitesFooter({
                 {col.links.map((link) => (
                   <a
                     key={link.href}
-                    {...footerLinkProps(link.href, go)}
+                    {...footerLinkProps(link.href, go, () => onLinkClick?.(link.label))}
                     className={styles.footmlink}
                   >
                     {link.label}
@@ -322,7 +351,11 @@ export default function SitesFooter({
             </div>
           ))}
         </div>
-        <Connect className={`${styles.connect} ${styles.connectMobile}`} label={copy.connect} />
+        <Connect
+          className={`${styles.connect} ${styles.connectMobile}`}
+          label={copy.connect}
+          onSocialClick={onSocialClick}
+        />
       </div>
 
       <div className={styles.footbar}>

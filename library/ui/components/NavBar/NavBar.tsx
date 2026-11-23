@@ -11,6 +11,7 @@ import {
   type CSSProperties,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject
 } from 'react'
@@ -130,6 +131,11 @@ type NavBarCommonProps = {
   /** Optional network control inside the profile panel. */
   accountMenuNetwork?: ReactNode
   linkComponent?: NavBarLinkComponent
+  /**
+   * Called with the link's href on each `click` and `auxclick` (a middle click) of a link the bar renders itself:
+   * the home link, section links, Sign in as a link and account menu links. Slot content reports its own clicks.
+   */
+  onLinkClick?: (href: string, event: ReactMouseEvent<HTMLAnchorElement>) => void
   labels?: Partial<NavBarLabels>
   /**
    * BCP 47 locale for balance numbers; defaults to `en-US`, which is also used for a locale `Intl` rejects. Pass the
@@ -228,10 +234,31 @@ const hasValue = (value: number | undefined): value is number =>
 type LinkRenderer = (props: NavBarLinkProps) => ReactNode
 
 const linkRenderer =
-  (LinkComponent: NavBarLinkComponent | undefined): LinkRenderer =>
+  (
+    LinkComponent: NavBarLinkComponent | undefined,
+    onLinkClick: NavBarProps['onLinkClick']
+  ): LinkRenderer =>
   (props) => {
     const Link = LinkComponent && isInternalHref(props.href) ? LinkComponent : 'a'
-    return <Link {...props} rel={props.target === '_blank' ? 'noopener noreferrer' : props.rel} />
+    const reported = onLinkClick
+      ? {
+          onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
+            onLinkClick(props.href, event)
+            props.onClick?.(event)
+          },
+          onAuxClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
+            onLinkClick(props.href, event)
+            props.onAuxClick?.(event)
+          }
+        }
+      : {}
+    return (
+      <Link
+        {...props}
+        {...reported}
+        rel={props.target === '_blank' ? 'noopener noreferrer' : props.rel}
+      />
+    )
   }
 
 /** Closes an open popup on Escape (returning focus to its trigger), on an outside press and when focus leaves it. */
@@ -918,6 +945,7 @@ export function NavBar({
   accountMenuBalancesPending,
   accountMenuNetwork,
   linkComponent,
+  onLinkClick,
   labels: labelOverrides,
   locale = 'en-US',
   brand,
@@ -932,7 +960,7 @@ export function NavBar({
     )
   } as NavBarLabels
   const format = useMemo(() => numberFormat(locale), [locale])
-  const renderLink = linkRenderer(linkComponent)
+  const renderLink = linkRenderer(linkComponent, onLinkClick)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [expandedDrawerSection, setExpandedDrawerSection] = useState<number>()
   const [desktopSection, setDesktopSection] = useState<{

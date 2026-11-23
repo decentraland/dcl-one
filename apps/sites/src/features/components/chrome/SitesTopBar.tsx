@@ -44,6 +44,7 @@ import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
+import { useChromeClicks } from "./chrome-clicks";
 import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
@@ -150,6 +151,7 @@ export default function SitesTopBar({
   const signIn = onSignIn ?? auth.onSignIn;
   const signOut = onSignOut ?? auth.onSignOut;
   const switchAccount = auth.onSwitchAccount;
+  const clicks = useChromeClicks();
   const [notificationOwner, setNotificationOwner] = useState<{
     account: string;
     pathname: string;
@@ -190,12 +192,13 @@ export default function SitesTopBar({
         polygonMana: polygonMana === undefined ? undefined : manaWeiToNumber(polygonMana),
       }
     : undefined;
+  const profileHref = `/profile/${encodeURIComponent(address.toLowerCase())}`;
   const actions = useMemo(
     () => [
       {
         label: actionLabels.viewProfile,
         icon: <GeneralPlayers size={20} aria-hidden="true" />,
-        href: `/profile/${encodeURIComponent(address.toLowerCase())}`,
+        href: profileHref,
       },
       {
         label: actionLabels.myAssets,
@@ -232,7 +235,7 @@ export default function SitesTopBar({
             ]
           : []),
     ],
-    [address, actionLabels, switchAccount, signOut],
+    [profileHref, actionLabels, switchAccount, signOut],
   );
   const panel = notificationsOpen ? (
     <SitesNotificationsDialog
@@ -300,6 +303,9 @@ export default function SitesTopBar({
           }
           icons={SITE_ICONS}
           linkComponent={NavigationLink}
+          onLinkClick={(href, event) =>
+            clicks.navbarLink(href, event, { signedIn: identity !== null, profileHref, signInHref })
+          }
           {...(identity
             ? {
                 account: {
@@ -311,7 +317,16 @@ export default function SitesTopBar({
                     : {}),
                 },
               }
-            : { signIn: signIn ? { onSelect: signIn } : { href: signInHref } })}
+            : {
+                signIn: signIn
+                  ? {
+                      onSelect: () => {
+                        clicks.signIn();
+                        signIn();
+                      },
+                    }
+                  : { href: signInHref },
+              })}
           balanceAction={isIn ? balances : undefined}
           accountControl={accountControl}
           accountActions={actions}

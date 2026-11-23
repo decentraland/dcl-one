@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useLocation, useRouteLoaderData } from "react-router";
+import { useContext, useEffect, useRef, useState } from "react";
+import { UNSAFE_DataRouterDataContext, useLocation } from "react-router";
 
 import { adoptSitesSegmentConfig, page } from "./track";
 import { trackedUserDropped } from "./tracked-user";
@@ -59,9 +59,13 @@ export function isOutsideLegacySites(path: string): boolean {
 
 type RootSession = { sid?: string | null; analyticsUserId?: string | null };
 
-/** The root loader's session id and Segment `userId` (the server-verified wallet only). */
+/**
+ * The root loader's session id and Segment `userId` (the server-verified wallet only). Read as
+ * `useRouteLoaderData("root")` does, minus its throw outside a data router: the site chrome that sends
+ * clicks also renders under a plain router, where there is no session to read.
+ */
 function useRootSession(): { sid: string; userId: string } {
-  const root = useRouteLoaderData("root") as RootSession | undefined;
+  const root = useContext(UNSAFE_DataRouterDataContext)?.loaderData.root as RootSession | undefined;
   return { sid: root?.sid ?? "", userId: root?.analyticsUserId ?? "" };
 }
 

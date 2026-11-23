@@ -475,6 +475,54 @@ describe('NavBar', () => {
     })
   })
 
+  describe('when a link the bar renders is clicked with onLinkClick', () => {
+    let onLinkClick: Mock<NonNullable<NavBarProps['onLinkClick']>>
+    let trigger: HTMLElement
+    beforeEach(async () => {
+      onLinkClick = vi.fn()
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          accountActions={[{ label: 'My profile', href: '/profile' }]}
+          onLinkClick={onLinkClick}
+        />
+      )
+      trigger = screen.getByRole('button', { name: 'Discover' })
+      await user.click(trigger)
+      fireEvent.click(screen.getByRole('link', { name: 'Jump in' }))
+    })
+
+    it('should report the link href with the click', () => {
+      expect(onLinkClick).toHaveBeenCalledOnce()
+      expect(onLinkClick.mock.calls[0]![0]).toBe('/play/')
+      expect(onLinkClick.mock.calls[0]![1].type).toBe('click')
+    })
+
+    it('should still close the dropdown', () => {
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('should report a middle click as an auxclick', () => {
+      fireEvent(
+        screen.getByRole('link', { name: 'Decentraland home' }),
+        new MouseEvent('auxclick', { bubbles: true, button: 1 })
+      )
+      expect(onLinkClick).toHaveBeenLastCalledWith('/', expect.objectContaining({ type: 'auxclick' }))
+    })
+
+    it('should report an account menu link', async () => {
+      await user.click(screen.getByRole('button', { name: 'Account: Ada' }))
+      await user.click(screen.getByRole('link', { name: 'My profile' }))
+      expect(onLinkClick).toHaveBeenLastCalledWith('/profile', expect.objectContaining({ type: 'click' }))
+    })
+
+    it('should not report a button', async () => {
+      await user.click(screen.getByRole('button', { name: 'Learn' }))
+      expect(onLinkClick).toHaveBeenCalledOnce()
+    })
+  })
+
   describe('when a dropdown link is clicked', () => {
     let trigger: HTMLElement
     beforeEach(async () => {
