@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { HeroDownloads } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
-import { useCreatorHubDownloadClick } from "../download/creator-hub-click";
+import { trackCreatorHubClick, useCreatorHubDownloadClick } from "../download/creator-hub-click";
 import CreatorHubDownload from "../download/CreatorHubDownload";
 
 import { copy } from "./content";
@@ -20,17 +20,23 @@ type Props = {
   /** The installers for the visitor's system; null where there is none to offer in place. */
   downloads: HeroDownloads | null;
   sid: string;
+  /** The verified wallet, sent as the download Click's `userId`. */
+  userId?: string | null;
 };
 
 /** The hero's desktop call to action: the Creator Hub installer for this system, and the other builds under it. */
-export default function HeroDownload({ downloads, sid }: Props) {
+export default function HeroDownload({ downloads, sid, userId }: Props) {
   const [offered, setOffered] = useState(downloads);
   useEffect(() => setOffered(downloads && forThisDevice(downloads)), [downloads]);
-  const onDownload = useCreatorHubDownloadClick(sid);
+  const onDownload = useCreatorHubDownloadClick({ sid, userId }, "create-hero");
 
   if (!offered) {
     return (
-      <a className={`${styles.cta} ${styles.ctaDesktop}`} href={CREATOR_HUB_DOWNLOAD}>
+      <a
+        className={`${styles.cta} ${styles.ctaDesktop}`}
+        href={CREATOR_HUB_DOWNLOAD}
+        onClick={() => trackCreatorHubClick("create-hero", { sid, userId })}
+      >
         <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
       </a>
     );
