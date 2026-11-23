@@ -68,8 +68,27 @@ const SERVED_DEADLINE: Duration = Duration::from_secs(30);
 /// What a visit takes besides its stay, which the scenario's deadline (`--deadline`) must hold
 /// too: making sure of the profiles, waiting up to [`SERVED_DEADLINE`] for them to be served,
 /// entering and leaving. A plan whose stay and this margin do not fit is refused before anyone
-/// enters, so the deadline never ends a visit mid-walk, before the crowd has left.
+/// enters. The margin is an estimate: a setup that takes longer shortens the stay instead
+/// ([`stay_within`]), so the crowd still leaves before the deadline ends the visit, and the notes
+/// say by how much (`stay_cut_short_by_ms`).
 pub const DEADLINE_MARGIN: Duration = Duration::from_secs(90);
+
+/// What the end of the scenario's deadline keeps for the crowd to leave and the visit to report.
+pub const LEAVE_MARGIN: Duration = Duration::from_secs(15);
+
+/// How long the crowd stays, at `now`, of the `planned` stay: it ends [`LEAVE_MARGIN`] before
+/// the scenario's deadline runs out at `ends_at`, however long the visit took to get there.
+pub fn stay_within(planned: Duration, now: Instant, ends_at: Option<Instant>) -> Duration {
+    match ends_at {
+        Some(ends_at) => ends_at
+            .checked_sub(LEAVE_MARGIN)
+            .map_or(Duration::ZERO, |leave_at| {
+                leave_at.saturating_duration_since(now)
+            })
+            .min(planned),
+        None => planned,
+    }
+}
 
 /// How long the crowd stays unless the plan says otherwise, and the longest it may.
 pub const DEFAULT_SECONDS: u64 = 120;
@@ -591,14 +610,14 @@ async fn visit(ctx: Ctx) -> Result<()> {
     let bots = enter_crowd(&ctx, &identities, &plan.realm, &spots).await?;
     ctx.note("all_entered_ms", started.elapsed().as_millis() as u64);
 
-    let stayed = stay(
-        &ctx,
-        &bots,
-        &spots,
-        &wallets,
-        Duration::from_secs(plan.seconds),
-    )
-    .await;
+    // the stay ends in time for the crowd to leave, whatever the setup took
+    let planned = Duration::from_secs(plan.seconds);
+    let staying = stay_within(planned, Instant::now(), ctx.ends_at());
+    ctx.note(
+        "stay_cut_short_by_ms",
+        (planned - staying).as_millis() as u64,
+    );
+    let stayed = stay(&ctx, &bots, &spots, &wallets, staying).await;
 
     // what each player caught, from its own connection's timeline, before anyone leaves
     let names: Vec<String> = (0..players).map(player_name).collect();

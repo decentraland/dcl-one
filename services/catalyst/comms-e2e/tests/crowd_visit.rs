@@ -204,6 +204,68 @@ async fn a_run_that_does_not_name_the_visit_leaves_it_out() {
     assert_eq!(stand_in.recorded.lock().reads, 0);
 }
 
+#[test]
+fn the_stay_ends_the_leave_margin_before_the_deadline() {
+    let now = std::time::Instant::now();
+    let planned = Duration::from_secs(20);
+    let leave = visit::LEAVE_MARGIN;
+    assert_eq!(visit::stay_within(planned, now, None), planned);
+    assert_eq!(
+        visit::stay_within(planned, now, Some(now + leave + Duration::from_secs(60))),
+        planned
+    );
+    assert_eq!(
+        visit::stay_within(planned, now, Some(now + leave + Duration::from_secs(5))),
+        Duration::from_secs(5)
+    );
+    assert_eq!(
+        visit::stay_within(planned, now, Some(now + leave / 2)),
+        Duration::ZERO
+    );
+    // the README states the leave margin as the code has it
+    assert!(
+        include_str!("../README.md").contains(&format!(
+            "the crowd leaves {} s before the deadline",
+            leave.as_secs()
+        )),
+        "the README states another leave margin"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "takes about 100 s: the setup has to outlast the margin a plan is admitted with"]
+async fn a_setup_that_eats_the_margin_shortens_the_stay_and_the_crowd_still_leaves() {
+    let pulse = support::in_process_pulse().await;
+    let stand_in = content::start(None).await;
+    let (client_ctx, client, _) = client_there(pulse).await;
+    // one wave of four players: every profile read takes 29 s (under the 30 s the crowd waits
+    // for its profiles to be served), and the first deployment is told to come back in 37 s
+    stand_in.delay_reads(Duration::from_secs(29));
+    stand_in.answer_next(503, Some("37"));
+    let mut slow = options(Some(VisitPlan {
+        seconds: 20,
+        ..plan("slow-setup", Vec::new())
+    }));
+    slow.crowd.players = Some(4);
+    // the least deadline the plan is admitted with
+    slow.scenario_deadline = Duration::from_secs(20) + visit::DEADLINE_MARGIN;
+    let mut report = run_scenarios(stack(pulse, &stand_in), &[&CROWD_VISIT], &slow).await;
+    let result = report.results.remove(0);
+    if let Outcome::Failed { expectation, .. } = &result.outcome {
+        assert!(!expectation.contains("did not finish"), "{expectation}");
+    }
+    let cut = note(&result, "stay_cut_short_by_ms").as_u64().unwrap();
+    assert!(cut > 0, "the stay was not cut");
+    // the crowd left the way clients do: the client holds none of it
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        client.view().subjects.is_empty(),
+        "{:?}",
+        client.view().wallets()
+    );
+    leave(&client_ctx, client).await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stay_that_cannot_fit_in_the_deadline_is_refused_before_anyone_enters() {
     let pulse = support::in_process_pulse().await;

@@ -175,7 +175,8 @@ struct CtxInner {
     one_source_address: std::sync::atomic::AtomicBool,
     crowd: Mutex<CrowdSize>,
     visit: Mutex<Option<VisitPlan>>,
-    deadline: Mutex<Option<Duration>>,
+    /// The repeat's deadline and when it was set.
+    deadline: Mutex<Option<(Duration, Instant)>>,
     allowed_hosts: Mutex<Vec<String>>,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
@@ -322,12 +323,21 @@ impl Ctx {
 
     /// The longest this repeat may take (`--deadline`), when a run set it.
     pub fn deadline(&self) -> Option<Duration> {
-        *self.inner.deadline.lock()
+        self.inner.deadline.lock().map(|(deadline, _)| deadline)
     }
 
-    /// Sets the longest this repeat may take.
+    /// When this repeat's deadline runs out: [`Ctx::deadline`] after it was set, which is when
+    /// the repeat starts.
+    pub fn ends_at(&self) -> Option<Instant> {
+        self.inner
+            .deadline
+            .lock()
+            .map(|(deadline, started)| started + deadline)
+    }
+
+    /// Sets the longest this repeat may take, counted from now: set as the repeat starts.
     pub fn set_deadline(&self, deadline: Duration) {
-        *self.inner.deadline.lock() = Some(deadline);
+        *self.inner.deadline.lock() = Some((deadline, Instant::now()));
     }
 
     /// Sets the hosts outside loopback this run admits (`--allow-host`), for the addresses a
