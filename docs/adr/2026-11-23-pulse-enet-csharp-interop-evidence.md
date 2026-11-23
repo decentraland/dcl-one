@@ -33,7 +33,8 @@ deployed runs, not a CI result.
 2. While the 20 bots walked on the same parcel, the Unity client received 2.7 to 3.0 KB/s
    at about 175 packets/s. It sent its own state at about 18 to 23 B/s at rest.
 3. Every one of the 20 bots received a Pulse `PlayerJoined` for the Unity client 591 to
-   645 ms after entering and held it at its position (1606.0, 1606.0). The server relayed
+   645 ms into the run (all 20 were admitted by 417 ms) and held it at its position
+   (1606.0, 1606.0). The server relayed
    the ENet-CSharp client's state to `rusty_enet` clients. The `comms-e2e` scenario
    `crowd-visit` passed: all expected participants were caught.
 4. The Bevy web client on the same Pulse held the Unity client as a remote player
