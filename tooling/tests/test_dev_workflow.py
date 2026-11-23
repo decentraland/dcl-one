@@ -274,7 +274,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
-                    # One Rust test shard saves; the other jobs save from every main run.
+                    # One Rust test shard and the web job's ui3 leg save; the other jobs save from every main run.
                     self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1'"
                                   + (' && matrix.shard == 1 }}' if 'shard: [' in job else
                                      " && matrix.app == 'ui3' }}" if 'app: [sites, ui3]' in job else ' }}'), snapshot)
@@ -473,7 +473,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']
         changes = jobs()['changes']
-        self.assertIn('run: python3 tooling/dev-ci.py', changes)
+        self.assertIn('run: python3 tooling/dev-ci.py\n', changes)
         self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
         self.assertIn('web-units: ${{ steps.web-coverage.outputs.run-web-unit-tests }}', changes)
         self.assertIn('fail-fast: false', web)
