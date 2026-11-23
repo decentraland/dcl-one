@@ -531,6 +531,7 @@ pub struct State {
     /// The auth relay's budget of contract-wallet (`isValidSignature`) calls,
     /// per network and per replica.
     pub contract_checks: auth_api::ContractChecks,
+    pub(crate) auth_sockets: auth_api::SocketBindings,
     /// The LAND index, attached after construction (`attach_land_authz`):
     /// the Estate metadata of estates the grid no longer holds.
     pub land_authz: std::sync::OnceLock<Arc<crate::land_authz::LandAuthzState>>,
@@ -579,6 +580,7 @@ impl State {
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
             contract_checks: Default::default(),
+            auth_sockets: Default::default(),
             land_authz: std::sync::OnceLock::new(),
         });
         state
@@ -613,6 +615,7 @@ impl State {
     /// maintenance and denylist snapshot reload run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
+        self.auth_sockets.spawn(self, jobs);
         denylist::spawn_reload(
             self,
             jobs,
@@ -796,6 +799,7 @@ pub fn router(state: Shared) -> Router {
         .route("/satellite/{z}/{x}/{y}", get(satellite::tile))
         .merge(posters::routes())
         .with_state(state.clone());
+    let socket_state = state.clone();
     let (registry, services): (Vec<_>, Vec<_>) = service_routers(state)
         .into_iter()
         .partition(|(prefix, _)| *prefix == REGISTRY_PREFIX);
@@ -806,7 +810,7 @@ pub fn router(state: Shared) -> Router {
     for (prefix, service) in registry {
         app = app.nest(&format!("/{prefix}"), service);
     }
-    app
+    app.merge(auth_api::socket_router(socket_state))
 }
 
 /// The unavailable envelope (`marketplace::unavailable`'s shape) for a

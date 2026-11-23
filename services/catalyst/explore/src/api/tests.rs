@@ -394,6 +394,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
         contract_checks: Default::default(),
+        auth_sockets: Default::default(),
         land_authz: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
