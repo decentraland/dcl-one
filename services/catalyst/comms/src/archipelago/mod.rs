@@ -138,7 +138,7 @@ pub async fn build_state(
         replica_id,
         ban_checker,
         deny_list,
-        logins: logins::LoginCredits::new(logins),
+        logins: logins::LoginCredits::start(logins, jobs),
     });
     feed::start(&state, jobs);
     Ok(state)

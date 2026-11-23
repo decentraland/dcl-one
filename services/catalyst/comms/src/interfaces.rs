@@ -282,6 +282,16 @@ pub trait LoginRecorder: Send + Sync {
     ) -> Result<(), LoginRecordError>;
 }
 
+/// Records nothing: the node's social writes are off.
+pub struct NoLoginRecorder;
+
+#[async_trait::async_trait]
+impl LoginRecorder for NoLoginRecorder {
+    async fn record_login(&self, _: &str, _: uuid::Uuid) -> Result<(), LoginRecordError> {
+        Ok(())
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use super::*;
