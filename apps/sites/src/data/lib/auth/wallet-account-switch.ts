@@ -6,7 +6,7 @@ import {
   subscribe,
   suspendWalletIdentity,
 } from "./session";
-import { switchSignedInAccount } from "./session-change";
+import { suspendSignedInAccount, switchSignedInAccount } from "./session-change";
 import { browserWalletRdnsFor, recordSignIn, UNRECORDED_BROWSER_WALLET } from "./signin-kind";
 import { sharedIdentityFor, walletSessionFor } from "./single-sign-on";
 import { browserWalletProvider, selectWallet } from "./wallet";
@@ -49,13 +49,20 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
       let sawEvent = false;
       let trusted = recordedRdns !== UNRECORDED_BROWSER_WALLET;
       let pendingAccount: string | null = null;
+      // A suspended session is signed out here: the verified-wallet cookie (routes/auth.callback.tsx) must not
+      // keep naming it while the wallet shows another account, or none.
+      const suspend = () => {
+        const active = getIdentity();
+        suspendWalletIdentity();
+        if (active) suspendSignedInAccount();
+      };
       const apply = (accounts: unknown) => {
         if (!live || !trusted) return;
         const account = exposedAccount(accounts);
         if (account === undefined) return;
         if (account === null) {
           pendingAccount = null;
-          suspendWalletIdentity();
+          suspend();
           return;
         }
         const saved = getSavedWebsiteIdentity();
@@ -67,12 +74,12 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
           : sharedIdentityFor(account) ?? walletSessionFor(account);
         if (next) {
           setBrowserWalletIdentity(next, rdns, true);
-          // The verified-wallet cookie still names the previous account (routes/auth.callback.tsx).
-          if (account !== signer) void switchSignedInAccount(next);
+          // Another account, or this one back from a suspension that cleared its cookie: the server names it again.
+          void switchSignedInAccount(next);
           onChange("activated");
         } else if (pendingAccount !== account) {
           pendingAccount = account;
-          suspendWalletIdentity();
+          suspend();
           onChange("sign-in");
         }
       };

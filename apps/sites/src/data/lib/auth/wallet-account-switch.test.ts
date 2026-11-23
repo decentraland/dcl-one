@@ -169,12 +169,47 @@ describe("when the Sites session belongs to a browser wallet", () => {
     });
 
     it("should request sign-in and keep the old account suspended across a reload", async () => {
+      wallet.request.mockResolvedValue([B]);
       wallet.emit([B]);
       expect(session.getIdentity()).toBeNull();
       expect(document.cookie).not.toContain(A);
       expect(onChange).toHaveBeenCalledWith("sign-in");
+      await vi.waitFor(() => expect(verified).toBeNull());
       vi.resetModules();
       expect((await import("./session")).getIdentity()).toBeNull();
+    });
+
+    it("should stop naming the old account to Segment at once, and clear its cookie", async () => {
+      const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+      wallet.request.mockResolvedValue([B]);
+      wallet.emit([B]);
+      expect(trackedUserDropped()).toBe(true);
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signout: true }]));
+      expect(verified).toBeNull();
+    });
+
+    it("should name the old account again once the wallet returns to it with its session", async () => {
+      const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+      wallet.request.mockResolvedValue([B]);
+      wallet.emit([B]);
+      await vi.waitFor(() => expect(verified).toBeNull());
+      wallet.request.mockResolvedValue([A]);
+      wallet.emit([A]);
+      expect(session.getIdentity()?.signer).toBe(A);
+      await vi.waitFor(() => expect(verified).toBe(A));
+      expect(callbacks).toEqual([{ signout: true }, { signedBy: A }]);
+      expect(trackedUserDropped()).toBe(false);
+    });
+
+    it("should keep page views from naming the old account when the clearing post never arrives", async () => {
+      const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+      server = "offline";
+      wallet.request.mockResolvedValue([B]);
+      wallet.emit([B]);
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signout: true }]));
+      // The cookie could not be cleared; this document's page views leave the account out.
+      expect(verified).toBe(A);
+      expect(trackedUserDropped()).toBe(true);
     });
   });
 
@@ -185,10 +220,9 @@ describe("when the Sites session belongs to a browser wallet", () => {
       expect(onChange).not.toHaveBeenCalled();
       wallet.emit([A]);
       expect(session.getIdentity()?.signer).toBe(A);
-      // The same account came back: the cookie still names it, so nothing is posted.
-      await Promise.resolve();
-      expect(callbacks).toEqual([]);
-      expect(verified).toBe(A);
+      // Suspending cleared the cookie; the account that came back is proven again.
+      await vi.waitFor(() => expect(verified).toBe(A));
+      expect(callbacks).toEqual([{ signout: true }, { signedBy: A }]);
     });
   });
 

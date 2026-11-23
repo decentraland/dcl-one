@@ -125,6 +125,16 @@ export async function confirmSignIn(
 }
 
 /**
+ * The wallet suspended the session (it locked, or moved to an account with no usable session): the
+ * account is not signed in here any more, so page views leave it out at once and its cookie is
+ * cleared. Coming back, it is proven again (`switchSignedInAccount`).
+ */
+export function suspendSignedInAccount(): void {
+  beginSignOut();
+  void postAuthCallback({ signout: true }, { keepalive: true, revalidate: true });
+}
+
+/**
  * The wallet moved the session to another account without a sign-in page: page views leave the
  * account out until the server names the new one, then root's data reloads in place. A wrong account
  * is worse than none, so when the new one cannot be proven (its session could not sign, the post
