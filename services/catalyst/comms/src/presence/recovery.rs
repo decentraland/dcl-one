@@ -57,6 +57,8 @@ impl ScanBudget {
 
 /// One observation's result before it is published.
 struct Candidate {
+    /// Before enumeration: an event applied after it is newer than this read.
+    started: Instant,
     rooms: Vec<RecoveredRoom>,
     refused: Vec<String>,
     observed: Observation,
@@ -324,8 +326,9 @@ impl Presence {
             .map(|r| &r.observed)
             .min_by_key(|o| o.mono)
             .cloned()
-            .unwrap_or(started);
+            .unwrap_or_else(|| started.clone());
         Ok(Candidate {
+            started: started.mono,
             rooms,
             refused,
             observed,
@@ -344,6 +347,7 @@ impl Presence {
     /// One complete pass. On error, retain membership AND original source time.
     pub async fn recover_complete(&self, state: &CommsState) -> Result<(), RecoveryFailure> {
         let Candidate {
+            started,
             rooms,
             refused,
             observed,
@@ -360,6 +364,9 @@ impl Presence {
                 "LiveKit rooms this node does not resolve are left out of the occupancy"
             );
         }
+        // Social needs no admission certification: events newer than `started` win
+        // over this read, and the next pass corrects the rest.
+        self.observe_world(&rooms, started);
         let mut current = self.state.lock();
         if !Self::clean(&current, unknown, &generations) {
             return Err(RecoveryFailure::Changed);
@@ -542,10 +549,12 @@ impl Presence {
     pub(crate) fn spawn_recovery(
         self: &Arc<Self>,
         state: Arc<CommsState>,
+        events: crate::gatekeeper::bus::NatsSubscription,
         jobs: &crate::jobs::Jobs,
     ) {
         let presence = self.clone();
         jobs.spawn("comms-occupancy-recovery", move |ctx| async move {
+            let _events = events;
             let mut retry = Duration::from_secs(1);
             loop {
                 let result = tokio::select! {

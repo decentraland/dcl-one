@@ -6,8 +6,9 @@ package catalyst.comms.bus.v1;
 
 // One LiveKit join or leave in a scene or world room. The comms gatekeeper's LiveKit webhook
 // publishes it on `comms.room_events.v1` (core NATS, at most once, at most 4096 bytes, which
-// the publisher's `encode` and the consumer's `decode` both enforce); the `multiplayer-hosting`
-// scheduler consumes it and reconciles against `GET /scene-participants`.
+// the publisher's `encode` and the consumer's `decode` both enforce). Every `serve` consumes it
+// and applies a World room event to its social online view; the `multiplayer-hosting` scheduler
+// consumes it and reconciles against `GET /scene-participants`.
 //
 // The fields are the ones that scheduler reads, plus the session, the time and the id it uses
 // to order and deduplicate events (`participant_sid`, `event_time_ms`, `event_id`); they are

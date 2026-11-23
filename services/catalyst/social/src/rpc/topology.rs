@@ -85,12 +85,12 @@ where
             offline
         };
         if batch.is_empty() {
-            let expiry = snapshot.received_at.map(|at| at + TOPOLOGY_RECEIPT_TTL);
+            let expiry = snapshot.expires_at();
             tokio::select! {
                 result = changes.changed() => { if result.is_err() { return; } }
                 _ = async { match expiry {
-                    Some(at) if at > tokio::time::Instant::now() => tokio::time::sleep_until(at).await,
-                    _ => std::future::pending::<()>().await,
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending::<()>().await,
                 }} => {}
             }
             continue;
@@ -381,6 +381,50 @@ mod tests {
         assert_eq!(peak.load(Ordering::SeqCst), 4);
         assert!(delivered.lock().unwrap().iter().all(|(_, online)| !online));
         assert!(topology.snapshot().wallets.is_empty());
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn world_presence_is_online_once_beside_an_island_and_its_expiry_owes_offline() {
+        let topology = Arc::new(Topology::default());
+        let wallet = format!("0x{:040x}", 9);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let task = {
+            let topology = topology.clone();
+            let events = events.clone();
+            tokio::spawn(async move {
+                run_notifications(&topology, |_, online, _, cursor| {
+                    let events = events.clone();
+                    async move {
+                        events.lock().unwrap().push(online);
+                        (cursor, true)
+                    }
+                })
+                .await;
+            })
+        };
+        topology.apply_world_event("PA_1", &wallet, true);
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true], "World-only is online");
+        topology
+            .receive(&frame(std::slice::from_ref(&wallet)))
+            .unwrap();
+        topology.apply_world_event("PA_1", &wallet, false);
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true], "still in an island");
+        topology.apply_world_event("PA_2", &wallet, true);
+        topology.receive(&[]).unwrap();
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true], "still inside the World");
+        topology.apply_world_event("PA_2", &wallet, false);
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true, false], "in neither");
+        // No read ever confirms the next session (LiveKit unreachable): it expires.
+        topology.apply_world_event("PA_3", &wallet, true);
+        settle().await;
+        tokio::time::advance(crate::comms::topology::WORLD_OCCUPANCY_TTL).await;
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true, false, true, false]);
         task.abort();
     }
 }

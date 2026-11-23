@@ -21,7 +21,7 @@ pub use recovery::RecoveryFailure;
 #[cfg(test)]
 mod recovery_tests;
 
-const PUBLIC_TTL: Duration = Duration::from_secs(90);
+pub(crate) const PUBLIC_TTL: Duration = Duration::from_secs(90);
 const ADMISSION_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy)]
@@ -139,6 +139,8 @@ pub struct Presence {
     admission_flight: tokio::sync::Semaphore,
     waiters: tokio::sync::Semaphore,
     dirty: tokio::sync::Notify,
+    // Social's online view; each complete observation replaces its World wallets.
+    topology: std::sync::OnceLock<Arc<crate::topology::Topology>>,
 }
 impl Default for Presence {
     fn default() -> Self {
@@ -149,6 +151,7 @@ impl Default for Presence {
             admission_flight: tokio::sync::Semaphore::new(1),
             waiters: tokio::sync::Semaphore::new(64),
             dirty: tokio::sync::Notify::new(),
+            topology: std::sync::OnceLock::new(),
         }
     }
 }
@@ -177,6 +180,48 @@ impl Presence {
         }
         drop(state);
         self.dirty.notify_one();
+    }
+
+    /// Feeds World room events and every complete observation's World participants
+    /// to `topology` (once).
+    pub fn attach_topology(&self, topology: Arc<crate::topology::Topology>) {
+        if self.topology.set(topology).is_ok() {
+            let complete = self.complete();
+            if let Some(observed) = &complete.observed {
+                self.observe_world(&complete.rooms, observed.mono);
+            }
+        }
+    }
+
+    /// One verified World join or leave, from this replica's webhook or another's.
+    /// Genesis presence comes from Pulse islands, so other rooms are ignored.
+    pub fn apply_room_event(&self, event: &crate::protocol::bus::room_events::RoomEvent) {
+        use crate::protocol::bus::room_events::{RoomEventKind, RoomType};
+        let Some(topology) = self.topology.get() else {
+            return;
+        };
+        let joined = match RoomEventKind::try_from(event.kind) {
+            Ok(RoomEventKind::Joined) => true,
+            Ok(RoomEventKind::Left) => false,
+            _ => return,
+        };
+        if event.room_type == RoomType::World as i32 && counts_as_player(&event.identity) {
+            topology.apply_world_event(&event.participant_sid, &event.identity, joined);
+        }
+    }
+
+    /// A complete read of every World room that started at `started`.
+    fn observe_world(&self, rooms: &[RecoveredRoom], started: Instant) {
+        let Some(topology) = self.topology.get() else {
+            return;
+        };
+        let participants = rooms
+            .iter()
+            .filter(|r| r.is_world)
+            .flat_map(|r| &r.participants)
+            .filter(|p| counts_as_player(&p.identity))
+            .map(|p| (p.sid.as_str(), p.identity.as_str()));
+        topology.observe_world(started, participants);
     }
 
     fn complete(&self) -> Arc<Complete> {
@@ -401,6 +446,9 @@ impl Presence {
         }
         view.observed = Some(observed);
         state.generations.entry(room.into()).or_insert(0);
+        let complete = state.complete.clone();
+        drop(state);
+        self.observe_world(&complete.rooms, Instant::now());
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn peer_left(&self, identity: &str, room: &str, _: bool) {
@@ -409,6 +457,11 @@ impl Presence {
             if r.name == room {
                 r.participants.retain(|p| p.identity != identity);
             }
+        }
+        let complete = state.complete.clone();
+        drop(state);
+        if complete.observed.is_some() {
+            self.observe_world(&complete.rooms, Instant::now());
         }
     }
 }

@@ -4855,3 +4855,68 @@ async fn community_voice_status_routes_answer_inactive_when_the_store_fails() {
         serde_json::json!({ "userAddress": member.as_str(), "isInCommunityVoiceChat": false })
     );
 }
+
+/// The webhook replica applies the room event and publishes it for every other
+/// replica; a refused publish never fails the webhook.
+#[tokio::test]
+async fn a_verified_room_event_is_applied_and_published_and_a_refused_publish_is_still_acknowledged()
+ {
+    use super::webhook::test_support::webhook_jwt;
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType, SUBJECT};
+    let event = |id: &str, kind: &str| {
+        serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": 1718900000, "event": kind, "room": { "name": "world-w.dcl.eth" }, "participant": { "identity": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sid": "PA_published" } })).unwrap()
+    };
+    let settings = Settings::for_tests();
+    let (key, secret) = (
+        settings.livekit.api_key.clone(),
+        settings.livekit.api_secret.clone(),
+    );
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let state = Arc::new(
+        CommsState::new(
+            PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects"),
+            Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(known_lobby_scenes("w.dcl.eth")),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_bus(bus.clone()),
+    );
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let app = super::router(state);
+    let joined = event("published-join", "participant_joined");
+    assert_eq!(
+        post_webhook(&app, Some(&webhook_jwt(&joined, &key, &secret)), &joined).await,
+        StatusCode::OK
+    );
+    let published = bus.published();
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].0, SUBJECT);
+    let decoded = RoomEvent::decode(&published[0].1).unwrap();
+    assert_eq!(decoded.kind, RoomEventKind::Joined as i32);
+    assert_eq!(decoded.room_type, RoomType::World as i32);
+    assert_eq!(decoded.realm_name, "w.dcl.eth");
+    assert_eq!(decoded.event_id, "published-join");
+    assert!(
+        topology.snapshot().is_online(wallet),
+        "applied here at once"
+    );
+
+    bus.refuse_publishes(true);
+    let left = event("refused-leave", "participant_left");
+    assert_eq!(
+        post_webhook(&app, Some(&webhook_jwt(&left, &key, &secret)), &left).await,
+        StatusCode::OK
+    );
+    assert!(
+        !topology.snapshot().is_online(wallet),
+        "applied here even when the publish is refused"
+    );
+}

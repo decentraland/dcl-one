@@ -406,17 +406,29 @@ pub async fn livekit_webhook(
             let watcher = p.watcher.as_ref();
             super::streaming::cast::refuse_on_join(&state, &p.room, &p.identity, watcher).await?;
         }
-        // The store orders sessions itself: a superseded event still counts there.
-        if prepared == Prepared::Superseded
+        if prepared != Prepared::Superseded {
+            return Ok(axum::http::StatusCode::OK.into_response());
+        }
+        // The store and World presence order sessions themselves: a superseded
+        // event (an old session's late leave) still counts there.
+        let room_event = match room_event(&state, &event).await {
+            Ok(room_event) => room_event,
+            Err(error) if state.room_event_store.is_some() => return Err(error),
+            Err(_) => None,
+        };
+        if let Some(room_event) = &room_event
             && state.room_event_store.is_some()
-            && let Some(room_event) = room_event(&state, &event).await?
         {
-            store_room_event(&state, &room_event).await?;
+            store_room_event(&state, room_event).await?;
             // A failed store's redelivery can be superseded by then; the sink still gets it once.
             let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
             if owed && let Some(sink) = state.room_events.as_ref() {
-                sink.observe_room_event(&room_event);
+                sink.observe_room_event(room_event);
             }
+        }
+        drop((_first, _second));
+        if let Some(room_event) = &room_event {
+            share_room_event(&state, room_event).await;
         }
         return Ok(axum::http::StatusCode::OK.into_response());
     }
@@ -452,8 +464,9 @@ pub async fn livekit_webhook(
         }
     }
     dispatch(&state, &event).await?;
-    if let Some(room_event) = room_event(&state, &event).await? {
-        if let Err(error) = store_room_event(&state, &room_event).await {
+    let room_event = room_event(&state, &event).await?;
+    if let Some(room_event) = &room_event {
+        if let Err(error) = store_room_event(&state, room_event).await {
             state
                 .webhooks
                 .state
@@ -464,7 +477,7 @@ pub async fn livekit_webhook(
             return Err(error);
         }
         if let Some(sink) = state.room_events.as_ref() {
-            sink.observe_room_event(&room_event);
+            sink.observe_room_event(room_event);
         }
     }
     state
@@ -473,6 +486,11 @@ pub async fn livekit_webhook(
         .lock()
         .unwrap()
         .applied(&event, deadline);
+    // Applied and unlocked first: a slow publish cannot get the event redelivered.
+    drop((_first, _second));
+    if let Some(room_event) = &room_event {
+        share_room_event(&state, room_event).await;
+    }
     Ok(axum::http::StatusCode::OK.into_response())
 }
 
@@ -526,6 +544,30 @@ async fn room_event(
         event_time_ms: event.at as u64,
         event_id: event.id.clone(),
     }))
+}
+
+/// Applies the event to this replica's World presence, then publishes it for every
+/// other replica (and `multiplayer-hosting`). Never fails the webhook: each replica's
+/// periodic LiveKit read corrects a lost one.
+async fn share_room_event(
+    state: &CommsState,
+    event: &crate::protocol::bus::room_events::RoomEvent,
+) {
+    state.presence.apply_room_event(event);
+    let Ok(payload) = event.encode() else {
+        return;
+    };
+    let outcome = state
+        .bus
+        .publish(crate::protocol::bus::room_events::SUBJECT, payload)
+        .await;
+    if outcome != super::bus::PublishOutcome::Submitted && state.bus.is_enabled() {
+        tracing::debug!(
+            ?outcome,
+            event_id = event.event_id,
+            "room event not published"
+        );
+    }
 }
 
 /// Stores the event before the webhook is acknowledged; a failure is a 503.
