@@ -151,7 +151,7 @@ All content is content-addressed:
 
 ## Catalyst communications
 
-The primary `catalyst serve` process runs the signed [Realm WebSocket connector](/docs/contributor/communications/archipelago/) and Gatekeeper. Gatekeeper enforces room policy and issues LiveKit credentials. The separate `catalyst pulse` process synchronizes avatars, clusters nearby players, and owns the statistics population. Every `catalyst serve` process exposes the read-only statistics API.
+Every `catalyst serve` process runs Gatekeeper’s room policy and token routes and exposes the read-only statistics API. The primary also runs the signed [Realm WebSocket connector](/docs/contributor/communications/archipelago/) and Gatekeeper’s island subscriber. Gatekeeper issues LiveKit credentials for the connector to deliver. The separate `catalyst pulse` process synchronizes avatars, clusters nearby players, and owns the statistics population.
 
 See the [Comms statistics and WebSocket API](/docs/apis/apis/archipelago-workers/) reference.
 

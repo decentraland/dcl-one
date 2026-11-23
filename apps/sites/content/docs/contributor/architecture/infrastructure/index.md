@@ -98,7 +98,7 @@ Managed subgraph hosting:
 
 | Service        | Purpose          |
 | -------------- | ---------------- |
-| Pulse and Catalyst | Cluster updates, room lookup, and statistics snapshots |
+| Pulse and Catalyst | Cluster updates, cluster lookups, and statistics snapshots |
 | Social Service | Friend status    |
 | Worlds         | World events     |
 

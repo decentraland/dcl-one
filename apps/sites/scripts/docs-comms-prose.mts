@@ -47,11 +47,11 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
   "apis/archipelago-workers/README.md": [[/^# Archipelago Workers\s*$/, `# ${apiTitle}\n\nSee the ${apiLink} reference for endpoints and client behavior.`]],
   "contributor/architecture/catalyst.md": [
     [/^## Archipelago Workers \(Comms\)\n[\s\S]*?(?=^\*\*\*$)/m,
-      `<span id="archipelago-workers-comms"></span>\n\n## Catalyst communications\n\nThe primary \`catalyst serve\` process runs the signed ${connectorLink} and Gatekeeper. Gatekeeper enforces room policy and issues LiveKit credentials. The separate \`catalyst pulse\` process synchronizes avatars, clusters nearby players, and owns the statistics population. Every \`catalyst serve\` process exposes the read-only statistics API.\n\nSee the ${apiLink} reference.\n\n`],
+      `<span id="archipelago-workers-comms"></span>\n\n## Catalyst communications\n\nEvery \`catalyst serve\` process runs Gatekeeper’s room policy and token routes and exposes the read-only statistics API. The primary also runs the signed ${connectorLink} and Gatekeeper’s island subscriber. Gatekeeper issues LiveKit credentials for the connector to deliver. The separate \`catalyst pulse\` process synchronizes avatars, clusters nearby players, and owns the statistics population.\n\nSee the ${apiLink} reference.\n\n`],
   ],
   "contributor/architecture/infrastructure.md": [
     ["* Archipelago Workers - Default voice", "* Catalyst Gatekeeper - LiveKit access for island and other voice rooms"],
-    [/^\| Archipelago\s+\| Position updates \|$/m, "| Pulse and Catalyst | Cluster updates, room lookup, and statistics snapshots |"],
+    [/^\| Archipelago\s+\| Position updates \|$/m, "| Pulse and Catalyst | Cluster updates, cluster lookups, and statistics snapshots |"],
   ],
   "contributor/architecture/services.md": [
     ["Decentraland's backend is composed of distributed microservices organized into logical layers:", "The backend exposes the following groups of APIs. In dcl-one, Catalyst serves multiple API areas from a shared process."],
@@ -61,7 +61,7 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
       `<span id="archipelago-workers"></span>\n\n### Pulse and Catalyst communications\n\nPulse runs as \`catalyst pulse\` and synchronizes avatars over ENet or WebTransport. It clusters nearby players and sends cluster changes and statistics to Catalyst over NATS.\n\nThe primary \`catalyst serve\` runs the signed ${connectorLink}. Gatekeeper checks room access and sends LiveKit assignments through that connector. Each \`catalyst serve\` exposes read-only statistics.\n\nSee the ${apiLink} reference.\n\n`],
     ["* Archipelago Stats - Real-time user counts per scene", "* Catalyst communications statistics - Scene activity and peer counts"],
     ["* Archipelago - Queries online status and locations", "* Catalyst communications - Supplies Pulse topology for friends' online status and can supply peer reads for the community online filter"],
-    ["* **Archipelago** - Routes position updates between islands", "* **Pulse and Catalyst** - Exchange cluster updates, room lookups, and statistics over NATS"],
+    ["* **Archipelago** - Routes position updates between islands", "* **Pulse and Catalyst** - Exchange cluster updates, cluster lookups, and statistics over NATS"],
     ["| Realm Provider        | Catalyst, Archipelago Stats    | All clients                    |", "| Realm Provider        | Catalyst APIs                  | All clients                    |"],
     ["| Archipelago Workers   | NATS, LiveKit                  | Realm Provider, Places         |", "| Pulse                 | NATS, Catalyst room authority  | Explorer, Catalyst             |"],
     ["| Social Service        | Catalyst, NATS, Archipelago    | Clients                        |", "| Social Service        | Catalyst, NATS                 | Clients                        |"],

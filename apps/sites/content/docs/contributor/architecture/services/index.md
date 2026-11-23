@@ -422,7 +422,7 @@ Real-time updates and asynchronous communication flow through NATS:
 
 * **Social Service** - Publishes friend status changes
 * **Worlds** - Broadcasts world configuration updates
-* **Pulse and Catalyst** - Exchange cluster updates, room lookups, and statistics over NATS
+* **Pulse and Catalyst** - Exchange cluster updates, cluster lookups, and statistics over NATS
 * **Events Notifier** - Publishes platform events
 
 NATS enables services to communicate without direct coupling.
