@@ -1,0 +1,72 @@
+# Runs the vendored rusty_enet's native interop test against ENet-CSharp as Unity Explorer ships it
+# (tooling/enet-csharp-probe). The test is ignored in the crate's default run, which the Development
+# workflow uses (tooling/dev-regressions.json keeps it ignored there), so this is where it runs.
+name: ENet-CSharp interop
+'on':
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - library/vendor/rusty_enet/**
+      - tooling/enet-csharp-probe/**
+      - .github/workflows/enet-csharp-interop.yml
+  push:
+    branches: [main]
+    paths:
+      - library/vendor/rusty_enet/**
+      - tooling/enet-csharp-probe/**
+      - .github/workflows/enet-csharp-interop.yml
+permissions:
+  contents: read
+concurrency:
+  group: enet-csharp-interop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  interop:
+    name: Rust ENet against ENet-CSharp
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    env:
+      # The toolchain the repository builds the crate with; it overrides the crate's own upstream
+      # rust-toolchain file for every cargo and rustc call, the cache action's included.
+      RUSTUP_TOOLCHAIN: 1.99.1
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      INTEROP_TEST: test::native_csharp_all_lanes_and_controlled_sender_throttle
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: library/vendor/rusty_enet -> target
+          key: enet-csharp-interop
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 10.0.x
+      # The probe's build downloads the pinned ENet-CSharp files into obj/pinned and checks their
+      # SHA-256; the key follows the project file, which holds the pins.
+      - name: Restore the pinned ENet-CSharp files
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tooling/enet-csharp-probe/obj/pinned
+          key: enet-csharp-pinned-${{ hashFiles('tooling/enet-csharp-probe/NativeProbe.csproj') }}
+      - name: Build the ENet-CSharp probe
+        run: dotnet build tooling/enet-csharp-probe/NativeProbe.csproj -c Release -o "$RUNNER_TEMP/enet-csharp-probe"
+      - name: Run the interop test against the probe
+        env:
+          PULSE_NATIVE_PROBE: ${{ runner.temp }}/enet-csharp-probe/NativeProbe.dll
+          PULSE_NATIVE_TRACE: ${{ runner.temp }}/enet-csharp-probe-trace.txt
+        run: |
+          set -o pipefail
+          cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib -- \
+            --exact "$INTEROP_TEST" --include-ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/interop.log"
+          # A filter that matches no test passes as well: require this one to have run and passed.
+          grep -qxF "test $INTEROP_TEST ... ok" "$RUNNER_TEMP/interop.log"
+          grep -qE '^test result: ok\. 1 passed; 0 failed; 0 ignored' "$RUNNER_TEMP/interop.log"
+      - name: Show the probe trace
+        if: failure()
+        run: cat "$RUNNER_TEMP/enet-csharp-probe-trace.txt" || echo "The probe wrote no trace."

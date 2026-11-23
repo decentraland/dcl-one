@@ -187,6 +187,8 @@
         "/services/catalyst/cast-bot/",
         "/.github/workflows/cast-presenter.yml",
         "/library/vendor/rusty_enet/",
+        "/tooling/enet-csharp-probe/",
+        "/.github/workflows/enet-csharp-interop.yml",
         "/library/dcl-livekit-token/"
       ]
     },

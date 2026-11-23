@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The ENet-CSharp probe of the vendored rusty_enet's native interop test (README.md).
+    It compiles ENet-CSharp as Unity Explorer ships it: the managed wrapper and lane definitions of
+    the com.decentraland.pulse.transport package at the Pulse commit unity-explorer's
+    Packages/packages-lock.json pins, and unity-explorer's native library for the build machine.
+    The build downloads each pinned file once into obj/pinned/<sha256>/ and refuses one whose
+    SHA-256 differs.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>NativeProbe</AssemblyName>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- The wrapper pins packet spans. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The wrapper as shipped compares an IntPtr with null (Packet.CopyTo). -->
+    <NoWarn>$(NoWarn);CS0472</NoWarn>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PinnedDirectory>$(MSBuildProjectDirectory)/obj/pinned/</PinnedDirectory>
+    <!-- unity-explorer main, 2026-11-19; it locks com.decentraland.pulse.transport at the Pulse commit below. -->
+    <UnityExplorerRevision>4c85b8603e969aad463b5779db73272242c17505</UnityExplorerRevision>
+    <!-- decentraland/Pulse #37, 2026-08-14: ENet-CSharp 2.4.9 (github.com/SoftwareGuy/ENet-CSharp) and the Pulse lanes. -->
+    <PulseRevision>994b07ee161c63bf3d2508902ec77c4fad3d4009</PulseRevision>
+    <PulsePackage>https://raw.githubusercontent.com/decentraland/Pulse/$(PulseRevision)/src/DCLPulse.Transport/Package/Runtime</PulsePackage>
+    <UnityExplorerNative>Explorer/Assets/Plugins/ENet/runtimes</UnityExplorerNative>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <PinnedSource Include="ENet.cs" Url="$(PulsePackage)/ENet.cs" Sha256="a3882f2626b286f88e8b0f8eea674c51f40942c8787a54da762710f4a05697dc" />
+    <PinnedSource Include="ENetChannel.cs" Url="$(PulsePackage)/ENetChannel.cs" Sha256="8d60458e2820ecdb03b80d3505d70aca41a5214071b1ab3683e39278e7f51df8" />
+    <PinnedNative Include="libenet.so" Rid="linux-x64" Sha256="8269fcb7ec49d2da4d31fa93baa6833a5ac16de604229a2197a80bfb49f6c537"
+                  Url="https://raw.githubusercontent.com/decentraland/unity-explorer/$(UnityExplorerRevision)/$(UnityExplorerNative)/linux-x64/native/libenet.so" />
+    <!-- unity-explorer keeps this one in Git LFS, which serves it from media.githubusercontent.com. -->
+    <PinnedNative Include="enet.dll" Rid="win-x64" Sha256="0a03cd54b35c77b679ce81f9c5d2e903486a4cd1500b3b4b21edfe4b0260dba3"
+                  Url="https://media.githubusercontent.com/media/decentraland/unity-explorer/$(UnityExplorerRevision)/$(UnityExplorerNative)/win-x64/native/enet.dll" />
+  </ItemGroup>
+
+  <Target Name="FetchPinnedEnetCSharp" BeforeTargets="BeforeBuild">
+    <ItemGroup>
+      <_PinnedNative Include="@(PinnedNative)" Condition="'%(Rid)' == '$(NETCoreSdkRuntimeIdentifier)'" />
+      <_Pinned Include="@(PinnedSource);@(_PinnedNative)" />
+      <_PinnedFile Include="@(_Pinned->'$(PinnedDirectory)%(Sha256)/%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(_PinnedNative)' == ''"
+           Text="No pinned ENet-CSharp native library for $(NETCoreSdkRuntimeIdentifier); pinned: @(PinnedNative->'%(Rid)', ', ')." />
+    <DownloadFile SourceUrl="%(_PinnedFile.Url)" DestinationFolder="%(_PinnedFile.RootDir)%(_PinnedFile.Directory)" Retries="3"
+                  Condition="!Exists('%(_PinnedFile.FullPath)')" />
+    <GetFileHash Files="@(_PinnedFile)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_PinnedHashed" />
+    </GetFileHash>
+    <!-- MSBuild compares strings case-insensitively, so the hash's letter case does not matter. -->
+    <Delete Files="%(_PinnedHashed.FullPath)" Condition="'%(_PinnedHashed.FileHash)' != '%(_PinnedHashed.Sha256)'" />
+    <Error Condition="'%(_PinnedHashed.FileHash)' != '%(_PinnedHashed.Sha256)'"
+           Text="%(_PinnedHashed.Url) has SHA-256 %(_PinnedHashed.FileHash), pinned %(_PinnedHashed.Sha256); the download was deleted." />
+    <ItemGroup>
+      <Compile Include="@(_PinnedHashed)" Condition="'%(Extension)' == '.cs'" />
+      <None Include="@(_PinnedHashed)" Condition="'%(Extension)' != '.cs'" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>

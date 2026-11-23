@@ -79,6 +79,8 @@
 /services/catalyst/cast-bot/ @decentraland/apis
 /.github/workflows/cast-presenter.yml @decentraland/apis
 /library/vendor/rusty_enet/ @decentraland/apis
+/tooling/enet-csharp-probe/ @decentraland/apis
+/.github/workflows/enet-csharp-interop.yml @decentraland/apis
 /library/dcl-livekit-token/ @decentraland/apis
 
 # pulse
