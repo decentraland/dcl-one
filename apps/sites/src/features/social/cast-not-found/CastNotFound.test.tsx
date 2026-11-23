@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import CastNotFound from "./CastNotFound";
@@ -30,9 +30,9 @@ const trackCtx = { sid: "test", story: "landings/cast-not-found", variant: "inst
 function renderNotFound(onTrack: ReturnType<typeof vi.fn>) {
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <MemoryRouter initialEntries={["/cast"]}>
+      <RootDataRouter initialEntries={["/cast"]}>
         <CastNotFound trackCtx={trackCtx} from="watcher" reason="expired" onTrack={onTrack as never} />
-      </MemoryRouter>
+      </RootDataRouter>
     </QueryClientProvider>,
   );
 }

@@ -2,7 +2,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -388,9 +389,9 @@ describe("the profile header", () => {
     const profile = { ...emptyProfile(OTHER), name: "Bob" };
     const view = () => (
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
+        <RootDataRouter>
           <ProfileShell profile={profile} own={false} tabs={[]} active="overview" onTab={vi.fn()}>body</ProfileShell>
-        </MemoryRouter>
+        </RootDataRouter>
       </QueryClientProvider>
     );
     const { rerender } = render(view());

@@ -2,12 +2,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 import { createShopClient } from "@shop/api/shop";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 import { sitesShopClient } from "@/data/lib/auth/shop-client";
 
 import ChromeNavBridge from "./ChromeNavBridge";
@@ -64,27 +64,14 @@ function show({
   analyticsUserId = null as string | null,
   footerCopy = sitesFooterCopy.en,
 } = {}) {
-  const root = { sid: "sid-1", analyticsUserId };
-  const router = createMemoryRouter(
-    [
-      {
-        id: "root",
-        path: "/",
-        loader: () => root,
-        element: (
-          <ChromeNavBridge>
-            <Outlet />
-          </ChromeNavBridge>
-        ),
-        children: [{ path: "*", element: <SitesLayout footerCopy={footerCopy}>Page</SitesLayout> }],
-      },
-    ],
-    { initialEntries: [path], hydrationData: { loaderData: { root } } },
-  );
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ChromeAuthContext value={auth}>
-        <RouterProvider router={router} />
+        <RootDataRouter initialEntries={[path]} root={{ sid: "sid-1", analyticsUserId }}>
+          <ChromeNavBridge>
+            <SitesLayout footerCopy={footerCopy}>Page</SitesLayout>
+          </ChromeNavBridge>
+        </RootDataRouter>
       </ChromeAuthContext>
     </QueryClientProvider>,
   );

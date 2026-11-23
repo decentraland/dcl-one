@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import SitesLayout from "./SitesLayout";
@@ -55,9 +55,9 @@ describe("upstream Shop and Marketplace links (notifications, CMS content)", () 
   });
 
   it("render as in-app links", () => {
-    const html = renderToString(<MemoryRouter><ChromeNavBridge>
+    const html = renderToString(<RootDataRouter><ChromeNavBridge>
       <ChromeLink href={`https://decentraland.org/marketplace/contracts/${C}/items/3`}>Item</ChromeLink>
-    </ChromeNavBridge></MemoryRouter>);
+    </ChromeNavBridge></RootDataRouter>);
     expect(html).toContain(`href="/shop/item/${C}/3"`);
   });
 });
@@ -68,14 +68,14 @@ function Probe() {
 
 describe("ChromeNavBridge", () => {
   it("discovers application card links while keeping documents, downloads and fragments native", () => {
-    const html = renderToString(<MemoryRouter><ChromeNavBridge>
+    const html = renderToString(<RootDataRouter><ChromeNavBridge>
       <ChromeLink href="/create/preview">Scenes</ChromeLink>
       <ChromeLink href="/play/">Play</ChromeLink>
       <ChromeLink href="/docs/">Docs</ChromeLink>
       <ChromeLink href="/social/">Community</ChromeLink>
       <ChromeLink href="/create/preview" download>Download</ChromeLink>
       <ChromeLink href="#main">Skip</ChromeLink>
-    </ChromeNavBridge></MemoryRouter>);
+    </ChromeNavBridge></RootDataRouter>);
     const anchors = html.match(/<a[^>]*>[^<]*<\/a>/g)!;
     expect(anchors[0]).toContain('data-discover="true"');
     for (const anchor of anchors.slice(1)) expect(anchor).not.toContain("data-discover");
@@ -83,12 +83,12 @@ describe("ChromeNavBridge", () => {
 
   it("provides the chrome navigator so the top bar renders discoverable in-app links", () => {
     const html = renderToString(
-      <MemoryRouter initialEntries={["/blog"]}>
+      <RootDataRouter initialEntries={["/blog"]}>
         <QueryClientProvider client={new QueryClient()}><ChromeNavBridge>
           <Probe />
           <DclTopBar variant="sites" active="learn" signedIn={false} />
         </ChromeNavBridge></QueryClientProvider>
-      </MemoryRouter>,
+      </RootDataRouter>,
     );
     expect(html).toContain("bridged");
     const shopAll = html.match(/<a[^>]*href="\/shop\/overview"[^>]*>Shop All<\/a>/)?.[0];
@@ -106,14 +106,14 @@ describe("ChromeNavBridge", () => {
 it("selects overlay geometry only for the explicit native header policy", () => {
   const legacy = renderToString(<SiteLayout overlayNavigation>Hero</SiteLayout>);
   expect(legacy).not.toContain('data-header-overlay');
-  const native = renderToString(<MemoryRouter><ChromeNavBridge><SiteLayout overlayNavigation>Hero</SiteLayout></ChromeNavBridge></MemoryRouter>);
+  const native = renderToString(<RootDataRouter><ChromeNavBridge><SiteLayout overlayNavigation>Hero</SiteLayout></ChromeNavBridge></RootDataRouter>);
   expect(native).toContain('data-header-layout="native"');
   expect(native).toContain('data-header-overlay="true"');
 });
 
 
 it("keeps a legacy overlay flag in flow unless the native header surface is explicitly selected", () => {
-  const shell = (children: ReactNode, at = "/") => renderToString(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[at]}><ChromeNavBridge>{children}</ChromeNavBridge></MemoryRouter></QueryClientProvider>);
+  const shell = (children: ReactNode, at = "/") => renderToString(<QueryClientProvider client={new QueryClient()}><RootDataRouter initialEntries={[at]}><ChromeNavBridge>{children}</ChromeNavBridge></RootDataRouter></QueryClientProvider>);
   for (const active of ["legal", "whatson", "play"] as const) {
     const ordinary = shell(<SitesLayout active={active} overlayNav>Page</SitesLayout>, "/about");
     expect(ordinary).toContain('data-header-layout="native"');

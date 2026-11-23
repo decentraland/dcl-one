@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChromeAuthContext } from "@dcl/one-ui/components/AppChrome/chrome-auth";
@@ -51,11 +51,11 @@ describe.each([
     });
 
     render(
-      <MemoryRouter initialEntries={["/events"]}>
+      <RootDataRouter initialEntries={["/events"]}>
         <QueryClientProvider client={new QueryClient()}>
           <SitesLayout>Events</SitesLayout>
         </QueryClientProvider>
-      </MemoryRouter>,
+      </RootDataRouter>,
     );
   });
 
@@ -88,13 +88,13 @@ describe("when Sites renders the credits chip", () => {
 
   function show(signedIn: boolean) {
     render(
-      <MemoryRouter initialEntries={["/events"]}>
+      <RootDataRouter initialEntries={["/events"]}>
         <QueryClientProvider client={queryClient}>
           <ChromeAuthContext value={{ signedIn, account: signedIn ? account : "", mana: "", name: "", committee: false }}>
             <SitesLayout>Events</SitesLayout>
           </ChromeAuthContext>
         </QueryClientProvider>
-      </MemoryRouter>,
+      </RootDataRouter>,
     );
   }
 

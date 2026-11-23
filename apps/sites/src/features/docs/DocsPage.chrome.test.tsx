@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
-import { MemoryRouter } from "react-router";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 import { describe, expect, it } from "vitest";
 import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 import type { DocsPageView } from "@/data/lib/docs/types";
@@ -33,7 +33,7 @@ describe("when Docs adapts its offsets to the owning header layout", () => {
     "should expose the %s policy to both sticky layout roots",
     (layout) => {
       const html = renderToString(
-        <MemoryRouter>
+        <RootDataRouter>
           <QueryClientProvider client={new QueryClient()}>
             <ChromeNavContext.Provider
               value={{ headerLayout: layout === "native" ? "native" : undefined }}
@@ -41,7 +41,7 @@ describe("when Docs adapts its offsets to the owning header layout", () => {
               <DocsPage view={view} />
             </ChromeNavContext.Provider>
           </QueryClientProvider>
-        </MemoryRouter>,
+        </RootDataRouter>,
       );
       expect(html).toMatch(
         new RegExp(

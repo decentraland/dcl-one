@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { RootDataRouter } from "@/core/lib/telemetry/root-router.test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getAddress } from "viem";
 import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
@@ -54,13 +54,13 @@ function Host({
   );
   return (
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[pathname]}>
+      <RootDataRouter initialEntries={[pathname]}>
         <ChromeAuthContext.Provider value={auth}>
           <SitesLocaleContext.Provider value={{ locale, onSelect: () => {} }}>
             <ChromeNavBridge>{children}</ChromeNavBridge>
           </SitesLocaleContext.Provider>
         </ChromeAuthContext.Provider>
-      </MemoryRouter>
+      </RootDataRouter>
     </QueryClientProvider>
   );
 }
@@ -543,11 +543,11 @@ describe("Sites native chrome integration", () => {
   describe("when the standalone chrome is its own nav renderer", () => {
     beforeEach(() => {
       render(
-        <MemoryRouter>
+        <RootDataRouter>
           <ChromeNavContext.Provider value={{ TopBar: DclTopBar }}>
             <DclTopBar />
           </ChromeNavContext.Provider>
-        </MemoryRouter>,
+        </RootDataRouter>,
       );
     });
 
