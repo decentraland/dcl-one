@@ -332,8 +332,9 @@ export default function App() {
   // (ui3/src/data/hooks); one client per request on the server, one per page
   // in the browser, so SSR never shares a cache between visitors.
   const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
-  useRoutePageView();
+  // Before the page view: it takes a redirect's hand-over and removes its fragment from the URL.
   useLegacyRedirectEvent();
+  useRoutePageView();
   useSessionChangeRevalidation();
   useEffect(() => {
     appHydrated = true;

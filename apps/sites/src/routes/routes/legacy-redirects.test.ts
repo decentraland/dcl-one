@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LEGACY_REDIRECT_COOKIE } from "@/core/lib/telemetry/legacy-redirect";
+import { LEGACY_REDIRECT_COOKIE, LEGACY_REDIRECT_FRAGMENT } from "@/core/lib/telemetry/legacy-redirect";
 
 import { loader as discover } from "./discover.$";
 import { loader as eventsEvent } from "./events_.event";
@@ -24,13 +24,23 @@ function cookieOf(response: Response) {
   return { name: pair!.slice(0, eq), value: pair!.slice(eq + 1), attributes };
 }
 
-/** The details a redirect hands over, in a cookie of its own scoped to the destination's path. */
+/** Where a redirect sends the visitor, without the hand-over's fragment. */
+function destinationOf(response: Response) {
+  return response.headers.get("Location")!.split("#")[0];
+}
+
+/**
+ * The details a redirect hands over: a cookie named by a one-time id, scoped to the destination's path, and
+ * that id in the redirect's fragment.
+ */
 function handedOver(response: Response) {
   const cookie = cookieOf(response);
   if (!cookie) return null;
-  expect(cookie.name).toMatch(new RegExp(`^${LEGACY_REDIRECT_COOKIE}[0-9a-f]{16}$`));
+  const match = new RegExp(`^${LEGACY_REDIRECT_COOKIE}([0-9a-f]{16})$`).exec(cookie.name);
+  expect(match).not.toBeNull();
   const location = response.headers.get("Location")!;
-  const path = location.split("?")[0];
+  expect(location.split("#")[1]).toBe(`${LEGACY_REDIRECT_FRAGMENT}=${match![1]}`);
+  const path = location.split(/[?#]/)[0];
   expect(cookie.attributes).toEqual([`Path=${path}`, "Max-Age=60", "SameSite=Lax", "Secure"]);
   expect(response.headers.get("Cache-Control")).toBe("private, no-store");
   return JSON.parse(decodeURIComponent(cookie.value));
@@ -40,7 +50,7 @@ describe("a What's On or Discover URL", () => {
   it("/whats-on hands over origin events, its path and query, and where it went", () => {
     const response = whatsOn(args("/whats-on?tab=live&utm_source=x"));
     expect(response.status).toBe(302);
-    expect(response.headers.get("Location")).toBe("/events?tab=live&utm_source=x");
+    expect(destinationOf(response)).toBe("/events?tab=live&utm_source=x");
     expect(handedOver(response)).toEqual({
       origin: "events",
       source: "/whats-on?tab=live&utm_source=x",
@@ -61,7 +71,7 @@ describe("a What's On or Discover URL", () => {
 
   it("a deeper /whats-on path is an events redirect too", () => {
     const response = whatsOnSplat(args("/whats-on/admin/users?tab=x", { "*": "admin/users" }));
-    expect(response.headers.get("Location")).toBe("/events/admin/users?tab=x");
+    expect(destinationOf(response)).toBe("/events/admin/users?tab=x");
     expect(handedOver(response)).toMatchObject({ origin: "events", source: "/whats-on/admin/users?tab=x" });
   });
 
@@ -76,7 +86,7 @@ describe("a What's On or Discover URL", () => {
 
   it("/discover hands over origin places", () => {
     const response = discover(args("/discover/world/foo.dcl.eth?tab=about"));
-    expect(response.headers.get("Location")).toBe("/places/world/foo.dcl.eth?tab=about");
+    expect(destinationOf(response)).toBe("/places/world/foo.dcl.eth?tab=about");
     expect(handedOver(response)).toEqual({
       origin: "places",
       source: "/discover/world/foo.dcl.eth?tab=about",
@@ -95,10 +105,11 @@ describe("a What's On or Discover URL", () => {
     });
   });
 
-  it("gives each redirect its own cookie, so concurrent redirects never overwrite each other", () => {
-    const first = cookieOf(whatsOn(args("/whats-on?tab=live")))!;
-    const second = cookieOf(whatsOn(args("/whats-on?tab=live")))!;
-    expect(first.name).not.toBe(second.name);
+  it("gives each redirect its own id, so two redirects to the same URL never share a hand-over", () => {
+    const first = whatsOn(args("/whats-on?tab=live"));
+    const second = whatsOn(args("/whats-on?tab=live"));
+    expect(cookieOf(first)!.name).not.toBe(cookieOf(second)!.name);
+    expect(first.headers.get("Location")).not.toBe(second.headers.get("Location"));
   });
 
   it("scopes the cookie to / when the destination path holds a character a cookie attribute cannot carry", () => {

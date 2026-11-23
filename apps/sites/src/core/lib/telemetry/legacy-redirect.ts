@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import { redirect, useLocation } from "react-router";
 
 import { useAnalyticsSid, useAnalyticsUserId } from "./page-view";
@@ -8,10 +8,11 @@ import { trackedUserDropped } from "./tracked-user";
 // The legacy site's `Legacy Events Redirected` and `Legacy Places Redirected` (decentraland/sites
 // `useLegacyRedirectTracking`): one per visit to a renamed section's old URL, sent from the visitor's
 // browser once analytics was ready, and dropped when it was not ready within 800 ms or the visitor left
-// first. Here the old URL answers with a server redirect, so it hands its details to the page it lands on
-// in a short-lived cookie of its own (one per redirect, scoped to the destination's path, read only on
-// the exact destination URL), and that page sends the event through the same gates (bot, exempt
-// session) and with the same identity as its own page view.
+// first. Here the old URL answers with a server redirect, so it hands its details to the page it lands on:
+// a short-lived cookie named by a one-time id, and that id in the redirect's fragment. Only the navigation
+// that followed this redirect carries the id, so neither another tab's redirect nor a direct visit to the
+// same URL can take the hand-over. The landing page removes the fragment before its page view and sends
+// the event through the same gates (bot, exempt session) and with the same identity as that page view.
 
 export type LegacyRedirectOrigin = "events" | "places";
 
@@ -59,12 +60,24 @@ function pathOf(destination: string): string {
   return /^\/[^;,\s]*$/.test(path) ? path : "/";
 }
 
-/** The `Set-Cookie` value that hands a redirect to the page it lands on; null when it would not fit. */
-export function legacyRedirectCookie(request: Request, origin: LegacyRedirectOrigin, destination: string): string | null {
+/** The fragment that names a redirect's hand-over: `#dcl-legacy-redirect=<id>`. */
+export const LEGACY_REDIRECT_FRAGMENT = "dcl-legacy-redirect";
+const HANDOFF_ID = /^[0-9a-f]{16}$/;
+
+type Handover = { location: string; cookie: string };
+
+/**
+ * The redirect's `Location` (the destination plus the hand-over's fragment) and its `Set-Cookie`; null when
+ * the details would not fit in a cookie.
+ */
+export function legacyRedirectHandover(request: Request, origin: LegacyRedirectOrigin, destination: string): Handover | null {
   const value = encodeURIComponent(JSON.stringify(legacyRedirectDetails(request, origin, destination)));
   if (value.length > MAX_COOKIE_VALUE) return null;
-  const path = pathOf(destination);
-  return `${LEGACY_REDIRECT_COOKIE}${handoffId()}=${value}; Path=${path}; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax; Secure`;
+  const id = handoffId();
+  return {
+    location: `${destination}#${LEGACY_REDIRECT_FRAGMENT}=${id}`,
+    cookie: `${LEGACY_REDIRECT_COOKIE}${id}=${value}; Path=${pathOf(destination)}; Max-Age=${COOKIE_MAX_AGE_S}; SameSite=Lax; Secure`,
+  };
 }
 
 /**
@@ -72,9 +85,11 @@ export function legacyRedirectCookie(request: Request, origin: LegacyRedirectOri
  * that carries them is the visitor's own, so no cache stores it.
  */
 export function legacyRedirect(request: Request, origin: LegacyRedirectOrigin, destination: string): Response {
-  const cookie = legacyRedirectCookie(request, origin, destination);
-  if (!cookie) return redirect(destination);
-  return redirect(destination, { headers: [["Set-Cookie", cookie], ["Cache-Control", "private, no-store"]] });
+  const handover = legacyRedirectHandover(request, origin, destination);
+  if (!handover) return redirect(destination);
+  return redirect(handover.location, {
+    headers: [["Set-Cookie", handover.cookie], ["Cache-Control", "private, no-store"]],
+  });
 }
 
 const isText = (value: unknown): value is string => typeof value === "string";
@@ -93,28 +108,34 @@ function parse(raw: string): LegacyRedirect | null {
   }
 }
 
+/** The hand-over id a URL fragment names, or null. */
+export function handoverId(hash: string): string | null {
+  const prefix = `#${LEGACY_REDIRECT_FRAGMENT}=`;
+  if (!hash.startsWith(prefix)) return null;
+  const id = hash.slice(prefix.length);
+  return HANDOFF_ID.test(id) ? id : null;
+}
+
 /**
- * Reads and clears the redirect handed to the URL being shown (`pathname` + `search`), so it is sent once
- * and only by the page it was meant for: another tab's redirect, or one to another URL, stays for its own
- * page. A hand-over that cannot be read is cleared and sends nothing.
+ * Reads and clears the cookie of hand-over `id`, so it is sent once. It is returned only when it was handed
+ * to the URL being shown (`pathname` + `search`); one that cannot be read sends nothing.
  */
-export function takeLegacyRedirect(pathname: string, search: string): LegacyRedirect | null {
+export function takeLegacyRedirect(id: string, pathname: string, search: string): LegacyRedirect | null {
   if (typeof document === "undefined") return null;
-  const here = withoutSensitiveParams(`${pathname}${search}`);
+  const name = `${LEGACY_REDIRECT_COOKIE}${id}`;
   try {
+    let raw: string | undefined;
     for (const part of document.cookie.split(";")) {
       const eq = part.indexOf("=");
-      const name = eq > 0 ? part.slice(0, eq).trim() : "";
-      if (!name.startsWith(LEGACY_REDIRECT_COOKIE)) continue;
-      const parsed = parse(part.slice(eq + 1).trim());
-      if (parsed && parsed.destination !== here) continue;
-      for (const path of new Set([pathOf(pathname), "/"])) document.cookie = `${name}=; Path=${path}; Max-Age=0; SameSite=Lax`;
-      if (parsed) return parsed;
+      if (eq > 0 && part.slice(0, eq).trim() === name) raw = part.slice(eq + 1).trim();
     }
+    if (raw === undefined) return null;
+    for (const path of new Set([pathOf(pathname), "/"])) document.cookie = `${name}=; Path=${path}; Max-Age=0; SameSite=Lax`;
+    const parsed = parse(raw);
+    return parsed && parsed.destination === withoutSensitiveParams(`${pathname}${search}`) ? parsed : null;
   } catch {
     return null;
   }
-  return null;
 }
 
 /** The legacy key order: `source`, `destination`, `origin`, `preservedParams`, `timestamp` (ISO, at sending). */
@@ -141,43 +162,84 @@ function sendLegacyRedirect(redirected: LegacyRedirect, sid: string, userId: str
 }
 
 /**
- * Sends the legacy redirect event a server redirect handed to this URL, once the document's analytics is
- * ready (its first Sites page view left), as the legacy hook did: a bot or an exempt session never sends
- * it, nor does a page whose analytics is still not ready 800 ms after landing, nor one the visitor leaves
- * first. Checked on every navigation, since a client navigation can follow a redirect too.
+ * A hand-over taken by a navigation: its deadline is fixed when it lands, and once it is sent, expired or
+ * left behind it never goes again, whatever re-runs (a session that arrives later, a returning history entry).
  */
-export function useLegacyRedirectEvent(): void {
-  const { key, pathname, search } = useLocation();
-  const sid = useAnalyticsSid();
-  const userId = useAnalyticsUserId();
-  useEffect(() => {
-    if (!sid) return;
-    const redirected = takenFor(key, pathname, search);
-    if (!redirected) return;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    const cancel = whenLegacyAnalyticsReady(() => {
-      clearTimeout(deadline);
-      handled.add(key);
-      sendLegacyRedirect(redirected, sid, userId);
-    });
-    if (handled.has(key)) return;
-    deadline = setTimeout(cancel, LEGACY_REDIRECT_TIMEOUT_MS);
-    return () => {
-      cancel();
-      clearTimeout(deadline);
-    };
-  }, [key, pathname, search, sid, userId]);
+type Landing = {
+  key: string;
+  redirect: LegacyRedirect | null;
+  deadline: number;
+  state: "pending" | "sent" | "expired" | "navigated" | "invalid";
+};
+
+/** The hand-overs this document's navigations took, by the navigation's location key. */
+const landings = new Map<string, Landing>();
+
+// A server render takes nothing; in the browser the hand-over is taken before any page's passive effects run,
+// so no page view sees the fragment.
+const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+function removeFragment(pathname: string, search: string): void {
+  try {
+    window.history.replaceState(window.history.state, "", `${pathname}${search}`);
+  } catch {
+    // The URL keeps its fragment; the event is unaffected.
+  }
 }
 
 /**
- * The hand-over read for a navigation, kept per navigation so a re-run effect (StrictMode, a session that
- * arrives later) sees the same one instead of a cleared cookie; one sent is never sent again.
+ * Sends the legacy redirect event the redirect this navigation followed handed over, once the document's
+ * analytics is ready (its first Sites page view left), as the legacy hook did: a bot or an exempt session
+ * never sends it, nor does a page whose analytics is still not ready 800 ms after landing, nor one the visitor
+ * leaves first. Checked on every navigation, since a client navigation can follow a redirect too. Call it
+ * before the root's page view.
  */
-const taken = new Map<string, LegacyRedirect | null>();
-const handled = new Set<string>();
+export function useLegacyRedirectEvent(): void {
+  const { key, pathname, search, hash } = useLocation();
+  const sid = useAnalyticsSid();
+  const userId = useAnalyticsUserId();
 
-function takenFor(key: string, pathname: string, search: string): LegacyRedirect | null {
-  if (handled.has(key)) return null;
-  if (!taken.has(key)) taken.set(key, takeLegacyRedirect(pathname, search));
-  return taken.get(key) ?? null;
+  useBrowserLayoutEffect(() => {
+    for (const landing of landings.values()) {
+      if (landing.state === "pending" && landing.key !== key) landing.state = "navigated";
+    }
+    if (landings.has(key)) return;
+    const id = handoverId(hash);
+    if (!id) return;
+    removeFragment(pathname, search);
+    const redirect = takeLegacyRedirect(id, pathname, search);
+    landings.set(key, {
+      key,
+      redirect,
+      deadline: Date.now() + LEGACY_REDIRECT_TIMEOUT_MS,
+      state: redirect ? "pending" : "invalid",
+    });
+  }, [key, pathname, search, hash]);
+
+  useEffect(() => {
+    const landing = landings.get(key);
+    if (!landing || landing.state !== "pending" || !landing.redirect || !sid) return;
+    const remaining = landing.deadline - Date.now();
+    if (remaining <= 0) {
+      landing.state = "expired";
+      return;
+    }
+    const redirected = landing.redirect;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancel = whenLegacyAnalyticsReady(() => {
+      clearTimeout(timer);
+      if (landing.state !== "pending") return;
+      landing.state = "sent";
+      sendLegacyRedirect(redirected, sid, userId);
+    });
+    if (landing.state !== "pending") return;
+    timer = setTimeout(() => {
+      cancel();
+      if (landing.state === "pending") landing.state = "expired";
+    }, remaining);
+    return () => {
+      cancel();
+      clearTimeout(timer);
+    };
+  }, [key, sid, userId]);
 }
