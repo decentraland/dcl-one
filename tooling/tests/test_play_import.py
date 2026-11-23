@@ -145,6 +145,20 @@ class GitHubReadTests(unittest.TestCase):
         self.assertEqual(get.call_count, 5)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16])
 
+    def test_rate_limit_and_unread_status_retries_are_counted_apart_inside_a_wait(self):
+        truncated = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='unexpected end of JSON input\n')
+        limited = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: API rate limit exceeded (HTTP 403)\n')
+        clock = [0]
+        with patch.object(play.subprocess, 'check_output', side_effect=[truncated] * 2 + [limited] * 5) as get, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep',
+                             side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42', deadline=5400)
+        self.assertEqual(get.call_count, 7)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 60, 120, 240, 240])
+
     def test_without_a_wait_rate_limit_backoff_still_follows_every_retry(self):
         limited = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: API rate limit exceeded (HTTP 403)\n')
         with patch.object(play.subprocess, 'check_output', side_effect=[self.error(503)] * 2 + [limited] * 3) as get, \
@@ -153,6 +167,19 @@ class GitHubReadTests(unittest.TestCase):
                 play.api('actions/runs/42')
         self.assertEqual(get.call_count, 5)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 240, 240])
+
+    def test_artifact_download_gives_up_after_its_two_tries(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        for stderr, pause in ((b'gh: HTTP 503\n', 2), (b'gh: API rate limit exceeded (HTTP 403)\n', 60)):
+            failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=stderr)
+            with self.subTest(stderr=stderr), \
+                    patch.object(play.subprocess, 'run', side_effect=failure) as gh, \
+                    patch.object(play.time, 'sleep') as sleep, patch('sys.stderr', new_callable=io.StringIO), \
+                    self.assertRaises(subprocess.CalledProcessError):
+                play.download({'id': 9}, Path(temporary.name) / 'web.zip')
+            self.assertEqual(gh.call_count, 2)
+            sleep.assert_called_once_with(pause)
 
     def test_invalid_json_does_not_retry_or_become_a_successful_read(self):
         with patch.object(play.subprocess, 'check_output', return_value='not JSON') as get, \
@@ -1338,14 +1365,14 @@ class PlayImportTests(unittest.TestCase):
     BASE_TIME = datetime.fromisoformat('2026-11-23T12:00:00Z').timestamp()
     OLDER, NEWER = '2026-11-23T10:00:00Z', '2026-11-23T14:00:00Z'
 
-    def non_engine_pr(self, main, download_run, **fetch):
+    def non_engine_pr(self, main, download_run, based=BASE_TIME, **fetch):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
         history = {f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}': [],
                    'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&branch=main&page=1': main}
         with patch.object(play, 'api', side_effect=lambda path, deadline: {'workflow_runs': history[path]}), \
                 patch.object(play, 'current_pr', return_value=pr), \
                 patch.object(play, 'engine_changed', return_value=False), \
-                patch.object(play, 'commit_time', return_value=self.BASE_TIME), \
+                patch.object(play, 'commit_time', return_value=based), \
                 patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
                 patch.object(contract, 'inputs', side_effect=lambda root, revision=None: 'theirs' if revision else 'ours'), \
                 patch.object(play, 'download_run', side_effect=download_run) as download:
@@ -1361,6 +1388,13 @@ class PlayImportTests(unittest.TestCase):
         self.assertIn("None of the 5 newest main web builds older than this PR's base", str(error))
         self.assertNotIn('newest 1,000 runs', str(error))
         self.assertEqual(downloads, [60, 59, 58, 57, 56])
+
+    def test_an_unreadable_base_time_leaves_the_walk_uncapped(self):
+        main = [run(id=60 - n, head_sha=f'{n}' * 40, created_at=self.OLDER) for n in range(7)]
+        result, downloads = self.non_engine_pr(main, [ValueError('Explorer build inputs differ')] * 6 + [self.build],
+                                               based=None)
+        self.assertEqual(result, self.build)
+        self.assertEqual(downloads, [60, 59, 58, 57, 56, 55, 54])
 
     def test_commit_time_reads_the_committer_time_of_a_commit(self):
         env = {**os.environ, 'GIT_AUTHOR_DATE': '2026-11-20T00:00:00Z', 'GIT_COMMITTER_DATE': '2026-11-23T12:00:00Z'}

@@ -80,7 +80,7 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
     # one minute, a server error from two seconds; both double up to a cap.
     # A rate limit gets four retries of its own even inside a wait: the wait is for a Bevy build, and the
     # repository's token budget can stay spent for the hour. So does an error whose status gh could not read.
-    attempt = bounded = 0
+    attempt = throttled = unread_tries = 0
     while True:
         timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
         if timeout <= 0:
@@ -93,14 +93,22 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
                 print(stderr, file=sys.stderr, end='')
             limited = isinstance(exc, subprocess.CalledProcessError) and rate_limited(stderr)
             unread = isinstance(exc, subprocess.CalledProcessError) and unread_status(stderr)
-            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
-                attempt >= 4 if deadline is None else bounded >= 4 if limited or unread else time.monotonic() >= deadline)
+            if attempts is not None and attempt + 1 >= attempts:
+                exhausted = True
+            elif deadline is None:
+                exhausted = attempt >= 4
+            elif limited:
+                exhausted = throttled >= 4
+            elif unread:
+                exhausted = unread_tries >= 4
+            else:
+                exhausted = time.monotonic() >= deadline
             if exhausted and limited:
                 print('GitHub kept rate limiting this repository token; rerun this job once its API budget resets.',
                       file=sys.stderr, flush=True)
             if exhausted or not (isinstance(exc, subprocess.TimeoutExpired) or limited or unread or transient(stderr)):
                 raise
-            step = attempt if deadline is None else bounded
+            step = attempt if deadline is None else throttled
             delay = min(240, 60 * 2 ** min(step, 2)) if limited else min(30, 2 ** min(attempt + 1, 5))
             if deadline is not None:
                 delay = min(delay, max(0, deadline - time.monotonic()))
@@ -110,8 +118,8 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
             if deadline is not None and time.monotonic() >= deadline:
                 raise
             attempt += 1
-            if limited or unread:
-                bounded += 1
+            throttled += bool(limited)
+            unread_tries += bool(unread)
 
 
 def api(path, deadline=None):
@@ -459,9 +467,8 @@ def fetch(wait=0, production=False, receipt=None):
                         rejected += 1
                         if rejected == MAX_REJECTED:
                             hint = (f'None of the {MAX_REJECTED} newest main web builds older than this PR\'s base '
-                                    'verified against this tree (the last error is above): they predate a change it '
-                                    'has. Rebase on main, or rerun this job once main has a successful Bevy CI build '
-                                    'after that change. ')
+                                    'verified against this tree (each error is above). Rebase on main, or rerun this '
+                                    'job once main has a newer successful Bevy CI build. ')
                             break
         except TimeoutError:
             # The wait ended inside a read: name the runs last seen under way.
