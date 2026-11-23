@@ -259,7 +259,8 @@ legacy namespaces need not parse as UUIDs. The object pass blocks writes to the 
 commits. For a concurrent build ahead of migration, use the definition from
 `schemas/21_world_scene_places.sql` and verify both `pg_index.indisvalid` and
 `pg_get_indexdef(indexrelid)`. Migration, bootstrap and status check only the
-name. See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
+name. Drop and rebuild any invalid or mismatched index before migration.
+See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
 
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
