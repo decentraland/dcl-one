@@ -2815,15 +2815,22 @@ Neither table has an FK: queue rows outlive catalogue deletion.
 
 Workload and invariants for removal notices: one immutable recipient set per
 live removal, with a durable `recipient_cursor` advanced after each Social
-acceptance. Explore freezes valid active local admin wallets into the queued event in
-the catalogue removal transaction, using exact World keys or the Genesis base.
-Its plain MVCC read of `social.scene_admins` (`place_id`, `admin_address`,
-`active`) takes no Social row locks and performs no Social writes. This preserves
-recipients if a re-grant overwrites `added_at` before the first maintenance pass.
-Safety cleanup commits before notification enrichment. The fallback for older
-events reads retained grants and saves local recipients before external
-owner/permission lookups. Missing external authority leaves
-`recipients_resolved=false`; a saved owner alone is never a complete set.
+acceptance. In the catalogue removal transaction Explore freezes, for a Genesis
+place, the valid active admin wallets of its base parcel into `recipients`. For a
+World it freezes the exact scene place keys into `admin_keys` and each active admin
+there with its original granter into `admin_grants` (a JSON array of
+`[admin, granter]` pairs); World admins are not saved as recipients because
+maintenance must first check that the granter still holds the world-wide
+authority. Its plain MVCC read of `social.scene_admins` (`place_id`,
+`admin_address`, `added_by`, `active`) takes no Social row locks and performs no
+Social writes. A re-grant before the first maintenance pass overwrites
+`added_by`, `added_at` and `removed_at` on the row; the frozen wallets and pairs
+keep the evidence. Safety cleanup also adds the pairs of the World grants it ends
+to `admin_grants`, in its own transaction, before notification enrichment runs.
+Enrichment then reads the owner, the permission surfaces and the grants (live,
+ended by this removal, and frozen), and saves the complete set in one write.
+Missing external authority leaves `recipients_resolved=false` with the frozen
+evidence unchanged; a saved owner alone is never a complete set.
 Retries reuse the complete set and original event time. Initial historical
 feed seeding sets `notify=false`, retaining cleanup without sending old notices.
 

@@ -233,6 +233,7 @@ pub(super) async fn prepare(
             .and_then(crate::rooms::decode_world_scene_room)
             .is_some();
     let mut binding_unresolvable = false;
+    let mut admin_grants: Option<Vec<(String, String)>> = None;
     let event = if let Some(kind) = command.notification() {
         let result = tokio::time::timeout(Duration::from_secs(5), async {
             // Keep the original context even if binding recovery fails or times out.
@@ -247,6 +248,11 @@ pub(super) async fn prepare(
             let context = context
                 .as_ref()
                 .ok_or_else(|| ApiError::http(503, "stream notification context unavailable"))?;
+            // Freeze the scene's admins with their granters before any external
+            // lookup: a re-grant before a retry overwrites both on the row.
+            if let Some(key) = admin_place_key.as_deref().filter(|_| context.world) {
+                admin_grants = Some(scene_grants(&state.pool, key, at).await?);
+            }
             let owner = super::notifications::owner(state, context).await?;
             recipients = key_recipients(
                 state,
@@ -256,6 +262,7 @@ pub(super) async fn prepare(
                 binding_unresolvable,
                 room.as_deref(),
                 at,
+                admin_grants.as_deref().unwrap_or_default(),
             )
             .await?;
             recipients_resolved = true;
@@ -288,6 +295,9 @@ pub(super) async fn prepare(
     evidence["admin_binding_unresolvable"] = serde_json::json!(binding_unresolvable);
     evidence["binding_room"] = serde_json::json!(room);
     evidence["notification_at"] = serde_json::json!(at);
+    if let Some(grants) = admin_grants {
+        evidence["admin_grants"] = serde_json::json!(grants);
+    }
     let context = Some(evidence);
     Ok(Some(Prepared {
         id,
@@ -312,17 +322,36 @@ async fn key_recipients(
     binding_unresolvable: bool,
     room: Option<&str>,
     at: NaiveDateTime,
+    grants: &[(String, String)],
 ) -> Result<Vec<Address>, ApiError> {
     let scope = if admin_key.is_some() || binding_unresolvable {
         super::notifications::Scope::KeyScene {
             place: admin_key,
             at,
+            grants,
         }
     } else {
         super::notifications::Scope::Key { room }
     };
     let recipients = super::notifications::recipients(state, context, owner, scope).await?;
     Ok(recipients.into_iter().collect())
+}
+
+/// The [admin, granter] pairs of the grants on scene place `key` that stood at
+/// `at`, normalized as the recipient rule reads them.
+async fn scene_grants(
+    pool: &PgPool,
+    key: &str,
+    at: NaiveDateTime,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT DISTINCT lower(btrim(admin_address)), lower(btrim(added_by)) FROM social.scene_admins \
+         WHERE place_id = $1 AND added_at <= $2 AND (active OR removed_at >= $2) ORDER BY 1, 2",
+    )
+    .bind(key)
+    .bind(at)
+    .fetch_all(pool)
+    .await
 }
 
 /// Runtime notification lookup takes no publication locks and never writes a credential.
@@ -674,6 +703,14 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             saved_context["admin_place_key"] = serde_json::json!(admin_key);
             saved_context["admin_binding_pending"] = serde_json::json!(false);
             saved_context["admin_binding_unresolvable"] = serde_json::json!(binding_unresolvable);
+            // Pairs frozen at preparation win; otherwise freeze them now, once.
+            if saved_context.get("admin_grants").is_none()
+                && let Some(key) = admin_key.as_deref().filter(|_| context.world)
+            {
+                let grants = scene_grants(&state.pool, key, row.occurred_at).await?;
+                saved_context["admin_grants"] = serde_json::json!(grants);
+            }
+            let grants = super::notifications::grant_pairs(saved_context.get("admin_grants"));
             // Save exact evidence before another authority lookup can fail or retire.
             let changed = sqlx::query("UPDATE social.scene_stream_cleanup SET source_context=$3 WHERE access_id=$1 AND claim_token=$2 AND NOT recipients_resolved")
                 .bind(row.access_id).bind(token).bind(&saved_context).execute(&state.pool).await?;
@@ -700,6 +737,7 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
                     binding_unresolvable,
                     room.as_deref(),
                     row.occurred_at,
+                    &grants,
                 )
                 .await
             })
@@ -1654,6 +1692,48 @@ mod tests {
                 .await
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_deferred_key_notice_keeps_admins_granted_at_the_event() {
+        let Some((state, directory, place)) = fanout_fixture(true).await else {
+            return;
+        };
+        let id =
+            fanout_access_bound(&state, &place, CleanupCommand::Revoke, Some("fanout-scene")).await;
+        let saved: serde_json::Value = sqlx::query_scalar(
+            "SELECT source_context->'admin_grants' FROM social.scene_stream_cleanup WHERE access_id=$1",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        let original = serde_json::json!([wallet(2).as_str(), wallet(1).as_str()]);
+        assert!(
+            saved
+                .as_array()
+                .is_some_and(|pairs| pairs.contains(&original)),
+            "preparation froze each admin with its granter: {saved}"
+        );
+        // As if the authority lookup had failed: the list is resolved later,
+        // after a wallet without authority re-granted wallet(2).
+        sqlx::query("UPDATE social.scene_stream_cleanup SET recipients='{}',recipients_resolved=false WHERE access_id=$1")
+            .bind(id).execute(&state.pool).await.unwrap();
+        sqlx::query("UPDATE social.scene_admins SET added_by=$2,added_at=timezone('UTC',now())+interval '1 second',active=true,removed_at=NULL WHERE admin_address=$1")
+            .bind(wallet(2)).bind(wallet(12)).execute(&state.pool).await.unwrap();
+        cleanup_access(&state, id).await.unwrap();
+        let actual: std::collections::BTreeSet<_> = directory
+            .streaming_notifications
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|notice| notice.recipient.clone())
+            .collect();
+        assert_eq!(
+            actual,
+            (1..=4).map(wallet).collect(),
+            "the admin granted by the owner at the event is still told"
+        );
     }
 
     #[tokio::test]

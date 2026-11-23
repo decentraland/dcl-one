@@ -23,10 +23,15 @@ At removal-event creation the trigger freezes the exact world scene places
 (`admin_keys`) and, for a Genesis place, the valid active admins of its base
 parcel, through a plain MVCC read of Social grants without Social row locks or
 writes. This keeps a pre-maintenance re-grant from erasing an earlier Genesis
-recipient. World admins are not frozen as addresses because their granter must
-be checked; the grants the removal ended keep its `removed_at`, so the
-resolution after the safety transaction still finds them on the frozen places
-even after the scene retired. Notification-only enrichment runs after that
+recipient. World admins are not frozen as recipients because their granter must
+be checked; instead each is frozen with its original granter (`admin_grants`),
+and safety cleanup adds the pairs of the grants it ends. A re-grant overwrites
+the row's granter and lifts its `removed_at`, and a retired scene no longer
+lists its admins, so resolution reads the frozen pairs as well as the live and
+ended grants, and checks every granter's world-wide authority. Key notices do
+the same: preparation saves the key scene's admins with their granters in the
+notice's context before any external lookup, and a deferred resolution saves
+them once if preparation could not. Notification-only enrichment runs after that
 commit. Resolve every permission surface before marking the snapshot complete
 (an unreadable surface retries, never shrinks the set), and checkpoint each
 Social acceptance. Retries keep the event identity, original context and

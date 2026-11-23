@@ -85,9 +85,11 @@ redeploy of the same place keeps the admins, their stream key access and their
 presenter control. A scene on a different place starts without them.
 
 Streaming notices retain one normalized recipient snapshot: owner, applicable
-LAND/World permission holders and explicit scene admins. Explore captures local
-admins in the catalogue removal event before a pre-maintenance re-grant can
-overwrite grant timing; fallback enrichment reads retained grants after safety
+LAND/World permission holders and explicit scene admins. Explore captures the
+Genesis admins, and each World scene admin with its granter, in the catalogue
+removal event before a pre-maintenance re-grant can overwrite grant timing or
+granter; World admins are told only after their saved granter's authority is
+checked; fallback enrichment reads retained grants after safety
 cleanup commits. External lookup outages leave notification resolution pending.
 Each accepted recipient has a durable cursor so bounded retries resume without
 starving later wallets. Credential issuance

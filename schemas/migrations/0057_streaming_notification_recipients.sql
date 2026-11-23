@@ -16,6 +16,8 @@ ALTER TABLE IF EXISTS social.scene_stream_access ADD COLUMN IF NOT EXISTS admin_
 ALTER TABLE IF EXISTS explore.place ADD COLUMN IF NOT EXISTS removal_admin_keys text[] NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS explore.place_world_local ADD COLUMN IF NOT EXISTS removal_admin_keys text[] NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS explore.place_removal_pending ADD COLUMN IF NOT EXISTS admin_keys text[] NOT NULL DEFAULT '{}';
+-- Each frozen World admin with its original granter: a re-grant overwrites added_by.
+ALTER TABLE IF EXISTS explore.place_removal_pending ADD COLUMN IF NOT EXISTS admin_grants jsonb NOT NULL DEFAULT '[]';
 
 CREATE OR REPLACE FUNCTION explore.capture_place_removal() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -57,12 +59,15 @@ BEGIN
         event_admin_keys := ARRAY(SELECT DISTINCT unnest(snapshot.removal_admin_keys || CASE WHEN snapshot.world THEN ARRAY(SELECT identity::text FROM explore.world_scene_place WHERE world_name=lower(snapshot.world_name) AND active) ELSE '{}'::text[] END) ORDER BY 1);
         -- Freeze Genesis admins with the event: a re-grant before maintenance
         -- can replace added_at and erase the earlier grant's time evidence. World
-        -- admins need their granter's authority checked, so only their exact
-        -- scene places are frozen (admin_keys). Read through MVCC without taking
-        -- admin locks after catalogue locks.
-        INSERT INTO explore.place_removal_pending (place_id, owner_address, world, world_name, base_position, positions, admin_keys, recipients, notify)
+        -- admins need their granter's authority checked, so their exact scene
+        -- places (admin_keys) and each active admin with its original granter
+        -- (admin_grants) are frozen; maintenance checks those granters later.
+        -- Read through MVCC without taking admin locks after catalogue locks.
+        INSERT INTO explore.place_removal_pending (place_id, owner_address, world, world_name, base_position, positions, admin_keys, admin_grants, recipients, notify)
         VALUES (place_key, CASE WHEN snapshot.world THEN COALESCE(snapshot.raw->>'owner', snapshot.creator_address) ELSE snapshot.raw->>'owner' END,
             snapshot.world, snapshot.world_name, snapshot.base_position, COALESCE(snapshot.raw->'positions', jsonb_build_array(snapshot.base_position)), event_admin_keys,
+            COALESCE((SELECT jsonb_agg(DISTINCT jsonb_build_array(lower(btrim(admin_address)), lower(btrim(added_by))))
+                      FROM social.scene_admins WHERE active AND snapshot.world AND place_id = ANY(event_admin_keys)), '[]'::jsonb),
             ARRAY(SELECT DISTINCT lower(btrim(admin_address)) FROM social.scene_admins
                   WHERE active AND lower(btrim(admin_address)) ~ '^0x[0-9a-f]{40}$'
                     AND NOT snapshot.world AND place_id=snapshot.base_position ORDER BY 1),

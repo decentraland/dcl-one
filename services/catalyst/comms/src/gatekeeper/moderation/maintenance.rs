@@ -80,6 +80,13 @@ async fn cleanup(
         .bind(event.removed_at)
         .execute(&mut *tx)
         .await?;
+        // Freeze each World admin this cleanup ends with its granter: a later
+        // re-grant overwrites the row's granter and lifts its `removed_at`.
+        if event.world {
+            sqlx::query("UPDATE explore.place_removal_pending SET admin_grants=(SELECT COALESCE(jsonb_agg(DISTINCT g),'[]'::jsonb) FROM (SELECT jsonb_array_elements(admin_grants) AS g UNION SELECT jsonb_build_array(lower(btrim(admin_address)),lower(btrim(added_by))) FROM social.scene_admins WHERE active AND added_at <= $2 AND place_id=ANY($3::text[])) grants) WHERE event_id=$1")
+                .bind(event.event_id).bind(event.removed_at).bind(&admin_keys)
+                .execute(&mut *tx).await?;
+        }
         // Include exact retired namespaces saved before catalogue removal.
         // A shared Genesis base keeps its live grant, but its affected admin
         // remains eligible for notification regardless of whether revocation is appropriate.
@@ -102,9 +109,21 @@ async fn cleanup(
         // The grants this removal ended keep its `removed_at`, so the retained
         // rule (`Scope::Removal`) still finds them; the trigger freezes Genesis
         // admins (they need no granter check) and the exact world scene places.
+        let grants = if event.world {
+            let saved: Option<Value> = sqlx::query_scalar(
+                "SELECT admin_grants FROM explore.place_removal_pending WHERE event_id=$1",
+            )
+            .bind(event.event_id)
+            .fetch_optional(&state.pool)
+            .await?;
+            streaming::notifications::grant_pairs(saved.as_ref())
+        } else {
+            Vec::new()
+        };
         let scope = Scope::Removal {
             revoked_at: event.removed_at,
             admin_keys: &admin_keys,
+            grants: &grants,
         };
         let (resolved_owner, all) =
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -1380,6 +1399,102 @@ mod tests {
             .unwrap();
             assert!(active, "a grant added after removal remains active");
         }
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_world_removal_keeps_original_granter_after_regrant_and_retirement() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, old_event) = setup(pool.clone()).await;
+        sqlx::query("DELETE FROM explore.place_removal_pending WHERE event_id=$1")
+            .bind(old_event.event_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let place = &old_event.place_id;
+        let owner = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let admin = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let unauthorized = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let stranger = "0xdddddddddddddddddddddddddddddddddddddddd";
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ('regrant.eth',$1,'regrant',ARRAY['0,0'])")
+            .bind(identity).execute(&pool).await.unwrap();
+        let key = identity.to_string();
+        let raw =
+            json!({"world":true,"world_name":"regrant.eth","owner":owner,"positions":["0,0"]});
+        sqlx::query("INSERT INTO explore.place(id,base_position,raw) VALUES ($1,'0,0',$2)")
+            .bind(place)
+            .bind(&raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The owner granted `admin`; `unauthorized` was granted by a wallet
+        // without the world-wide authority, so it is never told.
+        for (value, granter) in [(admin, owner), (unauthorized, stranger)] {
+            sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by,added_at) VALUES ($1,$2,$3,timezone('UTC',clock_timestamp())-interval '1 second')")
+                .bind(&key).bind(value).bind(granter).execute(&pool).await.unwrap();
+        }
+        sqlx::query("DELETE FROM explore.place WHERE id=$1")
+            .bind(place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let event: RemovedPlace =
+            sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE place_id=$1")
+                .bind(place)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let frozen: Value = sqlx::query_scalar(
+            "SELECT admin_grants FROM explore.place_removal_pending WHERE event_id=$1",
+        )
+        .bind(event.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            frozen.as_array().unwrap().contains(&json!([admin, owner])),
+            "the event froze the original pair: {frozen}"
+        );
+        // Before maintenance: the scene retires and a wallet without authority
+        // re-grants `admin`, overwriting the row's granter and time.
+        sqlx::query(
+            "UPDATE explore.world_scene_place SET active=false, entity_id=NULL WHERE identity=$1",
+        )
+        .bind(identity)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE social.scene_admins SET added_by=$3,added_at=$4,active=true,removed_at=NULL WHERE place_id=$1 AND admin_address=$2")
+            .bind(&key).bind(admin).bind(stranger).bind(event.removed_at+chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        let owner_address = Address::parse(owner).unwrap();
+        state.policy = Arc::new(
+            crate::gatekeeper::streaming::notifications::test_support::WorldPolicy {
+                owner: owner_address.clone(),
+                wide: Default::default(),
+                protected: [owner_address].into_iter().collect(),
+            },
+        );
+        cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
+            .await
+            .unwrap();
+        let told: Vec<String> = directory
+            .stub
+            .streaming_notifications
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|notice| notice.recipient.as_str().to_owned())
+            .collect();
+        assert!(
+            told.iter().any(|r| r == admin),
+            "the frozen original granter still qualifies the re-granted admin: {told:?}"
+        );
+        assert!(
+            !told.iter().any(|r| r == unauthorized),
+            "an admin whose granter lacks authority stays excluded: {told:?}"
+        );
     }
 
     #[tokio::test]

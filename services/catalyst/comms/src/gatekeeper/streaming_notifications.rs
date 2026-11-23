@@ -32,6 +32,7 @@ pub(in crate::gatekeeper) fn place_info(context: &PlaceContext) -> scene::PlaceI
 
 /// What a streaming notice is about, which decides the scene admins it
 /// reaches besides the place's owner and operators.
+#[derive(Clone, Copy)]
 pub(in crate::gatekeeper) enum Scope<'a> {
     /// A stream key; `room` is its room, which names the key's scene while
     /// that scene is deployed.
@@ -40,16 +41,22 @@ pub(in crate::gatekeeper) enum Scope<'a> {
     /// recovered from a unique retained binding, so it survives the scene's
     /// retirement. `None`: the binding is definitively missing or ambiguous,
     /// and no scene admin is told. A grant revoked after `at` still counts.
+    /// `grants` are the scene's [admin, granter] pairs saved when the notice
+    /// was prepared: a later re-grant overwrites the row's granter and time.
     KeyScene {
         place: Option<&'a str>,
         at: NaiveDateTime,
+        grants: &'a [(String, String)],
     },
     /// The removal of the place at `revoked_at`: the grants that removal
     /// ended are still told, so a retry after its cleanup reaches them,
-    /// including those on the exact scene places it froze (`admin_keys`).
+    /// including those on the exact scene places it froze (`admin_keys`) and
+    /// the [admin, granter] pairs it froze (`admin_grants`), whose rows a
+    /// later re-grant or scene retirement can no longer show.
     Removal {
         revoked_at: NaiveDateTime,
         admin_keys: &'a [String],
+        grants: &'a [(String, String)],
     },
 }
 
@@ -92,7 +99,7 @@ pub(in crate::gatekeeper) async fn recipients(
         }
         return Ok(out);
     };
-    let admins: Vec<(String, String)> = match scope {
+    let mut admins: Vec<(String, String)> = match scope {
         Scope::Key { room } => match key_scene_place(state, &world, room).await? {
             Some(key) => state.moderation.notice_admins(&key, None).await?,
             None => Vec::new(),
@@ -101,6 +108,7 @@ pub(in crate::gatekeeper) async fn recipients(
         Scope::KeyScene {
             place: Some(place),
             at,
+            ..
         } => {
             sqlx::query_as(
                 "SELECT admin_address, added_by FROM social.scene_admins \
@@ -117,6 +125,7 @@ pub(in crate::gatekeeper) async fn recipients(
         Scope::Removal {
             revoked_at,
             admin_keys,
+            ..
         } => {
             sqlx::query_as(
                 "SELECT a.admin_address, a.added_by FROM social.scene_admins a \
@@ -132,6 +141,10 @@ pub(in crate::gatekeeper) async fn recipients(
             .await?
         }
     };
+    // Saved pairs keep their original granter, checked like every live one.
+    if let Scope::KeyScene { grants, .. } | Scope::Removal { grants, .. } = scope {
+        admins.extend(grants.iter().cloned());
+    }
     let authority = super::world_authority(state, &context.place_id, &world);
     // Most grants share a granter (the owner): one decision for each.
     let mut decided: std::collections::HashMap<Address, bool> = Default::default();
@@ -158,6 +171,22 @@ pub(in crate::gatekeeper) async fn recipients(
         }
     }
     Ok(out)
+}
+
+/// The [admin, granter] pairs saved as a JSON array of two-string arrays;
+/// anything else in it is ignored.
+pub(in crate::gatekeeper) fn grant_pairs(saved: Option<&Value>) -> Vec<(String, String)> {
+    saved
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| match pair.as_array().map(Vec::as_slice) {
+            Some([Value::String(admin), Value::String(granter)]) => {
+                Some((admin.clone(), granter.clone()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The place (`ActiveDeployment::place_key`) of the world scene a key's room
@@ -614,6 +643,7 @@ mod tests {
             Scope::Removal {
                 revoked_at: removed_at,
                 admin_keys: &[],
+                grants: &[],
             },
         )
         .await
