@@ -36,24 +36,6 @@ impl v8::ValueSerializerImpl for SceneClone {
         refuse_clone(scope, "Object");
         None
     }
-
-    fn get_shared_array_buffer_id<'s>(
-        &self,
-        scope: &mut v8::PinScope<'s, '_>,
-        _shared_array_buffer: v8::Local<'s, v8::SharedArrayBuffer>,
-    ) -> Option<u32> {
-        refuse_clone(scope, "SharedArrayBuffer");
-        None
-    }
-
-    fn get_wasm_module_transfer_id(
-        &self,
-        scope: &mut v8::PinScope<'_, '_>,
-        _module: v8::Local<v8::WasmModuleObject>,
-    ) -> Option<u32> {
-        refuse_clone(scope, "WebAssembly.Module");
-        None
-    }
 }
 
 impl v8::ValueDeserializerImpl for SceneClone {}
