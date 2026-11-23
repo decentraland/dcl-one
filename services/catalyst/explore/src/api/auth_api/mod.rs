@@ -6,7 +6,7 @@
 //! requests, 1 h identities), so every API replica behind the gateway serves
 //! the same requests (DATABASE.md "Auth API relay state workload").
 
-use crate::shared::routing::{erase, get, post};
+use crate::shared::routing::{delete, erase, get, post};
 use axum::Extension;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Path, Request, State};
@@ -370,7 +370,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health/live", get(health_live))
         .route("/health", get(health_live))
-        .route("/accounts", axum::routing::delete(accounts::delete_account))
+        .route("/accounts", delete(accounts::delete_account))
         .route("/requests", post(create_request))
         .route(
             "/requests/{id}",

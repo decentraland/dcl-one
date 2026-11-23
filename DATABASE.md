@@ -2718,11 +2718,14 @@ measurable.
 
 Magic account deletion inserts one short-lived row per verified request into
 `explore_api.magic_deletion_attempts`. A digest of the wallet address and Magic
-token ID is the unique key. The insert commits before the outbound operation
-so that concurrent requests across replicas cannot reuse the same token. The
-row records whether Magic processed it, and a periodic sweep expires it after
-one day. A row still marked requested can represent an interrupted operation.
-The table holds neither DID tokens nor Magic response payloads.
+token ID is the unique key. An advisory transaction lock serializes the
+one-use claim across replicas. In the preceding hour, at most 3 attempts per
+wallet, 20 per network and 120 globally can reach Magic. Requests with no
+trusted source share a network bucket. Admission counts the preceding hour
+through the requested-at index, which also serves the one-day expiry sweep.
+The row stores the wallet and source digests and the outcome category. A row
+still marked requested can represent an interrupted operation. The table
+holds neither DID tokens nor Magic response payloads.
 
 Contract-wallet budget: contract-wallet calls (`isValidSignature`, including
 those of the signed-fetch chain on `POST /identities`) are budgeted in process

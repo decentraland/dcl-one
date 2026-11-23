@@ -10,6 +10,18 @@ export const ACCOUNT_COPY = {
   checking: "Checking your session…",
   signedOut: "Sign in to manage your account",
   signIn: "Sign In",
+  magicDeletion: {
+    action: "Delete Magic account",
+    title: "Delete your Magic account?",
+    description: "This permanently removes Magic access to your wallet. Export your wallet key before continuing to keep access to your assets.",
+    cancel: "Cancel",
+    signInAgain: "Sign in again to delete this account.",
+    magicSignIn: "Sign in with your Magic account again to continue.",
+    forbidden: "Magic could not verify this deletion request. Sign in with Magic again before retrying.",
+    rateLimited: "Too many deletion requests. Wait before trying again.",
+    unknown: "The outcome of your deletion request is unknown. Check your Magic account before submitting another request.",
+    failed: "Magic could not complete the deletion.",
+  },
 } as const;
 
 export const NOTIFICATIONS_COPY = {

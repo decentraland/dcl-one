@@ -10,6 +10,18 @@ import { getIdentity } from "@/data/lib/auth/session";
 import { signedFetch } from "@/data/lib/auth/signer";
 
 import styles from "./AccountSidebar.module.css";
+import { ACCOUNT_COPY } from "./copy";
+
+const copy = ACCOUNT_COPY.magicDeletion;
+
+function deletionError(status: number): string {
+  switch (status) {
+    case 403: return copy.forbidden;
+    case 429: return copy.rateLimited;
+    case 502: return copy.unknown;
+    default: return copy.failed;
+  }
+}
 
 export function DeleteMagicAccount({ address, onSignOut }: { address: string; onSignOut: () => void }) {
   const [available, setAvailable] = useState(false);
@@ -26,18 +38,19 @@ function DeleteMagicAccountAction({ address, onSignOut }: { address: string; onS
     mutationFn: async () => {
       const identity = getIdentity();
       if (!identity || identity.signer.toLowerCase() !== address.toLowerCase()) {
-        throw new Error("Sign in again to delete this account.");
+        throw new Error(copy.signInAgain);
       }
       const magic = await magicClient(magicApiKey());
       if (!(await magic.user.isLoggedIn())) {
-        throw new Error("Sign in with your Magic account again to continue.");
+        throw new Error(copy.magicSignIn);
       }
       const didToken = await magic.user.getIdToken({ lifespan: 120 });
       const response = await signedFetch(identity, "/auth-api/accounts", {
         method: "DELETE",
         metadata: { didToken },
       });
-      if (!response.ok) throw new Error("Magic could not complete the deletion. Please try again.");
+      await response.body?.cancel().catch(() => {});
+      if (!response.ok) throw new Error(deletionError(response.status));
     },
     onSuccess: () => {
       setOpen(false);
@@ -54,18 +67,18 @@ function DeleteMagicAccountAction({ address, onSignOut }: { address: string; onS
     <>
       <button type="button" className={styles.item} onClick={() => setOpen(true)}>
         <GeneralDelete size={20} aria-hidden="true" />
-        <span className={styles.itemLabel}>Delete Magic account</span>
+        <span className={styles.itemLabel}>{copy.action}</span>
       </button>
       {open && (
         <Modal
-          title="Delete your Magic account?"
-          description="This permanently removes Magic access to your wallet. Export your wallet key before continuing to keep access to your assets."
+          title={copy.title}
+          description={copy.description}
           onClose={close}
           dismissible={!deletion.isPending}
           actions={
             <>
-              <Button variant="secondary" disabled={deletion.isPending} onClick={close}>Cancel</Button>
-              <Button loading={deletion.isPending} onClick={() => deletion.mutate()}>Delete Magic account</Button>
+              <Button variant="secondary" disabled={deletion.isPending} onClick={close}>{copy.cancel}</Button>
+              <Button loading={deletion.isPending} onClick={() => deletion.mutate()}>{copy.action}</Button>
             </>
           }
         >

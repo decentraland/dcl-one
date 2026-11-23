@@ -1,21 +1,26 @@
+use std::net::SocketAddr;
 use std::time::Duration;
 
-use axum::Json;
-use axum::extract::{OriginalUri, State};
+use axum::extract::{ConnectInfo, OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{AppState, bad_request, budgeted, internal_error};
+use super::{AppState, admission_lock, bad_request, budgeted, internal_error, request_source};
 use crate::api::json_error;
 use crate::shared::signed_fetch::{self, AUTH_METADATA_HEADER, PayloadPolicy, SignedPath};
 
 const MAX_AGE_SECONDS: i64 = 120;
 const CLOCK_SKEW_SECONDS: i64 = 30;
+const ADMISSION_LOCK: &str = "explore_api.magic_deletion_attempts:admission";
+const ADDRESS_LIMIT: i64 = 3;
+const NETWORK_LIMIT: i64 = 20;
+const GLOBAL_LIMIT: i64 = 120;
 const API_URL: &str = "https://api.magic.link/v1/admin/user/deletion/request";
 
 #[derive(Clone)]
@@ -23,6 +28,8 @@ pub(crate) struct MagicDeletion {
     audience: String,
     secret: String,
     origins: Vec<String>,
+    #[cfg(test)]
+    test_url: Option<String>,
 }
 
 impl std::fmt::Debug for MagicDeletion {
@@ -50,6 +57,8 @@ impl MagicDeletion {
             audience: audience.clone(),
             secret: secret.clone(),
             origins: config.node.account_deletion_allowed_origins.clone(),
+            #[cfg(test)]
+            test_url: None,
         })
     }
 }
@@ -97,15 +106,54 @@ fn verify_token(token: &str, audience: &str, now: i64) -> Result<(String, [u8; 3
     Ok((address, hash.finalize().into()))
 }
 
-async fn claim_attempt(pool: &sqlx::PgPool, token_key: &[u8]) -> sqlx::Result<bool> {
-    let inserted = sqlx::query(
-        "INSERT INTO explore_api.magic_deletion_attempts (token_key) VALUES ($1)
-         ON CONFLICT DO NOTHING",
+#[derive(Debug, PartialEq, Eq)]
+enum Attempt {
+    Claimed,
+    Reused,
+    RateLimited,
+}
+
+async fn claim_attempt(
+    pool: &sqlx::PgPool,
+    token_key: &[u8; 32],
+    address: &str,
+    source: Option<&str>,
+) -> sqlx::Result<Attempt> {
+    let address_key = Sha256::digest(address.as_bytes());
+    let network_key = source.map(|key| Sha256::digest(key.as_bytes()));
+
+    let mut tx = pool.begin().await?;
+    admission_lock(&mut tx, ADMISSION_LOCK).await?;
+    let (reused, global, address, network): (bool, i64, i64, i64) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM explore_api.magic_deletion_attempts WHERE token_key = $1),
+                count(*), count(*) FILTER (WHERE address_key = $2),
+                count(*) FILTER (WHERE network_key IS NOT DISTINCT FROM $3)
+         FROM explore_api.magic_deletion_attempts
+         WHERE requested_at >= statement_timestamp() - interval '1 hour'",
     )
-    .bind(token_key)
-    .execute(pool)
+    .bind(token_key.as_slice())
+    .bind(address_key.as_slice())
+    .bind(network_key.as_ref().map(|key| key.as_slice()))
+    .fetch_one(&mut *tx)
     .await?;
-    Ok(inserted.rows_affected() == 1)
+    if reused {
+        return Ok(Attempt::Reused);
+    }
+    if address >= ADDRESS_LIMIT || network >= NETWORK_LIMIT || global >= GLOBAL_LIMIT {
+        return Ok(Attempt::RateLimited);
+    }
+    sqlx::query(
+        "INSERT INTO explore_api.magic_deletion_attempts
+             (token_key, address_key, network_key, requested_at)
+         VALUES ($1, $2, $3, statement_timestamp())",
+    )
+    .bind(token_key.as_slice())
+    .bind(address_key.as_slice())
+    .bind(network_key.as_ref().map(|key| key.as_slice()))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Attempt::Claimed)
 }
 
 pub(super) async fn sweep_attempts(conn: &mut sqlx::PgConnection) -> sqlx::Result<()> {
@@ -117,6 +165,7 @@ pub(super) async fn sweep_attempts(conn: &mut sqlx::PgConnection) -> sqlx::Resul
 
 pub(super) async fn delete_account(
     State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
@@ -165,7 +214,12 @@ pub(super) async fn delete_account(
             "Magic wallet does not match the request signer",
         );
     }
-    let budget = budgeted(&state, None);
+    let source = request_source(
+        &headers,
+        peer.map(|Extension(ConnectInfo(peer))| peer),
+        &state.settings.trusted_proxy_cidrs,
+    );
+    let budget = budgeted(&state, source.as_deref());
     let signer = signed_fetch::require_signer_at(
         &headers,
         "delete",
@@ -195,9 +249,17 @@ pub(super) async fn delete_account(
     }
 
     // Persist the one-use claim before dispatching the external deletion request.
-    match claim_attempt(&state.pool, token_key.as_slice()).await {
-        Ok(true) => {}
-        Ok(false) => return json_error(StatusCode::FORBIDDEN, "Magic DID token was already used"),
+    match claim_attempt(&state.pool, &token_key, &address, source.as_deref()).await {
+        Ok(Attempt::Claimed) => {}
+        Ok(Attempt::Reused) => {
+            return json_error(StatusCode::FORBIDDEN, "Magic DID token was already used");
+        }
+        Ok(Attempt::RateLimited) => {
+            return json_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many account deletion requests",
+            );
+        }
         Err(err) => return internal_error("Account deletion could not be recorded", err),
     }
 
@@ -209,7 +271,7 @@ pub(super) async fn delete_account(
                 "upstream_error",
                 json_error(
                     StatusCode::BAD_GATEWAY,
-                    "Magic account deletion request failed",
+                    "The outcome of the Magic deletion request is unknown",
                 ),
             )
         }
@@ -232,9 +294,13 @@ async fn request_deletion(
     magic: &MagicDeletion,
     address: &str,
 ) -> anyhow::Result<(&'static str, Response)> {
+    #[cfg(test)]
+    let url = magic.test_url.as_deref().unwrap_or(API_URL);
+    #[cfg(not(test))]
+    let url = API_URL;
     let response = state
         .http
-        .post(API_URL)
+        .post(url)
         .header("X-Magic-Secret-Key", &magic.secret)
         .timeout(Duration::from_secs(10))
         .max_redirects(0)
@@ -271,7 +337,7 @@ async fn request_deletion(
     }
     Ok((
         "processed",
-        Json(json!({ "deleted": true, "address": address, "magic": result })).into_response(),
+        Json(json!({ "deleted": true, "address": address })).into_response(),
     ))
 }
 
@@ -332,10 +398,216 @@ mod tests {
         };
         let other = db.second_pool().await;
         let key = [13u8; 32];
-        let (a, b) = tokio::join!(claim_attempt(&db.pool, &key), claim_attempt(&other, &key));
+        let (a, b) = tokio::join!(
+            claim_attempt(&db.pool, &key, "wallet", Some("network")),
+            claim_attempt(&other, &key, "wallet", Some("network"))
+        );
         assert_ne!(a.unwrap(), b.unwrap());
-        assert!(!claim_attempt(&other, &key).await.unwrap());
+        assert_eq!(
+            claim_attempt(&other, &key, "wallet", Some("network"))
+                .await
+                .unwrap(),
+            Attempt::Reused
+        );
         other.close().await;
         db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn deletion_claims_respect_wallet_network_and_global_limits() {
+        let Some(db) = crate::api::tests_support::scratch_database().await else {
+            return;
+        };
+        let mut next_id = 0u16;
+        let mut key = || {
+            next_id += 1;
+            let mut key = [0; 32];
+            key[..2].copy_from_slice(&next_id.to_be_bytes());
+            key
+        };
+        for _ in 0..ADDRESS_LIMIT {
+            assert_eq!(
+                claim_attempt(&db.pool, &key(), "wallet", Some("network"))
+                    .await
+                    .unwrap(),
+                Attempt::Claimed
+            );
+        }
+        assert_eq!(
+            claim_attempt(&db.pool, &key(), "wallet", Some("another-network"))
+                .await
+                .unwrap(),
+            Attempt::RateLimited
+        );
+        for wallet in ADDRESS_LIMIT..NETWORK_LIMIT {
+            assert_eq!(
+                claim_attempt(&db.pool, &key(), &wallet.to_string(), Some("network"))
+                    .await
+                    .unwrap(),
+                Attempt::Claimed
+            );
+        }
+        assert_eq!(
+            claim_attempt(&db.pool, &key(), "different-wallet", Some("network"))
+                .await
+                .unwrap(),
+            Attempt::RateLimited
+        );
+        for i in NETWORK_LIMIT..GLOBAL_LIMIT {
+            assert_eq!(
+                claim_attempt(&db.pool, &key(), &i.to_string(), Some(&i.to_string()))
+                    .await
+                    .unwrap(),
+                Attempt::Claimed
+            );
+        }
+        assert_eq!(
+            claim_attempt(&db.pool, &key(), "new-wallet", Some("new-network"))
+                .await
+                .unwrap(),
+            Attempt::RateLimited
+        );
+        let rows: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM explore_api.magic_deletion_attempts")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(rows, GLOBAL_LIMIT);
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn account_deletion_refuses_a_foreign_origin_and_wallet() {
+        let settings = with_magic(None);
+        let app = crate::api::router(crate::api::tests::node_without_db_state(settings).await);
+        let owner = crate::shared::signed_fetch::test_support::wallet();
+        assert_eq!(
+            call(&app, "https://unlisted.example", "one", &owner)
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        let other = alloy_signer_local::PrivateKeySigner::random();
+        let (status, body) = call(&app, ORIGIN, "one", &other).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body["error"],
+            "Magic wallet does not match the request signer"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_deletion_handles_provider_failures_and_rejects_token_reuse() {
+        use std::future::IntoFuture;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let Some(db) = crate::api::tests_support::scratch_database().await else {
+            return;
+        };
+        let address = crate::shared::signed_fetch::test_support::address();
+        let owner = crate::shared::signed_fetch::test_support::wallet();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = axum::Router::new().fallback({
+            let address = address.clone();
+            let calls = Arc::clone(&calls);
+            move || {
+                let address = address.clone();
+                let calls = Arc::clone(&calls);
+                async move {
+                    match calls.fetch_add(1, Ordering::Relaxed) {
+                        0 => StatusCode::TOO_MANY_REQUESTS.into_response(),
+                        1 => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+                        _ => Json(json!({ "processed": [address], "internal": "redacted" }))
+                            .into_response(),
+                    }
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(axum::serve(listener, provider).into_future());
+        let state =
+            crate::api::tests::node_on_pool_state(with_magic(Some(url)), db.pool.clone()).await;
+        let app = crate::api::router(state);
+
+        assert_eq!(
+            call(&app, ORIGIN, "one", &owner).await.0,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            call(&app, ORIGIN, "one", &owner).await.0,
+            StatusCode::FORBIDDEN
+        );
+        let (status, body) = call(&app, ORIGIN, "two", &owner).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            body["error"],
+            "The outcome of the Magic deletion request is unknown"
+        );
+        assert_eq!(
+            call(&app, ORIGIN, "three", &owner).await,
+            (
+                StatusCode::OK,
+                json!({ "deleted": true, "address": address })
+            ),
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        server.abort();
+        db.teardown().await;
+    }
+
+    const ORIGIN: &str = "https://decentraland.org";
+    const ACCOUNT_PATH: &str = "/auth-api/accounts";
+
+    fn with_magic(test_url: Option<String>) -> crate::api::Settings {
+        let mut settings = crate::api::Settings::for_tests(crate::api::Sources::defaults());
+        settings.magic_deletion = Some(MagicDeletion {
+            audience: "decentraland".into(),
+            secret: "dummy-key".into(),
+            origins: vec![ORIGIN.into()],
+            test_url,
+        });
+        settings
+    }
+
+    async fn call(
+        app: &axum::Router,
+        origin: &str,
+        token_id: &str,
+        wallet: &alloy_signer_local::PrivateKeySigner,
+    ) -> (StatusCode, Value) {
+        use axum::body::{Body, to_bytes};
+        use axum::extract::Request;
+        use tower::ServiceExt;
+
+        let now = chrono::Utc::now();
+        let token = signed_token(now.timestamp(), now.timestamp(), token_id);
+        let metadata = json!({ "didToken": token }).to_string();
+        let headers = signed_fetch::test_support::signed_headers_by(
+            wallet,
+            "delete",
+            ACCOUNT_PATH,
+            &metadata,
+            true,
+            &now.timestamp_millis().to_string(),
+        )
+        .await;
+        let mut request = Request::builder()
+            .method("DELETE")
+            .uri(ACCOUNT_PATH)
+            .body(Body::empty())
+            .unwrap();
+        *request.headers_mut() = headers;
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, origin.parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        (status, body)
     }
 }
