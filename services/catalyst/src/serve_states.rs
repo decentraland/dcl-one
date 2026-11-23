@@ -526,7 +526,7 @@ pub(super) async fn comms_states(
     let archipelago = archipelago::build_state(archipelago_settings, gatekeeper.clone(), jobs)
         .await
         .context("wiring archipelago")?;
-    // Social's online view: Pulse islands united with this replica's World occupancy.
+    // Social reads the union of Pulse islands and World presence from events and recovery.
     gatekeeper
         .presence
         .attach_topology(archipelago.feed.topology.clone());

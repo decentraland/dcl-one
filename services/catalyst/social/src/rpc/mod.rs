@@ -7,8 +7,8 @@
 //! the one module `service` registers; every procedure is answered from
 //! `social.*` over the ONE pool (`db`) and fans its events out in-process
 //! (`pubsub`; local delivery). Online status is reconstructed independently on
-//! every replica from the complete Pulse topology over the existing comms NATS link,
-//! united with the replica's own World room occupancy.
+//! every replica from Pulse islands, verified World room events over NATS, and
+//! complete LiveKit occupancy reads.
 //!
 //! Voice needs LiveKit: call persistence and media operations use the gatekeeper's
 //! `VoiceRooms` seam (`comms::gatekeeper::voice::rooms`), which its state

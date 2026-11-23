@@ -12,7 +12,9 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use crate::protocol::bus::{BusError, topology::decode_islands, wallet_token};
+use crate::protocol::bus::{
+    BusError, room_events::MAX_PARTICIPANT_SID_BYTES, topology::decode_islands, wallet_token,
+};
 
 pub const TOPOLOGY_RECEIPT_TTL: Duration = Duration::from_secs(5);
 /// A World session no event or complete read confirmed for this long stops counting.
@@ -23,6 +25,11 @@ const WORLD_LEFT_TTL: Duration = Duration::from_secs(300);
 const MAX_WORLD_LIVE: usize = 200_000;
 /// Remembered leaves; the oldest is forgotten first.
 const MAX_WORLD_LEFT: usize = 200_000;
+
+/// Match the LiveKit participant SID limit enforced by the webhook parser.
+fn valid_world_sid(sid: &str) -> bool {
+    (1..=MAX_PARTICIPANT_SID_BYTES).contains(&sid.len())
+}
 
 /// One live LiveKit participant session (keyed by its sid) in a World room.
 struct LiveSession {
@@ -42,7 +49,8 @@ struct WorldSessions {
     live: HashMap<String, LiveSession>,
     /// Live sessions per wallet; only a 0 <-> 1 move changes the wallet's presence.
     per_wallet: HashMap<String, u32>,
-    /// One entry per live session, re-armed lazily on a later confirmation.
+    /// Entries are re-armed lazily after confirmation. Entries left by ended
+    /// sessions are cleared at their deadlines or compacted on insertion.
     expiry: BinaryHeap<Reverse<(Instant, u64, String)>>,
     left: HashSet<String>,
     left_order: VecDeque<(Instant, String)>,
@@ -58,6 +66,15 @@ impl WorldSessions {
             metrics::counter!("comms_world_presence_dropped_total", "reason" => "live_cap")
                 .increment(1);
             return;
+        }
+        // Churn can leave future deadlines for ended sessions. Compact when
+        // at least half the entries are stale, with slack for small sets.
+        if self.expiry.len() >= (2 * self.live.len()).max(64) {
+            let live = &self.live;
+            self.expiry.retain(|Reverse((_, incarnation, sid))| {
+                live.get(sid)
+                    .is_some_and(|session| session.incarnation == *incarnation)
+            });
         }
         self.incarnations += 1;
         let incarnation = self.incarnations;
@@ -209,6 +226,10 @@ pub struct WalletTopology {
 impl WalletTopology {
     pub fn is_online(&self, wallet: &str) -> bool {
         self.wallets.contains(&wallet.to_ascii_lowercase())
+    }
+
+    fn status_is_current(&self, generation: u64, wallet: &str, online: bool) -> bool {
+        generation <= self.generation && self.is_online(wallet) == online
     }
 
     /// The earliest expiry in this snapshot. A deadline that has passed wakes the worker.
@@ -368,12 +389,12 @@ impl Topology {
     /// Applies one LiveKit join or leave of participant session `sid` in a World room.
     /// Duplicates are no-ops, and a leave stays final if its join arrives later.
     pub fn apply_world_event(&self, sid: &str, identity: &str, joined: bool) {
+        if !valid_world_sid(sid) {
+            return;
+        }
         let Some(wallet) = wallet_token(identity) else {
             return;
         };
-        if sid.is_empty() {
-            return;
-        }
         let mut current = self.current.lock().unwrap();
         let mut transitions = Vec::new();
         current
@@ -394,7 +415,7 @@ impl Topology {
     ) {
         let seen = participants
             .into_iter()
-            .filter(|(sid, _)| !sid.is_empty())
+            .filter(|(sid, _)| valid_world_sid(sid))
             .filter_map(|(sid, identity)| Some((sid.to_owned(), wallet_token(identity)?)))
             .collect();
         let mut current = self.current.lock().unwrap();
@@ -424,7 +445,7 @@ impl Topology {
     }
 
     /// Hold the same short lock as replacement through synchronous queue publication.
-    /// A queued online update cannot pass a newer offline replacement.
+    /// Publish a still-current status even if another wallet advanced the generation.
     pub fn deliver_if_current(
         &self,
         generation: u64,
@@ -434,7 +455,7 @@ impl Topology {
     ) -> bool {
         let mut current = self.current.lock().unwrap();
         self.settle(&mut current, false);
-        if current.view.generation != generation || current.view.is_online(wallet) != online {
+        if !current.view.status_is_current(generation, wallet, online) {
             return false;
         }
         deliver();
@@ -446,7 +467,7 @@ impl Topology {
     pub fn queued_status_is_current(&self, generation: u64, wallet: &str, online: bool) -> bool {
         let mut current = self.current.lock().unwrap();
         self.settle(&mut current, false);
-        generation <= current.view.generation && current.view.is_online(wallet) == online
+        current.view.status_is_current(generation, wallet, online)
     }
 }
 
@@ -591,6 +612,59 @@ mod tests {
 
     fn online(state: &Topology, wallet: &str) -> bool {
         state.snapshot().is_online(wallet)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn publication_uses_the_wallet_status_after_unrelated_changes() {
+        let state = Topology::default();
+        state.apply_world_event("PA_actor", A, true);
+        let generation = state.snapshot().generation;
+        state.apply_world_event("PA_other", B, true);
+        let current = state.snapshot().generation;
+        assert!(current > generation);
+
+        let mut delivered = false;
+        assert!(state.deliver_if_current(generation, A, true, || delivered = true));
+        assert!(delivered);
+        assert!(!state.deliver_if_current(current + 1, A, true, || panic!("future delivery")));
+
+        state.apply_world_event("PA_actor", A, false);
+        assert!(!state.deliver_if_current(generation, A, true, || panic!("stale delivery")));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn world_events_and_reads_limit_the_sid_length() {
+        let state = Topology::default();
+        let event_sid = format!("PA_{}", "a".repeat(125));
+        let read_sid = format!("PA_{}", "b".repeat(125));
+        let oversized_sid = format!("{event_sid}a");
+
+        state.apply_world_event(&oversized_sid, A, true);
+        assert!(!online(&state, A));
+        state.observe_world(Instant::now(), [(oversized_sid.as_str(), B)], false);
+        assert!(!online(&state, B));
+        state.apply_world_event(&oversized_sid, A, false);
+        assert!(state.current.lock().unwrap().world.left.is_empty());
+
+        state.apply_world_event(&event_sid, A, true);
+        state.observe_world(Instant::now(), [(read_sid.as_str(), B)], false);
+        assert!(online(&state, A));
+        assert!(online(&state, B));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn world_expiry_entries_stay_bounded_during_join_and_leave_churn() {
+        let state = Topology::default();
+        state.apply_world_event("PA_stable", A, true);
+        for number in 0..256 {
+            let sid = format!("PA_{number}");
+            state.apply_world_event(&sid, B, true);
+            state.apply_world_event(&sid, B, false);
+        }
+        assert!(state.current.lock().unwrap().world.expiry.len() <= 64);
+        assert!(online(&state, A));
+        tokio::time::advance(WORLD_OCCUPANCY_TTL).await;
+        assert!(!online(&state, A));
     }
 
     #[tokio::test(start_paused = true)]

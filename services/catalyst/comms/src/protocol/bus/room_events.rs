@@ -1,6 +1,6 @@
-//! The room event: one LiveKit join or leave in a scene or world room, which the gatekeeper's
-//! LiveKit webhook publishes for every `serve` (which applies a World room event to its social
-//! online view) and the `multiplayer-hosting` scheduler.
+//! A LiveKit join or leave in a canonically named scene or world room. The gatekeeper's
+//! webhook publishes it for each `serve` and for the `multiplayer-hosting` scheduler.
+//! Every `serve` applies the World room events to its social online view.
 //!
 //! Its nine fields are the ones that scheduler reads, plus the session, the time and the id it
 //! uses to order and deduplicate events; they are not the set of fields the gatekeeper's former
@@ -18,6 +18,9 @@ pub const SUBJECT: &str = "comms.room_events.v1";
 /// A room event is a handful of short strings; a longer one is not ours. The publisher's
 /// [`RoomEvent::encode`] and the consumer's [`RoomEvent::decode`] both refuse it.
 pub const MAX_BYTES: usize = 4096;
+
+/// The maximum LiveKit participant SID retained by presence or accepted by the webhook.
+pub(crate) const MAX_PARTICIPANT_SID_BYTES: usize = 128;
 
 // Retired, and never to be given another meaning: fields 5 (`is_world`), 7 (`user_address`),
 // 12 (`island_name`), 13 (`community_id`) and 14 (`voice_chat_id`) of the message, and the room

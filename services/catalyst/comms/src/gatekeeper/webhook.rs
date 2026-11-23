@@ -13,6 +13,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::Mutex;
 
+use crate::protocol::bus::room_events::MAX_PARTICIPANT_SID_BYTES;
+
+use super::bus::PublishOutcome;
 use super::errors::{ApiError, unauthorized};
 use super::livekit::{address_from_identity, verify_webhook_token};
 use super::voice::{
@@ -166,7 +169,9 @@ impl ValidatedEvent {
             "participant_joined" | "participant_left" => {
                 let sid = participant_sid(event);
                 let identity = participant_identity(event);
-                if sid.as_ref().is_none_or(|sid| sid.len() > 128)
+                if sid
+                    .as_ref()
+                    .is_none_or(|sid| sid.len() > MAX_PARTICIPANT_SID_BYTES)
                     || room.as_ref().is_none_or(|room| room.len() > 512)
                     || identity
                         .as_ref()
@@ -566,7 +571,14 @@ async fn share_room_event(
         .bus
         .publish(crate::protocol::bus::room_events::SUBJECT, payload)
         .await;
-    if outcome != super::bus::PublishOutcome::Submitted && state.bus.is_enabled() {
+    let reason = match outcome {
+        PublishOutcome::Submitted => return,
+        PublishOutcome::NoConnection => "no_connection",
+        PublishOutcome::Failed => "failed",
+        PublishOutcome::Unconfirmed => "unconfirmed",
+    };
+    if state.bus.is_enabled() {
+        metrics::counter!("comms_room_event_publish_failed_total", "reason" => reason).increment(1);
         tracing::debug!(
             ?outcome,
             event_id = event.event_id,

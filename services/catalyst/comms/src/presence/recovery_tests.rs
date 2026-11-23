@@ -30,6 +30,7 @@ type SourceRooms = Vec<(String, String, Vec<(String, String)>)>;
 #[derive(Default)]
 struct Source {
     fail: AtomicBool,
+    fail_inventory_after_roster: AtomicBool,
     empty: AtomicBool,
     sid_changed: AtomicBool,
     enumerate: AtomicUsize,
@@ -55,6 +56,11 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
             use axum::response::IntoResponse;
             if source.fail.load(Ordering::SeqCst) { return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(); }
             if uri.path().ends_with("ListRooms") {
+                if source.fail_inventory_after_roster.load(Ordering::SeqCst)
+                    && source.roster_reads.load(Ordering::SeqCst) != 0
+                {
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
                 let call = source.enumerate.fetch_add(1, Ordering::SeqCst);
                 let values = if source.empty.load(Ordering::SeqCst) { vec![] } else {
                     source.rooms.lock().iter().map(|(name,sid,_)| json!({"name":name,"sid":if source.sid_changed.load(Ordering::SeqCst) && call%2 == 1 { "RM_recreated" } else { sid }})).collect::<Vec<_>>()
@@ -1555,5 +1561,23 @@ async fn a_read_that_fails_after_listing_confirms_and_ends_nothing() {
         "a source failure confirms nothing"
     );
     assert!(!view.is_online(GENESIS_WALLET));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_source_failure_discards_rosters_already_read() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_listed".into())];
+    source
+        .fail_inventory_after_roster
+        .store(true, Ordering::SeqCst);
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Source)
+    ));
+    assert_eq!(source.roster_reads.load(Ordering::SeqCst), 1);
+    assert!(!topology.snapshot().is_online(WORLD_WALLET));
     server.abort();
 }

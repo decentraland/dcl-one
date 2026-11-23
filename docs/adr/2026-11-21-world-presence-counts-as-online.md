@@ -89,17 +89,20 @@ exists in this tree.
   about 30 s later.
 - A player moving from Genesis into a World can leave the islands snapshot shortly
   before the World join arrives, so friends may briefly get offline then online.
-- Memory is bounded: live sessions follow live participants up to 200,000, and event
-  leaves are kept for 5 minutes up to 200,000. A join past the live cap is dropped;
-  drops are counted in `comms_world_presence_dropped_total{reason}`.
+- Social presence accepts participant SIDs of 1 to 128 bytes, matching the webhook.
+  Live sessions and remembered leaves are capped at 200,000 each. The expiry heap
+  compacts stale deadlines as sessions arrive and holds at most 400,000 entries.
+  `comms_world_presence_dropped_total{reason}` counts events dropped at the caps.
 - `comms_presence_recovery_passes_total{result}` gives the complete read failure rate,
   and `comms_world_presence_sessions` / `comms_world_presence_wallets` the World size.
+  `comms_room_event_publish_failed_total{reason}` counts failed NATS submissions
+  when the link is configured.
 - A wallet in a LiveKit room this node refuses to resolve produces no event and no
   read entry, so it is not counted as online.
 - If LiveKit stays unreachable, players who joined more than 90 s earlier go offline
-  until a read succeeds. A read that fails after listing still confirms what it
-  listed; past the read budget (4,096 rooms or 100,000 participants) the rooms it
-  did not reach go unconfirmed.
+  until a read succeeds. A read interrupted by a changed inventory, budget or
+  deadline confirms what it listed. The read budget is 4,096 rooms or 100,000
+  participants.
 - This is the first publisher on `comms.room_events.v1`, Genesis scene rooms
   included. Any NATS client allowed to publish on it can set World presence, the
   same trust as `engine.islands` for island presence.

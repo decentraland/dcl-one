@@ -120,13 +120,14 @@ impl SocialServiceImpl {
                 };
                 for (actor, profile) in profiles {
                     let friend = crate::rpc::profiles::friend_profile(&actor, Some(&profile));
-                    let snapshot = ctx.topology().snapshot();
-                    let online = snapshot.is_online(&actor);
+                    let (online, generation) = {
+                        let snapshot = ctx.topology().snapshot();
+                        (snapshot.is_online(&actor), snapshot.generation)
+                    };
                     if !online {
                         continue;
                     }
-                    let guard =
-                        ctx.friend_delivery_guard(me.clone(), actor, online, snapshot.generation);
+                    let guard = ctx.friend_delivery_guard(me.clone(), actor, online, generation);
                     let update = friend_replay_update(friend, online);
                     if yielder.yield_confirmed(update, guard).await.is_err() {
                         return;
