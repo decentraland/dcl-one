@@ -1,11 +1,12 @@
 //! A stand-in for a realm's content server and lambdas, on a loopback port of its own: it
 //! describes the realm at `/about`, takes profile deployments at `POST /content/entities` the way
-//! the content server reads them (a multipart form), answers what a test scripts, and serves what
-//! it accepted at `GET /lambdas/profiles/{address}`.
+//! the content server reads them (a multipart form), answers what a test scripts, refuses one no
+//! newer than the profile it serves for the pointer, and serves what it accepted at
+//! `GET /lambdas/profiles/{address}` the way the lambdas do.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::{Multipart, Path, State};
@@ -44,6 +45,8 @@ pub struct Recorded {
     pub served: HashMap<String, serde_json::Value>,
     /// Profile reads at the lambdas.
     pub reads: usize,
+    /// How long the lambdas take to answer a profile read.
+    pub read_delay: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -71,6 +74,19 @@ impl ContentStandIn {
             address.to_lowercase(),
             serde_json::json!({ "avatars": [{ "ethAddress": address, "version": version }] }),
         );
+    }
+
+    /// Serves `avatar` for `address` as the active profile, stamped `timestamp`, as if someone
+    /// had deployed it: the way the lambdas serve a deployed one.
+    pub fn serve_avatar(&self, address: &str, avatar: serde_json::Value, timestamp: i64) {
+        let address = address.to_lowercase();
+        let profile = as_served(&address, "bafkreisomeoneelse", &[avatar], timestamp);
+        self.recorded.lock().served.insert(address, profile);
+    }
+
+    /// Makes every profile read at the lambdas take `delay`.
+    pub fn delay_reads(&self, delay: Duration) {
+        self.recorded.lock().read_delay = Some(delay);
     }
 
     /// The name of the profile served for `address`.
@@ -148,15 +164,57 @@ async fn deploy(State(shared): State<Shared>, headers: HeaderMap, mut form: Mult
     };
     let entity: serde_json::Value = serde_json::from_slice(&entity.bytes).unwrap();
     let pointer = entity["pointers"][0].as_str().unwrap().to_lowercase();
-    let profile = serde_json::json!({
-        "avatars": entity["metadata"]["avatars"],
-        "timestamp": entity["timestamp"],
-    });
+    let timestamp = entity["timestamp"].as_i64().unwrap();
+    // as the content server: an entity only replaces the active one on its pointer when it is
+    // newer
+    let active = recorded
+        .served
+        .get(&pointer)
+        .and_then(|profile| profile["timestamp"].as_i64());
+    if active.is_some_and(|active| active >= timestamp) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "errors": ["There is a newer entity pointed by one or more of the pointers you provided."]
+            })),
+        )
+            .into_response();
+    }
+    let avatars = entity["metadata"]["avatars"].as_array().unwrap();
+    let profile = as_served(&pointer, &id, avatars, timestamp);
     recorded.served.insert(pointer, profile);
     axum::Json(serde_json::json!({ "creationTimestamp": entity["timestamp"] })).into_response()
 }
 
+/// A profile as the lambdas serve it: `{ timestamp, avatars }`, each avatar carrying the
+/// pointer as its `userId` and `ethAddress` and snapshots at the entity's own address.
+fn as_served(
+    pointer: &str,
+    entity_id: &str,
+    avatars: &[serde_json::Value],
+    timestamp: i64,
+) -> serde_json::Value {
+    let avatars: Vec<serde_json::Value> = avatars
+        .iter()
+        .cloned()
+        .map(|mut avatar| {
+            avatar["userId"] = pointer.into();
+            avatar["ethAddress"] = pointer.into();
+            avatar["avatar"]["snapshots"] = serde_json::json!({
+                "face256": format!("https://images.example/entities/{entity_id}/face.png"),
+                "body": format!("https://images.example/entities/{entity_id}/body.png"),
+            });
+            avatar
+        })
+        .collect();
+    serde_json::json!({ "timestamp": timestamp, "avatars": avatars })
+}
+
 async fn profile(State(shared): State<Shared>, Path(address): Path<String>) -> Response {
+    let delay = shared.recorded.lock().read_delay;
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
+    }
     let mut recorded = shared.recorded.lock();
     recorded.reads += 1;
     match recorded.served.get(&address.to_lowercase()) {

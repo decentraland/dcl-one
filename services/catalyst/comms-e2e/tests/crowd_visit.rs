@@ -241,6 +241,7 @@ async fn the_crowd_deploys_its_profiles_meets_a_client_already_there_and_the_cli
         Some(PLAYERS as u64)
     );
     assert_eq!(note(&result, "profiles_already_served").as_u64(), Some(0));
+    assert_eq!(note(&result, "profiles_replaced").as_u64(), Some(0));
     assert_eq!(
         note(&result, "profiles_served_before_entering").as_u64(),
         Some(PLAYERS as u64)

@@ -382,6 +382,23 @@ pub async fn served_version(
     lambdas: &Url,
     address: &str,
 ) -> Result<Option<i64>> {
+    Ok(served_profile(client, lambdas, address)
+        .await?
+        .and_then(|body| {
+            body.pointer("/avatars/0/version").and_then(|version| {
+                version
+                    .as_i64()
+                    .or_else(|| version.as_f64().map(|v| v as i64))
+            })
+        }))
+}
+
+/// What the lambdas serve for `address` (`{ timestamp, avatars }`), `None` when they serve none.
+pub async fn served_profile(
+    client: &reqwest::Client,
+    lambdas: &Url,
+    address: &str,
+) -> Result<Option<serde_json::Value>> {
     let url = under(lambdas, &format!("profiles/{address}"));
     let response = client
         .get(url)
@@ -399,11 +416,35 @@ pub async fn served_version(
         .json()
         .await
         .map_err(|error| anyhow!("the lambdas' profile of {address} is not JSON: {error}"))?;
-    Ok(body.pointer("/avatars/0/version").and_then(|version| {
-        version
-            .as_i64()
-            .or_else(|| version.as_f64().map(|v| v as i64))
-    }))
+    Ok(Some(body))
+}
+
+/// Whether `served`, what the lambdas serve for visiting player `index`'s wallet `address`, is
+/// the profile this module deploys for it: one avatar, equal to [`visit_avatar`] in every field
+/// but those the lambdas set themselves (`userId` and `ethAddress`, the pointer, and the
+/// avatar's `snapshots`), with no field it does not set.
+pub fn serves_visit_profile(served: &serde_json::Value, address: &str, index: usize) -> bool {
+    let without_what_the_lambdas_set = |avatar: &serde_json::Value| {
+        let mut avatar = avatar.clone();
+        if let Some(fields) = avatar.as_object_mut() {
+            fields.remove("userId");
+            fields.remove("ethAddress");
+        }
+        if let Some(looks) = avatar
+            .get_mut("avatar")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            looks.remove("snapshots");
+        }
+        avatar
+    };
+    match served.get("avatars").and_then(serde_json::Value::as_array) {
+        Some(avatars) if avatars.len() == 1 => {
+            without_what_the_lambdas_set(&avatars[0])
+                == without_what_the_lambdas_set(&visit_avatar(address, index))
+        }
+        _ => false,
+    }
 }
 
 /// The delay a `Retry-After` value asks for, at `now`: whole seconds, or an HTTP date.
@@ -491,14 +532,18 @@ pub async fn deploy(
 /// What [`ensure`] did for one wallet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ensured {
-    /// The lambdas already served this version: nothing was deployed.
+    /// The lambdas already served this profile: nothing was deployed.
     AlreadyServed,
-    /// A profile was deployed.
+    /// A profile was deployed where the lambdas served none.
     Deployed(Deployed),
+    /// The lambdas served another profile for the wallet: this one was deployed over it.
+    Replaced(Deployed),
 }
 
 /// Makes sure the realm serves visiting player `index`'s profile for `identity`: asks the lambdas
-/// first, and deploys it only when they do not serve [`PROFILE_VERSION`].
+/// first, and deploys it unless they serve exactly that profile ([`serves_visit_profile`]). The
+/// content server keeps the newer of two profiles, so a deployment over another one is stamped
+/// after it: now, or just after the profile served when that is later.
 pub async fn ensure(
     client: &reqwest::Client,
     endpoints: &Endpoints,
@@ -506,15 +551,25 @@ pub async fn ensure(
     index: usize,
 ) -> Result<Ensured> {
     let address = identity.address();
-    if served_version(client, &endpoints.lambdas, &address).await?
-        == Some(i64::from(PROFILE_VERSION))
+    let served = served_profile(client, &endpoints.lambdas, &address).await?;
+    if served
+        .as_ref()
+        .is_some_and(|served| serves_visit_profile(served, &address, index))
     {
         return Ok(Ensured::AlreadyServed);
     }
-    let deployment = profile_deployment(identity, index, crate::identity::now_ms());
-    deploy(client, &endpoints.entities, &deployment)
-        .await
-        .map(Ensured::Deployed)
+    let served_at = served
+        .as_ref()
+        .and_then(|served| served.get("timestamp"))
+        .and_then(serde_json::Value::as_i64);
+    let now = crate::identity::now_ms();
+    let timestamp = served_at.map_or(now, |served_at| now.max(served_at + 1));
+    let deployment = profile_deployment(identity, index, timestamp);
+    let deployed = deploy(client, &endpoints.entities, &deployment).await?;
+    Ok(match served {
+        Some(_) => Ensured::Replaced(deployed),
+        None => Ensured::Deployed(deployed),
+    })
 }
 
 #[cfg(test)]

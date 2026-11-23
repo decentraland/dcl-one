@@ -149,15 +149,22 @@ async fn a_profile_already_served_is_not_deployed_again() {
     let stand_in = content::start(None).await;
     let client = profile::client().unwrap();
     let endpoints = profile::endpoints(&client, &stand_in.api).await.unwrap();
+    // the profile this tool deployed before, served the way the lambdas serve it
     let identity = visitor(2);
-    stand_in.serve(&identity.address(), i64::from(PROFILE_VERSION));
+    profile::deploy(
+        &client,
+        &endpoints.entities,
+        &profile_deployment(&identity, 2, now_ms()),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         profile::ensure(&client, &endpoints, &identity, 2)
             .await
             .unwrap(),
         Ensured::AlreadyServed
     );
-    assert_eq!(stand_in.posts(), 0);
+    assert_eq!(stand_in.posts(), 1);
 
     // another version served is replaced, once
     let other = visitor(3);
@@ -166,7 +173,7 @@ async fn a_profile_already_served_is_not_deployed_again() {
         profile::ensure(&client, &endpoints, &other, 3)
             .await
             .unwrap(),
-        Ensured::Deployed(Deployed::Accepted)
+        Ensured::Replaced(Deployed::Accepted)
     );
     assert_eq!(
         profile::ensure(&client, &endpoints, &other, 3)
@@ -174,7 +181,110 @@ async fn a_profile_already_served_is_not_deployed_again() {
             .unwrap(),
         Ensured::AlreadyServed
     );
-    assert_eq!(stand_in.posts(), 1);
+    assert_eq!(stand_in.posts(), 2);
+
+    // nothing served: deployed
+    let new = visitor(6);
+    assert_eq!(
+        profile::ensure(&client, &endpoints, &new, 6).await.unwrap(),
+        Ensured::Deployed(Deployed::Accepted)
+    );
+    assert_eq!(stand_in.posts(), 3);
+}
+
+/// A change someone else's profile for a visiting wallet makes to the avatar this tool deploys.
+type Tamper = fn(&mut serde_json::Value);
+
+#[tokio::test]
+async fn a_profile_of_the_same_version_that_is_not_this_tools_is_replaced() {
+    let stand_in = content::start(None).await;
+    let client = profile::client().unwrap();
+    let endpoints = profile::endpoints(&client, &stand_in.api).await.unwrap();
+    let tamperings: [(&str, Tamper); 7] = [
+        ("the name", |avatar| avatar["name"] = "someone-else".into()),
+        ("the description", |avatar| {
+            avatar["description"] = "visit links.example".into()
+        }),
+        ("the body shape", |avatar| {
+            avatar["avatar"]["bodyShape"] =
+                "urn:decentraland:off-chain:base-avatars:BaseMale".into()
+        }),
+        ("a wearable", |avatar| {
+            avatar["avatar"]["wearables"][0] =
+                "urn:decentraland:off-chain:base-avatars:m_mountainshoes.glb".into()
+        }),
+        ("a colour", |avatar| {
+            avatar["avatar"]["skin"]["color"]["r"] = 0.5.into()
+        }),
+        ("an emote", |avatar| {
+            avatar["avatar"]["emotes"][0]["urn"] = "kiss".into()
+        }),
+        (
+            "a field it does not set",
+            |avatar| {
+                avatar["links"] =
+                    serde_json::json!([{ "title": "x", "url": "https://links.example/" }])
+            },
+        ),
+    ];
+    for (offset, (what, tamper)) in tamperings.iter().enumerate() {
+        let index = 10 + offset;
+        let identity = visitor(index as u32);
+        let mut avatar = profile::visit_avatar(&identity.address(), index);
+        tamper(&mut avatar);
+        assert_eq!(avatar["version"], PROFILE_VERSION, "{what}");
+        // stamped a minute ahead of this machine: the content server keeps the newer entity, so
+        // the deployment that replaces it must be newer still
+        stand_in.serve_avatar(&identity.address(), avatar, now_ms() + 60_000);
+        assert_eq!(
+            profile::ensure(&client, &endpoints, &identity, index)
+                .await
+                .unwrap(),
+            Ensured::Replaced(Deployed::Accepted),
+            "{what}"
+        );
+        assert_eq!(
+            stand_in.served_name(&identity.address()),
+            Some(profile::visit_name(index)),
+            "{what}"
+        );
+        assert_eq!(
+            profile::ensure(&client, &endpoints, &identity, index)
+                .await
+                .unwrap(),
+            Ensured::AlreadyServed,
+            "{what}"
+        );
+    }
+    assert_eq!(stand_in.posts(), tamperings.len());
+}
+
+/// What the replacement stands on: like the content server, the stand-in keeps the active
+/// profile against a deployment that is not newer.
+#[tokio::test]
+async fn a_deployment_older_than_the_profile_served_is_refused() {
+    let stand_in = content::start(None).await;
+    let client = profile::client().unwrap();
+    let endpoints = profile::endpoints(&client, &stand_in.api).await.unwrap();
+    let identity = visitor(7);
+    let now = now_ms();
+    profile::deploy(
+        &client,
+        &endpoints.entities,
+        &profile_deployment(&identity, 7, now),
+    )
+    .await
+    .unwrap();
+    let error = profile::deploy(
+        &client,
+        &endpoints.entities,
+        &profile_deployment(&identity, 7, now - 1_000),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("HTTP 400"), "{error}");
+    assert!(error.contains("newer entity"), "{error}");
 }
 
 #[tokio::test]

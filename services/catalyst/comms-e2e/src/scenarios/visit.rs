@@ -91,7 +91,7 @@ pub static CROWD_VISIT: Scenario = Scenario {
     name: "crowd-visit",
     tags: &["pulse", "crowd", "visit"],
     guards: &["claim: real clients and a crowd in one place see each other"],
-    summary: "A crowd (20, or CE2E_CROWD_PLAYERS, at most 30) goes to the realm and parcel the run's visit plan names (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL), where other clients stand: each player first makes sure the realm's content server holds a minimal profile for its wallet (the wallet from CE2E_VISIT_LABEL and its index; deployed only when the lambdas do not serve it) and announces its version; the crowd walks there for CE2E_VISIT_SECONDS (120 unless given) and leaves as a client does: every player must catch a Pulse join event for each wallet in CE2E_VISIT_EXPECT and for each other player, each announcing the profile; notes give the profiles deployed and already there, every join each player caught, visitors included, and samples of what each held. Runs only when the run names it; skipped without a plan",
+    summary: "A crowd (20, or CE2E_CROWD_PLAYERS, at most 30) goes to the realm and parcel the run's visit plan names (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL), where other clients stand: each player first makes sure the realm's content server holds a minimal profile for its wallet (the wallet from CE2E_VISIT_LABEL and its index; deployed unless the lambdas serve exactly that profile) and announces its version; the crowd walks there for CE2E_VISIT_SECONDS (120 unless given) and leaves as a client does: every player must catch a Pulse join event for each wallet in CE2E_VISIT_EXPECT and for each other player, each announcing the profile; notes give the profiles deployed, replaced and already there, every join each player caught, visitors included, and samples of what each held. Runs only when the run names it; skipped without a plan",
     needs: Needs {
         api: true,
         visit: true,
@@ -192,10 +192,12 @@ pub fn plan_from(
     }))
 }
 
-/// How many players' profiles were deployed and how many the realm served already.
+/// How many players' profiles were deployed, how many of those replaced another profile the realm
+/// served for the wallet, and how many the realm served already.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProfileCounts {
     pub deployed: usize,
+    pub replaced: usize,
     pub already_served: usize,
     pub sent_again: usize,
 }
@@ -254,8 +256,11 @@ async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCo
                 )
             })? {
                 Ensured::AlreadyServed => counts.already_served += 1,
-                Ensured::Deployed(deployed) => {
+                ensured @ (Ensured::Deployed(deployed) | Ensured::Replaced(deployed)) => {
                     counts.deployed += 1;
+                    if matches!(ensured, Ensured::Replaced(_)) {
+                        counts.replaced += 1;
+                    }
                     if deployed == profile::Deployed::AcceptedOnRetry {
                         counts.sent_again += 1;
                     }
@@ -264,6 +269,7 @@ async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCo
         }
     }
     ctx.note("profiles_deployed", counts.deployed);
+    ctx.note("profiles_replaced", counts.replaced);
     ctx.note("profiles_already_served", counts.already_served);
     ctx.note("profiles_sent_again_after_retry_after", counts.sent_again);
     if counts.deployed > 0 {
@@ -282,14 +288,22 @@ async fn wait_served(
 ) -> usize {
     let deadline = Instant::now() + SERVED_DEADLINE;
     loop {
-        let versions = join_all(identities.iter().map(|identity| async move {
-            profile::served_version(client, &endpoints.lambdas, &identity.address()).await
+        let served = join_all(identities.iter().enumerate().map(|(index, identity)| {
+            let address = identity.address();
+            async move {
+                profile::served_profile(client, &endpoints.lambdas, &address)
+                    .await
+                    .is_ok_and(|profile| {
+                        profile.is_some_and(|profile| {
+                            profile::serves_visit_profile(&profile, &address, index)
+                        })
+                    })
+            }
         }))
-        .await;
-        let served = versions
-            .iter()
-            .filter(|version| matches!(version, Ok(Some(v)) if *v == i64::from(PROFILE_VERSION)))
-            .count();
+        .await
+        .into_iter()
+        .filter(|served| *served)
+        .count();
         if served == identities.len() || Instant::now() >= deadline {
             return served;
         }

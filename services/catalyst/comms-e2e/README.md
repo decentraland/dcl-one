@@ -192,8 +192,11 @@ wallet how many players caught it (`expected_caught_by`), the crowd's wallets by
 reads from a catalyst's lambdas. So before the crowd enters, each player makes sure the realm
 serves a profile for its wallet: it reads the realm description (`<api>/about`) for the content
 server (`content.publicUrl`) and the lambdas (`lambdas.publicUrl`), asks the lambdas for the
-wallet's profile, and deploys one to `POST <content.publicUrl>/entities` only when they do not
-serve its version. The deployment is the one the explorer makes for its own profile: an entity
+wallet's profile, and deploys one to `POST <content.publicUrl>/entities` unless they serve
+exactly the profile it would deploy: the same name and every other field it sets, and no field it
+does not set (the lambdas' own `userId`, `ethAddress` and snapshots aside). A profile deployed over
+another one is stamped after it, since the content server keeps the newer of the two. The
+deployment is the one the explorer makes for its own profile: an entity
 file with no files attached, named by its CIDv1 and signed by the wallet. The profile is named
 `ce2e-visit-NN` (`NN` the player's index), claims no name, wears base avatars only, its body shape
 and colours varied by index, and has no snapshots. Each player then announces that profile's
@@ -209,14 +212,16 @@ no profile.
   run, and the content server and the lambdas the realm description names must pass the same
   guard: loopback, or a host `--allow-host` names. A refused deployment fails the visit before
   anyone enters; a 429 or 503 that says when to come back (`Retry-After`, up to 60 s) is sent once
-  more. The report notes `profiles_deployed`, `profiles_already_served`,
+  more. The report notes `profiles_deployed` (of them `profiles_replaced`, deployed over another
+  profile served for the wallet), `profiles_already_served`,
   `profiles_sent_again_after_retry_after` and, after a deployment, how many the lambdas served
   before the crowd entered (`profiles_served_before_entering`, waited for up to 30 s).
 - What a visit leaves behind on a deployment: one profile entity per wallet of each label used,
   `ce2e-visit-00` to `ce2e-visit-NN`, in the content server's history and active entities, served
   by its lambdas to anyone who asks. A content server deletes no entity; a later deployment for the
   same wallet replaces the active profile, and only a deployment's own operators can remove it.
-  The wallets' keys derive from the label and are not secret: anyone can deploy for them.
+  The wallets' keys derive from the label and are not secret: anyone can deploy for them, and the
+  next visit deploys its own profile over whatever else it finds served.
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
 
