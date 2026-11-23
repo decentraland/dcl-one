@@ -161,6 +161,10 @@ pub mod adr_timestamps {
 
     pub const PROFILE_IDENTITY: Timestamp = 1_786_579_200_000;
 
+    /// 2026-12-15T00:00:00Z: from here on a third-party item's merkle proof
+    /// must commit every top-level metadata field.
+    pub const THIRD_PARTY_FULL_COMMIT: Timestamp = 1_797_292_800_000;
+
     pub const LEGACY_CONTENT_MIGRATION: Timestamp = 1_582_167_600_000;
 }
 
