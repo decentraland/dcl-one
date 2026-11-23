@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CatalystError } from "../client";
 import { asAddress, fetchMemberProfiles, memberName, sameOriginContentUrl } from "./member-profiles";
 
 const BASE = "https://node.example";
@@ -52,10 +53,13 @@ describe("sameOriginContentUrl", () => {
   });
 
   describe("when the URL is an upstream face snapshot", () => {
-    it("should read it through the node's image cache", () => {
-      expect(sameOriginContentUrl("https://profile-images.decentraland.org/entities/bafyface/face.png", BASE)).toBe(
-        `${BASE}/profile-images/entities/bafyface/face.png`,
-      );
+    it.each([
+      "https://profile-images.decentraland.org/entities/bafyface/face.png",
+      "https://profile-images.decentraland.org/v1/entities/bafyface/face.png",
+      "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/entities/bafyface/face.png",
+      "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafyface/face.png",
+    ])("should read %s through the node's image cache", (source) => {
+      expect(sameOriginContentUrl(source, BASE)).toBe(`${BASE}/profile-images/entities/bafyface/face.png`);
     });
   });
 
@@ -69,6 +73,7 @@ describe("sameOriginContentUrl", () => {
 describe("fetchMemberProfiles", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("when the node answers with profiles matched by ethAddress or userId", () => {
@@ -166,6 +171,41 @@ describe("fetchMemberProfiles", () => {
       const fetchImpl = replyWith([]);
       await expect(fetchMemberProfiles([], { base: BASE, fetchImpl })).resolves.toEqual({});
       expect(fetchImpl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("when the node has no response body", () => {
+    it.each([200, 204])("should return no profiles for HTTP %i", async (status) => {
+      const fetchImpl = vi.fn(async () => new Response(null, { status }));
+      await expect(fetchMemberProfiles([FIRST], { base: BASE, fetchImpl })).resolves.toEqual({});
+    });
+  });
+
+  describe("when a build configures a Catalyst URL", () => {
+    beforeEach(() => {
+      vi.stubEnv("VITE_CATALYST_URL", "https://configured.example/");
+    });
+
+    it("should use the configured origin for the request and for faces", async () => {
+      const fetchImpl = replyWith([{ avatars: [{ ethAddress: FIRST, avatar: { snapshots: { face256: "bafyface" } } }] }]);
+      const profiles = await fetchMemberProfiles([FIRST], { fetchImpl });
+      expect(fetchImpl).toHaveBeenCalledWith("https://configured.example/lambdas/profiles", expect.anything());
+      expect(profiles[FIRST]?.picture).toBe("https://configured.example/content/contents/bafyface");
+    });
+
+    it("should keep an explicit origin ahead of the build configuration", async () => {
+      const fetchImpl = replyWith([]);
+      await fetchMemberProfiles([FIRST], { base: BASE, fetchImpl });
+      expect(fetchImpl).toHaveBeenCalledWith(`${BASE}/lambdas/profiles`, expect.anything());
+    });
+  });
+
+  describe("when the connection fails", () => {
+    it("should preserve the request URL in a Catalyst error", async () => {
+      const fetchImpl = vi.fn().mockRejectedValue(new TypeError("offline"));
+      const profiles = fetchMemberProfiles([FIRST], { base: BASE, fetchImpl });
+      await expect(profiles).rejects.toBeInstanceOf(CatalystError);
+      await expect(profiles).rejects.toMatchObject({ status: 0, url: `${BASE}/lambdas/profiles` });
     });
   });
 

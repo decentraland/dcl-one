@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { profileFaceUrl } from "../../auth/profile-face-url";
 import { catalystBase, postPublicJSON, type GetOptions } from "../client";
 import { ETH_ADDRESS_RE } from "../format/address";
 
@@ -31,11 +32,7 @@ export function asAddress(raw: unknown): string | null {
 export function sameOriginContentUrl(url: string, base = catalystBase()): string {
   const hash = /^https?:\/\/[^/]+\/content\/contents\/([A-Za-z0-9]+)\/?$/.exec(url)?.[1];
   if (hash) return `${base}/content/contents/${hash}`;
-  const face =
-    /^https?:\/\/(?:profile-images\.decentraland\.org|profile-images-bucket-[a-z0-9]+\.s3\.[a-z0-9-]+\.amazonaws\.com)\/(?:v1\/)?entities\/([A-Za-z0-9]+)\/face\.png$/i.exec(
-      url,
-    )?.[1];
-  return face ? `${base}/profile-images/entities/${face}/face.png` : url;
+  return /^https?:\/\//i.test(url) ? profileFaceUrl(url, base) || url : url;
 }
 
 const Envelope = z
@@ -74,10 +71,14 @@ export async function fetchMemberProfiles(
   addresses: readonly string[],
   opts: Pick<GetOptions, "base" | "signal" | "fetchImpl"> = {},
 ): Promise<MemberProfiles> {
-  const base = catalystBase(opts.base);
+  const base = catalystBase(opts.base ?? (import.meta.env.VITE_CATALYST_URL || undefined));
   const profiles: MemberProfiles = {};
   for (let i = 0; i < addresses.length; i += BATCH) {
-    const batch = await postPublicJSON("/lambdas/profiles", { ids: addresses.slice(i, i + BATCH) }, { ...opts, base });
+    const batch = await postPublicJSON(
+      "/lambdas/profiles",
+      { ids: addresses.slice(i, i + BATCH) },
+      { ...opts, base, allowEmpty: true },
+    );
     for (const envelope of Array.isArray(batch) ? batch : []) {
       // One unreadable profile must not cost the rest of its batch their names.
       const parsed = Envelope.safeParse(envelope);
