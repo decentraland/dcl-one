@@ -493,6 +493,48 @@ mod tests {
         accepted
     }
 
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn client_reports_a_refusal_while_opening_its_reliable_stream() {
+        use super::super::client::{Client, ClientConfig, ClientError};
+        use crate::pulse::hardening::DisconnectReason;
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let hash = Sha256::digest(cert.cert.der()).to_vec();
+        let (certs, key) = parse_pem(&cert.cert.pem(), &cert.signing_key.serialize_pem()).unwrap();
+        let mut config = server_config(certs, key, IDLE_TIMEOUT).unwrap();
+        // CONNECT uses the only bidirectional stream, so client setup has to wait for credit.
+        Arc::get_mut(&mut config.transport)
+            .unwrap()
+            .max_concurrent_bidi_streams(1_u8.into());
+        let endpoint = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let mut server = web_transport_quinn::Server::new(endpoint);
+        let timeout = Duration::from_secs(2);
+        let dialing = tokio::task::spawn_blocking(move || {
+            Client::connect_within(
+                ClientConfig {
+                    url: format!("https://{address}/"),
+                    server_cert_hash: Some(hash),
+                },
+                Some(timeout),
+            )
+        });
+
+        let request = tokio::time::timeout(timeout, server.accept())
+            .await
+            .expect("client should send CONNECT")
+            .unwrap();
+        let session = request.ok().await.unwrap();
+        let refusal = DisconnectReason::PreAuthIpLimitExhausted.code();
+        session.close(refusal, b"");
+        match dialing.await.unwrap() {
+            Err(ClientError::Closed { code, .. }) => assert_eq!(code, refusal),
+            Err(error) => panic!("expected the server refusal, got {error}"),
+            Ok(_) => panic!("client opened a stream despite the stream limit"),
+        }
+    }
+
     #[test]
     fn a_live_session_that_sends_nothing_outlives_the_idle_timeout() {
         // Pulse ends a session that never authenticates after 30 s, the idle timeout too: the

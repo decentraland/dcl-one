@@ -15,7 +15,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use web_transport_quinn::Session;
+use web_transport_quinn::{Session, SessionError, WebTransportError};
 
 /// Buffer size for a single reliable-stream read. Raw chunks are forwarded as-is.
 const STREAM_READ_BUF: usize = 16 * 1024;
@@ -39,6 +39,8 @@ pub enum ClientError {
     Config(String),
     /// The connection (TLS / WebTransport handshake / stream open) failed.
     Connect(String),
+    /// The peer closed the session before the reliable stream was ready.
+    Closed { code: u32, reason: String },
 }
 
 impl std::fmt::Display for ClientError {
@@ -46,6 +48,9 @@ impl std::fmt::Display for ClientError {
         match self {
             ClientError::Config(m) => write!(f, "config error: {m}"),
             ClientError::Connect(m) => write!(f, "connect error: {m}"),
+            ClientError::Closed { code, reason } => {
+                write!(f, "session closed with {code}: {reason}")
+            }
         }
     }
 }
@@ -131,10 +136,12 @@ impl Client {
                 .await
                 .map_err(|e| ClientError::Connect(e.to_string()))?;
             // Client opens the reliable bidi stream; the server accepts it (server `accept_bi`).
-            let (send, recv) = session
-                .open_bi()
-                .await
-                .map_err(|e| ClientError::Connect(e.to_string()))?;
+            let (send, recv) = session.open_bi().await.map_err(|error| match error {
+                SessionError::WebTransportError(WebTransportError::Closed(code, reason)) => {
+                    ClientError::Closed { code, reason }
+                }
+                other => ClientError::Connect(other.to_string()),
+            })?;
             Ok::<_, ClientError>((session, send, recv))
         };
         let (session, send, recv) = runtime.block_on(async move {
@@ -254,9 +261,7 @@ async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
     // The code the server closed the session with; 0 when the session ended some other way
     // (idle timeout, lost connection, local close).
     let reason = match session.closed().await {
-        web_transport_quinn::SessionError::WebTransportError(
-            web_transport_quinn::WebTransportError::Closed(code, _),
-        ) => code,
+        SessionError::WebTransportError(WebTransportError::Closed(code, _)) => code,
         _ => 0,
     };
     let _ = events_tx.send(ClientEvent::Disconnected { reason });
