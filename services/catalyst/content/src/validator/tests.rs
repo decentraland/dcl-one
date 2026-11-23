@@ -633,7 +633,7 @@ impl Eip1654Validator for FailsAtLatest {
 
 /// A local deploy whose contract-wallet call fails at latest and is refused at the entity
 /// block is refused: `@dcl/crypto` reads a failed call as a refusal before asking the past
-/// block.
+/// block. A synced entity is undecided instead (`batch_deployer` tests).
 #[tokio::test]
 async fn a_latest_error_then_an_entity_block_refusal_is_rejected() {
     let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
