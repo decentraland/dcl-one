@@ -267,4 +267,46 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AuthError::Eip1654ValidationFailed(_)));
     }
+
+    /// A failed call at latest followed by two clean refusals at the verification-time block
+    /// is a refusal: `@dcl/crypto` reads a failed `isValidSignature` call as a refusal and
+    /// then asks the past block.
+    #[tokio::test]
+    async fn a_latest_error_then_a_past_block_refusal_is_a_refusal() {
+        struct FailsLatestRefusesPast;
+        #[async_trait]
+        impl Eip1654Validator for FailsLatestRefusesPast {
+            async fn validate_signature(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+            ) -> Result<bool, AuthError> {
+                Err(AuthError::Eip1654ValidationFailed("timeout".into()))
+            }
+
+            async fn validate_signature_at_block(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+                _: u64,
+            ) -> Result<bool, AuthError> {
+                Ok(false)
+            }
+
+            async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, AuthError> {
+                Ok(Some(7))
+            }
+        }
+        let verdict = verify_eip1654_at_verification_time(
+            &FailsLatestRefusesPast,
+            "0xcontract",
+            b"msg",
+            &[0u8; 65],
+            1_700_000_000_000,
+        )
+        .await;
+        assert!(matches!(verdict, Ok(false)), "{verdict:?}");
+    }
 }

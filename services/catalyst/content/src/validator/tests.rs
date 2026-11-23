@@ -611,6 +611,68 @@ async fn a_failed_l1_block_lookup_leaves_a_contract_wallet_unverifiable() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A contract wallet whose call fails at latest and refuses at past blocks.
+struct FailsAtLatest;
+
+#[async_trait]
+impl Eip1654Validator for FailsAtLatest {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Err(AuthError::Eip1654ValidationFailed("timeout".into()))
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        _: u64,
+    ) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+}
+
+/// A local deploy whose contract-wallet call fails at latest and is refused at the entity
+/// block is refused: `@dcl/crypto` reads a failed call as a refusal before asking the past
+/// block.
+#[tokio::test]
+async fn a_latest_error_then_an_entity_block_refusal_is_rejected() {
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = temp_storage("eip1654-latest-error").await;
+    let s = Sources::new(
+        lazy_pool(),
+        storage,
+        Outbound::for_tests(),
+        Some(Arc::new(FailsAtLatest)),
+        Settings {
+            l1_rpc_url: Some(chain.url.clone()),
+            ignore_blockchain_access: true,
+            ..mainnet()
+        },
+    );
+    let model = b"glb".to_vec();
+    let (entity, files, _, _) = signed(scene(&["1,1"], &model), std::slice::from_ref(&model)).await;
+    let auth = crate::sync_test_support::signed_chain_behind_contract(
+        &entity.id,
+        "2099-01-01T00:00:00.000Z",
+    )
+    .await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &auth,
+    };
+    let verdict = validate(&entity, &files, &ctx).await.unwrap_err();
+    assert!(
+        matches!(&verdict[..], [ValidationError::Rejected(m)] if m.starts_with("The signature is invalid. ")),
+        "{verdict:?}"
+    );
+    assert!(
+        chain.calls().iter().any(|c| c == "eth_getBlockByNumber"),
+        "the entity block was looked up: {:?}",
+        chain.calls()
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[cfg(unix)]
 fn seal_shard(storage: &Storage, hash: &str) -> std::path::PathBuf {
     let shard = storage.root().join(crate::storage::hex_prefix(hash));

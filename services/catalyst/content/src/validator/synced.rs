@@ -572,6 +572,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(tmp);
     }
 
+    /// A contract wallet that signs at latest; a past-block ask fails the test.
+    struct SignsAtLatest;
+
+    #[async_trait]
+    impl Eip1654Validator for SignsAtLatest {
+        async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+            _: u64,
+        ) -> Result<bool, AuthError> {
+            panic!("an answer at latest asks no past block")
+        }
+    }
+
+    /// A synced contract-wallet link accepted at latest needs no L1 RPC.
+    #[tokio::test]
+    async fn a_synced_contract_wallet_accepted_at_latest_needs_no_l1_rpc() {
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-latest").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            Some(std::sync::Arc::new(SignsAtLatest)),
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: None,
+                ..Default::default()
+            },
+        );
+        let synced = Synced {
+            sources: &sources,
+            content: SyncedContent::Fetched,
+            trusted_expirations: Mutex::new(Vec::new()),
+        };
+        let id = "bafkreientity";
+        let auth =
+            crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+                .await;
+
+        synced
+            .validate_signature(id, &auth, 1_700_000_000_500)
+            .await
+            .unwrap();
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
     /// A contract wallet whose RPC never answers.
     struct Stalled;
 
