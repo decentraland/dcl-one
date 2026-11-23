@@ -1676,8 +1676,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
-  // The Shop closed: the tag over its avatar goes with it, whatever the bridge says later.
+  // Read by the engine's messages, which a closed Shop's tag mustn't reach.
+  const shopOpenRef = useRef(false)
+  // The Shop closed: the tag over its avatar goes with it, and a place told late, while it is closed, is never kept.
   useEffect(() => {
+    shopOpenRef.current = shopOpen
     if (!shopOpen) setPreviewNametagAnchor(null)
   }, [shopOpen])
   const bridgeRequestRef = useRef(0)
@@ -2546,7 +2549,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setSigninStageReady(true)
           break
         case 'previewNametag':
-          setPreviewNametagAnchor(msg.anchor)
+          // a place told while the Shop is closed (a stream's last word, late) is no place to open on
+          if (msg.anchor == null || shopOpenRef.current) setPreviewNametagAnchor(msg.anchor)
           break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a

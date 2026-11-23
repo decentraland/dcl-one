@@ -10236,7 +10236,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "357dd3c625be3953a07b0251f52462beb26b63462e12936282df77294466a7a3"
+      "sha256": "328f94a22b22de70d17d70971e7553d8520c608504887d90b16a8dd56198c3fd"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10980,7 +10980,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
-      "sha256": "7350d20bc565dd4204a95d3cc283ff5c2cd9d2274860dc51864fad482eb76631"
+      "sha256": "1716ccf8e9867f5db69c91874a1e5c5ca1deb00d7e418b7d3774f8aa62f9a0bb"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",

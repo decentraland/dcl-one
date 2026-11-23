@@ -12,23 +12,33 @@ describe("the Shop avatar's nametag", () => {
   it('stands where the engine last said, and is unknown once the engine has none', async () => {
     const h = renderSession({ userId: null })
     expect(h.session().shop.nametagAnchor ?? null).toBeNull()
+    act(() => h.session().shop.toggle())
+    await waitFor(() => expect(h.session().shop.open).toBe(true))
     act(() => h.driver.emit({ kind: 'previewNametag', anchor: { x: 0.53, y: 0.12 } }))
     await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual({ x: 0.53, y: 0.12 }))
     act(() => h.driver.emit({ kind: 'previewNametag', anchor: null }))
     await waitFor(() => expect(h.session().shop.nametagAnchor).toBeNull())
   })
 
-  it('forgets it when the Shop closes and when the bridge starts again, whatever the bridge said last', async () => {
+  it('forgets it when the Shop closes, never keeps a place told late while closed, and forgets it when the bridge starts again', async () => {
     const h = renderSession({ userId: null })
+    const place = { x: 0.53, y: 0.12 }
     act(() => h.session().shop.toggle())
     await waitFor(() => expect(h.session().shop.open).toBe(true))
-    act(() => h.driver.emit({ kind: 'previewNametag', anchor: { x: 0.53, y: 0.12 } }))
-    await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual({ x: 0.53, y: 0.12 }))
+    act(() => h.driver.emit({ kind: 'previewNametag', anchor: place }))
+    await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual(place))
     act(() => h.session().shop.toggle())
     await waitFor(() => expect(h.session().shop.nametagAnchor).toBeNull())
+    // the stream's last word, late, while the Shop is closed: not kept
+    act(() => h.driver.emit({ kind: 'previewNametag', anchor: place }))
+    expect(h.session().shop.nametagAnchor).toBeNull()
+    // reopened: no place from before, until the engine tells one
+    act(() => h.session().shop.toggle())
+    await waitFor(() => expect(h.session().shop.open).toBe(true))
+    expect(h.session().shop.nametagAnchor).toBeNull()
+    act(() => h.driver.emit({ kind: 'previewNametag', anchor: place }))
+    await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual(place))
     // a bridge that restarted says nothing until its stream does: the old place isn't kept for it
-    act(() => h.driver.emit({ kind: 'previewNametag', anchor: { x: 0.53, y: 0.12 } }))
-    await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual({ x: 0.53, y: 0.12 }))
     act(() => h.driver.emit({ kind: 'bridgeReady' }))
     await waitFor(() => expect(h.session().shop.nametagAnchor).toBeNull())
   })
