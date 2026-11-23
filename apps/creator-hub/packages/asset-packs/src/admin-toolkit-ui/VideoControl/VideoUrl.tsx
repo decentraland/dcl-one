@@ -11,6 +11,11 @@ import { createVideoPlayerControls, isVideoUrl } from './utils';
 const VIDEO_PLAYER_HELP_URL =
   'https://docs.decentraland.org/creator/scene-editor/interactivity/video-screen';
 
+// A stream or DCL Cast source is not a URL the admin can edit, so the field starts empty for it.
+function toInputURL(src: string | undefined): string {
+  return !src || src.startsWith('livekit-video://') ? '' : src;
+}
+
 export function VideoControlURL({
   engine,
   video,
@@ -20,10 +25,13 @@ export function VideoControlURL({
   entity: Entity;
   video: DeepReadonlyObject<PBVideoPlayer> | undefined;
 }) {
-  const [videoURL, setVideoURL] = ReactEcs.useState('');
+  // Start from the screen's current URL so returning to this panel offers Deactivate at once.
+  // Starting empty and filling the field in later can leave the draft empty while the field shows
+  // the URL: @dcl/react-ecs skips writing a value equal to the field's last reported text.
+  const currentURL = toInputURL(video?.src);
+  const [videoURL, setVideoURL] = ReactEcs.useState(currentURL);
   ReactEcs.useEffect(() => {
-    const url = video?.src?.startsWith('livekit-video://') ? '' : video?.src;
-    setVideoURL(url ?? '');
+    setVideoURL(currentURL);
   }, [entity]);
   const controls = createVideoPlayerControls(entity, engine);
   const isActive = !!(video && isVideoUrl(video.src));
