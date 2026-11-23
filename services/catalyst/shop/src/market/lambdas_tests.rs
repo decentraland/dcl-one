@@ -1539,6 +1539,23 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         crate::land_authz::Settings::for_tests(),
         Some(state.index.clone()),
     )));
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
+        .bind(LAND_REGISTRY_MAINNET)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        get_via(land.clone(), "/lambdas/parcels/0/0/operators")
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "the fresh local fold has no parcel"
+    );
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '11 minutes'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let (status, body) = get_via(land.clone(), "/lambdas/parcels/0/0/operators").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -1670,6 +1687,43 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
 async fn profile_routes_answer_as_lamb2_when_content_is_unavailable() {
     let state = crate::market::tests::support::state_without_db();
     state.pool.close().await;
+    assert_lambdas_profile_dependency_failure(&state, "entities").await;
+}
+
+#[tokio::test]
+async fn profile_routes_answer_as_lamb2_when_ownership_is_unavailable() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    deploy(
+        &db.pool,
+        "bafyownershipfailureprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "Test", "avatar": { "wearables": [] } }] }),
+        &[],
+    )
+    .await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(serve_failing_graph().await),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_lambdas_profile_dependency_failure(&state, "ownership").await;
+    db.drop().await;
+}
+
+async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &str) {
+    let recorder = crate::comms::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let _recording = metrics::set_default_local_recorder(&recorder);
     let app = router(state.clone());
     for modified_since in [None, Some("Wed, 21 Oct 2015 07:28:00 GMT")] {
         let mut request = Request::post("/lambdas/profiles");
@@ -1694,16 +1748,32 @@ async fn profile_routes_answer_as_lamb2_when_content_is_unavailable() {
         );
     }
     assert_eq!(
-        get(&state, &format!("/lambdas/profiles/{OWNER}")).await,
+        get(state, &format!("/lambdas/profiles/{OWNER}")).await,
         (
             StatusCode::NOT_FOUND,
             json!({ "error": "Not Found", "message": "Profile not found" })
         )
     );
     assert_eq!(
-        get(&state, &format!("/lambdas/profile/{OWNER}")).await,
+        get(state, &format!("/lambdas/profile/{OWNER}")).await,
         (StatusCode::OK, json!({ "avatars": [], "timestamp": 0 }))
     );
+    let rendered = recorder.handle().render();
+    for (route, count) in [
+        ("lambdas_profiles", 2),
+        ("lambdas_profile_by_id", 1),
+        ("lambdas_profile_alias", 1),
+    ] {
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.starts_with("profiles_lookup_failures_total{")
+                    && line.contains(&format!("route=\"{route}\""))
+                    && line.contains(&format!("layer=\"{layer}\""))
+                    && line.ends_with(&format!(" {count}"))),
+            "{rendered}"
+        );
+    }
 }
 
 #[tokio::test]

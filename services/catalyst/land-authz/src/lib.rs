@@ -56,12 +56,13 @@
 //! 25 blocks of the confirmed head, which trails the chain head by
 //! `LAND_AUTHZ_CONFIRMATIONS`, 12 by default). The fold job runs every
 //! `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120 by default). The public LAND Lambdas
-//! routes use folds up to five minutes old on the database clock;
+//! routes use folds up to ten minutes old on the database clock;
 //! `/lambdas/land-authz/status` reports their window and the fold's age.
 //! Outside that window, the routes use their configured subgraph fallback
 //! or return an error. The LAND subgraph can lag the chain, and this node
 //! memoizes its per-parcel response for five seconds.
-//! Write paths use the 30-minute fold window and fall back to the marketplace
+//! Deploy authorization and its batch permissions preview use the 30-minute
+//! fold window and fall back to the marketplace
 //! subgraph's owner leg. The job runs only
 //! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
 //! keep using the fallbacks.
@@ -92,7 +93,9 @@ use crate::chain_index::ChainIndex;
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
 
-const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(5);
+// A successful fold can precede two failed passes and their retry waits
+// (120 + 120 + 240 seconds by default), leaving time for the next pass.
+const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
 pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 
 pub const SCHEMA: &str = "land_authz";
@@ -534,19 +537,10 @@ pub async fn can_deploy_batch(
     parcels: &[(i32, i32)],
     actor: &str,
 ) -> Result<Vec<Decision>, Unavailable> {
-    can_deploy_batch_within(state, parcels, actor, READY_WINDOW).await
-}
-
-async fn can_deploy_batch_within(
-    state: &LandAuthzState,
-    parcels: &[(i32, i32)],
-    actor: &str,
-    max_age: chrono::Duration,
-) -> Result<Vec<Decision>, Unavailable> {
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(mut snapshot) = state.ready_snapshot_within(max_age).await {
+    if let Some(mut snapshot) = state.ready_snapshot().await {
         let cursor = &snapshot.cursor;
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),

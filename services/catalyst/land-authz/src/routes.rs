@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use super::resolve::operator_flags;
 use super::{
     DecisionSource, LAMBDAS_FOLD_WINDOW, LandOperators, ParcelPermissionFlags, SharedState,
-    Unavailable, Verdict, can_deploy_batch_within, indexer, is_address,
+    Unavailable, Verdict, can_deploy_batch, indexer, is_address,
 };
 use crate::chain_index::source::{Source, unavailable};
 use crate::chain_index::{ChainIndex, land_graph};
@@ -405,7 +405,7 @@ async fn parcels_permissions_batch(
         Err(msg) => return bad_request(&msg),
     };
     let coords: Vec<(i32, i32)> = parcels.iter().map(|&(x, y)| (x as i32, y as i32)).collect();
-    match can_deploy_batch_within(&state, &coords, &addr, LAMBDAS_FOLD_WINDOW).await {
+    match can_deploy_batch(&state, &coords, &addr).await {
         Ok(decisions) => {
             let source = decisions
                 .first()

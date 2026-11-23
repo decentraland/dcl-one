@@ -4547,6 +4547,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
             .await
             .is_some()
     );
+    seed_rights(&db.pool).await;
     let state = state_over(db.pool.clone(), settings, None);
     assert!(state.ready().await.is_some());
     let app = router(state.clone());
@@ -4572,7 +4573,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
     assert_eq!(body["ready"], false);
     assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() < 0);
-    for (minutes, expected) in [(4, true), (6, false), (31, false)] {
+    for (minutes, expected) in [(9, true), (11, false), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
             indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
@@ -4583,7 +4584,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
         assert_eq!(state.ready().await.is_some(), minutes < 30);
         let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
         assert_eq!(body["ready"], expected);
-        assert_eq!(body["readyWindowSecs"], 300);
+        assert_eq!(body["readyWindowSecs"], 600);
         assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() >= minutes as i64 * 60);
         let (status, _, _) = get_json(&app, "/lambdas/parcels/1/2/operators").await;
         assert_eq!(
@@ -4595,6 +4596,23 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
             }
         );
     }
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC',now()) - interval '11 minutes'")
+        .execute(&db.pool).await.unwrap();
+    let actor = DANA;
+    let decision = can_deploy(&state, (1, 1), actor).await.unwrap();
+    assert_eq!(
+        decision.verdict,
+        Verdict::Granted(LandRightLeg::UpdateManager)
+    );
+    let (status, headers, body) = post_json(
+        &app,
+        &format!("/lambdas/users/{actor}/parcels/permissions"),
+        json!({ "parcels": ["1,1"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[crate::routes::SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["elements"][0]["permissions"]["updateManager"], true);
     db.drop().await;
 }
 

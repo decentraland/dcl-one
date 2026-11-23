@@ -69,8 +69,8 @@ fn is_default_pointer(address: &str) -> bool {
 pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
 
 /// Counts profile answers that left something out because a lookup layer
-/// failed, by `route` and `layer` (`entities`, `ownership`): those answers
-/// are `200`s, as the Registry's, so 5xx alerting does not see them.
+/// failed, by `route` and `layer` (`entities`, `ownership`). The Registry
+/// and Lambdas can use their normal response statuses for these failures.
 pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
 
 pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
@@ -827,13 +827,17 @@ pub async fn profiles(
             }
             Err(f) => {
                 f.log("profiles");
+                count_lookup_failure("lambdas_profiles", f.layer());
                 Json(json!([])).into_response()
             }
         };
     }
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
-        Err(()) => return Json(json!([])).into_response(),
+        Err(()) => {
+            count_lookup_failure("lambdas_profiles", Failure::Db.layer());
+            return Json(json!([])).into_response();
+        }
     };
 
     if let Some(threshold) = modified_since
@@ -848,7 +852,9 @@ pub async fn profiles(
             Json(Value::Array(profiles)).into_response()
         }
         Err(e) => {
-            Failure::Reader(e).log("profiles");
+            let failure = Failure::Reader(e);
+            failure.log("profiles");
+            count_lookup_failure("lambdas_profiles", failure.layer());
             Json(json!([])).into_response()
         }
     }
@@ -967,6 +973,7 @@ pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<Stri
         Ok(None) => not_found("Profile not found"),
         Err(f) => {
             f.log("profiles/:id");
+            count_lookup_failure("lambdas_profile_by_id", f.layer());
             not_found("Profile not found")
         }
     }
@@ -977,7 +984,10 @@ pub async fn profile_alias(State(state): State<SharedState>, Path(id): Path<Stri
     match fetch_profile_for_id(&state, &id).await {
         Ok(Some(processed)) => return Json(processed).into_response(),
         Ok(None) => {}
-        Err(f) => f.log("profile/:id"),
+        Err(f) => {
+            f.log("profile/:id");
+            count_lookup_failure("lambdas_profile_alias", f.layer());
+        }
     }
     Json(json!({ "avatars": [], "timestamp": 0 })).into_response()
 }
@@ -1381,8 +1391,6 @@ mod tests {
         assert_eq!(metadata["avatars"][2]["hasClaimedName"], false);
     }
 
-    /// `addBaseUrlToSnapshots`: face and body always rewritten, every other
-    /// key left as deployed, a missing object created.
     #[tokio::test]
     async fn legacy_body_shapes_are_translated_when_profiles_are_assembled() {
         let state = super::super::tests::support::state_without_db();
@@ -1410,6 +1418,8 @@ mod tests {
         }
     }
 
+    /// `addBaseUrlToSnapshots`: face and body always rewritten, every other
+    /// key left as deployed, a missing object created.
     #[test]
     fn snapshots_point_at_the_cdn_or_at_our_profile_images() {
         let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "https://x/already.png", "face128": "bafy128" } } }] });

@@ -398,8 +398,8 @@ pub struct Holdings {
     pub failed: Vec<String>,
 }
 
-/// The owner's holdings over each network's JSON-RPC endpoint. Contracts on
-/// a network without a configured endpoint are reported as unreadable.
+/// The owner's holdings over configured JSON-RPC endpoints. Unsupported
+/// networks and contracts are logged, and contribute no holdings.
 pub async fn owned_via_rpc(
     state: &MarketplaceState,
     owner: &str,
@@ -418,10 +418,10 @@ pub async fn owned_via_rpc(
     }
     let per_network = by_network.into_iter().filter_map(|(network, contracts)| {
         let Some(rpc) = rpc_url_for(state, network) else {
-            holdings.failed.extend(
-                contracts.into_iter().map(|(contract, _)| {
-                    format!("{network}:{contract}: no configured RPC endpoint")
-                }),
+            tracing::warn!(
+                network,
+                contracts = contracts.len(),
+                "third-party holdings: no configured RPC endpoint"
             );
             return None;
         };
@@ -524,7 +524,8 @@ async fn owned_on_network(
         let answers = &answers;
         legs.push(async move {
             let Some(addr) = addr else {
-                return (contract.clone(), Err("invalid contract address".into()));
+                tracing::warn!(network, contract, "third-party holdings: invalid contract address");
+                return (contract.clone(), Ok(Vec::new()));
             };
             let balance = answers
                 .get(probe_index)
@@ -552,7 +553,10 @@ async fn owned_on_network(
                         }
                         check_721(state, rpc, addr, owner, parsed_ids(cand)).await
                     }
-                    None => Err("contract did not return an ERC-721 or ERC-1155 balance".into()),
+                    None => {
+                        tracing::warn!(network, contract, "third-party holdings: contract has no readable ERC-721 or ERC-1155 balance");
+                        Ok(Vec::new())
+                    }
                 }
             };
             let found = found.map(|ids| {
@@ -2106,27 +2110,28 @@ mod tests {
         let holdings = owned_via_rpc(&state, &owner, &candidates).await;
         assert!(holdings.owned.is_empty());
         assert_eq!(holdings.failed.len(), 2, "{:?}", holdings.failed);
+    }
 
-        let state = state_with(with_rpcs(""));
-        let holdings = owned_via_rpc(&state, &owner, &candidates).await;
-        assert!(holdings.owned.is_empty());
-        assert_eq!(holdings.failed.len(), 2);
-        assert!(
-            holdings
-                .failed
-                .iter()
-                .all(|failure| failure.contains("no configured RPC endpoint"))
+    #[tokio::test]
+    async fn unsupported_mappings_keep_holdings_from_readable_contracts() {
+        let (rpc, _) = serve_chain().await;
+        let state = state_with(with_rpcs(&format!("80002={rpc}")));
+        let no_nft = address!("0x00000000000000000000000000000000000000ff");
+        let mut candidates: CandidateMap = [
+            candidate("amoy", no_nft, &["7"], false),
+            candidate("amoy", PLAIN_721, &["7"], false),
+            candidate("sepolia", PLAIN_721, &["7"], false),
+        ]
+        .into_iter()
+        .collect();
+        candidates.insert(
+            ("amoy".into(), "invalid-address".into()),
+            Candidates::default(),
         );
 
-        let state = state_with(with_rpcs(&format!("80002={rpc}")));
-        let unreadable = address!("0x00000000000000000000000000000000000000ff");
-        let candidates = [candidate("amoy", unreadable, &["7"], false)]
-            .into_iter()
-            .collect();
-        let holdings = owned_via_rpc(&state, &owner, &candidates).await;
-        assert!(holdings.owned.is_empty());
-        assert_eq!(holdings.failed.len(), 1);
-        assert!(holdings.failed[0].contains("did not return an ERC-721 or ERC-1155 balance"));
+        let holdings = owned_via_rpc(&state, &OWNER.to_string(), &candidates).await;
+        assert_eq!(holdings.owned, vec![triple("amoy", PLAIN_721, 7)]);
+        assert!(holdings.failed.is_empty());
     }
 
     #[tokio::test]

@@ -10,7 +10,9 @@ pub struct LandAuthzConfig {
     #[arg(long, env = "LAND_AUTHZ_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub land_authz_index_enabled: bool,
 
-    #[arg(long, env = "LAND_AUTHZ_INDEX_INTERVAL_SECS", default_value_t = 120)]
+    /// Seconds between passes. At most 240 to leave room for retries within
+    /// the public LAND routes' ten-minute freshness window.
+    #[arg(long, env = "LAND_AUTHZ_INDEX_INTERVAL_SECS", default_value_t = 120, value_parser = clap::value_parser!(u64).range(..=240))]
     pub land_authz_index_interval_secs: u64,
 
     /// Log, timestamp-header and legacy-repair RPC budget per pass (minimum 2).
