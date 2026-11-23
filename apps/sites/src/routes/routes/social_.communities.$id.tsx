@@ -1,11 +1,12 @@
 import "@dcl/one-ui/foundations/foundations.css";
 import { HydrationBoundary } from "@tanstack/react-query";
 import { useState } from "react";
-import { isRouteErrorResponse, useParams } from "react-router";
+import { isRouteErrorResponse, useParams, type ShouldRevalidateFunctionArgs } from "react-router";
 
-import { CommunityErrorView } from "@/features/social/community/CommunityErrorView";
-import { CommunityPage } from "@/features/social/community/CommunityPage";
+import { EventsLocaleProvider } from "@/features/events/locale";
 import { communityHref } from "@/features/social/community/view";
+import { CommunityErrorPage } from "@/pages/social/CommunityErrorPage";
+import { CommunityPage } from "@/pages/social/CommunityPage";
 
 import { communityLoader } from "../lib/community-loader.server";
 import { absoluteImage, absoluteUrl, notFoundMeta, oneLine, publicBase, socialMeta } from "../lib/social-meta";
@@ -17,6 +18,15 @@ export const loader = ({ request, context, params }: Route.LoaderArgs) => commun
 /** Client navigations fetch through the browser client; only the first document carries server data. */
 export async function clientLoader() {
   return null;
+}
+
+/**
+ * Opening or closing an event's detail (`?event=`) changes only the query. Revalidating would swap the
+ * first document's data for the client loader's nothing, and with it the page's title and card.
+ */
+export function shouldRevalidate({ currentUrl, nextUrl, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
+  // The route has no action, so a submission elsewhere (a fetcher) is no reason to read again either.
+  return currentUrl.pathname === nextUrl.pathname ? false : defaultShouldRevalidate;
 }
 
 /**
@@ -45,16 +55,24 @@ export function meta({ loaderData, error, params, matches }: Route.MetaArgs) {
 }
 
 export function ErrorBoundary() {
-  return <CommunityErrorView />;
+  return <CommunityErrorPage />;
 }
 
 export default function CommunityDetailRoute({ loaderData }: Route.ComponentProps) {
   const params = useParams();
-  // After a client navigation there is no loader clock; the browser's stands in for it.
-  const [now] = useState(() => loaderData?.now ?? Date.now());
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
-      <CommunityPage key={params.id} id={params.id ?? ""} now={now} />
+      {/* An event's detail follows the visitor's language, as on the events page. */}
+      <EventsLocaleProvider>
+        {/* Keyed by community, so moving to another one starts from that navigation's own data. */}
+        <CommunityRoutePage key={params.id} id={params.id ?? ""} loaderData={loaderData} />
+      </EventsLocaleProvider>
     </HydrationBoundary>
   );
+}
+
+function CommunityRoutePage({ id, loaderData }: { id: string; loaderData: Route.ComponentProps["loaderData"] }) {
+  // After a client navigation there is no loader clock, nor session; the browser's clock stands in.
+  const [first] = useState(() => ({ now: loaderData?.now ?? Date.now(), sid: loaderData?.sid ?? "" }));
+  return <CommunityPage id={id} now={first.now} sid={first.sid} />;
 }

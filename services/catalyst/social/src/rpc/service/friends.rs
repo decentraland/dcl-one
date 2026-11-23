@@ -115,9 +115,12 @@ pub(crate) async fn apply_friendship_action(
 /// guards recheck them before delivery. A wallet the profile source holds no
 /// profile for is skipped, as upstream's live loop skips it.
 pub(crate) async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
-    let snapshot = ctx.topology().snapshot();
     for (recipient, friend) in [(other, me), (me, other)] {
-        if !snapshot.is_online(friend) {
+        let (online, generation) = {
+            let snapshot = ctx.topology().snapshot();
+            (snapshot.is_online(friend), snapshot.generation)
+        };
+        if !online {
             continue;
         }
         let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
@@ -126,7 +129,7 @@ pub(crate) async fn announce_accepted_connectivity(ctx: &Context, me: &str, othe
         let mut friend_profile = profile;
         friend_profile.address = friend.to_string();
         ctx.topology()
-            .deliver_if_current(snapshot.generation, friend, true, || {
+            .deliver_if_current(generation, friend, true, || {
                 ctx.pubsub().publish(
                     recipient,
                     SocialEvent::TopologyFriendConnectivity(
@@ -135,7 +138,7 @@ pub(crate) async fn announce_accepted_connectivity(ctx: &Context, me: &str, othe
                             friend: Some(friend_profile),
                             status: ConnectivityStatus::Online as i32,
                         },
-                        snapshot.generation,
+                        generation,
                     ),
                 );
             });

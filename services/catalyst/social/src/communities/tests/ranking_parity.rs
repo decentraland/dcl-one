@@ -21,6 +21,109 @@ async fn counters(rig: &Rig, id: CommunityId) -> (i32, i32, i32, i32, i32) {
 }
 
 #[tokio::test]
+async fn upstream_community_edits_import_after_a_ranking_pass() {
+    async fn load_community(
+        pool: &PgPool,
+        id: Uuid,
+        owner: &Address,
+        name: &str,
+        updated_at: &str,
+    ) {
+        // The migration runner stages the extracted upstream row before applying this load.
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "CREATE TEMP TABLE stage ON COMMIT DROP AS
+             SELECT $1::uuid AS id, $2::text AS owner_address, $3::text AS name,
+                    'Community description'::text AS description, false AS private, true AS active,
+                    false AS unlisted, false AS editors_choice,
+                    timestamptz '2026-01-01 00:00:00+00' AS created_at,
+                    $4::text::timestamptz AS updated_at",
+        )
+        .bind(id)
+        .bind(owner.as_str())
+        .bind(name)
+        .bind(updated_at)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/tooling/migration/sources/social-service-ea/communities.load.sql"
+        )))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let community = CommunityId::new();
+    let id = community.as_uuid();
+    let owner = wallet();
+    load_community(
+        &rig.pool,
+        id,
+        &owner.address,
+        "Original",
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+    let ranking_at = chrono::NaiveDate::from_ymd_opt(2026, 1, 3)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    ranking::recalculate_ids(&rig.pool, &[id], ranking_at)
+        .await
+        .unwrap();
+    let score: f32 = sqlx::query_scalar("SELECT ranking_score FROM social.communities WHERE id=$1")
+        .bind(id)
+        .fetch_one(&rig.pool)
+        .await
+        .unwrap();
+    assert!(score > 0.0, "the ranking pass must write a score");
+
+    assert!(
+        super::super::queries::set_suspended(&rig.pool, community, true, "admin", Some("reason"))
+            .await
+            .unwrap()
+    );
+    // This edit predates the ranking pass but arrives in the next import.
+    load_community(
+        &rig.pool,
+        id,
+        &owner.address,
+        "Edited upstream",
+        "2026-01-02T00:00:00Z",
+    )
+    .await;
+    let (name, updated_at, suspended): (String, chrono::NaiveDateTime, bool) =
+        sqlx::query_as("SELECT name, updated_at, suspended FROM social.communities WHERE id=$1")
+            .bind(id)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap();
+    assert_eq!(name, "Edited upstream");
+    assert_eq!(updated_at, ranking_at - chrono::Duration::days(1));
+    assert!(suspended);
+
+    assert!(
+        super::super::queries::set_suspended(&rig.pool, community, false, "admin", None)
+            .await
+            .unwrap()
+    );
+    let lifted: (bool, chrono::NaiveDateTime) =
+        sqlx::query_as("SELECT suspended, updated_at FROM social.communities WHERE id=$1")
+            .bind(id)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap();
+    assert_eq!(lifted, (false, updated_at));
+    rig.finish();
+}
+
+#[tokio::test]
 async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retries() {
     use crate::comms::interfaces::SocialDirectory;
     let Some(rig) = Rig::new(Settings::for_tests()).await else {

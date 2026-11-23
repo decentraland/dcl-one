@@ -215,9 +215,10 @@ pub(crate) async fn recalculate_ids(
         .await?;
     let updates: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
     let scores: Vec<f32> = rows.iter().map(|row| score(&row.metrics) as f32).collect();
-    sqlx::query("UPDATE social.communities c SET ranking_score=v.score,updated_at=$3
+    // The importer compares updated_at to decide which metadata edit is newer.
+    sqlx::query("UPDATE social.communities c SET ranking_score=v.score
         FROM UNNEST($1::uuid[],$2::real[]) v(id,score) WHERE c.id=v.id AND c.origin='local' AND c.active")
-        .bind(updates).bind(scores).bind(now).execute(&mut *tx).await?;
+        .bind(updates).bind(scores).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
