@@ -23,13 +23,15 @@ use collectibles::{
 };
 #[cfg(feature = "explorer")]
 use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
+#[cfg(feature = "explorer")]
+use common::structs::StartupScenes;
 use common::{
     sets::SceneSets,
     structs::{
         AudioEmitter, AudioType, AvatarDynamicState, Clips, EmoteCommand, EmoteLifecycle,
         EmoteLifecycleEvent, EmoteLifecycleSource, EmoteMask, ForeignAvatar, MoveKind,
         OneShotAudio, PlayerEmoteTriggered, PlayerModifiers, PrimaryUser, SceneDrivenAnim,
-        SceneDrivenAnimationFeedback, SceneDrivenAnimationFeedbackState, StartupScenes,
+        SceneDrivenAnimationFeedback, SceneDrivenAnimationFeedbackState,
     },
     util::TryPushChildrenEx,
 };

@@ -2,7 +2,7 @@
 //! webhook reads them: `used_emote` at most once a minute, `walked_distance` with the steps walked
 //! since the last report, and `vertical_height_reached` once per login after a total elevation
 //! gain of 500 m on foot. Only movement under the player's own control counts.
-//! `move_to_parcel` is sent by the scene runner, which knows the scene at each parcel.
+//! `move_to_parcel` goes with the parcel reports ([`crate::primary_player_parcel_position`]).
 //! Each goes out only with a usable auth chain ([`SegmentConfig::client_event_common`]).
 
 use bevy::prelude::*;
@@ -15,33 +15,34 @@ use wallet::Wallet;
 use crate::{
     data_definition::{
         SegmentEvent, SegmentEventUsedEmote, SegmentEventVerticalHeightReached,
-        SegmentEventWalkedDistance,
+        SegmentEventWalkedDistance, UNAUTHENTICATED,
     },
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
 
 /// The avatar has no footstep events, so a step is this much grounded walking at the player's own
 /// speed.
-pub const STEP_METRES: f32 = 0.75;
+pub(crate) const STEP_METRES: f32 = 0.75;
 /// Steps are reported this often, or as soon as more than [`SEND_AT_STEPS`] are counted; one
 /// report stays far below the node's 10,000-step cap.
-pub const STEP_SEND_SECS: f32 = 30.0;
-pub const SEND_AT_STEPS: u64 = 100;
+pub(crate) const STEP_SEND_SECS: f32 = 30.0;
+pub(crate) const SEND_AT_STEPS: u64 = 100;
 /// The total elevation gain in one session that completes vertical voyager, in metres: the
 /// badge is "a total elevation gain of at least 500m in one session", so every climb adds up.
-pub const HEIGHT: f32 = 500.0;
+pub(crate) const HEIGHT: f32 = 500.0;
 /// A rise is counted once it passes this (jitter stays out) and only below the cap, in metres.
-pub const MIN_RISE: f32 = 0.01;
-pub const MAX_RISE: f32 = 10.0;
+pub(crate) const MIN_RISE: f32 = 0.01;
+pub(crate) const MAX_RISE: f32 = 10.0;
 
 /// The node counts emotes per distinct minute.
-pub const EMOTE_INTERVAL_SECS: f64 = 60.0;
-
-const UNAUTHENTICATED: &str = "unauthenticated";
+pub(crate) const EMOTE_INTERVAL_SECS: f64 = 60.0;
+/// Horizontal own movement in one frame, in metres, below which the player is not walking (pressed
+/// against a wall); real walking covers several times this per frame at any frame rate.
+pub(crate) const MIN_STRIDE: f32 = 1e-3;
 
 /// Steps per login, reported in chunks.
 #[derive(Default)]
-pub struct StepCounter {
+pub(crate) struct StepCounter {
     address: Option<String>,
     metres: f32,
     steps: u64,
@@ -51,7 +52,7 @@ pub struct StepCounter {
 impl StepCounter {
     /// A frame of `dt` seconds in which the player walked `metres` on the ground; the steps to
     /// report when a chunk closes.
-    pub fn tick(&mut self, address: &str, metres: f32, dt: f32) -> Option<u64> {
+    pub(crate) fn tick(&mut self, address: &str, metres: f32, dt: f32) -> Option<u64> {
         if self.address.as_deref() != Some(address) {
             *self = Self {
                 address: Some(address.to_owned()),
@@ -77,7 +78,7 @@ impl StepCounter {
 
 /// How the player stands this frame, for the elevation gain.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Footing {
+pub(crate) enum Footing {
     /// Walking on the ground under its own control: the rise counts.
     Walking,
     /// Not moving under its own control (standing, carried by a lift, platform or scene, pushed):
@@ -91,7 +92,7 @@ pub enum Footing {
 
 /// Elevation gained on foot per login, once.
 #[derive(Default)]
-pub struct ElevationGain {
+pub(crate) struct ElevationGain {
     address: Option<String>,
     pending: f32,
     gain: f32,
@@ -101,7 +102,7 @@ pub struct ElevationGain {
 impl ElevationGain {
     /// A frame in which the player's own movement rose `dy` metres; the gain once past
     /// [`HEIGHT`], every frame until [`Self::sent`].
-    pub fn tick(&mut self, address: &str, dy: f32, footing: Footing) -> Option<f32> {
+    pub(crate) fn tick(&mut self, address: &str, dy: f32, footing: Footing) -> Option<f32> {
         if self.address.as_deref() != Some(address) {
             *self = Self {
                 address: Some(address.to_owned()),
@@ -130,14 +131,14 @@ impl ElevationGain {
     }
 
     /// The event went out: nothing more this login.
-    pub fn sent(&mut self) {
+    pub(crate) fn sent(&mut self) {
         self.reached = true;
     }
 }
 
 /// The player's footing from its movement state.
 fn footing(dynamics: &AvatarDynamicState) -> Footing {
-    if dynamics.own_velocity == Vec3::ZERO {
+    if dynamics.own_displacement == Vec3::ZERO {
         return Footing::Standing;
     }
     let airborne = dynamics.ground_height > 0.2
@@ -151,7 +152,7 @@ fn footing(dynamics: &AvatarDynamicState) -> Footing {
         );
     if airborne {
         Footing::Airborne
-    } else if dynamics.own_velocity.xz().length() > 0.1 {
+    } else if dynamics.own_displacement.xz().length() > MIN_STRIDE {
         Footing::Walking
     } else {
         Footing::Standing
@@ -160,14 +161,14 @@ fn footing(dynamics: &AvatarDynamicState) -> Footing {
 
 /// One `used_emote` per player per [`EMOTE_INTERVAL_SECS`].
 #[derive(Default)]
-pub struct EmoteThrottle {
+pub(crate) struct EmoteThrottle {
     address: Option<String>,
     last: Option<f64>,
 }
 
 impl EmoteThrottle {
     /// Whether an emote played at `now` (seconds) is reported.
-    pub fn allow(&mut self, address: &str, now: f64) -> bool {
+    pub(crate) fn allow(&mut self, address: &str, now: f64) -> bool {
         if self.address.as_deref() != Some(address) {
             *self = Self {
                 address: Some(address.to_owned()),
@@ -185,27 +186,7 @@ impl EmoteThrottle {
     }
 }
 
-/// The last parcel a `move_to_parcel` was sent for, per login and realm.
-#[derive(Default)]
-pub struct ParcelTracker(Option<(String, String, IVec2)>);
-
-impl ParcelTracker {
-    /// `Some(old)` when the player is somewhere new: a new parcel, or the same parcel under
-    /// another login or realm, whose previous parcel is `None`.
-    pub fn moved(&self, address: &str, realm: &str, parcel: IVec2) -> Option<Option<IVec2>> {
-        match &self.0 {
-            Some((a, r, p)) if a == address && r == realm => (*p != parcel).then_some(Some(*p)),
-            _ => Some(None),
-        }
-    }
-
-    /// The move to `parcel` was sent.
-    pub fn sent(&mut self, address: &str, realm: &str, parcel: IVec2) {
-        self.0 = Some((address.to_owned(), realm.to_owned(), parcel));
-    }
-}
-
-pub fn report_badge_events(
+pub(crate) fn report_badge_events(
     player: Query<(&AvatarDynamicState, Has<OutOfWorld>), With<PrimaryUser>>,
     time: Res<Time>,
     config: Option<Res<SegmentConfig>>,
@@ -334,25 +315,28 @@ mod tests {
         assert!(!gain.reached);
     }
 
-    fn dynamics(own_velocity: Vec3, velocity: Vec3) -> AvatarDynamicState {
+    fn dynamics(own_displacement: Vec3, velocity: Vec3) -> AvatarDynamicState {
         AvatarDynamicState {
-            own_velocity,
+            own_displacement,
             velocity,
             ..default()
         }
     }
 
     // A conveyor, a vehicle or a scene's movement override moves the player with no movement of
-    // its own: neither steps nor climb.
+    // its own: neither steps nor climb; pressing against a wall is not walking either.
     #[test]
     fn only_the_players_own_movement_is_walking() {
         let carried = dynamics(Vec3::ZERO, Vec3::new(5.0, 2.0, 0.0));
         assert_eq!(footing(&carried), Footing::Standing);
-        let walking = dynamics(Vec3::new(1.5, 0.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
+        // 1.5 m/s at 60 fps
+        let walking = dynamics(Vec3::new(0.025, 0.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
         assert_eq!(footing(&walking), Footing::Walking);
+        let against_a_wall = dynamics(Vec3::new(0.0, 0.0, 1e-4), Vec3::ZERO);
+        assert_eq!(footing(&against_a_wall), Footing::Standing);
         let jumping = AvatarDynamicState {
             move_kind: MoveKind::Jump,
-            ..dynamics(Vec3::new(1.5, 8.0, 0.0), Vec3::ZERO)
+            ..dynamics(Vec3::new(0.025, 0.13, 0.0), Vec3::ZERO)
         };
         assert_eq!(footing(&jumping), Footing::Airborne);
     }
@@ -366,35 +350,5 @@ mod tests {
         assert!(!throttle.allow("0xa", 69.9));
         assert!(throttle.allow("0xa", 70.0));
         assert!(throttle.allow("0xb", 71.0));
-    }
-
-    // A login or realm change sends the current parcel again from nowhere, so Genesis (0,0) to a
-    // world's (0,0) is a move; standing still is not, and an unsent move stays pending.
-    #[test]
-    fn a_move_is_per_login_realm_and_parcel() {
-        let mut tracker = ParcelTracker::default();
-        let genesis = "https://peer.decentraland.org/";
-        let world = "https://worlds.example/world/a.dcl.eth/";
-        assert_eq!(
-            tracker.moved(UNAUTHENTICATED, genesis, IVec2::ZERO),
-            Some(None)
-        );
-        tracker.sent(UNAUTHENTICATED, genesis, IVec2::ZERO);
-        assert_eq!(tracker.moved(UNAUTHENTICATED, genesis, IVec2::ZERO), None);
-        assert_eq!(tracker.moved("0xa", genesis, IVec2::ZERO), Some(None));
-        tracker.sent("0xa", genesis, IVec2::ZERO);
-        // not sent: the next move still starts from (0,0)
-        assert_eq!(
-            tracker.moved("0xa", genesis, IVec2::X),
-            Some(Some(IVec2::ZERO))
-        );
-        assert_eq!(
-            tracker.moved("0xa", genesis, IVec2::Y),
-            Some(Some(IVec2::ZERO))
-        );
-        tracker.sent("0xa", genesis, IVec2::Y);
-        assert_eq!(tracker.moved("0xa", world, IVec2::Y), Some(None));
-        tracker.sent("0xa", world, IVec2::Y);
-        assert_eq!(tracker.moved("0xa", world, IVec2::Y), None);
     }
 }

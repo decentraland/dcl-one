@@ -434,7 +434,7 @@ impl SegmentConfig {
 /// `context.auth_chain`; no key, only the public delegation. `None` for a guest (no delegation)
 /// or a guest account (no wallet of its own), and once the delegation has expired.
 fn login_auth_chain(wallet: &wallet::Wallet, now: DateTime<Utc>) -> Option<String> {
-    if wallet.address().is_none() || wallet.is_guest() || wallet.is_guest_account() {
+    if wallet.address().is_none() || wallet.is_any_guest() {
         return None;
     }
     let chain = serde_json::to_string(&wallet.auth_chain().ok()?).ok()?;
@@ -583,7 +583,7 @@ async fn send_segment_batch(write_key: &str, events: &[String]) -> Result<(), Se
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::data_definition::{SegmentEventFirstMoveInWorld, SegmentEventTimeSpentInWorld};
 
@@ -690,7 +690,10 @@ mod tests {
     }
 
     // A wallet signed in with its own delegation, valid from `now_millis` for thirty days.
-    fn signed_in(now_millis: i64, guest_account: bool) -> (wallet::Wallet, SegmentConfig) {
+    pub(crate) fn signed_in(
+        now_millis: i64,
+        guest_account: bool,
+    ) -> (wallet::Wallet, SegmentConfig) {
         let mut root = wallet::Wallet::default();
         root.finalize_as_guest();
         let address = root.address().unwrap();

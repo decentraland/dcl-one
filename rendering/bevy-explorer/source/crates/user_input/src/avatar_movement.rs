@@ -802,7 +802,6 @@ fn record_own_movement(
         .actual_velocity
         .filter(|_| own)
         .map_or(Vec3::ZERO, |v| v.world_vec_to_vec3());
-    dynamic_state.own_velocity = velocity;
     // `step_time` is this frame's delta, the one `actual_velocity` was divided by
     dynamic_state.own_displacement = velocity * info.0.step_time;
 }

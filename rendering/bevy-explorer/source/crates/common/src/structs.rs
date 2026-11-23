@@ -1973,13 +1973,11 @@ pub enum MoveKind {
 #[derive(Component, Default)]
 pub struct AvatarDynamicState {
     pub velocity: Vec3,
-    /// Primary player only: the velocity a startup portable's controller (launch-time, console or
-    /// server-hosted, such as the default controller) gave the player this frame, after collisions
+    /// Primary player only: how far a startup portable's controller (launch-time, console or
+    /// server-hosted, such as the default controller) moved the player this frame, after collisions
     /// and without lifts or platforms, with movement input held; zero while a parcel scene, a
     /// smart wearable or a scene-spawned portable drives, a suppression holds or a force pushes the
     /// player.
-    pub own_velocity: Vec3,
-    /// `own_velocity` over this frame: the distance it moved the player.
     pub own_displacement: Vec3,
     pub ground_height: f32,
     pub jump_time: f64,
@@ -2031,6 +2029,16 @@ impl From<ws_scene_message::Message> for PreviewCommand {
 #[derive(Event)]
 pub struct PlayerTeleported {
     pub position: Vec3,
+}
+
+/// The local player's parcel changed, or the scene the realm lists at it did. `old` is the parcel
+/// before (`None` for the first; `parcel` itself when only the scene changed). `scene`: `None`
+/// unresolved, `Some(None)` an empty parcel, `Some(Some(hash))` a scene.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct PlayerParcelChanged {
+    pub old: Option<IVec2>,
+    pub parcel: IVec2,
+    pub scene: Option<Option<String>>,
 }
 
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional

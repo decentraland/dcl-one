@@ -8,7 +8,7 @@ const PLATFORM: &str = std::env::consts::OS;
 const PLATFORM: &str = "web";
 
 /// Mobile's wallet value before a sign-in, and after a sign-out.
-const UNAUTHENTICATED: &str = "unauthenticated";
+pub(crate) const UNAUTHENTICATED: &str = "unauthenticated";
 
 #[derive(Serialize)]
 pub struct SegmentMetricEventBody {
@@ -43,7 +43,7 @@ pub struct SegmentEventContext {
 }
 
 /// The events the node's webhook turns into client-event rows for badges.
-pub const CLIENT_EVENTS: [&str; 5] = [
+pub(crate) const CLIENT_EVENTS: [&str; 5] = [
     "move_to_parcel",
     "used_emote",
     "passport_opened",
@@ -51,7 +51,7 @@ pub const CLIENT_EVENTS: [&str; 5] = [
     "vertical_height_reached",
 ];
 
-pub fn is_client_event(name: &str) -> bool {
+pub(crate) fn is_client_event(name: &str) -> bool {
     CLIENT_EVENTS.iter().any(|e| e.eq_ignore_ascii_case(name))
 }
 
