@@ -55,11 +55,14 @@ handshake. That was a clock rule, not a wire-format problem.
 
 ## What this does not establish
 
-- The ignored native test `native_csharp_all_lanes_and_controlled_sender_throttle` in
-  `library/vendor/rusty_enet/src/test.rs` needs a separately built ENet-CSharp probe
-  (`PULSE_NATIVE_PROBE`, `PULSE_NATIVE_TRACE`, `--include-ignored`). It is not run by the
-  Development workflow, which runs `cargo test --lib` on the vendor workspace without
-  `--include-ignored` (`tooling/dev-test.sh`), and the probe source is not in this
-  repository. A default green run does not prove native interop.
+- The native test `native_csharp_all_lanes_and_controlled_sender_throttle` in
+  `library/vendor/rusty_enet/src/test.rs` is ignored by default. The Development workflow
+  does not run it: it runs `cargo test --lib` on the vendor workspace without
+  `--include-ignored` (`tooling/dev-test.sh`).
+  [#1983](https://github.com/decentraland/dcl-one/pull/1983) adds the test's ENet-CSharp
+  probe (`tooling/enet-csharp-probe`, pinned to the ENet-CSharp files Unity Explorer
+  ships) and the *ENet-CSharp interop* workflow, which runs the test on Linux over
+  loopback for every change to the vendored crate. Until #1983 merges, a green run on
+  main does not prove native interop.
 - The runs cover one Unity build, one deployment and a short window. They do not cover
   lane-by-lane behaviour under sender throttle, long sessions or load.
