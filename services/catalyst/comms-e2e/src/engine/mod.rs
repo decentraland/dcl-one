@@ -155,10 +155,11 @@ impl Needs {
         if self.scene_listener && stack.scene_listener_key_env.is_none() {
             missing.push("the scene listener wallet key (`scene_listener_key_env`)");
         }
-        if self.restart && stack.restart_command.is_none() {
+        let absent = |command: &Option<Vec<String>>| command.as_ref().is_none_or(Vec::is_empty);
+        if self.restart && absent(&stack.restart_command) {
             missing.push("a restart command (`restart_command`)");
         }
-        if self.pulse_restart && stack.pulse_restart_command.is_none() {
+        if self.pulse_restart && absent(&stack.pulse_restart_command) {
             missing.push("a Pulse restart command (`pulse_restart_command`)");
         }
         (!missing.is_empty()).then(|| format!("the stack file has no {}", missing.join(", no ")))

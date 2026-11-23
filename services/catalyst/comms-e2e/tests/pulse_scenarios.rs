@@ -13,6 +13,7 @@ use catalyst_comms_e2e::engine::{Outcome, RunOptions, Scenario, ScenarioResult, 
 use catalyst_comms_e2e::identity::Identity;
 use catalyst_comms_e2e::pulse::{HandshakeOutcome, PulseBot};
 use catalyst_comms_e2e::scenarios::pulse::{self, *};
+use catalyst_comms_e2e::scenarios::pulse_enet;
 use catalyst_comms_e2e::stack::Stack;
 use sha2::{Digest, Sha256};
 
@@ -77,6 +78,65 @@ fn failure_of(result: &ScenarioResult) -> String {
             result.name
         ),
     }
+}
+
+/// A command that does nothing to Pulse and exits with `code`.
+fn exits_with(code: u8) -> Vec<String> {
+    let (shell, flag) = if cfg!(windows) {
+        ("cmd", "/c")
+    } else {
+        ("sh", "-c")
+    };
+    vec![shell.to_owned(), flag.to_owned(), format!("exit {code}")]
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_command_that_fails_is_reported_as_the_commands_failure() {
+    let started = Instant::now();
+    let result = run_on(
+        PulseServer::new(),
+        |stack| stack.pulse_restart_command = Some(exits_with(3)),
+        &pulse_enet::GRACEFUL_STOP,
+        options(1),
+    )
+    .await;
+    let failure = failure_of(&result);
+    assert!(
+        failure.contains("the Pulse restart command failed"),
+        "{failure}"
+    );
+    assert!(!failure.contains("must be told"), "{failure}");
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_is_refused_when_the_deadline_cannot_hold_the_restart() {
+    let started = Instant::now();
+    let result = run_on(
+        PulseServer::new(),
+        |stack| stack.pulse_restart_command = Some(exits_with(0)),
+        &pulse_enet::GRACEFUL_STOP,
+        RunOptions {
+            scenario_deadline: Duration::from_secs(60),
+            ..options(1)
+        },
+    )
+    .await;
+    let failure = failure_of(&result);
+    assert!(
+        failure.contains("the Pulse restart command may take"),
+        "{failure}"
+    );
+    assert!(failure.contains("--deadline 295 or more"), "{failure}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]

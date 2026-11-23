@@ -20,9 +20,13 @@ use crate::identity::Identity;
 use crate::pulse::{ConnectOptions, PulseBot, messages};
 use crate::stack::Stack;
 
-/// How long the stop scenario watches for the peers' disconnects: past the 30 s a client's own
-/// ENet timeout can take, so a peer that is never told still shows how it ended.
-const STOP_WATCH: Duration = Duration::from_secs(45);
+/// How long the stop command may take to stop Pulse, start it again and return.
+const COMMAND_BUDGET: Duration = Duration::from_secs(180);
+/// How long the peers are still watched once the stop command has returned: past the 30 s a
+/// client's own ENet timeout can take, so a peer that was never told still shows how it ended.
+const AFTER_COMMAND: Duration = Duration::from_secs(35);
+/// What the peers may take to enter before the stop command starts.
+const STOP_SETUP: Duration = Duration::from_secs(20);
 /// Peers signed in to Pulse when it is told to stop; one more has connected and not signed in.
 const SIGNED_IN: u32 = 3;
 /// How long Pulse may take to answer a handshake again after the restart command.
@@ -181,6 +185,12 @@ pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), Strin
     }
     let graceful = DisconnectReason::Graceful.code();
     let command_ms = command_took.as_millis() as u64;
+    if seen.iter().all(|peer| peer.code.is_none()) {
+        return Err(format!(
+            "the stop command did not stop Pulse: it returned after {command_ms} ms and no peer's connection had ended {} s later",
+            AFTER_COMMAND.as_secs()
+        ));
+    }
     let wrong: Vec<String> = seen
         .iter()
         .filter(|peer| {
@@ -198,7 +208,16 @@ pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), Strin
                 }
                 _ => "still connected at the end of the watch".to_owned(),
             };
-            format!("{} ({state}): {ended}", peer.peer)
+            // Pulse ends a connection that has not signed in on its own after a while: a command
+            // slower than that leaves this peer nothing to be told
+            let slow_command = !peer.signed_in
+                && peer.code == Some(DisconnectReason::AuthTimeout.code());
+            let cause = if slow_command {
+                ": the command took too long to stop Pulse, which had by then ended this connection for not signing in"
+            } else {
+                ""
+            };
+            format!("{} ({state}): {ended}{cause}", peer.peer)
         })
         .collect();
     if wrong.is_empty() {
@@ -212,11 +231,16 @@ pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), Strin
     }
 }
 
-/// Watches `peers` from `started` until each has seen its connection end or `watch` has passed.
+/// When the stop command returned, and whether it succeeded; `None` while it runs.
+type CommandEnd = parking_lot::Mutex<Option<(Instant, bool)>>;
+
+/// Watches `peers` from `started` until each has seen its connection end. While the command runs
+/// the watch goes on; it ends at once when the command fails, and [`AFTER_COMMAND`] after it
+/// succeeds.
 async fn watch_disconnects(
     peers: &[(PulseBot, bool)],
     started: Instant,
-    watch: Duration,
+    command: &CommandEnd,
 ) -> Vec<StopSeen> {
     let mut ended: Vec<Option<(u32, u64)>> = vec![None; peers.len()];
     loop {
@@ -227,7 +251,12 @@ async fn watch_disconnects(
                 *slot = Some((code, started.elapsed().as_millis() as u64));
             }
         }
-        if ended.iter().all(Option::is_some) || started.elapsed() >= watch {
+        let over = match *command.lock() {
+            None => false,
+            Some((_, false)) => true,
+            Some((returned, true)) => returned.elapsed() >= AFTER_COMMAND,
+        };
+        if ended.iter().all(Option::is_some) || over {
             break;
         }
         tokio::time::sleep(Duration::from_millis(2)).await;
@@ -251,6 +280,23 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
         .get_program()
         .to_string_lossy()
         .into_owned();
+    // The command has to run to its end: cut short between its stop and its start, it leaves
+    // Pulse down.
+    let needed = STOP_SETUP + COMMAND_BUDGET + AFTER_COMMAND + BACK_WITHIN;
+    if let Some(ends_at) = ctx.ends_at() {
+        let left = ends_at.saturating_duration_since(Instant::now());
+        if left < needed {
+            bail!(
+                "the scenario's deadline leaves {} s, less than the {} s the Pulse restart command may take with the {} s the peers are watched after it, the {} s Pulse may take to answer again and {} s to set up: give --deadline {} or more",
+                left.as_secs(),
+                COMMAND_BUDGET.as_secs(),
+                AFTER_COMMAND.as_secs(),
+                BACK_WITHIN.as_secs(),
+                STOP_SETUP.as_secs(),
+                needed.as_secs()
+            );
+        }
+    }
     let realm = ctx.realm("stop");
     let here = meeting_place(&ctx);
     let target = ctx.stack().pulse_enet;
@@ -298,9 +344,12 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
     let mut child = command
         .spawn()
         .map_err(|error| anyhow!("starting the Pulse restart command `{program}`: {error}"))?;
-    let (seen, status) = tokio::join!(watch_disconnects(&peers, started, STOP_WATCH), async {
+    let command_end = CommandEnd::new(None);
+    let (seen, status) = tokio::join!(watch_disconnects(&peers, started, &command_end), async {
         // The child is killed if this future is dropped (the scenario deadline).
-        let status = tokio::time::timeout(Duration::from_secs(180), child.wait()).await;
+        let status = tokio::time::timeout(COMMAND_BUDGET, child.wait()).await;
+        let succeeded = matches!(&status, Ok(Ok(status)) if status.success());
+        *command_end.lock() = Some((Instant::now(), succeeded));
         (status, started.elapsed())
     });
     let (status, command_took) = status;
@@ -312,12 +361,17 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
 
     // whatever the peers saw, the stack is left answering as it was found
     let back = pulse_answers_again(&ctx, &ctx.identity(SIGNED_IN + 1)).await;
-    judge_stop(&seen, command_took).map_err(|error| anyhow!(error))?;
-    let status =
-        status.map_err(|_| anyhow!("the Pulse restart command did not return within 180 s"))??;
+    // a command that did not do its work is the stack's own failure: nothing is said of Pulse
+    let status = status.map_err(|_| {
+        anyhow!(
+            "the Pulse restart command did not return within {} s: the stop was not judged, and Pulse may be down",
+            COMMAND_BUDGET.as_secs()
+        )
+    })??;
     if !status.success() {
-        bail!("the Pulse restart command failed: {status}");
+        bail!("the Pulse restart command failed ({status}): the stop was not judged");
     }
+    judge_stop(&seen, command_took).map_err(|error| anyhow!(error))?;
     back
 }
 
@@ -559,6 +613,63 @@ mod tests {
             assert!(!failure.contains("signed-in-0"), "{failure}");
         }
         assert!(judge_stop(&[], command_took).is_err());
+    }
+
+    #[test]
+    fn a_peer_pulse_ended_for_not_signing_in_names_the_slow_command() {
+        let graceful = DisconnectReason::Graceful.code();
+        let seen = vec![
+            stopped("signed-in-0", true, Some(graceful), Some(31_000)),
+            stopped(
+                "not-signed-in",
+                false,
+                Some(DisconnectReason::AuthTimeout.code()),
+                Some(30_100),
+            ),
+        ];
+        let failure = judge_stop(&seen, Duration::from_secs(33)).unwrap_err();
+        assert!(
+            failure.contains("the command took too long to stop Pulse"),
+            "{failure}"
+        );
+        assert!(!failure.contains("signed-in-0"), "{failure}");
+    }
+
+    #[test]
+    fn a_command_after_which_no_connection_ended_did_not_stop_pulse() {
+        let untouched = vec![
+            stopped("signed-in-0", true, None, None),
+            stopped("not-signed-in", false, None, None),
+        ];
+        let failure = judge_stop(&untouched, Duration::from_millis(23)).unwrap_err();
+        assert!(
+            failure.contains("the stop command did not stop Pulse"),
+            "{failure}"
+        );
+        assert!(!failure.contains("must be told"), "{failure}");
+        // one peer left connected among others that ended is still a word on Pulse
+        let graceful = DisconnectReason::Graceful.code();
+        let mixed = vec![
+            stopped("signed-in-0", true, Some(graceful), Some(10)),
+            stopped("signed-in-1", true, None, None),
+        ];
+        let failure = judge_stop(&mixed, Duration::from_millis(23)).unwrap_err();
+        assert!(failure.contains("must be told"), "{failure}");
+    }
+
+    #[test]
+    fn an_empty_restart_command_is_a_missing_one() {
+        let pulse =
+            Stack::parse("pulse_enet = \"127.0.0.1:9\"\npulse_restart_command = []\n").unwrap();
+        let missing = GRACEFUL_STOP.needs.missing(&pulse).unwrap();
+        assert!(missing.contains("pulse_restart_command"), "{missing}");
+        let api = Stack::parse("pulse_enet = \"127.0.0.1:9\"\nrestart_command = []\n").unwrap();
+        let restarts = Needs {
+            restart: true,
+            ..Needs::NONE
+        };
+        let missing = restarts.missing(&api).unwrap();
+        assert!(missing.contains("restart_command"), "{missing}");
     }
 
     fn silence(peer: &str, subject: u32, dropped_after_ms: Option<u64>) -> SilenceSeen {

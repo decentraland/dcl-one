@@ -234,8 +234,15 @@ stack file's `pulse_restart_command`, which stops Pulse as a deployment does (SI
 to its console on Windows), starts it again and returns once it listens. Each of the four must
 receive a disconnect with `Graceful` (1) before the command returns; the report notes each
 peer's code and time (`stop`) and how long the command took (`restart_command_ms`), and the
-scenario then waits for Pulse to accept a handshake again. It is hostile: it stops a process of the stack. The `pulse-silent-peer` scenarios put a
-peer behind a fault link, let ENet measure the path's round trip for 5 s, then drop everything
+scenario then waits for Pulse to accept a handshake again. It is hostile: it stops a process of
+the stack. The command has 180 s to return, and the scenario refuses to start when the run's
+`--deadline` leaves less than 295 s for it: a command cut short between its stop and its start
+leaves Pulse down for the rest of the run, and ending it reaches only the process the scenario
+started, not what that process started. A command that fails or does not return is reported as
+the command's failure, and the stop is not judged. The command must also reach Pulse within the
+30 s Pulse keeps a connection that has not signed in, or the peer that never signs in is gone
+before the stop. The `pulse-silent-peer` scenarios put a peer behind a fault link, let ENet
+measure the path's round trip for 5 s, then drop everything
 on the link both ways: an observer must see the peer leave within 8 s (ENet's 5 s bound, plus the
 ping that starts the count, the retransmission timer the bound is checked on and a tick), and
 then the same for a second peer, which must take the slot the first left (the observer knows a
