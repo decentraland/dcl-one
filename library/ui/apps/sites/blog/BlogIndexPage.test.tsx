@@ -133,6 +133,13 @@ describe('BlogIndexPage', () => {
       ])
     })
 
+    it('should render the shared navigation bar and keep desktop search', () => {
+      const links = within(nav).getAllByRole('link')
+      expect(nav).toHaveAttribute('data-page', 'blog')
+      expect(links.every((link) => link.hasAttribute('data-label'))).toBe(true)
+      expect(within(nav).getByRole('searchbox')).toBeInTheDocument()
+    })
+
     it('should mark the active tab with aria-current', () => {
       expect(within(nav).getByRole('link', { name: 'Platform' })).toHaveAttribute(
         'aria-current',
