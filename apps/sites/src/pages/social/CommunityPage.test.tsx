@@ -806,6 +806,46 @@ describe("CommunityPage", () => {
         });
       });
 
+      describe("and the visitor opens an event while the sign-in return's join is pending", () => {
+        let router: Router;
+        let release: (value: CommunityInfo) => void;
+
+        beforeEach(async () => {
+          release = () => {};
+          net.fetchCommunity.mockImplementation((_id: string, opts: { identity?: unknown } = {}) =>
+            opts.identity
+              ? new Promise<CommunityInfo>((resolve) => (release = resolve))
+              : Promise.resolve(community()),
+          );
+          net.fetchCommunityEvents.mockResolvedValue({ events: [upcomingEvent()], total: 1, received: 1 });
+          net.joinCommunity.mockResolvedValue(undefined);
+          const nonce = rememberAction(ID, "join");
+          router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
+          await userEvent.click(await screen.findByRole("link", { name: "Takeover Tuesday" }));
+          await screen.findByRole("dialog");
+          await act(async () => release(community({ role: "none" })));
+        });
+
+        it("should not join while the detail is open", async () => {
+          await act(async () => {});
+          expect(net.joinCommunity).not.toHaveBeenCalled();
+          expect(router.state.location.search).toBe("?event=ev-1");
+        });
+
+        describe("and closes the detail", () => {
+          beforeEach(async () => {
+            await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /close/i }));
+          });
+
+          it("should join once, back on the community page with a clean URL", async () => {
+            await waitFor(() => expect(net.joinCommunity).toHaveBeenCalledTimes(1));
+            await waitFor(() => expect(router.state.location.search).toBe(""));
+            expect(screen.queryByRole("dialog")).toBeNull();
+            expect(net.joinCommunity).toHaveBeenCalledTimes(1);
+          });
+        });
+      });
+
       describe("and the link is this tab's sign-in return with the join action", () => {
         let router: Router;
 

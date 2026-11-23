@@ -96,7 +96,8 @@ export function useCommunityEvents(
       // A second click before the dialog covers the card would push a second entry for the same event.
       if (id === eventId) return;
       const next = new URLSearchParams(location.search);
-      // A sign-in return's action stays on the entry it arrived on, which Close goes back to.
+      // A sign-in return's action stays on the entry it arrived on: it is deferred until the visitor comes
+      // back to that entry (Close), and leaving the detail another way, or past the action's expiry, drops it.
       next.delete(ACTION_PARAM);
       next.delete(NONCE_PARAM);
       next.set(EVENT_PARAM, id);
