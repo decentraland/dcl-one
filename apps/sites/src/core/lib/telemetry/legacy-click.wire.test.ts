@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { LegacyClick, LegacySectionViewed, LegacySession } from "./legacy-click";
+
 // The serialized Segment bodies a legacy Click or Section Viewed leaves the browser with, through the real
 // transport and gates. Each test loads a fresh document, whose readiness is its first page view.
 
@@ -19,7 +21,16 @@ async function loadDocument(path = "/") {
   vi.resetModules();
   const telemetry = await import("./track");
   const legacy = await import("./legacy-click");
-  return { page: telemetry.page, ...legacy };
+  // A scope standing for the mounted control, as a component's `useLegacyTrackScope` would give it.
+  const scope = legacy.createLegacyTrackScope();
+  type Session = Omit<LegacySession, "scope">;
+  return {
+    page: telemetry.page,
+    scope,
+    trackLegacyClick: (click: LegacyClick, session: Session) => legacy.trackLegacyClick(click, { ...session, scope }),
+    trackSectionViewed: (section: LegacySectionViewed, session: Session) =>
+      legacy.trackSectionViewed(section, { ...session, scope }),
+  };
 }
 
 async function tracks(): Promise<Array<{ event: string; userId?: string; anonymousId: string; properties: Record<string, unknown> }>> {
@@ -46,6 +57,25 @@ describe("a legacy Click", () => {
     const [click] = await tracks();
     expect(click).toMatchObject({ event: "Click", anonymousId: "sid-1", userId: "0xabc" });
     expect(click!.properties).toMatchObject({ place: "Landing Explore", section: "view_all", track_deferred: false });
+  });
+
+  it("is dropped when its component unmounts before the document's page view, and never sent later", async () => {
+    const { page, scope, trackLegacyClick } = await loadDocument("/create");
+    trackLegacyClick({ place: "Creators Faqs", title: "faqs-cta" }, { sid: "sid-1", userId: "0xabc" });
+    scope.close();
+    window.history.replaceState(null, "", "/blog");
+    page("/blog", {}, { sid: "sid-1" });
+    expect((await tracks()).filter((t) => t.event === "Click")).toEqual([]);
+  });
+
+  it("is sent once, deferred, when its component is still mounted at the page view", async () => {
+    const { page, trackLegacyClick } = await loadDocument("/create");
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1" });
+    page("/create", {}, { sid: "sid-1" });
+    page("/create", {}, { sid: "sid-1" });
+    const clicks = (await tracks()).filter((t) => t.event === "Click");
+    expect(clicks).toHaveLength(1);
+    expect(clicks[0]!.properties).toMatchObject({ place: "Creators Hero", track_deferred: true });
   });
 
   it("is never sent for a bot", async () => {
@@ -83,6 +113,15 @@ describe("Section Viewed", () => {
     const [viewed] = await tracks();
     expect(viewed).toMatchObject({ event: "Section Viewed", anonymousId: "sid-1" });
     expect(viewed!.properties).toMatchObject({ section_viewed: "Creators Why", mobile: false, track_deferred: true });
+  });
+
+  it("is dropped when its section unmounts before the document's page view", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query }));
+    const { page, scope, trackSectionViewed } = await loadDocument("/create");
+    trackSectionViewed("Creators Why", { sid: "sid-1" });
+    scope.close();
+    page("/create", {}, { sid: "sid-1" });
+    expect(await tracks()).toEqual([]);
   });
 
   it("is never sent for a bot", async () => {

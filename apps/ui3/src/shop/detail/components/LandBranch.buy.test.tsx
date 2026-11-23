@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BOOK } from "@shop/payment/fixtures";
 import type { EvmAddress } from "@shop/model/address";
 import { catalogClient, fixtureHost, RESELLER, ShopHarness } from "../../discovery/fixtures";
-import { invalidateShopQueries } from "../../discovery/query";
+import { invalidateShopQueries, peekShopQuery } from "../../discovery/query";
 import { APPROVAL_STILL_PENDING, TxPendingError } from "../../market/lib/tx";
 import type { Trade } from "../../market/lib/trades";
 import { buyTradeWithMana, executeLegacyOrder } from "../../market/purchase/executeOrder";
@@ -96,12 +96,23 @@ function purchaseEnds(how: (opts: { onSubmitted?: (hash: string) => void }) => P
   else vi.mocked(executeLegacyOrder).mockImplementationOnce(how);
 }
 
-describe.each<Listing>(["trade", "legacy order"])("a LAND bought from its page through a %s, with the sale still confirming", (kind) => {
+describe.each<Listing>(["trade", "legacy order"])("a LAND bought from its page through a %s", (kind) => {
   beforeEach(() => {
     listing = kind;
   });
 
-  it("keeps the notice up, then reads that LAND again once it closes, and not its neighbour", async () => {
+  it("keeps its success up, then reads that LAND again once it closes, and not its neighbour", async () => {
+    const before = await openBuy();
+    expect(await screen.findByText(/Purchase complete/)).toBeTruthy();
+    // Not read under the success: a read empties the page until it answers, and would take the dialog with it.
+    expect(reads).toEqual(before);
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(reads[BOUGHT]).toBe(before[BOUGHT]! + 1));
+    expect(reads[NEIGHBOUR]).toBe(before[NEIGHBOUR]);
+  });
+
+  it("with the sale still confirming, keeps the notice up, then reads that LAND again once it closes, and not its neighbour", async () => {
     purchaseEnds(async (opts) => {
       opts.onSubmitted?.(SALE);
       throw new TxPendingError(SALE, "The purchase");
@@ -115,6 +126,42 @@ describe.each<Listing>(["trade", "legacy order"])("a LAND bought from its page t
     await waitFor(() => expect(reads[BOUGHT]).toBe(before[BOUGHT]! + 1));
     expect(reads[NEIGHBOUR]).toBe(before[NEIGHBOUR]);
     expect(await within(screen.getByTestId("bought")).findByTestId("land-buy")).toBeTruthy();
+  });
+
+  it.each(["success", "pending"] as const)("reads that LAND again when the sale's %s arrives after the page was left", async (end) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    purchaseEnds(async (opts) => {
+      opts.onSubmitted?.(SALE);
+      await gate;
+      if (end === "pending") throw new TxPendingError(SALE, "The purchase");
+      return SALE;
+    });
+    await openBuy();
+    const bought = ["land-token", BOOK.land.toLowerCase(), BOUGHT];
+    const neighbour = ["land-token", BOOK.land.toLowerCase(), NEIGHBOUR];
+    // Back while the sale's receipt is awaited: nothing has armed the read yet.
+    cleanup();
+    expect(peekShopQuery(bought, Infinity)).toBeDefined();
+
+    await act(async () => release());
+    await waitFor(() => expect(peekShopQuery(bought, Infinity)).toBeUndefined());
+    expect(peekShopQuery(neighbour, Infinity)).toBeDefined();
+  });
+
+  it("leaves that LAND's read alone when only the approval was confirming as the page was left", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    purchaseEnds(async () => {
+      await gate;
+      throw new TxPendingError(`0x${"a".repeat(64)}`, "The MANA approval");
+    });
+    await openBuy();
+    const bought = ["land-token", BOOK.land.toLowerCase(), BOUGHT];
+    cleanup();
+    await act(async () => release());
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(peekShopQuery(bought, Infinity)).toBeDefined();
   });
 
   it("reads nothing again when only the MANA approval was still confirming", async () => {

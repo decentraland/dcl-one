@@ -14,31 +14,6 @@
     "Click": {
       "loose": false,
       "props": {
-        "action": {
-          "kind": "enum-string",
-          "values": [
-            "account_settings",
-            "create_in_decentraland",
-            "credits",
-            "emotes",
-            "events",
-            "land",
-            "learn",
-            "logo",
-            "marketplace_authorizations",
-            "merch",
-            "my_assets",
-            "names",
-            "places",
-            "publish_land",
-            "publish_wearables_emotes",
-            "shop_all",
-            "sign_in",
-            "view_profile",
-            "wearables"
-          ],
-          "optional": true
-        },
         "card": {
           "kind": "string",
           "optional": true
@@ -65,17 +40,8 @@
         "event": {
           "kind": "enum-string",
           "values": [
-            "Download",
-            "click"
+            "Download"
           ],
-          "optional": true
-        },
-        "href": {
-          "kind": "string",
-          "optional": true
-        },
-        "link": {
-          "kind": "string",
           "optional": true
         },
         "mac_arch": {
@@ -113,10 +79,7 @@
             "Landing Catch The Vibe",
             "Landing Come Hang Out",
             "Landing Explore",
-            "Landing Footer Link",
-            "Landing Footer Social",
             "Landing Hero",
-            "Landing Navbar",
             "Landing Weekly Rituals",
             "come-hang-out",
             "come-hang-out-platform-switch",
@@ -125,10 +88,6 @@
             "landing-hero-platform-switch"
           ],
           "optional": false
-        },
-        "platform": {
-          "kind": "string",
-          "optional": true
         },
         "section": {
           "kind": "string",
@@ -144,15 +103,15 @@
         },
         "track_called_at": {
           "kind": "number",
-          "optional": true
+          "optional": false
         },
         "track_deferred": {
           "kind": "boolean",
-          "optional": true
+          "optional": false
         },
         "track_delivered_at": {
           "kind": "number",
-          "optional": true
+          "optional": false
         },
         "utm_campaign": {
           "kind": "string",

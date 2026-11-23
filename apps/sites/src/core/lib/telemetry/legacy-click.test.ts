@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { renderHook } from "@testing-library/react";
+import { createElement, StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { legacyAnalyticsReady, track, whenLegacyAnalyticsReady } from "./track";
 import { dropTrackedUser, restoreTrackedUser } from "./tracked-user";
-import { trackLegacyClick, trackSectionViewed } from "./legacy-click";
+import { createLegacyTrackScope, sendLegacyDeferred, trackLegacyClick, trackSectionViewed, useLegacyTrackScope } from "./legacy-click";
 
 // The document's readiness (its first page view) is driven here; `legacy-click.wire.test.ts` covers the real gates.
 let ready = true;
@@ -18,10 +20,19 @@ function becomeReady() {
 vi.mock("./track", () => ({
   track: vi.fn(),
   legacyAnalyticsReady: vi.fn(() => ready),
-  whenLegacyAnalyticsReady: vi.fn((fire: () => void) => (ready ? fire() : pending.push(fire))),
+  whenLegacyAnalyticsReady: vi.fn((fire: () => void) => {
+    if (ready) {
+      fire();
+      return () => {};
+    }
+    pending.push(fire);
+    return () => {
+      pending = pending.filter((queued) => queued !== fire);
+    };
+  }),
 }));
 
-const SESSION = { sid: "sid-1" };
+const SESSION = { sid: "sid-1", scope: createLegacyTrackScope() };
 
 function sent() {
   expect(track).toHaveBeenCalledTimes(1);
@@ -87,11 +98,11 @@ describe("trackLegacyClick", () => {
   });
 
   it("names the verified wallet as userId, and drops it once a sign-out has started", () => {
-    trackLegacyClick({ place: "Creators Why", title: "x" }, { sid: "sid-1", userId: "0xabc" });
+    trackLegacyClick({ place: "Creators Why", title: "x" }, { sid: "sid-1", userId: "0xabc", scope: SESSION.scope });
     expect(sent().ctx).toEqual({ sid: "sid-1", userId: "0xabc", legacy: true });
     vi.mocked(track).mockReset();
     dropTrackedUser();
-    trackLegacyClick({ place: "Creators Why", title: "x" }, { sid: "sid-1", userId: "0xabc" });
+    trackLegacyClick({ place: "Creators Why", title: "x" }, { sid: "sid-1", userId: "0xabc", scope: SESSION.scope });
     expect(sent().ctx).toEqual({ sid: "sid-1", legacy: true });
   });
 
@@ -156,5 +167,94 @@ describe("trackSectionViewed", () => {
     expect(track).not.toHaveBeenCalled();
     becomeReady();
     expect(sent().props).toMatchObject({ section_viewed: "Creators Faqs", track_deferred: true });
+  });
+});
+
+describe("sendLegacyDeferred", () => {
+  it("stamps a conversion's delivery with its call time, however long building it took", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(1000).mockReturnValue(1005);
+    const send = vi.fn();
+    sendLegacyDeferred(send, SESSION, { conversion: true });
+    expect(send.mock.calls[0]![0]).toEqual({ track_called_at: 1000, track_delivered_at: 1000, track_deferred: false });
+    now.mockRestore();
+  });
+
+  it("stamps a held call's delivery with the time it leaves", () => {
+    ready = false;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const send = vi.fn();
+    sendLegacyDeferred(send, { sid: "sid-1", scope: createLegacyTrackScope() });
+    now.mockReturnValue(1400);
+    becomeReady();
+    expect(send.mock.calls[0]![0]).toEqual({ track_called_at: 1000, track_delivered_at: 1400, track_deferred: true });
+    now.mockRestore();
+  });
+});
+
+describe("the emitting component's scope", () => {
+  it("drops what is still waiting when the component unmounts, so readiness sends nothing stale", () => {
+    ready = false;
+    const scope = createLegacyTrackScope();
+    trackLegacyClick({ place: "Creators Faqs", title: "faqs-cta" }, { sid: "sid-1", userId: "0xabc", scope });
+    trackSectionViewed("Creators Faqs", { sid: "sid-1", scope });
+    scope.close();
+    becomeReady();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it("refuses a deferral once unmounted", () => {
+    const scope = createLegacyTrackScope();
+    scope.close();
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1", scope });
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it("sends what waited exactly once when the component is still mounted at readiness", () => {
+    ready = false;
+    const scope = createLegacyTrackScope();
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1", scope });
+    becomeReady();
+    scope.close();
+    expect(sent().props).toMatchObject({ place: "Creators Hero", track_deferred: true });
+  });
+
+  it("keeps only the unmounted component's events out, not another's", () => {
+    ready = false;
+    const left = createLegacyTrackScope();
+    const stays = createLegacyTrackScope();
+    trackLegacyClick({ place: "Creators Why", title: "left" }, { sid: "sid-1", scope: left });
+    trackLegacyClick({ place: "Creators Why", title: "stays" }, { sid: "sid-1", scope: stays });
+    left.close();
+    becomeReady();
+    expect(sent().props).toMatchObject({ title: "stays" });
+  });
+
+  it("accepts deferrals again once reopened, as the Strict Mode remount does (close, then open)", () => {
+    ready = false;
+    const scope = createLegacyTrackScope();
+    scope.close();
+    scope.open();
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1", scope });
+    becomeReady();
+    expect(sent().props).toMatchObject({ place: "Creators Hero", track_deferred: true });
+  });
+
+  it("drops a held click once the Strict Mode component really unmounts", () => {
+    ready = false;
+    const strict = ({ children }: { children: ReactNode }) => createElement(StrictMode, null, children);
+    const { result, unmount } = renderHook(() => useLegacyTrackScope(), { wrapper: strict });
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1", scope: result.current });
+    unmount();
+    becomeReady();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it("sends a conversion at once whatever the scope", () => {
+    ready = false;
+    const scope = createLegacyTrackScope();
+    scope.close();
+    const send = vi.fn();
+    sendLegacyDeferred(send, { sid: "sid-1", scope }, { conversion: true });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
