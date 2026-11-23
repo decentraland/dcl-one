@@ -414,3 +414,21 @@ the build; DATABASE.md gives the concurrent build to run beforehand.
 These are single warm-cache samples on synthetic data during other load. They
 do not measure production row width, cold reads, the build time or lock wait
 on the production table, or a whole pass's total.
+
+## Wallet presence and world quota lookups
+
+On 100,000 synthetic memberships per table,
+selective and missing-wallet probes used 3–4 buffers instead of 1,024–1,137
+under custom and generic plans. A wallet holding 10% of community rows still
+selected a sequential scan with a custom plan. Each index occupied about
+2.9 MiB after write probes; inserting 1,000 memberships added about 78 kB of
+WAL per table. These are warm synthetic measurements, not production latency
+or capacity claims.
+
+On 100,000 synthetic identities,
+the quota read used 103 buffers instead of 668, with both custom and generic
+prepared plans; the index occupied 5.65 MiB after write probes. Retiring 1,000
+new identities increased measured WAL from 221 kB to 332 kB. Production world
+sizes, request rates and latency are unmeasured.
+
+Building the two wallet indexes and the retired identity index on the synthetic tables took 64, 65 and 108 ms respectively.

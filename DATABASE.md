@@ -250,16 +250,16 @@ scenes in that world (expected up to a few hundred).
 World quotas and usage exclude recorded retired identities, and exclude the
 parked legacy `world` bucket once that world has an active identity; unknown
 other legacy scopes still count. Storage rows remain retained and inaccessible
-through new scene scopes. Verify migration and recovery limits and measure quota-query costs before acceptance.
+through new scene scopes.
 
 The partial `world_scene_place_retired_identity_idx` on
 `(world_name, (identity::text)) WHERE NOT active` bounds the quota exclusion to
 retired identities in the requested world. It keeps the UUID-to-text comparison:
-legacy namespaces need not parse as UUIDs. On 100,000 synthetic identities,
-the quota read used 103 buffers instead of 668, with both custom and generic
-prepared plans; the index occupied 5.65 MiB after write probes. Retiring 1,000
-new identities increased measured WAL from 221 kB to 332 kB. Production world
-sizes, request rates and latency are unmeasured.
+legacy namespaces need not parse as UUIDs. The object pass blocks writes to the table until the migration transaction
+commits. For a concurrent build ahead of migration, use the definition from
+`schemas/21_world_scene_places.sql` and verify both `pg_index.indisvalid` and
+`pg_get_indexdef(indexrelid)`. Migration, bootstrap and status check only the
+name. See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
 
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
@@ -1141,26 +1141,15 @@ Wallet-scoped media probes use `private_voice_chat_participants_address_idx`
 and `community_voice_chat_users_address_idx`, both nonunique B-trees on
 `address`. These are separate from the pending-call party indexes. They retain
 every status so expiry predicates can use their existing timestamps without
-time-dependent partial indexes. On 100,000 synthetic memberships per table,
-selective and missing-wallet probes used 3–4 buffers instead of 1,024–1,137
-under custom and generic plans. A wallet holding 10% of community rows still
-selected a sequential scan with a custom plan. Each index occupied about
-2.9 MiB after write probes; inserting 1,000 memberships added about 78 kB of
-WAL per table. These are warm synthetic measurements, not production latency
-or capacity claims.
+time-dependent partial indexes. See the [wallet probe measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
 
-The schema object pass installs these two address indexes and the retired
-world identity index for existing databases, without rewriting table rows or
-adding migration steps. It builds them non-concurrently in its transaction,
-blocking writes while the indexes build. Measured builds on the synthetic
-100,000-row tables took 64, 65 and 108 ms respectively; production lock time is
-unmeasured. To avoid that build inside the migration transaction, build each
-index beforehand with `CREATE INDEX CONCURRENTLY` and the exact definition in
-`schemas/40_social.sql` or `schemas/21_world_scene_places.sql`, outside a
-transaction. The object pass then skips it. A failed concurrent build leaves
-an invalid index: inspect `pg_index.indisvalid`, drop that invalid index and
-retry before migrating. Existing binaries and import load statements remain
-compatible because columns, constraints and query results are unchanged.
+The object pass builds missing wallet indexes in the migration transaction,
+blocking writes to the indexed tables until the transaction commits. To build
+ahead, run each definition from `schemas/40_social.sql` with `CREATE INDEX
+CONCURRENTLY` outside a transaction. Migration, bootstrap and schema status
+check the index name only. Before migrating, verify `pg_index.indisvalid` and
+compare `pg_get_indexdef(indexrelid)` with the schema. Drop and rebuild an
+invalid or mismatched index before relying on it.
 
 Community detail, listing and member-request reads fetch voice status separately
 through the existing comms `VoiceDb` on the same pool and presence configuration.
