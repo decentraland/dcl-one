@@ -1,6 +1,6 @@
-import { check } from "../../validate";
+import { check } from "@web-core/validate";
 
-import { SignProxyOkSchema, ThirdwebAuthResultSchema } from "./thirdwebSchema";
+import { SignProxyOkSchema, ThirdwebAuthResultSchema, type ThirdwebAuthResult } from "@web-core/auth/thirdwebSchema";
 
 const THIRDWEB_API_BASE = "https://api.thirdweb.com";
 
@@ -46,13 +46,7 @@ export class ThirdwebError extends Error {
   }
 }
 
-export type ThirdwebAuthResult = {
-  isNewUser: boolean;
-  token: string;
-  userId: string;
-  walletAddress: string;
-  type: string;
-};
+export type { ThirdwebAuthResult };
 
 type ThirdwebSocialProvider =
   | "google"

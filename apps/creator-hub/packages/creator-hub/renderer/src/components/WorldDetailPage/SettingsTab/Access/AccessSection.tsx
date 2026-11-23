@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import CheckIcon from '@mui/icons-material/Check';
-import { MenuItem } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
 
 import { useDispatch, useSelector } from '#store';
 import { WorldPermissionType } from '/@/lib/worlds';
@@ -8,20 +7,16 @@ import { fetchWorldPermissions } from '/@/modules/store/management/slice';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../../Button';
-import { menuSurfaceStyles } from '../../../Dropdown/component.styled';
-import { ChevronDownIcon } from '../../../Icons';
+import Button from '@ui/atoms/Button';
 import { FieldTitle } from '../../../LandDetailPage/DetailsTab/DetailsTab.styled';
-import { selectRowStyles } from '../../../ManagePage/ViewBar/ViewBar.styled';
 import { DefaultModal } from '../../../Modals/DefaultModal';
-import { CheckSlot } from '../../DetailsTab/DetailsTab.styled';
-import { AccessSelect, Block, Section, TypeDescription, TypeLabel } from './Access.styled';
+import { FieldSelect, OptionCheck, SelectOption } from '../../FieldSelect';
 import { InvitedList } from './InvitedList';
 import { InviteForm } from './InviteForm';
 import { PasswordModal } from './PasswordModal';
 import { useAccessActions } from './useAccessActions';
 
-const MENU_GAP = 10;
+import styles from './Access.module.css';
 
 const TYPES: Record<
   | WorldPermissionType.Unrestricted
@@ -47,8 +42,8 @@ type AccessType = keyof typeof TYPES;
 
 const typeText = (type: AccessType) => (
   <>
-    <TypeLabel>{`${t(TYPES[type].label)}  `}</TypeLabel>
-    <TypeDescription>{t(TYPES[type].description)}</TypeDescription>
+    <span className={styles.typeLabel}>{`${t(TYPES[type].label)}  `}</span>
+    <span className={styles.typeDescription}>{t(TYPES[type].description)}</span>
   </>
 );
 
@@ -127,36 +122,29 @@ export function AccessSection({ worldName }: { worldName: string }) {
   const shown = pending && (password || !erasesSomething) ? pending : current;
 
   return (
-    <Section>
-      <Block>
+    <div className={styles.section}>
+      <div className={styles.block}>
         <FieldTitle as="span">{t('world_detail.settings.access.label')}</FieldTitle>
-        <AccessSelect
+        <FieldSelect<AccessType>
+          className={styles.accessSelect}
           value={shown}
           disabled={writing}
-          IconComponent={ChevronDownIcon}
-          inputProps={{ 'aria-label': t('world_detail.settings.access.label') }}
-          renderValue={value => typeText(value as AccessType)}
-          onChange={event => pick(event.target.value as AccessType)}
-          MenuProps={{
-            anchorOrigin: { vertical: 'bottom', horizontal: 'left' },
-            transformOrigin: { vertical: 'top', horizontal: 'left' },
-            slotProps: { paper: { sx: { marginTop: `${MENU_GAP}px`, width: 700 } } },
-            sx: [theme => menuSurfaceStyles({ theme }), theme => selectRowStyles({ theme })],
-          }}
+          aria-label={t('world_detail.settings.access.label')}
+          renderValue={typeText}
+          onChange={pick}
         >
           {(Object.keys(TYPES) as AccessType[]).map(type => (
-            <MenuItem
+            <SelectOption
               key={type}
               value={type}
+              label={t(TYPES[type].label)}
             >
-              <CheckSlot className="MenuGlyph">
-                {type === shown && <CheckIcon aria-hidden />}
-              </CheckSlot>
+              <OptionCheck checked={type === shown} />
               <span>{typeText(type)}</span>
-            </MenuItem>
+            </SelectOption>
           ))}
-        </AccessSelect>
-      </Block>
+        </FieldSelect>
+      </div>
       {current === WorldPermissionType.AllowList && (
         <>
           <InviteForm
@@ -174,10 +162,9 @@ export function AccessSection({ worldName }: { worldName: string }) {
         </>
       )}
       {current === WorldPermissionType.SharedSecret && (
-        <span className="ChangePassword">
+        <span className={cx('ChangePassword', styles.changePassword)}>
           <Button
-            variant="contained"
-            color="primary"
+            className="hub-button hub-button--primary"
             onClick={() => setPassword('change')}
           >
             {t('world_detail.settings.password.change_password')}
@@ -213,6 +200,6 @@ export function AccessSection({ worldName }: { worldName: string }) {
           }
         />
       )}
-    </Section>
+    </div>
   );
 }

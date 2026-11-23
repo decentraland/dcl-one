@@ -3,7 +3,7 @@ import { IoIosArrowDown, IoIosArrowForward } from 'react-icons/io';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
 import { MdContentCopy as CopyIcon, MdContentPaste as PasteIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import { Button } from '../Button';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import MoreOptionsMenu from '../EntityInspector/MoreOptionsMenu';
@@ -100,17 +100,27 @@ const Container: React.FC<React.PropsWithChildren<Props>> = props => {
         {hasMenu && (
           <MoreOptionsMenu className="ContainerMenu">
             {clipboardEnabled ? (
-              <Button onClick={onCopyValues}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onCopyValues}
+              >
                 <CopyIcon /> Copy values
               </Button>
             ) : null}
             {clipboardEnabled ? (
-              <Button onClick={onPasteValues}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onPasteValues}
+              >
                 <PasteIcon /> Paste values
               </Button>
             ) : null}
             {props.onRemoveContainer ? (
               <Button
+                variant="secondary"
+                size="sm"
                 className="RemoveButton"
                 onClick={props.onRemoveContainer}
               >

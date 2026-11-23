@@ -5,9 +5,9 @@
 .modal {
   position: relative;
   display: flex;
-  width: min(1080px, 94%);
-  height: min(700px, 88%);
-  border-radius: 18px;
+  width: min(1650px, 96%);
+  height: min(928px, 92%);
+  border-radius: 24px;
   font-family: var(--font-family);
   background: linear-gradient(160deg, #4a2088 0%, #371561 100%);
   box-shadow: var(--shadow-modal);
@@ -20,24 +20,24 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 26px 28px 0;
+  padding: 40px 40px 0;
 }
 
 .header {
   display: flex;
-  gap: 20px;
+  gap: 30px;
   align-items: flex-start;
 }
 .thumb {
   flex: none;
-  width: 110px;
-  height: 110px;
+  width: 200px;
+  height: 200px;
   border-radius: 18px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 42px;
+  font-size: 72px;
   font-weight: 800;
   color: rgba(0, 0, 0, 0.5);
 }
@@ -49,11 +49,12 @@
 .headInfo {
   flex: 1;
   min-width: 0;
+  padding-top: 8px;
 }
 .name {
   margin: 0;
-  font-size: 28px;
-  font-weight: 800;
+  font-size: 34px;
+  font-weight: 700;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -63,8 +64,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 1px;
+  font-size: 16px;
   color: var(--ink-7);
 }
 .privacy {
@@ -79,8 +80,8 @@
   color: var(--ink-45);
 }
 .desc {
-  margin: 12px 0 0;
-  font-size: 14px;
+  margin: 18px 0 0;
+  font-size: 16px;
   line-height: 1.5;
   color: var(--ink-7);
 }
@@ -94,6 +95,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 6px;
 }
 .iconBtn {
   display: flex;
@@ -117,14 +119,27 @@
 .joined {
   opacity: 0.85;
 }
+/* the header's Join / Request to Join / Leave: an outlined button */
+.headActions > button:not(.iconBtn):not(.kebab) {
+  min-width: 130px;
+  height: 40px;
+  padding: 0 16px;
+  border: 2px solid var(--text);
+  border-radius: 10px;
+  background: rgba(22, 0, 44, 0.55);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
 .kebab {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   border: none;
   border-radius: 10px;
-  background: var(--white-10);
+  background: transparent;
   color: var(--text);
-  font-size: 18px;
+  font-size: 22px;
   cursor: pointer;
   transition:
     background-color var(--dur-fast) ease,
@@ -136,7 +151,9 @@
 }
 
 .tabs {
-  margin-top: 22px;
+  margin-top: 33px;
+  gap: 57px;
+  --tab-ink: var(--text);
 }
 
 .tabBody {
@@ -295,9 +312,58 @@
   border-radius: 10px;
   overflow: hidden;
 }
+/* A card with the places service's row: as unity-explorer's, hovering or focusing it shows its
+   actions, and the cover gives up the room they take so the card keeps its height. */
+.placeActionable {
+  /* the actions' height: 10px above, two 36px rows 8px apart */
+  --place-actions-h: 90px;
+  position: relative;
+  container-type: inline-size;
+  cursor: pointer;
+}
+.placeActionable .placeCover {
+  aspect-ratio: auto;
+  height: calc(100cqw * 10 / 16);
+  transition: height var(--dur-hover) var(--ease-outquad);
+}
+.placeActionable:hover .placeCover,
+.placeActionable:focus-within .placeCover {
+  height: calc(100cqw * 10 / 16 - var(--place-actions-h));
+}
+.placeOpen {
+  position: absolute;
+  inset: 0;
+}
+.placeActions {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: default;
+}
+.placeActionable:hover .placeActions,
+.placeActionable:focus-within .placeActions {
+  display: flex;
+}
+.placeButtons {
+  display: flex;
+  gap: 8px;
+}
+.placeToggle {
+  flex: 1;
+  height: 36px;
+}
+.placeJump {
+  width: 100%;
+  height: 36px;
+  gap: 8px;
+  font-size: var(--type-14);
+  font-weight: 600;
+}
 /* Delete on a place the user owns (owners and moderators): over the cover's top-right corner. */
 .placeDelete {
   position: absolute;
+  z-index: 1;
   top: 8px;
   right: 8px;
   display: flex;
@@ -390,15 +456,15 @@
 /* Upcoming Events sidebar. */
 .events {
   flex: none;
-  width: 340px;
+  width: 470px;
   display: flex;
   flex-direction: column;
-  padding: 26px 22px 0;
+  padding: 46px 20px 0;
   background: rgba(0, 0, 0, 0.18);
   border-left: 1px solid var(--white-10);
 }
 .eventsHead {
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 800;
   color: var(--text);
   margin-bottom: 16px;
@@ -412,14 +478,14 @@
 }
 .event {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  padding: 8px 0;
+  padding: 7px 0;
 }
 .eventThumb {
   flex: none;
-  width: 92px;
-  height: 56px;
+  width: 180px;
+  height: 122px;
   border-radius: 8px;
   overflow: hidden;
 }
@@ -436,13 +502,13 @@
   gap: 3px;
 }
 .eventDate {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--ink-6);
 }
 .eventName {
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text);
   overflow: hidden;
@@ -452,12 +518,13 @@
 
 .close {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: 18px;
+  right: 22px;
   width: 36px;
   height: 36px;
   border: none;
   border-radius: 9px;
+  font-weight: 700;
   background: rgba(0, 0, 0, 0.4);
   color: #fff;
   font-size: 20px;

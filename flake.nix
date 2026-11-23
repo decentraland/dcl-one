@@ -26,8 +26,11 @@
         import ./infra/packages (rustPackages system // {
           revision = self.rev or self.dirtyRev or "unversioned";
         })) // {
-          # The tool environments alone: the macOS CI legs take ffmpeg from here.
-          aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; };
+          # The tool environments: the macOS CI legs take ffmpeg from here. `cast-bot` too, for a
+          # local node's CAST_BOT_BIN.
+          aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; } // {
+            cast-bot = import ./infra/packages/cast-bot.nix (rustPackages "aarch64-darwin");
+          };
         };
 
       # `nix build .#bevy-explorer` and `.#bevy-explorer.tests`. An evaluation of the Explorer
@@ -67,7 +70,7 @@
           default = pkgs.mkShell (environment // {
             packages = with pkgs; [
               rust nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
-              postgresql_18 process-compose watchexec livekit nats-server python3 bashInteractive
+              postgresql_18 process-compose watchexec livekit livekit-ingress valkey nats-server python3 bashInteractive
               gitMinimal git-lfs gh ripgrep libarchive pkg-config cmake clang protobuf curl jq ffmpeg-headless dev
             ];
             LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";

@@ -18,6 +18,15 @@ describe('avatarPreview domain', () => {
     })
   })
 
+  it('reports the part of the rect the avatar is framed in, when the page gives one', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const rect = { x: 0, y: 0, width: 1184, height: 1184 }
+    const focus = { x: 304, y: 160, width: 576, height: 886 }
+    act(() => h.session().setEngineViewport('avatarPreview', rect, 2, focus))
+    expect(h.driver.last('engineViewport')).toEqual({ kind: 'engineViewport', region: 'avatarPreview', rect, dpr: 2, focus })
+  })
+
   it('clears the rect (null) when the preview closes', async () => {
     const h = renderSession()
     await enterAsGuest(h)
@@ -36,5 +45,7 @@ describe('avatarPreview domain', () => {
     expect(h.driver.last('previewRotate')).toEqual({ kind: 'previewRotate', degrees: -20 })
     act(() => h.session().backpack.zoom(1.5, 0.25))
     expect(h.driver.last('previewZoom')).toEqual({ kind: 'previewZoom', zoom: 1.5, anchor: 0.25 })
+    act(() => h.session().turnLobbyAvatar(12))
+    expect(h.driver.last('previewRotate')).toEqual({ kind: 'previewRotate', degrees: 12, stage: 'lobby' })
   })
 })

@@ -12,21 +12,22 @@ export const STORES = {
     "https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer",
 } as const;
 
+export const osName = (os: "windows" | "macos") =>
+  os === "windows" ? "Windows" : "macOS";
+
 /** Desktop actions show installation guidance before requesting the pinned native artifact. */
 export function downloadActions(
   platform: DetectedPlatform,
   downloads: string,
 ): { actions: DownloadActionsProps; store: StoreBadgeProps } {
   const { wide, narrowStore } = viewportOffers(platform);
-  const name = (os: "windows" | "macos") =>
-    os === "windows" ? "Windows" : "macOS";
   return {
     actions: {
       primary: wide.primary
         ? {
             label: "Download for",
             os: wide.primary.os,
-            osName: name(wide.primary.os),
+            osName: osName(wide.primary.os),
             href: downloadSuccessHref(wide.primary),
           }
         : undefined,
@@ -36,13 +37,15 @@ export function downloadActions(
         href: "https://store.epicgames.com/en-US/p/decentraland-b692fb",
       },
       downloads: `Total Downloads: ${downloads}`,
-      alternatives: wide.secondary
+      alternativeGroups: wide.secondary
         ? [
-            {
-              icon: wide.secondary.os,
-              label: `Download for ${name(wide.secondary.os)}`,
-              href: downloadSuccessHref(wide.secondary),
-            },
+            [
+              {
+                icon: wide.secondary.os,
+                label: `Download for ${osName(wide.secondary.os)}`,
+                href: downloadSuccessHref(wide.secondary),
+              },
+            ],
           ]
         : [],
     },

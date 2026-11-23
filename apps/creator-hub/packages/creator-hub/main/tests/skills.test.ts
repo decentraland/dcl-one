@@ -566,3 +566,14 @@ describe('updateProjectSkills', () => {
     expect(fs.lstatSync(path.join(project, '.claude', 'skills')).isSymbolicLink()).toBe(true);
   });
 });
+
+describe('ensureSkillsLinked', () => {
+  it('returns the sdk-skills commit it linked, for AI sharing to record', async () => {
+    const sha = 'abcdef0123456789abcdef0123456789abcdef01';
+    seedCache(sha, {});
+    stubLatestSha(sha);
+    const { project } = setup();
+
+    await expect(ensureSkillsLinked(project)).resolves.toBe(sha);
+  });
+});

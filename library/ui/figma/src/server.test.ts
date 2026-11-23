@@ -83,15 +83,19 @@ describe('figma stdio server', () => {
       ).toBe(false)
     })
 
-    it('should only return components that need manual work when asked', async () => {
-      const result = JSON.parse(
-        (await call('figma_list_components', { kind: 'components', needsManualOnly: true })).text
-      )
+    describe('and only components that need manual work are requested', () => {
+      it('should only return components that need manual work', async () => {
+        const result = JSON.parse(
+          (await call('figma_list_components', { kind: 'components', needsManualOnly: true })).text
+        )
 
-      expect(result.components.length).toBeGreaterThan(0)
-      expect(
-        result.components.every((entry: { needsManual: string[] }) => entry.needsManual.length > 0)
-      ).toBe(true)
+        expect(result.components.length).toBeGreaterThan(0)
+        expect(
+          result.components.every(
+            (entry: { needsManual: string[] }) => entry.needsManual.length > 0
+          )
+        ).toBe(true)
+      })
     })
 
     it('should group icon variants under one component', async () => {

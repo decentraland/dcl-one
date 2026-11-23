@@ -1,5 +1,4 @@
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import WarningIcon from '@mui/icons-material/WarningAmber';
+import { CheckCircleIcon, WarningAmberIcon } from '@ui/atoms/icons-material';
 import type { Hex } from 'viem';
 
 import { config } from '/@/config';
@@ -8,10 +7,12 @@ import { t } from '/@/modules/store/translation/utils';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 
 import { DialogButton } from '../../DialogButton';
+import { ExternalLink } from '../../ExternalLink';
 import { ClockIcon, WarningCircleIcon } from '../../Icons';
 import { Loader } from '../../Loader';
-import { Actions } from '../DefaultModal/DefaultModal.styled';
-import { ExplorerLink, Root, StateRow, Step } from './TxState.styled';
+import modal from '../DefaultModal/DefaultModal.module.css';
+
+import styles from './TxState.module.css';
 
 const SEPOLIA = 11155111;
 
@@ -84,7 +85,7 @@ const UNCONFIRMED_STEP: (typeof PHASES)[TxPhase] = {
 const GLYPHS: Record<Tone, JSX.Element> = {
   progress: <Loader size={24} />,
   success: <CheckCircleIcon aria-hidden />,
-  warning: <WarningIcon aria-hidden />,
+  warning: <WarningAmberIcon aria-hidden />,
   error: <WarningCircleIcon />,
 };
 
@@ -110,14 +111,17 @@ export function TxState({ flow, doneText, stepLabels, onRetry, onClose }: Props)
   const handlers = { close: onClose, retry: onRetry };
 
   return (
-    <Root>
+    <div className={styles.root}>
       {flow.step && (
-        <Step>
+        <span className={styles.step}>
           {t('tx.step', { n: flow.step.n, total: flow.step.total })}
           {stepLabels?.[flow.step.n - 1] && ` · ${stepLabels[flow.step.n - 1]}`}
-        </Step>
+        </span>
       )}
-      <StateRow tone={phase.tone}>
+      <div
+        className={styles.stateRow}
+        data-tone={phase.tone}
+      >
         {glyph}
         <span
           role="status"
@@ -125,13 +129,16 @@ export function TxState({ flow, doneText, stepLabels, onRetry, onClose }: Props)
         >
           {phase.text ? t(phase.text) : doneText}
         </span>
-      </StateRow>
+      </div>
       {phase.link && flow.hash && (
-        <ExplorerLink href={getExplorerTxUrl(flow.hash, Number(config.get('CHAIN_ID')))}>
+        <ExternalLink
+          className={styles.link}
+          href={getExplorerTxUrl(flow.hash, Number(config.get('CHAIN_ID')))}
+        >
           {t('tx.view_explorer')}
-        </ExplorerLink>
+        </ExternalLink>
       )}
-      <Actions>
+      <div className={modal.actions}>
         {phase.secondary && (
           <DialogButton
             type="button"
@@ -151,7 +158,7 @@ export function TxState({ flow, doneText, stepLabels, onRetry, onClose }: Props)
             {t(phase.primary.label)}
           </DialogButton>
         )}
-      </Actions>
-    </Root>
+      </div>
+    </div>
   );
 }

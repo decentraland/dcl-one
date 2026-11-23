@@ -213,6 +213,12 @@ pub struct PurchaseOffer {
     pub coupon: Option<OfferCoupon>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mana: Option<ManaExecution>,
+    /// The credits node authorizes a Credits part for this line, the rest paid
+    /// in MANA in the same call (`policy::split_price`): a store mint or a
+    /// listing paid in the chain's MANA, which the session may pay both ways.
+    /// Sent only when true; absent, the line has no split.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub splittable: bool,
 }
 
 /// The identity and economics of the coupon an offer was priced with.
@@ -397,6 +403,41 @@ mod tests {
     use super::*;
     use crate::policy::Refusal;
     use serde_json::json;
+
+    #[test]
+    fn an_offer_says_it_is_splittable_only_when_it_is() {
+        let offer = |splittable| PurchaseOffer {
+            asset: crate::types::AssetId::item(
+                crate::types::ChainId::POLYGON,
+                EvmAddress::parse("0x00000000000000000000000000000000000000cc").unwrap(),
+                alloy_primitives::U256::from(7u8),
+            ),
+            kind: crate::types::AssetKind::Wearable,
+            sale: crate::types::SaleKind::PrimaryMint,
+            bundle: false,
+            eligibility: Eligibility {
+                allowed: vec![],
+                default: None,
+                reasons: vec![],
+                guidance: None,
+            },
+            quotes: vec![],
+            unavailable: vec![],
+            settlement: vec![],
+            available: None,
+            quoted_at: 1,
+            coupon: None,
+            mana: None,
+            splittable,
+        };
+        let split = serde_json::to_value(offer(true)).unwrap();
+        assert_eq!(split["splittable"], json!(true));
+        let whole = serde_json::to_value(offer(false)).unwrap();
+        assert!(
+            whole.get("splittable").is_none(),
+            "an offer without a split keeps its earlier shape: {whole}"
+        );
+    }
 
     #[test]
     fn a_line_request_reads_the_uis_listing_ref_and_defaults_the_quantity() {

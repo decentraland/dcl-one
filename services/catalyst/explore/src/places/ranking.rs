@@ -108,11 +108,11 @@ pub(crate) struct WorldBuckets {
 pub(crate) fn classify_places(
     entries: &[RankingEntry],
     rows: &[CurationRow],
-    locally_served: &[String],
+    world_backed_ids: &[String],
 ) -> PlaceBuckets {
     let found: HashMap<&str, &CurationRow> =
         rows.iter().map(|row| (row.id.as_str(), row)).collect();
-    let local: HashSet<&str> = locally_served.iter().map(String::as_str).collect();
+    let local: HashSet<&str> = world_backed_ids.iter().map(String::as_str).collect();
     let mut buckets = PlaceBuckets::default();
     for entry in entries {
         match found.get(entry.id.as_str()) {
@@ -175,6 +175,25 @@ fn now() -> chrono::NaiveDateTime {
     chrono::Utc::now().naive_utc()
 }
 
+/// Locks the world-scene identities among `ids`, in identity order: their
+/// curation and ranking writes then run one at a time.
+pub(super) async fn lock_world_scenes(
+    conn: &mut PgConnection,
+    ids: &[String],
+) -> Result<(), ApiError> {
+    let identities: Vec<uuid::Uuid> = ids
+        .iter()
+        .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+        .collect();
+    if !identities.is_empty() {
+        sqlx::query("SELECT 1 FROM explore.world_scene_place WHERE identity = ANY($1) ORDER BY identity FOR UPDATE")
+            .bind(&identities)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Records `overlays` (catalogue id, raw keys decided) and merges them into
 /// both legs' `raw`. Returns the number of catalogue rows written.
 async fn write_overlays(
@@ -186,6 +205,7 @@ async fn write_overlays(
         return Ok(0);
     }
     let ids: Vec<String> = overlays.iter().map(|(id, _)| id.clone()).collect();
+    lock_world_scenes(conn, &ids).await?;
     let docs: Vec<Value> = overlays.iter().map(|(_, v)| v.clone()).collect();
     sqlx::query(
         "INSERT INTO explore.place_ranking (place_id, overlay, set_by, updated_at)
@@ -240,6 +260,22 @@ pub async fn set_ranking(
     Ok(written)
 }
 
+/// A world-scene place `p` with its curation as its projection reads it:
+/// its own or its world's highlight, or its ranking exclusion.
+const SCENE_CURATION_FROM: &str = "FROM explore.world_scene_place p \
+     LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
+     LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
+     LEFT JOIN explore.place_ranking r ON r.place_id = p.identity::text";
+const SCENE_CURATED: &str = "(COALESCE(m.highlighted, wm.highlighted, false) \
+     OR COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false))";
+
+/// A world-scene place's curation and canonical id, its identity locked.
+fn scene_curation_sql() -> String {
+    format!(
+        "SELECT {SCENE_CURATED}, p.identity::text {SCENE_CURATION_FROM} WHERE p.identity = $1 FOR UPDATE OF p"
+    )
+}
+
 fn curation_sql(table: &str) -> String {
     format!(
         "SELECT highlighted, {EXCLUDE_FROM_RANKING_SQL} AS excluded FROM {table} WHERE id = $1 FOR UPDATE"
@@ -254,15 +290,34 @@ pub async fn set_ranking_from_score(
     actor: &str,
 ) -> Result<ScoreRankingOutcome, ApiError> {
     let mut tx = pool.begin().await?;
-    let mut curated = None;
-    for table in ["explore.place", "explore.place_world_local"] {
-        if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(curation_sql(table)))
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-        {
-            curated = Some(row.get::<bool, _>("highlighted") || row.get::<bool, _>("excluded"));
-            break;
+    // Scene before catalogue row, the order every other curation write takes.
+    lock_world_scenes(&mut tx, &[id.to_string()]).await?;
+    // A scene wins over a catalogue row with its id, as on read, and is
+    // written under its canonical id, the one its projection reads.
+    let scene: Option<(bool, String)> = match uuid::Uuid::parse_str(id) {
+        Ok(identity) => {
+            sqlx::query_as(sqlx::AssertSqlSafe(scene_curation_sql()))
+                .bind(identity)
+                .fetch_optional(&mut *tx)
+                .await?
+        }
+        Err(_) => None,
+    };
+    let key = scene
+        .as_ref()
+        .map_or(id, |(_, canonical)| canonical.as_str())
+        .to_string();
+    let mut curated = scene.map(|(curated, _)| curated);
+    if curated.is_none() {
+        for table in ["explore.place", "explore.place_world_local"] {
+            if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(curation_sql(table)))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+            {
+                curated = Some(row.get::<bool, _>("highlighted") || row.get::<bool, _>("excluded"));
+                break;
+            }
         }
     }
     let outcome = match curated {
@@ -271,7 +326,7 @@ pub async fn set_ranking_from_score(
         Some(false) => {
             write_overlays(
                 &mut tx,
-                &[(id.to_string(), json!({ "ranking": ranking_value(ranking) }))],
+                &[(key, json!({ "ranking": ranking_value(ranking) }))],
                 actor,
             )
             .await?;
@@ -310,28 +365,50 @@ fn place_curation_sql() -> String {
 const LOCALLY_SERVED_WORLD_IDS: &str =
     "SELECT id FROM explore.place_world_local WHERE world IS TRUE AND id = ANY($1)";
 
+const WORLD_SCENE_IDS: &str =
+    "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
+
+/// The ranked, uncurated world-scene places the places leg clears (a scene
+/// wins over a catalogue row with its id). `$1` is spared; `$2`, when set,
+/// narrows them to `$2`.
+fn scene_clear_candidates_sql() -> String {
+    format!(
+        "SELECT p.identity::text {SCENE_CURATION_FROM} \
+         WHERE jsonb_typeof(r.overlay->'ranking') = 'number' AND r.overlay->'ranking' <> '0'::jsonb \
+         AND NOT {SCENE_CURATED} AND p.identity::text <> ALL($1::text[]) \
+         AND ($2::text[] IS NULL OR p.identity::text = ANY($2::text[])) ORDER BY p.identity"
+    )
+}
+
+/// World rows by id or name; a row a scene shadows is left to the scene path.
 fn world_resolution_sql() -> String {
+    let scene = super::scene_identity::is_scene_id_sql("p.id");
     format!(
         "SELECT s.submitted AS submitted, p.id AS id, p.highlighted AS highlighted, {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking
          FROM unnest($1::text[]) AS s(submitted)
          JOIN explore.place_indexed p ON p.world IS TRUE AND (p.id = s.submitted OR lower(p.world_name) = lower(s.submitted))
+         WHERE NOT {scene}
          ORDER BY s.submitted, p.id"
     )
 }
 
-/// The automated rows of one leg the replace clears: ranked, uncurated, not kept.
+/// The automated rows of one leg the replace clears: ranked, uncurated, not
+/// kept, and not shadowed by a scene (the scene clear owns those).
 fn clear_candidates_sql(world: bool) -> String {
     let leg = if world { "TRUE" } else { "FALSE" };
+    let scene = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
     format!(
         "SELECT id FROM explore.place_indexed WHERE world IS {leg} AND highlighted IS FALSE
-         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])"
+         AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])
+         AND NOT {scene}"
     )
 }
 
 /// Replaces the automated ranking set of each leg in `scope` in one
 /// transaction: every ranking named is written, every automated ranking of
-/// that leg not named is cleared to 0, curated rows are never touched, and a
-/// leg out of scope is neither written nor cleared. A clear then a separate
+/// that leg not named is cleared to 0 (world-scene places with the places
+/// leg; one the run names is reported world-backed and kept), curated rows
+/// are never touched, and a leg out of scope is neither written nor cleared. A clear then a separate
 /// write would leave a window where the population reads as unranked.
 pub async fn replace_ranking(
     pool: &PgPool,
@@ -343,7 +420,7 @@ pub async fn replace_ranking(
     let mut tx = pool.begin().await?;
     let place_ids: Vec<String> = places.iter().map(|e| e.id.clone()).collect();
     let mut curation = Vec::new();
-    let mut locally_served = Vec::new();
+    let mut world_backed_ids = Vec::new();
     if !place_ids.is_empty() {
         curation = sqlx::query(sqlx::AssertSqlSafe(place_curation_sql()))
             .bind(&place_ids)
@@ -357,12 +434,28 @@ pub async fn replace_ranking(
                 world: r.get("world"),
             })
             .collect();
-        locally_served = sqlx::query_scalar(LOCALLY_SERVED_WORLD_IDS)
+        world_backed_ids = sqlx::query_scalar(LOCALLY_SERVED_WORLD_IDS)
             .bind(&place_ids)
             .fetch_all(&mut *tx)
             .await?;
+        // A world-scene place is world-backed, as upstream's per-scene world place rows are.
+        let parsed: Vec<uuid::Uuid> = place_ids
+            .iter()
+            .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+            .collect();
+        let scenes: HashSet<uuid::Uuid> = sqlx::query_scalar(WORLD_SCENE_IDS)
+            .bind(&parsed)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .collect();
+        let is_scene =
+            |id: &str| uuid::Uuid::parse_str(id).is_ok_and(|identity| scenes.contains(&identity));
+        // A scene wins over a catalogue row with its id, as on read.
+        curation.retain(|row| !is_scene(&row.id));
+        world_backed_ids.extend(place_ids.iter().filter(|id| is_scene(id)).cloned());
     }
-    let place_buckets = classify_places(places, &curation, &locally_served);
+    let place_buckets = classify_places(places, &curation, &world_backed_ids);
 
     let world_ids: Vec<String> = worlds.iter().map(|e| e.id.clone()).collect();
     let mut matches = Vec::new();
@@ -406,6 +499,8 @@ pub async fn replace_ranking(
             ..Default::default()
         },
     };
+    // Every clear is chosen before any write, so all scene locks come first and in one order.
+    let mut legs = Vec::new();
     for (world, in_scope, writable) in [
         (false, scope.places, &place_buckets.writable),
         (true, scope.worlds, &world_buckets.writable),
@@ -418,17 +513,66 @@ pub async fn replace_ranking(
             .iter()
             .map(|e| (e.id.clone(), json!({ "ranking": e.ranking })))
             .collect();
-        let applied_count = write_overlays(&mut tx, &applied, actor).await? as i64;
         let cleared_ids: Vec<String> =
             sqlx::query_scalar(sqlx::AssertSqlSafe(clear_candidates_sql(world)))
                 .bind(&keep)
                 .fetch_all(&mut *tx)
                 .await?;
+        // A scene named in this run is reported world-backed and keeps its ranking;
+        // its id is compared in the identity's canonical spelling.
+        let spared: Vec<String> = keep
+            .iter()
+            .cloned()
+            .chain(place_buckets.world_backed.iter().map(|id| {
+                uuid::Uuid::parse_str(id)
+                    .map_or_else(|_| id.clone(), |identity| identity.to_string())
+            }))
+            .collect();
+        let scene_ids: Vec<String> = if world {
+            Vec::new()
+        } else {
+            sqlx::query_scalar(sqlx::AssertSqlSafe(scene_clear_candidates_sql()))
+                .bind(&spared)
+                .bind(None::<Vec<String>>)
+                .fetch_all(&mut *tx)
+                .await?
+        };
+        legs.push((world, spared, applied, cleared_ids, scene_ids));
+    }
+    let touched: Vec<String> = legs
+        .iter()
+        .flat_map(|(_, _, applied, cleared, scenes)| {
+            applied
+                .iter()
+                .map(|(id, _)| id)
+                .chain(cleared)
+                .chain(scenes)
+        })
+        .cloned()
+        .collect();
+    lock_world_scenes(&mut tx, &touched).await?;
+    for (world, spared, applied, cleared_ids, scene_ids) in legs {
+        let applied_count = write_overlays(&mut tx, &applied, actor).await? as i64;
         let cleared: Vec<(String, Value)> = cleared_ids
             .into_iter()
             .map(|id| (id, json!({ "ranking": 0 })))
             .collect();
-        let cleared_count = write_overlays(&mut tx, &cleared, actor).await? as i64;
+        let mut cleared_count = write_overlays(&mut tx, &cleared, actor).await? as i64;
+        if !scene_ids.is_empty() {
+            // Re-read under the lock: a scene curated meanwhile keeps its ranking.
+            let scenes: Vec<(String, Value)> =
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(scene_clear_candidates_sql()))
+                    .bind(&spared)
+                    .bind(&scene_ids)
+                    .fetch_all(&mut *tx)
+                    .await?
+                    .into_iter()
+                    .map(|id| (id, json!({ "ranking": 0 })))
+                    .collect();
+            write_overlays(&mut tx, &scenes, actor).await?;
+            // Disjoint from the catalogue clear, which leaves scene ids out.
+            cleared_count += scenes.len() as i64;
+        }
         if world {
             result.worlds.applied = applied_count;
             result.worlds.cleared = cleared_count;

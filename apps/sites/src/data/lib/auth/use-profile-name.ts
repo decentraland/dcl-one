@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
-import { profileFaceUrl } from "./profile-face-url";
+import { profileFaceUrl, profileSnapshotUrl } from "./profile-face-url";
 import { isProfileOfAddress, profileDisplayName } from "./profile-label";
 
 type ProfileIdentity = {
   name: string;
   avatarUrl: string;
+  bodyUrl: string;
+  /** The avatar disc's colour decentraland.org derives from the display name; empty until the profile loads. */
+  avatarColor: string;
 };
 
-const EMPTY: ProfileIdentity = { name: "", avatarUrl: "" };
+const EMPTY: ProfileIdentity = { name: "", avatarUrl: "", bodyUrl: "", avatarColor: "" };
 
 export function useProfileIdentity(
   address: string | null | undefined,
@@ -27,13 +31,16 @@ export function useProfileIdentity(
         if (cancelled || !avatar || !isProfileOfAddress(avatar, address)) return;
         const name = profileDisplayName(avatar);
         const avatarUrl = profileFaceUrl(avatar.avatar?.snapshots?.face256);
+        const avatarColor = getAvatarBackgroundColor(getDisplayName(avatar.name, avatar.hasClaimedName, avatar.ethAddress ?? address));
         setIdentity((prev) => {
           const next = {
             address: address.toLowerCase(),
             name,
             avatarUrl,
+            bodyUrl: profileSnapshotUrl(avatar.avatar?.snapshots?.body, "body.png"),
+            avatarColor,
           };
-          return next.address === prev.address && next.name === prev.name && next.avatarUrl === prev.avatarUrl
+          return next.address === prev.address && next.name === prev.name && next.avatarUrl === prev.avatarUrl && next.bodyUrl === prev.bodyUrl && next.avatarColor === prev.avatarColor
             ? prev
             : next;
         });
@@ -46,11 +53,4 @@ export function useProfileIdentity(
   }, [isConnected, address]);
 
   return isConnected && address?.toLowerCase() === identity.address ? identity : EMPTY;
-}
-
-export function useProfileName(
-  address: string | null | undefined,
-  isConnected: boolean,
-): string {
-  return useProfileIdentity(address, isConnected).name;
 }

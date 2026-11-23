@@ -12,12 +12,17 @@ import subprocess
 PACKAGES = {
     'catalyst': ('catalyst-deps', 'catalyst-vendor'),
     'sites': ('sites-deps', 'sites-runtime-deps', 'sites-toolchain'),
-    'apis': ('catalyst',),
+    # The node and the cast-bot the APIs image carries beside it (CAST_BOT_BIN).
+    'apis': ('catalyst', 'cast-bot'),
     'sites-app': ('sites-app', 'sites-app-polygon-credits'),
+    # The hosted component gallery Sites serves under /ui-gallery/, in its own entry: a change to
+    # apps/sites or the gallery alone misses only its own entry. A change to library/ui's components,
+    # foundations, apps/hud or library/explorer-core, tests included, is an input of both, so it misses both.
+    'ui-gallery': ('ui-gallery',),
 }
 # Compiled runtime closures restore under exact identities only; a stale entry
 # would not spare a single build step.
-RUNTIME = ('apis', 'sites-app')
+RUNTIME = ('apis', 'sites-app', 'ui-gallery')
 
 
 def cache_plan(arch, event, ref, derivations):

@@ -75,6 +75,18 @@ columns = [
 ]
 
 [[step]]
+name = "attendance_reconcile"
+targets = ["explore.event_attendance_local"]
+extract = "attendance_reconcile.extract.sql"
+load = "attendance_reconcile.load.sql"
+key = ["event_id", "signer"]
+whole = true
+columns = [
+  { name = "event_id", type = "text" },
+  { name = "signer", type = "text" },
+]
+
+[[step]]
 name = "profile_settings"
 targets = ["explore.event_profile_settings"]
 extract = "profile_settings.extract.sql"

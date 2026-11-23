@@ -23,6 +23,10 @@
 //! closes it, is a row of [`paths::CREDIT_PATHS`]; [`paths::ALIASES`] pairs
 //! each renamed route with its legacy paths.
 
+// Production routes go through `shared::routing` (shop/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 #[cfg(test)]
@@ -59,6 +63,7 @@ pub mod stores;
 pub mod subscriptions;
 pub mod treasury;
 pub mod types;
+mod worker_progress;
 
 #[cfg(test)]
 mod parity_tests;
@@ -67,8 +72,9 @@ mod test_db;
 
 use std::sync::Arc;
 
+use crate::shared::routing::any;
 use axum::Router;
-use axum::routing::{MethodRouter, any};
+use axum::routing::MethodRouter;
 
 pub use policy::{
     Authoritative, CartLine, Eligibility, Facts, GroupTotal, Quote, Reason, Refusal,
@@ -209,4 +215,16 @@ mod router_tests {
             "nothing to configure: it is unwritten"
         );
     }
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
 }

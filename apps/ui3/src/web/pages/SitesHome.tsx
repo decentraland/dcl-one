@@ -1,7 +1,7 @@
 import { siteUrl } from "../../data/site";
 import SitesChrome from "../frames/SitesChrome";
 import { asset } from "../../asset";
-import { publicThumbnail } from "../../data/thumbnail";
+import { publicThumbnail, useThumbnailPublicBase } from "../../data/thumbnail";
 import CoverImage from "../../components/CoverImage";
 import HeroVideo from "../../components/HeroVideo";
 import "./siteshome.css";
@@ -56,7 +56,8 @@ const RITUALS: HomeRitual[] = [
 ];
 
 function CardImage({ image, width = 640 }: { image?: string | null; width?: 320 | 640 }) {
-  return image ? <CoverImage className="sh__cardimg" src={publicThumbnail(image, width)} fallbackSrc={image} alt="" /> : null;
+  const thumbnailBase = useThumbnailPublicBase();
+  return image ? <CoverImage className="sh__cardimg" src={publicThumbnail(image, width, thumbnailBase)} fallbackSrc={image} alt="" /> : null;
 }
 function PlayCta() {
   return <div className="sh__cta"><a className="sh__btn sh__btn--primary" href="/play/">Play</a></div>;

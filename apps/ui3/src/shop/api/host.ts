@@ -5,38 +5,18 @@
 // - who signs: a web identity, the identity ui3 keeps in localStorage, or the engine (the bridge pair);
 // - the document's client, signed with the stored identity, which a host that owns the session replaces.
 
-import type { AuthIdentity } from "../../data/auth/identity";
-import { signAuthChain } from "../../data/auth/signerCore";
+import { fetchTransport, identitySigner, shopApiMode } from "@web-core/auth/shopRequest";
+import { getDocumentShopClient, setShopClient } from "@shop/api/document-client";
+
+export { fetchTransport, identitySigner, setShopClient, shopApiMode };
 import { catalystBase, signedFetch } from "../../data/catalyst/client";
 import type { ShopPeers, UrnNetwork } from "@shop/detail/lib/urn";
-import type { ShopApiMode, ShopApiOptions } from "@shop/api/client";
+import type { ShopApiOptions } from "@shop/api/client";
 import { createShopClient, type ShopClient } from "@shop/api/shop";
 import type { ShopSigner, ShopTransport } from "@shop/api/signer";
 
 type ShopWindow = Window &
-  typeof globalThis & { __SHOP_API_MODE__?: string; __SHOP_PEERS__?: Partial<Record<UrnNetwork, string>> };
-
-/** The API mode: the override, else the page's `window.__SHOP_API_MODE__`, else `VITE_SHOP_API_MODE`; legacy only when one says so. */
-export function shopApiMode(override?: ShopApiMode): ShopApiMode {
-  if (override) return override;
-  const fromWindow = typeof window !== "undefined" ? (window as ShopWindow).__SHOP_API_MODE__ : undefined;
-  const fromEnv = typeof import.meta !== "undefined" ? (import.meta.env?.VITE_SHOP_API_MODE as string | undefined) : undefined;
-  const value = fromWindow ?? fromEnv;
-  return value === "legacy" ? "legacy" : "canonical";
-}
-
-/** A transport over fetch. */
-export function fetchTransport(fetchImpl: typeof fetch = (...a) => fetch(...a)): ShopTransport {
-  return async (req) => {
-    const res = await fetchImpl(req.url, {
-      method: req.method,
-      headers: req.headers,
-      body: req.body,
-      signal: req.signal,
-    });
-    return { status: res.status, body: res.status === 204 ? "" : await res.text() };
-  };
-}
+  typeof globalThis & { __SHOP_PEERS__?: Partial<Record<UrnNetwork, string>> };
 
 export type HostApiOptions = Partial<ShopApiOptions> & { fetchImpl?: typeof fetch };
 
@@ -54,31 +34,6 @@ export function hostApiOptions(opts: HostApiOptions = {}): ShopApiOptions {
 export function shopPeers(): ShopPeers {
   const byNetwork = typeof window !== "undefined" ? (window as ShopWindow).__SHOP_PEERS__ : undefined;
   return { byNetwork: byNetwork ?? {}, base: catalystBase() };
-}
-
-function expired(expiration: string, now: number): boolean {
-  const at = Date.parse(expiration);
-  return !Number.isFinite(at) || at <= now;
-}
-
-/** Signs with a web identity (sites' session, or the host's identity in the native contract). */
-export function identitySigner(identity: AuthIdentity | null, now: () => number = Date.now): ShopSigner | null {
-  if (!identity || expired(identity.expiration, now())) return null;
-  return {
-    address: identity.signer.toLowerCase(),
-    async sign(method, path, metadata) {
-      if (expired(identity.expiration, now())) throw new Error("The sign-in has expired. Sign in again to continue.");
-      const { headers } = await signAuthChain(
-        identity.ephemeral.privateKey,
-        identity.authChain,
-        method,
-        path,
-        String(now()),
-        JSON.stringify(metadata),
-      );
-      return headers;
-    },
-  };
 }
 
 /**
@@ -123,16 +78,7 @@ export function bridgeSigner(address: string): ShopSigner {
   return { address: address.toLowerCase(), sign: async () => ({}) };
 }
 
-let shared: ShopClient | null = null;
-
-/** The document's client: canonical paths (or the legacy flag), signed with ui3's stored identity. A browser
- *  document's only: a server request builds its own. */
+// A host that owns the session can install its client before the default is needed.
 export function shopClient(): ShopClient {
-  shared ??= createShopClient(hostApiOptions({ signer: () => storedIdentitySigner() }));
-  return shared;
-}
-
-/** Hosts that own the session (sites, the native contract) install their own client once. */
-export function setShopClient(client: ShopClient | null): void {
-  shared = client;
+  return getDocumentShopClient(() => createShopClient(hostApiOptions({ signer: () => storedIdentitySigner() })));
 }

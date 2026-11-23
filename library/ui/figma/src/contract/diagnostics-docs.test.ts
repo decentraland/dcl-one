@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   DIAGNOSTICS,
   audiencesOf,
@@ -66,24 +66,34 @@ describe('the diagnostic registry', () => {
     })
   })
 
-  it('should pick the action of the reason for a code with per-reason actions', () => {
-    expect(diagnostic('contract-incompatible', 'range', { reason: 'library-version' }).action).toBe(
-      DIAGNOSTICS['contract-incompatible'].action['library-version']
-    )
-  })
+  describe('when a code has per-reason actions', () => {
+    describe('and the details name a registered reason', () => {
+      it('should pick the action of the reason', () => {
+        expect(
+          diagnostic('contract-incompatible', 'range', { reason: 'library-version' }).action
+        ).toBe(DIAGNOSTICS['contract-incompatible'].action['library-version'])
+      })
+    })
 
-  it.each([[undefined], [{}], [{ reason: 'not-a-reason' }], [{ reason: 'toString' }]])(
-    'should refuse a per-reason code whose details are %j',
-    (details) => {
-      expect(() => diagnostic('contract-incompatible', 'x', details as never)).toThrow(
-        /has no action/
+    describe('and the details name no registered reason', () => {
+      it.each([[undefined], [{}], [{ reason: 'not-a-reason' }], [{ reason: 'toString' }]])(
+        'should refuse details %j',
+        (details) => {
+          expect(() => diagnostic('contract-incompatible', 'x', details as never)).toThrow(
+            /has no action/
+          )
+        }
       )
-    }
-  )
+    })
 
-  it('should refuse an unregistered reason at compile time', () => {
-    // @ts-expect-error: 'library-versoin' is not a reason of contract-incompatible.
-    expect(() => diagnostic('contract-incompatible', 'x', { reason: 'library-versoin' })).toThrow()
+    describe('and the reason is misspelled', () => {
+      it('should refuse the unregistered reason at compile time and at run time', () => {
+        expect(() =>
+          // @ts-expect-error: 'library-versoin' is not a reason of contract-incompatible.
+          diagnostic('contract-incompatible', 'x', { reason: 'library-versoin' })
+        ).toThrow('Diagnostic contract-incompatible has no action for reason library-versoin')
+      })
+    })
   })
 
   it('should list only registered reasons as maintainer reasons', () => {
@@ -95,13 +105,15 @@ describe('the diagnostic registry', () => {
         ]).toEqual([code, true])
   })
 
-  it('should give a reason that only check-mappings emits the maintainer audience', () => {
-    expect(diagnostic('identity-ambiguous', 'x', { reason: 'duplicate-id' }).audience).toBe(
-      'maintainer'
-    )
-    expect(diagnostic('identity-ambiguous', 'x', { reason: 'name' }).audience).toBe('consumer')
-    expect(audiencesOf('identity-ambiguous')).toEqual(['consumer', 'maintainer'])
-    expect(audiencesOf('superseded-pending')).toEqual(['maintainer'])
+  describe('when a reason is emitted only by check-mappings', () => {
+    it('should give that reason the maintainer audience', () => {
+      expect(diagnostic('identity-ambiguous', 'x', { reason: 'duplicate-id' }).audience).toBe(
+        'maintainer'
+      )
+      expect(diagnostic('identity-ambiguous', 'x', { reason: 'name' }).audience).toBe('consumer')
+      expect(audiencesOf('identity-ambiguous')).toEqual(['consumer', 'maintainer'])
+      expect(audiencesOf('superseded-pending')).toEqual(['maintainer'])
+    })
   })
 
   it('should never put a Figma URL or file key in an action', () => {
@@ -212,13 +224,15 @@ describe('when a document table differs from the registry', () => {
   ] as const)('should report %s', (_label, markdown, scope, problem) => {
     expect(tableProblems(markdown, scope)).toContain(problem)
   })
+})
 
-  it('should ignore another table keyed by backticked names', () => {
-    expect(
-      tableProblems(
-        skill + '\n\n| Command | x |\n| --- | --- |\n| `fetch-source` | y |\n',
-        'consumer'
-      )
-    ).toEqual([])
+describe('when a document has another table keyed by backticked names', () => {
+  let markdown: string
+  beforeEach(() => {
+    markdown = read(SKILL) + '\n\n| Command | x |\n| --- | --- |\n| `fetch-source` | y |\n'
+  })
+
+  it('should ignore that table', () => {
+    expect(tableProblems(markdown, 'consumer')).toEqual([])
   })
 })

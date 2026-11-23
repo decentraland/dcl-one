@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { IoGridOutline as SquaresGridIcon } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { CrdtMessageType } from '@dcl/ecs';
 
@@ -168,6 +168,8 @@ const Metrics = withSdk<WithSdkProps>(({ sdk }) => {
     <div className="Metrics">
       <div className="Buttons">
         <Button
+          variant="secondary"
+          size="sm"
           className={cx({
             Active: showMetrics,
             Disabled: metricsUnavailable,

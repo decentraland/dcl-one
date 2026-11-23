@@ -26,6 +26,7 @@ adding events created upstream later as `'upstream'` rows; the next
 | `schedule` | `schedule` | `explore.schedules_local` | `id` | none (small; update path not verified to bump `updated_at`) |
 | `event` | `events` | `explore.event` | `id` | `updated_at` (`EventModel.update` sets it on every write, attendee counts and the recurrence cron included) |
 | `attendance` | `event_attendees` | `explore.event_attendance_local` (`going`) | `event_id, signer` | none (`created_at` nullable; a cancel deletes the row) |
+| `attendance_reconcile` | whole normalized `event_attendees` set | unchanged imported attendance and its provenance | `event_id, signer` | whole set; upstream deletes cancel RSVPs |
 | `profile_subscription` | `profile_subscriptions` | `explore.event_profile_subscriptions` | `endpoint` | none (source has no timestamps) |
 | `profile_settings` | `profile_settings` | `explore.event_profile_settings` | `user` | none (updates keep the old `updated_at`) |
 
@@ -35,6 +36,19 @@ Notes:
   become local rows, which the read path counts on top of the preview.
   Attendees of events missing upstream are skipped (the mirror sweep deletes
   orphan RSVPs). An RSVP or cancel this node recorded later wins.
+- Attendance loads record only rows actually written in
+  `dcl_migration.event_attendance_loaded` (timestamp and payload). Run
+  `attendance_reconcile` after attendance on every authoritative pass: it removes
+  recorded upstream-missing `going` rows only while their imported values still
+  match. Later local changes and unrelated local attendance remain. Empty source
+  membership is refused while provenance exists unless the operator verifies it
+  and uses `--allow-empty events/attendance_reconcile`.
+- Before activating event jobs, reconcile deletions against the frozen source.
+  An import made without attendance provenance cannot identify attendees already
+  removed upstream: use an earlier authoritative attendance export to establish
+  those exact imported rows and reconcile them, preserving later local changes.
+  Do not infer ownership from payload shape. Without that evidence, historical
+  cancellation coverage remains unverified and activation is not ready.
 - Posters on the upstream bucket (`events-assets-<hex>.decentraland.*/poster[-vertical]/<file>`)
   become `/poster[-vertical]/<file>`, the path local writes store. The poster
   bytes are not in the database: they come through the poster read-through

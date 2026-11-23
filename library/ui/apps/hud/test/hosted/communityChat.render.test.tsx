@@ -7,6 +7,7 @@ import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../
 import { fakeSession } from '../harness'
 import type { ActiveCommunityVoiceChat, VoiceChatState } from '@explorer-core/engine/protocol'
 import { SessionProvider } from '../../features/session/SessionContext'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 
 vi.mock('../../features/communities/CommunityModal', () => ({ openCommunityModal: vi.fn(() => () => undefined) }))
 import { openCommunityModal } from '../../features/communities/CommunityModal'
@@ -68,6 +69,36 @@ describe('community chat panel', () => {
     expect(screen.queryByRole('button', { name: 'View Cy' })).toBeNull()
   })
 
+  it("the community's thumbnail and name open a menu that views the community", async () => {
+    vi.mocked(openCommunityModal).mockClear()
+    render(<Chat chat={chatWith({ channel: 'community:c1', communities: [community()] })} />)
+    const title = screen.getByRole('button', { name: 'Decentraland Foundation options' })
+    expect(title).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(title)
+    expect(title).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(screen.getByRole('menuitem', { name: 'View Community' }))
+    expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c1', expect.any(Function))
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it("the title's menu closes on Escape, giving the focus back, and on a press outside", async () => {
+    render(<Chat chat={chatWith({ channel: 'community:c1', communities: [community()] })} />)
+    const title = screen.getByRole('button', { name: 'Decentraland Foundation options' })
+    await userEvent.click(title)
+    expect(screen.getByRole('menuitem', { name: 'View Community' })).toHaveFocus()
+    act(() => {
+      dispatchCancelLayer()
+    })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(title).toHaveFocus()
+    expect(title).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(title)
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    await userEvent.click(document.body)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(title).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('the menu views the community, sets the ping, deletes history or closes the chat', async () => {
     const chat = chatWith({ channel: 'community:c1', communities: [community()], deleteHistory: vi.fn(), closeCommunity: vi.fn() })
     render(<Chat chat={chat} />)
@@ -92,7 +123,7 @@ describe('community chat panel', () => {
     await userEvent.click(screen.getByRole('menuitemradio', { name: 'Default' }))
     expect(pingModeFor('community:c1')).toBe('none')
     await userEvent.click(options())
-    await userEvent.click(screen.getByText('Delete chat history'))
+    await userEvent.click(screen.getByText('Delete Chat History'))
     expect(vi.mocked(chat.deleteHistory)).toHaveBeenCalledWith('community:c1')
     await userEvent.click(options())
     await userEvent.click(screen.getByText('Close conversation'))

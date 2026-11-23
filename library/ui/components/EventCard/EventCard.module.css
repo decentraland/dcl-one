@@ -1,6 +1,6 @@
-/* Hand-written from decentraland.org/events' event cards (the Upcoming row and the All Events day
-   column). No FDS capture of an event card exists, so the values are the reference page's, through the
-   foundations tokens. */
+/* Hand-written. The small card follows the design system's event-card `size=small` (default and hover,
+   live and not), through the foundations tokens. The day column card follows decentraland.org/events'
+   All Events column; no FDS capture of an event card exists. */
 @layer dcl.reset, dcl.foundations, dcl.components;
 
 @layer dcl.components {
@@ -12,7 +12,7 @@
     border-radius: var(--dcl-radius-lg);
     background: var(--dcl-transparencies-black-40);
     color: var(--dcl-neutrals-snow);
-    /* The reference card lifts and glows over 200ms. */
+    /* Small cards lift and glow over 200ms. */
     transition:
       transform 200ms,
       box-shadow 200ms;
@@ -63,29 +63,159 @@
     overflow: hidden;
   }
 
-  /* Upcoming: the cover takes 42% of the width; the body grows for a two-line title. */
-  .compact {
-    container-type: inline-size;
-    min-height: 140px;
+  /* size=small (an Upcoming row, the phone's day list): the text on the left, centred, beside a
+     135px square cover with its own rounded corners. Tall enough for a two-line title in every state,
+     so revealing the actions on hover never resizes the card. */
+  .small {
+    min-height: 135px;
   }
 
-  .compact .media {
-    width: 42%;
+  .small .body {
+    justify-content: center;
+    gap: var(--dcl-space-0);
+    /* the design's 18px leading inset, no spacing token */
+    padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-4) 18px;
   }
 
-  .compact .body {
-    padding: var(--dcl-space-12);
+  /* The cover stays a 135px square: a taller card (every row shown on a touch screen) centres it. */
+  .small .media {
+    align-self: center;
+    width: 135px;
+    height: 135px;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-neutrals-gray);
   }
 
-  .compact .title {
+  .smallTitle {
+    composes: text68656164696e672f34 from '../../foundations/typography/text-styles.module.css';
     display: -webkit-box;
+    flex: none;
+    margin: 0;
+    overflow: hidden;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+  }
+
+  /* "by UserName", muted, with no face. Its padding is the 4px under the title and half of the 16px
+     over the time, so folding it away leaves the design's 8px between title and time. */
+  .smallBy {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    margin: 0;
+    padding: var(--dcl-space-4) 0 var(--dcl-space-8);
+    overflow: hidden;
+    color: var(--dcl-transparencies-white-60);
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The rows under the title leave the pointer to the card link (a row that moves is painted over
+     it); only the actions take it back. */
+  .small .reveal {
+    pointer-events: none;
+  }
+
+  .timeRow {
+    padding-top: var(--dcl-space-8);
+  }
+
+  .smallTime {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    box-sizing: border-box;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    max-width: 100%;
+    margin: 0;
+    /* the design's 2px block padding (space/2), no foundations token */
+    padding: 2px var(--dcl-space-4);
+    overflow: hidden;
+    border-radius: var(--dcl-radius-xs);
+    background: var(--dcl-transparencies-white-10);
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .smallTime svg {
+    flex: none;
+  }
+
+  .smallTime time {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .actionsRow {
+    padding-top: var(--dcl-space-8);
+  }
+
+  /* A live card's JUMP IN sits 20px under the title (12px gap and 8px row padding in the design). */
+  .small.isLive .actionsRow {
+    padding-top: calc(var(--dcl-space-12) + var(--dcl-space-8));
+  }
+
+  .small .actions {
+    position: relative;
+    z-index: 1;
+    flex-wrap: wrap;
+    gap: var(--dcl-space-8);
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .small .actions > * {
+    pointer-events: auto;
+  }
+
+  /* Icon-only square actions (the design's button-icon): 44px to tap, 32px on a device that hovers. */
+  .small .action {
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .small .action:hover:not(:disabled) {
+    background: var(--dcl-transparencies-white-20);
+  }
+
+  .small .action[aria-pressed='true'] {
+    color: var(--dcl-brand-ruby);
+  }
+
+  /* Live: the design's Event Live surface (#680d4a) under two Event Live glows (#e00061) rising from
+     below the card, and a 5px live bar on the leading edge. Neither colour has a foundations token
+     (the HUD keeps the surface as its own --events-card-live, outside the shared foundations). */
+  .small.isLive {
+    background:
+      radial-gradient(
+        33% 54% at 50% 150%,
+        rgb(224 0 97 / 0.35),
+        rgb(224 0 97 / 0.105) 60%,
+        transparent
+      ),
+      radial-gradient(
+        53% 78% at 50% 150%,
+        rgb(224 0 97 / 0.5),
+        rgb(224 0 97 / 0.125) 60%,
+        transparent
+      ),
+      #680d4a;
+  }
+
+  .small.isLive::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    width: 5px;
+    background: var(--dcl-system-red);
+    pointer-events: none;
   }
 
   /* A day column: a 16:9 cover above the text. A live event is marked on its leading edge. */
   .day {
     flex-direction: column;
+    container-type: inline-size;
   }
 
   .day .media {
@@ -101,8 +231,44 @@
     white-space: nowrap;
   }
 
-  .day.isLive {
-    box-shadow: inset 4px 0 0 var(--dcl-system-red);
+  .day.isLive::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    width: 5px;
+    background: var(--dcl-brand-ruby);
+    pointer-events: none;
+  }
+
+  .day.isLive .media {
+    height: min(62.5cqw, 200px);
+    aspect-ratio: auto;
+  }
+
+  .day.isLive .body {
+    background: var(--dcl-transparencies-black-60);
+  }
+
+  .day.isLive .actions > * {
+    position: relative;
+    z-index: 1;
+    pointer-events: auto;
+  }
+
+  .announcement {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    position: absolute;
+    z-index: 2;
+    inset-block-end: var(--dcl-space-48);
+    inset-inline-start: var(--dcl-space-12);
+    max-inline-size: calc(100% - var(--dcl-space-24));
+    padding: var(--dcl-space-4) var(--dcl-space-8);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-neutrals-onix);
+    color: var(--dcl-neutrals-snow);
+    overflow-wrap: anywhere;
+    pointer-events: none;
   }
 
   /* Badges over the cover */
@@ -132,6 +298,12 @@
     text-transform: uppercase;
   }
 
+  .liveIcon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+  }
+
   .players {
     composes: badge;
     background: var(--dcl-neutrals-shadow);
@@ -144,6 +316,27 @@
     background: var(--dcl-system-green);
   }
 
+  /* A small card's badges: LIVE as a 26px glyph square (its word kept for assistive technology) and
+     the count, 10px from the cover's corner. */
+  .small .badges {
+    /* the design's 10px inset, no spacing token */
+    top: 10px;
+    left: 10px;
+  }
+
+  .small .live {
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+  }
+
+  .small .liveIcon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .small .liveLabel,
   .visuallyHidden {
     position: absolute;
     width: 1px;
@@ -287,46 +480,44 @@
     white-space: nowrap;
   }
 
-  @container (max-width: 399px) {
-    .compact .actionLabel {
-      display: none;
-    }
-
-    .compact .labelled {
-      width: 44px;
-      padding-inline: 0;
-      justify-content: center;
-    }
-  }
-
-  /* A device that hovers, from tablet width: the actions wait, hidden, over the time. Hover or focus
-     inside the card lifts it (4px, with the reference's 30% white glow), fades the time out and fades
-     and slides the actions up 8px into its place, all over 200ms. Hidden by opacity only, the actions
-     stay in the accessibility tree and in reverse Tab order. */
+  /* Hover or focus reveals future event actions over the start time. Waiting actions stay in
+     the accessibility tree so they can be reached by reverse Tab. */
   @media (hover: hover) and (min-width: 768px) {
-    .card:hover,
-    .card:focus-within {
+    .small:hover,
+    .small:focus-within {
       transform: translateY(-4px);
       box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
     }
 
-    .hasActions .footer {
+    .day:not(.isLive):is(:hover, :focus-within) {
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
+    }
+
+    .day.isLive .media {
+      transition: height 250ms ease;
+    }
+
+    .day.isLive:hover .media {
+      height: min(78cqw, 260px);
+    }
+
+    .day.hasActions:not(.isLive) .footer {
       position: relative;
       flex-direction: row;
       align-items: center;
       min-height: 32px;
     }
 
-    .hasActions .time {
+    .day.hasActions .time {
       transition: opacity 200ms;
     }
 
-    .hasActions:hover .time,
-    .hasActions:focus-within .time {
+    .day.hasActions:hover .time,
+    .day.hasActions:focus-within .time {
       opacity: 0;
     }
 
-    .hasActions .actions {
+    .day.hasActions:not(.isLive) .actions {
       position: absolute;
       inset: 0;
       opacity: 0;
@@ -336,49 +527,116 @@
         transform 200ms;
     }
 
-    .hasActions .action {
-      width: 32px;
+    .day.hasActions:not(.isLive) .action {
       height: 32px;
       pointer-events: none;
     }
 
-    .hasActions .labelled {
-      width: auto;
+    .day.hasActions:not(.isLive) .action:not(.labelled) {
+      width: 32px;
     }
 
-    .hasActions:hover .actions,
-    .hasActions:focus-within .actions {
+    @container (max-width: 224px) {
+      .day.hasActions:not(.isLive) .labelled {
+        flex-shrink: 1;
+        min-width: 0;
+        padding-inline: var(--dcl-space-4);
+      }
+
+      .day.hasActions:not(.isLive) .labelled > svg {
+        display: none;
+      }
+
+      .day.hasActions:not(.isLive) .actionLabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    }
+
+    .day.hasActions:hover .actions,
+    .day.hasActions:focus-within .actions {
       opacity: 1;
       transform: translateY(0);
     }
 
-    .hasActions:hover .action,
-    .hasActions:focus-within .action {
+    .day.hasActions:hover .action,
+    .day.hasActions:focus-within .action {
       pointer-events: auto;
+    }
+
+    /* A small card folds the host away (and a live one its time) and opens the 32px actions row under
+       the time, each row's height and opacity changing together over 200ms; the actions also rise 8px.
+       A folded row clips its content. */
+    .small .action {
+      width: 32px;
+      height: 32px;
+    }
+
+    .reveal {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 1fr;
+      transition:
+        grid-template-rows 200ms,
+        opacity 200ms,
+        transform 200ms;
+    }
+
+    .revealInner {
+      min-height: 0;
+    }
+
+    .showOnHover {
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    .showOnHover .revealInner,
+    .hasActions:hover .hideOnHover .revealInner,
+    .hasActions:focus-within .hideOnHover .revealInner {
+      overflow: hidden;
+    }
+
+    .hasActions:hover .showOnHover,
+    .hasActions:focus-within .showOnHover {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .hasActions:hover .showOnHover .revealInner,
+    .hasActions:focus-within .showOnHover .revealInner {
+      overflow: visible;
+    }
+
+    .hasActions:hover .hideOnHover,
+    .hasActions:focus-within .hideOnHover {
+      grid-template-rows: 0fr;
+      opacity: 0;
     }
   }
 
   /* Under reduced motion every state changes at once, in place. */
   @media (prefers-reduced-motion: reduce) {
+    .day.isLive .media {
+      transition: none;
+    }
+
     .card,
-    .hasActions .time,
-    .hasActions .actions {
+    .day.hasActions .time,
+    .day.hasActions .actions,
+    .reveal {
       transition: none;
     }
 
     .card:hover,
     .card:focus-within,
-    .hasActions .actions,
-    .hasActions:hover .actions,
-    .hasActions:focus-within .actions {
+    .day.hasActions .actions,
+    .day.hasActions:hover .actions,
+    .day.hasActions:focus-within .actions,
+    .showOnHover {
       transform: none;
-    }
-  }
-
-  /* A touch or narrow screen shows the time and the 44px actions under it, so the row is taller. */
-  @media (hover: none), (max-width: 767px) {
-    .compact {
-      min-height: 176px;
     }
   }
 }

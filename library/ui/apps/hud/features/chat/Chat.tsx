@@ -8,14 +8,15 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
-import { EmojiPicker } from './EmojiPicker'
+import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
-import { AutoTranslateButton } from './AutoTranslateButton'
-import { ConversationMenu } from './ConversationMenu'
+import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
+import { HeartIcon } from './ChatIcons'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
+import { buttonSoundHandlers } from './buttonSounds'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
@@ -178,7 +179,7 @@ function NewSeparator(): React.JSX.Element {
   )
 }
 
-const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world }
+const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world, bold: styles.bold, italic: styles.italic }
 
 /** "Ana, Bo and you reacted with :fire:" — who reacted with one emoji, for its pill's tooltip. */
 export function reactionLabel(reaction: MessageReaction, me?: string): string {
@@ -338,7 +339,7 @@ export const ChatBubble = memo(function ChatBubble({
   return (
     <div className={`${styles.entry} ${own ? styles.own : ''} ${arrive ? styles.arrive : ''}`.trim()}>
       {clickable ? (
-        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} onClick={openSender} onContextMenu={openSender}>
+        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
           {avatar}
         </button>
       ) : (
@@ -347,7 +348,7 @@ export const ChatBubble = memo(function ChatBubble({
       <div className={`${styles.bubble} ${highlight ? styles.mentionMe : ''}`.trim()}>
         <div className={styles.content}>
           {clickable ? (
-            <button type="button" className={styles.name} style={{ color }} onClick={openSender} onContextMenu={openSender}>
+            <button type="button" className={styles.name} style={{ color }} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
               {nameRow}
             </button>
           ) : (
@@ -369,7 +370,7 @@ export const ChatBubble = memo(function ChatBubble({
         <span className={styles.spacer} aria-hidden="true" />
       </div>
       {translatable && onTranslate != null && (translation == null || translation.status === 'failed') && (
-        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" onClick={() => onTranslate(line)}>
+        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" data-ui-sound="press" onClick={() => onTranslate(line)}>
           <Translate size={16} />
         </button>
       )}
@@ -379,6 +380,7 @@ export const ChatBubble = memo(function ChatBubble({
           className={`${styles.reactBtn} ${reacting ? styles.reactBtnOn : ''}`.trim()}
           aria-label="React"
           aria-pressed={reacting}
+          data-ui-sound="soft"
           onClick={(e) => onReact(line, e.currentTarget)}
         />
       )}
@@ -418,6 +420,7 @@ function ReactionBar({
       type="button"
       className={`${styles.barEmoji} ${isMine(emoji) ? styles.barEmojiOn : ''}`.trim()}
       title={EMOJI_BY_GLYPH.get(emoji)?.expression}
+      data-ui-sound="press"
       onClick={() => onPick(emoji)}
     >
       {emoji}
@@ -499,7 +502,7 @@ type MemberEntry = NearbyMember & { role?: string }
 
 function MembersOverlay({
   title = 'Nearby',
-  empty = 'No one nearby',
+  empty,
   members,
   speaking,
   onOpen,
@@ -517,7 +520,7 @@ function MembersOverlay({
   return (
     <div className={styles.membersPanel}>
       <header className={`${styles.nav} ${styles.membersHeader}`}>
-        <ControlButton variant="dark" aria-label="Back" onClick={onBack}>
+        <ControlButton variant="dark" aria-label="Back" autoFocus onClick={onBack}>
           <MaskIcon src={arrowLeftIcon} size={12} className={styles.backIcon} />
         </ControlButton>
         <span className={styles.navTitle} title={title}>{title}&nbsp; -</span>
@@ -525,13 +528,14 @@ function MembersOverlay({
           <MaskIcon src={playersIcon} size={16} />
           <span className={styles.countNum}>{members.length}</span> Online
         </span>
-        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose} data-ui-sound="soft">
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </header>
       <div className={styles.membersList}>
         {members.length === 0 ? (
-          <div className={styles.empty}>{empty}</div>
+          // alone in Nearby the list is bare: the words are for screen readers
+          <div className={empty != null ? styles.empty : styles.srOnly}>{empty ?? 'No one nearby'}</div>
         ) : (
           members.map((m) => <MemberRow key={m.address} member={m} role={m.role} speaking={speaking.has(m.address.toLowerCase())} onOpen={onOpen} />)
         )}
@@ -612,11 +616,10 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
             </ControlButton>
           </Tooltip>
         )}
-        <AutoTranslateButton channel={conversation.address} />
         <ConversationMenu
           channel={conversation.address}
           entries={[
-            { label: 'Delete chat history', danger: true, onClick: onDelete },
+            { label: 'Delete Chat History', danger: true, onClick: onDelete },
             { label: 'Close conversation', onClick: onClose }
           ]}
         />
@@ -650,7 +653,9 @@ export function Chat({
   const [sug, setSug] = useState<Suggestions | null>(null)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
-  const [dim, setDim] = useState(false)
+  // Focus anywhere in the panel (a title bar button, the members list, the options menu) keeps the
+  // chat active, as the input's does: only a click outside lets go of it.
+  const [within, setWithin] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -672,13 +677,41 @@ export function Chat({
   // "active" = the user is interacting → show the full solid panel + chrome.
   // A profile card opened from the chat keeps it active, so the view under the card stays put.
   const [cardOpen, setCardOpen] = useState(false)
-  const active = open && (hovered || focused || picker || cardOpen || reacting != null)
+  const active = open && (hovered || focused || within || picker || cardOpen || reacting != null)
   const bare = !active // collapsed or idle-open → borderless translucent input only
+  // `within` is where the focus is, read from the document, not kept from focus and blur events: a
+  // focused control that unmounts (the members list's Back, a menu entry that closes its menu, a
+  // rail tab's close, the panel itself going away) fires no blur. Read again whenever the focus or
+  // the pointer does something, once more after the handlers of a click or a key have changed the
+  // tree, and when the view under the focus changes.
+  const syncWithin = useCallback(() => {
+    const at = document.activeElement
+    const root = rootRef.current
+    setWithin(at != null && at !== document.body && ((root?.contains(at) ?? false) || at.closest(`[${MENU_LAYER}]`) != null))
+  }, [])
+  useEffect(() => {
+    let later: ReturnType<typeof setTimeout> | null = null
+    const check = (): void => {
+      syncWithin()
+      if (later != null) clearTimeout(later)
+      later = setTimeout(() => {
+        later = null
+        syncWithin()
+      }, 0)
+    }
+    const events = ['focusin', 'pointerdown', 'click', 'keyup'] as const
+    for (const name of events) document.addEventListener(name, check)
+    return () => {
+      for (const name of events) document.removeEventListener(name, check)
+      if (later != null) clearTimeout(later)
+    }
+  }, [syncWithin])
+  useEffect(syncWithin, [syncWithin, open, hidden, chat.channel, showMembers, picker, cardOpen, reacting])
   useEffect(() => chat.setActive(active), [active, chat.setActive])
   // The DM or community shown, if the channel is one; the rail appears once any tab exists.
   const conversation = chat.channel === 'Nearby' ? null : (chat.conversations.find((c) => c.address === chat.channel) ?? null)
   const community = chat.channel === 'Nearby' ? null : (chat.communities.find((c) => c.key === chat.channel) ?? null)
-  const hasRail = open && (chat.conversations.length > 0 || chat.communities.length > 0)
+  const hasRail = open // Nearby's tab is on the rail even with no other conversation
   // A community's online members as people: its members list, and who @-mentions can name.
   const communityMembers = community?.members
   const communityPeople = useMemo(
@@ -697,15 +730,6 @@ export function Chat({
     if (open) liveFrom.current = lastId + 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
-
-  // Idle and unhovered, the messages dim after 10s; a new message or any interaction restores them.
-  const IDLE_DIM_MS = 10_000
-  useEffect(() => {
-    setDim(false)
-    if (!open || active) return
-    const t = setTimeout(() => setDim(true), IDLE_DIM_MS)
-    return () => clearTimeout(t)
-  }, [open, active, lastId])
 
   const rows = useMemo(() => {
     const out: ({ kind: 'day'; ts: number; id: string } | { kind: 'msg'; line: ChatLine })[] = []
@@ -1011,6 +1035,7 @@ export function Chat({
     })
   }
   const accept = (s: Suggestions, i: number): void => {
+    chat.playSound('chatEmoji')
     if (s.kind === 'emoji') replaceRange(s.start, s.end, s.items[i].emoji)
     else {
       const m = s.items[i]
@@ -1023,6 +1048,13 @@ export function Chat({
     const end = el?.selectionEnd ?? draft.length
     replaceRange(start, end, glyph)
   }
+
+  // The emoji panel opening sounds; its closing does not.
+  useEffect(() => {
+    if (picker) chat.playSound('chatEmoji')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picker])
+  const buttonSounds = useMemo(() => buttonSoundHandlers(chat.playSound), [chat.playSound])
 
   const send = (): void => {
     if (!draft.trim()) return
@@ -1052,17 +1084,8 @@ export function Chat({
     }
   }
 
-  // The emoji panel closes on a press outside it (the emoji button toggles it itself).
-  useEffect(() => {
-    if (!picker) return
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as HTMLElement
-      if (pickerRef.current?.contains(t) || t.closest('[aria-label="Emoji"]')) return
-      setPicker(false)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [picker])
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
 
   // A click anywhere in the panel that isn't a control focuses the input — unless it selected text to copy.
   const focusFromPanel = (e: React.MouseEvent): void => {
@@ -1086,8 +1109,15 @@ export function Chat({
       ref={setRoot}
       className={`${styles.root} ${open ? styles.open : ''} ${active ? styles.active : ''} ${focused ? styles.focused : ''} ${active && showMembers ? styles.membersOpen : ''} ${hasRail ? styles.withRail : ''}`.trim()}
       onClick={focusFromPanel}
+      {...buttonSounds}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={syncWithin}
+      onBlur={(e) => {
+        const to = e.relatedTarget as Element | null
+        if (to != null && (e.currentTarget.contains(to) || to.closest(`[${MENU_LAYER}]`) != null)) return
+        setWithin(false)
+      }}
     >
       <div className={styles.main}>
       {open && conversation != null && (
@@ -1123,7 +1153,6 @@ export function Chat({
             <span className={styles.navTitle}>Nearby</span>
           </div>
           <div className={styles.navRight}>
-            <AutoTranslateButton channel="Nearby" />
             <ControlButton
               variant="faint"
               shape="pill"
@@ -1135,21 +1164,24 @@ export function Chat({
               <MaskIcon src={playersIcon} size={18} />
               {chat.members.length}
             </ControlButton>
-            <ConversationMenu channel="Nearby" />
-            {!hasRail && (
-              <>
-                <span className={styles.navDivider} aria-hidden="true" />
-                <ControlButton variant="dark" aria-label="Close chat" onClick={chat.toggle}>
-                  <MaskIcon src={closeIcon} size={10} />
-                </ControlButton>
-              </>
-            )}
+            <ConversationMenu
+              channel="Nearby"
+              entries={[{
+                label: 'Delete Chat History',
+                danger: true,
+                onClick: () => {
+                  chat.deleteHistory('Nearby')
+                  clearAutoTranslate('Nearby')
+                  clearPingMode('Nearby')
+                }
+              }]}
+            />
           </div>
         </header>
       )}
 
       {open && (
-        <div ref={listRef} className={`${styles.messages} ${dim ? styles.dim : ''}`.trim()} onScroll={() => hoverReaction(null)}>
+        <div ref={listRef} className={styles.messages} onScroll={() => hoverReaction(null)}>
           {rows.map((r) =>
             r.kind === 'day' ? (
               <DaySeparator key={r.id} ts={r.ts} />
@@ -1182,7 +1214,10 @@ export function Chat({
       {active && picker && (
         <div ref={pickerRef} className={styles.pickerWrap}>
           <EmojiPicker
-            onPick={insertAtCaret}
+            onPick={(glyph) => {
+              chat.playSound('chatEmoji')
+              insertAtCaret(glyph)
+            }}
             onClose={() => {
               setPicker(false)
               inputRef.current?.focus()
@@ -1246,7 +1281,12 @@ export function Chat({
           rows={1}
           className={styles.input}
           value={draft}
-          onChange={(e) => updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          onChange={(e) => {
+            // the user's own edits sound (typing, a paste, a cut); a text change the chat makes
+            // (a send's clearing, an emoji or suggestion dropped in) has that action's sound
+            chat.playSound('chatInput')
+            updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)
+          }}
           onSelect={(e) => {
             const el = e.currentTarget
             if (el.selectionStart === el.selectionEnd && sug?.end !== el.selectionStart) suggestAt(el.value, el.selectionStart ?? el.value.length)
@@ -1263,7 +1303,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
+          <EmojiButton ref={emojiRef} className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 
@@ -1283,6 +1323,21 @@ export function Chat({
       )}
       </div>
       {hasRail && <ConversationRail chat={chat} onClose={chat.toggle} />}
+      {blockedState == null && (
+        <button
+          type="button"
+          className={styles.heart}
+          aria-label="Heart"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            openIfClosed()
+            insertAtCaret('\u2764\uFE0F')
+            inputRef.current?.focus()
+          }}
+        >
+          <HeartIcon />
+        </button>
+      )}
       {open && pillTip != null && <PillTip label={pillTip.label} top={pillTip.top} center={pillTip.center} />}
       {open && reactingLine != null && reacting != null && !reactPicker && (
         <div ref={reactRef} className={styles.reactionLayer}>

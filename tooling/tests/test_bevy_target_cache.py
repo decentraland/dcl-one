@@ -1,7 +1,6 @@
-"""The Explorer's native Cargo cache: keyed by what Cargo's fingerprints depend on, pruned to what a run reuses."""
+"""The Explorer's native Cargo cache: keyed by what Cargo's fingerprints depend on, with the workspace crates in it."""
 import importlib.util
 import io
-import json
 import os
 from pathlib import Path
 import re
@@ -18,7 +17,6 @@ SPEC.loader.exec_module(cache)
 ENV = {'RUNNER_OS': 'Linux', 'RUNNER_ARCH': 'X64', 'CC': '/opt/hostedtoolcache/llvm-21.1.8/bin/clang',
        'CXX': '/opt/hostedtoolcache/llvm-21.1.8/bin/clang++', 'CEF_PATH': '/opt/cef',
        'LD_LIBRARY_PATH': '/opt/cef', 'PATH': os.environ['PATH']}
-NAMES = {'decentra-bevy', 'decentra_bevy', 'webgpu_build', 'benchmark', 'harness-util', 'harness_util', 'dcl_scene_wasm'}
 RUSTC = 'rustc 1.99.1 (abcdef012 2026-10-01)\nhost: x86_64-unknown-linux-gnu\n'
 
 
@@ -31,7 +29,7 @@ class KeyTest(unittest.TestCase):
         self.git('init', '-q')
         self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'gc.auto', '0')
-        for name, text in {'rendering/bevy-explorer/vendor/boimp/src/lib.rs': 'pub fn import() {}\n',
+        for name, text in {'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs': 'pub fn layout() {}\n',
                            'library/vendor/rusty_enet/src/lib.rs': 'pub fn host() {}\n',
                            'rendering/bevy-explorer/source/vendor/basisu/src/lib.rs': 'pub fn transcode() {}\n',
                            'rendering/bevy-explorer/source/Cargo.lock': 'version = 4\n',
@@ -39,11 +37,12 @@ class KeyTest(unittest.TestCase):
                            'rendering/bevy-explorer/source/.cargo/config.toml': '[env]\nRUST_BACKTRACE = "1"\n',
                            '.cargo/config.toml': '[env]\nDCL_ONE_ROOT = { value = "", relative = true }\n',
                            'rendering/bevy-explorer/source/crates/common/Cargo.toml': '[package]\nname = "common"\n',
-                           'rendering/bevy-explorer/source/src/lib.rs': 'fn main() {}\n'}.items():
+                           'rendering/bevy-explorer/source/src/lib.rs': 'fn main() {}\n',
+                           'library/protocol/proto/decentraland/common/vectors.proto': 'syntax = "proto3";\n'}.items():
             self.write(name, text)
         self.commit()
         manifests = [self.source / 'Cargo.toml', self.source / 'crates/common/Cargo.toml']
-        for target, value in (('workspace', (NAMES, manifests)), ('rustc', RUSTC)):
+        for target, value in (('workspace', manifests), ('rustc', RUSTC)):
             patcher = patch.object(cache, target, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -64,28 +63,30 @@ class KeyTest(unittest.TestCase):
     def key(self, lane='test', env=ENV):
         return cache.key(lane, env, self.root, self.source)
 
-    def test_key_names_lane_platform_compiler_tools_and_sources(self):
+    def test_key_names_lane_platform_compiler_tools_sources_and_members(self):
         exact, fallbacks = self.key()
-        self.assertRegex(exact, r'^bevy-native-v1-test-Linux-X64-[0-9a-f]{16}-[0-9a-f]{16}-[0-9a-f]{16}$')
-        self.assertEqual(fallbacks, [exact[:-16], exact[:-33]])
+        self.assertRegex(exact, r'^bevy-native-v1-test-Linux-X64-[0-9a-f]{16}-[0-9a-f]{16}-[0-9a-f]{16}-[0-9a-f]{16}$')
+        self.assertEqual(fallbacks, [exact[:-17], exact[:-33], exact[:-50]])
         self.assertNotEqual(self.key('clippy')[0], exact)
         self.assertNotEqual(self.key(env={**ENV, 'RUNNER_OS': 'macOS', 'RUNNER_ARCH': 'ARM64'})[0], exact)
 
     def test_the_scheduled_cleanup_bounds_the_caches_of_this_key(self):
         # The cleanup keeps the newest cache of each prefix on a ref; the prefix ends with the platform.
         cleanup = (ROOT / '.github/workflows/closed-pr-cache.yml').read_text()
-        family = re.search(r"r'\|\^(bevy-native-.+)'\)", cleanup).group(1)
+        family = re.search(r"r'\|\^(bevy-native-[^']+)'", cleanup).group(1)
         for lane, system, arch in (('test', 'Linux', 'X64'), ('clippy', 'macOS', 'ARM64'), ('headless', 'Windows', 'X64')):
             exact = self.key(lane, {**ENV, 'RUNNER_OS': system, 'RUNNER_ARCH': arch})[0]
-            self.assertEqual(re.match(family, exact).group(0), exact[:-50])
+            self.assertEqual(re.match(family, exact).group(0), exact[:-67])
 
     def test_the_tool_environment_changes_the_tools_digest_only(self):
         exact, fallbacks = self.key()
         moved, moved_fallbacks = self.key(env={**ENV, 'CC': '/opt/hostedtoolcache/llvm-22.1.0/bin/clang'})
         self.assertNotEqual(moved, exact)
         self.assertEqual(moved[-16:], exact[-16:])
+        self.assertEqual(moved[-33:], exact[-33:])
         self.assertNotEqual(moved_fallbacks[0], fallbacks[0])
-        self.assertEqual(moved_fallbacks[1], fallbacks[1])
+        self.assertNotEqual(moved_fallbacks[1], fallbacks[1])
+        self.assertEqual(moved_fallbacks[2], fallbacks[2])
         self.assertEqual(self.key(env={**ENV, 'LD_LIBRARY_PATH': '/elsewhere', 'PATH': '/opt/bin'})[0], exact)
 
     def test_cargo_inputs_and_vendored_trees_change_the_sources_digest_only(self):
@@ -94,7 +95,7 @@ class KeyTest(unittest.TestCase):
                            ('rendering/bevy-explorer/source/crates/common/Cargo.toml', '[package]\nname = "common"\nversion = "0.2.0"\n'),
                            ('rendering/bevy-explorer/source/.cargo/config.toml', '[env]\nRUST_BACKTRACE = "full"\n'),
                            ('.cargo/config.toml', '[build]\nrustflags = ["-Cdebuginfo=0"]\n'),
-                           ('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'pub fn import() { }\n'),
+                           ('rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs', 'pub fn layout() { }\n'),
                            ('library/vendor/rusty_enet/src/lib.rs', 'pub fn host() { }\n'),
                            ('rendering/bevy-explorer/source/vendor/basisu/src/lib.rs', 'pub fn transcode() { }\n')):
             with self.subTest(name=name):
@@ -102,13 +103,28 @@ class KeyTest(unittest.TestCase):
                 self.commit()
                 changed, changed_fallbacks = self.key()
                 self.assertNotEqual(changed, exact)
+                self.assertNotEqual(changed_fallbacks[0], fallbacks[0])
+                self.assertEqual(changed_fallbacks[1:], fallbacks[1:])
+                exact, fallbacks = changed, changed_fallbacks
+
+    def test_workspace_sources_and_protocol_definitions_change_the_members_digest_only(self):
+        # The entry holds the workspace crates: main saves one for each state of what they compile from,
+        # and a pull request finds the newest of them under the unchanged first fallback.
+        exact, fallbacks = self.key()
+        for name, text in (('rendering/bevy-explorer/source/src/lib.rs', 'fn main() { }\n'),
+                           ('library/protocol/proto/decentraland/common/vectors.proto', 'syntax = "proto3";\npackage common;\n')):
+            with self.subTest(name=name):
+                self.write(name, text)
+                self.commit()
+                changed, changed_fallbacks = self.key()
+                self.assertNotEqual(changed, exact)
+                self.assertEqual(changed[:-16], exact[:-16])
                 self.assertEqual(changed_fallbacks, fallbacks)
                 exact = changed
 
-    def test_workspace_sources_are_no_key_input(self):
-        # Cargo rebuilds the workspace crates every run; the vendored trees are judged by file time.
+    def test_a_file_outside_the_cargo_inputs_changes_no_key(self):
         exact = self.key()[0]
-        self.write('rendering/bevy-explorer/source/src/lib.rs', 'fn main() { }\n')
+        self.write('docs/development.md', 'notes\n')
         self.commit()
         self.assertEqual(self.key()[0], exact)
 
@@ -127,7 +143,9 @@ class KeyTest(unittest.TestCase):
                 patch.object(cache, 'ROOT', self.root), patch.object(cache, 'SOURCE', self.source), \
                 patch('sys.stdout', new_callable=io.StringIO) as stdout:
             cache.main()
-        self.assertEqual(output.read_text(), f'key={exact}\nrestore-keys<<KEYS\n{fallbacks[0]}\n{fallbacks[1]}\nKEYS\n')
+        self.assertEqual(output.read_text(), f'key={exact}\ndependencies={fallbacks[0]}\nrestore-keys<<KEYS\n'
+                                             f'{fallbacks[0]}\n{fallbacks[1]}\n{fallbacks[2]}\nKEYS\n')
+        self.assertTrue(exact.startswith(fallbacks[0] + '-'))
         self.assertIn(exact, stdout.getvalue())
 
 
@@ -140,13 +158,15 @@ class PruneTest(unittest.TestCase):
             'ci-test/deps/libbevy_app-5e.rlib', 'ci-test/.fingerprint/bevy_app-5e/lib-bevy_app',
             'x86_64-unknown-linux-gnu/release/deps/libcc-6f.rlib', 'x86_64-unknown-linux-gnu/release/.fingerprint/cc-6f/lib-cc',
             'CACHEDIR.TAG', '.rustc_info.json')
-    PRUNED = ('release/deps/libwebgpu_build-7a.rlib', 'release/deps/webgpu_build-7a.d', 'release/deps/benchmark-8b',
-              'release/deps/benchmark-8b.exe', 'release/deps/benchmark-8b.pdb', 'release/deps/libharness_util-9c.rmeta',
-              'release/build/decentra-bevy-7a/output', 'release/build/decentra-bevy-7a/build_script_build-7a',
-              'release/.fingerprint/decentra-bevy-7a/lib-webgpu_build', 'release/.fingerprint/benchmark-8b/bin-benchmark',
-              'release/incremental/webgpu_build-xyz/s-abc.lock', 'release/examples/demo-1', 'release/avatar_render',
-              'release/.cargo-lock', 'ci-test/deps/webgpu_build-7b', 'ci-test/.fingerprint/decentra-bevy-7b/test-lib-webgpu_build',
-              'x86_64-unknown-linux-gnu/release/deps/libdcl_scene_wasm-0d.rlib',
+    # The workspace crates' artifacts, build script outputs and fingerprints stay: a later run reuses them.
+    WORKSPACE = ('release/deps/libwebgpu_build-7a.rlib', 'release/deps/webgpu_build-7a.d', 'release/deps/benchmark-8b',
+                 'release/deps/benchmark-8b.exe', 'release/deps/benchmark-8b.pdb', 'release/deps/libharness_util-9c.rmeta',
+                 'release/build/decentra-bevy-7a/output', 'release/build/decentra-bevy-7a/build_script_build-7a',
+                 'release/.fingerprint/decentra-bevy-7a/lib-webgpu_build', 'release/.fingerprint/benchmark-8b/bin-benchmark',
+                 'ci-test/deps/webgpu_build-7b', 'ci-test/.fingerprint/decentra-bevy-7b/test-lib-webgpu_build',
+                 'x86_64-unknown-linux-gnu/release/deps/libdcl_scene_wasm-0d.rlib')
+    PRUNED = ('release/incremental/webgpu_build-xyz/s-abc.lock', 'release/examples/demo-1', 'release/avatar_render',
+              'release/.cargo-lock', 'ci-test/webgpu_build', 'x86_64-unknown-linux-gnu/release/dcl_scene_wasm.wasm',
               'cargo-timings/cargo-timing.html', 'native-test-artifacts.jsonl', 'sccache-stats.json', 'tmp/scratch')
     # The Cargo home is the runner's own: the prune removes nothing in it, saved path or not.
     HOME_KEPT = ('registry/index/index.crates.io-1cd66030c949c28d/config.json',
@@ -161,7 +181,7 @@ class PruneTest(unittest.TestCase):
         root = Path(temporary.name).resolve()
         self.target = root / 'target'
         self.home = root / 'cargo-home'
-        for name in self.KEPT + self.PRUNED:
+        for name in self.KEPT + self.WORKSPACE + self.PRUNED:
             self.write(self.target / name)
         for name in self.HOME_KEPT:
             self.write(self.home / name)
@@ -171,7 +191,7 @@ class PruneTest(unittest.TestCase):
         path.write_text('x')
 
     def assert_pruned(self):
-        for name in self.KEPT:
+        for name in self.KEPT + self.WORKSPACE:
             self.assertTrue((self.target / name).exists(), name)
         for name in self.PRUNED:
             self.assertFalse((self.target / name).exists(), name)
@@ -180,59 +200,58 @@ class PruneTest(unittest.TestCase):
         for directory in ('release/incremental', 'release/examples', 'tmp', 'cargo-timings'):
             self.assertFalse((self.target / directory).exists(), directory)
 
-    def test_prune_keeps_dependency_artifacts_and_the_cargo_home_and_drops_workspace_outputs_and_reports(self):
+    def test_prune_keeps_every_crates_artifacts_and_the_cargo_home_and_drops_final_binaries_and_reports(self):
         removed = []
-        cache.prune_target(self.target, NAMES, removed)
+        cache.prune_target(self.target, removed)
         self.assert_pruned()
         for name in self.PRUNED:
             path = (self.target / name).resolve()
             self.assertTrue(any(path == gone or gone in path.parents for gone in removed), name)
-        for name in self.KEPT + tuple(f'../cargo-home/{name}' for name in self.HOME_KEPT):
+        for name in self.KEPT + self.WORKSPACE + tuple(f'../cargo-home/{name}' for name in self.HOME_KEPT):
             path = (self.target / name).resolve()
             self.assertFalse(any(path == gone or gone in path.parents for gone in removed), name)
 
     def test_the_prune_command_reports_what_it_removed(self):
         with patch('sys.argv', ['bevy-target-cache.py', 'prune', str(self.target)]), \
                 patch.dict(os.environ, {'CARGO_HOME': str(self.home)}), \
-                patch.object(cache, 'workspace', return_value=(NAMES, [])), \
                 patch('sys.stdout', new_callable=io.StringIO) as stdout:
             cache.main()
         self.assert_pruned()
         self.assertRegex(stdout.getvalue(), r'^\d+ entries pruned; \d+ MB left in \S+\n$')
 
-    def test_owned_reads_cargos_artifact_names(self):
-        for name in ('libwebgpu_build-7a.rlib', 'webgpu_build-7a.d', 'benchmark-8b', 'benchmark-8b.exe', 'benchmark-8b.dll.lib',
-                     'decentra-bevy-7a', 'harness_util-9c'):
-            self.assertTrue(cache.owned(name, NAMES), name)
-        for name in ('libbevy_ecs-1a.rlib', 'bevy-mtimes.json', 'basisu-2b', 'liblibsqlite3_sys-3c.rlib', 'openssl-sys-4d'):
-            self.assertFalse(cache.owned(name, NAMES), name)
+    def test_the_size_does_not_follow_a_link_and_skips_what_it_cannot_read(self):
+        # A build script of a git dependency leaves a link to the crate's checkout in its output.
+        outside = self.target.parent / 'checkout'
+        (outside / 'src').mkdir(parents=True)
+        (outside / 'src/lib.rs').write_bytes(b'x' * 4096)
+        out = self.target / 'release/build/webrtc-sys-5a/out/cxxbridge/crate'
+        out.mkdir(parents=True)
+        os.symlink(outside, out / 'webrtc-sys', target_is_directory=True)
+        os.symlink(self.target / 'missing', self.target / 'dangling')
+        measured = cache.size(self.target)
+        self.assertLess(measured, 4096)
+        scandir = os.scandir
 
-    def test_a_name_shared_with_a_registry_crate_is_not_pruned(self):
-        source = self.target.parent
-        (source / 'Cargo.lock').write_text(
-            '[[package]]\nname = "console"\nversion = "0.1.0"\ndependencies = [\n "bevy",\n]\n\n'
-            '[[package]]\nname = "console"\nversion = "0.16.4"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n'
-            '[[package]]\nname = "harness-util"\nversion = "0.1.0"\n\n'
-            '[[package]]\nname = "harness_util"\nversion = "1.0.0"\nsource = "git+https://example.invalid/harness#abc"\n\n'
-            '[[package]]\nname = "decentra-bevy"\nversion = "0.1.0"\n')
-        packages = [{'name': name, 'targets': [{'name': target}], 'manifest_path': str(source / name / 'Cargo.toml')}
-                    for name, target in (('console', 'console'), ('harness-util', 'harness_util'), ('decentra-bevy', 'webgpu_build'))]
-        with patch.object(cache.subprocess, 'check_output', return_value=json.dumps({'packages': packages})):
-            names, manifests = cache.workspace(source)
-        self.assertEqual(names, {'decentra-bevy', 'decentra_bevy', 'webgpu_build'})
-        self.assertEqual(len(manifests), 3)
-        for name in ('release/deps/libconsole-1a.rlib', 'release/.fingerprint/console-1a/lib-console', 'release/build/harness-util-2b/output'):
-            self.write(self.target / name)
-        cache.prune_target(self.target, names, [])
-        for name in ('release/deps/libconsole-1a.rlib', 'release/.fingerprint/console-1a/lib-console', 'release/build/harness-util-2b/output'):
-            self.assertTrue((self.target / name).exists(), name)
-        self.assertFalse((self.target / 'release/deps/libwebgpu_build-7a.rlib').exists())
+        def refuse(path):  # On Windows a listing at the link failed with WinError 5.
+            if Path(path) == out:
+                raise PermissionError(13, 'Access is denied')
+            return scandir(path)
+        with patch.object(cache.os, 'scandir', side_effect=refuse):
+            self.assertEqual(cache.size(self.target), measured)
+        with patch.object(cache.os, 'lstat', side_effect=PermissionError(13, 'Access is denied')):
+            self.assertEqual(cache.size(self.target), 0)
+        self.assertEqual(cache.size(self.target / 'absent'), 0)
 
 
 class WorkflowTest(unittest.TestCase):
-    """The native jobs key after their tool steps, build after the restore and save pruned trees from main's first attempts."""
+    """The native jobs key after their tool steps, build after the restore and save from main's first attempts;
+    a pull request saves only when the restored entry was not built for its dependencies."""
     WORKFLOW = (ROOT / '.github/workflows/bevy-explorer-ci.yml').read_text()
-    GUARD = "if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'"
+    GUARD = ("        if: >-\n"
+             "          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&\n"
+             "          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&\n"
+             "          github.event.pull_request.head.repo.full_name == github.repository &&\n"
+             "          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))\n")
     PATHS = ('          path: |\n            ~/.cargo/registry/index/\n            ~/.cargo/registry/cache/\n'
              '            ~/.cargo/git/db/\n            rendering/bevy-explorer/source/target/\n')
 

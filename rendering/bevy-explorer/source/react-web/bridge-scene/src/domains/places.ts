@@ -2,8 +2,11 @@
 // user's like and favourite on a place, and a place's photos.
 //   from: the places service via BevyApi.kernelFetch, signed so each place carries the signed-in
 //         user's own like, dislike and favourite;
-//       + camera-reel for a place's photos.
-import type { DiscoverPlace, PlacePhoto, SearchPlacesRequest } from '@explorer-core/engine/protocol'
+//       + camera-reel for a place's photos;
+//       + one place by id for the lobby's place details, with its connected players;
+//       + whether the player may enter a world, from the engine's entry check.
+import type { DiscoverPlace, PlacePhoto, SearchPlacesRequest, SignedPlace } from '@explorer-core/engine/protocol'
+import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { serviceBase, signed, signedBody } from '../http'
 
@@ -32,28 +35,35 @@ function mapPlace(p: PlaceRaw): DiscoverPlace {
 
 const places = (rows: PlaceRaw[] | undefined): DiscoverPlace[] => (Array.isArray(rows) ? rows.map(mapPlace) : [])
 
-async function placesAt(positions: string[]): Promise<DiscoverPlace[]> {
+async function placesAt(positions: string[], world?: string): Promise<DiscoverPlace[]> {
   if (positions.length === 0) return []
+  if (world != null && world !== '') {
+    // `names` turns `positions` off on the service, so the scenes covering them are put first here
+    const scenes = places(await signed<PlaceRaw[]>(`${await serviceBase('places')}/api/places?names=${encodeURIComponent(world)}&with_realms_detail=true`))
+    const covers = (p: DiscoverPlace): boolean => p.positions.some((at) => positions.includes(at))
+    return [...scenes.filter(covers), ...scenes.filter((p) => !covers(p))]
+  }
   const query = positions.map((p) => `positions=${p}`).join('&')
   return places(await signed<PlaceRaw[]>(`${await serviceBase('places')}/api/places?${query}&with_realms_detail=true`))
 }
 
 const queryValue = (value: string): string => encodeURIComponent(value).replace(/%20/g, '+')
 
-async function search(msg: SearchPlacesRequest): Promise<{ places: DiscoverPlace[]; total: number }> {
-  const params = [
-    `search=${queryValue(msg.search)}`,
-    `offset=${msg.offset}`,
-    `limit=${msg.limit}`,
-    `order_by=${msg.orderBy}`,
-    'order=desc',
-    `categories=${msg.favorites ? '' : encodeURIComponent(msg.category)}`,
-    'with_realms_detail=true',
-    'only_sdk7=true'
-  ]
+/** The destinations search's query. The service answers an empty `categories` with no places, so
+ *  a search without text or without a category leaves that parameter out. */
+function searchQuery(msg: SearchPlacesRequest): string {
+  const params: string[] = []
+  if (msg.search !== '') params.push(`search=${queryValue(msg.search)}`)
+  params.push(`offset=${msg.offset}`, `limit=${msg.limit}`, `order_by=${msg.orderBy}`, 'order=desc')
+  if (!msg.favorites && msg.category !== '') params.push(`categories=${encodeURIComponent(msg.category)}`)
+  params.push('with_realms_detail=true', 'only_sdk7=true')
   if (msg.favorites) params.push('only_favorites=true')
+  return params.join('&')
+}
+
+async function search(msg: SearchPlacesRequest): Promise<{ places: DiscoverPlace[]; total: number }> {
   // the whole body: the page needs `total` beside the places
-  const body = await signedBody<{ data?: PlaceRaw[]; total?: number }>(`${await serviceBase('places')}/api/destinations?${params.join('&')}`)
+  const body = await signedBody<{ data?: PlaceRaw[]; total?: number }>(`${await serviceBase('places')}/api/destinations?${searchQuery(msg)}`)
   const found = places(body?.data)
   return { places: found, total: body?.total ?? found.length }
 }
@@ -69,9 +79,27 @@ async function photos(placeId: string, offset: number, limit: number): Promise<{
 
 // Every request is answered, a failed one with `failed`, so the page never waits for nothing.
 export function registerPlaces(ctx: Ctx): void {
+  ctx.on('getPlace', async (msg) => {
+    try {
+      const url = `${await serviceBase('places')}/api/destinations?ids=${encodeURIComponent(msg.id)}&with_connected_users=true`
+      const rows = await signed<SignedPlace[]>(url)
+      ctx.send({ kind: 'place', requestId: msg.requestId, place: Array.isArray(rows) ? (rows.find((p) => p.id === msg.id) ?? null) : null })
+    } catch (e) {
+      console.error('[places] place read failed', e)
+      ctx.send({ kind: 'place', requestId: msg.requestId, place: null })
+    }
+  })
+  ctx.on('getWorldAccess', async (msg) => {
+    try {
+      ctx.send({ kind: 'worldAccess', requestId: msg.requestId, access: (await BevyApi.getWorldAccess?.(msg.world)) ?? 'failed' })
+    } catch (e) {
+      console.error('[places] world access failed', e)
+      ctx.send({ kind: 'worldAccess', requestId: msg.requestId, access: 'failed' })
+    }
+  })
   ctx.on('getPlacesAt', async (msg) => {
     try {
-      ctx.send({ kind: 'placesAt', request: msg.request, places: await placesAt(msg.positions) })
+      ctx.send({ kind: 'placesAt', request: msg.request, places: await placesAt(msg.positions, msg.world) })
     } catch (e) {
       console.error('[places] by parcel failed', e)
       ctx.send({ kind: 'placesAt', request: msg.request, places: [], failed: true })

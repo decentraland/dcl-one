@@ -3,7 +3,9 @@
 // position themselves from, so a drag or a zoom step repaints without re-rendering the page.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { growRect, levelFor, rectContains } from '@explorer-core/features/map/atlas'
 import { PARCEL_UNITS, coordsToPosition, parcelWithinBounds, type Vec2 } from '@explorer-core/features/map/mapCoords'
+import type { DetailView } from '@explorer-core/features/map/satelliteTiles'
 import {
   BASE_ZOOM,
   DEFAULT_ZOOM_LEVEL,
@@ -24,11 +26,17 @@ import {
   type MapView
 } from '@explorer-core/features/map/mapZoom'
 
+/** Share of the view's own size the detail view reaches past it, so a short pan changes nothing. */
+const DETAIL_MARGIN = 0.25
+
 /** How far under its marker a title sits, in marker units. */
 const TITLE_BASE_Y = -1.2
 
 export interface MapCamera {
   viewportRef: (el: HTMLDivElement | null) => void
+  /** What the satellite detail layer must cover, as an external store: it changes when the view
+   *  leaves the rectangle last reported or crosses into another detail level, not on every frame. */
+  detail: { subscribe: (listener: () => void) => () => void; getSnapshot: () => DetailView }
   level: number
   /** The map-unit rectangle in view, refreshed when it moves by a meaningful amount. */
   visible: { xMin: number; yMin: number; xMax: number; yMax: number }
@@ -53,6 +61,9 @@ interface DragState {
   ratio: number
 }
 
+// The page is drawn inside a scaled overlay, so a client px is not a layout px.
+const layoutScale = (el: HTMLDivElement): number => (el.offsetWidth > 0 ? el.getBoundingClientRect().width / el.offsetWidth : 1)
+
 export function useMapCamera(): MapCamera {
   const elRef = useRef<HTMLDivElement | null>(null)
   const resizeObserver = useRef<ResizeObserver | null>(null)
@@ -69,6 +80,22 @@ export function useMapCamera(): MapCamera {
   const zoomStep = useRef(0)
   const inertia = useRef(0)
   const velocity = useRef({ x: 0, y: 0 })
+  // client px per layout px (the page sits in a scaled overlay), refreshed when the viewport resizes
+  const pageScale = useRef(1)
+  const detailView = useRef<DetailView>({ rect: { xMin: 0, yMin: 0, xMax: 0, yMax: 0 }, pxPerParcel: 0 })
+  const detailListeners = useRef(new Set<() => void>())
+  const detail = useMemo(
+    () => ({
+      subscribe: (listener: () => void): (() => void) => {
+        detailListeners.current.add(listener)
+        return () => {
+          detailListeners.current.delete(listener)
+        }
+      },
+      getSnapshot: (): DetailView => detailView.current
+    }),
+    []
+  )
 
   const write = useCallback((): void => {
     const el = elRef.current
@@ -88,6 +115,16 @@ export function useMapCamera(): MapCamera {
     s.setProperty('--user-unit', `${userMarkerScale(v.ortho) * k}px`)
     s.setProperty('--pin-unit', `${pinMarkerScale(v.ortho) * k}px`)
     s.setProperty('--path-dot', `${pathDotSize(v.ortho) * k}px`)
+
+    // the satellite detail layer: device px per parcel and the parcel rectangle in view
+    const halfWUnits = v.ortho * (v.width / v.height)
+    const exact = { xMin: (v.x - halfWUnits) / PARCEL_UNITS, xMax: (v.x + halfWUnits) / PARCEL_UNITS, yMin: (v.y - v.ortho) / PARCEL_UNITS, yMax: (v.y + v.ortho) / PARCEL_UNITS }
+    const pxPerParcel = PARCEL_UNITS * k * pageScale.current * (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)
+    const reported = detailView.current
+    if (!rectContains(reported.rect, exact) || levelFor(pxPerParcel) !== levelFor(reported.pxPerParcel)) {
+      detailView.current = { rect: growRect(exact, DETAIL_MARGIN), pxPerParcel }
+      for (const listener of [...detailListeners.current]) listener()
+    }
 
     // tell React only once the view has moved a quarter of its height past the rectangle it last
     // heard about, which carries half a height of margin on every side
@@ -135,12 +172,14 @@ export function useMapCamera(): MapCamera {
       if (el == null) return
       view.current.width = el.offsetWidth || view.current.width
       view.current.height = el.offsetHeight || view.current.height
+      pageScale.current = layoutScale(el)
       write()
       if (typeof ResizeObserver === 'undefined') return
       const observer = new ResizeObserver(() => {
         if (el.offsetWidth === 0 || el.offsetHeight === 0) return
         view.current.width = el.offsetWidth
         view.current.height = el.offsetHeight
+        pageScale.current = layoutScale(el)
         place(view.current.x, view.current.y)
       })
       observer.observe(el)
@@ -221,9 +260,6 @@ export function useMapCamera(): MapCamera {
     zoomBlocked.current = blocked
   }, [])
 
-  // The page is drawn inside a scaled overlay, so a client px is not a layout px.
-  const layoutScale = (el: HTMLDivElement): number => (el.offsetWidth > 0 ? el.getBoundingClientRect().width / el.offsetWidth : 1)
-
   const parcelAt = useCallback((clientX: number, clientY: number): Vec2 | null => {
     const el = elRef.current
     if (el == null) return null
@@ -289,7 +325,7 @@ export function useMapCamera(): MapCamera {
   }, [])
 
   return useMemo(
-    () => ({ viewportRef, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag }),
-    [viewportRef, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag]
+    () => ({ viewportRef, detail, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag }),
+    [viewportRef, detail, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag]
   )
 }

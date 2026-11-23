@@ -1,6 +1,10 @@
+#![forbid(unsafe_code)]
+
 pub mod engine;
 pub use engine::ImageProcessingPlugin;
 mod ktx2;
+mod satellite_tile;
+pub use satellite_tile::{satellite_tile_jpeg, validate_satellite_tile_path};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -33,17 +37,29 @@ pub struct AssetForProcessing {
     pub ty: ProcessingAssetType,
 }
 
+/// What the image processor thread takes from the engine.
+pub(crate) enum ProcessorRequest {
+    Asset(AssetForProcessing),
+    /// A satellite tile's KTX2 bytes, answered with its JPEG. The web engine has no compute
+    /// threads, so this runs on the processor worker; the native engine converts tiles on its
+    /// compute pool instead.
+    #[cfg(target_arch = "wasm32")]
+    SatelliteTile(
+        Vec<u8>,
+        tokio::sync::oneshot::Sender<Result<Vec<u8>, &'static str>>,
+    ),
+}
+
 #[cfg(target_arch = "wasm32")]
-#[allow(clippy::type_complexity)]
 static CHANNELS: OnceLock<
     Arc<
         Mutex<(
             Option<(
-                UnboundedSender<AssetForProcessing>,
+                UnboundedSender<ProcessorRequest>,
                 UnboundedReceiver<Result<AssetForProcessing, ()>>,
             )>,
             Option<(
-                UnboundedReceiver<AssetForProcessing>,
+                UnboundedReceiver<ProcessorRequest>,
                 UnboundedSender<Result<AssetForProcessing, ()>>,
             )>,
         )>,

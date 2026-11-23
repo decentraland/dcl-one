@@ -1,17 +1,18 @@
 import { Provider } from 'react-redux';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';
 
 import { analytics, misc } from '#preload';
+import { actions } from '/@/modules/store/creatorFund';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import * as api from '/@/lib/creatorFundApi';
 import { Worlds } from '/@/lib/worlds';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import {
   CYCLES,
@@ -19,6 +20,7 @@ import {
   OLDEST_CLOSED,
   exampleWorld,
   fail,
+  myPlaces,
   ok,
   payout,
   place,
@@ -30,7 +32,9 @@ vi.mock('/@/lib/creatorFundApi', () => ({
   getEnrollment: vi.fn(),
   getPayouts: vi.fn(),
   getPayoutWallet: vi.fn(),
+  getPlaces: vi.fn(),
   putPayoutWallet: vi.fn(),
+  putEnrollment: vi.fn(),
   postEmailVerification: vi.fn(),
   putEmailVerification: vi.fn(),
 }));
@@ -46,6 +50,12 @@ const ENROLLMENT: Enrollment = {
   email: 'jane.doe@example.com',
   email_verified_at: null,
 };
+
+const VERIFIED: Enrollment = { ...ENROLLMENT, email_verified_at: '2026-10-30T15:00:00Z' };
+
+const EMAIL_NEEDS_SCENE = 'You need to have a published scene to verify your email';
+const WALLET_NEEDS_SCENE = 'You need to have a published scene to set up your wallet.';
+const VERIFY_FIRST = 'Verify your email to set up your wallet.';
 
 const WALLET: PayoutWallet = {
   address: '0x000000000000000000000000000000000000dEaD',
@@ -65,9 +75,9 @@ const PAYOUTS = [
 function mountTab(store: ReturnType<typeof createTestStore>) {
   render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <PayoutsTab />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
 }
@@ -82,6 +92,20 @@ const cycleButton = (table: HTMLElement, name: string) =>
   within(table).getByRole('button', { name });
 const walletCard = async () => within(await screen.findByTestId('payouts-wallet-card'));
 const contactCard = async () => within(await screen.findByTestId('payouts-contact-card'));
+
+const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/get-a-wallet';
+const walletInfo = async () =>
+  (await walletCard()).findByRole('button', { name: 'About payout wallets' });
+const learnMore = () => screen.findByRole('link', { name: /Learn More/ });
+/** The visible line that says why a setup step is locked; its button names it as its description. */
+const lockHint = (card: ReturnType<typeof within>, text: string) => card.getByText(text);
+const PAYOUT_RULES_URL =
+  'https://docs.decentraland.org/creator/creator-fund/program-rules#payout-process';
+const openAddDialog = async () => {
+  fireEvent.click(await (await walletCard()).findByRole('button', { name: 'Add wallet' }));
+  return screen.findByRole('dialog', { name: 'Add payout wallet' });
+};
+const pause = (ms: number) => act(() => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
 const WALLET_CARD = '[data-testid="payouts-wallet-card"]';
 const CARDS = '[data-testid="payouts-wallet-card"], [data-testid="payouts-contact-card"]';
@@ -142,7 +166,8 @@ describe('PayoutsTab', () => {
 
   beforeEach(() => {
     vi.mocked(api.getCycles).mockResolvedValue(ok(CYCLES));
-    vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+    vi.mocked(api.getEnrollment).mockResolvedValue(ok(VERIFIED));
+    vi.mocked(api.getPlaces).mockResolvedValue(ok(myPlaces([place('a')])));
     vi.mocked(api.getPayouts).mockResolvedValue(ok({ payouts: PAYOUTS }));
     vi.mocked(api.getPayoutWallet).mockResolvedValue(ok(WALLET));
     vi.mocked(Worlds.prototype.fetchWorldScenes).mockResolvedValue({ scenes: [], total: 3 } as any);
@@ -459,6 +484,201 @@ describe('PayoutsTab', () => {
     });
   });
 
+  describe('when the payout wallet info button gets focus', () => {
+    it('should show the tooltip and name it as the description of the button', async () => {
+      await renderTab();
+      const info = await walletInfo();
+
+      act(() => info.focus());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toMatch(/^A digital wallet is where you store/);
+      expect(info.getAttribute('aria-describedby')).toBe(tooltip.id);
+    });
+
+    it('should move focus to Learn More on Tab and keep the tooltip open', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+
+      const moved = !fireEvent.keyDown(info, { key: 'Tab' });
+
+      expect(moved).toBe(true);
+      expect(document.activeElement).toBe(link);
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+    });
+
+    it('should go back to the button on Shift+Tab from Learn More, with the tooltip open', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      const held = !fireEvent.keyDown(link, { key: 'Tab', shiftKey: true });
+
+      expect(held).toBe(true);
+      expect(document.activeElement).toBe(info);
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+      expect(info.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id);
+    });
+
+    it('should close the tooltip when Tab leaves Learn More for the next control', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      const edit = (await walletCard()).getByRole('button', { name: 'Edit' });
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      // Tab goes on from the button: the handler puts focus there and leaves the key to the page.
+      const left = fireEvent.keyDown(link, { key: 'Tab' });
+      expect(left).toBe(true);
+      expect(document.activeElement).toBe(info);
+      act(() => edit.focus());
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      expect(info.hasAttribute('aria-describedby')).toBe(false);
+    });
+
+    it('should close the tooltip on Escape in Learn More and put focus on the button', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      fireEvent.keyDown(link, { key: 'Escape' });
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      expect(document.activeElement).toBe(info);
+    });
+
+    it('should open the tooltip on the next hover after Escape closed it from Learn More', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+      fireEvent.keyDown(link, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+
+      fireEvent.mouseEnter(info);
+
+      expect(await screen.findByRole('tooltip')).toBeTruthy();
+    });
+
+    it('should open the wallet guide in the browser from Learn More', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+
+      const followed = fireEvent.click(await learnMore());
+
+      expect(followed).toBe(false);
+      expect(misc.openExternal).toHaveBeenCalledWith(GET_A_WALLET_URL);
+    });
+  });
+
+  describe('when the pointer crosses the payout wallet info button', () => {
+    it('should never open the tooltip when the pointer leaves before the open delay', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      const tooltip = watchFor('[role="tooltip"]');
+
+      fireEvent.mouseEnter(info);
+      fireEvent.mouseLeave(info);
+      await pause(400);
+
+      expect(tooltip.seen()).toBe(false);
+      tooltip.stop();
+      expect(info.hasAttribute('aria-describedby')).toBe(false);
+    });
+
+    it('should open the tooltip when the pointer stays', async () => {
+      await renderTab();
+      const info = await walletInfo();
+
+      fireEvent.mouseEnter(info);
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(within(tooltip).getByRole('link', { name: /Learn More/ })).toBeTruthy();
+    });
+  });
+
+  describe('when the info button beside the payout wallet dialog title gets focus', () => {
+    beforeEach(() => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
+    });
+
+    it('should explain the payout wallet in the tooltip and name it as the description of the button', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      const info = within(dialog).getByRole('button', { name: 'About payout wallets' });
+
+      act(() => info.focus());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toMatch(
+        /^Your payout wallet is where the Creator Fund sends your rewards, in USDC on Ethereum \(ERC-20\)/,
+      );
+      expect(info.getAttribute('aria-describedby')).toBe(tooltip.id);
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should move focus to Learn More on Tab and keep the tooltip and the dialog open', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      const info = within(dialog).getByRole('button', { name: 'About payout wallets' });
+      act(() => info.focus());
+      const link = await learnMore();
+
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      expect(document.activeElement).toBe(link);
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should close only the tooltip on Escape in Learn More, keeping the dialog open', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      const info = within(dialog).getByRole('button', { name: 'About payout wallets' });
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      fireEvent.keyDown(link, { key: 'Escape' });
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      expect(document.activeElement).toBe(info);
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should open the payout rules in the browser from Learn More, keeping the dialog open', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      act(() => within(dialog).getByRole('button', { name: 'About payout wallets' }).focus());
+
+      const followed = fireEvent.click(await learnMore());
+
+      expect(followed).toBe(false);
+      expect(misc.openExternal).toHaveBeenCalledTimes(1);
+      expect(misc.openExternal).toHaveBeenCalledWith(PAYOUT_RULES_URL);
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should offer the same button when the wallet is changed', async () => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(ok(WALLET));
+      await renderTab();
+      fireEvent.click(await (await walletCard()).findByRole('button', { name: 'Edit' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Change payout wallet' });
+
+      expect(within(dialog).getByRole('button', { name: 'About payout wallets' })).toBeTruthy();
+    });
+  });
+
   describe('when there is no payout wallet', () => {
     beforeEach(() => {
       vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
@@ -471,6 +691,17 @@ describe('PayoutsTab', () => {
       expect(await wallet.findByRole('button', { name: 'Add wallet' })).toBeTruthy();
       expect(wallet.queryByRole('button', { name: 'Edit' })).toBeNull();
       expect(wallet.queryByRole('button', { name: 'Copy wallet address' })).toBeNull();
+    });
+
+    it('should give ADD WALLET and an unverified VERIFY EMAIL the same primary button', async () => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+      await renderTab();
+
+      const add = await (await walletCard()).findByRole('button', { name: 'Add wallet' });
+      const verify = await (await contactCard()).findByRole('button', { name: 'Verify email' });
+      for (const button of [add, verify]) {
+        expect(button.classList).toContain('btn--primary');
+      }
     });
 
     it('should hold the submit until the address is valid and flag a bad one on blur', async () => {
@@ -553,7 +784,20 @@ describe('PayoutsTab', () => {
   });
 
   describe('when the email is not verified', () => {
+    const CONFIRM_TITLE = '1. Confirm your email';
+    const CODE_TITLE = '2. Enter the verification code';
+    const NEW_EMAIL = 'jane.doe@example.org';
+    const GENERIC = 'Something went wrong. Please try again.';
+    const DAILY_LIMIT = "You've requested too many codes today. Try again tomorrow.";
+    const SEND_SOON = 'You can send a code to this address in a moment.';
+
+    const tooSoon = (inMs: number) => ({
+      ...fail(429),
+      body: { error: 'too_soon', resend_available_at: new Date(Date.now() + inMs).toISOString() },
+    });
+
     beforeEach(() => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
       vi.mocked(api.postEmailVerification).mockResolvedValue(
         ok(
           {
@@ -564,13 +808,39 @@ describe('PayoutsTab', () => {
           202,
         ),
       );
+      vi.mocked(api.putEnrollment).mockImplementation(async request =>
+        ok({ ...ENROLLMENT, ...request }),
+      );
     });
 
     async function openVerify() {
-      await renderTab();
+      const store = await renderTab();
       fireEvent.click(await (await contactCard()).findByRole('button', { name: 'Verify email' }));
-      return screen.findByRole('dialog', { name: 'Verify your email' });
+      return { store, dialog: await screen.findByRole('dialog', { name: CONFIRM_TITLE }) };
     }
+
+    const continueButton = (dialog: HTMLElement) => within(dialog).getByText('Continue');
+    const emailInput = (dialog: HTMLElement) =>
+      within(dialog).getByLabelText('Email') as HTMLInputElement;
+    const pencil = (dialog: HTMLElement) => within(dialog).getByLabelText('Edit email');
+    const focusOn = (element: HTMLElement) =>
+      waitFor(() => expect(document.activeElement).toBe(element));
+
+    const toCodeStep = async (dialog: HTMLElement) => {
+      fireEvent.click(continueButton(dialog));
+      await screen.findByRole('dialog', { name: CODE_TITLE });
+    };
+
+    async function openCodeStep() {
+      const { dialog } = await openVerify();
+      await toCodeStep(dialog);
+      return dialog;
+    }
+
+    const editEmail = (dialog: HTMLElement, value: string) => {
+      fireEvent.click(pencil(dialog));
+      fireEvent.change(emailInput(dialog), { target: { value } });
+    };
 
     const typeCode = (dialog: HTMLElement, code: string) =>
       fireEvent.paste(within(dialog).getByLabelText('Digit 1 of 6'), {
@@ -584,6 +854,407 @@ describe('PayoutsTab', () => {
       expectNoPrivateValuesTracked();
     });
 
+    describe('and the dialog opens on its first step', () => {
+      it('should show the email read-only with focus on CONTINUE, and send nothing', async () => {
+        const { dialog } = await openVerify();
+
+        expect(emailInput(dialog).value).toBe('jane.doe@example.com');
+        expect(emailInput(dialog).readOnly).toBe(true);
+        expect(document.activeElement).toBe(continueButton(dialog));
+        expect(api.postEmailVerification).not.toHaveBeenCalled();
+      });
+
+      it('should send a code on CONTINUE and open the code step on the first box', async () => {
+        const dialog = await openCodeStep();
+
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
+        await focusOn(within(dialog).getByLabelText('Digit 1 of 6'));
+        const resend = within(dialog).getByText('Resend code');
+        await waitFor(() => expect(resend.getAttribute('aria-disabled')).toBe('true'));
+        expect(within(dialog).getByText('Verify').hasAttribute('disabled')).toBe(true);
+        expect(within(dialog).getByText('Back')).toBeTruthy();
+        expect(within(dialog).queryByText('Cancel')).toBeNull();
+      });
+
+      it('should make the field editable from the pencil, with focus in it and its text selected', async () => {
+        const select = vi.spyOn(HTMLInputElement.prototype, 'select');
+        const { dialog } = await openVerify();
+
+        fireEvent.click(pencil(dialog));
+
+        const input = emailInput(dialog);
+        expect(input.readOnly).toBe(false);
+        expect(document.activeElement).toBe(input);
+        expect(select.mock.contexts).toEqual([input]);
+        expect(within(dialog).queryByLabelText('Edit email')).toBeNull();
+        select.mockRestore();
+      });
+
+      it('should save a changed email with the names and the current terms, then send the code to it', async () => {
+        const { store, dialog } = await openVerify();
+        store.dispatch(actions.fetchTerms.pending('terms', undefined));
+        store.dispatch(
+          actions.fetchTerms.fulfilled(
+            { version: 2, title: 'Terms', published_at: '2026-11-01T00:00:00Z', content: '' },
+            'terms',
+            undefined,
+          ),
+        );
+
+        editEmail(dialog, `  ${NEW_EMAIL} `);
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).toHaveBeenCalledWith({
+          first_name: 'Jane',
+          last_name: 'Doe',
+          email: NEW_EMAIL,
+          terms_version: 2,
+        });
+        expect(vi.mocked(api.putEnrollment).mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(api.postEmailVerification).mock.invocationCallOrder[0],
+        );
+        expect(within(dialog).getByText(NEW_EMAIL).tagName).toBe('B');
+      });
+
+      it('should count an email equal to the current one once trimmed as unchanged', async () => {
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, ' jane.doe@example.com ');
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should count an email that differs from the current one only in case as unchanged', async () => {
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, ' JANE.DOE@Example.com ');
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should open the code step on the cooling code when its address comes back in another case', async () => {
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+
+        editEmail(dialog, 'Jane.Doe@EXAMPLE.com');
+        await toCodeStep(dialog);
+
+        expect(api.putEnrollment).not.toHaveBeenCalled();
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should hold CONTINUE on an empty or invalid email and flag an invalid one under the field', async () => {
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, '');
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        expect(within(dialog).queryByRole('alert')).toBeNull();
+
+        fireEvent.change(emailInput(dialog), { target: { value: 'jane.doe@' } });
+        fireEvent.blur(emailInput(dialog));
+
+        const alert = await within(dialog).findByRole('alert');
+        expect(alert.textContent).toBe('Invalid email');
+        expect(emailInput(dialog).getAttribute('aria-invalid')).toBe('true');
+        expect(emailInput(dialog).getAttribute('aria-describedby')).toContain(alert.id);
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+      });
+
+      it('should stay on the step with the error line when the save fails', async () => {
+        vi.mocked(api.putEnrollment).mockResolvedValue(fail(500));
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        expect(api.postEmailVerification).not.toHaveBeenCalled();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+        await focusOn(emailInput(dialog));
+      });
+
+      it('should stay on the step with the error line when the service says the email is already verified', async () => {
+        vi.mocked(api.putEnrollment).mockResolvedValue({
+          ...fail(409),
+          body: { error: 'email_verified' },
+        } as never);
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        expect(api.postEmailVerification).not.toHaveBeenCalled();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+      });
+
+      it('should wait on a changed email while a 150 s cooldown runs', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(tooSoon(150e3) as never);
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        await expectWaiting(dialog);
+      });
+
+      it('should keep the saved email read-only when the send fails after it, and retry only the send', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(fail(500));
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        expect(emailInput(dialog).value).toBe(NEW_EMAIL);
+        expect(emailInput(dialog).readOnly).toBe(true);
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false));
+        await focusOn(emailInput(dialog));
+
+        await toCodeStep(dialog);
+        expect(api.putEnrollment).toHaveBeenCalledTimes(1);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+      });
+
+      it('should say a failed send under the field and let CONTINUE try again', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(fail(500));
+        const { dialog } = await openVerify();
+
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false));
+        await focusOn(emailInput(dialog));
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+      });
+
+      it.each([
+        ['30 s', 30e3],
+        ['90 s', 90e3],
+        ['150 s', 150e3],
+        ['3 min', 180e3],
+      ])(
+        'should open the code step without a new code while the last one cools down for %s',
+        async (_away, ms) => {
+          vi.mocked(api.postEmailVerification).mockResolvedValue(tooSoon(ms) as never);
+          const { dialog } = await openVerify();
+
+          await toCodeStep(dialog);
+
+          expect(within(dialog).queryByRole('alert')).toBeNull();
+          expect(within(dialog).getByText('Resend code').getAttribute('aria-disabled')).toBe(
+            'true',
+          );
+        },
+      );
+
+      it.each([
+        ['6 h', 6 * 3600e3],
+        ['12 h', 12 * 3600e3],
+      ])(
+        'should say the daily limit and hold CONTINUE when the next code is %s away',
+        async (_away, ms) => {
+          vi.mocked(api.postEmailVerification).mockResolvedValue(tooSoon(ms) as never);
+          const { dialog } = await openVerify();
+
+          fireEvent.click(continueButton(dialog));
+
+          expect((await within(dialog).findByRole('alert')).textContent).toBe(DAILY_LIMIT);
+          expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+          await focusOn(emailInput(dialog));
+          expect(screen.getByRole('dialog', { name: CONFIRM_TITLE })).toBe(dialog);
+        },
+      );
+
+      const expectWaiting = async (dialog: HTMLElement) => {
+        const status = await within(dialog).findByRole('status');
+        expect(status.textContent).toBe(SEND_SOON);
+        expect(within(dialog).queryByRole('alert')).toBeNull();
+        expect(emailInput(dialog).value).toBe(NEW_EMAIL);
+        expect(emailInput(dialog).readOnly).toBe(true);
+        expect(pencil(dialog)).toBeTruthy();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        expect(continueButton(dialog).getAttribute('aria-describedby')).toBe(status.id);
+        expect(screen.queryByRole('dialog', { name: CODE_TITLE })).toBeNull();
+        await focusOn(emailInput(dialog));
+      };
+
+      const waitOut = async (dialog: HTMLElement) => {
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false), {
+          timeout: 3000,
+        });
+        expect(within(dialog).queryByRole('status')).toBeNull();
+      };
+
+      it('should keep a changed email on this step until the cooldown the service answers ends, then send on CONTINUE', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(tooSoon(600) as never);
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        await expectWaiting(dialog);
+        await waitOut(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+        expect(api.putEnrollment).toHaveBeenCalledTimes(1);
+        expect(within(dialog).getByText(NEW_EMAIL).tagName).toBe('B');
+      });
+
+      it('should keep a changed email on this step while the code just sent cools down, sending nothing until CONTINUE', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(
+          ok(
+            {
+              sent_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + 600e3).toISOString(),
+              resend_available_at: new Date(Date.now() + 600).toISOString(),
+            },
+            202,
+          ),
+        );
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        await expectWaiting(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        await waitOut(dialog);
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
+        expect(within(dialog).getByText(NEW_EMAIL).tagName).toBe('B');
+      });
+
+      const waitOnNewEmail = async () => {
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+        await expectWaiting(dialog);
+        return dialog;
+      };
+
+      it('should take the address the last code went to back while waiting, and open the code step on that code', async () => {
+        const dialog = await waitOnNewEmail();
+
+        editEmail(dialog, 'jane.doe@example.com');
+
+        expect(within(dialog).queryByRole('status')).toBeNull();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+        await toCodeStep(dialog);
+        expect(vi.mocked(api.putEnrollment).mock.calls.map(([request]) => request.email)).toEqual([
+          NEW_EMAIL,
+          'jane.doe@example.com',
+        ]);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
+      });
+
+      it('should keep waiting when the saved address is edited only in case', async () => {
+        const dialog = await waitOnNewEmail();
+
+        editEmail(dialog, 'JANE.DOE@example.ORG');
+
+        expect(within(dialog).getByRole('status').textContent).toBe(SEND_SOON);
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        expect(api.putEnrollment).toHaveBeenCalledTimes(1);
+      });
+
+      it('should save a third address at once while waiting, then wait on it', async () => {
+        const dialog = await waitOnNewEmail();
+
+        editEmail(dialog, 'jane.doe@example.net');
+
+        expect(within(dialog).queryByRole('status')).toBeNull();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+        fireEvent.click(continueButton(dialog));
+        await waitFor(() => expect(api.putEnrollment).toHaveBeenCalledTimes(2));
+        expect(vi.mocked(api.putEnrollment).mock.calls[1][0].email).toBe('jane.doe@example.net');
+        expect((await within(dialog).findByRole('status')).textContent).toBe(SEND_SOON);
+        expect(emailInput(dialog).value).toBe('jane.doe@example.net');
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep waiting for the changed email when the dialog is closed and opened again', async () => {
+        const dialog = await openCodeStep();
+        fireEvent.click(within(dialog).getByText('Back'));
+        await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+        await expectWaiting(dialog);
+
+        fireEvent.keyDown(dialog, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        fireEvent.click(await (await contactCard()).findByRole('button', { name: 'Verify email' }));
+        const again = await screen.findByRole('dialog', { name: CONFIRM_TITLE });
+        fireEvent.click(continueButton(again));
+
+        await expectWaiting(again);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+      });
+
+      it('should say a refused send with no time for the next code as a failure, and let CONTINUE try again', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValue({
+          ...fail(429),
+          body: { error: 'too_soon' },
+        });
+        const { dialog } = await openVerify();
+
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        await waitFor(() => expect(continueButton(dialog).hasAttribute('disabled')).toBe(false));
+        expect(screen.getByRole('dialog', { name: CONFIRM_TITLE })).toBe(dialog);
+      });
+
+      it('should say an active place is needed when the service refuses the code for it, and lock the step', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValue({
+          ...fail(403),
+          body: { error: 'no_active_place' },
+        });
+        vi.mocked(api.getPlaces)
+          .mockResolvedValueOnce(ok(myPlaces([place('a')])))
+          .mockResolvedValue(ok(myPlaces([])));
+        const { dialog } = await openVerify();
+
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(EMAIL_NEEDS_SCENE);
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(true);
+        await focusOn(emailInput(dialog));
+        const contact = await contactCard();
+        await waitFor(() => expect(lockHint(contact, EMAIL_NEEDS_SCENE)).toBeTruthy());
+      });
+    });
+
+    describe('and BACK is pressed on the code step', () => {
+      it('should return to the first step read-only, with focus on the pencil and the code cleared', async () => {
+        const dialog = await openCodeStep();
+        typeCode(dialog, '12');
+
+        fireEvent.click(within(dialog).getByText('Back'));
+
+        expect(await screen.findByRole('dialog', { name: CONFIRM_TITLE })).toBe(dialog);
+        expect(emailInput(dialog).readOnly).toBe(true);
+        await waitFor(() => expect(document.activeElement).toBe(pencil(dialog)));
+        await toCodeStep(dialog);
+        expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        expect((within(dialog).getByLabelText('Digit 1 of 6') as HTMLInputElement).value).toBe('');
+      });
+    });
+
     it.each([
       ['verified', ok({ ...ENROLLMENT, email_verified_at: '2026-11-04T10:02:00Z' })],
       ['incorrect', { ...fail(400), body: { error: 'invalid_code' } }],
@@ -591,7 +1262,7 @@ describe('PayoutsTab', () => {
       ['locked', { ...fail(429), body: { error: 'too_many_attempts' } }],
     ] as const)('should track a %s code once', async (result, response) => {
       vi.mocked(api.putEmailVerification).mockResolvedValue(response as never);
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -604,7 +1275,7 @@ describe('PayoutsTab', () => {
 
     it('should track no code verdict when the check itself fails', async () => {
       vi.mocked(api.putEmailVerification).mockResolvedValue(fail(500));
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -621,24 +1292,11 @@ describe('PayoutsTab', () => {
       expect(screen.getByText('Unverified')).toBeTruthy();
     });
 
-    it('should send a code on open and hold Resend Code', async () => {
-      const dialog = await openVerify();
-
-      expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
-      expect(within(dialog).getByText('jane.doe@example.com').tagName).toBe('B');
-      expect(document.activeElement).toBe(within(dialog).getByLabelText('Digit 1 of 6'));
-      const resend = within(dialog).getByRole('button', { name: 'Resend Code' });
-      await waitFor(() => expect(resend.getAttribute('aria-disabled')).toBe('true'));
-      expect(within(dialog).getByRole('button', { name: 'Verify' }).hasAttribute('disabled')).toBe(
-        true,
-      );
-    });
-
     it('should verify the code, say so and drop the badge and VERIFY EMAIL', async () => {
       vi.mocked(api.putEmailVerification).mockResolvedValue(
         ok({ ...ENROLLMENT, email_verified_at: '2026-11-04T10:02:00Z' }),
       );
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '000000');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -650,9 +1308,56 @@ describe('PayoutsTab', () => {
       expect((await contactCard()).queryByRole('button', { name: 'Verify email' })).toBeNull();
       const heading = screen.getByRole('heading', { level: 2, name: 'Contact Information' });
       await waitFor(() => expect(document.activeElement).toBe(heading));
+      const wallet = await walletCard();
+      expect(wallet.queryByText(VERIFY_FIRST)).toBeNull();
+      expect(wallet.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     });
 
-    it('should keep Resend Code under an expired code and let it send a new one', async () => {
+    it('should lock the payout wallet, saying beside ADD WALLET to verify the email first', async () => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
+      await renderTab();
+      const wallet = await walletCard();
+      const add = await wallet.findByRole('button', { name: 'Add wallet' });
+
+      expect(add.hasAttribute('disabled')).toBe(true);
+      expect(screen.getByTestId('payouts-wallet-card').hasAttribute('data-locked')).toBe(true);
+      expect(add.getAttribute('aria-describedby')).toBe(lockHint(wallet, VERIFY_FIRST).id);
+      expect(screen.queryByText('Unavailable')).toBeNull();
+      expect((await contactCard()).queryByText(EMAIL_NEEDS_SCENE)).toBeNull();
+    });
+
+    it('should keep a wallet set before the email was verified, with EDIT disabled', async () => {
+      await renderTab();
+      const wallet = await walletCard();
+
+      expect(await wallet.findByText('0x00000...00dEaD')).toBeTruthy();
+      const edit = wallet.getByRole('button', { name: 'Edit' });
+      expect(edit.hasAttribute('disabled')).toBe(true);
+      expect(edit.getAttribute('aria-describedby')).toBe(lockHint(wallet, VERIFY_FIRST).id);
+    });
+
+    it.each([
+      ['an incorrect code', { ...fail(400), body: { error: 'invalid_code' } }, 'first box'],
+      ['an expired code', { ...fail(410), body: { error: 'code_expired' } }, 'resend'],
+      ['too many tries', { ...fail(429), body: { error: 'too_many_attempts' } }, 'resend'],
+    ] as const)('should move focus to what %s is about', async (_case, response, target) => {
+      vi.mocked(api.putEmailVerification).mockResolvedValue(response as never);
+      const dialog = await openCodeStep();
+
+      typeCode(dialog, '123456');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
+
+      await within(dialog).findByRole('alert');
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          target === 'resend'
+            ? within(dialog).getByRole('button', { name: 'Resend code' })
+            : within(dialog).getByLabelText('Digit 1 of 6'),
+        ),
+      );
+    });
+
+    it('should keep Resend code under an expired code and let it send a new one', async () => {
       vi.mocked(api.putEmailVerification).mockResolvedValue({
         ...fail(410),
         body: { error: 'code_expired' },
@@ -678,12 +1383,12 @@ describe('PayoutsTab', () => {
             202,
           ),
         );
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
       await within(dialog).findByRole('alert');
 
-      const resend = within(dialog).getByRole('button', { name: 'Resend Code' });
+      const resend = within(dialog).getByRole('button', { name: 'Resend code' });
       expect(resend.getAttribute('aria-disabled')).toBeNull();
       fireEvent.click(resend);
 
@@ -691,8 +1396,18 @@ describe('PayoutsTab', () => {
       expect(within(dialog).queryByRole('alert')).toBeNull();
     });
 
-    it('should say a failed send on the error line and keep Resend Code to try again', async () => {
+    it('should say a failed resend on the error line and keep Resend code to try again', async () => {
       vi.mocked(api.postEmailVerification)
+        .mockResolvedValueOnce(
+          ok(
+            {
+              sent_at: '2026-11-04T09:00:00Z',
+              expires_at: '2026-11-04T09:10:00Z',
+              resend_available_at: '2026-11-04T09:01:00Z',
+            },
+            202,
+          ),
+        )
         .mockResolvedValueOnce(fail(500))
         .mockResolvedValue(
           ok(
@@ -704,25 +1419,24 @@ describe('PayoutsTab', () => {
             202,
           ),
         );
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Resend code' }));
 
-      expect((await within(dialog).findByRole('alert')).textContent).toBe(
-        'Something went wrong. Please try again.',
-      );
-      const resend = within(dialog).getByRole('button', { name: 'Resend Code' });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+      const resend = within(dialog).getByRole('button', { name: 'Resend code' });
       expect(resend.getAttribute('aria-disabled')).toBeNull();
       fireEvent.click(resend);
 
-      await waitFor(() => expect(api.postEmailVerification).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(api.postEmailVerification).toHaveBeenCalledTimes(3));
       await waitFor(() => expect(within(dialog).queryByRole('alert')).toBeNull());
     });
 
     it.each([
-      [400, 'invalid_code', 'Incorrect Code. Check the email and try again.'],
-      [429, 'too_many_attempts', 'Something went wrong. Please try again.'],
-    ])('should explain a %s %s', async (status, error, message) => {
+      [400, 'invalid_code', 'Incorrect code. Check the email and try again.', false],
+      [429, 'too_many_attempts', GENERIC, true],
+    ])('should explain a %s %s', async (status, error, message, resendShown) => {
       vi.mocked(api.putEmailVerification).mockResolvedValue({ ...fail(status), body: { error } });
-      const dialog = await openVerify();
+      const dialog = await openCodeStep();
 
       typeCode(dialog, '123456');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Verify' }));
@@ -731,7 +1445,7 @@ describe('PayoutsTab', () => {
       expect(within(dialog).getByLabelText('Digit 1 of 6').getAttribute('aria-invalid')).toBe(
         'true',
       );
-      expect(within(dialog).queryByRole('button', { name: 'Resend Code' })).toBeNull();
+      expect(!!within(dialog).queryByRole('button', { name: 'Resend code' })).toBe(resendShown);
     });
   });
 
@@ -750,6 +1464,116 @@ describe('PayoutsTab', () => {
       expect(screen.queryByRole('heading', { name: 'Payout Wallet' })).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       expect(await screen.findByRole('heading', { name: 'Payout Wallet' })).toBeTruthy();
+    });
+  });
+
+  describe('when the setup steps show', () => {
+    it('should put the email first and the payout wallet second', async () => {
+      await renderTab();
+      await walletCard();
+
+      expect(
+        [...document.querySelectorAll(CARDS)].map(card => card.getAttribute('data-testid')),
+      ).toEqual(['payouts-contact-card', 'payouts-wallet-card']);
+    });
+
+    it('should ask for the places with no cycle, the view the service checks', async () => {
+      await renderTab();
+      await walletCard();
+
+      expect(api.getPlaces).toHaveBeenCalledWith();
+    });
+  });
+
+  describe('when none of the places is in the program', () => {
+    beforeEach(() => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+      vi.mocked(api.getPlaces).mockResolvedValue(
+        ok(myPlaces([place('a', { status: 'not_eligible', reasons: ['content_policy'] })])),
+      );
+    });
+
+    it('should lock the email step, say an active place is needed, and send no code', async () => {
+      await renderTab();
+      const contact = await contactCard();
+      const verify = await contact.findByRole('button', { name: 'Verify email' });
+
+      expect(verify.hasAttribute('disabled')).toBe(true);
+      fireEvent.click(verify);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(api.postEmailVerification).not.toHaveBeenCalled();
+      expect(verify.getAttribute('aria-describedby')).toBe(lockHint(contact, EMAIL_NEEDS_SCENE).id);
+    });
+
+    it('should put the line in the title row after the title and VERIFY EMAIL, so it can fall under them', async () => {
+      await renderTab();
+      const contact = await contactCard();
+      const verify = await contact.findByRole('button', { name: 'Verify email' });
+      const title = contact.getByRole('heading', { name: 'Contact Information' });
+
+      expect(verify.previousElementSibling).toBe(title.parentElement);
+      expect(verify.nextElementSibling).toBe(lockHint(contact, EMAIL_NEEDS_SCENE));
+    });
+
+    it('should keep the payout wallet locked behind the email', async () => {
+      await renderTab();
+
+      expect(lockHint(await walletCard(), VERIFY_FIRST)).toBeTruthy();
+    });
+
+    describe('and the email is verified', () => {
+      beforeEach(() => {
+        vi.mocked(api.getEnrollment).mockResolvedValue(ok(VERIFIED));
+      });
+
+      it('should lock EDIT, keep the address, and say an active place is needed', async () => {
+        await renderTab();
+        const wallet = await walletCard();
+        const edit = await wallet.findByRole('button', { name: 'Edit' });
+
+        expect(edit.hasAttribute('disabled')).toBe(true);
+        expect(wallet.getByTitle(WALLET.address)).toBeTruthy();
+        expect(edit.getAttribute('aria-describedby')).toBe(lockHint(wallet, WALLET_NEEDS_SCENE).id);
+        expect(screen.queryByText(VERIFY_FIRST)).toBeNull();
+      });
+
+      it('should lock ADD WALLET when no wallet is set', async () => {
+        vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
+        await renderTab();
+        const wallet = await walletCard();
+        const add = await wallet.findByRole('button', { name: 'Add wallet' });
+
+        expect(add.hasAttribute('disabled')).toBe(true);
+        fireEvent.click(add);
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(add.getAttribute('aria-describedby')).toBe(lockHint(wallet, WALLET_NEEDS_SCENE).id);
+      });
+    });
+  });
+
+  describe('when the places fail to load', () => {
+    it('should leave the payout wallet of a verified email to the service', async () => {
+      vi.mocked(api.getPlaces).mockResolvedValue(fail(500));
+      await renderTab();
+      const wallet = await walletCard();
+
+      expect((await wallet.findByRole('button', { name: 'Edit' })).hasAttribute('disabled')).toBe(
+        false,
+      );
+      expect(wallet.queryByText(WALLET_NEEDS_SCENE)).toBeNull();
+    });
+
+    it('should show the steps and leave VERIFY EMAIL to the service', async () => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+      vi.mocked(api.getPlaces).mockResolvedValue(fail(500));
+      await renderTab();
+      const contact = await contactCard();
+
+      expect(
+        (await contact.findByRole('button', { name: 'Verify email' })).hasAttribute('disabled'),
+      ).toBe(false);
+      expect(contact.queryByText(EMAIL_NEEDS_SCENE)).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
     });
   });
 
@@ -821,6 +1645,37 @@ describe('PayoutsTab', () => {
       expectNoPrivateValuesTracked();
     });
 
+    it('should say the wallet was kept when the service could not email the change', async () => {
+      vi.mocked(api.putPayoutWallet).mockResolvedValue({
+        ...fail(502),
+        body: { error: 'email_unavailable' },
+      });
+
+      await saveWallet('Edit', 'Change payout wallet', 'Save');
+
+      const dialog = screen.getByRole('dialog', { name: 'Change payout wallet' });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(
+        "We couldn't email you about this change, so your wallet wasn't saved. Please try again.",
+      );
+    });
+
+    it('should say an active place is needed when the service finds none, and lock the step', async () => {
+      vi.mocked(api.putPayoutWallet).mockResolvedValue({
+        ...fail(403),
+        body: { error: 'no_active_place' },
+      });
+      vi.mocked(api.getPlaces)
+        .mockResolvedValueOnce(ok(myPlaces([place('a')])))
+        .mockResolvedValue(ok(myPlaces([])));
+
+      await saveWallet('Edit', 'Change payout wallet', 'Save');
+
+      const dialog = screen.getByRole('dialog', { name: 'Change payout wallet' });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(WALLET_NEEDS_SCENE);
+      const wallet = await walletCard();
+      await waitFor(() => expect(lockHint(wallet, WALLET_NEEDS_SCENE)).toBeTruthy());
+    });
+
     it('should track a refused wallet as a save that failed', async () => {
       vi.mocked(api.putPayoutWallet).mockResolvedValue({
         ...fail(400),
@@ -836,6 +1691,56 @@ describe('PayoutsTab', () => {
       );
       expectNoPrivateValuesTracked();
     });
+  });
+
+  describe('when a second notice comes while the first still shows', () => {
+    const SECOND_ADDRESS = '0x0000000000000000000000000000000000000003';
+
+    async function save(open: string, dialogName: string, submit: string, address: string) {
+      fireEvent.click(await (await walletCard()).findByRole('button', { name: open }));
+      const dialog = await screen.findByRole('dialog', { name: dialogName });
+      fireEvent.change(within(dialog).getByLabelText('Wallet address'), {
+        target: { value: address },
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: submit }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.mocked(api.putPayoutWallet).mockImplementation(async ({ address }) =>
+        ok({ address, updated_at: '2026-11-04T10:00:00Z' }),
+      );
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      [
+        'a wallet is added, then changed',
+        fail(404),
+        ['Add wallet', 'Add payout wallet', 'Add wallet'],
+      ],
+      ['the wallet is changed twice', ok(WALLET), ['Edit', 'Change payout wallet', 'Save']],
+    ] as const)(
+      'should show the second for its full time when %s',
+      async (_case, firstWallet, [open, dialogName, submit]) => {
+        vi.mocked(api.getPayoutWallet).mockResolvedValue(firstWallet);
+        await renderTab();
+        const status = await screen.findByRole('status');
+
+        await save(open, dialogName, submit, NEW_ADDRESS);
+        act(() => vi.advanceTimersByTime(3_000));
+        await save('Edit', 'Change payout wallet', 'Save', SECOND_ADDRESS);
+        act(() => vi.advanceTimersByTime(4_000));
+
+        expect(status.textContent).toBe('Payout wallet updated');
+        act(() => vi.advanceTimersByTime(1_500));
+        expect(status.textContent).toBe('');
+      },
+    );
   });
 
   describe('when a paid transaction is opened', () => {

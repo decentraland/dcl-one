@@ -72,7 +72,6 @@ const IGNORE_TEXTURES = [
 
 function collectTexturesFromMaterial(material: Material, textures: Set<string>): void {
   for (const key in material) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const value = (material as any)[key];
     if (value && typeof value === 'object' && 'getInternalTexture' in value) {
       const texture = value;
@@ -138,7 +137,14 @@ export function computeEntitiesOutsideLayout(scene: Scene, context: SceneContext
   const { isEntityOutsideLayout } = getLayoutManager(scene);
   const outside: Entity[] = [];
   for (const node of context.getAllEntities()) {
-    if (node.boundingInfoMesh && isEntityOutsideLayout(node.boundingInfoMesh)) {
+    const mesh = node.boundingInfoMesh;
+    if (!mesh) continue;
+    // The world bounds only follow the entity's transform once the world matrix is computed,
+    // which Babylon does at the next render. This list is recomputed right when a just-loaded
+    // model's bounding mesh is added, before that render, so its bounds still sit around the
+    // scene origin and would read as out of bounds. Compute them now.
+    mesh.computeWorldMatrix(true);
+    if (isEntityOutsideLayout(mesh)) {
       outside.push(node.entityId);
     }
   }

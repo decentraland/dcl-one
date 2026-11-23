@@ -4,7 +4,13 @@
 //! ONE client, a `jobs::spawn_periodic` job with `index_cursor` as its
 //! durable progress: [`indexer`]), `token_right` / `estate_land` /
 //! `account_right` (the fold), read by [`resolve::Store`] and served by
-//! [`routes`]. Consumers: the content deploy validator and `worlds::policy`
+//! [`routes`]. The same pass appends the Estate registry's version-0 data
+//! documents (`CreateEstate`, `Update`) to `estate_data_event`, which
+//! [`LandAuthzState::dissolved_estate`] reads for the map metadata of an
+//! estate left without LAND. A node whose index predates that table holds
+//! only the documents indexed since: `LAND_AUTHZ_REPLAY_FROM_BLOCK` at the
+//! Estate registry's deployment block (6,236,547 on mainnet) re-reads the
+//! earlier ones. Consumers: the content deploy validator and `worlds::policy`
 //! through [`can_deploy`] / [`can_deploy_batch`] / [`owns_land_at`], comms'
 //! scene permissions and the `lands-permissions` route through the old
 //! lambdas paths.
@@ -198,6 +204,8 @@ pub struct Settings {
     /// `LAND_AUTHZ_CONFIRMATIONS` (12): blocks the index stays behind the
     /// head, so a reorg shallower than this never reaches the log.
     pub confirmations: u64,
+    /// [`indexer::REBIND_LOCK_TIMEOUT`]; no environment variable sets it.
+    pub rebind_lock_timeout: Duration,
 }
 
 impl Settings {
@@ -217,6 +225,7 @@ impl Settings {
             replay_from_block: None,
             stop_block: None,
             confirmations: 12,
+            rebind_lock_timeout: indexer::REBIND_LOCK_TIMEOUT,
         })
     }
 
@@ -300,6 +309,27 @@ pub struct Decision {
 /// parcel belongs to no estate; absence of an answer means the index is unready.
 pub struct EstateMembership {
     pub estate_id: Option<String>,
+}
+
+/// An estate's latest data document: its name and description, each empty
+/// when the document has none.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EstateData {
+    pub name: String,
+    pub description: String,
+}
+
+/// What the index says of an Estate token
+/// ([`LandAuthzState::dissolved_estate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DissolvedEstate {
+    /// Minted and holding no LAND: its latest data document.
+    Dissolved(EstateData),
+    /// Never minted, or still holding LAND.
+    NotDissolved,
+    /// The index could not answer: it is not published, or the database
+    /// failed. Not an answer about the estate, so never one to cache.
+    Unknown,
 }
 
 /// Why no decision could be made: the caller refuses the write (never
@@ -405,6 +435,41 @@ impl LandAuthzState {
         .fetch_optional(conn)
         .await?;
         Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
+    }
+
+    /// The Estate token `estate_id` (decimal) when the configured Estate
+    /// registry minted it and it holds no LAND now: a dissolved estate, the
+    /// atlas's `searchEstateSize: 0` lookup, with the name and description
+    /// of its latest data document (`estate_data_event`; empty when it has
+    /// none). [`DissolvedEstate::NotDissolved`] when it was never minted or
+    /// still holds LAND; [`DissolvedEstate::Unknown`] when the index may not
+    /// answer (a database error reads as not ready).
+    pub async fn dissolved_estate(&self, estate_id: &str) -> DissolvedEstate {
+        let Some(mut snapshot) = self.ready_snapshot().await else {
+            return DissolvedEstate::Unknown;
+        };
+        let row: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
+            "SELECT d.name, d.description FROM land_authz.token_right e \
+             LEFT JOIN LATERAL (SELECT x.name, x.description FROM land_authz.estate_data_event x \
+                                 WHERE x.token_address = e.token_address AND x.estate_id = e.token_id \
+                                 ORDER BY x.block_number DESC, x.log_index DESC LIMIT 1) d ON true \
+             WHERE e.token_address = $1 AND e.token_id = $2::numeric \
+               AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el \
+                                WHERE el.estate_token_id = $2::numeric)",
+        )
+        .bind(&self.settings.estate_registry)
+        .bind(estate_id)
+        .fetch_optional(&mut *snapshot.tx)
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "land-authz: dissolved-estate lookup failed"));
+        match row {
+            Ok(Some((name, description))) => DissolvedEstate::Dissolved(EstateData {
+                name: name.unwrap_or_default(),
+                description: description.unwrap_or_default(),
+            }),
+            Ok(None) => DissolvedEstate::NotDissolved,
+            Err(_) => DissolvedEstate::Unknown,
+        }
     }
 
     /// The marketplace reader, when one with a subgraph URL is attached.

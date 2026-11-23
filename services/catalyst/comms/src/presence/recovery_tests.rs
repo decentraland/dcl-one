@@ -30,6 +30,7 @@ type SourceRooms = Vec<(String, String, Vec<(String, String)>)>;
 #[derive(Default)]
 struct Source {
     fail: AtomicBool,
+    fail_inventory_after_roster: AtomicBool,
     empty: AtomicBool,
     sid_changed: AtomicBool,
     enumerate: AtomicUsize,
@@ -55,6 +56,11 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
             use axum::response::IntoResponse;
             if source.fail.load(Ordering::SeqCst) { return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(); }
             if uri.path().ends_with("ListRooms") {
+                if source.fail_inventory_after_roster.load(Ordering::SeqCst)
+                    && source.roster_reads.load(Ordering::SeqCst) != 0
+                {
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
                 let call = source.enumerate.fetch_add(1, Ordering::SeqCst);
                 let values = if source.empty.load(Ordering::SeqCst) { vec![] } else {
                     source.rooms.lock().iter().map(|(name,sid,_)| json!({"name":name,"sid":if source.sid_changed.load(Ordering::SeqCst) && call%2 == 1 { "RM_recreated" } else { sid }})).collect::<Vec<_>>()
@@ -79,21 +85,30 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
         }
     )).with_state(source.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mut settings = Settings::for_tests();
-    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let api_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let state = Arc::new(CommsState::new(
-        sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
-        crate::http::Outbound::for_tests(),
-        settings,
-        None,
-        None,
-        Arc::new(StubPolicy::default()),
-        Arc::new(Catalogue::default()),
-        Arc::new(Presence::new()),
-        Arc::new(StubDirectory::default()),
-    ));
+    let state = replica(&api_url, Arc::new(crate::gatekeeper::bus::DisabledBus));
     (state, source, server)
+}
+
+/// One `serve` replica over the shared LiveKit `api_url` and NATS `bus`.
+fn replica(api_url: &str, bus: Arc<dyn crate::gatekeeper::bus::NatsBus>) -> Arc<CommsState> {
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = api_url.to_owned();
+    Arc::new(
+        CommsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            crate::http::Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(Catalogue::default()),
+            Arc::new(Presence::new()),
+            Arc::new(StubDirectory::default()),
+        )
+        .with_bus(bus),
+    )
 }
 
 async fn get(app: &Router, path: &str) -> (axum::http::StatusCode, Value) {
@@ -1359,5 +1374,210 @@ async fn exact_scene_rejects_unsupported_or_unavailable_scope_even_with_fresh_co
     assert!(Arc::ptr_eq(&state.presence.complete(), &published));
     assert_eq!(state.presence.last_updated(), observed);
     assert_eq!(state.presence.comms_stats().users, 1);
+    server.abort();
+}
+
+const WORLD_WALLET: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const GENESIS_WALLET: &str = "0xcccccccccccccccccccccccccccccccccccccccc";
+
+fn passes(jobs: &crate::jobs::Jobs) -> u64 {
+    jobs.report()
+        .iter()
+        .find(|r| r.name == "comms-occupancy-recovery")
+        .map_or(0, |r| r.passes)
+}
+
+/// A verified LiveKit webhook for `WORLD_WALLET`'s session `sid` in the foo lobby.
+async fn webhook(app: &Router, id: &str, kind: &str, sid: &str) {
+    use tower::ServiceExt;
+    let settings = Settings::for_tests();
+    let body = serde_json::to_vec(&json!({ "id": id, "createdAt": 1718900000, "event": kind, "room": { "name": "world-foo.dcl.eth" }, "participant": { "identity": WORLD_WALLET, "sid": sid } })).unwrap();
+    let jwt = crate::gatekeeper::webhook::test_support::webhook_jwt(
+        &body,
+        &settings.livekit.api_key,
+        &settings.livekit.api_secret,
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::post("/livekit-webhook")
+                .header("content-type", "application/webhook+json")
+                .header("authorization", jwt)
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+}
+
+async fn advance_until_pass(jobs: &[crate::jobs::Jobs], pass: u64) {
+    for _ in 0..10 {
+        elapse(Duration::from_secs(6)).await;
+        for _ in 0..100 {
+            if jobs.iter().all(|jobs| passes(jobs) >= pass) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+    panic!("recovery workers did not finish pass {pass}");
+}
+
+#[tokio::test]
+async fn world_events_reach_every_replica_at_once_and_complete_reads_correct_drift() {
+    let (first, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![("authoritative-server".into(), "PA_server".into())];
+    source.rooms.lock().push((
+        "scene:main:GenesisScene".into(),
+        "RM_genesis".into(),
+        vec![(GENESIS_WALLET.into(), "PA_genesis".into())],
+    ));
+    let bus = Arc::new(crate::gatekeeper::bus::InProcessBus::new());
+    let replicas = [
+        replica(&first.livekit.api_url, bus.clone()),
+        replica(&first.livekit.api_url, bus.clone()),
+    ];
+    let topologies = replicas.each_ref().map(|replica| {
+        let topology = Arc::new(crate::topology::Topology::default());
+        replica.presence.attach_topology(topology.clone());
+        topology
+    });
+    let jobs = replicas.each_ref().map(|replica| {
+        let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
+        replica.spawn_presence_recovery(&jobs);
+        jobs
+    });
+    for jobs in &jobs {
+        wait_pass(jobs, 1).await;
+    }
+    assert!(
+        topologies.iter().all(|t| t.snapshot().wallets.is_empty()),
+        "World rooms only: Genesis comes from Pulse, servers never count"
+    );
+
+    // One replica's webhook; both replicas apply it before any read.
+    let app = crate::gatekeeper::router(replicas[0].clone());
+    webhook(&app, "EV_join", "participant_joined", "PA_1").await;
+    assert!(
+        topologies
+            .iter()
+            .all(|t| t.snapshot().is_online(WORLD_WALLET))
+    );
+    webhook(&app, "EV_join_again", "participant_joined", "PA_1").await;
+    webhook(&app, "EV_leave", "participant_left", "PA_1").await;
+    assert!(
+        topologies
+            .iter()
+            .all(|t| !t.snapshot().is_online(WORLD_WALLET))
+    );
+    assert!(
+        jobs.iter().all(|jobs| passes(jobs) == 1),
+        "no read was needed"
+    );
+
+    // A join whose leave never arrives: the next complete read ends it.
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_2".into())];
+    webhook(&app, "EV_join_2", "participant_joined", "PA_2").await;
+    source.rooms.lock()[0].2.clear();
+    // Whichever wait each replica is in (the webhook replica's own invalidation
+    // shortens its), advance until both have read again, well inside the TTL.
+    advance_until_pass(&jobs, 2).await;
+    assert!(
+        topologies
+            .iter()
+            .all(|t| !t.snapshot().is_online(WORLD_WALLET))
+    );
+
+    // A restarted replica missed every event and recovers on its first read.
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_3".into())];
+    let restarted = replica(&first.livekit.api_url, bus.clone());
+    let fresh = Arc::new(crate::topology::Topology::default());
+    restarted.presence.attach_topology(fresh.clone());
+    assert!(!fresh.snapshot().is_online(WORLD_WALLET));
+    let restarted_jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
+    restarted.spawn_presence_recovery(&restarted_jobs);
+    wait_pass(&restarted_jobs, 1).await;
+    assert!(fresh.snapshot().is_online(WORLD_WALLET));
+
+    // LiveKit unreachable: an unconfirmed session ages out instead of staying online.
+    source.fail.store(true, Ordering::SeqCst);
+    elapse(crate::topology::WORLD_OCCUPANCY_TTL + Duration::from_secs(1)).await;
+    assert!(!fresh.snapshot().is_online(WORLD_WALLET));
+
+    for jobs in jobs.into_iter().chain([restarted_jobs]) {
+        jobs.shutdown(Duration::from_secs(1)).await;
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_read_a_webhook_overtook_still_feeds_the_online_view() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_1".into())];
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    *source.dirty_on_read.lock() = Some(state.presence.clone());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    assert_eq!(state.presence.last_updated(), "1970-01-01T00:00:00.000Z");
+    assert!(topology.snapshot().is_online(WORLD_WALLET));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_read_that_fails_after_listing_confirms_and_ends_nothing() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_listed".into())];
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    // Announced by an event, absent from LiveKit's listing.
+    topology.apply_world_event("PA_unlisted", GENESIS_WALLET, true);
+    // The inventory changes between enumerations: the read fails after its rosters.
+    source.sid_changed.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    let view = topology.snapshot();
+    assert!(view.is_online(WORLD_WALLET), "listed: confirmed");
+    assert!(
+        view.is_online(GENESIS_WALLET),
+        "unlisted: not ended by a failed read"
+    );
+    // LiveKit itself down: nothing is confirmed.
+    source.sid_changed.store(false, Ordering::SeqCst);
+    source.fail.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Source)
+    ));
+    elapse(crate::topology::WORLD_OCCUPANCY_TTL + Duration::from_secs(1)).await;
+    let view = topology.snapshot();
+    assert!(
+        !view.is_online(WORLD_WALLET),
+        "a source failure confirms nothing"
+    );
+    assert!(!view.is_online(GENESIS_WALLET));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_source_failure_discards_rosters_already_read() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_listed".into())];
+    source
+        .fail_inventory_after_roster
+        .store(true, Ordering::SeqCst);
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Source)
+    ));
+    assert_eq!(source.roster_reads.load(Ordering::SeqCst), 1);
+    assert!(!topology.snapshot().is_online(WORLD_WALLET));
     server.abort();
 }

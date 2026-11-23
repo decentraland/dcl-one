@@ -1,0 +1,44 @@
+.grid {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  width: calc(100% + 32px);
+  margin-top: -32px;
+  margin-left: -32px;
+}
+
+.item {
+  box-sizing: border-box;
+  margin: 0;
+  padding-top: 32px;
+  padding-left: 32px;
+}
+
+@media (min-width: 768px) {
+  .item {
+    flex-basis: 100%;
+    flex-grow: 0;
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  .item {
+    flex-basis: 50%;
+    max-width: 50%;
+  }
+}
+
+@media (min-width: 1280px) {
+  .item {
+    flex-basis: 33.333333%;
+    max-width: 33.333333%;
+  }
+}
+
+@media (min-width: 1500px) {
+  .item {
+    flex-basis: 25%;
+    max-width: 25%;
+  }
+}

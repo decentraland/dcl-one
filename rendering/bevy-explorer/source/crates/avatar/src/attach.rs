@@ -58,7 +58,6 @@ impl From<PbAvatarAttach> for AvatarAttachment {
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_attached(
     mut commands: Commands,
     attachments: Query<(
@@ -178,7 +177,6 @@ struct DitheredMaterial<M: Asset> {
     _phantom_data: PhantomData<M>,
 }
 
-#[allow(clippy::type_complexity)]
 fn undither_materials_on_attached_items(
     mut commands: Commands,
     mut new: Query<

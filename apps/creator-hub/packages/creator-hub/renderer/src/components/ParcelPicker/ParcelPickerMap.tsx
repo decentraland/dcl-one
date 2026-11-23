@@ -1,5 +1,4 @@
 import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import { dclColors } from 'decentraland-ui2';
 
 import { coordsToId } from '/@/lib/land';
 import { t } from '/@/modules/store/translation/utils';
@@ -17,7 +16,7 @@ import {
   toCoord,
   toId,
 } from './cursor';
-import { MapFrame, VisuallyHidden } from './ParcelPicker.styled';
+import styles from './ParcelPicker.module.css';
 
 type Props = {
   label: string;
@@ -34,12 +33,16 @@ type Viewport = { nw: Coord; se: Coord };
 
 const RIGHT_MOUSE_BUTTON_CLICK = 2;
 const RENDER_MARGIN = 2;
+const CURSOR_COLOR = '#FCFCFC';
 
 const isInside = ({ nw, se }: Viewport, { x, y }: Coord) =>
   x > nw.x + RENDER_MARGIN &&
   x < se.x - RENDER_MARGIN &&
   y > se.y + RENDER_MARGIN &&
   y < nw.y - RENDER_MARGIN;
+
+const isInView = ({ nw, se }: Viewport, { x, y }: Coord) =>
+  x >= nw.x && x <= se.x && y >= se.y && y <= nw.y;
 
 /** A parcel atlas with controlled selection; keyboard picking needs `allowed`. */
 export function ParcelPickerMap({
@@ -105,7 +108,7 @@ export function ParcelPickerMap({
     showCursor && !!cursor && cursor.x === x && cursor.y === y;
 
   const cursorLayer = (x: number, y: number) =>
-    isCursor(x, y) ? { color: dclColors.neutral.softWhite, scale: 1.4 } : null;
+    isCursor(x, y) ? { color: CURSOR_COLOR, scale: 1.4 } : null;
 
   const cursorTileLayer = (x: number, y: number) =>
     isCursor(x, y)
@@ -186,6 +189,10 @@ export function ParcelPickerMap({
     keepInView(at);
   };
 
+  // A short drag can end a rectangle and still count as a click. That click is not a toggle: it would
+  // start from the selection before the rectangle and remove the rectangle.
+  const rectangleDone = useRef(false);
+
   const handleMouseUp = () => {
     if (drag.isSelectingParcels && drag.from && drag.to) {
       const { from, to } = drag;
@@ -197,6 +204,7 @@ export function ParcelPickerMap({
           }
         }
         onChange(next);
+        rectangleDone.current = true;
       }
     }
     setDrag({ isSelectingParcels: false, from: null, to: null });
@@ -215,30 +223,37 @@ export function ParcelPickerMap({
       onChange={({ nw, se }: Viewport) => {
         viewport.current = { nw, se };
       }}
-      onClick={(x: number, y: number) => void toggle(x, y)}
+      onClick={(x: number, y: number) => {
+        if (rectangleDone.current) rectangleDone.current = false;
+        else toggle(x, y);
+      }}
       onHover={(x: number, y: number) => {
-        if (drag.isSelectingParcels && drag.from && isAllowed(x, y)) {
-          setDrag(previous => ({ ...previous, to: { x, y } }));
-        }
+        if (!drag.isSelectingParcels || !drag.from || !isAllowed(x, y)) return;
+        // The map keeps the pointer during a drag and reports parcels beyond its edge too. The
+        // rectangle ends at the last parcel in view.
+        if (viewport.current && !isInView(viewport.current, { x, y })) return;
+        setDrag(previous => ({ ...previous, to: { x, y } }));
       }}
       onMouseDownEvent={event => {
         if (event.button !== RIGHT_MOUSE_BUTTON_CLICK) {
           setDrag(previous => ({ ...previous, isSelectingParcels: true }));
         }
       }}
-      onMouseDown={(x: number, y: number) =>
-        setDrag(previous => ({ ...previous, from: { x, y }, to: { x, y } }))
-      }
+      onMouseDown={(x: number, y: number) => {
+        rectangleDone.current = false;
+        setDrag(previous => ({ ...previous, from: { x, y }, to: { x, y } }));
+      }}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     />
   );
 
-  if (!allowed) return <MapFrame>{atlas}</MapFrame>;
+  if (!allowed) return <div className={styles.mapFrame}>{atlas}</div>;
 
   return (
     <>
-      <MapFrame
+      <div
+        className={styles.mapFrame}
         tabIndex={0}
         role="application"
         aria-roledescription={t('parcel_picker.map_role')}
@@ -255,14 +270,20 @@ export function ParcelPickerMap({
         }}
       >
         {atlas}
-      </MapFrame>
-      <VisuallyHidden id={instructionsId}>{t('parcel_picker.map_instructions')}</VisuallyHidden>
-      <VisuallyHidden
+      </div>
+      <span
+        className={styles.visuallyHidden}
+        id={instructionsId}
+      >
+        {t('parcel_picker.map_instructions')}
+      </span>
+      <span
+        className={styles.visuallyHidden}
         role="status"
         aria-live="polite"
       >
         {announcement}
-      </VisuallyHidden>
+      </span>
     </>
   );
 }

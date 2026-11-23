@@ -1,7 +1,6 @@
-import type { AlertColor } from 'decentraland-ui2';
 import type { Project } from '/shared/types/projects';
 
-export type Severity = AlertColor | 'loading';
+export type Severity = 'success' | 'info' | 'warning' | 'error' | 'loading';
 export type NotificationId = string;
 export type CustomNotificationType =
   | { type: 'missing-scenes' }
@@ -9,6 +8,8 @@ export type CustomNotificationType =
   // `installed`: the scene has the skills and they are outdated, else it has none.
   | { type: 'sdk-skills'; project: Project; installed: boolean }
   | { type: 'deploy'; path: string }
+  // The editor realm's Multiplayer Server kept stopping and main gave up restarting it.
+  | { type: 'realm-server-stopped'; path: string }
   | { type: 'external-agent-access' };
 
 export type Opts = {

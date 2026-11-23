@@ -2,7 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { getDisplayName } from "../../lib/avatarColor";
+import { getDisplayName } from "@web-core/profile/avatarColor";
 import CreatorCard from "./CreatorCard";
 
 describe("the avatar backdrop", () => {

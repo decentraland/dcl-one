@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_gltf): skip animation channels with an unknown target path
+Date: 2026-11-17T20:02:58+00:00
+
+---
+diff --git a/crates/bevy_gltf/src/loader/mod.rs b/crates/bevy_gltf/src/loader/mod.rs
+index 9d5e0fca140959e7c029e1be04e5c7bb93dee589..3edc167fd4a0e47001128096be3ef7cd0735fa05 100644
+--- a/crates/bevy_gltf/src/loader/mod.rs
++++ b/crates/bevy_gltf/src/loader/mod.rs
+@@ -341,6 +341,19 @@ async fn load_gltf<'a, 'b, 'c>(
+             let mut first_pointer = None;
+             for (channel_index, channel) in animation.channels().enumerate() {
+                 let target = channel.target();
++                // the gltf crate never validates a channel's target, and `property()` unwraps its
++                // path: one it does not know (not a transform, the weights or a pointer) panics
++                let json_target = &gltf.document.as_json().animations[animation.index()].channels
++                    [channel_index]
++                    .target;
++                if matches!(json_target.path, gltf::json::validation::Checked::Invalid) {
++                    warn!(
++                        "{}: animation {} channel {channel_index} has an unknown target path; skipped",
++                        load_context.asset_path(),
++                        animation.index(),
++                    );
++                    continue;
++                }
+                 // a KHR_animation_pointer channel animates the property a JSON pointer names
+                 // (a material's emissive, a camera's fov), not a node; bevy_animation only
+                 // drives an entity's components, so the channel is skipped and the rest of
+@@ -2293,8 +2306,8 @@ mod test {
+         assert_eq!(gltf_node.asset_label(), GltfAssetLabel::Node(0));
+     }
+ 
+-    // a KHR_animation_pointer channel and a channel with no node are skipped; the clip keeps the
+-    // node's translation channel
++    // a KHR_animation_pointer channel, a channel with no node and one with an unknown path are
++    // skipped; the clip keeps the node's translation channel
+     #[cfg(feature = "bevy_animation")]
+     #[test]
+     fn animation_pointer_channels_are_skipped() {
+@@ -2327,6 +2340,7 @@ mod test {
+             { "sampler": 0, "target": { "path": "pointer", "extensions": {
+                 "KHR_animation_pointer": { "pointer": "/materials/0/emissiveFactor" } } } },
+             { "sampler": 0, "target": { "path": "translation" } },
++            { "sampler": 0, "target": { "node": 0, "path": "foo" } },
+             { "sampler": 0, "target": { "node": 0, "path": "translation" } }
+         ]
+     }]

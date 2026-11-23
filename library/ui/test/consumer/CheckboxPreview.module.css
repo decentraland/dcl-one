@@ -1,0 +1,27 @@
+:global(body) {
+  margin: 0;
+  background: var(--dcl-bg-page);
+}
+
+.matrix {
+  overflow-x: auto;
+}
+
+.labels {
+  display: grid;
+  gap: 16px;
+  justify-items: start;
+}
+
+.edges > :not(.edgeCases) {
+  display: none;
+}
+
+.dialog {
+  padding: var(--dcl-space-24);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface-raised);
+  color: var(--dcl-text-primary);
+  overflow: visible;
+}

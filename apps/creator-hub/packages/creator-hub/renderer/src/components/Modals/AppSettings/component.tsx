@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import SettingsIcon from '@mui/icons-material/Settings';
-import equal from 'fast-deep-equal';
+import { SettingsIcon } from '@ui/atoms/icons-material';
+import { deepEqual as equal } from '/shared/deep-equal';
 import {
   loadEditors,
   setDefaultEditor,
@@ -20,6 +20,7 @@ import { useDispatch, useSelector } from '#store';
 import { settings as settingsPreload, misc } from '#preload';
 import { TabsModal } from '../TabsModal';
 import { ScenesTab, EditorTab, AiTab, ExperimentalTab, AboutTab } from './Tabs';
+import { AiSharingSection } from './Tabs/AiTab/AiSharingSection';
 
 import './styles.css';
 
@@ -127,7 +128,7 @@ export function AppSettings({
   }, [settings, handleUpdateSettings, validateScenesPathField]);
 
   const handleResetScenesFolder = useCallback(async () => {
-    const defaultPath = await settingsPreload.getDefaultScenesPath();
+    const defaultPath = await settingsPreload.createDefaultScenesFolder();
     const newSettings = { ...settings, scenesPath: defaultPath };
     handleUpdateSettings(newSettings);
     validateScenesPathField(defaultPath);
@@ -196,7 +197,9 @@ export function AppSettings({
           <AiTab
             settings={settings}
             updateSettings={handleUpdateSettings}
-          />
+          >
+            <AiSharingSection />
+          </AiTab>
         );
       case SettingsTab.EXPERIMENTAL:
         return (

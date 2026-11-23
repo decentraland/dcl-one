@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use anyhow::anyhow;
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;
@@ -72,7 +74,6 @@ pub struct NewSceneCommand {
     system_api_sender: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
 }
 
-#[allow(clippy::type_complexity)]
 pub static NEW_SCENE_SENDER: Lazy<
     RwLock<Option<tokio::sync::mpsc::UnboundedSender<NewSceneCommand>>>,
 > = Lazy::new(Default::default);
@@ -202,27 +203,6 @@ pub fn init_runtime() -> anyhow::Result<()> {
     init_rx.blocking_recv()?
 }
 
-#[cfg(test)]
-mod endpoint_tests {
-    use super::ipc_socket_name;
-    use std::collections::HashSet;
-
-    #[test]
-    fn concurrent_runtimes_have_distinct_endpoints() {
-        let names = std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..16)
-                .map(|_| scope.spawn(|| (0..128).map(|_| ipc_socket_name()).collect::<Vec<_>>()))
-                .collect();
-            workers
-                .into_iter()
-                .flat_map(|worker| worker.join().unwrap())
-                .collect::<HashSet<_>>()
-        });
-        assert_eq!(names.len(), 16 * 128);
-    }
-}
-
-#[allow(clippy::type_complexity)]
 pub async fn renderer_ipc_out(
     mut stream: SendHalf,
     mut new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
@@ -350,8 +330,17 @@ async fn next_global_update(
 pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
-        let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
+        if let Err(e) = stream.read_exact(&mut buffer).await {
+            warn!("renderer_ipc_in exit on truncated message: {e}");
+            break;
+        }
+        let msg: SceneToEngine = match rmp_serde::from_slice(&buffer) {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("renderer_ipc_in exit on undecodable message: {e}");
+                break;
+            }
+        };
 
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
@@ -398,7 +387,6 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,
@@ -457,4 +445,24 @@ pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
         .await
         .unwrap();
     stream.write_all(&bytes).await.unwrap();
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::ipc_socket_name;
+    use std::collections::HashSet;
+
+    #[test]
+    fn concurrent_runtimes_have_distinct_endpoints() {
+        let names = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| (0..128).map(|_| ipc_socket_name()).collect::<Vec<_>>()))
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<HashSet<_>>()
+        });
+        assert_eq!(names.len(), 16 * 128);
+    }
 }

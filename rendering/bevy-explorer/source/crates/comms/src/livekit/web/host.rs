@@ -27,8 +27,8 @@ extern "C" {
     #[wasm_bindgen(js_name = "setupMicrophonePermission")]
     fn setup_microphone_permission(on_change: &Closure<dyn FnMut(String)>);
     fn is_microphone_available() -> bool;
-    #[wasm_bindgen(js_name = "promptMicrophonePermission")]
-    fn prompt_microphone_permission();
+    #[wasm_bindgen(js_name = "promptMicrophonePermission", catch)]
+    fn prompt_microphone_permission() -> Result<(), JsValue>;
 
     #[wasm_bindgen(catch)]
     async fn room_connect(
@@ -64,7 +64,8 @@ extern "C" {
         local_participant: &JsValue,
         local_track: &JsValue,
     ) -> Result<JsValue, JsValue>;
-    fn local_participant_can_publish(local_participant: &JsValue) -> bool;
+    #[wasm_bindgen(catch)]
+    fn local_participant_can_publish(local_participant: &JsValue) -> Result<bool, JsValue>;
     fn local_participant_sid(local_participant: &JsValue) -> String;
     fn local_participant_identity(local_participant: &JsValue) -> String;
     fn local_participant_metadata(local_participant: &JsValue) -> Option<String>;
@@ -77,23 +78,39 @@ extern "C" {
     fn remote_track_publication_sid(remote_track_publication: &JsValue) -> String;
     fn remote_track_publication_kind(remote_track_publication: &JsValue) -> String;
     fn remote_track_publication_source(remote_track_publication: &JsValue) -> String;
+    #[wasm_bindgen(catch)]
     fn remote_track_publication_set_subscribed(
         remote_track_publication: &JsValue,
         subscribed: bool,
-    );
+    ) -> Result<(), JsValue>;
     fn remote_track_publication_track(remote_track_publication: &JsValue) -> JsValue;
 
     async fn local_audio_track_new(options: JsValue) -> JsValue;
-    fn local_audio_track_set_enabled(track: &JsValue, enabled: bool);
+    #[wasm_bindgen(catch)]
+    fn local_audio_track_set_enabled(track: &JsValue, enabled: bool) -> Result<(), JsValue>;
     #[wasm_bindgen(catch)]
     fn local_audio_track_stop(track: &JsValue) -> Result<(), JsValue>;
 
-    fn local_track_publication_sid(local_track_publication: &JsValue) -> String;
-    fn local_track_publication_kind(local_track_publication: &JsValue) -> String;
-    fn local_track_publication_source(local_track_publication: &JsValue) -> String;
+    #[wasm_bindgen(catch)]
+    fn local_track_publication_sid(local_track_publication: &JsValue) -> Result<String, JsValue>;
+    #[wasm_bindgen(catch)]
+    fn local_track_publication_kind(local_track_publication: &JsValue) -> Result<String, JsValue>;
+    #[wasm_bindgen(catch)]
+    fn local_track_publication_source(local_track_publication: &JsValue)
+        -> Result<String, JsValue>;
 
-    fn remote_track_pan_and_volume(remote_track: &JsValue, pan: f32, volume: f32);
-    fn remote_audio_track_set_volume(remote_audio_track: &JsValue, volume: f32);
+    // A throw in a non-`catch` import would end the command loop, so every setter catches.
+    #[wasm_bindgen(catch)]
+    fn remote_track_pan_and_volume(
+        remote_track: &JsValue,
+        pan: f32,
+        volume: f32,
+    ) -> Result<(), JsValue>;
+    #[wasm_bindgen(catch)]
+    fn remote_audio_track_set_volume(
+        remote_audio_track: &JsValue,
+        volume: f32,
+    ) -> Result<(), JsValue>;
 }
 
 /// The property the page stamps on livekit objects with their [`ObjectId`].
@@ -219,11 +236,25 @@ fn local_participant(object: &JsValue, room: RoomId) -> LocalParticipant {
     }
 }
 
-fn local_track_publication(object: &JsValue) -> LocalTrackPublication {
+fn local_track_publication(object: &JsValue) -> Result<LocalTrackPublication, String> {
+    if object.is_null() || object.is_undefined() {
+        return Err("no track publication".to_owned());
+    }
+    Ok(LocalTrackPublication {
+        sid: local_track_publication_sid(object).map_err(js_error)?,
+        kind: TrackKind::from_js_str(&local_track_publication_kind(object).map_err(js_error)?),
+        source: TrackSource::from_js_str(
+            &local_track_publication_source(object).map_err(js_error)?,
+        ),
+    })
+}
+
+/// The publication a local track had, from the track itself.
+fn local_track_as_publication(track: &JsValue) -> LocalTrackPublication {
     LocalTrackPublication {
-        sid: local_track_publication_sid(object),
-        kind: TrackKind::from_js_str(&local_track_publication_kind(object)),
-        source: TrackSource::from_js_str(&local_track_publication_source(object)),
+        sid: get_string(track, "sid").unwrap_or_default(),
+        kind: TrackKind::from_js_str(&get_string(track, "kind").unwrap_or_default()),
+        source: TrackSource::from_js_str(&get_string(track, "source").unwrap_or_default()),
     }
 }
 
@@ -356,19 +387,26 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
         } => {
             let publication = host.borrow().registry.get(publication);
             if let Some(publication) = publication {
-                remote_track_publication_set_subscribed(&publication, subscribed);
+                if let Err(err) = remote_track_publication_set_subscribed(&publication, subscribed)
+                {
+                    warn!("failed to set the subscription: {}", js_error(err));
+                }
             }
         }
         LivekitCommand::PanAndVolume { track, pan, volume } => {
             let track = host.borrow().registry.get(track);
             if let Some(track) = track {
-                remote_track_pan_and_volume(&track, pan, volume);
+                if let Err(err) = remote_track_pan_and_volume(&track, pan, volume) {
+                    warn!("failed to set pan and volume: {}", js_error(err));
+                }
             }
         }
         LivekitCommand::SetVolume { track, volume } => {
             let track = host.borrow().registry.get(track);
             if let Some(track) = track {
-                remote_audio_track_set_volume(&track, volume);
+                if let Err(err) = remote_audio_track_set_volume(&track, volume) {
+                    warn!("failed to set the volume: {}", js_error(err));
+                }
             }
         }
         LivekitCommand::AttachVideo { track, media_id } => {
@@ -390,8 +428,10 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 let track = local_audio_track_new(audio_capture_options(&options)).await;
                 let result = if track.is_null() || track.is_undefined() {
                     Err("could not create the local audio track".to_owned())
+                } else if let Err(err) = local_audio_track_set_enabled(&track, false) {
+                    let _ = local_audio_track_stop(&track);
+                    Err(js_error(err))
                 } else {
-                    local_audio_track_set_enabled(&track, false);
                     let id = host.borrow_mut().registry.id_of(&track, None);
                     Ok(LocalAudioTrack {
                         id,
@@ -408,7 +448,9 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 // A revoked publication is never reused. Stop its physical source now,
                 // including while publishTrack still awaits a signaling response.
                 if enabled {
-                    local_audio_track_set_enabled(&track, true);
+                    if let Err(err) = local_audio_track_set_enabled(&track, true) {
+                        warn!("failed to enable the microphone: {}", js_error(err));
+                    }
                 } else if let Err(err) = local_audio_track_stop(&track) {
                     warn!("failed to stop the revoked microphone: {}", js_error(err));
                 }
@@ -441,7 +483,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                     // A listen-only token: the SDK would throw once the room refused the
                     // track, so it is never offered. The publication task stops its own track.
                     (Ok(local_participant), Ok(_))
-                        if !local_participant_can_publish(&local_participant) =>
+                        if !local_participant_can_publish(&local_participant).unwrap_or(true) =>
                     {
                         Err("the room's permissions allow no publishing".to_owned())
                     }
@@ -451,8 +493,14 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                         track_publish_options(&options),
                     )
                     .await
-                    .map(|publication| local_track_publication(&publication))
-                    .map_err(js_error),
+                    .map_err(js_error)
+                    .map(|publication| {
+                        // published even if the result is unreadable: an Err would skip the unpublish
+                        local_track_publication(&publication).unwrap_or_else(|err| {
+                            warn!("unreadable track publication: {err}");
+                            local_track_as_publication(&track)
+                        })
+                    }),
                     (Err(err), _) | (_, Err(err)) => Err(err),
                 };
                 reply(&events, request, Reply::Publish(result));
@@ -478,11 +526,11 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                             .await
                             .map_err(js_error)
                             .and_then(|publication| {
-                                // null when the SDK held no publication of the track
+                                // none when the SDK already unpublished it (on disconnect)
                                 if publication.is_null() || publication.is_undefined() {
-                                    Err("the track was not published".to_owned())
+                                    Ok(local_track_as_publication(&js_track))
                                 } else {
-                                    Ok(local_track_publication(&publication))
+                                    local_track_publication(&publication)
                                 }
                             })
                     }
@@ -504,7 +552,11 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             // lives as long as the page
             on_change.forget();
         }
-        LivekitCommand::PromptMicrophonePermission => prompt_microphone_permission(),
+        LivekitCommand::PromptMicrophonePermission => {
+            if let Err(err) = prompt_microphone_permission() {
+                warn!("failed to prompt for the microphone: {}", js_error(err));
+            }
+        }
     }
 }
 

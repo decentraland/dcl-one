@@ -195,6 +195,22 @@ pub(super) async fn due_batch(
     settings: &MirrorSettings,
     cursor: &str,
 ) -> Result<Vec<(String, Vec<String>)>> {
+    // An unlimited pass seeks directly from its cursor. A finite pass keeps
+    // the first-N scope before applying the cursor, including on resume.
+    if settings.limit.is_none() {
+        return Ok(sqlx::query_as(
+            r#"SELECT world_name, scene_ids FROM worlds.remote_worlds
+               WHERE unlisted_at IS NULL
+                 AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
+                 AND world_name > $2
+               ORDER BY world_name LIMIT $3"#,
+        )
+        .bind(&settings.names)
+        .bind(cursor)
+        .bind(settings.concurrency as i64)
+        .fetch_all(pool)
+        .await?);
+    }
     let rows = sqlx::query(
         r#"SELECT world_name, scene_ids FROM (
              SELECT world_name, scene_ids FROM worlds.remote_worlds

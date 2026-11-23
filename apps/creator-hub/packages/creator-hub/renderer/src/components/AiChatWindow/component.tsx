@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Box, CircularProgress } from 'decentraland-ui2';
+import Spinner from '@ui/atoms/Spinner';
 
 import type { AiAssetMention, AiAttachment, AiMirrorState, AiProvider } from '/shared/types/ai';
 
@@ -11,6 +11,8 @@ import type { Locale } from '/shared/types/translation';
 
 import type { AiMessage } from '/@/modules/store/ai/types';
 import { ChatView } from '../AiChatPanel/ChatView';
+
+import styles from './component.module.css';
 
 // The detached chat window (#1504). It keeps no chat store of its own: it renders the
 // state the main window mirrors here and sends the user's actions back as remote commands
@@ -81,17 +83,57 @@ export function AiChatWindow() {
       aiPreload.sendAiRemoteCommand({ type: 'removeAssetMention', mention }),
     [],
   );
+  const onRemoveRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'removeRecording' }),
+    [],
+  );
+  const onSendRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'sendRecording' }),
+    [],
+  );
+  const onDraftConsumed = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'consumeDraftPrompt' }),
+    [],
+  );
   // The close button shuts the assistant entirely (window + inline panel), consistent with the
   // inline close — not a dock-back. The main window handles it (it owns the inline open flag).
   const onClose = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'closeAssistant' }), []);
+  const onToggleRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'toggleRecording' }),
+    [],
+  );
+  const onCancelRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'cancelRecording' }),
+    [],
+  );
+  const onShareDecision = useCallback(
+    (granted: boolean) => aiPreload.sendAiRemoteCommand({ type: 'shareDecision', granted }),
+    [],
+  );
+  const onShareNotNow = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'shareNotNow' }),
+    [],
+  );
+  const onSetConversationShared = useCallback(
+    (shared: boolean) => aiPreload.sendAiRemoteCommand({ type: 'setConversationShared', shared }),
+    [],
+  );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) =>
+      aiPreload.sendAiRemoteCommand({ type: 'rateTurn', id, rating }),
+    [],
+  );
 
   if (mirror === null) {
     return (
-      <Box
-        sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}
-      >
-        <CircularProgress />
-      </Box>
+      <div className={styles.loading}>
+        <Spinner
+          ring="wide"
+          role="progressbar"
+          size={40}
+          color="primary"
+        />
+      </div>
     );
   }
 
@@ -105,6 +147,13 @@ export function AiChatWindow() {
       detecting={mirror.detecting}
       selection={mirror.selection}
       assetMentions={mirror.assetMentions}
+      recording={mirror.recording ?? null}
+      recorder={mirror.recorder}
+      onToggleRecording={onToggleRecording}
+      onCancelRecording={onCancelRecording}
+      onSendRecording={onSendRecording}
+      draftPrompt={mirror.draftPrompt}
+      onDraftConsumed={onDraftConsumed}
       billingDismissed={mirror.billingDismissed}
       sessions={mirror.sessions}
       currentSessionId={mirror.currentSessionId}
@@ -121,7 +170,13 @@ export function AiChatWindow() {
       onDeleteSession={onDeleteSession}
       onClearSelection={onClearSelection}
       onRemoveAssetMention={onRemoveAssetMention}
+      onRemoveRecording={onRemoveRecording}
       onClose={onClose}
+      sharing={mirror.sharing}
+      onShareDecision={onShareDecision}
+      onShareNotNow={onShareNotNow}
+      onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
     />
   );
 }

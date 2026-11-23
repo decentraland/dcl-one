@@ -99,7 +99,6 @@ fn parse_source(source: Option<&str>) -> Result<PhotoModeSource, String> {
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn take_photo_command(
     mut cmd: ConsoleCommand<TakePhotoCommand>,
     mut requests: EventWriter<TakePhotoRequest>,
@@ -157,7 +156,6 @@ fn take_photo_command(
     );
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn photo_mode_command(
     mut cmd: ConsoleCommand<PhotoModeCommand>,
     mut requests: EventWriter<PhotoModeRequest>,
@@ -269,7 +267,6 @@ fn finish_deletes(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn state_json(
     transform: &Transform,
     primary: &PrimaryCamera,

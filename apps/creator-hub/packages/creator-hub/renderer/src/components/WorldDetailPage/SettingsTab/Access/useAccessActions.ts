@@ -16,7 +16,7 @@ type Access = WorldPermissions['access'] | undefined;
 const allowList = (access: Access): AllowListPermissionSetting | null =>
   access?.type === WorldPermissionType.AllowList ? access : null;
 
-/** The World's access writes, each sent at once (as the old permissions modal did). */
+/** The World's access writes, each sent at once. */
 export function useAccessActions(worldName: string, access: Access) {
   const dispatch = useDispatch();
   const list = allowList(access);

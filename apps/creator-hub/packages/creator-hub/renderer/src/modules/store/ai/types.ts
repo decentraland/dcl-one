@@ -5,7 +5,11 @@ import type {
   AiProvider,
   AiProviderInfo,
   AiAssetMention,
+  AiPendingRecording,
+  AiRecorderState,
 } from '/shared/types/ai';
+
+export type AiRating = 'up' | 'down';
 
 // The message content model (parts + prompt) is shared with the detached-window mirror, so it
 // lives in shared/types/ai and is re-exported here for the store's own consumers.
@@ -25,6 +29,12 @@ export interface AiMessage {
   mutations?: number;
   // Set once the user reverts this turn's scene changes, so the button hides.
   reverted?: boolean;
+  // The user stopped this turn before it finished.
+  cancelled?: boolean;
+  // AI sharing: the id this turn was shared under (absent when it wasn't), and the creator's
+  // thumbs up or down on it.
+  recordId?: string;
+  rating?: AiRating;
   // Files the user attached to this prompt (user messages only), shown as chips under the
   // bubble. Name + kind only — the bytes/paths aren't kept in the transcript.
   attachments?: AiAttachmentMeta[];
@@ -36,7 +46,12 @@ export interface AiSessionMeta {
   id: string;
   title: string;
   updatedAt: number; // epoch ms; the list is sorted newest first
+  // The creator turned conversation sharing off for this conversation only.
+  shareExcluded?: boolean;
 }
+
+/** How a seeded draft meets what the composer already holds. */
+export type DraftPromptMode = 'append' | 'replace';
 
 export interface AiState {
   // Backends reported by main (Claude/Codex), with availability + reason.
@@ -68,6 +83,12 @@ export interface AiState {
   // inspector's Local Assets panel. Shown beside the selection and attached as context to the
   // next turn only, then cleared.
   assetMentions: AiAssetMention[];
+  // A session recording (Record button) to attach to the next turn, then cleared. Shown as a
+  // composer chip; the transcript is seeded into the input separately.
+  recording: AiPendingRecording | null;
+  // The Record button's live state, owned by the editor's recorder (useSessionRecorder) and
+  // shown in the assistant panel and the detached window.
+  recorder: AiRecorderState;
   // Whether the chat is showing anywhere (inline panel or detached window). Mentions are only
   // accepted while it is, so a double-click with the assistant closed does nothing.
   chatVisible: boolean;
@@ -75,5 +96,8 @@ export interface AiState {
   // "describe a reaction" buttons (inspector→host `prompt_assistant` RPC). EditorPage opens
   // the panel on it and the composer seeds its input from `text`, then clears it. `nonce`
   // makes the same text fire again (a second click on the same button).
-  draftPrompt: { text: string; nonce: number } | null;
+  /** Text for the composer; with `send`, the composer sends it as soon as it can (a recording). */
+  draftPrompt: { text: string; nonce: number; mode: DraftPromptMode; send?: boolean } | null;
+  /** Only ever counts up, so a composer can tell a draft it already applied from a new one. */
+  draftNonce: number;
 }

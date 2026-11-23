@@ -134,7 +134,7 @@ function createJsContext(wasmApi, context) {
   // two scenes agreeing on a bucket name would have a shared filesystem.
   deleteFromPrototypeChain(self.navigator, "storage");
   deleteFromPrototypeChain(self.navigator, "storageBuckets");
-  // the page's service worker registration (and its cache routes) is no scene's business
+  // Scenes cannot access the page's service worker registration.
   deleteFromPrototypeChain(self.navigator, "serviceWorker");
   // the scene server's one-per-scene lock (headless.js) is held by name, which a scene could take
   deleteFromPrototypeChain(self.navigator, "locks");
@@ -187,10 +187,15 @@ function createJsContext(wasmApi, context) {
   const ops = Object.create(null);
   for (const exportName in wasmApi) {
     if (exportName.substring(0, 3) === "op_") {
+      const traced = !UNTRACED_OPS.has(exportName);
       Object.defineProperty(ops, exportName, {
         configurable: false,
         get() {
           return (...args) => {
+            if (traced) {
+              lastOp.name = exportName;
+              lastOp.at = performance.now();
+            }
             // wrap ops to inject context arg
             return wasmApi[exportName](context, ...args);
           };
@@ -371,6 +376,30 @@ var sceneId = undefined;
 // still can't forge the SHUTDOWN_COMPLETE ack and pass itself off as exited.
 var killToken = undefined;
 var shutdownToken = undefined;
+
+// Where the scene loop is and the last op the scene called, printed when the engine has to shut
+// the worker down: a scene wedged in an await is usually waiting on that op. Module-scoped, so
+// scene code can't rewrite them.
+const phase = { name: "starting", at: performance.now() };
+const lastOp = { name: undefined, at: 0 };
+// logging and per-tick bookkeeping ops, which would hide the op the scene is waiting on
+const UNTRACED_OPS = new Set([
+  "op_log",
+  "op_error",
+  "op_begin_tick",
+  "op_continue_running",
+  "op_communicated_with_renderer",
+]);
+function setPhase(name) {
+  phase.name = name;
+  phase.at = performance.now();
+}
+function describePhase() {
+  const now = performance.now();
+  const since = (at) => `${((now - at) / 1000).toFixed(2)}s ago`;
+  const op = lastOp.name === undefined ? "none" : `${lastOp.name}, ${since(lastOp.at)}`;
+  return `phase ${phase.name} since ${since(phase.at)}; last op ${op}`;
+}
 function postToEngine(message) {
   workerPostMessage({ ...message, killToken });
 }
@@ -434,7 +463,7 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
     if (relayAtomicsLoad(killFlags, KILL) === 1) {
       relayAtomicsStore(killFlags, IN_RUST, 0);
       // last words: nothing after the wait ever runs
-      relayLog.warn(`[Relay] scene ${sceneId}: kill flag set; parking until terminate`);
+      relayLog.warn(`[Relay] scene ${sceneId}: kill flag set; parking until terminate (${describePhase()})`);
       relayAtomicsWait(killFlags, PARK, 0);
     }
   };
@@ -600,7 +629,7 @@ self.onmessage = async (event) => {
     // engine kill escalation: the kill flag is already set, but the scene never came back
     // to the loop check (wedged in an await). A genuine SHUTDOWN runs with an empty JS
     // stack, so no op is in flight; close() discards the parked scene task.
-    console.warn("[Sandbox Worker] SHUTDOWN received, tearing down");
+    console.warn(`[Sandbox Worker] scene ${sceneId}: SHUTDOWN received, tearing down (${describePhase()})`);
     tearDown();
     return;
   }
@@ -627,6 +656,7 @@ self.onmessage = async (event) => {
     }
 
     try {
+      setPhase("relay start");
       await relayStart(compiledModule, sharedMemory, event.data.payload.sceneModule);
     } catch (e) {
       console.error("[Relay] start failed:", e);
@@ -659,6 +689,7 @@ self.onmessage = async (event) => {
     });
 
     try {
+      setPhase("scene construction");
       wasmContext = await sceneApi.wasm_init_scene();
     } catch (e) {
       console.error("[Scene Worker] Error during scene construction:", e);
@@ -676,17 +707,21 @@ self.onmessage = async (event) => {
       const ops = jsContext.Deno.core.ops;
 
       // preload modules
+      setPhase("module preload");
       await preloadModules(wasmContext, sceneApi.builtin_module);
 
+      setPhase("scene code load");
       const sceneCode = wasmContext.get_source();
       let module = await runWithScope(sceneCode);
 
       // send any initial rpc requests
+      setPhase("initial send");
       ops.op_crdt_send_to_renderer([]);
 
       // the initial send drew on the tick's send allowance; give onStart a full one
       ops.op_set_elapsed(0);
 
+      setPhase("onStart");
       await module.onStart();
       // drop onStart's handshake round trips from the first onUpdate's dt (dcl_js::end_start)
       ops.op_end_start();
@@ -700,6 +735,7 @@ self.onmessage = async (event) => {
         // engine-time dt from the previous tick's renderer response, capped (dcl_js::begin_tick)
         const dt = ops.op_begin_tick();
         var err = undefined;
+        setPhase(`onUpdate ${count}`);
         try {
           await module.onUpdate(dt);
         } catch (e) {
@@ -769,11 +805,11 @@ function createWebStorageProxy(ops) {
         }
 
         // Handle direct property access like `localStorage.myKey`
-        return ops.op_storage_get(String(prop));
+        return ops.op_webstorage_get(String(prop));
       },
 
       set(_target, prop, value, _receiver) {
-        ops.op_storage_set(String(prop), String(value));
+        ops.op_webstorage_set(String(prop), String(value));
         return true;
       },
 
