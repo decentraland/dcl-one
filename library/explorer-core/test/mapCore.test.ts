@@ -177,14 +177,14 @@ describe('marker layers', () => {
 })
 
 describe('quest pins', () => {
-  it('stand on the centre of their parcel and replace the whole list', () => {
-    expect(pinMarkers([{ id: 'px:1', x: -3, y: 7, title: 'Memory Grid' }])).toEqual([
-      { id: 'px:1', key: { x: -3, y: 7 }, position: parcelCenter({ x: -3, y: 7 }), title: 'Memory Grid' }
+  it('stand on the centre of their parcel, keep their icon and replace the whole list', () => {
+    expect(pinMarkers([{ id: 'px:1', x: -3, y: 7, title: 'Memory Grid', icon: null }])).toEqual([
+      { id: 'px:1', key: { x: -3, y: 7 }, position: parcelCenter({ x: -3, y: 7 }), title: 'Memory Grid', icon: null }
     ])
     let calls = 0
     const off = mapPins.subscribe(() => calls++)
-    mapPins.receive([{ id: 'px:1', x: 0, y: 0, title: '' }])
-    expect(mapPins.getSnapshot().map((p) => p.id)).toEqual(['px:1'])
+    mapPins.receive([{ id: 'px:1', x: 0, y: 0, title: '', icon: 'https://content.test/a.png' }])
+    expect(mapPins.getSnapshot().map((p) => p.icon)).toEqual(['https://content.test/a.png'])
     mapPins.clear()
     mapPins.clear()
     expect(mapPins.getSnapshot()).toEqual([])
@@ -193,7 +193,7 @@ describe('quest pins', () => {
   })
 
   it('drop a pin outside the city, where there is no parcel to pick', () => {
-    const pin = (id: string, x: number, y: number) => ({ id, x, y, title: id })
+    const pin = (id: string, x: number, y: number) => ({ id, x, y, title: id, icon: null })
     expect(pinMarkers([pin('far', 5000, 5000), pin('west', -151, 0), pin('plaza', 0, 0), pin('north strip', 100, 155)]).map((p) => p.id)).toEqual([
       'plaza',
       'north strip'

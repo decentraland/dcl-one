@@ -12,6 +12,7 @@ import type { PinMarker } from '@explorer-core/features/map/mapPins'
 import type { CategoryKey } from '@explorer-core/features/map/navmap'
 import type { PlayerPose } from '../session/useEngineSession'
 import { CAT_PINS, MARKER_ART, SEA_ART, SEA_SIZE } from './mapArt'
+import { QuestPinIcon } from './QuestPinIcon'
 import { SatelliteDetailLayer } from './SatelliteDetailLayer'
 import type { MapCamera } from './useMapCamera'
 import styles from './MapCanvas.module.css'
@@ -232,7 +233,7 @@ const QuestPin = memo(function QuestPin({ pin, onPick }: { pin: PinMarker; onPic
       }}
     >
       <span className={styles.scaler}>
-        <img className={styles.pinIcon} src={MARKER_ART.quest} alt="" draggable={false} />
+        <QuestPinIcon icon={pin.icon} className={styles.pinIcon} />
       </span>
     </button>
   )

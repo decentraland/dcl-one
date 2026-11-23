@@ -525,8 +525,9 @@ Expectations:
 - **Quest pins:** the engine streams the map pins of portable experiences (`GetMapPinsStream`, the
   whole list on each change, the last list again on `hello`), and the session drops them when it ends.
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
-  pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
-  not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
+  pin outside the city is dropped. A pin without an icon, or whose icon fails to load, draws the
+  default quest pin. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows
+  two pins, one with a broken icon.
 - Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.

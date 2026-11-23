@@ -3,7 +3,7 @@ import { enterAsGuest, renderSession } from './harness'
 import { mapPins } from '@explorer-core/features/map/mapPins'
 import type { MapPinInfo } from '@explorer-core/engine/generated'
 
-const pin: MapPinInfo = { id: 'bafypx:512', x: 3, y: 2, title: 'Memory Grid' }
+const pin: MapPinInfo = { id: 'bafypx:512', x: 3, y: 2, title: 'Memory Grid', icon: null }
 
 afterEach(() => mapPins.clear())
 
@@ -13,7 +13,7 @@ describe('map pins domain', () => {
     const h = renderSession()
     await enterAsGuest(h)
     h.driver.emit({ kind: 'mapPins', pins: [pin] })
-    expect(mapPins.getSnapshot().map((p) => [p.id, p.key, p.title])).toEqual([['bafypx:512', { x: 3, y: 2 }, 'Memory Grid']])
+    expect(mapPins.getSnapshot().map((p) => [p.id, p.key, p.title, p.icon])).toEqual([['bafypx:512', { x: 3, y: 2 }, 'Memory Grid', null]])
 
     h.driver.emit({ kind: 'mapPins', pins: [] })
     expect(mapPins.getSnapshot()).toEqual([])

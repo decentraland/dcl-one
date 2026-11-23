@@ -12,4 +12,8 @@ id: string, x: number, y: number,
 /**
  * At most 100 characters.
  */
-title: string, };
+title: string, 
+/**
+ * A file of the scene's content; `None` draws the default pin.
+ */
+icon: string | null, };
