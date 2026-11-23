@@ -196,11 +196,16 @@ impl BlockchainChecker for Synced<'_> {
         timestamp: Timestamp,
     ) -> Result<PermissionResult, ValidatorError> {
         // The reference never asks about the URNs it skips: they count as owned.
-        let asked: Vec<String> = urns
+        let (asked, malformed): (Vec<String>, Vec<bool>) = urns
             .iter()
-            .filter(|u| !super::onchain::reference_skips(u))
-            .cloned()
-            .collect();
+            .filter_map(|u| match super::onchain::items::classify(u) {
+                (_, true) => None,
+                (item, false) => Some((
+                    u.clone(),
+                    matches!(item, super::onchain::items::ItemRef::Malformed),
+                )),
+            })
+            .unzip();
         let owned = self
             .sources
             .access()
@@ -216,8 +221,9 @@ impl BlockchainChecker for Synced<'_> {
             asked
                 .into_iter()
                 .zip(owned)
-                .filter(|(u, o)| !o && !super::onchain::is_malformed_item(u))
-                .map(|(u, _)| u)
+                .zip(malformed)
+                .filter(|((_, o), m)| !o && !m)
+                .map(|((u, _), _)| u)
                 .collect(),
         ))
     }
@@ -951,9 +957,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_synced_profile_is_not_asked_about_items_the_reference_skips() {
-        use super::super::fake_chain;
+        use super::super::fake_chain::{self, Query, Reply};
+        use alloy_primitives::{Address, U256};
         const OWNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
-        let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        // Every item is owned by someone else.
+        let chain = fake_chain::serve(|q, _| match q {
+            Query::OwnerOf { .. } => Reply::Owner(Address::repeat_byte(0x11)),
+            Query::BalanceOf { .. } => Reply::Balance(U256::ZERO),
+            other => panic!("unexpected question {other:?}"),
+        })
+        .await;
         let (storage, tmp) = crate::sync_test_support::temp_storage("synced-skips").await;
         let sources = Sources::new(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
@@ -984,13 +997,15 @@ mod tests {
             .await
             .unwrap();
         assert!(verdict.result, "{verdict:?}");
+        assert_eq!(chain.requests(), 0);
         let local = sources
             .check_items_ownership(OWNER, &urns, 1_700_000_000_000)
             .await;
         assert!(
-            !matches!(&local, Ok(r) if r.result),
+            matches!(&local, Ok(r) if !r.result && r.failing.as_ref() == Some(&urns)),
             "a local deploy still asks: {local:?}"
         );
+        assert!(chain.requests() > 0);
         let _ = std::fs::remove_dir_all(tmp);
     }
 }
