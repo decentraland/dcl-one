@@ -19,9 +19,9 @@ vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   fetchCommunity: net.fetchCommunity,
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: null }) }));
-vi.mock("../../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("../../events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
-vi.mock("../../events/useEventReminders", () => ({
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
+vi.mock("@/features/events/useEventReminders", () => ({
   useEventReminders: () => ({ get: () => ({ active: false, pending: false, toggle: () => {} }) }),
 }));
 
@@ -29,7 +29,7 @@ import { CatalystError } from "@/data/lib/catalyst/client";
 import { CommunityNotFoundError } from "@/data/lib/catalyst/social/community-detail";
 import { communityKeys } from "@/data/lib/community/queries";
 
-import { CommunityErrorView } from "./CommunityErrorView";
+import { CommunityErrorPage } from "./CommunityErrorPage";
 import { CommunityPage } from "./CommunityPage";
 
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
@@ -39,7 +39,7 @@ function show(loader?: () => unknown, element: ReactNode = <CommunityPage id={ID
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [
-      { path: "/social/communities/:id", loader, element, ErrorBoundary: CommunityErrorView },
+      { path: "/social/communities/:id", loader, element, ErrorBoundary: CommunityErrorPage },
       { path: "/elsewhere", element: <p>Elsewhere</p> },
     ],
     { initialEntries: [`/social/communities/${ID}`] },
@@ -59,7 +59,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("CommunityErrorView", () => {
+describe("CommunityErrorPage", () => {
   describe("when a document request's loader throws a 404", () => {
     beforeEach(() => {
       show(() => {
@@ -166,7 +166,7 @@ describe("CommunityErrorView", () => {
           {
             path: "/",
             ErrorBoundary: () => <p>Root boundary</p>,
-            children: [{ path: "social/communities/:id", element: <Root />, ErrorBoundary: CommunityErrorView }],
+            children: [{ path: "social/communities/:id", element: <Root />, ErrorBoundary: CommunityErrorPage }],
           },
         ],
         { initialEntries: [`/social/communities/${ID}`] },

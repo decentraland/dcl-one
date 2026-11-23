@@ -161,7 +161,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 129,
+          "line": 131,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -170,7 +170,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 233,
+          "line": 236,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -202,7 +202,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 141,
+          "line": 143,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -294,14 +294,14 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 124,
+          "line": 126,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 235,
+          "line": 238,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -324,7 +324,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 224,
+          "line": 227,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -432,7 +432,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 136,
+          "line": 138,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -546,7 +546,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 138,
+          "line": 140,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -946,7 +946,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 316,
+          "line": 319,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -969,7 +969,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 317,
+          "line": 320,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []

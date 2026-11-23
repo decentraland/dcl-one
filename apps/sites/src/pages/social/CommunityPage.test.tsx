@@ -32,10 +32,10 @@ vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   ...net,
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: auth.identity }) }));
-vi.mock("../../components/auth/signin-store", () => signIn);
-vi.mock("../../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("../../events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
-vi.mock("../../events/useEventReminders", () => ({
+vi.mock("@/features/components/auth/signin-store", () => signIn);
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
+vi.mock("@/features/events/useEventReminders", () => ({
   REMIND_FAILED: "Couldn't update your reminder. Try again.",
   useEventReminders: (_identity: unknown, onSignIn: () => void) => {
     reminders.onSignIn = onSignIn;
@@ -43,10 +43,11 @@ vi.mock("../../events/useEventReminders", () => ({
   },
 }));
 
+import type { Event } from "@/data/lib/catalyst/places/events";
 import type { CommunityInfo } from "@/data/lib/catalyst/social/community-detail";
 
 import { CommunityPage } from "./CommunityPage";
-import { PENDING_ACTION_TTL_MS, rememberAction } from "./pendingAction";
+import { PENDING_ACTION_TTL_MS, rememberAction } from "@/features/social/community/pendingAction";
 
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
 const ME = "0x1111111111111111111111111111111111111111";
@@ -62,6 +63,33 @@ const community = (over: Partial<CommunityInfo> = {}): CommunityInfo => ({
   thumbnailUrl: null,
   role: null,
   ...over,
+});
+
+const upcomingEvent = (): Event => ({
+  id: "ev-1",
+  name: "Takeover Tuesday",
+  image: null,
+  image_vertical: null,
+  description: "Rave classics all night.",
+  start_at: "2099-06-01T18:00:00.000Z",
+  finish_at: "2099-06-01T19:00:00.000Z",
+  next_start_at: "2099-06-01T18:00:00.000Z",
+  all_day: false,
+  x: 0,
+  y: 5,
+  position: [0, 5],
+  coordinates: [0, 5],
+  url: null,
+  user_name: "Decentraland Foundation",
+  scene_name: "Genesis Plaza",
+  estate_name: null,
+  live: false,
+  highlighted: false,
+  trending: false,
+  recurrent: false,
+  recurrent_frequency: null,
+  total_attendees: 0,
+  place_id: null,
 });
 
 let client: QueryClient;
@@ -246,6 +274,48 @@ describe("CommunityPage", () => {
           expect(await screen.findByText("We couldn't load the events right now.")).toBeTruthy();
           await userEvent.click(screen.getByRole("button", { name: "Try again" }));
           expect(await screen.findByText("No Upcoming Events")).toBeTruthy();
+        });
+      });
+
+      describe("and the community has an upcoming event", () => {
+        let router: Router;
+
+        beforeEach(() => {
+          net.fetchCommunityEvents.mockResolvedValue({ events: [upcomingEvent()], total: 1, received: 1 });
+          router = show();
+        });
+
+        describe("and the visitor clicks its card", () => {
+          beforeEach(async () => {
+            await userEvent.click(await screen.findByRole("link", { name: "Takeover Tuesday" }));
+          });
+
+          it("should open the event's detail over the community page", async () => {
+            const dialog = await screen.findByRole("dialog");
+            expect(within(dialog).getByText("Rave classics all night.")).toBeTruthy();
+            expect(router.state.location.pathname).toBe(`/social/communities/${ID}`);
+            expect(router.state.location.search).toBe("");
+          });
+
+          describe("and closes the detail", () => {
+            beforeEach(async () => {
+              await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /close/i }));
+            });
+
+            it("should leave the community page as it was", async () => {
+              await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+              expect(screen.getByRole("heading", { level: 1, name: "Decentraland Foundation" })).toBeTruthy();
+            });
+          });
+        });
+
+        describe("and the visitor opens its card with a modifier key", () => {
+          it("should leave the link to the browser and open no detail", async () => {
+            const link = await screen.findByRole("link", { name: "Takeover Tuesday" });
+            expect(link.getAttribute("href")).toBe("/events?id=ev-1");
+            link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true }));
+            expect(screen.queryByRole("dialog")).toBeNull();
+          });
         });
       });
 
