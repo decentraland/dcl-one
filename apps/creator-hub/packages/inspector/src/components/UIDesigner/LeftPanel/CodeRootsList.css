@@ -12,40 +12,51 @@
   overflow: auto;
 }
 
-.ui-designer-code-root-row {
+.ui-designer-code-root-row,
+.ui-designer-mobile-hud-row {
   display: flex;
   align-items: center;
-  gap: var(--uid-space-2);
-  padding: 3px var(--uid-space-2);
+  gap: 10px;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 10px;
   cursor: pointer;
-  color: var(--ui-designer-text);
+  color: var(--palette-neutral-gray4);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: normal;
+  letter-spacing: 0;
   user-select: none;
   touch-action: manipulation;
 }
 
-.ui-designer-code-root-row > svg {
+.ui-designer-code-root-row > svg,
+.ui-designer-mobile-hud-row > svg {
   flex-shrink: 0;
 }
 
-.ui-designer-code-root-row:hover {
-  background: var(--ui-designer-control-accent-15);
+.ui-designer-code-root-row:hover,
+.ui-designer-mobile-hud-row:hover {
+  background: var(--hover-row);
 }
 
-.ui-designer-code-root-row.is-active {
-  background: var(--selected-item);
+.ui-designer-code-root-row.is-active,
+.ui-designer-mobile-hud-row.is-active {
+  background: var(--palette-whiteTransparent-subtle);
 }
 
-.ui-designer-code-root-row:focus-visible {
-  outline: 2px solid var(--ui-designer-control-accent);
-  outline-offset: -2px;
+.ui-designer-code-root-row:focus-visible,
+.ui-designer-mobile-hud-row:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
 }
 
-.ui-designer-code-root-row.is-hidden,
-.ui-designer-code-root-row.is-hidden > svg {
-  color: var(--ui-designer-text-muted);
+.ui-designer-code-root-row.is-hidden {
+  color: var(--palette-whiteTransparent-blurry);
 }
 
-.ui-designer-code-root-name {
+.ui-designer-code-root-name,
+.ui-designer-mobile-hud-row-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -54,54 +65,18 @@
 }
 
 .ui-designer-code-root-actions {
-  display: flex;
+  display: none;
   align-items: center;
-  gap: var(--uid-space-1);
-  visibility: hidden;
+  margin-right: -4px;
 }
 
-.ui-designer-code-root-row:hover .ui-designer-code-root-actions,
-.ui-designer-code-root-row:focus-within .ui-designer-code-root-actions,
-.ui-designer-code-root-actions:has(.ui-designer-code-root-toplevel[aria-pressed="false"]) {
-  visibility: visible;
-}
-
-/* The MobileHUD entry sits as a fixed first row above the authored GUIs, set off
-   by a divider. It selects a read-only mode rather than opening a GUI file. */
-.ui-designer-mobile-hud-row {
+.ui-designer-code-root-row:is(
+    :hover,
+    :focus-within:not(:focus:not(:focus-visible)):not(:has(:focus:not(:focus-visible)))
+  )
+  .ui-designer-code-root-actions,
+.ui-designer-code-root-actions:has(.ui-designer-code-root-toplevel[aria-pressed="true"]) {
   display: flex;
-  align-items: center;
-  gap: var(--uid-space-2);
-  padding: 3px var(--uid-space-2);
-  cursor: pointer;
-  color: var(--ui-designer-text);
-  user-select: none;
-  touch-action: manipulation;
-}
-
-.ui-designer-mobile-hud-row svg {
-  flex-shrink: 0;
-}
-
-.ui-designer-mobile-hud-row:hover {
-  background: var(--ui-designer-control-accent-15);
-}
-
-.ui-designer-mobile-hud-row.is-active {
-  background: var(--selected-item);
-}
-
-.ui-designer-mobile-hud-row:focus-visible {
-  outline: 2px solid var(--ui-designer-control-accent);
-  outline-offset: -2px;
-}
-
-.ui-designer-mobile-hud-row-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ui-designer-roots-error {

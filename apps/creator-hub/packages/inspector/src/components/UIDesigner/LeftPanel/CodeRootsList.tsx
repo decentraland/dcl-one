@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useDrag } from 'react-dnd';
 import { cx } from '../../../lib/utils/cx';
 
@@ -6,6 +6,7 @@ import { useAppDispatch, useAppSelector } from '../../../redux/hooks';
 import { isMenuOpen } from '../../../hooks/useHotkey';
 import { withContextMenu } from '../../../hoc/withContextMenu';
 import { ContextMenu } from '../../Tree/ContextMenu';
+import { navigate } from '../../Tree/TreeRoot/navigation';
 import { getMobileHudSelected, selectMobileHud, selectNode } from '../../../redux/ui-designer';
 import { UI_DESIGNER_DND_TYPE, type UIDesignerDragItem } from '../shared/dnd';
 import { GUIRoot, Mobile } from '../../Icons/figma';
@@ -24,9 +25,30 @@ import { RenameField } from './RenameField';
 
 import './CodeRootsList.css';
 
-const MobileHudRow: React.FC = () => {
+const MOBILE_HUD = 'mobilehud';
+
+const isActivationKey = (e: React.KeyboardEvent) => e.key === 'Enter' || e.key === ' ';
+
+const moveRowFocus = (e: React.KeyboardEvent<HTMLElement>) => {
+  const target = e.target as HTMLElement;
+  if (target.getAttribute('role') !== 'treeitem') return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+  const result = navigate(
+    rows.map((_, i) => ({ id: String(i), level: 1 })),
+    String(rows.indexOf(target)),
+    e.key,
+    false,
+  );
+  if (result?.kind !== 'focus') return;
+  e.preventDefault();
+  e.stopPropagation();
+  rows[Number(result.id)].focus();
+};
+
+const MobileHudRow: React.FC<{ active: boolean; tabIndex: 0 | -1 }> = ({ active, tabIndex }) => {
   const dispatch = useAppDispatch();
-  const active = useAppSelector(getMobileHudSelected);
+  const labelId = useId();
 
   const onSelect = useCallback(() => {
     dispatch(selectMobileHud());
@@ -36,19 +58,27 @@ const MobileHudRow: React.FC = () => {
   return (
     <div
       className={cx('ui-designer-mobile-hud-row', { 'is-active': active })}
-      role="button"
-      tabIndex={0}
-      aria-current={active}
+      role="treeitem"
+      aria-level={1}
+      aria-selected={active}
+      aria-labelledby={labelId}
+      tabIndex={tabIndex}
       onClick={onSelect}
       onKeyDown={e => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (!isActivationKey(e)) return;
         e.preventDefault();
+        e.stopPropagation();
         onSelect();
       }}
       title="Customize the mobile touch-screen controls"
     >
       <Mobile fontSize="small" />
-      <span className="ui-designer-mobile-hud-row-name">MobileHUD</span>
+      <span
+        id={labelId}
+        className="ui-designer-mobile-hud-row-name"
+      >
+        MobileHUD
+      </span>
     </div>
   );
 };
@@ -58,6 +88,7 @@ const noop = () => undefined;
 type RootRowProps = {
   root: CodeRoot;
   active: boolean;
+  tabIndex: 0 | -1;
   editing: boolean;
   onSelect: () => void;
   onBeginEdit: () => void;
@@ -71,6 +102,7 @@ const RootRowImpl: React.FC<RootRowProps & { contextMenuId: string }> = ({
   contextMenuId,
   root,
   active,
+  tabIndex,
   editing,
   onSelect,
   onBeginEdit,
@@ -79,6 +111,7 @@ const RootRowImpl: React.FC<RootRowProps & { contextMenuId: string }> = ({
   onRemove,
   onDuplicate,
 }) => {
+  const labelId = useId();
   const [{ isDragging }, drag] = useDrag<UIDesignerDragItem, unknown, { isDragging: boolean }>(
     () => ({
       type: UI_DESIGNER_DND_TYPE,
@@ -96,13 +129,16 @@ const RootRowImpl: React.FC<RootRowProps & { contextMenuId: string }> = ({
         'is-hidden': !root.topLevel,
       })}
       style={{ opacity: isDragging ? 0.4 : 1 }}
-      role="button"
-      tabIndex={0}
-      aria-current={active}
+      role="treeitem"
+      aria-level={1}
+      aria-selected={active}
+      aria-labelledby={labelId}
+      tabIndex={tabIndex}
       onClick={onSelect}
       onKeyDown={e => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        if (isActivationKey(e)) {
           e.preventDefault();
+          e.stopPropagation();
           onSelect();
           return;
         }
@@ -135,35 +171,39 @@ const RootRowImpl: React.FC<RootRowProps & { contextMenuId: string }> = ({
           onCancel={onCancel}
         />
       ) : (
-        <span
-          className="ui-designer-code-root-name"
-          onDoubleClick={e => {
-            e.stopPropagation();
-            onBeginEdit();
-          }}
-        >
-          {root.name}
-        </span>
+        <>
+          <span
+            id={labelId}
+            className="ui-designer-code-root-name"
+            onDoubleClick={e => {
+              e.stopPropagation();
+              onBeginEdit();
+            }}
+          >
+            {root.name}
+          </span>
+          <div className="ui-designer-code-root-actions">
+            <button
+              type="button"
+              className="ui-designer-code-root-toplevel ui-designer-toggle ui-designer-compact ui-designer-layer-toggle"
+              title={
+                root.topLevel
+                  ? 'Top-level: rendered on its own. Click to make it a nested-only component.'
+                  : 'Component: only rendered where it is nested. Click to make it top-level.'
+              }
+              aria-label={`Hide ${root.name}`}
+              aria-pressed={!root.topLevel}
+              tabIndex={tabIndex}
+              onClick={e => {
+                e.stopPropagation();
+                void toggleTopLevel(root.filename);
+              }}
+            >
+              {root.topLevel ? <EyeIcon /> : <EyeOffIcon />}
+            </button>
+          </div>
+        </>
       )}
-      <div className="ui-designer-code-root-actions">
-        <button
-          type="button"
-          className="ui-designer-code-root-toplevel ui-designer-toggle ui-designer-compact ui-designer-layer-toggle"
-          title={
-            root.topLevel
-              ? 'Top-level: rendered on its own. Click to make it a nested-only component.'
-              : 'Component: only rendered where it is nested. Click to make it top-level.'
-          }
-          aria-label={`Toggle top-level for ${root.name}`}
-          aria-pressed={root.topLevel}
-          onClick={e => {
-            e.stopPropagation();
-            void toggleTopLevel(root.filename);
-          }}
-        >
-          {root.topLevel ? <EyeIcon /> : <EyeOffIcon />}
-        </button>
-      </div>
     </div>
   );
 };
@@ -217,6 +257,11 @@ export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) =>
 
   const term = filter.trim().toLowerCase();
   const shown = term ? roots.filter(root => root.name.toLowerCase().includes(term)) : roots;
+  const hudShown = roots.length > 0 && MOBILE_HUD.includes(term);
+  const selectedKey = mobileHudSelected ? MOBILE_HUD : filename;
+  const keys = [...(hudShown ? [MOBILE_HUD] : []), ...shown.map(root => root.filename)];
+  const tabStop = selectedKey !== null && keys.includes(selectedKey) ? selectedKey : keys[0];
+  const tabIndexOf = (key: string) => (key === tabStop ? 0 : -1);
 
   return (
     <div className="ui-designer-roots-list">
@@ -228,13 +273,24 @@ export const CodeRootsList: React.FC<{ filter?: string }> = ({ filter = '' }) =>
           {error}
         </div>
       ) : null}
-      <div className="ui-designer-roots-tree">
-        {roots.length > 0 && 'mobilehud'.includes(term) ? <MobileHudRow /> : null}
+      <div
+        className="ui-designer-roots-tree"
+        role="tree"
+        aria-label="GUIs"
+        onKeyDown={moveRowFocus}
+      >
+        {hudShown ? (
+          <MobileHudRow
+            active={selectedKey === MOBILE_HUD}
+            tabIndex={tabIndexOf(MOBILE_HUD)}
+          />
+        ) : null}
         {shown.map(root => (
           <RootRow
             key={root.filename}
             root={root}
-            active={!mobileHudSelected && root.filename === filename}
+            active={selectedKey === root.filename}
+            tabIndex={tabIndexOf(root.filename)}
             editing={editing === root.filename}
             onSelect={() => handleSelect(root)}
             onBeginEdit={() => beginEdit(root)}
