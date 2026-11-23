@@ -8,16 +8,16 @@ use dcl_js::system_api::{JsBindingsData, PermissionTypeDetail};
 use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarNametagAnchor,
+    BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
+    CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest,
+    ItemPurchaseState, ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetAvatarResult, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -69,7 +69,9 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_bridge_stream(),
             op_get_user_profile(),
             op_get_compact_profiles(),
-            op_avatar_nametag_anchor(),
+            op_get_avatar_nametag_anchor_stream(),
+            op_read_avatar_nametag_anchor_stream(),
+            op_close_avatar_nametag_anchor_stream(),
             op_quit(),
             op_get_permission_request_stream(),
             op_read_permission_request_stream(),
@@ -488,12 +490,22 @@ pub async fn op_get_compact_profiles(
 }
 
 #[op2(async)]
+pub async fn op_get_avatar_nametag_anchor_stream(state: Rc<RefCell<OpState>>, entity: u32) -> u32 {
+    dcl_js::system_api::op_get_avatar_nametag_anchor_stream(state, entity).await
+}
+
+#[op2(async)]
 #[serde]
-pub async fn op_avatar_nametag_anchor(
+pub async fn op_read_avatar_nametag_anchor_stream(
     state: Rc<RefCell<OpState>>,
-    entity: u32,
-) -> Result<Option<common::rpc::NametagAnchorOffset>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_avatar_nametag_anchor(state, entity).await
+    rid: u32,
+) -> Result<Option<AvatarNametagAnchor>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_avatar_nametag_anchor_stream(state, rid).await
+}
+
+#[op2(fast)]
+pub fn op_close_avatar_nametag_anchor_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
+    dcl_js::system_api::op_close_avatar_nametag_anchor_stream(state, rid)
 }
 
 #[op2(fast)]

@@ -328,18 +328,28 @@ pub async fn op_get_compact_profiles(
 }
 
 #[wasm_bindgen]
-pub async fn op_avatar_nametag_anchor(
+pub async fn op_get_avatar_nametag_anchor_stream(state: &WorkerContext, entity: u32) -> u32 {
+    dcl_js::system_api::op_get_avatar_nametag_anchor_stream(state.rc(), entity).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_avatar_nametag_anchor_stream(
     state: &WorkerContext,
-    entity: u32,
+    rid: u32,
 ) -> Result<JsValue, WasmError> {
-    dcl_js::system_api::op_avatar_nametag_anchor(state.rc(), entity)
+    dcl_js::system_api::op_read_avatar_nametag_anchor_stream(state.rc(), rid)
         .await
-        .map(|anchor| {
-            anchor
+        .map(|value| {
+            value
                 .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
                 .unwrap()
         })
         .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_close_avatar_nametag_anchor_stream(state: &WorkerContext, rid: u32) {
+    dcl_js::system_api::op_close_avatar_nametag_anchor_stream(state.rc(), rid)
 }
 
 #[wasm_bindgen]

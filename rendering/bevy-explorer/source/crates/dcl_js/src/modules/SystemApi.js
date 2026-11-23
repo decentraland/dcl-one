@@ -157,12 +157,29 @@ module.exports.getCompactProfiles = async function(addresses) {
     return await Deno.core.ops.op_get_compact_profiles(addresses);
 }
 
-// where one of this (system) scene's avatars has its nametag: the offset of the nametag anchor of an
-// AvatarShape entity from the avatar's origin, in metres with the avatar's scale, along the scene's
-// axes (x east, y up, z north). The engine sets that anchor over the head and what it wears.
-// -> { x: number, y: number, z: number } | null (null until the avatar's body is measured)
-module.exports.avatarNametagAnchor = async function(entity) {
-    return await Deno.core.ops.op_avatar_nametag_anchor(entity);
+// where one of this (system) scene's avatars has its nametag, as a stream: the offset of the nametag anchor of an
+// AvatarShape entity from the avatar's origin, in metres with the avatar's scale, along the scene's axes (x east,
+// y up, z north), told now and again whenever it moves by a step. The engine sets that anchor over the head and
+// what it wears.
+// type AvatarNametagAnchor = { measured: boolean, x: number, y: number, z: number } (measured false, and 0s, until
+// the avatar's body is measured, or while the entity is no such avatar)
+// close() ends it.
+module.exports.getAvatarNametagAnchorStream = async function(entity) {
+  const rid = await Deno.core.ops.op_get_avatar_nametag_anchor_stream(entity);
+  async function* streamGenerator() {
+    try {
+      while (true) {
+        const next = await Deno.core.ops.op_read_avatar_nametag_anchor_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    } finally {
+      Deno.core.ops.op_close_avatar_nametag_anchor_stream(rid);
+    }
+  }
+  const stream = streamGenerator();
+  stream.close = () => Deno.core.ops.op_close_avatar_nametag_anchor_stream(rid);
+  return stream;
 }
 
 // get the next key/button pressed by the user, identified as a string

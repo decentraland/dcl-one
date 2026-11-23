@@ -237,6 +237,14 @@ pub enum SystemApi {
     RetryConnectivity,
     /// The current safe snapshot, followed by changes until the consumer closes.
     GetConnectivityStream(RpcStreamSender<ConnectivitySnapshot>),
+    /// Where one of the system scene's avatars (`entity`, its `AvatarShape` entity as the scene
+    /// numbers it) has its nametag: now, then again whenever it moves by a step, until the consumer
+    /// closes. Only the system scene can ask (it is a `SystemApi`), and the entity is read in its
+    /// own context.
+    GetAvatarNametagAnchorStream {
+        entity: u32,
+        sender: RpcStreamSender<AvatarNametagAnchor>,
+    },
     GetAvatarModifiers(RpcResultSender<Vec<AvatarModifierState>>),
     // Social / Friends
     GetFriends(RpcResultSender<Vec<FriendData>>),

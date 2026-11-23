@@ -14,17 +14,17 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync::Arc};
 use strum::IntoEnumIterator;
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
-    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
-    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent, WorldAccessVerdict,
+    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarNametagAnchor,
+    BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
+    CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest,
+    ItemPurchaseState, ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetAvatarResult, SetItemPurchaseState, SetPermanentPermission,
+    SetSinglePermission, SystemApi, TextureOptimizationStatus, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -771,30 +771,33 @@ pub async fn op_get_user_profile(
 }
 
 /// Where one of the system scene's avatars (an `AvatarShape` entity, as the scene numbers it) has
-/// its nametag: its anchor's offset from the avatar's origin, in world metres with the avatar's
-/// scale along the scene's axes, or None until the engine has measured the avatar's body. The
-/// system scene's avatar preview places the page's nametag with it. The check below only fails a
-/// call early; the guard is the engine's (`serve_avatar_nametag_anchor`), which answers no scene
-/// but the system scene.
-pub async fn op_avatar_nametag_anchor(
+/// its nametag, as a stream: its anchor's offset from the avatar's origin, in world metres with the
+/// avatar's scale along the scene's axes, told now and again whenever it moves by a step. The
+/// system scene's avatar preview places the page's nametag with it. A `SystemApi`, so only the
+/// system scene can ask.
+pub async fn op_get_avatar_nametag_anchor_stream(
     state: Rc<RefCell<impl State>>,
     entity: u32,
-) -> Result<Option<common::rpc::NametagAnchorOffset>, anyhow::Error> {
-    if !state.borrow().has::<SuperUserScene>() {
-        anyhow::bail!("avatarNametagAnchor is only available to the system scene");
-    }
-
-    let (sx, rx) = RpcResultSender::channel();
-
+) -> u32 {
+    let (sender, receiver) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), receiver);
     state
         .borrow_mut()
-        .borrow_mut::<RpcCalls>()
-        .push(RpcCall::AvatarNametagAnchor {
-            entity: dcl_component::SceneEntityId::from_proto_u32(entity),
-            response: sx,
-        })?;
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetAvatarNametagAnchorStream { entity, sender })
+        .unwrap();
+    rid
+}
 
-    rx.await.map_err(|e| anyhow::anyhow!(e))
+pub async fn op_read_avatar_nametag_anchor_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<AvatarNametagAnchor>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_avatar_nametag_anchor_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<AvatarNametagAnchor>(&mut *state.borrow_mut(), rid);
 }
 
 /// The most addresses one `getCompactProfiles` call may ask about.

@@ -79,14 +79,46 @@ type Anchor = { x: number; y: number } | null
 
 type Offset = { x: number; y: number; z: number }
 
-/** A fresh preview, its Shop stage up on a page of `framing` (a Names page by default), the engine answering
- *  `answers` to the first reads, in order (the anchor, read once, by default): later reads never answer, so whatever
- *  the tag does after comes from the anchors already read. */
-async function openShop(answers: Offset[] = [ANCHOR], framing: 'names' | 'catalog' = 'names') {
+/** One anchor stream the preview opened, as the engine serves it: what the test has it tell, and whether it was closed. */
+function anchorStream() {
+  const queue: { measured: boolean; x: number; y: number; z: number }[] = []
+  let wake: (() => void) | null = null
+  const state = { closed: false }
+  const iterable = {
+    close: () => {
+      state.closed = true
+      wake?.()
+    },
+    async *[Symbol.asyncIterator]() {
+      while (!state.closed) {
+        while (queue.length > 0) yield queue.shift()!
+        if (state.closed) return
+        await new Promise<void>((resolve) => (wake = resolve))
+      }
+    }
+  }
+  return {
+    iterable,
+    state,
+    tell: (offset: Offset) => {
+      queue.push({ measured: true, ...offset })
+      wake?.()
+    }
+  }
+}
+
+/** A fresh preview, its Shop stage up on a page of `framing` (a Names page by default). On a Names page the engine's
+ *  stream for its avatar tells `first` (the anchor by default) as it opens; the test tells it more with `tell`. */
+async function openShop(framing: 'names' | 'catalog' = 'names', first: Offset | null = ANCHOR) {
   vi.resetModules()
   ecs.reset()
-  let reads = 0
-  api.avatarNametagAnchor = vi.fn(() => (reads < answers.length ? Promise.resolve(answers[reads++]) : new Promise(() => {})))
+  const streams: ReturnType<typeof anchorStream>[] = []
+  api.getAvatarNametagAnchorStream = vi.fn(async () => {
+    const stream = anchorStream()
+    streams.push(stream)
+    if (first) stream.tell(first)
+    return stream.iterable
+  })
   const { registerAvatarPreview } = await import('../../bridge-scene/src/domains/avatarPreview')
   const handlers = new Map<string, (msg: PageToScene) => void>()
   const systems: ((dt: number) => void)[] = []
@@ -98,9 +130,17 @@ async function openShop(answers: Offset[] = [ANCHOR], framing: 'names' | 'catalo
   } as unknown as Ctx
   registerAvatarPreview(ctx)
   const emit = (msg: PageToScene): void => handlers.get(msg.kind)!(msg)
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+  }
   const frame = async (dt = 0): Promise<void> => {
     systems.forEach((s) => s(dt))
-    for (let i = 0; i < 10; i++) await Promise.resolve()
+    await settle()
+  }
+  /** The engine tells the stream open now that the anchor is `offset`. */
+  const tell = async (offset: Offset): Promise<void> => {
+    streams.at(-1)!.tell(offset)
+    await settle()
   }
   const camera = (): number => {
     const [cam] = [...ecs.stores.get('TextureCamera')!.values()] as { mode: { orthographic: { verticalRange: number } } }[]
@@ -111,7 +151,7 @@ async function openShop(answers: Offset[] = [ANCHOR], framing: 'names' | 'catalo
   emit({ kind: 'previewStage', rect: STAGE, framing } as PageToScene)
   await frame()
   await frame()
-  return { emit, frame, camera, tags, read: api.avatarNametagAnchor as ReturnType<typeof vi.fn> }
+  return { emit, frame, tell, camera, tags, streams, open: api.getAvatarNametagAnchorStream as ReturnType<typeof vi.fn> }
 }
 
 beforeEach(() => {
@@ -119,23 +159,27 @@ beforeEach(() => {
 })
 
 describe("the Shop's avatar preview", () => {
-  it('reads no anchor on a catalogue page, and starts once a Names page is on the stage', async () => {
-    const shop = await openShop([ANCHOR], 'catalog')
+  it('follows no anchor on a catalogue page, starts once a Names page is on the stage, and stops when it leaves', async () => {
+    const shop = await openShop('catalog')
     await shop.frame(1)
-    expect(shop.read).not.toHaveBeenCalled()
+    expect(shop.open).not.toHaveBeenCalled()
     expect(shop.tags()).toEqual([])
     shop.emit({ kind: 'previewStage', rect: STAGE, framing: 'names' } as PageToScene)
     await shop.frame(0.05)
-    expect(shop.read).toHaveBeenCalledTimes(1)
+    expect(shop.open).toHaveBeenCalledTimes(1)
     expect(shop.tags()).toHaveLength(1)
+    // another page: the tag goes at once, and the stream is closed
+    shop.emit({ kind: 'previewStage', rect: STAGE, framing: 'catalog' } as PageToScene)
+    expect(shop.tags().at(-1)).toBeNull()
+    expect(shop.streams[0].state.closed).toBe(true)
   })
 
   it("eases to Names' framing, a resize midway neither snapping it nor dropping the tag, and back from midway", async () => {
-    const shop = await openShop([ANCHOR], 'catalog')
+    const shop = await openShop('catalog')
     expect(shop.camera()).toBeCloseTo(SHOP_FRAMING.range, 9)
 
     shop.emit({ kind: 'previewStage', rect: STAGE, framing: 'names' } as PageToScene)
-    await shop.frame(0.15) // a quarter of the ease, and the Names page's first read
+    await shop.frame(0.15) // a quarter of the ease, and the Names page's stream telling the anchor
     const quarter = shop.camera()
     expect(quarter).toBeGreaterThan(SHOP_FRAMING.range)
     expect(quarter).toBeLessThan(SHOP_NAMES_FRAMING.range)
@@ -163,7 +207,7 @@ describe("the Shop's avatar preview", () => {
     expect(shop.camera()).toBeLessThan(SHOP_NAMES_FRAMING.range)
   })
 
-  it('puts the tag back where the unzoomed view has it as soon as the zoom returns, without a new read', async () => {
+  it('puts the tag back where the unzoomed view has it as soon as the zoom returns, from the anchor told', async () => {
     const shop = await openShop()
     const [unzoomed] = shop.tags()
     shop.emit({ kind: 'previewZoom', zoom: 2, anchor: 0.3 } as PageToScene)
@@ -173,56 +217,57 @@ describe("the Shop's avatar preview", () => {
     await shop.frame()
     expect(shop.tags().at(-1)!.x).toBeCloseTo(unzoomed!.x, 9)
     expect(shop.tags().at(-1)!.y).toBeCloseTo(unzoomed!.y, 9)
+    expect(shop.open).toHaveBeenCalledTimes(1)
   })
 
   it("stands the tag on the avatar's axis, still while the head sways and turns, and moves it for a hat", async () => {
-    // the head off the axis (read again once the pose has settled), then swaying 3cm up and turned the other way,
+    // the head off the axis (told again once the pose has settled), then swaying 3cm up and turned the other way,
     // then under a hat
-    const shop = await openShop([
-      { x: 0.2, y: 3.6, z: -0.3 },
-      { x: 0.2, y: 3.6, z: -0.3 },
-      { x: -0.15, y: 3.63, z: 0.2 },
-      { x: 0.1, y: 3.95, z: 0 }
-    ])
+    const shop = await openShop('names', { x: 0.2, y: 3.6, z: -0.3 })
     const [first] = shop.tags()
     expect(first!.x).toBeCloseTo(0.5, 9)
-    await shop.frame(NAMETAG_SETTLE_SECONDS) // the place held from now on
-    await shop.frame(0.25) // the sway's read
+    await shop.frame(NAMETAG_SETTLE_SECONDS)
+    await shop.tell({ x: 0.2, y: 3.6, z: -0.3 }) // the place held from now on
+    await shop.tell({ x: -0.15, y: 3.63, z: 0.2 }) // the sway
     expect(shop.tags()).toEqual([first])
-    await shop.frame(0.25) // the hat's read
+    await shop.tell({ x: 0.1, y: 3.95, z: 0 }) // the hat
     const tags = shop.tags()
     expect(tags).toHaveLength(2)
     expect(tags[1]!.x).toBeCloseTo(0.5, 9)
     expect(tags[1]!.y).toBeLessThan(first!.y)
   })
 
-  it('opens on Names in its framing, and takes the tag away when the stage goes', async () => {
+  it('opens on Names in its framing, and takes the tag away and closes the stream when the stage goes', async () => {
     const shop = await openShop()
     shop.emit({ kind: 'previewStage', rect: null } as PageToScene)
     expect(shop.tags().at(-1)).toBeNull()
+    expect(shop.streams[0].state.closed).toBe(true)
     shop.emit({ kind: 'previewStage', rect: STAGE, framing: 'names' } as PageToScene)
     expect(shop.camera()).toBeCloseTo(SHOP_NAMES_FRAMING.range, 9)
   })
 
   it('places the tag afresh after an emote, where it would have held through a sway', async () => {
     // settled at 3.6m, then 3cm higher: held as a sway; then an emote stops and the head comes back 4cm higher
-    const shop = await openShop([ANCHOR, ANCHOR, { x: 0, y: 3.63, z: 0 }, { x: 0, y: 3.64, z: 0 }])
+    const shop = await openShop()
     const [first] = shop.tags()
     await shop.frame(NAMETAG_SETTLE_SECONDS)
-    await shop.frame(0.25)
+    await shop.tell(ANCHOR)
+    await shop.tell({ x: 0, y: 3.63, z: 0 })
     expect(shop.tags()).toEqual([first])
     shop.emit({ kind: 'previewEmote', urn: null } as PageToScene)
-    await shop.frame(0.25)
+    await shop.tell({ x: 0, y: 3.64, z: 0 })
     const tags = shop.tags()
     expect(tags).toHaveLength(2)
     expect(tags[1]!.y).toBeLessThan(first!.y)
   })
 
   it('tells a reloaded page where the tag is, though it has not moved', async () => {
-    const shop = await openShop([ANCHOR, ANCHOR])
+    const shop = await openShop()
     const [first] = shop.tags()
     shop.emit({ kind: 'hello' } as PageToScene)
     await shop.frame()
+    // followed afresh: the engine tells the new stream the anchor as it opens
+    expect(shop.open).toHaveBeenCalledTimes(2)
     expect(shop.tags()).toEqual([first, null, first])
   })
 })

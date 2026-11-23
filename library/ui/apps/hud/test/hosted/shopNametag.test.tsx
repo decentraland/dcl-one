@@ -18,6 +18,21 @@ describe("the Shop avatar's nametag", () => {
     await waitFor(() => expect(h.session().shop.nametagAnchor).toBeNull())
   })
 
+  it('forgets it when the Shop closes and when the bridge starts again, whatever the bridge said last', async () => {
+    const h = renderSession({ userId: null })
+    act(() => h.session().shop.toggle())
+    await waitFor(() => expect(h.session().shop.open).toBe(true))
+    act(() => h.driver.emit({ kind: 'previewNametag', anchor: { x: 0.53, y: 0.12 } }))
+    await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual({ x: 0.53, y: 0.12 }))
+    act(() => h.session().shop.toggle())
+    await waitFor(() => expect(h.session().shop.nametagAnchor).toBeNull())
+    // a bridge that restarted says nothing until its stream does: the old place isn't kept for it
+    act(() => h.driver.emit({ kind: 'previewNametag', anchor: { x: 0.53, y: 0.12 } }))
+    await waitFor(() => expect(h.session().shop.nametagAnchor).toEqual({ x: 0.53, y: 0.12 }))
+    act(() => h.driver.emit({ kind: 'bridgeReady' }))
+    await waitFor(() => expect(h.session().shop.nametagAnchor).toBeNull())
+  })
+
   it("tells the engine how the Shop's page draws the avatar with its stage, and nothing more when not told", () => {
     const h = renderSession({ userId: null })
     const rect = { x: 0, y: -70, width: 1920, height: 1080 }

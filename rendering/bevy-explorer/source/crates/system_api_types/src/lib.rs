@@ -18,6 +18,21 @@ use dcl_component::proto_components::{
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
+/// Where one of the system scene's avatars (an `AvatarShape` entity) has its nametag: the nametag
+/// anchor's offset from the avatar's origin, in world metres with the avatar's scale, along the
+/// scene's axes (`x` east, `y` up, `z` north). The engine sets that anchor over the head and what
+/// it wears. `measured` is false (and the offset zero) until the engine has measured the avatar's
+/// body, or while the entity is no such avatar.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AvatarNametagAnchor {
+    pub measured: bool,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
 /// The safe connectivity snapshot shared by the HUD and diagnostic console.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]

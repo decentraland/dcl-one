@@ -3,12 +3,13 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    rpc::{NametagAnchorOffset, RpcCall, RpcCallEvent},
+    rpc::RpcStreamSender,
     sets::PostUpdateSets,
     structs::{AttachPoints, AvatarDynamicState, MoveKind},
 };
-use dcl_component::transform_and_parent::DclTranslation;
+use dcl_component::{transform_and_parent::DclTranslation, SceneEntityId};
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
+use system_bridge::{AvatarNametagAnchor, SystemApi};
 
 use crate::ghost::AvatarGhost;
 use bevy_console::ConsoleCommand;
@@ -38,7 +39,7 @@ impl Plugin for DynamicNametagPlugin {
             PostUpdate,
             dynamic_nametag_position.in_set(PostUpdateSets::Nametag),
         );
-        app.add_systems(Update, serve_avatar_nametag_anchor);
+        app.add_systems(Update, stream_avatar_nametag_anchor);
 
         app.insert_resource(NametagsVisible(true))
             .add_console_command::<Nametags, _>(nametags_command);
@@ -66,40 +67,74 @@ fn nametags_command(mut cmd: ConsoleCommand<Nametags>, mut visible: ResMut<Namet
     cmd.reply_ok(serde_json::json!({"visible": visible.0}).to_string());
 }
 
-/// Answers `avatarNametagAnchor`: for an avatar of the system scene (its `AvatarShape` entity),
-/// where its nametag anchor stands from the avatar's origin, as `dynamic_nametag_position` last
-/// placed it (over the head, clear of what the avatar wears, following the head across too), in
-/// world metres along the scene's axes. None for another scene's entity, an entity that is no such
-/// avatar, or an avatar whose body isn't measured yet (no `NametagHeadOffset`). Read in `Update`: the
-/// transforms as the last frame's `PostUpdate` propagated them.
+/// The least the nametag anchor moves, in world metres on any axis, before a stream tells it again:
+/// a centimetre, under a pixel or two of the Shop's window, and well inside what an idle sways.
+const NAMETAG_ANCHOR_STEP: f32 = 0.01;
+
+/// One stream of `getAvatarNametagAnchorStream`: the system scene's avatar it follows, and what it
+/// told last.
+struct NametagAnchorStream {
+    entity: SceneEntityId,
+    sender: RpcStreamSender<AvatarNametagAnchor>,
+    told: Option<AvatarNametagAnchor>,
+}
+
+/// Serves `getAvatarNametagAnchorStream`: for an avatar of the system scene (its `AvatarShape`
+/// entity, read in the system scene's own context), where its nametag anchor stands from the
+/// avatar's origin, as `dynamic_nametag_position` last placed it (over the head, clear of what the
+/// avatar wears, following the head across too), in world metres along the scene's axes. Told on
+/// subscribe, then again when it moves by NAMETAG_ANCHOR_STEP or more, or when the avatar becomes
+/// measured or stops being one; never polled. Read in `Update`: the transforms as the last frame's
+/// `PostUpdate` propagated them.
 ///
-/// Only the system scene is answered, and this is where that holds: a call's origin is the scene
-/// the engine stamped on it, so a scene that reaches the op directly (on web, any scene can, from
-/// its own sandbox) gets None whatever it asks.
-fn serve_avatar_nametag_anchor(
-    mut requests: EventReader<RpcCallEvent>,
+/// Only the system scene can subscribe: the request is a `SystemApi`, which reaches the engine from
+/// the system scene alone, and its entity is resolved in that scene's context.
+fn stream_avatar_nametag_anchor(
+    mut requests: EventReader<SystemApi>,
+    mut streams: Local<Vec<NametagAnchorStream>>,
     scenes: Query<&RendererSceneContext, With<SuperUserScene>>,
     avatars: Query<&AttachPoints, With<NametagHeadOffset>>,
     global_transforms: Query<&GlobalTransform>,
 ) {
-    for event in requests.read() {
-        let RpcCall::AvatarNametagAnchor { entity, response } = &event.call else {
-            continue;
-        };
-        let anchor = event
-            .origin
-            .scene()
-            .and_then(|scene| scenes.get(scene).ok())
-            .and_then(|context| context.bevy_entity(*entity))
+    for request in requests.read() {
+        if let SystemApi::GetAvatarNametagAnchorStream { entity, sender } = request {
+            streams.push(NametagAnchorStream {
+                entity: SceneEntityId::from_proto_u32(*entity),
+                sender: sender.clone(),
+                told: None,
+            });
+        }
+    }
+    streams.retain(|stream| !stream.sender.is_closed());
+    if streams.is_empty() {
+        return;
+    }
+    let system_scene = scenes.iter().next();
+    for stream in streams.iter_mut() {
+        let anchor = system_scene
+            .and_then(|context| context.bevy_entity(stream.entity))
             .and_then(|avatar| avatars.get(avatar).ok())
             .and_then(|points| {
                 nametag_anchor_from(
                     global_transforms.get(points.position).ok()?,
                     global_transforms.get(points.nametag).ok()?,
                 )
-            });
-        response.send(anchor);
+            })
+            .unwrap_or_default();
+        if stream.told.is_some_and(|told| !moved(told, anchor)) {
+            continue;
+        }
+        let _ = stream.sender.send(anchor);
+        stream.told = Some(anchor);
     }
+}
+
+/// Whether `now` is worth telling after `told`: measured or not, or moved by a step on any axis.
+fn moved(told: AvatarNametagAnchor, now: AvatarNametagAnchor) -> bool {
+    told.measured != now.measured
+        || (now.x - told.x).abs() >= NAMETAG_ANCHOR_STEP
+        || (now.y - told.y).abs() >= NAMETAG_ANCHOR_STEP
+        || (now.z - told.z).abs() >= NAMETAG_ANCHOR_STEP
 }
 
 /// The nametag anchor's offset from the avatar's origin, in world metres along a scene's axes (the
@@ -107,13 +142,18 @@ fn serve_avatar_nametag_anchor(
 fn nametag_anchor_from(
     origin: &GlobalTransform,
     nametag: &GlobalTransform,
-) -> Option<NametagAnchorOffset> {
+) -> Option<AvatarNametagAnchor> {
     let offset = nametag.translation() - origin.translation();
     if !offset.is_finite() {
         return None;
     }
     let [x, y, z] = DclTranslation::from_bevy_translation(offset).0;
-    Some(NametagAnchorOffset { x, y, z })
+    Some(AvatarNametagAnchor {
+        measured: true,
+        x,
+        y,
+        z,
+    })
 }
 
 /// On an avatar: how far above the head bone their nametag sits, clear of what they wear, in
@@ -249,8 +289,7 @@ pub(crate) fn dynamic_nametag_position(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::rpc::{RpcOrigin, RpcResultSender};
-    use dcl_component::SceneEntityId;
+    use common::rpc::RpcStreamReceiver;
 
     /// A scene (the system scene if `system`), and one of its avatars (an `AvatarShape`'s attach
     /// points) whose origin and nametag anchor stand here in the world (the engine's axes);
@@ -307,82 +346,159 @@ mod tests {
     fn nametag_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .add_event::<RpcCallEvent>()
-            .add_systems(Update, serve_avatar_nametag_anchor);
+            .add_event::<SystemApi>()
+            .add_systems(Update, stream_avatar_nametag_anchor);
         app
     }
 
-    fn ask(app: &mut App, origin: RpcOrigin, entity: SceneEntityId) -> Option<NametagAnchorOffset> {
-        let (response, mut answer) = RpcResultSender::channel();
-        app.world_mut().send_event(RpcCallEvent {
-            origin,
-            call: RpcCall::AvatarNametagAnchor { entity, response },
-        });
-        app.update();
-        answer
-            .try_recv()
-            .expect("answered in the frame it was asked")
+    /// Subscribes to `entity`'s anchor, as the system scene's `getAvatarNametagAnchorStream` does.
+    fn subscribe(app: &mut App, entity: SceneEntityId) -> RpcStreamReceiver<AvatarNametagAnchor> {
+        let (sender, receiver) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetAvatarNametagAnchorStream {
+                entity: entity.as_proto_u32().unwrap(),
+                sender,
+            });
+        receiver
+    }
+
+    /// Everything the stream told since the last look.
+    fn told(receiver: &mut RpcStreamReceiver<AvatarNametagAnchor>) -> Vec<AvatarNametagAnchor> {
+        std::iter::from_fn(|| receiver.try_recv().ok()).collect()
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-5
     }
 
     #[test]
-    fn the_system_scene_learns_where_its_avatar_has_its_nametag_along_its_own_axes() {
+    fn the_system_scene_follows_where_its_avatar_has_its_nametag_along_its_own_axes() {
         let mut app = nametag_app();
         // the head leans east and toward the engine's -z, which is the scene's north
-        let (scene, avatar) = scene_with_avatar(
+        let (_, avatar) = scene_with_avatar(
             app.world_mut(),
             true,
             Vec3::new(8.0, 0.5, -8.0),
             Vec3::new(8.2, 4.1, -8.3),
             true,
         );
-        let from_scene = RpcOrigin::Scene {
-            entity: scene,
-            hash: "scene".into(),
-        };
-        let anchor = ask(&mut app, from_scene.clone(), avatar).expect("a measured avatar");
-        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        let mut stream = subscribe(&mut app, avatar);
+        app.update();
+        let first = told(&mut stream);
+        assert_eq!(first.len(), 1, "told once on subscribe: {first:?}");
+        let anchor = first[0];
+        assert!(anchor.measured);
         assert!(
             close(anchor.x, 0.2) && close(anchor.y, 3.6) && close(anchor.z, 0.3),
             "{anchor:?}"
         );
-        // the engine itself is no scene, and an entity the scene doesn't hold is no avatar
-        assert_eq!(ask(&mut app, RpcOrigin::Engine, avatar), None);
-        assert_eq!(ask(&mut app, from_scene, SceneEntityId::new(601, 0)), None);
+        // still: nothing more, however many frames pass
+        app.update();
+        app.update();
+        assert!(told(&mut stream).is_empty());
     }
 
     #[test]
-    fn an_ordinary_scene_learns_no_nametag_anchor() {
+    fn the_anchor_is_told_again_only_once_it_moves_by_a_step() {
         let mut app = nametag_app();
-        // the same measured avatar as the system scene's above, held by a scene that isn't it
-        let (scene, avatar) = scene_with_avatar(
+        let (root, avatar) = scene_with_avatar(
+            app.world_mut(),
+            true,
+            Vec3::new(8.0, 0.5, -8.0),
+            Vec3::new(8.0, 4.1, -8.0),
+            true,
+        );
+        let mut stream = subscribe(&mut app, avatar);
+        app.update();
+        assert_eq!(told(&mut stream).len(), 1);
+        let nametag = {
+            let context = app.world().get::<RendererSceneContext>(root).unwrap();
+            let avatar = context.bevy_entity(avatar).unwrap();
+            app.world().get::<AttachPoints>(avatar).unwrap().nametag
+        };
+        let place = |app: &mut App, y: f32| {
+            app.world_mut()
+                .entity_mut(nametag)
+                .insert(GlobalTransform::from_translation(Vec3::new(8.0, y, -8.0)));
+            app.update();
+        };
+        // a breath: under a step, not told
+        place(&mut app, 4.1 + NAMETAG_ANCHOR_STEP * 0.5);
+        assert!(told(&mut stream).is_empty());
+        // a hat: a step or more, told where it is now
+        place(&mut app, 4.1 + NAMETAG_ANCHOR_STEP * 3.0);
+        let moved = told(&mut stream);
+        assert_eq!(moved.len(), 1);
+        assert!(
+            close(moved[0].y, 3.6 + NAMETAG_ANCHOR_STEP * 3.0),
+            "{moved:?}"
+        );
+    }
+
+    #[test]
+    fn an_avatar_held_by_an_ordinary_scene_is_none_of_the_system_scenes() {
+        let mut app = nametag_app();
+        // a measured avatar, held by a scene that isn't the system scene: the entity is read in the
+        // system scene's context, where there is none
+        let (_, avatar) = scene_with_avatar(
             app.world_mut(),
             false,
             Vec3::new(8.0, 0.5, -8.0),
             Vec3::new(8.2, 4.1, -8.3),
             true,
         );
-        let from_scene = RpcOrigin::Scene {
-            entity: scene,
-            hash: "scene".into(),
-        };
-        assert_eq!(ask(&mut app, from_scene, avatar), None);
+        let mut stream = subscribe(&mut app, avatar);
+        app.update();
+        assert_eq!(told(&mut stream), vec![AvatarNametagAnchor::default()]);
     }
 
     #[test]
-    fn an_avatar_whose_body_isnt_measured_has_no_nametag_anchor_yet() {
+    fn an_avatar_whose_body_isnt_measured_is_told_unmeasured_then_measured() {
         let mut app = nametag_app();
-        let (scene, avatar) = scene_with_avatar(
+        let (root, avatar) = scene_with_avatar(
             app.world_mut(),
             true,
             Vec3::new(8.0, 0.5, -8.0),
             Vec3::new(8.0, 4.1, -8.0),
             false,
         );
-        let from_scene = RpcOrigin::Scene {
-            entity: scene,
-            hash: "scene".into(),
-        };
-        assert_eq!(ask(&mut app, from_scene, avatar), None);
+        let mut stream = subscribe(&mut app, avatar);
+        app.update();
+        assert_eq!(told(&mut stream), vec![AvatarNametagAnchor::default()]);
+        let entity = app
+            .world()
+            .get::<RendererSceneContext>(root)
+            .unwrap()
+            .bevy_entity(avatar)
+            .unwrap();
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(NametagHeadOffset(0.3));
+        app.update();
+        let measured = told(&mut stream);
+        assert_eq!(measured.len(), 1);
+        assert!(
+            measured[0].measured && close(measured[0].y, 3.6),
+            "{measured:?}"
+        );
+    }
+
+    #[test]
+    fn a_closed_stream_is_dropped() {
+        let mut app = nametag_app();
+        let (_, avatar) = scene_with_avatar(
+            app.world_mut(),
+            true,
+            Vec3::new(8.0, 0.5, -8.0),
+            Vec3::new(8.0, 4.1, -8.0),
+            true,
+        );
+        let stream = subscribe(&mut app, avatar);
+        app.update();
+        drop(stream);
+        app.update();
+        // nothing left to serve: the next frame early-outs
+        app.update();
     }
 
     #[test]

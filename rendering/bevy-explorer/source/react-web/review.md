@@ -225,6 +225,13 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
       look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
       Mock has no engine, so the page's background stays.
+- [ ] **Shop NAMEs nametag** (`avatarPreview.tsx`, `previewNametagFeed.ts`, the engine's anchor stream in
+      `crates/avatar/src/dynamic_nametag.rs`): on the Shop's NAMEs pages the tag stands just over the
+      avatar's head and what it wears, on its axis, and stays still through the idle and a drag-turn.
+      Put on a tall hat: the tag rises over it. Zoom and resize the window, also while the camera eases
+      between a catalogue page and NAMEs: the tag follows the avatar, never left behind. Play an emote,
+      and stop it: the tag settles at the head's height once it ends. Leaving NAMEs, or closing the Shop,
+      takes the tag away at once. Mock has no engine, so the tag keeps the design's place.
 
 ---
 

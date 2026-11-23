@@ -1676,6 +1676,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
+  // The Shop closed: the tag over its avatar goes with it, whatever the bridge says later.
+  useEffect(() => {
+    if (!shopOpen) setPreviewNametagAnchor(null)
+  }, [shopOpen])
   const bridgeRequestRef = useRef(0)
   const bridgePendingRef = useRef(new Map<number, (msg: BridgeReply) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
@@ -2115,6 +2119,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'bridgeReady':
           setBridgeAnswered(true)
+          // a bridge (re)started knows no tag over the Shop's avatar until its stream tells it
+          setPreviewNametagAnchor(null)
           break
         case 'bridgeUnavailable':
           // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
@@ -4342,6 +4348,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
+    // the Shop's nametag was the signed-in avatar's
+    setPreviewNametagAnchor(null)
     driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
