@@ -62,6 +62,17 @@ ignore = [
   { id = "RUSTSEC-2026-0548", reason = "TODO: bump zip 0.6.6, 2.4.2 to 9.0.5 or newer" },
   { id = "RUSTSEC-2026-0486", reason = "TODO: bump rustix 1.1.4 to 1.1.6 or newer" },
   { id = "RUSTSEC-2026-0543", reason = "TODO: replace chrono 0.4.45 or the crates that pull it in" },
+  # Published after the 2026-11-17 baseline, found on 2026-11-23
+  { id = "RUSTSEC-2026-0574", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0575", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0576", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0577", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0578", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0579", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0580", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0581", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0582", reason = "TODO: bump heapless 0.8.0 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0592", reason = "TODO: bump url 2.5.8 to 2.5.9 or newer" },
 ]
 
 [bans]

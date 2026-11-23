@@ -34,6 +34,26 @@ ignore = [
   { id = "RUSTSEC-2026-0486", reason = "TODO: bump rustix 1.1.5 to 1.1.6 or newer" },
   { id = "RUSTSEC-2026-0543", reason = "TODO: replace chrono 0.4.45 or the crates that pull it in" },
   { id = "RUSTSEC-2026-0555", reason = "TODO: replace chrono-tz 0.10.4 or the crates that pull it in" },
+  # Published after the 2026-11-17 baseline, found on 2026-11-23
+  { id = "RUSTSEC-2026-0574", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0575", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0576", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0577", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0578", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0579", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0580", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0581", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0582", reason = "TODO: bump heapless 0.7.17 to 0.9.4 or newer" },
+  { id = "RUSTSEC-2026-0592", reason = "TODO: bump url 2.5.8 to 2.5.9 or newer" },
+  { id = "RUSTSEC-2026-0566", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0567", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0568", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0569", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0570", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0571", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0572", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0573", reason = "TODO: bump wasmtime 50.0.0 to 50.0.2 or newer" },
+  { id = "RUSTSEC-2026-0587", reason = "TODO: bump wasmtime-wasi 50.0.0 to 50.0.3 or newer" },
 ]
 
 [bans]
