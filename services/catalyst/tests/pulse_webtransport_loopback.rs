@@ -1,6 +1,4 @@
 // from: catalyrst/crates/catalyrst-pulse/tests/webtransport_loopback.rs
-#[path = "support/wt_client.rs"]
-mod wt_client;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -12,7 +10,7 @@ use catalyst::comms::pulse::transport::webtransport::{WtConfig, WtHost};
 use catalyst::comms::pulse::transport::{Event, Packet};
 
 use sha2::{Digest, Sha256};
-use wt_client::{Client, ClientConfig};
+use catalyst::comms::pulse::transport::webtransport::client::{Client, ClientConfig};
 
 const SLOT_BASE: u32 = 4095;
 

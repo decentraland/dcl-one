@@ -2,6 +2,7 @@
 
 pub mod agent_commands;
 pub mod explorer_ui;
+mod home;
 mod item_purchase;
 mod map_pins;
 pub mod portables;
@@ -42,8 +43,9 @@ use comms::{
     global_crdt::{CrdtContexts, ForeignPlayer},
     preview::handle_preview_socket,
     profile::{CurrentUserProfile, ProfileManager, UserProfile},
+    scene_messages::SceneMessageTraffic,
     scene_rooms::SceneRooms,
-    scene_topics::{is_topic_frame, SceneTopicTraffic},
+    scene_topics::is_topic_frame,
     NetworkMessage, NetworkMessageRecipient,
 };
 use console::DoAddConsoleCommand;
@@ -137,6 +139,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
         app.add_plugins(world_access::WorldAccessPlugin);
+        app.add_plugins(home::HomePlugin);
         app.add_plugins(map_pins::MapPinsPlugin);
         app.add_plugins(item_purchase::ItemPurchasePlugin);
     }
@@ -1765,7 +1768,8 @@ fn send_scene_messages(
     mut events: EventReader<RpcCallEvent>,
     scene_rooms: SceneRooms,
     scenes: Query<&RendererSceneContext>,
-    mut topic_traffic: ResMut<SceneTopicTraffic>,
+    mut traffic: ResMut<SceneMessageTraffic>,
+    (wallet, realm, admission): (Res<Wallet>, Res<CurrentRealm>, Res<comms::SceneAdmission>),
 ) {
     for ev in events.read() {
         let RpcOrigin::Scene { entity, hash } = &ev.origin else {
@@ -1783,7 +1787,7 @@ fn send_scene_messages(
             }
             RpcCall::PublishSceneTopic { data } => {
                 if !is_topic_frame(data) {
-                    topic_traffic.record_publish(false);
+                    traffic.record_publish(false);
                     continue;
                 }
                 (data, NetworkMessageRecipient::All, true)
@@ -1791,21 +1795,30 @@ fn send_scene_messages(
             _ => continue,
         };
 
-        let sent = scene_rooms.transport(hash).is_some_and(|transport| {
-            let message = rfc4::Packet {
-                message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
-                    scene_id: hash.to_string(),
-                    data: data.clone(),
-                })),
-                protocol_version: 100,
-            };
-            transport
-                .sender
-                .try_send(NetworkMessage::targetted_reliable(&message, recipient))
-                .is_ok()
+        let denied = wallet.address().is_some_and(|address| {
+            admission.is_scene_banned(&realm.about_url, address, hash.as_ref())
+                || scene_rooms
+                    .moderation(hash)
+                    .is_some_and(|state| state.is_banned(address))
+        });
+        let filtered = comms::scene_messages::outbound(data, denied, &mut traffic);
+        let sent = filtered.is_some_and(|filtered| {
+            scene_rooms.transport(hash).is_some_and(|transport| {
+                let message = rfc4::Packet {
+                    message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
+                        scene_id: hash.to_string(),
+                        data: filtered.into_owned(),
+                    })),
+                    protocol_version: 100,
+                };
+                transport
+                    .sender
+                    .try_send(NetworkMessage::targetted_reliable(&message, recipient))
+                    .is_ok()
+            })
         });
         if topic {
-            topic_traffic.record_publish(sent);
+            traffic.record_publish(sent);
         }
     }
 }
@@ -2874,7 +2887,9 @@ mod scene_message_tests {
         app.init_resource::<SceneRoomConnection>()
             .init_resource::<ServerSceneRooms>()
             .init_resource::<common::structs::CurrentRealm>()
-            .init_resource::<SceneTopicTraffic>();
+            .init_resource::<SceneMessageTraffic>()
+            .init_resource::<comms::SceneAdmission>()
+            .init_resource::<Wallet>();
         app.add_systems(Update, send_scene_messages);
         app
     }
@@ -2900,6 +2915,7 @@ mod scene_message_tests {
         app.world_mut().resource_mut::<SceneRoomConnection>().0 = Some((
             SetCurrentScene {
                 realm_name: "realm".to_owned(),
+                realm_about_url: String::new(),
                 scene_id: hash.to_owned(),
             },
             "livekit:test".to_owned(),
@@ -2977,11 +2993,85 @@ mod scene_message_tests {
     }
 
     fn topic_publishes(app: &App) -> (u64, u64) {
-        app.world().resource::<SceneTopicTraffic>().publishes()
+        app.world().resource::<SceneMessageTraffic>().publishes()
     }
 
     fn both() -> [Vec<u8>; 2] {
         [TOPIC_MESSAGE.to_vec(), BUS_MESSAGE.to_vec()]
+    }
+
+    #[test]
+    fn scene_binary_sends_are_filtered_and_bounded_in_the_engine() {
+        let mut app = sending_app();
+        let mut room_rx = client_room(&mut app, "bafyscene");
+        let scene = spawn_scene(&mut app, "bafyscene", false);
+        let mut at_limit = vec![0; dcl_types::MAX_BINARY_MESSAGE_BYTES + 1];
+        at_limit[0] = CommsMessageType::Binary as u8;
+        let mut oversized = at_limit.clone();
+        oversized.push(0);
+        let mut local_only = vec![CommsMessageType::Binary as u8, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::PHYSICS_COMBINED_FORCE.0,
+            1,
+            0,
+        ] {
+            local_only.extend(word.to_le_bytes());
+        }
+        for data in [at_limit, oversized, local_only, vec![2, 1, 0]] {
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: "bafyscene".into(),
+                },
+                call: RpcCall::SendMessageBus {
+                    data,
+                    recipient: None,
+                },
+            });
+        }
+        app.update();
+        assert_eq!(sent(&mut room_rx).len(), 2);
+    }
+
+    #[test]
+    fn scene_messages_cannot_be_sent_while_locally_banned() {
+        for from_metadata in [false, true] {
+            let mut app = sending_app();
+            app.world_mut()
+                .resource_mut::<Wallet>()
+                .finalize_as_guest_with_seed([7; 32]);
+            let address = app.world().resource::<Wallet>().address().unwrap();
+            let mut room_rx = client_room(&mut app, "bafyscene");
+            let scene = spawn_scene(&mut app, "bafyscene", false);
+            if from_metadata {
+                let room = app
+                    .world()
+                    .resource::<SceneRoomConnection>()
+                    .0
+                    .as_ref()
+                    .unwrap()
+                    .2;
+                let mut metadata = comms::SceneRoomModeration::default();
+                metadata.banned_addresses.insert(address);
+                app.world_mut().entity_mut(room).insert(metadata);
+            } else {
+                app.insert_resource(
+                    comms::SceneAdmission::from_refusal(
+                        403,
+                        Some("User is banned from this scene"),
+                        false,
+                        "bafyscene",
+                    )
+                    .for_session("", address),
+                );
+            }
+            send(&mut app, scene, "bafyscene", both());
+            assert!(sent(&mut room_rx).is_empty());
+            assert_eq!(topic_publishes(&app), (0, 1));
+        }
     }
 
     #[test]

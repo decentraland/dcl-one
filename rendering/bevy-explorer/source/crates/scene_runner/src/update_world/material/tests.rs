@@ -25,6 +25,12 @@ use scene_material::SceneMaterialExt;
 /// `mesh_renderer`'s test app with the material systems as `MaterialDefinitionPlugin` adds
 /// them, after `update_mesh`; the charges are recorded after both.
 fn material_app() -> (App, Entity) {
+    material_app_with(true)
+}
+
+/// `loading` off leaves a created material as it was built: `update_loading_materials` takes a
+/// texture that fails to load off it, and a test's textures have no file.
+fn material_app_with(loading: bool) -> (App, Entity) {
     let (mut app, root) = test_app();
     app.init_asset::<Image>()
         .init_asset::<StandardMaterial>()
@@ -36,8 +42,9 @@ fn material_app() -> (App, Entity) {
                 init_cache,
                 remove_freed_cached_materials,
                 update_materials,
+                add_missing_tangents,
                 update_bias,
-                update_loading_materials,
+                update_loading_materials.run_if(move || loading),
             )
                 .chain()
                 .after(update_mesh)
@@ -577,5 +584,568 @@ fn per_frame_cost_with_a_large_backlog() {
             material_times[FRAMES / 2].as_secs_f64() * 1e6,
             material_times[FRAMES - 1].as_secs_f64() * 1e6,
         );
+    }
+}
+
+#[test]
+fn a_mesh_drawn_with_a_normal_map_gets_tangents() {
+    let (mut app, _) = material_app();
+    let world = app.world_mut();
+    let mut drawn = |normal_map: bool| {
+        let mesh = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(Mesh::from(Cuboid::default()));
+        let image = world.resource_mut::<Assets<Image>>().add(Image::default());
+        let material = world
+            .resource_mut::<Assets<SceneMaterial>>()
+            .add(SceneMaterial {
+                base: StandardMaterial {
+                    normal_map_texture: normal_map.then_some(image),
+                    ..Default::default()
+                },
+                extension: SceneBound::new_unbounded(),
+            });
+        world.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material)));
+        mesh
+    };
+    let (mapped, plain) = (drawn(true), drawn(false));
+    app.update();
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    let has_tangents = |mesh: &Handle<Mesh>| {
+        meshes
+            .get(mesh)
+            .unwrap()
+            .contains_attribute(Mesh::ATTRIBUTE_TANGENT)
+    };
+    assert!(has_tangents(&mapped));
+    assert!(!has_tangents(&plain));
+}
+
+mod definition {
+    use dcl_component::proto_components::{
+        common::{texture_union::Tex, Color3, Color4, Texture, TextureUnion, Vector2},
+        sdk::components::{
+            pb_material::{self, PbrMaterial, UnlitMaterial},
+            MaterialTransparencyMode, PbMaterial,
+        },
+    };
+
+    use super::super::*;
+
+    fn texture(src: &str) -> Option<TextureUnion> {
+        Some(TextureUnion {
+            tex: Some(Tex::Texture(Texture {
+                src: src.to_owned(),
+                ..Default::default()
+            })),
+        })
+    }
+
+    fn grey(v: f32, a: f32) -> Option<Color4> {
+        Some(Color4 {
+            r: v,
+            g: v,
+            b: v,
+            a,
+        })
+    }
+
+    fn pbr(pbr: PbrMaterial) -> MaterialDefinition {
+        MaterialDefinition::from_base_and_material(
+            None,
+            &PbMaterial {
+                material: Some(pb_material::Material::Pbr(pbr)),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn unlit(unlit: UnlitMaterial) -> MaterialDefinition {
+        MaterialDefinition::from_base_and_material(
+            None,
+            &PbMaterial {
+                material: Some(pb_material::Material::Unlit(unlit)),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn albedo_and_diffuse_colours_are_srgb() {
+        let lit = pbr(PbrMaterial {
+            albedo_color: grey(0.5, 1.0),
+            ..Default::default()
+        });
+        let flat = unlit(UnlitMaterial {
+            diffuse_color: grey(0.5, 1.0),
+            ..Default::default()
+        });
+        for definition in [lit, flat] {
+            let linear = definition.material.base_color.to_linear().red;
+            assert!((linear - 0.214).abs() < 0.001, "{linear}");
+        }
+    }
+
+    #[test]
+    fn the_emissive_colour_is_linear_times_its_intensity() {
+        let half = Some(Color3 {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+        });
+        let default_intensity = pbr(PbrMaterial {
+            emissive_color: half,
+            ..Default::default()
+        });
+        let intensity_four = pbr(PbrMaterial {
+            emissive_color: half,
+            emissive_intensity: Some(4.0),
+            ..Default::default()
+        });
+        assert_eq!(
+            default_intensity.material.emissive.red,
+            0.5 * 2.0 * SDK_EMISSIVE_SCALE
+        );
+        assert_eq!(
+            intensity_four.material.emissive.red,
+            0.5 * 4.0 * SDK_EMISSIVE_SCALE
+        );
+    }
+
+    #[test]
+    fn an_emissive_texture_emits_only_with_a_colour_and_an_intensity() {
+        let white = Some(Color3 {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        });
+        let no_colour = pbr(PbrMaterial {
+            emissive_texture: texture("lava.png"),
+            ..Default::default()
+        });
+        let no_intensity = pbr(PbrMaterial {
+            emissive_texture: texture("lava.png"),
+            emissive_color: white,
+            emissive_intensity: Some(0.0),
+            ..Default::default()
+        });
+        for definition in [no_colour, no_intensity] {
+            let emissive = definition.material.emissive;
+            assert_eq!([emissive.red, emissive.green, emissive.blue], [0.0; 3]);
+            assert!(definition.emmissive_texture.is_none());
+        }
+        let lit = pbr(PbrMaterial {
+            emissive_texture: texture("lava.png"),
+            emissive_color: white,
+            ..Default::default()
+        });
+        assert!(lit.emmissive_texture.is_some());
+    }
+
+    #[test]
+    fn automatic_transparency_follows_the_albedo_alpha_alone() {
+        let alpha_mode = |material: PbrMaterial| pbr(material).material.alpha_mode;
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                albedo_color: grey(1.0, 0.5),
+                ..Default::default()
+            }),
+            AlphaMode::Blend
+        );
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                alpha_test: Some(0.3),
+                ..Default::default()
+            }),
+            AlphaMode::Opaque
+        );
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                alpha_texture: texture("alpha.png"),
+                ..Default::default()
+            }),
+            AlphaMode::Opaque
+        );
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                transparency_mode: Some(MaterialTransparencyMode::MtmAlphaTest as i32),
+                alpha_test: Some(0.3),
+                ..Default::default()
+            }),
+            AlphaMode::Mask(0.3)
+        );
+    }
+
+    #[test]
+    fn an_unlit_material_blends_through_its_alpha_texture_only() {
+        let alpha_mode = |material: UnlitMaterial| unlit(material).material.alpha_mode;
+        assert_eq!(
+            alpha_mode(UnlitMaterial {
+                diffuse_color: grey(1.0, 0.5),
+                alpha_test: Some(0.3),
+                ..Default::default()
+            }),
+            AlphaMode::Opaque
+        );
+        assert_eq!(
+            alpha_mode(UnlitMaterial {
+                alpha_texture: texture("alpha.png"),
+                ..Default::default()
+            }),
+            AlphaMode::Blend
+        );
+    }
+
+    #[test]
+    fn alpha_test_and_blend_is_premultiplied() {
+        let definition = pbr(PbrMaterial {
+            transparency_mode: Some(MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend as i32),
+            alpha_test: Some(0.3),
+            ..Default::default()
+        });
+        assert_eq!(definition.material.alpha_mode, AlphaMode::Premultiplied);
+    }
+
+    #[test]
+    fn only_an_unlit_material_carries_an_alpha_texture() {
+        let flat = unlit(UnlitMaterial {
+            alpha_texture: texture("alpha.png"),
+            ..Default::default()
+        });
+        assert!(flat.alpha_texture.is_some());
+        let empty = unlit(UnlitMaterial {
+            alpha_texture: texture(""),
+            ..Default::default()
+        });
+        assert!(empty.alpha_texture.is_none());
+        assert_eq!(empty.material.alpha_mode, AlphaMode::Opaque);
+        let lit = pbr(PbrMaterial {
+            alpha_texture: texture("alpha.png"),
+            ..Default::default()
+        });
+        assert!(lit.alpha_texture.is_none());
+    }
+
+    #[test]
+    fn an_unlit_material_casts_no_shadow() {
+        let definition = unlit(UnlitMaterial {
+            cast_shadows: Some(true),
+            ..Default::default()
+        });
+        assert!(!definition.shadow_caster);
+    }
+
+    #[test]
+    fn a_bump_texture_is_read_with_its_green_channel_down() {
+        let bumped = pbr(PbrMaterial {
+            bump_texture: texture("bumps.png"),
+            ..Default::default()
+        });
+        assert!(bumped.material.flip_normal_map_y);
+        assert!(!pbr(PbrMaterial::default()).material.flip_normal_map_y);
+    }
+
+    #[test]
+    fn tiling_keeps_the_bottom_left_of_the_texture() {
+        // meshes carry `1 - v`, so `offset + uv * tiling` from the bottom left is, in mesh uvs,
+        // `v * tiling + (1 - tiling - offset)`
+        let tiled = pbr(PbrMaterial {
+            texture: Some(TextureUnion {
+                tex: Some(Tex::Texture(Texture {
+                    src: "lava.png".to_owned(),
+                    tiling: Some(Vector2 { x: 0.5, y: 0.25 }),
+                    offset: Some(Vector2 { x: 0.1, y: 0.2 }),
+                    ..Default::default()
+                })),
+            }),
+            ..Default::default()
+        });
+        let transform = tiled.material.uv_transform;
+        assert_eq!(transform.matrix2, Mat2::from_diagonal(Vec2::new(0.5, 0.25)));
+        assert!((transform.translation - Vec2::new(0.1, 0.55)).length() < 1e-6);
+
+        let plain = pbr(PbrMaterial {
+            texture: texture("lava.png"),
+            ..Default::default()
+        });
+        assert_eq!(plain.material.uv_transform, Affine2::IDENTITY);
+    }
+}
+
+/// A glTF material written to the scene and read back with that glTF as its base, as when a
+/// scene changes one field of the material it was given.
+mod readback {
+    use std::path::PathBuf;
+
+    use dcl_component::proto_components::{
+        common::{texture_union::Tex, Texture, TextureUnion},
+        sdk::components::pb_material::{self, GltfMaterial},
+    };
+    use ipfs::ipfs_path::IpfsType;
+
+    use super::{super::*, container, material_app, material_app_with};
+
+    fn gltf() -> Option<GltfMaterial> {
+        Some(GltfMaterial {
+            gltf_src: "model.glb".to_owned(),
+            name: "material".to_owned(),
+        })
+    }
+
+    fn base(material: &StandardMaterial) -> BaseMaterial {
+        BaseMaterial {
+            material: material.clone(),
+            gltf: "model.glb".to_owned(),
+            name: "material".to_owned(),
+        }
+    }
+
+    fn written(material: &StandardMaterial) -> PbMaterial {
+        PbMaterial {
+            material: Some(dcl_material_from_standard_material(
+                material,
+                &Assets::<Image>::default(),
+            )),
+            gltf: gltf(),
+        }
+    }
+
+    fn read_back(material: &StandardMaterial) -> MaterialDefinition {
+        MaterialDefinition::from_base_and_material(Some(&base(material)), &written(material))
+    }
+
+    /// A handle with a content path, as a glTF's own textures have.
+    fn image(app: &App, file: &str) -> Handle<Image> {
+        let path = IpfsPath::new(IpfsType::new_content_file(
+            "bafyhash".to_owned(),
+            file.to_owned(),
+        ));
+        app.world()
+            .resource::<AssetServer>()
+            .load(PathBuf::from(&path))
+    }
+
+    fn close(a: LinearRgba, b: LinearRgba) -> bool {
+        (a.to_vec4() - b.to_vec4()).abs().max_element() < 1e-4
+    }
+
+    /// The shader reads an emissive's colour alone.
+    fn close_rgb(a: LinearRgba, b: LinearRgba) -> bool {
+        (a.to_vec3() - b.to_vec3()).abs().max_element() < 1e-4
+    }
+
+    #[test]
+    fn an_unlit_colour_is_kept() {
+        let material = StandardMaterial {
+            unlit: true,
+            base_color: Color::srgb(0.5, 0.25, 0.75),
+            ..Default::default()
+        };
+        let definition = read_back(&material);
+        assert!(
+            close(
+                definition.material.base_color.to_linear(),
+                material.base_color.to_linear()
+            ),
+            "{:?}",
+            definition.material.base_color
+        );
+        assert!(definition.material.unlit);
+    }
+
+    #[test]
+    fn a_lit_colour_is_kept() {
+        let material = StandardMaterial {
+            base_color: Color::srgba(0.5, 0.25, 0.75, 0.5),
+            alpha_mode: AlphaMode::Blend,
+            ..Default::default()
+        };
+        let definition = read_back(&material);
+        assert!(close(
+            definition.material.base_color.to_linear(),
+            material.base_color.to_linear()
+        ));
+        assert_eq!(definition.material.alpha_mode, AlphaMode::Blend);
+    }
+
+    #[test]
+    fn an_unlit_cutout_stays_a_cutout() {
+        let definition = read_back(&StandardMaterial {
+            unlit: true,
+            alpha_mode: AlphaMode::Mask(0.3),
+            ..Default::default()
+        });
+        assert_eq!(definition.material.alpha_mode, AlphaMode::Mask(0.3));
+    }
+
+    #[test]
+    fn an_unlit_blend_keeps_its_own_alpha() {
+        let (app, _) = material_app();
+        let textured = read_back(&StandardMaterial {
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            base_color_texture: Some(image(&app, "leaf.png")),
+            ..Default::default()
+        });
+        assert_eq!(textured.material.alpha_mode, AlphaMode::Blend);
+        // an alpha texture would scale the alpha by the texture's brightness
+        assert!(textured.alpha_texture.is_none());
+
+        let untextured = read_back(&StandardMaterial {
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            base_color: Color::srgba(1.0, 1.0, 1.0, 0.5),
+            ..Default::default()
+        });
+        assert_eq!(untextured.material.alpha_mode, AlphaMode::Blend);
+    }
+
+    #[test]
+    fn the_emissive_keeps_the_gltf_rules() {
+        let definition = read_back(&StandardMaterial {
+            emissive: LinearRgba::rgb(0.5, 0.25, 0.0),
+            ..Default::default()
+        });
+        assert!(!definition.plain_emissive);
+        assert!(close_rgb(
+            definition.material.emissive,
+            LinearRgba::rgb(0.5, 0.25, 0.0)
+        ));
+    }
+
+    #[test]
+    fn an_emissive_above_one_is_kept() {
+        let emissive = LinearRgba::rgb(4.0, 2.0, 0.0);
+        let definition = read_back(&StandardMaterial {
+            emissive,
+            ..Default::default()
+        });
+        assert!(
+            close_rgb(definition.material.emissive, emissive),
+            "{:?}",
+            definition.material.emissive
+        );
+    }
+
+    #[test]
+    fn a_texture_transform_is_kept() {
+        let (app, _) = material_app();
+        let uv_transform = Affine2 {
+            matrix2: Mat2::from_diagonal(Vec2::new(0.5, 0.25)),
+            translation: Vec2::new(0.1, 0.2),
+        };
+        let definition = read_back(&StandardMaterial {
+            base_color_texture: Some(image(&app, "bark.png")),
+            uv_transform,
+            ..Default::default()
+        });
+        let read = definition.material.uv_transform;
+        assert_eq!(read.matrix2, uv_transform.matrix2);
+        assert!(
+            (read.translation - uv_transform.translation).length() < 1e-6,
+            "{:?}",
+            read.translation
+        );
+    }
+
+    fn written_with_normal_map(app: &App) -> (StandardMaterial, PbMaterial) {
+        let material = StandardMaterial {
+            normal_map_texture: Some(image(app, "bumps.png")),
+            ..Default::default()
+        };
+        let written = written(&material);
+        (material, written)
+    }
+
+    fn with_bump_src(mut written: PbMaterial, src: &str) -> PbMaterial {
+        let Some(pb_material::Material::Pbr(pbr)) = written.material.as_mut() else {
+            panic!("not a PBR material");
+        };
+        pbr.bump_texture = Some(TextureUnion {
+            tex: Some(Tex::Texture(Texture {
+                src: src.to_owned(),
+                ..Default::default()
+            })),
+        });
+        written
+    }
+
+    #[test]
+    fn a_normal_map_keeps_its_orientation() {
+        let (app, _) = material_app();
+        let (material, written) = written_with_normal_map(&app);
+        let definition =
+            MaterialDefinition::from_base_and_material(Some(&base(&material)), &written);
+        assert!(definition.normal_map.is_some());
+        assert!(!definition.material.flip_normal_map_y);
+    }
+
+    #[test]
+    fn a_bump_texture_put_in_a_normal_maps_place_is_the_scenes() {
+        let (app, _) = material_app();
+        let (material, written) = written_with_normal_map(&app);
+        let definition = MaterialDefinition::from_base_and_material(
+            Some(&base(&material)),
+            &with_bump_src(written, "scene-bumps.png"),
+        );
+        assert!(definition.material.flip_normal_map_y);
+    }
+
+    #[test]
+    fn a_bump_texture_without_a_source_leaves_the_normal_map_as_it_is() {
+        let (app, _) = material_app();
+        let (material, written) = written_with_normal_map(&app);
+        let definition = MaterialDefinition::from_base_and_material(
+            Some(&base(&material)),
+            &with_bump_src(written, ""),
+        );
+        assert!(!definition.material.flip_normal_map_y);
+    }
+
+    #[test]
+    fn an_emissive_texture_without_a_factor_stays_bound() {
+        let (mut app, root) = material_app_with(false);
+        let material = StandardMaterial {
+            emissive_texture: Some(image(&app, "glow.png")),
+            ..Default::default()
+        };
+        let written = written_with(&app, &material);
+        let entity = app
+            .world_mut()
+            .spawn((
+                container(root),
+                base(&material),
+                PbMaterialComponent(written),
+            ))
+            .id();
+        app.update();
+
+        let handle = app
+            .world()
+            .get::<MeshMaterial3dLoading>(entity)
+            .map(|loading| loading.0.id())
+            .or_else(|| {
+                app.world()
+                    .get::<MeshMaterial3d<SceneMaterial>>(entity)
+                    .map(|material| material.id())
+            })
+            .expect("the material was not created");
+        let created = app
+            .world()
+            .resource::<Assets<SceneMaterial>>()
+            .get(handle)
+            .unwrap();
+        assert!(created.base.emissive_texture.is_some());
+        assert_eq!(created.base.emissive, LinearRgba::BLACK);
+    }
+
+    fn written_with(app: &App, material: &StandardMaterial) -> PbMaterial {
+        PbMaterial {
+            material: Some(dcl_material_from_standard_material(
+                material,
+                app.world().resource::<Assets<Image>>(),
+            )),
+            gltf: gltf(),
+        }
     }
 }

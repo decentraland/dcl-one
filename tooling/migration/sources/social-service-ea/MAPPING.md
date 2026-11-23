@@ -4,7 +4,9 @@ Upstream: `github.com/decentraland/social-service-ea` at the `revision` in
 `source.toml`; table shapes are the result of every file in `src/migrations`.
 All wallet columns are lowercased. Rows whose wallet is not `0x` + 40 hex, self-pairs
 and self-referrals are skipped. When case variants of one key exist, the lowercase spelling
-wins. Upstream `timestamp` columns hold UTC; referral timestamps are epoch milliseconds.
+wins. Place ids are lowercased too, as the node stores them; of case variants in one
+community the lowercase spelling wins, then the earliest added. Upstream `timestamp`
+columns hold UTC; referral timestamps are epoch milliseconds.
 
 | Step | Upstream | Target | Cursor |
 | --- | --- | --- | --- |
@@ -16,10 +18,11 @@ wins. Upstream `timestamp` columns hold UTC; referral timestamps are epoch milli
 | user_mutes | user_mutes | social.user_mutes | muted_at |
 | user_mutes_reconcile | user_mutes (pairs) | deletes from social.user_mutes | whole set |
 | communities | communities | social.communities (+ deletes social.community_mirror rows) | updated_at |
+| community_ranking_metrics | community_ranking_metrics + communities.ranking_score | social.communities ranking columns | key (full re-scan) |
 | community_bans | community_bans | social.community_bans (+ deletes banned member rows) | key (full re-scan) |
 | community_members | community_members (+ owner from communities) | social.community_members (+ deletes removed members) | whole set |
 | community_requests | community_requests | social.community_requests | updated_at |
-| community_places | community_places (id → place_id) | social.community_places | added_at |
+| community_places | community_places (id → place_id, lowercased) | social.community_places | added_at |
 | community_posts | community_posts | social.community_posts | created_at |
 | community_posts_reconcile | community_posts (ids) | deletes from social.community_posts | whole set |
 | community_post_likes | community_post_likes | social.community_post_likes | liked_at |
@@ -107,11 +110,50 @@ upstream. Private and unlisted communities, which the mirror never sees, are imp
   replacement keeps the replacement. A pending request the node already holds wins, a status
   the node made terminal is never reopened, and no pending request is added for a wallet the
   node bans there.
-- Kept on the node: `suspended*` and `ranking_score`. Upstream's ranking job output
-  (`ranking_score`, `last_score_calculated_at`, `community_ranking_metrics`) has no writer
-  here and is not copied. A local edit newer than upstream's `updated_at` is kept.
+- Kept on the node: `suspended*`. A local edit newer than upstream's `updated_at` is kept.
+  Ranking is the next section.
 - Imported communities have no `social.community_signed_actions` entries, so they appear
   in the federation feeds only from their next signed action.
+
+## Community ranking
+
+The node's daily ranking pass scores a local community from five lifetime counters on
+`social.communities` (`ranking_events_count`, `ranking_events_total_attendees`,
+`ranking_photos_count`, `ranking_streams_count`, `ranking_streams_total_participants`) plus
+facts it reads live: places, posts, members of the last 7 days, description, age and
+`has_thumbnail`. The counters cannot be rebuilt from the node's data (no stream history; an
+event rebuild would reach before upstream started counting), so `community_ranking_metrics`
+copies upstream's `community_ranking_metrics` (zeros when a community has no row) and its
+`ranking_score`, which stands until the node's next pass. `has_thumbnail` is not copied: the
+node reads it from `social.community_thumbnails`, which `blobs social-service-ea` fills.
+
+What the step last loaded is recorded in `dcl_migration.social_community_ranking_loaded`. A
+re-run whose upstream counters are unchanged leaves the node's counters and score alone, so
+after the cutover, once upstream's event, photo and streaming handlers are stopped, the node
+keeps counting; upstream's daily rescore alone changes nothing. The score is copied with the
+counters. When upstream's counters changed, events and attendees take upstream's
+values and `ranking_tracking_since` moves to the moment upstream was read, so the node's
+ended-event scan does not count again an imported event upstream counted; events that ended
+on the node only before that moment are dropped. Photos and streams are upstream's plus the
+node's own count, what it holds above upstream's last loaded value (imported photos are published without a ranking
+increment, so the node never counts one of them). A taken-over mirrored community starts its tracking
+there too.
+
+Order: `run` (communities before community_ranking_metrics), then `blobs social-service-ea`,
+then start or restart the node, whose ranking job scores on acquiring its lease and daily.
+
+## Community places
+
+A place id resolves to a full row through the node's own catalogue (`explore.place`),
+whatever `PLACES_MIRROR_UPSTREAM` says. A Genesis place is keyed there by upstream's places
+UUID only after `run places`: with the mirror off and no places import, the catalogue holds
+only the node's derived rows, keyed by the UUIDv5 of the base parcel, and an imported
+community place comes back as its bare `{id, addedBy, addedAt}` row. The rows resolve as
+soon as places is imported, in any order. The load reports the UUID ids the catalogue
+lacks under their exact stored spelling (the node's lookup), except world-scene ids. Some
+ids stay bare whatever is imported, as upstream serves them: a world scene's UUID (only its
+world name is a destination) and a place upstream disabled (redeployed elsewhere,
+undeployed), which the places import skips, so it is reported too.
 
 ## Community thumbnails
 

@@ -22,7 +22,6 @@ import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { MARKER_ART, PANEL_ART } from '../map/mapArt'
 import { MaskIcon } from '../../design/MaskIcon'
-import { QuestPinIcon } from '../map/QuestPinIcon'
 import { useMapLayerData } from '../map/useMapLayerData'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
@@ -31,7 +30,7 @@ import { edgePoint, mapUnitsToMeters, offMap } from '@explorer-core/features/min
 import { homeOf, isStandingInHome } from '@explorer-core/features/map/home'
 import { fetchPlaceAt, isEmptyPlace, setPlaceFavorite } from '@explorer-core/features/map/mapApi'
 import { jumpInLink } from '@explorer-core/features/map/shareLinks'
-import { minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
+import { genesisStartParcel, minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
 import {
@@ -289,7 +288,7 @@ export const Minimap = memo(function Minimap({
     if (navigator.clipboard == null) return failed()
     navigator.clipboard.writeText(jumpInLink(map.x, map.y, referrer, linkRealm)).then(() => showToast('Link copied'), failed)
   }, [linkRealm, map.x, map.y, referrer])
-  const { changeRealm, setHome } = map
+  const { teleportToPlace, setHome, clearHome } = map
   const { reloadScene } = minimap
 
   // The place under the player, read again on every parcel and realm: Set as Home counts any parcel
@@ -349,6 +348,10 @@ export const Minimap = memo(function Minimap({
     setSettingsOpen(false)
     reloadScene()
   }, [reloadScene])
+  const jumpBack = useCallback(() => {
+    const start = genesisStartParcel(home)
+    teleportToPlace(start.x, start.y)
+  }, [home, teleportToPlace])
 
   const tiles = useMemo(() => {
     if (effectiveStyle === 'satellite') return <SatelliteTiles chunks={chunks} />
@@ -418,7 +421,7 @@ export const Minimap = memo(function Minimap({
                 style={style}
                 onStyle={pickStyle}
                 hideStyle={!inGenesis}
-                home={linkRealm != null ? { on: homeHere, onSet: setHomeHere } : undefined}
+                home={linkRealm != null && map.canPinHome ? { on: homeHere, onSet: setHomeHere, onClear: clearHome } : undefined}
                 onCopyLink={linkRealm != null ? copyLink : undefined}
                 onReloadScene={reload}
               />
@@ -457,7 +460,7 @@ export const Minimap = memo(function Minimap({
                 {inGenesis && layers.has('pins') &&
                   layerData.pins.map((m) => (
                     <span key={m.id} className={styles.poi} style={atlasPxAt(m.key)} data-marker="pins">
-                      <QuestPinIcon icon={m.icon} className={styles.questPin} />
+                      <img className={styles.questPin} src={MARKER_ART.quest} alt="" draggable={false} />
                     </span>
                   ))}
                 {inGenesis && layers.has('liveEvents') &&
@@ -521,7 +524,7 @@ export const Minimap = memo(function Minimap({
 
       {/* The way back from a world. */}
       {inWorld && (
-        <button type="button" className={styles.jumpBack} onClick={() => changeRealm(DEFAULT_REALM)}>
+        <button type="button" className={styles.jumpBack} onClick={jumpBack}>
           <DclLogo size={20} />
           Jump back to Genesis City
         </button>

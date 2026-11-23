@@ -89,6 +89,8 @@ pub struct Rpc<'a> {
     url: &'a str,
     /// Counts every HTTP request as it is sent, whatever its outcome.
     sent: Option<&'a std::sync::atomic::AtomicUsize>,
+    /// One read's own count, kept the same way beside `sent`.
+    also: Option<&'a std::sync::atomic::AtomicUsize>,
 }
 
 impl<'a> Rpc<'a> {
@@ -99,6 +101,7 @@ impl<'a> Rpc<'a> {
             http,
             url,
             sent: None,
+            also: None,
         }
     }
 
@@ -112,9 +115,19 @@ impl<'a> Rpc<'a> {
         }
     }
 
+    /// The same client, also adding one to `sent` for every HTTP request it
+    /// sends, beside the counter [`Rpc::counting`] gave it: one read's own
+    /// count, retries and failures included.
+    pub fn also_counting(self, sent: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self {
+            also: Some(sent),
+            ..self
+        }
+    }
+
     /// One HTTP request about to be sent.
     fn jsonrpc(&self) -> crate::http::jsonrpc::Rpc<'a> {
-        if let Some(sent) = self.sent {
+        for sent in [self.sent, self.also].into_iter().flatten() {
             sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         crate::http::jsonrpc::Rpc::new(self.http, self.url)
