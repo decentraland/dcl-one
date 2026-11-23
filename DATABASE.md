@@ -155,6 +155,22 @@ thumbnails. A worlds mirror pass re-checks the blobs its rows name under
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
+
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
 next read.
@@ -298,8 +314,27 @@ See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-loo
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
-remain external IDs, never storage authority. The old
-`worlds.world_scene_identity` table is a frozen upgrade source only: creating
+remain external IDs, never storage authority.
+
+World publication, undeployment, settings (including spawn), access and block
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
+This relation holds at most one pending row per changed world. Coalescing takes
+the pending row's lock without losing its original queue position, so a worker
+cannot consume a mark before its source update commits. The leased
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
+aggregate and the consumption of its mark commit together. The worker reads
+world and scene rows without taking row locks. A failed refresh rolls back
+both effects. Consecutive refresh failures back off to at most 30 seconds.
+A full reconciliation runs at its configured interval and can
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
+
+The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
 creation. This is once per creation, not once for the lifetime of a database:
 never drop/recreate the authoritative relation to recover it, because that

@@ -15,13 +15,6 @@ type Profile = {
 
 type Tab = { id: string; label: ReactNode };
 
-export const MEMBER_TABS: { id: string; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "creations", label: "Creations" },
-  { id: "communities", label: "Communities" },
-  { id: "places", label: "Places" },
-  { id: "photos", label: "Photos" },
-];
 export const OWN_TABS: { id: string; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "assets", label: "My Assets" },
