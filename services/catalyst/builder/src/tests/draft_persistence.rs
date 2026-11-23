@@ -403,3 +403,38 @@ async fn item_files_behind_a_long_unlink_batch_answer_503() {
     );
     cleanup(&store, &[collection], &[hash]).await;
 }
+
+#[tokio::test]
+async fn collection_item_totals_survive_empty_offsets_and_name_filters() {
+    let Some(store) = scratch_component().await else {
+        return;
+    };
+    let collection = Uuid::new_v4();
+    let draft = serde_json::from_value(json!({"id":collection,"name":"Query fixture"})).unwrap();
+    store.save_collection_draft(OWNER, &draft).await.unwrap();
+    for status in ["pending", "approved", "rejected"] {
+        let item: ItemDraft = serde_json::from_value(json!({"id":Uuid::new_v4(),"name":"Query hat","type":"wearable","collection_id":collection,"data":{"category":"upper_body"}})).unwrap();
+        store.save_item_draft(OWNER, &item).await.unwrap();
+        store
+            .set_item_curation_status(&collection, &item.id, status)
+            .await
+            .unwrap();
+    }
+    for (name, expected) in [(None, 3), (Some("hat"), 3), (Some("absent"), 0)] {
+        for page in [1, 100] {
+            let query = crate::items::ItemQuery {
+                name: name.map(str::to_string),
+                page: Some(page),
+                limit: Some(1),
+                ..Default::default()
+            };
+            let (rows, total) = store
+                .items_for_collection(&collection, &query)
+                .await
+                .unwrap();
+            assert_eq!(total, expected);
+            assert_eq!(rows.len(), if page == 1 && expected > 0 { 1 } else { 0 });
+        }
+    }
+    cleanup(&store, &[collection], &[]).await;
+}

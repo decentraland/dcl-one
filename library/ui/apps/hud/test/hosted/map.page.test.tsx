@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DEFAULT_REALM } from '@hud-host'
 import type { SceneToPage } from '@explorer-core/engine/protocol'
@@ -12,6 +12,7 @@ import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
 import { MARKER_ART } from '../../features/map/mapArt'
+import chromeStyles from '../../features/map/MapChrome.module.css'
 import type { MapState, TravelOutcome } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
@@ -139,6 +140,15 @@ describe('map page controls', () => {
     }
   })
 
+  it("wraps the category chips only in the lobby's section modal", () => {
+    serve()
+    renderMap()
+    expect(screen.getByRole('group', { name: 'Categories' }).parentElement).not.toHaveClass(chromeStyles.categoriesWrap)
+    cleanup()
+    renderMap({}, true, { onTravel: vi.fn() })
+    expect(screen.getByRole('group', { name: 'Categories' }).parentElement).toHaveClass(chromeStyles.categoriesWrap)
+  })
+
   it('stops zooming at the closest and the farthest view', async () => {
     serve()
     vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -189,22 +199,20 @@ describe('map layers', () => {
     expect(within(view()).queryByRole('button', { name: 'Friday Party' })).not.toBeInTheDocument()
   })
 
-  it('draws the quest pins of portable experiences, with their own icon, and hides them with their layer', async () => {
+  it('draws the quest pins of portable experiences, each as the default pin, and hides them with their layer', async () => {
     serve({ places: [place('p', 'Plaza', ['10,-5'])] })
     renderMap()
     act(() =>
       mapPins.receive([
-        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null },
-        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' },
-        { id: 'bafypx:514', x: 4, y: 2, title: '   ', icon: null }
+        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid' },
+        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally' },
+        { id: 'bafypx:514', x: 4, y: 2, title: '   ' }
       ])
     )
     expect(marker('Pin at 4, 2')).toHaveAttribute('data-marker', 'pins')
     const memory = marker('Memory Grid')
     expect(memory).toHaveAttribute('data-marker', 'pins')
     expect(within(view()).queryByText('Memory Grid')).not.toBeInTheDocument()
-    expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
-    fireEvent.error(marker('Tile Tally').querySelector('img')!)
     expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', MARKER_ART.quest)
 
     await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
@@ -215,7 +223,7 @@ describe('map layers', () => {
   it('opens the place under a quest pin when it is clicked', async () => {
     serve({ places: [place('p', 'Plaza', ['10,-5'])] })
     renderMap()
-    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null }]))
+    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid' }]))
     await userEvent.click(marker('Memory Grid'))
     expect(await within(panel()).findByRole('heading', { name: 'Plaza' })).toBeInTheDocument()
   })

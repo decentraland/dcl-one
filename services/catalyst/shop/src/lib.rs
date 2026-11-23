@@ -63,6 +63,7 @@ pub mod stores;
 pub mod subscriptions;
 pub mod treasury;
 pub mod types;
+mod worker_progress;
 
 #[cfg(test)]
 mod parity_tests;

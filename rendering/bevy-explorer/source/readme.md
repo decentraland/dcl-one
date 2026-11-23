@@ -221,8 +221,8 @@ Console commands:
 
 A scene loaded as a portable experience whose scene.json also declares
 `isPortableExperience: true` can place map pins (`MapPin`); no other scene's pins are read. The
-HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel, the title cut to 100
-characters, and an icon url resolved from a file of the scene's content) and draws them
+HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel and the title cut to 100
+characters) and draws them, each as the default quest pin,
 on the full map and the minimap under the Layers panel's Quest Mini-Games switch.
 `/map_pins_state` (the debug panel's Map pins section) reports the scenes read, the pins read and
 ignored, and the list last sent to the HUD.
@@ -285,10 +285,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
   dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
-  ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
-  ended; `/item_purchase_cancel` drops the one in flight), `/home_state` (the signed-in account's
-  home and the home that applies at startup; `/home_clear` takes that account's home back),
-  `/entity_screen_position <entity>
+  ban), `/scene_topics` (scene-room routing, topic traffic, rejection and CRDT-filter counters,
+  plus the binary payload limit), `/item_purchase_state` (the scene item purchase request in
+  flight and how the last one ended; `/item_purchase_cancel` drops the one in flight),
+  `/home_state` (the signed-in account's home and the home that applies at startup;
+  `/home_clear` takes that account's home back), `/entity_screen_position <entity>
   [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`

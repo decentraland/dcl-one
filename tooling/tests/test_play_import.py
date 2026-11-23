@@ -92,6 +92,21 @@ class GitHubReadTests(unittest.TestCase):
                 play.api('actions/runs/42', deadline=500)
             self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 80])
             self.assertEqual(clock[0], 500)
+        # A long wait for a Bevy build does not become a wait for the token budget: five tries, then fail.
+        for failure in limited:
+            clock = [0]
+            with self.subTest(failure=failure.stderr), \
+                    patch.object(play.subprocess, 'check_output', side_effect=failure) as get, \
+                    patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    patch.object(play.time, 'sleep',
+                                 side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                    patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    play.api('actions/runs/42', deadline=5400)
+                self.assertEqual(get.call_count, 5)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 240])
+                self.assertEqual(clock[0], 660)
+                self.assertIn('rerun this job once its API budget resets', stderr.getvalue())
 
     def test_invalid_json_does_not_retry_or_become_a_successful_read(self):
         with patch.object(play.subprocess, 'check_output', return_value='not JSON') as get, \
