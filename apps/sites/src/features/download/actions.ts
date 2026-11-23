@@ -2,14 +2,14 @@ import type {
   DownloadActionsProps,
   StoreBadgeProps,
 } from "@dcl/one-ui/apps/sites/download/DownloadActions";
+import { GOOGLE_PLAY_BASE_URL, googlePlayHref } from "./google-play";
 import { downloadSuccessHref } from "./installers";
 import { viewportOffers, type DetectedPlatform } from "./options";
 
 export const STORES = {
   app_store:
     "https://apps.apple.com/app/apple-store/id6478403840?pt=126284288&ct=Decentraland%20Home%20iOS&mt=8",
-  google_play:
-    "https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer",
+  google_play: GOOGLE_PLAY_BASE_URL,
 } as const;
 
 export const osName = (os: "windows" | "macos") =>
@@ -19,6 +19,8 @@ export const osName = (os: "windows" | "macos") =>
 export function downloadActions(
   platform: DetectedPlatform,
   downloads: string,
+  /** The Google Play listing tagged with the visitor's campaign; the site's own tag by default. */
+  googlePlay: string = googlePlayHref(),
 ): { actions: DownloadActionsProps; store: StoreBadgeProps } {
   const { wide, narrowStore } = viewportOffers(platform);
   return {
@@ -55,7 +57,7 @@ export function downloadActions(
         narrowStore === "app_store"
           ? "Download on the App Store"
           : "Get it on Google Play",
-      href: STORES[narrowStore],
+      href: narrowStore === "google_play" ? googlePlay : STORES.app_store,
     },
   };
 }

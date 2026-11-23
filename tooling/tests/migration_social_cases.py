@@ -255,6 +255,36 @@ class SocialMigrationCases:
         self.sql(src, f"""INSERT INTO communities VALUES ('{self.SOCIAL_COMMUNITY}', 'c', '', '{owner}',
             false, true, false, false, '2026-01-01', '2026-01-01');""")
 
+    def test_when_a_legacy_ranking_timestamp_blocked_an_edit_it_should_replay_after_repair(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        later = '00000000-0000-4000-8000-0000000000a1'
+        self.social_ea_community(src, owner)
+        self.social_ea_run('communities')
+
+        self.sql(tgt, f"""UPDATE social.communities SET updated_at = '2026-01-04'
+            WHERE id = '{self.SOCIAL_COMMUNITY}';""")
+        self.sql(src, f"""UPDATE communities SET name = 'Upstream edit', updated_at = '2026-01-02'
+            WHERE id = '{self.SOCIAL_COMMUNITY}';
+            INSERT INTO communities VALUES ('{later}', 'Later upstream', '', '{owner}',
+            false, true, false, false, '2026-01-03', '2026-01-03');""")
+        names = f"""SELECT name FROM social.communities WHERE id = '{self.SOCIAL_COMMUNITY}';"""
+        self.social_ea_run('communities', restart=False)
+        self.assertEqual(self.sql(tgt, names).strip(), 'c')
+        self.social_ea_run('communities')
+        self.assertEqual(self.sql(tgt, names).strip(), 'c')
+
+        self.sql(tgt, f"""UPDATE social.communities SET updated_at = '2026-01-01'
+            WHERE id = '{self.SOCIAL_COMMUNITY}' AND updated_at = '2026-01-04';
+            UPDATE social.communities SET name = 'Newer local edit', updated_at = '2026-01-05'
+            WHERE id = '{later}';""")
+        self.social_ea_run('communities', restart=False)
+        self.assertEqual(self.sql(tgt, names).strip(), 'c')
+        self.social_ea_run('communities')
+        self.assertEqual(self.sql(tgt, names).strip(), 'Upstream edit')
+        self.assertEqual(self.sql(tgt, f"SELECT name FROM social.communities WHERE id = '{later}';").strip(),
+                         'Newer local edit')
+
     def test_when_copying_community_thumbnails_it_should_fill_the_imported_ones_and_keep_the_nodes(self):
         from tooling.tests import migration_harness as harness
         src, tgt = self.social_ea_dbs()

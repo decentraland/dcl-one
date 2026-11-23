@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { fetchEntities, representationHashes } from "./outfit";
+import { baseMeshHidden, computeHiding, fetchEntities, representationHashes } from "./outfit";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -106,4 +106,58 @@ test("a representation's files to download: each hash once, the main model but n
   });
   expect(representationHashes(entity(listed), male.toLowerCase())).toEqual(["h_male", "h_tex"]);
   expect(representationHashes(entity(), male)).toEqual(["h_male"]);
+});
+
+const wearable = (category: string, data: Record<string, unknown> = {}) => ({ metadata: { data: { category, ...data } } });
+const handsHidden = (items: Record<string, ReturnType<typeof wearable>>) =>
+  baseMeshHidden(["basemale_hands_basemesh"], computeHiding(Object.keys(items), new Map(Object.entries(items))));
+
+test("handwear that hides nothing leaves the body's hands showing", () => {
+  expect(handsHidden({ "urn:watch": wearable("hands_wear") })).toBe(false);
+});
+
+test("hiding the handwear category leaves the body's hands showing", () => {
+  expect(handsHidden({ "urn:hat": wearable("hat", { hides: ["hands_wear"] }) })).toBe(false);
+});
+
+test("a wearable that hides hands removes the body's hands", () => {
+  expect(handsHidden({ "urn:gloves": wearable("hands_wear", { hides: ["hands"] }) })).toBe(true);
+});
+
+test("an upper body removes the body's hands unless it lifts the default", () => {
+  expect(handsHidden({ "urn:shirt": wearable("upper_body") })).toBe(true);
+  expect(handsHidden({ "urn:shirt": wearable("upper_body", { removesDefaultHiding: ["hands"] }) })).toBe(false);
+});
+
+const rulesFor = (items: Record<string, ReturnType<typeof wearable>>, bodyShape?: string, forceRender?: string[]) =>
+  computeHiding(Object.keys(items), new Map(Object.entries(items)), bodyShape, forceRender);
+
+test("two wearables that hide each other leave the higher category showing, with what it hides", () => {
+  const rules = rulesFor({
+    "urn:shoes": wearable("feet"),
+    "urn:overalls": wearable("lower_body", { hides: ["upper_body"], replaces: ["lower_body"] }),
+    "urn:dress": wearable("upper_body", { hides: ["lower_body", "feet"], removesDefaultHiding: ["hands"] }),
+  });
+  expect([...rules.hidden].sort()).toEqual(["feet", "lower_body"]);
+  expect([...rules.equippedCats]).toEqual(["upper_body"]);
+  expect(baseMeshHidden(["basefemale_hands_basemesh"], rules)).toBe(false);
+});
+
+test("a representation's own hides apply on its body shape only", () => {
+  const female = "urn:decentraland:off-chain:base-avatars:BaseFemale";
+  const hat = wearable("hat", { hides: ["hair"], representations: [{ bodyShapes: [female], overrideHides: ["head"] }] });
+  expect([...rulesFor({ "urn:hat": hat }, female.toLowerCase()).hidden]).toEqual(["head"]);
+  expect([...rulesFor({ "urn:hat": hat }, "urn:decentraland:off-chain:base-avatars:BaseMale").hidden]).toEqual(["hair"]);
+});
+
+test("a category the profile forces to render is not hidden", () => {
+  const rules = rulesFor({ "urn:shirt": wearable("upper_body") }, undefined, ["hands"]);
+  expect(baseMeshHidden(["basemale_hands_basemesh"], rules)).toBe(false);
+});
+
+test("a skin hides every base mesh", () => {
+  const rules = rulesFor({ "urn:skin": wearable("skin"), "urn:shirt": wearable("upper_body") });
+  expect(rules.skinEquipped).toBe(true);
+  expect([...rules.equippedCats]).toEqual(["skin"]);
+  expect(baseMeshHidden(["basemale_hands_basemesh"], rules)).toBe(true);
 });

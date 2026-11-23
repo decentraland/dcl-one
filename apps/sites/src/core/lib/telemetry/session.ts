@@ -185,6 +185,16 @@ export function markPublicResponse(context: Readonly<RouterContextProvider>): vo
   context.set(publicResponseContext, true);
 }
 
+/**
+ * The paths whose route calls `markPublicResponse` (`routes/docs.$.tsx`, mounted at `/docs/*`), matched
+ * case-insensitively as React Router matches routes: root's data for them carries no session.
+ */
+const PUBLIC_RESPONSE_PATH = /^\/docs(\/|$)/i;
+
+export function isPublicResponsePath(pathname: string): boolean {
+  return PUBLIC_RESPONSE_PATH.test(pathname);
+}
+
 /** `public` or `s-maxage`: either lets a shared cache store the response. */
 function isPublic(response: Response): boolean {
   return /(^|,)\s*(public|s-maxage)\b/i.test(response.headers.get("Cache-Control") ?? "");

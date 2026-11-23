@@ -32,12 +32,14 @@ type CreateLandingProps = {
   downloads?: HeroDownloads | null;
   /** The visit's session id, for the download events. */
   sid?: string;
+  /** The verified wallet, for the download Click's `userId`. */
+  userId?: string;
 };
 
-export default function CreateLanding({ downloads = null, sid = "" }: CreateLandingProps) {
+export default function CreateLanding({ downloads = null, sid = "", userId = "" }: CreateLandingProps) {
   return (
     <main className={styles.landing}>
-      <Hero downloads={downloads} sid={sid} />
+      <Hero downloads={downloads} sid={sid} userId={userId} />
       <Why />
       <Possibilities />
       <LiveScenes />
@@ -99,7 +101,7 @@ function useHydrated(): boolean {
   return useSyncExternalStore(noSubscribe, () => true, () => false);
 }
 
-function Hero({ downloads, sid }: Required<CreateLandingProps>) {
+function Hero({ downloads, sid, userId }: Required<CreateLandingProps>) {
   const isMobile = useMediaQuery("(max-width: 767px)");
   // The server cannot know the viewport: the video mounts after hydration, when isMobile is known, so each
   // viewport requests only its own file (as the reference's client-rendered Hero.tsx does).
@@ -125,7 +127,7 @@ function Hero({ downloads, sid }: Required<CreateLandingProps>) {
           </h1>
           <p className={styles.heroSubtitle}>{heroData.subtitle}</p>
           <div className={styles.heroActions}>
-            <HeroDownload downloads={downloads} sid={sid} />
+            <HeroDownload downloads={downloads} sid={sid} userId={userId} />
             <a className={`${styles.cta} ${styles.ctaMobile}`} href={docsUrl("creator")}>
               <span className={styles.ctaLabel}>{copy.heroMobileCta}</span>
             </a>
