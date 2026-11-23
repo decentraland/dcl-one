@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+#[cfg(any(target_arch = "wasm32", test))]
 use dcl_types::{SceneResponse, SceneResponseSender};
 
 pub struct SceneReplies {
@@ -22,7 +23,7 @@ pub struct SceneReplies {
 pub static REPLIES: SceneReplies = SceneReplies::new();
 
 impl SceneReplies {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             count: Mutex::new(0),
             arrived: Condvar::new(),
@@ -31,7 +32,8 @@ impl SceneReplies {
 
     /// Relay: forwards `response` to the engine and, once it is sent, counts it and wakes the
     /// loop. False if the engine's channel refused it.
-    pub fn send(&self, sender: &SceneResponseSender, response: SceneResponse) -> bool {
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn send(&self, sender: &SceneResponseSender, response: SceneResponse) -> bool {
         let sent = sender.try_send(response).is_ok();
         if sent {
             self.replied();
@@ -40,6 +42,7 @@ impl SceneReplies {
     }
 
     // a message reached the engine
+    #[cfg(any(target_arch = "wasm32", test))]
     fn replied(&self) {
         let mut count = self.count.lock().unwrap_or_else(PoisonError::into_inner);
         *count = count.wrapping_add(1);
@@ -72,12 +75,6 @@ impl SceneReplies {
             }
         }
         false
-    }
-}
-
-impl Default for SceneReplies {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

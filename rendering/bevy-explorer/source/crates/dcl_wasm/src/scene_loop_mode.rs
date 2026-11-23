@@ -19,8 +19,6 @@ pub enum SceneLoopMode {
 }
 
 impl SceneLoopMode {
-    pub const NAMES: &'static str = "legacy|relay|deadline|both";
-
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "legacy" => Some(Self::Legacy),
@@ -31,17 +29,9 @@ impl SceneLoopMode {
         }
     }
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Legacy => "legacy",
-            Self::Relay => "relay",
-            Self::Deadline => "deadline",
-            Self::Both => "both",
-        }
-    }
-
     /// The relay waits for the engine's tick instead of sleeping.
-    pub fn relay_wake(self) -> bool {
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn relay_wake(self) -> bool {
         matches!(self, Self::Relay | Self::Both)
     }
 
@@ -56,7 +46,8 @@ impl SceneLoopMode {
         self != Self::Legacy
     }
 
-    pub fn from_u8(value: u8) -> Self {
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn from_u8(value: u8) -> Self {
         match value {
             1 => Self::Relay,
             2 => Self::Deadline,
@@ -65,7 +56,8 @@ impl SceneLoopMode {
         }
     }
 
-    pub const fn to_u8(self) -> u8 {
+    #[cfg(any(target_arch = "wasm32", test))]
+    const fn to_u8(self) -> u8 {
         match self {
             Self::Legacy => 0,
             Self::Relay => 1,
@@ -105,7 +97,8 @@ pub fn set_wake_scenes(scenes: impl IntoIterator<Item = u64>) {
 }
 
 /// Relay: whether the engine wakes its scene; None while the engine is publishing.
-pub fn wakes_scene(scene: u64) -> Option<bool> {
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn wakes_scene(scene: u64) -> Option<bool> {
     WAKE_SCENES
         .try_lock()
         .ok()
@@ -118,13 +111,13 @@ mod tests {
 
     #[test]
     fn every_mode_reads_back_by_name_and_number() {
-        for mode in [
-            SceneLoopMode::Legacy,
-            SceneLoopMode::Relay,
-            SceneLoopMode::Deadline,
-            SceneLoopMode::Both,
+        for (name, mode) in [
+            ("legacy", SceneLoopMode::Legacy),
+            ("relay", SceneLoopMode::Relay),
+            ("deadline", SceneLoopMode::Deadline),
+            ("both", SceneLoopMode::Both),
         ] {
-            assert_eq!(SceneLoopMode::parse(mode.name()), Some(mode));
+            assert_eq!(SceneLoopMode::parse(name), Some(mode));
             assert_eq!(SceneLoopMode::from_u8(mode.to_u8()), mode);
         }
         assert_eq!(SceneLoopMode::parse("frame"), None);
