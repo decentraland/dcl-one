@@ -710,19 +710,7 @@ pub static STATIONARY_CREDENTIALS: Scenario = Scenario {
 /// without the environment variables the stack file says hold secrets, as the explorer and the
 /// LiveKit client are.
 pub fn restart_command(stack: &Stack) -> Result<tokio::process::Command> {
-    let words = stack
-        .restart_command
-        .as_ref()
-        .ok_or_else(|| anyhow!("the stack file has no restart command"))?;
-    let (program, arguments) = words
-        .split_first()
-        .ok_or_else(|| anyhow!("the restart command is empty"))?;
-    let mut command = tokio::process::Command::new(program);
-    command.args(arguments).kill_on_drop(true);
-    for variable in stack.secret_variables() {
-        command.env_remove(variable);
-    }
-    Ok(command)
+    super::support::stack_command(stack, stack.restart_command.as_deref(), "restart_command")
 }
 
 async fn stationary_credentials(ctx: Ctx) -> Result<()> {

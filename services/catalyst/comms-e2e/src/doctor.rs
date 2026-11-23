@@ -204,6 +204,16 @@ pub async fn examine(stack: Arc<Stack>) -> Vec<Check> {
         )),
         _ => checks.push(Check::absent("Restart command", "restart_command")),
     }
+    match &stack.pulse_restart_command {
+        Some(command) if !command.is_empty() => checks.push(Check::new(
+            "Pulse restart command",
+            Ok(format!("`{}` (not run)", command[0])),
+        )),
+        _ => checks.push(Check::absent(
+            "Pulse restart command",
+            "pulse_restart_command",
+        )),
+    }
 
     match &stack.explorer {
         Some(target) => {

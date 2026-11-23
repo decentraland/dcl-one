@@ -42,7 +42,7 @@ pub struct Scenario {
     pub summary: &'static str,
     pub needs: Needs,
     /// Floods, sends malformed frames, creates bans or restarts a process of the stack (the stack
-    /// file's `restart_command`): refused against a host that is not loopback unless the run
+    /// file's `restart_command` or `pulse_restart_command`): refused against a host that is not loopback unless the run
     /// names it with `--allow-host`.
     pub hostile: bool,
     /// How many times a run repeats it unless told otherwise. Races repeat.
@@ -106,6 +106,8 @@ pub struct Needs {
     pub scene_listener: bool,
     /// The stack file names a command that restarts the gatekeeper's process.
     pub restart: bool,
+    /// The stack file names a command that stops Pulse and starts it again.
+    pub pulse_restart: bool,
     /// The run names a visit plan ([`VisitPlan`]): a realm and a place other clients are in.
     pub visit: bool,
     /// The run names this scenario (`comms-e2e run <name>`): `--all` and `--tag` leave it out.
@@ -124,6 +126,7 @@ impl Needs {
         explorer: false,
         scene_listener: false,
         restart: false,
+        pulse_restart: false,
         visit: false,
         by_name: false,
     };
@@ -154,6 +157,9 @@ impl Needs {
         }
         if self.restart && stack.restart_command.is_none() {
             missing.push("a restart command (`restart_command`)");
+        }
+        if self.pulse_restart && stack.pulse_restart_command.is_none() {
+            missing.push("a Pulse restart command (`pulse_restart_command`)");
         }
         (!missing.is_empty()).then(|| format!("the stack file has no {}", missing.join(", no ")))
     }

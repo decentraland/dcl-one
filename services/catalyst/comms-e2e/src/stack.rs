@@ -43,6 +43,11 @@ pub struct Stack {
     /// the scenarios that restart it are skipped.
     #[serde(default)]
     pub restart_command: Option<Vec<String>>,
+    /// A command (program and arguments) that stops Pulse the way a deployment does (SIGTERM, or
+    /// Ctrl+C to its console on Windows), starts it again and returns once it listens. Absent:
+    /// the scenarios that stop Pulse are skipped.
+    #[serde(default)]
+    pub pulse_restart_command: Option<Vec<String>>,
     /// The LiveKit client (`harness-util`) for a stack that gives no room-service keys, so no
     /// `[livekit]` section: clients join the rooms their island assignments name. `[livekit]
     /// client` is used when both are set. Read through [`Stack::livekit_client`].
@@ -265,6 +270,7 @@ impl Stack {
             explorer: None,
             scene_listener_key_env: None,
             restart_command: None,
+            pulse_restart_command: None,
             livekit_client: None,
             grid: Grid::default(),
             limits: Limits::default(),
