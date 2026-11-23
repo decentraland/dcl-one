@@ -5,6 +5,7 @@
   ];
   internal = [
     "/internal/message-router"
+    "/internal/metrics"
     "/internal/pulse"
     "/metrics"
   ];

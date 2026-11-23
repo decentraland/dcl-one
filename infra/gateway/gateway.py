@@ -154,6 +154,10 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     storage = env.get("GATEWAY_STORAGE_ROOT", "")
     if storage and not re.fullmatch(r"/[a-zA-Z0-9_./-]+", storage):
         raise ValueError("GATEWAY_STORAGE_ROOT must be an absolute path without whitespace")
+    # The operator's htpasswd file for the scrape endpoint; without one, /metrics stays closed.
+    metrics_htpasswd = env.get("GATEWAY_METRICS_HTPASSWD", "")
+    if metrics_htpasswd and not re.fullmatch(r"/[a-zA-Z0-9_./-]+", metrics_htpasswd):
+        raise ValueError("GATEWAY_METRICS_HTPASSWD must be an absolute path without whitespace")
     trusted = networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", ""))
     storage_trusted = networks(env.get("GATEWAY_STORAGE_TRUSTED_CIDRS", ""))
     if any(ipaddress.ip_network(proxy).overlaps(ipaddress.ip_network(caller))
@@ -176,8 +180,12 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
         "storage_trusted": storage_trusted,
         "sync_peers": networks(env.get("GATEWAY_TRUSTED_SYNC_PEER_IPS", "")),
         "storage": storage.rstrip("/"),
+        "metrics_htpasswd": metrics_htpasswd,
     }
 
+
+# The API listener's internal path for the process exporter (src/serve_routes.rs).
+METRICS_UPSTREAM_PATH = "/internal/metrics"
 
 # Worlds routes: reads (GET, HEAD, OPTIONS) are not rate-limited, as upstream; writes and
 # the admin routes (reachable from admin networks only) keep the server-wide read budget.
@@ -256,6 +264,15 @@ def render(table, cfg, mime):
                         'add_header Referrer-Policy strict-origin-when-cross-origin always;\n'
                         'add_header Cross-Origin-Opener-Policy $coop_fallback always;')
     locations = location("= /_gateway/healthz", 'access_log off; return 200 "ok\\n";')
+    # The process's one Prometheus endpoint, behind basic auth. The API answers its internal
+    # path only to the gateway's network (HTTP_TRUSTED_PROXY_CIDRS), and the internal map
+    # below keeps every other spelling of /metrics closed.
+    metrics_open = ""
+    if cfg["metrics_htpasswd"]:
+        metrics_open = '"/metrics" 0;'
+        locations += location("= /metrics", 'auth_basic "Prometheus metrics";\n'
+                              f'auth_basic_user_file {cfg["metrics_htpasswd"]};\n'
+                              + proxy("apis" + METRICS_UPSTREAM_PATH))
     # The operator gate is applied in the server rewrite phase, before any
     # location or .data regex; a root alias rewrites with `break`, so the gate
     # lists alias prefixes (market, camera-reel) beside their targets.
@@ -527,6 +544,7 @@ http {{
     map $uri $internal_path {{
         volatile;
         default 0;
+        {metrics_open}
         "~*^/({blocked})(/|\\\\.|$)" 1;
     }}
     # The telemetry dash entries guard the old serve's routes: they leave with the

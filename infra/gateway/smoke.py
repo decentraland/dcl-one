@@ -193,6 +193,7 @@ def client(args):
                  "/INTERNAL/PULSE/X.data", "//internal//pulse/x.data", "/internal%2fpulse/x.data",
                  "/internal/message-router", "/internal/message-router/token/v1",
                  "/INTERNAL/MESSAGE-ROUTER/token/v1", "//internal//message-router/token/v1",
+                 "/internal/metrics", "/INTERNAL/Metrics",
                  "/__protected_storage/0a/blob"]:
         for host in (public, admitted):
             status, body = request(host, path)

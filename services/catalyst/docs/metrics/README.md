@@ -8,62 +8,68 @@ working. Each area page maps every legacy series to what the node emits:
 - [Sync](sync.md): the snapshots fetcher and the deployments-to-SQS series;
 - [Lambdas](lambdas.md): lamb2.
 
-## The `/metrics` listener
+## One endpoint for the whole process
 
-The process serves every series from one Prometheus exporter, on a listener
-separate from the API:
+`catalyst serve` records every series in one Prometheus exporter, and the
+gateway publishes it as one endpoint, `/metrics`, behind basic auth. The
+content server's `/content_metrics` and lamb2's `/lamb2_metrics` have no
+equivalent: both families, and every other area's, are in this one endpoint.
 
-| Setting | Default | Meaning |
+The exporter is reachable in two ways:
+
+| Path | Who can reach it | Authentication |
 | --- | --- | --- |
-| `SERVE_METRICS_BIND` (`--serve-metrics-bind`) | `127.0.0.1:5006` | Address of the exporter's HTTP listener. It must be a loopback address; startup fails otherwise. |
+| `http://<SERVE_METRICS_BIND>/metrics` (default `127.0.0.1:5006`) | the API process's own network namespace; the bind must be a loopback address | none |
+| `GET /internal/metrics` on the API port (`HTTP_SERVER_PORT`, 5210) | a loopback peer, or a peer in `HTTP_TRUSTED_PROXY_CIDRS` (the gateway's network); 404 to anyone else | none; the gateway never forwards this path |
+| `GET /metrics` on the gateway | Prometheus, from anywhere the gateway is reachable | basic auth, only when configured |
 
-`GET http://<bind>/metrics` answers the Prometheus text format with no
-authentication. The API port (`HTTP_SERVER_PORT`, 5210) does not serve these
-series, and the gateway answers 404 for `/metrics`
-([gateway](../../../../infra/gateway/README.md)).
+## Configuring the credentials
 
-The content server and lamb2 each had their own endpoint. Here both are in the
-one exporter, together with every other area's series.
+1. Create an htpasswd file, for example `htpasswd -B -c metrics.htpasswd <user>`.
+   Keep it with the deployment's other secrets, never in the repository.
+2. Mount it read-only into the gateway container and set
+   `GATEWAY_METRICS_HTPASSWD` to its path, for example
+   `/etc/gateway/metrics.htpasswd`.
+3. List the gateway's container network in the API's
+   `HTTP_TRUSTED_PROXY_CIDRS`, which a gateway deployment already needs for
+   client addresses ([gateway](../../../../infra/gateway/README.md)).
 
-## Scraping in production
+Without `GATEWAY_METRICS_HTPASSWD`, the gateway answers 404 for `/metrics`:
+nothing is public by default. With it, only the exact path `/metrics` opens;
+`/metrics/...`, other spellings and `/internal/metrics` stay 404.
 
-The listener is reachable only from the network namespace of the `catalyst
-serve` process. Scrape it from inside that namespace, without publishing the
-port:
+## Scraping
 
-- run the Prometheus agent (or a compatible collector, such as
-  `prometheus --agent` with `remote_write`) as a sidecar sharing the API
-  container's network (`--network container:<apis>`, or a sidecar in the same
-  Kubernetes pod), with a static target `127.0.0.1:5006`;
-- or run the node with host networking and scrape `127.0.0.1:5006` from an
-  agent on the host.
+One Prometheus job scrapes the whole process:
 
 ```yaml
 scrape_configs:
   - job_name: catalyst
+    scheme: https
+    metrics_path: /metrics
+    basic_auth:
+      username: <user>
+      password_file: /etc/prometheus/catalyst-metrics-password
     static_configs:
-      - targets: ["127.0.0.1:5006"]
+      - targets: ["<node-domain>"]
 ```
 
-The previous deployments exposed `/content_metrics` and `/lamb2_metrics`
-through their nginx, behind basic auth
-([catalyst-owner `docs/METRICS.md`](https://github.com/decentraland/catalyst-owner/blob/1866250dcff73a095ccba757d869766ea254bda9/docs/METRICS.md),
-[`local/nginx/include/metrics.conf`](https://github.com/decentraland/catalyst-owner/blob/1866250dcff73a095ccba757d869766ea254bda9/local/nginx/include/metrics.conf)).
-The gateway has no equivalent route: it reaches the APIs on their API port,
-and the exporter only accepts loopback connections. A Prometheus that must
-scrape from outside the node needs a proxy in the node's network namespace
-that adds authentication (basic auth or a bearer token) before forwarding to
-`127.0.0.1:5006`. Never expose the listener without authentication.
+An agent in the API's network namespace (a sidecar sharing the API
+container's network, or the host with host networking) can instead scrape
+`127.0.0.1:5006` directly, without the gateway.
 
-Which of these a deployment uses is an open choice: a scraping sidecar in the
-node's network namespace, or an authenticating proxy there for an outside
-Prometheus. Neither is provided by this repository yet.
+The subgraph series carry the configured subgraph URL in their `url` label
+([lambdas](lambdas.md)). A URL that embeds an API key is therefore visible to
+anyone who can read the endpoint, which is why it is only served behind
+authentication.
 
 ### Dashboards that select a job
 
-A scrape of the one endpoint gives every series the same `job` and `instance`.
-A query that told the two services apart by a job selector needs that
-selector removed or changed. Three families were emitted by both services:
+The previous deployments scraped the content server and lamb2 as two jobs.
+One endpoint gives every series the same `job` and `instance`, so a dashboard
+or alert query that filtered on the old job (content vs lamb2) needs that
+filter removed or changed to the new job. Three families were emitted by both
+services:
 
 - the per-route HTTP series, whose `handler` values are distinct except for
   `/status` (the content server's and lamb2's status routes now add up in one

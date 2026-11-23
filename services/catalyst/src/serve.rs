@@ -140,6 +140,58 @@ mod metrics_tests {
         }
     }
 
+    /// The gateway's `/metrics` reaches the exporter through the API listener's
+    /// internal path, which answers only loopback and trusted-proxy peers.
+    #[tokio::test(flavor = "current_thread")]
+    async fn internal_metrics_answer_only_internal_peers() {
+        use tower::ServiceExt;
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            metrics::counter!("http_requests_total", "handler" => "/status").increment(1)
+        });
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--http-trusted-proxy-cidrs",
+            "172.18.0.0/16",
+        ])
+        .unwrap();
+        let app = super::routes::internal_metrics_router(handle, &config);
+        for (peer, status) in [
+            (Some("127.0.0.1:4000"), 200),
+            (Some("172.18.0.7:4000"), 200),
+            (Some("10.1.0.7:4000"), 404),
+            (Some("203.0.113.9:4000"), 404),
+            (None, 404),
+        ] {
+            let mut request = axum::http::Request::builder()
+                .uri(super::routes::INTERNAL_METRICS_PATH)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            if let Some(peer) = peer {
+                request.extensions_mut().insert(axum::extract::ConnectInfo(
+                    peer.parse::<std::net::SocketAddr>().unwrap(),
+                ));
+            }
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status().as_u16(), status, "{peer:?}");
+            if status == 200 {
+                let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                assert!(
+                    String::from_utf8_lossy(&body)
+                        .contains("http_requests_total{handler=\"/status\"} 1"),
+                    "{peer:?}"
+                );
+            }
+        }
+    }
+
     /// The content and lamb2 per-route series: legacy names, labels, help and
     /// buckets, one handler for both content mounts and no raw path.
     #[tokio::test(flavor = "current_thread")]
@@ -265,6 +317,7 @@ pub async fn serve(
 ) -> anyhow::Result<()> {
     config.node.init_tracing_with(log_metrics::CountLogs);
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    let internal_metrics = routes::internal_metrics_router(metrics_handle.clone(), &config);
     log_metrics::register_series();
     shop::market::lambdas_http::register_series(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
@@ -1577,7 +1630,8 @@ pub async fn serve(
             ops_admin,
             snapshot_gen,
         },
-    );
+    )
+    .merge(internal_metrics);
     run_http(addr, app, connector_lifecycle, &jobs).await
 }
 
