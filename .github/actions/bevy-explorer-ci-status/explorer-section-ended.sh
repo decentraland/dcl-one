@@ -49,9 +49,9 @@ esac
 
 log() { echo "[explorer-section-ended $SECTION] $*" >&2; }
 
-# A run with an open job has not ended, so only an idle run is read.
+# A run with an open job has not ended: the read is skipped only on that proof.
 run_status() {
-  if [ "$idle" != true ]; then echo in_progress; return; fi
+  if [ "$idle" = false ]; then echo in_progress; return; fi
   gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status'
 }
 

@@ -167,6 +167,12 @@ echo '{"status":"queued"}' > "$SCENARIO/run.1.json"
 expect "no job listed yet, no budget => false" false 0
 expect_calls "an empty job list is idle: the run is read" run 1
 
+new_scenario jobs-not-json
+echo 'upstream error' > "$SCENARIO/jobs.1.json"
+echo '{"status":"completed"}' > "$SCENARIO/run.1.json"
+expect "an unreadable job list => false" false 0
+expect_calls "without proof of an open job the run is read" run 1
+
 # 9. The wait: nothing listed, then running, then ended while the image build goes on.
 new_scenario waits-for-the-tests
 jobs_json 'Changes:completed:success' > "$SCENARIO/jobs.1.json"
@@ -200,6 +206,11 @@ new_scenario build-ended-publish-goes-on
 jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:in_progress:' \
   'Test Suite (ubuntu-24.04):in_progress:' > "$SCENARIO/jobs.1.json"
 SECTION=build expect "build: the products ended, the publication runs => true" true 0
+
+new_scenario build-ended-publish-waiting
+jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:waiting:' > "$SCENARIO/jobs.1.json"
+SECTION=build expect "build: the publication waits for approval => true" true 0
+expect_calls "a waiting job is open: no read of the run" run 0
 
 # 12. The publish job is not listed yet: the section cannot tell whether a preview comes.
 new_scenario build-publish-not-listed
