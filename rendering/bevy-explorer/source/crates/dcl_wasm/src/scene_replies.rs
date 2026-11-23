@@ -1,6 +1,6 @@
 //! How the engine's scene loop (scene_runner `run_scene_loop`) waits for scene replies on the
 //! web. A sandbox worker's relay counts each message it forwards to the engine
-//! ([`SceneReplies::replied`], from `inner::relay`) and wakes the loop if it waits for one
+//! ([`SceneReplies::send`], from `inner::relay`) and wakes the loop if it waits for one
 //! ([`SceneReplies::wait`]). A reply then ends the wait as soon as it arrives, not when a timed
 //! wait wakes: a browser's timed wait can end a millisecond or more late. The count and its
 //! condition variable live in engine memory, which the relays share.
@@ -10,6 +10,8 @@ use std::{
     sync::{Condvar, Mutex, PoisonError},
     time::Duration,
 };
+
+use dcl_types::{SceneResponse, SceneResponseSender};
 
 pub struct SceneReplies {
     count: Mutex<u32>,
@@ -27,8 +29,18 @@ impl SceneReplies {
         }
     }
 
-    /// Relay: it forwarded a message to the engine.
-    pub fn replied(&self) {
+    /// Relay: forwards `response` to the engine and, once it is sent, counts it and wakes the
+    /// loop. False if the engine's channel refused it.
+    pub fn send(&self, sender: &SceneResponseSender, response: SceneResponse) -> bool {
+        let sent = sender.try_send(response).is_ok();
+        if sent {
+            self.replied();
+        }
+        sent
+    }
+
+    // a message reached the engine
+    fn replied(&self) {
         let mut count = self.count.lock().unwrap_or_else(PoisonError::into_inner);
         *count = count.wrapping_add(1);
         self.arrived.notify_all();
@@ -73,6 +85,9 @@ impl Default for SceneReplies {
 mod tests {
     use std::{sync::Arc, thread, time::Instant};
 
+    use bevy::prelude::Entity;
+    use dcl_types::SceneId;
+
     use super::*;
 
     // long enough that only a missing wake reaches it
@@ -107,6 +122,30 @@ mod tests {
     fn without_a_reply_the_wait_times_out() {
         let replies = SceneReplies::new();
         assert!(replies.wait(replies.seen(), Duration::from_millis(1)));
+    }
+
+    /// What the relay forwards (`Relay::forward`, `Relay::end`) and the engine's channel takes ends
+    /// the loop's wait; a message the channel refuses changes no count.
+    #[test]
+    fn a_forwarded_message_ends_the_wait() {
+        let (channel, _receiver) = dcl_types::scene_response_channel();
+        let sender = SceneResponseSender::new(SceneId(Entity::PLACEHOLDER), channel);
+        let replies = Arc::new(SceneReplies::new());
+        let seen = replies.seen();
+        let relay = replies.clone();
+        let forwarded = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            relay.send(&sender, SceneResponse::Error("tick".to_owned()))
+        });
+        assert!(!replies.wait(seen, LONG));
+        assert!(forwarded.join().unwrap());
+
+        let (channel, receiver) = dcl_types::scene_response_channel();
+        let sender = SceneResponseSender::new(SceneId(Entity::PLACEHOLDER), channel);
+        drop(receiver);
+        let seen = replies.seen();
+        assert!(!replies.send(&sender, SceneResponse::Error("tick".to_owned())));
+        assert_eq!(replies.seen(), seen);
     }
 }
 

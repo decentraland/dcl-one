@@ -112,19 +112,17 @@ impl Relay {
         count(|s| s.rejected += 1.0);
         if !self.ended {
             self.ended = true;
-            let _ = self.renderer_sender.try_send(SceneResponse::Error(format!(
-                "scene ended by the relay: {reason}"
-            )));
-            REPLIES.replied();
+            REPLIES.send(
+                &self.renderer_sender,
+                SceneResponse::Error(format!("scene ended by the relay: {reason}")),
+            );
         }
     }
 
     fn forward(&mut self, response: SceneResponse) -> bool {
-        let sent = self.renderer_sender.try_send(response).is_ok();
-        if sent {
-            // wakes the engine's scene loop if it waits for a reply
-            REPLIES.replied();
-        } else {
+        // wakes the engine's scene loop if it waits for a reply
+        let sent = REPLIES.send(&self.renderer_sender, response);
+        if !sent {
             count(|s| s.failures += 1.0);
         }
         sent
