@@ -132,7 +132,7 @@ async fn still_stored(
 /// that set its settings here still holds the name ([`mirror_keeps_local`], with [`name_holder`]). A thumbnail the pass could not fetch keeps the stored one. `settings_version` never goes back: it takes the source's counter, or this row's
 /// plus one when a copied column changes and the source's is not ahead, so a consumer ordering
 /// by it never sees an update out of order (a row bumped by earlier ingests can be ahead of its
-/// source). A verified thumbnail alias survives an owner override of the settings.
+/// source). A verified thumbnail alias is renewed even when the owner keeps local settings.
 async fn apply_settings(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
@@ -149,8 +149,11 @@ async fn apply_settings(
     if let (Some(sha256), Some(cid)) = (&copy.thumbnail_legacy_sha256, &copy.thumbnail_hash) {
         // The caller holds the shared blob store lock and checked the CID is still present.
         sqlx::query(
-            "INSERT INTO worlds.thumbnail_aliases (legacy_sha256, blob_cid) VALUES ($1, $2) \
-             ON CONFLICT (legacy_sha256) DO NOTHING",
+            "INSERT INTO worlds.thumbnail_aliases AS alias (legacy_sha256, blob_cid, mirror_expires_at) \
+             VALUES ($1, $2, now() + interval '720 hours') \
+             ON CONFLICT (legacy_sha256) DO UPDATE SET mirror_expires_at = EXCLUDED.mirror_expires_at \
+             WHERE alias.blob_cid = EXCLUDED.blob_cid \
+               AND alias.mirror_expires_at <= EXCLUDED.mirror_expires_at - interval '24 hours'",
         )
         .bind(sha256)
         .bind(cid)

@@ -106,7 +106,10 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   so saved hex URLs still resolve on the worlds mount. To recover mappings
   on an earlier import, run `blobs worlds-content-server` and replay the
   `world` step with `--since` set before the source rows. The aliases are
-  recorded even for worlds that retain newer local settings. Deploy-derived
+  recorded even for worlds that retain newer local settings. Import pins
+  these blobs by clearing `mirror_expires_at` on a matching alias previously
+  recorded by the mirror. The import verification checks pinned aliases.
+  Deploy-derived
   thumbnails already are a scene content CID.
 - The store layout is the node's: `<STORAGE_ROOT_FOLDER>/contents/<sha1
   shard>/<cid>`, written through a new staging file (`O_EXCL|O_NOFOLLOW`, as

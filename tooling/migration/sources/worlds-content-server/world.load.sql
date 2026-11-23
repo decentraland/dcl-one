@@ -48,7 +48,9 @@ SELECT DISTINCT b.object_key, b.hash
 FROM stage s JOIN dcl_migration.blob_inventory b
   ON b.source = 'worlds-content-server' AND b.object_key = s.thumbnail_hash
 WHERE b.object_key ~ '^[0-9a-f]{64}$' AND b.size > 256 * 1024 AND b.size <= 1024 * 1024
-ON CONFLICT (legacy_sha256) DO NOTHING;
+ON CONFLICT (legacy_sha256) DO UPDATE SET mirror_expires_at = NULL
+WHERE worlds.thumbnail_aliases.blob_cid = EXCLUDED.blob_cid
+  AND worlds.thumbnail_aliases.mirror_expires_at IS NOT NULL;
 
 INSERT INTO worlds.worlds AS w (
     name, owner, access_type, access_secret_hash, access_nft, spawn_coordinates,

@@ -50,7 +50,7 @@ pub const BEFORE_FIRST_SCENE: i32 = i32::MIN;
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(300);
 const WORLD_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
 const WORLD_UPDATE_MAX_RETRY: Duration = Duration::from_secs(30);
-const WORLD_UPDATE_BATCH: i64 = 64;
+const WORLD_UPDATE_BATCH: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeriveScope {
@@ -475,7 +475,7 @@ async fn refresh_queued_worlds(pool: &PgPool, content_public_url: &str) -> sqlx:
              ORDER BY queued_at, world_name LIMIT $1 FOR UPDATE SKIP LOCKED
          ) RETURNING world_name",
     )
-    .bind(WORLD_UPDATE_BATCH)
+    .bind(WORLD_UPDATE_BATCH as i64)
     .fetch_all(&mut *tx)
     .await?;
     if !worlds.is_empty() {
@@ -940,20 +940,26 @@ pub fn spawn_job(
                         next_full.as_mut().reset(tokio::time::Instant::now() + wait);
                     }
                     _ = &mut next_update => {
-                        match refresh_queued_worlds(&pool, &url).await {
+                        let wait = match refresh_queued_worlds(&pool, &url).await {
                             Ok(worlds) => {
                                 update_delay = WORLD_UPDATE_INTERVAL;
                                 if worlds > 0 {
                                     ctx.progress(format!("{worlds} world listings refreshed"));
+                                }
+                                if worlds == WORLD_UPDATE_BATCH {
+                                    Duration::ZERO
+                                } else {
+                                    WORLD_UPDATE_INTERVAL
                                 }
                             }
                             Err(error) => {
                                 update_delay = (update_delay * 2).min(WORLD_UPDATE_MAX_RETRY);
                                 tracing::warn!(%error, retry_in_secs = update_delay.as_secs(), "queued world place refresh failed");
                                 ctx.error(error.to_string());
+                                update_delay
                             }
-                        }
-                        next_update.as_mut().reset(tokio::time::Instant::now() + update_delay);
+                        };
+                        next_update.as_mut().reset(tokio::time::Instant::now() + wait);
                     }
                 }
             }

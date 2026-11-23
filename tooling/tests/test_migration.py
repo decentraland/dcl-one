@@ -1431,16 +1431,16 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         self.assertEqual(aliases, [f'{upload_key}\t{blobs.hash_bytes_v1(upload)}'])
         self.assertEqual(self.count(tgt, 'worlds.world_scenes'), 2)
 
-        # Replay an import from before aliases were recorded, with newer local settings.
-        self.sql(tgt, "DELETE FROM worlds.thumbnail_aliases;\n"
+        # A verified import pins an existing mirror alias, even over newer local settings.
+        self.sql(tgt, "UPDATE worlds.thumbnail_aliases SET mirror_expires_at = now() - interval '1 day';\n"
                       "UPDATE worlds.worlds SET title = 'local edit', settings_version = settings_version + 1, "
                       "updated_at = updated_at + interval '1 day' WHERE name = 'alpha.dcl.eth';\n")
         code, out = self.migrate('run', 'worlds-content-server', '--step', 'world',
                                  '--since', '2000-01-01T00:00:00Z', '--storage-root', str(node),
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.sql(tgt, 'SELECT legacy_sha256, blob_cid FROM worlds.thumbnail_aliases;\n')
-                         .splitlines(), aliases)
+        self.assertEqual(self.sql(tgt, 'SELECT legacy_sha256, blob_cid FROM worlds.thumbnail_aliases '
+                                       'WHERE mirror_expires_at IS NULL;\n').splitlines(), aliases)
         self.assertEqual(self.sql(tgt, "SELECT title FROM worlds.worlds WHERE name = 'alpha.dcl.eth';\n").strip(),
                          'local edit')
 

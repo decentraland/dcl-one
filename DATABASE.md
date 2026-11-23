@@ -162,10 +162,14 @@ images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
 before inserting the mapping under the same store lock as the settings write.
 The mirror and the cutover importer record aliases even when the world keeps
 its local settings. The importer uses the verified blob inventory. Legacy
-hex reads probe the primary key after a raw-leaf miss. Alias rows are
-permanent and the index on the CID lets the blob collector keep their bytes
-indefinitely, including after a world changes its thumbnail or leaves the
-listing. Operators can withhold the bytes through the content denylist.
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
 
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
@@ -318,12 +322,12 @@ in the source transaction.
 This relation holds at most one pending row per changed world. Coalescing takes
 the pending row's lock without losing its original queue position, so a worker
 cannot consume a mark before its source update commits. The leased
-`places-derive` job checks the queue every two seconds and takes up to 64
-oldest entries with `SKIP LOCKED`; the update or removal of the corresponding
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
 aggregate and the consumption of its mark commit together. The worker reads
 world and scene rows without taking row locks. A failed refresh rolls back
-both effects. Consecutive refresh failures back off to at most 30 seconds
-between checks. A successful check resumes the two-second interval.
+both effects. Consecutive refresh failures back off to at most 30 seconds.
 A full reconciliation runs at its configured interval and can
 delay processing queued edits while it runs. The local projection and mirror
 upserts of worlds share an advisory transaction lock. The mirror checks for

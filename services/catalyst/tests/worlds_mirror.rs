@@ -1956,14 +1956,32 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     );
     let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
     assert!(settings.get("thumbnail_hash").is_none(), "{settings}");
-    let alias: Option<String> = sqlx::query_scalar(
-        "SELECT blob_cid FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
+    let alias: Option<(String, bool)> = sqlx::query_as(
+        "SELECT blob_cid, mirror_expires_at > now() FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
     )
     .bind(&sha256)
     .fetch_optional(&node.pool)
     .await
     .unwrap();
-    assert_eq!(alias.as_deref(), Some(cid.as_str()));
+    assert_eq!(alias, Some((cid, true)));
+    sqlx::query(
+        "UPDATE worlds.thumbnail_aliases SET mirror_expires_at = now() - interval '1 day'
+         WHERE legacy_sha256 = $1",
+    )
+    .bind(&sha256)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    node.pass(&ctx).await;
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT mirror_expires_at > now() FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
+        )
+        .bind(&sha256)
+        .fetch_one(&node.pool)
+        .await
+        .unwrap()
+    );
 
     // The source restricts the world: the copied access bumps the version even though the
     // source's settings counter is not ahead.

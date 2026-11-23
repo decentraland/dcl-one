@@ -653,12 +653,23 @@ pub async fn catalogue_references(
     Ok(keys)
 }
 
+/// Plain references are durable except for mirror-observed thumbnail aliases.
+fn reference_predicate(source: &str) -> &'static str {
+    match source {
+        "worlds.thumbnail_aliases.blob_cid" => {
+            " AND (mirror_expires_at IS NULL OR mirror_expires_at > now())"
+        }
+        _ => "",
+    }
+}
+
 /// Whether any domain names any key at all (the empty-set refusal).
 async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
     for source in REFERENCE_SOURCES {
         let (table, column) = split_source(source);
+        let live = reference_predicate(source);
         let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} IS NOT NULL AND {column} <> '')"
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} IS NOT NULL AND {column} <> ''{live})"
         )))
         .fetch_one(pool)
         .await?;
@@ -780,8 +791,9 @@ async fn rows_among(
             continue;
         }
         let (table, column) = split_source(source);
+        let live = reference_predicate(source);
         let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
+            "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1){live}"
         )))
         .bind(keys)
         .fetch_all(&mut *conn)
@@ -1084,6 +1096,40 @@ mod tests {
         referenced_among(&pool, Pins::new(&storage, &[]), &["none".to_string()])
             .await
             .expect("every source statement runs against the schema");
+    }
+
+    #[tokio::test]
+    async fn only_imported_and_unexpired_thumbnail_aliases_pin_blobs() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        sqlx::query(
+            "INSERT INTO worlds.thumbnail_aliases (legacy_sha256, blob_cid, mirror_expires_at)
+             VALUES (repeat('a', 64), 'imported', NULL),
+                    (repeat('b', 64), 'current', now() + interval '1 day'),
+                    (repeat('c', 64), 'expired', now() - interval '1 day'),
+                    (repeat('d', 64), 'world-thumbnail', now() - interval '1 day')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, thumbnail_hash)
+             VALUES ('thumbnail.dcl.eth', 'world-thumbnail')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let keys = ["imported", "current", "expired", "world-thumbnail"].map(String::from);
+        assert_eq!(
+            referenced_rows_among_on(&mut *pool.acquire().await.unwrap(), &keys)
+                .await
+                .unwrap(),
+            ["imported", "current", "world-thumbnail"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
     }
 
     /// An unlink batch waits for a publish holding the shared lock, and only one run holds the run lock.
