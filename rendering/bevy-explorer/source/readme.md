@@ -221,8 +221,8 @@ Console commands:
 
 A scene loaded as a portable experience whose scene.json also declares
 `isPortableExperience: true` can place map pins (`MapPin`); no other scene's pins are read. The
-HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel, the title cut to 100
-characters, and an icon url resolved from a file of the scene's content) and draws them
+HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel and the title cut to 100
+characters) and draws them, each as the default quest pin,
 on the full map and the minimap under the Layers panel's Quest Mini-Games switch.
 `/map_pins_state` (the debug panel's Map pins section) reports the scenes read, the pins read and
 ignored, and the list last sent to the HUD.
