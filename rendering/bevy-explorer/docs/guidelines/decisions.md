@@ -70,7 +70,29 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
-  the extension is not the fix; the long-term answer is still open.
+  the extension is not the fix; the long-term answer is still open. A glTF emissive factor of 1
+  draws five times as bright as a lit white surface, and the strength multiplies that.
+- **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
+  unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
+  colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
+  its texture's alpha, and its emissive factor is tinted by its base colour texture. The
+  material the engine writes to a scene for a glTF has to draw the same once the scene sends it
+  back with one field changed, and the SDK fields cannot say either thing. So a Material with a
+  `gltf` reference reads `alpha_test`, the diffuse alpha and the emissive by the glTF's rules;
+  one without it, which includes `GltfNodeModifiers`, reads them by the SDK's. The imposter
+  bake applies the same alpha-texture and emissive rules, so a scene keeps its look when its
+  imposter takes over.
+  A normal map follows the texture, not the reference: an SDK `bumpTexture` has its green
+  channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
+  keeps its orientation when it comes back, and a bump texture the scene puts in its place is
+  read as the SDK's.
+- **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
+  surface here is about half as strong as Unity draws it, and 0.5 matches its captures
+  (`BLOOM_SCATTER`).
+- **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
+  colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
+  reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
+  terms split inside the lighting functions.
 - **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
   ambient keys are interpolated linearly; Unity's curve tangents are not carried.
 - **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
@@ -126,7 +148,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
-  with no hash): the player's own wearables and the emotes they play, then the player's scenes,
+  with no hash): the player's own wearables and the emotes they play or have equipped, then the
+  player's scenes,
   then the other avatars' wearables and emotes, then the
   other scenes, the last two by parcel ring, in front before behind, then raw distance; then
   requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
