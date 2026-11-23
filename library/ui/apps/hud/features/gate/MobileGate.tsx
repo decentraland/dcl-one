@@ -107,7 +107,7 @@ export function MobileGate({ reason = 'mobile' }: { reason?: 'mobile' | 'browser
           <img className={styles.logo} src={publicUrl('assets/logo.png')} alt="" draggable={false} />
           <h1 className={styles.title}>Browser Not Supported</h1>
           <p className={styles.subtitle}>
-            Decentraland Web requires <strong>Google Chrome</strong> on desktop to run.
+            Decentraland Web needs a desktop browser with <strong>WebGPU</strong>, such as Google Chrome.
           </p>
           <div className={styles.buttons}>
             <Button variant="secondary" href={CHROME_URL} target="_blank" rel="noopener" className={styles.store}>

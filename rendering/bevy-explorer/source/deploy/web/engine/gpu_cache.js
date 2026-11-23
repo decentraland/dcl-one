@@ -179,8 +179,61 @@ async function storeInstance(type, hash, value) {
 
 export async function initGpuCache(key, fakeAsync) {
   console.log(`[GPU Cache] key: ${key}`);
+  patchPowerPreference();
+  patchVideoFrameCopy();
   patchWebgpuAdapter(fakeAsync);
   await createGpuCache(key);
+}
+
+// Firefox's copyExternalImageToTexture takes no VideoFrame (only ImageBitmap, image and canvas
+// elements and OffscreenCanvas) and throws a TypeError, which wgpu drops: video screens stay black.
+// After the first such error, copy each frame through an ImageBitmap. The copy lands a moment later;
+// the frame is cloned because the caller closes it as soon as this returns.
+export function patchVideoFrameCopy() {
+  if (!self.GPUQueue || !self.VideoFrame) return;
+  const originalCopy = GPUQueue.prototype.copyExternalImageToTexture;
+  let viaBitmap = false;
+  GPUQueue.prototype.copyExternalImageToTexture = function (source, destination, size) {
+    const frame = source?.source;
+    if (!(frame instanceof VideoFrame)) return originalCopy.call(this, source, destination, size);
+    if (!viaBitmap) {
+      try {
+        return originalCopy.call(this, source, destination, size);
+      } catch (err) {
+        if (!(err instanceof TypeError)) throw err;
+        viaBitmap = true;
+        console.log("[GPU Cache] VideoFrame copies go through ImageBitmap");
+      }
+    }
+    const copy = frame.clone();
+    createImageBitmap(copy).then(
+      (bitmap) => {
+        copy.close();
+        try {
+          originalCopy.call(this, { ...source, source: bitmap, origin: { x: 0, y: 0 } }, destination, size);
+        } catch (err) {
+          // the target was replaced (a resize) while the bitmap was made; the next frame copies again
+        }
+        bitmap.close();
+      },
+      () => copy.close()
+    );
+  };
+}
+
+// Firefox on Linux cannot show a canvas that one GPU draws while another GPU composites the
+// desktop: with a discrete card and an integrated GPU that runs the session, a "high-performance"
+// adapter gives a black view or crashes the browser. Without a preference Firefox gives the
+// adapter it composites with, which is also the one the precache below gets.
+export function patchPowerPreference() {
+  const ua = self.navigator.userAgent;
+  if (!/Firefox\//.test(ua) || !/Linux/.test(ua) || /Android/.test(ua) || !self.GPU) return;
+  const originalRequestAdapter = GPU.prototype.requestAdapter;
+  GPU.prototype.requestAdapter = function (options) {
+    if (options?.powerPreference !== "high-performance") return originalRequestAdapter.call(this, options);
+    const { powerPreference: _, ...rest } = options;
+    return originalRequestAdapter.call(this, rest);
+  };
 }
 
 // Console marker boot.js (the page, where this worker's console is mirrored) turns into the crash

@@ -51,8 +51,8 @@ import { usePlatformBanNotices } from './features/session/PlatformBanDialog'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
 import { useWindowKeyDown } from './lib/useWindowKeyDown'
 import { useHudInsetReport } from './lib/hudInset'
-import { isMobile, isChromiumBased, hasBypassCookie } from '@explorer-core/lib/isMobile'
-import { inShell } from '@explorer-core/lib/shell'
+import { isMobile, hasWebGpu, hasBypassCookie } from '@explorer-core/lib/isMobile'
+import { inShell, shellRequest } from '@explorer-core/lib/shell'
 import { probeGpu, type GpuAdapterInfo } from '@explorer-core/lib/gpu'
 import { integratedGpuOnWindows } from '@explorer-core/lib/integratedGpu'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
@@ -90,12 +90,12 @@ const SHOWCASE = params.get('showcase') === '1'
 // chrome, or the substituted ui scene in-engine.
 const HIDE_HUD = bootMode().hideHud
 // Gate: don't mount the HUD/engine where the engine can't run — mobile (no WebGPU/SharedArrayBuffer)
-// or a non-Chromium desktop browser (the engine bundle renders its own "Browser Not Supported" page
-// there — see deploy/web/index.html — which the HUD would otherwise cover, leaving login frozen at
-// 0%). `?gate=1` forces the mobile variant, `?gate=browser` the browser variant, `?gate=gpu` the
-// no-GPU variant (all for testing); `?nogate=1` bypasses. The mobile/browser checks are synchronous
-// (UA); the real no-GPU detection is async (see useGpuProbe) — `?gate=gpu` short-circuits it here for a deterministic gate.
-function gateReason(): 'mobile' | 'browser' | 'gpu' | null {
+// or a desktop browser without WebGPU. `?gate=1` forces the mobile variant, `?gate=browser` the
+// browser variant, `?gate=gpu` the no-GPU variant (all for testing); `?nogate=1` bypasses. The
+// mobile/browser checks are synchronous; the real no-GPU detection is async (see useGpuProbe) —
+// `?gate=gpu` short-circuits it here for a deterministic gate. 'isolation': the app is not
+// isolated in the shell's frame, and asks the shell for page isolation (usePageIsolation).
+function gateReason(): 'mobile' | 'browser' | 'gpu' | 'isolation' | null {
   // Precedence: a real device constraint wins over a test override — mobile is checked before
   // `?gate=browser`, so on an actual phone that param still (correctly) yields the mobile variant.
   // Native (CEF webview over native bevy): no browser/mobile gate — the host app IS the platform.
@@ -104,12 +104,32 @@ function gateReason(): 'mobile' | 'browser' | 'gpu' | null {
   if (isMobile() || params.get('gate') === '1') return 'mobile'
   if (params.get('gate') === 'browser') return 'browser'
   if (params.get('gate') === 'gpu') return 'gpu'
-  if (!isChromiumBased()) return 'browser'
-  // inside the shell the engine's SharedArrayBuffer needs Document-Isolation-Policy (Chrome 137+)
-  if (inShell && !crossOriginIsolated) return 'browser'
+  if (!hasWebGpu()) return 'browser'
+  // inside the shell the engine's SharedArrayBuffer needs Document-Isolation-Policy (Chrome 137+) or,
+  // in a browser without it, page isolation (@explorer-core/lib/isolation)
+  if (inShell && !crossOriginIsolated) return 'isolation'
   return null
 }
 const GATE_REASON = gateReason()
+
+// Asks the shell once for page isolation: the shell then reloads the page. True when the shell
+// can't give it (or doesn't answer): the browser gate then.
+let pageIsolationRequest: Promise<unknown> | null = null
+function usePageIsolationFailed(ask: boolean): boolean {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!ask) return
+    let live = true
+    pageIsolationRequest ??= shellRequest('isolation.page', undefined, 5000)
+    pageIsolationRequest.catch(() => {
+      if (live) setFailed(true)
+    })
+    return () => {
+      live = false
+    }
+  }, [ask])
+  return failed
+}
 // `?gpuGuide=1` shows the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) whatever the
 // machine, for a look at it (mock mode included); otherwise the probe's adapter decides.
 const GPU_GUIDE_FORCED = params.get('gpuGuide') === '1'
@@ -165,6 +185,7 @@ export function HudApp(host: HudAppHost): React.JSX.Element {
   // bevy/wgpu, not WebGPU in this webview, so probing there would gate a HUD that runs fine.
   // 'checking' shows a brief spinner.
   const gpu = useGpuProbe(GATE_REASON != null || MODE === 'mock' || MODE === 'native' || SHOWCASE)
+  const isolationFailed = usePageIsolationFailed(GATE_REASON === 'isolation')
   // The one GPU finding the player can act on: a Windows browser on its integrated GPU (the
   // engine's probe path only; native renders through the host's own wgpu). Told once signed in.
   const integratedGpu = GPU_GUIDE_FORCED
@@ -178,6 +199,7 @@ export function HudApp(host: HudAppHost): React.JSX.Element {
   if (UNTRUSTED_PARAMS.length > 0 && !trustUntrusted) {
     return <UntrustedLaunchGate params={UNTRUSTED_PARAMS} onProceed={() => setTrustUntrusted(true)} />
   }
+  if (GATE_REASON === 'isolation') return isolationFailed ? <MobileGate reason="browser" /> : <GateChecking />
   if (GATE_REASON) return <MobileGate reason={GATE_REASON} />
   if (gpu.state === 'checking') return <GateChecking />
   if (gpu.state === 'blocked') return <MobileGate reason="gpu" />

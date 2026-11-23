@@ -69,6 +69,9 @@ self.addEventListener('fetch', (event) => {
     // Same-origin page loads: isolate the app, and keep the shell that embeds it unisolated
     if (request.mode === 'navigate' || request.destination === 'document') {
         event.respondWith(addCrossOriginIsolationHeaders(request));
+    } else if (PAGE_ISOLATION && request.destination === 'worker') {
+        // the workers of an isolated page need COEP too
+        event.respondWith(addCrossOriginIsolationHeaders(request));
     }
 });
 
@@ -422,12 +425,16 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
     return report;
 }
 
+// A browser without Document-Isolation-Policy registers this worker with `?isolation=page`
+// (library/explorer-core/lib/isolation.ts): it isolates the shell and the app as whole pages.
+const PAGE_ISOLATION = new URL(self.location.href).searchParams.get('isolation') === 'page';
+
 /**
  * Fetches a page and sets its isolation headers. The app (app.html: HUD + engine) gets
  * Document-Isolation-Policy, which makes it cross-origin isolated (SharedArrayBuffer) in a process
  * of its own. The shell that embeds it (the scope's index page) loses the host's COEP: an isolated
- * top-level page would take the app's process back in with it. Any other page (another host's
- * engine page, say) gets COOP/COEP credentialless to enable SharedArrayBuffer.
+ * top-level page would take the app's process back in with it. With PAGE_ISOLATION, and for any
+ * other page (another host's engine page, say), COOP/COEP credentialless enables SharedArrayBuffer.
  */
 async function addCrossOriginIsolationHeaders(request) {
     const response = await fetch(request);
@@ -440,10 +447,10 @@ async function addCrossOriginIsolationHeaders(request) {
         newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
         // the scene server's frame (engine/headless.js) takes the app's policy: the app scripts it,
         // which only documents with the same policy may do
-        if (path === scope + 'app.html' || path === scope + 'engine/headless.html') {
-            newHeaders.delete('Cross-Origin-Embedder-Policy');
-            newHeaders.set('Document-Isolation-Policy', 'isolate-and-credentialless');
-        } else if (path === scope || path === scope + 'index.html') {
+        const app = path === scope + 'app.html' || path === scope + 'engine/headless.html';
+        const shell = path === scope || path === scope + 'index.html';
+        if (app) newHeaders.set('Document-Isolation-Policy', 'isolate-and-credentialless');
+        if ((app || shell) && !PAGE_ISOLATION) {
             newHeaders.delete('Cross-Origin-Embedder-Policy');
         } else {
             newHeaders.set('Cross-Origin-Embedder-Policy', 'credentialless');

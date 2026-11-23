@@ -16,6 +16,8 @@ import { mountPlayShell } from '../shell/mount'
 
 let app: Window
 let nextId = 1
+// the address the visitor entered: a link to a world
+let entryUrl = ''
 
 /** The app says a session runs or not: only the question before the page goes reads it. */
 function sessionLive(live: boolean): void {
@@ -36,6 +38,8 @@ async function ask(method: string, params: unknown = {}): Promise<unknown> {
 
 beforeAll(async () => {
   vi.stubGlobal('crossOriginIsolated', false)
+  history.replaceState(null, '', '?realm=entry.dcl.eth')
+  entryUrl = location.href
   mountPlayShell()
   app = await vi.waitFor(() => {
     const frame = document.querySelector('iframe')
@@ -71,6 +75,26 @@ describe('the shell’s answers to the app', () => {
   it('posts back a busy shop’s code with its message', async () => {
     shop.request.mockRejectedValue(shopBusy())
     expect(await ask('shop.buy')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), error: 'a purchase is already open', code: SHOP_BUSY })
+  })
+
+  it('refuses page isolation where it cannot help: here, no service worker', async () => {
+    expect(await ask('isolation.page')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), error: 'page isolation is not available' })
+    expect(localStorage.getItem('dcl-shell-isolation')).toBeNull()
+  })
+
+  it('loads the page for page isolation as the visitor entered it, not as the app wrote the address since', async () => {
+    const registration = { update: async () => {}, installing: null, waiting: null, active: {} }
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { register: async () => registration } })
+    try {
+      // the engine's URL sync: the lobby has no realm yet
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:url', search: '?position=0%2C0' }, origin: location.origin, source: app }))
+      expect(location.href).not.toBe(entryUrl)
+      expect(await ask('isolation.page')).toEqual({ type: 'bevy-shell:response', id: expect.any(Number), result: true })
+      await vi.waitFor(() => expect(page.reload).toHaveBeenCalledWith(entryUrl))
+    } finally {
+      delete (navigator as { serviceWorker?: unknown }).serviceWorker
+      sessionStorage.clear()
+    }
   })
 
   it('posts back any other failure as its message alone', async () => {

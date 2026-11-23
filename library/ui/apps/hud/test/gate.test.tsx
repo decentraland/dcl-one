@@ -1,17 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MobileGate } from '../features/gate/MobileGate'
-import { isChromiumBased } from '@explorer-core/lib/isMobile'
+import { hasWebGpu } from '@explorer-core/lib/isMobile'
 
 const IPHONE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 const ANDROID_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
-const FIREFOX_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0'
-const SAFARI_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
-const CHROME_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
 const origUA = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent')
 function setUA(ua: string): void {
@@ -49,14 +44,15 @@ describe('mobile gate', () => {
   })
 })
 
-describe('browser gate (non-Chromium desktop)', () => {
-  it('isChromiumBased: true for Chrome, false for Firefox / Safari', () => {
-    setUA(CHROME_UA)
-    expect(isChromiumBased()).toBe(true)
-    setUA(FIREFOX_UA)
-    expect(isChromiumBased()).toBe(false)
-    setUA(SAFARI_UA)
-    expect(isChromiumBased()).toBe(false)
+describe('browser gate (desktop without WebGPU)', () => {
+  it('hasWebGpu: whether the browser exposes navigator.gpu, whatever its user agent', () => {
+    expect(hasWebGpu()).toBe(false)
+    Object.defineProperty(window.navigator, 'gpu', { value: {}, configurable: true })
+    try {
+      expect(hasWebGpu()).toBe(true)
+    } finally {
+      delete (window.navigator as { gpu?: unknown }).gpu
+    }
   })
 
   it('the browser variant shows a Download Chrome link, no try-anyway or store links', () => {
