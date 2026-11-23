@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import { docsUrl } from "@web-core/docs";
-import { trackLegacyClick, trackSectionViewed, type LegacyClick, type LegacySectionViewed, type LegacySession } from "@/core/lib/telemetry/legacy-click";
+import { trackLegacyClick, trackSectionViewed, useLegacyTrackScope, type LegacyClick, type LegacySectionViewed, type LegacySession } from "@/core/lib/telemetry/legacy-click";
 import { latestPostsQuery, type BlogPostSummary } from "@/data/lib/create-landing/blog-posts";
 import { liveScenesQuery, selectLiveScenes, type HotScene } from "@/data/lib/create-landing/live-scenes";
 
@@ -54,12 +54,16 @@ export default function CreateLanding({ downloads = null, sid = "", userId = "" 
   );
 }
 
-const SessionContext = createContext<LegacySession>({ sid: "" });
+const SessionContext = createContext<Omit<LegacySession, "scope">>({ sid: "" });
 
-/** Sends a control's legacy `Click` (decentraland/sites `useTrackClick` on the reference's `Create/*` sections). */
+/**
+ * Sends a control's legacy `Click` (decentraland/sites `useTrackClick` on the reference's `Create/*` sections),
+ * deferred in this component's scope as the legacy hook's queue was.
+ */
 function useClick(): (click: LegacyClick) => void {
   const session = useContext(SessionContext);
-  return useCallback((click: LegacyClick) => trackLegacyClick(click, session), [session]);
+  const scope = useLegacyTrackScope();
+  return useCallback((click: LegacyClick) => trackLegacyClick(click, { ...session, scope }), [session, scope]);
 }
 
 /**
@@ -69,8 +73,9 @@ function useClick(): (click: LegacyClick) => void {
  */
 function useSectionViewed(section: LegacySectionViewed) {
   const session = useContext(SessionContext);
-  const latest = useRef(session);
-  latest.current = session;
+  const scope = useLegacyTrackScope();
+  const latest = useRef({ ...session, scope });
+  latest.current = { ...session, scope };
   const sent = useRef(false);
   const observer = useRef<IntersectionObserver | null>(null);
   return useCallback(

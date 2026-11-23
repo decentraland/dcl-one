@@ -14,10 +14,28 @@ import CreateLanding from "./CreateLanding";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
 
+/** The document's readiness (its first page view), driven by the test. */
+const readiness = vi.hoisted(() => ({ ready: true, pending: [] as Array<() => void> }));
+function becomeReady() {
+  readiness.ready = true;
+  const queued = readiness.pending;
+  readiness.pending = [];
+  for (const fire of queued) fire();
+}
+
 vi.mock("@/core/lib/telemetry/track", () => ({
   track: vi.fn(),
-  legacyAnalyticsReady: () => true,
-  whenLegacyAnalyticsReady: (fire: () => void) => fire(),
+  legacyAnalyticsReady: () => readiness.ready,
+  whenLegacyAnalyticsReady: (fire: () => void) => {
+    if (readiness.ready) {
+      fire();
+      return () => {};
+    }
+    readiness.pending.push(fire);
+    return () => {
+      readiness.pending = readiness.pending.filter((queued) => queued !== fire);
+    };
+  },
 }));
 
 /** Every observed section, and a way to scroll a share of one into view. */
@@ -89,6 +107,8 @@ function blockNavigation(event: MouseEvent) {
 let mobile: boolean;
 
 beforeEach(() => {
+  readiness.ready = true;
+  readiness.pending = [];
   observed = [];
   mobile = false;
   vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
@@ -254,5 +274,30 @@ describe("/create Section Viewed", () => {
     vi.stubGlobal("IntersectionObserver", undefined);
     expect(() => renderLanding()).not.toThrow();
     expect(track).not.toHaveBeenCalled();
+  });
+});
+
+describe("/create events made before the document is ready", () => {
+  it("are dropped when the landing unmounts first: no stale Click or Section Viewed after readiness", async () => {
+    readiness.ready = false;
+    const { unmount } = renderLanding();
+    await userEvent.click(screen.getByRole("link", { name: "Explore the Creator Docs" }));
+    scrollInto(sectionOf(/creators choose Decentraland/), 0.5);
+    unmount();
+    becomeReady();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it("are sent once, deferred, when the landing is still mounted at readiness", async () => {
+    readiness.ready = false;
+    renderLanding();
+    await userEvent.click(screen.getByRole("link", { name: "Explore the Creator Docs" }));
+    scrollInto(sectionOf(/creators choose Decentraland/), 0.5);
+    becomeReady();
+    expect(sent()).toEqual([
+      ["Click", { place: "Creators Hero" }],
+      ["Section Viewed", { section_viewed: "Creators Why", mobile: false }],
+    ]);
+    expect(vi.mocked(track).mock.calls.map(([, props]) => (props as { track_deferred: boolean }).track_deferred)).toEqual([true, true]);
   });
 });
