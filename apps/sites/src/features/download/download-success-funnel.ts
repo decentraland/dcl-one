@@ -22,6 +22,7 @@ import {
   collectDeepLinkParams,
   resolveGatewayAnonUserId,
   resolveReferrer,
+  reportedInstallerUrl,
   withInstallerQuery,
 } from "./installer-gateway";
 
@@ -89,10 +90,11 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
       );
     let current: ReturnType<typeof tracker> | null = null;
     try {
-      const url = await chooseInstallerUrl({ os, arch, fallback: plain, gateway, identityId, anonUserId: anon, signal });
+      const chosen = await chooseInstallerUrl({ os, arch, fallback: plain, gateway, identityId, anonUserId: anon, signal });
       if (signal.aborted) return;
+      const { url } = chosen;
       const href = withInstallerQuery(url, { anon_user_id: anon, ...deepLink, ...(referrer ? { referrer } : {}) });
-      current = tracker(href);
+      current = tracker(reportedInstallerUrl(href, gateway, chosen.identityId));
       fired.current.startedFired = true;
       current.started();
       const delivery = await deliverInstaller(href, os, dispatch, signal);

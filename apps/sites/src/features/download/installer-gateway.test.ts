@@ -6,6 +6,7 @@ import {
   collectDeepLinkParams,
   resolveGatewayAnonUserId,
   resolveReferrer,
+  reportedInstallerUrl,
   withInstallerQuery,
 } from "./installer-gateway";
 
@@ -24,6 +25,17 @@ afterEach(() => {
 describe("collectDeepLinkParams", () => {
   it("re-emits a position from its integers and keeps a valid realm", () => {
     expect(collectDeepLinkParams(params("position=10.20&realm=foo.dcl.eth"))).toEqual({ position: "10,20", realm: "foo.dcl.eth" });
+  });
+
+  it.each([
+    ["a position outside the gateway's grid", "position=1000,5", {}],
+    ["a realm that is a URL", "realm=https://evil.test/realm", {}],
+    ["a realm with a path", "realm=evil.dcl.eth/x", {}],
+    ["a realm starting with a symbol", "realm=-evil", {}],
+    ["a realm with a space or quote", 'realm=a b"', {}],
+    ["a realm longer than 63 characters", `realm=${"a".repeat(64)}`, {}],
+  ])("never forwards %s to the gateway", (_, query, expected) => {
+    expect(collectDeepLinkParams(params(query))).toEqual(expected);
   });
 
   it("drops the Explorer's defaults, a malformed position and a realm outside the allowlist", () => {
@@ -91,14 +103,14 @@ describe("chooseInstallerUrl", () => {
 
   it("serves the plain installer without a gateway, never asking for a token", async () => {
     const identityId = vi.fn();
-    expect(await chooseInstallerUrl({ ...base, gateway: null, identityId })).toBe(base.fallback);
+    expect(await chooseInstallerUrl({ ...base, gateway: null, identityId })).toEqual({ url: base.fallback });
     expect(identityId).not.toHaveBeenCalled();
   });
 
   it("serves the plain installer with a gateway but neither a token nor a campaign id", async () => {
-    expect(await chooseInstallerUrl({ ...base, gateway: "https://g.test", identityId: async () => undefined, anonUserId: undefined })).toBe(
-      base.fallback,
-    );
+    expect(await chooseInstallerUrl({ ...base, gateway: "https://g.test", identityId: async () => undefined, anonUserId: undefined })).toEqual({
+      url: base.fallback,
+    });
   });
 });
 
@@ -107,5 +119,20 @@ describe("withInstallerQuery", () => {
     expect(withInstallerQuery("https://g.test/a.exe", { anon_user_id: UUID, position: undefined, referrer: null })).toBe(
       `https://g.test/a.exe?anon_user_id=${UUID}`,
     );
+  });
+});
+
+describe("reportedInstallerUrl", () => {
+  const G = "https://g.test";
+  it("replaces the identity route's sign-in token with the gateway's placeholder", () => {
+    expect(reportedInstallerUrl(`${G}/token-1/decentraland.exe?anon_user_id=${UUID}`, G, "token-1")).toBe(
+      `${G}/:identityId/decentraland.exe?anon_user_id=${UUID}`,
+    );
+  });
+
+  it("leaves the anonymous route, the plain installer and a link without a gateway untouched", () => {
+    expect(reportedInstallerUrl(`${G}/anonymous/decentraland.exe`, G, undefined)).toBe(`${G}/anonymous/decentraland.exe`);
+    expect(reportedInstallerUrl("https://cdn.test/x.dmg", G, "token-1")).toBe("https://cdn.test/x.dmg");
+    expect(reportedInstallerUrl("https://cdn.test/x.dmg", null, "token-1")).toBe("https://cdn.test/x.dmg");
   });
 });

@@ -303,6 +303,27 @@ describe("the download gateway (legacy calculateCDNReleaseLinksWithIdentity)", (
     expect(requests).toEqual([`${GATEWAY}/token-1/decentraland.dmg?anon_user_id=${SID}`]);
   });
 
+  it("never sends the sign-in token to telemetry: the tracked link names the route with the placeholder", async () => {
+    auth.identity = { signer: "0xabc" };
+    auth.post.mockResolvedValue({ identityId: "token-secret-1", expiration: "" });
+    show("?os=Windows&place=download-page");
+    await settle();
+    expect(requests[0]).toContain("/token-secret-1/");
+    await act(() => vi.advanceTimersByTimeAsync(4000));
+    setHidden(true);
+    expect(sent("download_started")[0]).toMatchObject({ href: `${GATEWAY}/:identityId/decentraland.exe?anon_user_id=${SID}` });
+    expect(sent("download_success")[0]).toMatchObject({ href: `${GATEWAY}/:identityId/decentraland.exe?anon_user_id=${SID}` });
+    expect(JSON.stringify(vi.mocked(track).mock.calls)).not.toContain("token-secret-1");
+  });
+
+  it("forwards no deep link the gateway would drop on the identity route", async () => {
+    auth.identity = { signer: "0xabc" };
+    auth.post.mockResolvedValue({ identityId: "token-1", expiration: "" });
+    show("?os=Windows&place=download-page&realm=https://evil.test&position=1000,5");
+    await settle();
+    expect(requests).toEqual([`${GATEWAY}/token-1/decentraland.exe?anon_user_id=${SID}`]);
+  });
+
   it("keeps an Intel Mac on the plain installer on the identity route, and on the gateway on the anonymous one", async () => {
     auth.identity = { signer: "0xabc" };
     auth.post.mockResolvedValue({ identityId: "token-1", expiration: "" });

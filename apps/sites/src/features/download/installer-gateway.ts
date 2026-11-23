@@ -7,7 +7,12 @@ import type { FunnelArch, FunnelOs } from "./download-funnel";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REFERRER_RE = /^0x[a-fA-F0-9]{40}$/;
-const REALM_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+// The gateway's own allowlists (client-download-gateway `validations.ts`), which bake these values into the installer:
+// a parcel pair within the Genesis City grid and a server or world name. A name cannot carry a scheme, host or path,
+// so a crafted link cannot point a signed-in installer at another server. The legacy page's looser realm pattern
+// (`/^[a-zA-Z0-9._-]{1,64}$/`) let through values the gateway drops anyway; this one never sends them.
+const POSITION_RE = /^-?\d{1,3},-?\d{1,3}$/;
+const REALM_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/;
 const REFERRER_STORAGE_KEY = "dcl_referrer";
 const ATTRIBUTION_STORAGE_KEY = "dcl_gateway_anon_user_id";
 const IDENTITY_TIMEOUT_MS = 5000;
@@ -21,7 +26,7 @@ export function collectDeepLinkParams(params: URLSearchParams): DeepLinkParams {
   if (tokens?.length === 2) {
     const [x, y] = tokens.map((token) => Number.parseInt(token, 10));
     const position = Number.isFinite(x) && Number.isFinite(y) ? `${x},${y}` : undefined;
-    if (position && position !== "0,0") out.position = position;
+    if (position && POSITION_RE.test(position) && position !== "0,0") out.position = position;
   }
   const realm = params.get("realm");
   if (realm && REALM_RE.test(realm) && realm !== "main") out.realm = realm;
@@ -102,8 +107,16 @@ function gatewayUrl(gateway: string, segment: string, os: FunnelOs, arch: Funnel
 }
 
 /** The installer URL before its query: identity route, then anonymous route, then the plain installer. */
-export async function chooseInstallerUrl({ os, arch, fallback, gateway, identityId, anonUserId, signal }: InstallerChoice): Promise<string> {
-  if (!gateway) return fallback;
+export async function chooseInstallerUrl({
+  os,
+  arch,
+  fallback,
+  gateway,
+  identityId,
+  anonUserId,
+  signal,
+}: InstallerChoice): Promise<{ url: string; identityId?: string }> {
+  if (!gateway) return { url: fallback };
   let id: string | undefined;
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(new DOMException("The sign-in token took too long", "TimeoutError")), IDENTITY_TIMEOUT_MS);
@@ -114,9 +127,20 @@ export async function chooseInstallerUrl({ os, arch, fallback, gateway, identity
   } finally {
     clearTimeout(timer);
   }
-  if (id) return gatewayUrl(gateway, encodeURIComponent(id), os, arch, fallback);
-  if (anonUserId) return gatewayUrl(gateway, "anonymous", os, arch, fallback);
-  return fallback;
+  if (id) return { url: gatewayUrl(gateway, encodeURIComponent(id), os, arch, fallback), identityId: id };
+  if (anonUserId) return { url: gatewayUrl(gateway, "anonymous", os, arch, fallback) };
+  return { url: fallback };
+}
+
+/**
+ * The installer link as telemetry reports it. The identity route's path carries the visitor's sign-in token, which
+ * the legacy page sent to Segment inside `href`; here that segment is replaced by the gateway's own `:identityId`
+ * placeholder, so the route stays readable and no credential leaves the page.
+ */
+export function reportedInstallerUrl(url: string, gateway: string | null, identityId: string | undefined): string {
+  if (!gateway || !identityId) return url;
+  const prefix = `${gateway}/${encodeURIComponent(identityId)}/`;
+  return url.startsWith(prefix) ? `${gateway}/:identityId/${url.slice(prefix.length)}` : url;
 }
 
 /** Appends the attribution the gateway bakes into the installer. Never `click_id`: a UUID there shadows the token. */
