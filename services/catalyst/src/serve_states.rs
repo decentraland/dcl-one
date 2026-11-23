@@ -1036,6 +1036,11 @@ mod event_notice_configuration_tests {
                 &explore,
                 onboarding,
                 recorder.handle(),
+                Arc::new(communities::referral::Referral::new(
+                    pool.clone(),
+                    http.clone(),
+                    referral_settings(&config),
+                )),
             )
             .unwrap();
             let settings = &social.notifications.settings;
