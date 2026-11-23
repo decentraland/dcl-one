@@ -999,7 +999,7 @@ impl WriteDeployer {
             #[cfg(any(test, feature = "test-support"))]
             LocalValidation::PartialChecks => None,
         };
-        super::validator::verify_entity_chain(
+        super::validator::verify_local_entity_chain(
             auth_chain,
             entity_id,
             timestamp,

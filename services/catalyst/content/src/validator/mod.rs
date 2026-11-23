@@ -297,7 +297,7 @@ impl ExternalCalls for Sources {
         auth_chain: &AuthChain,
         timestamp: types::Timestamp,
     ) -> Result<(), AuthError> {
-        verify_entity_chain(
+        verify_local_entity_chain(
             auth_chain,
             entity_id,
             timestamp,
@@ -311,7 +311,7 @@ impl ExternalCalls for Sources {
 /// A local entity's chain: a contract-wallet link refused at latest is asked again at the
 /// L1 block `@dcl/crypto` selects for the entity timestamp, found by the access checks'
 /// search when `access` is given.
-pub(crate) async fn verify_entity_chain(
+pub(crate) async fn verify_local_entity_chain(
     auth_chain: &AuthChain,
     entity_id: &str,
     timestamp_ms: i64,
