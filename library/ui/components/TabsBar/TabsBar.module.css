@@ -233,7 +233,7 @@
     width: auto;
   }
 
-  @media (width < 768px) {
+  @media (max-width: 767px) {
     .routeRoot[data-page='blog'] .routeControls {
       display: none;
     }

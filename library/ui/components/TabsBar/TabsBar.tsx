@@ -267,6 +267,7 @@ type TabsBarComponentProps =
       mode?: 'panel'
       items?: never
       activeId?: never
+      current?: never
       page?: never
       search?: never
       actions?: never
