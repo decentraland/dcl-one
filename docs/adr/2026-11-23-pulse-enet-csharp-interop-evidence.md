@@ -13,13 +13,13 @@ observations, not a standing CI check.
 
 ## Setup
 
-- Deployment: dcl.dev, running dcl-one's servers. Realm `dcl-one-poc`; Pulse at
-  `dcl-one-poc-rt.decentraland.zone`, ENet over UDP port 7777.
+- Deployment: dcl.dev, running dcl-one's servers: the proof-of-concept realm's Pulse,
+  ENet over UDP port 7777.
 - Unity client: the build of
   [decentraland/unity-explorer#10686](https://github.com/decentraland/unity-explorer/pull/10686)
   (`v0.199.0-alpha-feat/realm-scene-pointers-pulse-server-7a360e3`), which adds the
-  `--pulse-server` option. Launched with `--pulse true --pulse-server
-  dcl-one-poc-rt.decentraland.zone --realm https://dcl.dev --gatekeeper-url
+  `--pulse-server` option. Launched with `--pulse true`, `--pulse-server` set to that
+  realm's Pulse host, `--realm https://dcl.dev` and `--gatekeeper-url
   https://dcl.dev/comms-gatekeeper`.
 - Other clients: 20 `comms-e2e` protocol bots (`rusty_enet`, native ENet) and the Bevy web
   client (WebTransport).
@@ -52,9 +52,10 @@ observations, not a standing CI check.
 
 `native_csharp_all_lanes_and_controlled_sender_throttle` in
 `library/vendor/rusty_enet/src/test.rs` runs the vendored `rusty_enet` host against an
-ENet-CSharp client over loopback. Its .NET probe is not in this repository. For this
-record it was rebuilt from the test's contract, on ENet-CSharp 2.4.9 as Unity Explorer
-ships it:
+ENet-CSharp client over loopback. The test starts a .NET probe with a port and a trace
+path, checks the length and first byte of one packet per lane, and passes when the probe
+exits 0. That probe is not in this repository. For this record one was written to fit
+the test, on ENet-CSharp 2.4.9 as Unity Explorer ships it:
 
 - Wrapper and lanes: `ENet.cs` and `ENetChannel.cs` of the `com.decentraland.pulse.transport`
   package, at decentraland/Pulse `994b07ee16`, the commit unity-explorer's
@@ -70,13 +71,13 @@ channels. It sends one packet per lane with the shipped flags (`Reliable`, `Unth
 | Run | Native library | Result |
 | --- | --- | --- |
 | Local, Windows x64 | `enet.dll` | `1 passed; 0 failed; 0 ignored` |
-| [GitHub Actions](https://github.com/decentraland/dcl-one/actions/runs/45157354026/job/137633594123), Ubuntu | `libenet.so` | `1 passed; 0 failed; 0 ignored` |
+| [GitHub Actions](https://github.com/decentraland/dcl-one/actions/runs/45157354026/job/137633594123), Ubuntu, with the workflow of closed [#1983](https://github.com/decentraland/dcl-one/pull/1983) (not on main) | `libenet.so` | `1 passed; 0 failed; 0 ignored` |
 | Local negative control: the host sends lane 1 without the throttle bypass | `enet.dll` | lane 1 received none of the eight bypass packets; the probe and the test failed |
 
-In both passing runs:
+In both passing runs, the test saw the probe's 4096 bytes on lane 0 (reliable), 32 bytes
+on lane 1 (sequenced unreliable) and 32 bytes on lane 2 (unsequenced). The probe checked
+the rest and exited 0:
 
-- The host received the probe's 4096 bytes on lane 0 (reliable), 32 bytes on lane 1
-  (sequenced unreliable) and 32 bytes on lane 2 (unsequenced).
 - With the host's send throttle at 0, its ordinary unreliable `[99]` on lane 0 never
   arrived. Its eight packets `[100]` to `[107]` on lane 1, sent with the per-packet bypass,
   all arrived in order.
@@ -85,9 +86,9 @@ In both passing runs:
 
 ## Related finding
 
-Before [#1808](https://github.com/decentraland/dcl-one/pull/1808) (merged 2026-11-20,
-60 s future-skew tolerance), a client whose clock ran 0.3 s fast was refused at the
-handshake. That was a clock rule, not a wire-format problem.
+Pulse admits handshakes signed up to 60 s ahead of its clock
+([#1808](https://github.com/decentraland/dcl-one/pull/1808)). A handshake refused for
+skew beyond that window is a clock rule, not a wire-format problem.
 
 ## What this does not establish
 
