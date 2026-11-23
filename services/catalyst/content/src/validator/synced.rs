@@ -624,6 +624,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(tmp);
     }
 
+    /// A contract wallet that refuses at latest, signed at every past block, and whose own
+    /// selector would pick one.
+    struct RefusesAtLatest;
+
+    #[async_trait]
+    impl Eip1654Validator for RefusesAtLatest {
+        async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+            Ok(false)
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+            _: u64,
+        ) -> Result<bool, AuthError> {
+            Ok(true)
+        }
+
+        async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, AuthError> {
+            Ok(Some(7))
+        }
+    }
+
+    /// A synced contract-wallet link refused at latest on a node without an L1 RPC is
+    /// undecided: the validator's own selector is not asked for a synced entity.
+    #[tokio::test]
+    async fn a_synced_contract_wallet_refused_at_latest_without_l1_is_undecided() {
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-no-l1").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            Some(std::sync::Arc::new(RefusesAtLatest)),
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: None,
+                ..Default::default()
+            },
+        );
+        let synced = Synced {
+            sources: &sources,
+            content: SyncedContent::Fetched,
+            trusted_expirations: Mutex::new(Vec::new()),
+        };
+        let id = "bafkreientity";
+        let auth =
+            crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+                .await;
+
+        let verdict = synced
+            .validate_signature(id, &auth, 1_700_000_000_500)
+            .await;
+        assert!(
+            matches!(verdict, Err(AuthError::Eip1654ValidationFailed(_))),
+            "got {verdict:?}"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
     /// A contract wallet whose RPC never answers.
     struct Stalled;
 
