@@ -4963,4 +4963,12 @@ async fn community_rpc_kick_reports_failed_livekit_removal() {
         matches!(&outcome, Err(VoiceUnavailable::Failed(m)) if m.contains("livekit remove participant")),
         "{outcome:?}"
     );
+    assert!(
+        state
+            .voice_db
+            .community_users_in_room(community)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
