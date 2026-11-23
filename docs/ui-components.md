@@ -62,14 +62,14 @@ Some names requested in [the shared UI backlog](https://github.com/decentraland/
 | --- | --- | --- |
 | JumpInButton | JumpInCTA | [JumpInCTA.figma.ts](../library/ui/components/JumpInCTA/JumpInCTA.figma.ts) maps the JumpInCTA set. |
 | SkeletonAnimation | Skeleton | [Skeleton.figma.ts](../library/ui/components/Skeleton/Skeleton.figma.ts) maps the Skeleton set. |
-| DropdownTrigger, DropdownField, DropdownSecondary, DropdownEntry, DropdownPanel | Dropdown | One component draws the trigger, the option panel and its entries. [Dropdown.figma.ts](../library/ui/components/Dropdown/Dropdown.figma.ts) maps the web Dropdown set's idle, opened and blocked states; it has no separate secondary appearance. |
+| DropdownTrigger, DropdownField, DropdownSecondary, DropdownEntry, DropdownPanel | Dropdown | These names mean the parts of the web Dropdown set, not the editor's field and trigger (see below). One component draws the trigger, the option panel and its entries. [Dropdown.figma.ts](../library/ui/components/Dropdown/Dropdown.figma.ts) maps the web Dropdown set's idle, opened and blocked states; it has no separate secondary appearance. |
 | CloseCTA | CloseButton | [CloseButton.figma.ts](../library/ui/components/CloseButton/CloseButton.figma.ts) maps the CloseCTA set and [CloseButtonStyle.figma.ts](../library/ui/components/CloseButton/CloseButtonStyle.figma.ts) the Close Button set. |
 | ButtonFriend | FriendCTA | [FriendCTA.figma.ts](../library/ui/components/FriendCTA/FriendCTA.figma.ts) maps the FriendCTA set. |
 | Toggle | Switch | No Figma mapping (see the Switch row). ui3's local `atoms/Toggle` is a `switch` role control with the same purpose (a `<button>` with `aria-checked`); only Switch, a native checkbox, takes part in forms. |
 | AmountLabel, NewLabel, SmartItemBadge | ItemLabel (`variant` `amount`, `new`, `smart`) | [AmountLabel.figma.ts](../library/ui/components/ItemLabel/AmountLabel.figma.ts), [NewLabel.figma.ts](../library/ui/components/ItemLabel/NewLabel.figma.ts) and [SmartItemBadge.figma.ts](../library/ui/components/ItemLabel/SmartItemBadge.figma.ts) target ItemLabel. |
 | AgeRatingAlpha, CommunityType, Location, ModeratonType, Realm, Status | Tag | One mapping per Figma component or set in [library/ui/components/Tag](../library/ui/components/Tag/), each targeting Tag. |
 
-The editor's dropdown field and dropdown trigger designs are a separate design contract, implemented in Creator Hub by the inspector's `ui/Dropdown` (`apps/creator-hub/packages/inspector/src/components/ui/Dropdown`) and described in [the Creator Hub design notes](../apps/creator-hub/docs/DESIGN.md). The web Dropdown does not implement them.
+The editor's dropdown field and dropdown trigger designs are a separate design contract, implemented in Creator Hub by the inspector's `ui/Dropdown` (`apps/creator-hub/packages/inspector/src/components/ui/Dropdown`) and described in [the Creator Hub design notes](../apps/creator-hub/docs/DESIGN.md#dropdown-input-dropdown). The web Dropdown does not implement them; on a web surface, the requested Dropdown names above mean the web Dropdown.
 
 ## Review-only components
 
