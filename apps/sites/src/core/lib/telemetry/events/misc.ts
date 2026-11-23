@@ -1,19 +1,23 @@
 export type MiscEvents = {
   Click: {
+    action?: "account_settings" | "create_in_decentraland" | "credits" | "emotes" | "events" | "land" | "learn" | "logo" | "marketplace_authorizations" | "merch" | "my_assets" | "names" | "places" | "publish_land" | "publish_wearables_emotes" | "shop_all" | "sign_in" | "view_profile" | "wearables";
     card?: string;
     click_id?: string;
     clicked_at?: number;
     download_target?: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
-    event?: "Download";
+    event?: "Download" | "click";
+    href?: string;
+    link?: string;
     mac_arch?: "apple_silicon" | "intel" | "unknown";
     os?: "Android" | "Windows" | "iOS" | "macOS";
-    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Footer Link" | "Landing Footer Social" | "Landing Hero" | "Landing Navbar" | "Landing Weekly Rituals" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    platform?: string;
     section?: string;
     tab?: string;
     title?: string;
-    track_called_at: number;
-    track_deferred: boolean;
-    track_delivered_at: number;
+    track_called_at?: number;
+    track_deferred?: boolean;
+    track_delivered_at?: number;
     utm_campaign?: string;
     utm_content?: string;
     utm_medium?: string;

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createLegacyTrackScope, type LegacySession } from "@/core/lib/telemetry/legacy-click";
 import { restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
 import { isSameTabNavigation, navbarLinkClick, type NavbarClick } from "./chrome-clicks";
@@ -24,6 +25,9 @@ async function loadDocument(path = "/") {
   const telemetry = await import("@/core/lib/telemetry/track");
   const chrome = await import("./chrome-clicks");
   const user = await import("@/core/lib/telemetry/tracked-user");
+  const legacy = await import("@/core/lib/telemetry/legacy-click");
+  // The navbar's own scope, as `useChromeClicks` holds it for the mounted chrome.
+  SESSION.scope = legacy.createLegacyTrackScope();
   return { page: telemetry.page, dropTrackedUser: user.dropTrackedUser, ...chrome };
 }
 
@@ -34,7 +38,7 @@ async function clicks(): Promise<Sent[]> {
   return bodies.filter((b) => b.type === "track" && b.event === "Click");
 }
 
-const SESSION = { sid: "sid-1" };
+const SESSION: LegacySession = { sid: "sid-1", scope: createLegacyTrackScope() };
 const EVENTS: NavbarClick = { action: "events", link: { section: "discover", href: "/events" } };
 
 beforeEach(() => {
@@ -54,9 +58,9 @@ afterEach(() => {
 describe("trackNavbarClick", () => {
   it("sends the legacy navbar Click once analytics is ready, with no utm_* and not deferred", async () => {
     const { page, trackNavbarClick } = await loadDocument("/events?utm_source=newsletter");
-    page("/events", {}, SESSION);
+    page("/events", {}, { sid: "sid-1" });
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
-    trackNavbarClick(EVENTS, { sid: "sid-1", userId: "0xAbC" });
+    trackNavbarClick(EVENTS, { ...SESSION, userId: "0xAbC" });
 
     const [click] = await clicks();
     expect(click).toMatchObject({ anonymousId: "sid-1", userId: "0xabc" });
@@ -74,7 +78,7 @@ describe("trackNavbarClick", () => {
 
   it("sends a click without a link (Sign in) with no section or href", async () => {
     const { page, trackNavbarClick } = await loadDocument("/");
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     trackNavbarClick({ action: "sign_in" }, SESSION);
 
     const [click] = await clicks();
@@ -103,7 +107,7 @@ describe("trackNavbarClick", () => {
     expect(await clicks()).toEqual([]);
 
     now.mockReturnValue(1_700_000_000_400);
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     const sent = await clicks();
     expect(sent).toHaveLength(1);
     expect(sent[0]!.properties).toMatchObject({
@@ -113,11 +117,19 @@ describe("trackNavbarClick", () => {
     });
   });
 
+  it("drops a held click when the navbar unmounts before analytics is ready", async () => {
+    const { page, trackNavbarClick } = await loadDocument("/");
+    trackNavbarClick(EVENTS, SESSION, { leavesPage: false });
+    SESSION.scope.close();
+    page("/", {}, { sid: "sid-1" });
+    expect(await clicks()).toEqual([]);
+  });
+
   it("sends no userId once a sign-out has started", async () => {
     const { page, trackNavbarClick, dropTrackedUser } = await loadDocument("/");
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     dropTrackedUser();
-    trackNavbarClick(EVENTS, { sid: "sid-1", userId: "0xabc" });
+    trackNavbarClick(EVENTS, { ...SESSION, userId: "0xabc" });
     expect((await clicks())[0]).not.toHaveProperty("userId");
   });
 
@@ -126,13 +138,13 @@ describe("trackNavbarClick", () => {
     const { page, trackNavbarClick } = await loadDocument("/");
     trackNavbarClick(EVENTS, SESSION);
     trackNavbarClick(EVENTS, SESSION, { leavesPage: false });
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     expect(await clicks()).toEqual([]);
   });
 
   it("sends nothing in a session that started on an exempt page", async () => {
     const { page, trackNavbarClick } = await loadDocument("/privacy");
-    page("/privacy", {}, SESSION);
+    page("/privacy", {}, { sid: "sid-1" });
     trackNavbarClick(EVENTS, SESSION);
     trackNavbarClick(EVENTS, SESSION, { leavesPage: false });
     expect(await clicks()).toEqual([]);
@@ -149,8 +161,8 @@ describe("trackNavbarClick", () => {
 describe("footer clicks", () => {
   it("sends the social icon Click with the platform and no deferral fields once analytics is ready", async () => {
     const { page, trackFooterSocialClick } = await loadDocument("/");
-    page("/", {}, SESSION);
-    trackFooterSocialClick("Discord", { sid: "sid-1", userId: "0xAbC" });
+    page("/", {}, { sid: "sid-1" });
+    trackFooterSocialClick("Discord", { ...SESSION, userId: "0xAbC" });
 
     const [click] = await clicks();
     expect(click).toMatchObject({ anonymousId: "sid-1", userId: "0xabc" });
@@ -159,7 +171,7 @@ describe("footer clicks", () => {
 
   it("sends the link Click with the label it shows", async () => {
     const { page, trackFooterLinkClick } = await loadDocument("/");
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     trackFooterLinkClick("Preguntas frecuentes", SESSION);
 
     const [click] = await clicks();
@@ -170,14 +182,14 @@ describe("footer clicks", () => {
     const { page, trackFooterLinkClick, trackFooterSocialClick } = await loadDocument("/");
     trackFooterSocialClick("X", SESSION);
     trackFooterLinkClick("FAQs", SESSION);
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     expect(await clicks()).toEqual([]);
   });
 
   it("sends nothing for a bot", async () => {
     browser(BOT_UA);
     const { page, trackFooterSocialClick } = await loadDocument("/");
-    page("/", {}, SESSION);
+    page("/", {}, { sid: "sid-1" });
     trackFooterSocialClick("X", SESSION);
     expect(await clicks()).toEqual([]);
   });

@@ -20,7 +20,16 @@ const { readiness } = vi.hoisted(() => ({ readiness: { ready: true, pending: [] 
 vi.mock("@/core/lib/telemetry/track", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/core/lib/telemetry/track")>()),
   legacyAnalyticsReady: () => readiness.ready,
-  whenLegacyAnalyticsReady: (fire: () => void) => (readiness.ready ? fire() : readiness.pending.push(fire)),
+  whenLegacyAnalyticsReady: (fire: () => void) => {
+    if (readiness.ready) {
+      fire();
+      return () => {};
+    }
+    readiness.pending.push(fire);
+    return () => {
+      readiness.pending = readiness.pending.filter((pending) => pending !== fire);
+    };
+  },
 }));
 vi.mock("@/data/lib/auth/shop-client", () => ({ sitesShopClient: vi.fn() }));
 vi.mock("@/data/lib/shop/marketplace-access", () => ({ useMarketplaceHere: () => true }));
@@ -171,6 +180,16 @@ describe("the navbar", () => {
 
     becomeReady();
     expect((await onlyClick()).properties).toMatchObject({ action: "events", track_deferred: true });
+  });
+
+  it("drops a held click when the page unmounts before analytics is ready", async () => {
+    readiness.ready = false;
+    show();
+    await user.click(header().getByRole("button", { name: "Discover" }));
+    fireEvent(header().getByRole("link", { name: "Events" }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    cleanup();
+    becomeReady();
+    expect(await clicks()).toEqual([]);
   });
 
   it("sends nothing for a right click", async () => {

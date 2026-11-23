@@ -2,7 +2,7 @@ import { useMemo, type MouseEvent } from "react";
 import { useLocation } from "react-router";
 
 import { isOutsideLegacySites, useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
-import { sendLegacyDeferred, type LegacySession } from "@/core/lib/telemetry/legacy-click";
+import { sendLegacyDeferred, useLegacyTrackScope, type LegacySession } from "@/core/lib/telemetry/legacy-click";
 import { legacyAnalyticsReady, track, type TrackContext } from "@/core/lib/telemetry/track";
 
 // The legacy site's navbar and footer `Click` events (decentraland/sites `LandingNavbar.tsx` `trackNavbar` and
@@ -192,10 +192,11 @@ export type ChromeClicks = {
 export function useChromeClicks(): ChromeClicks {
   const sid = useAnalyticsSid();
   const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
   const { pathname } = useLocation();
   const off = isOutsideLegacySites(pathname);
   return useMemo(() => {
-    const session = { sid, userId };
+    const session = { sid, userId, scope };
     return {
       navbarLink: (href, event, context) => {
         if (off) return;
@@ -219,5 +220,5 @@ export function useChromeClicks(): ChromeClicks {
         if (!off) trackFooterLinkClick(label, session);
       },
     };
-  }, [off, sid, userId]);
+  }, [off, scope, sid, userId]);
 }
