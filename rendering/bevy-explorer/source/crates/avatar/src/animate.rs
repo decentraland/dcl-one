@@ -23,8 +23,6 @@ use collectibles::{
 };
 #[cfg(feature = "explorer")]
 use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
-#[cfg(feature = "explorer")]
-use common::structs::StartupScenes;
 use common::{
     sets::SceneSets,
     structs::{
@@ -338,21 +336,14 @@ fn handle_trigger_emotes(
     mut emote_cmds: EventReader<RpcCallEvent>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
     mut perms: Permission<(EmoteCommand, &'static str)>,
-    startup: Option<Res<StartupScenes>>,
     mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     let Ok((player, maybe_prev)) = player.single() else {
         return;
     };
     // the HUD plays the player's own emotes through a super-user system scene
-    let source = |hash: &str| {
-        let system = startup.as_ref().is_some_and(|startup| {
-            startup
-                .scenes
-                .iter()
-                .any(|scene| scene.super_user && scene.hash.as_deref() == Some(hash))
-        });
-        if system {
+    let source = |perms: &Permission<(EmoteCommand, &'static str)>, hash: &str| {
+        if perms.is_system_scene(hash) {
             "self"
         } else {
             "scene"
@@ -380,7 +371,7 @@ fn handle_trigger_emotes(
                         timestamp,
                         mask: *mask,
                     },
-                    source(hash),
+                    source(&perms, hash),
                 ),
             ),
             (
@@ -398,7 +389,7 @@ fn handle_trigger_emotes(
                         timestamp,
                         mask: EmoteMask::FullBody,
                     },
-                    source(hash),
+                    source(&perms, hash),
                 ),
             ),
             _ => continue,
