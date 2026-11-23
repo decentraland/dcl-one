@@ -1,5 +1,5 @@
 import type { ScriptParamObject, ScriptParamUnion } from '../types';
-import { Container } from '../../../Container';
+import { Accordion } from '../../../ui/Accordion';
 import InfoTooltip from '../../../ui/InfoTooltip/InfoTooltip';
 import { formatLabel } from './labels';
 import { ScriptParamField } from './ScriptParamField';
@@ -27,12 +27,10 @@ function actionFieldsOf(fields: Record<string, ScriptParamUnion>, key: string): 
 export function ObjectField({ name, param, getError, onUpdate }: Props) {
   const { value, fields } = param;
   return (
-    <Container
+    <Accordion
       label={formatLabel(name)}
       initialOpen={false}
-      variant="minimal"
-      border
-      rightContent={param.tooltip ? <InfoTooltip text={param.tooltip} /> : undefined}
+      info={param.tooltip ? <InfoTooltip text={param.tooltip} /> : undefined}
     >
       {Object.entries(fields).map(([key, fieldParam]) => (
         <ScriptParamField
@@ -56,6 +54,6 @@ export function ObjectField({ name, param, getError, onUpdate }: Props) {
           }
         />
       ))}
-    </Container>
+    </Accordion>
   );
 }
