@@ -13,7 +13,7 @@
 //!
 //! Chain reads go over each `ContractNetwork`'s JSON-RPC endpoint
 //! (`rpc_url_for`) through the ONE guarded client, and never scan logs: per
-//! contract a `balanceOf(owner)` and two `supportsInterface` probes, then
+//! contract a pair of `balanceOf` probes and an enumerability probe, then
 //! the `tokenOfOwnerByIndex` walk of an enumerable ERC-721, or the mapped
 //! ids' `ownerOf`/`balanceOfBatch`. An `any` or wide `range` mapping on a
 //! contract that cannot list an owner's tokens (a plain ERC-721 the owner
@@ -53,7 +53,6 @@ use crate::shared::query_params::{
 use super::definitions::{extract_wearable_definition, locale_cmp};
 use super::graph::graph_query;
 use super::listings::{ETHEREUM_MAINNET, ETHEREUM_SEPOLIA, MATIC_AMOY, MATIC_MAINNET};
-use super::user_items::is_third_party_name_urn;
 use super::{MarketplaceState, SharedState, bad_request};
 
 const PROVIDER_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -86,7 +85,6 @@ sol! {
 
 /// Same address on every chain it is deployed to, mainnet and polygon included.
 const MULTICALL3: Address = address!("0xcA11bde05977b3631167028862bE2a173976CA11");
-const IFACE_ERC1155: [u8; 4] = [0xd9, 0xb6, 0x7a, 0x26];
 const IFACE_ERC721_ENUMERABLE: [u8; 4] = [0x78, 0x0e, 0x9d, 0x63];
 /// A `range` mapping wider than this is not expanded into ids.
 const RANGE_CAP: u64 = 2048;
@@ -400,9 +398,8 @@ pub struct Holdings {
     pub failed: Vec<String>,
 }
 
-/// The owner's holdings over each network's JSON-RPC endpoint. A network
-/// with no RPC endpoint configured reports nothing (logged): the deployment
-/// did not provide the reader.
+/// The owner's holdings over each network's JSON-RPC endpoint. Contracts on
+/// a network without a configured endpoint are reported as unreadable.
 pub async fn owned_via_rpc(
     state: &MarketplaceState,
     owner: &str,
@@ -421,7 +418,11 @@ pub async fn owned_via_rpc(
     }
     let per_network = by_network.into_iter().filter_map(|(network, contracts)| {
         let Some(rpc) = rpc_url_for(state, network) else {
-            tracing::warn!(network, "third-party wearable ownership: no RPC endpoint for this network; reporting nothing owned");
+            holdings.failed.extend(
+                contracts.into_iter().map(|(contract, _)| {
+                    format!("{network}:{contract}: no configured RPC endpoint")
+                }),
+            );
             return None;
         };
         let key = (
@@ -499,7 +500,7 @@ async fn owned_on_network(
             to: addr,
             data: IERC721::balanceOfCall { owner }.abi_encode().into(),
         });
-        probes.push(supports_call(addr, IFACE_ERC1155));
+        probes.push(erc1155_probe(addr));
         probes.push(supports_call(addr, IFACE_ERC721_ENUMERABLE));
     }
     let answers = match eth_call_batch(state, rpc, &probes).await {
@@ -516,17 +517,21 @@ async fn owned_on_network(
     let mut legs = Vec::with_capacity(contracts.len());
     let mut i = 0;
     for ((contract, cand), addr) in contracts.iter().zip(addrs) {
-        let Some(addr) = addr else {
-            continue;
-        };
-        let balance = answers
-            .get(i)
-            .and_then(Option::as_ref)
-            .and_then(|b| IERC721::balanceOfCall::abi_decode_returns(b).ok());
-        let is_1155 = decode_bool(answers.get(i + 1));
-        let enumerable = decode_bool(answers.get(i + 2));
-        i += 3;
+        let probe_index = i;
+        if addr.is_some() {
+            i += 3;
+        }
+        let answers = &answers;
         legs.push(async move {
+            let Some(addr) = addr else {
+                return (contract.clone(), Err("invalid contract address".into()));
+            };
+            let balance = answers
+                .get(probe_index)
+                .and_then(Option::as_ref)
+                .and_then(|b| IERC721::balanceOfCall::abi_decode_returns(b).ok());
+            let is_1155 = decodes_1155_balance(answers.get(probe_index + 1));
+            let enumerable = decode_bool(answers.get(probe_index + 2));
             let found = if is_1155 {
                 if cand.open {
                     unresolved(
@@ -547,8 +552,7 @@ async fn owned_on_network(
                         }
                         check_721(state, rpc, addr, owner, parsed_ids(cand)).await
                     }
-                    // Neither an ERC-721 nor an ERC-1155.
-                    None => Ok(Vec::new()),
+                    None => Err("contract did not return an ERC-721 or ERC-1155 balance".into()),
                 }
             };
             let found = found.map(|ids| {
@@ -575,6 +579,25 @@ fn unresolved(network: &str, contract: &str, owner: Address, why: &'static str) 
         why,
         "third-party holdings: an open mapping is unresolved without NFT_WORKER_BASE_URL; only its mapped ids are read"
     );
+}
+
+/// lamb2 probes the method directly because some ERC-1155 contracts lack ERC-165.
+fn erc1155_probe(contract: Address) -> RpcCall {
+    RpcCall {
+        to: contract,
+        data: IERC1155::balanceOfCall {
+            account: contract,
+            id: U256::ZERO,
+        }
+        .abi_encode()
+        .into(),
+    }
+}
+
+fn decodes_1155_balance(answer: Option<&Option<Bytes>>) -> bool {
+    answer
+        .and_then(Option::as_ref)
+        .is_some_and(|bytes| IERC1155::balanceOfCall::abi_decode_returns(bytes).is_ok())
 }
 
 fn supports_call(to: Address, interface: [u8; 4]) -> RpcCall {
@@ -691,12 +714,11 @@ async fn owned_1155(
             .collect();
         let answers = eth_call_batch(state, rpc, &calls).await?;
         for (chunk, answer) in page.chunks(MULTICALL_CHUNK).zip(answers) {
-            let Some(balances) = answer
+            let balances = answer
                 .as_ref()
                 .and_then(|b| IERC1155::balanceOfBatchCall::abi_decode_returns(b).ok())
-            else {
-                continue;
-            };
+                .filter(|balances| balances.len() == chunk.len())
+                .ok_or("invalid ERC-1155 balanceOfBatch response")?;
             for ((id, _), balance) in chunk.iter().zip(balances) {
                 if !balance.is_zero() {
                     owned.push(id.clone());
@@ -1004,13 +1026,30 @@ impl FetchFailure {
     }
 }
 
-/// The provider name of a registry id (`urn:decentraland:<network>:collections-thirdparty:<name>`).
-fn provider_name(id: &str) -> Option<&str> {
-    id.split(':').nth(4)
+/// A registry network and provider name. As in lamb2, an asset URN
+/// may supply the provider prefix of a collection ID.
+pub(super) fn collection_provider(id: &str) -> Option<(&'static str, &str)> {
+    let mut parts = id.split(':');
+    if parts.next()? != "urn" || parts.next()? != "decentraland" {
+        return None;
+    }
+    let network = parts.next()?;
+    let network = ["matic", "amoy", "mumbai"]
+        .into_iter()
+        .find(|candidate| candidate.eq_ignore_ascii_case(network))?;
+    if parts.next()? != "collections-thirdparty" {
+        return None;
+    }
+    let name = parts.next()?;
+    (!name.is_empty()
+        && !name
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control() || matches!(ch, '?' | '#')))
+    .then_some((network, name))
 }
 
 /// Every third-party wearable `owner` holds through a mapped NFT, optionally
-/// only the provider named `only_name` (the URN's fifth part). With a
+/// only the provider identified by `only_provider`. With a
 /// registry configured, a name no approved provider has is
 /// `ThirdPartyNotFound`, as the old lambdas threw. A contract that could not
 /// be read fails the fetch or is left out, per `on_failure`. An `owner` that
@@ -1019,15 +1058,15 @@ fn provider_name(id: &str) -> Option<&str> {
 pub async fn fetch_all_third_party_wearables(
     state: &MarketplaceState,
     owner: &str,
-    only_name: Option<&str>,
+    only_provider: Option<(&str, &str)>,
     on_failure: OnFailure,
 ) -> Result<Vec<TpwElement>, FetchFailure> {
     let owner = owner.to_lowercase();
     let mut providers = third_party_providers(state)
         .await
         .map_err(FetchFailure::Fetch)?;
-    if let Some(name) = only_name {
-        providers.retain(|p| provider_name(&p.id) == Some(name));
+    if let Some((network, name)) = only_provider {
+        providers.retain(|p| collection_provider(&p.id) == Some((network, name)));
         if providers.is_empty() && state.settings.third_party_registry_subgraph_url.is_some() {
             return Err(FetchFailure::ThirdPartyNotFound(name.to_string()));
         }
@@ -1291,17 +1330,11 @@ pub async fn user_third_party_collection_wearables(
     Path((address, collection_id)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    let cleaned: String = collection_id
-        .split(':')
-        .take(5)
-        .collect::<Vec<_>>()
-        .join(":");
-    if !is_third_party_name_urn(&cleaned) {
+    let Some(provider) = collection_provider(&collection_id) else {
         return bad_request(&format!(
             "Invalid collection id: {collection_id} not a valid URN"
         ));
-    }
-    let name = cleaned.split(':').nth(4).unwrap_or("").to_string();
+    };
     let (params, pagination) = match pagination_object(request.uri().query().unwrap_or("")) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -1309,7 +1342,8 @@ pub async fn user_third_party_collection_wearables(
     // The fetcher's order, unsorted, as lamb2 pages it
     // (decentraland/lamb2:src/controllers/handlers/third-party-wearables-handler.ts:102-105).
     let elements =
-        match fetch_all_third_party_wearables(&state, &address, Some(&name), OnFailure::Fail).await
+        match fetch_all_third_party_wearables(&state, &address, Some(provider), OnFailure::Fail)
+            .await
         {
             Ok(elements) => elements,
             Err(e) => return e.response(&address),
@@ -1394,10 +1428,10 @@ pub async fn third_party_integrations(State(state): State<SharedState>) -> Respo
 pub(crate) async fn owned_third_party_urns(
     state: &MarketplaceState,
     owner: &str,
-    provider_name: &str,
+    provider: (&str, &str),
 ) -> Result<Vec<(String, usize, Value)>, FetchFailure> {
     Ok(
-        fetch_all_third_party_wearables(state, owner, Some(provider_name), OnFailure::Fail)
+        fetch_all_third_party_wearables(state, owner, Some(provider), OnFailure::Fail)
             .await?
             .into_iter()
             .map(|e| (e.urn, e.individual_data.len(), e.entity))
@@ -1591,15 +1625,12 @@ async fn confirm_linked_items(
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let probes: Vec<RpcCall> = contracts
-            .iter()
-            .map(|c| supports_call(*c, IFACE_ERC1155))
-            .collect();
+        let probes: Vec<RpcCall> = contracts.iter().copied().map(erc1155_probe).collect();
         let answers = eth_call_batch(state, &rpc, &probes).await?;
         let erc1155: BTreeSet<Address> = contracts
             .iter()
             .zip(&answers)
-            .filter(|(_, a)| decode_bool(Some(a)))
+            .filter(|(_, answer)| decodes_1155_balance(Some(answer)))
             .map(|(c, _)| *c)
             .collect();
         let calls: Vec<RpcCall> = checks
@@ -1794,8 +1825,7 @@ mod tests {
                 let iface = IERC165::supportsInterfaceCall::abi_decode(data)
                     .ok()?
                     .interfaceId;
-                let yes = (to == ENUM_721 && iface.0 == IFACE_ERC721_ENUMERABLE)
-                    || (to == MULTI_1155 && iface.0 == IFACE_ERC1155);
+                let yes = to == ENUM_721 && iface.0 == IFACE_ERC721_ENUMERABLE;
                 Some(Bytes::from(yes.abi_encode()))
             }
             IERC721::balanceOfCall::SELECTOR if to == PLAIN_721 || to == THROTTLED_721 => {
@@ -1819,6 +1849,7 @@ mod tests {
                     .index;
                 (i < U256::from(ENUM_BALANCE)).then(|| word(U256::from(1000) + i))
             }
+            IERC1155::balanceOfCall::SELECTOR if to == MULTI_1155 => Some(word(U256::ZERO)),
             IERC1155::balanceOfBatchCall::SELECTOR if to == MULTI_1155 => {
                 let call = IERC1155::balanceOfBatchCall::abi_decode(data).ok()?;
                 let balances: Vec<U256> = call
@@ -2076,12 +2107,26 @@ mod tests {
         assert!(holdings.owned.is_empty());
         assert_eq!(holdings.failed.len(), 2, "{:?}", holdings.failed);
 
-        // No endpoint configured for the network: the deployment has no reader.
         let state = state_with(with_rpcs(""));
-        assert_eq!(
-            owned_via_rpc(&state, &owner, &candidates).await,
-            Holdings::default()
+        let holdings = owned_via_rpc(&state, &owner, &candidates).await;
+        assert!(holdings.owned.is_empty());
+        assert_eq!(holdings.failed.len(), 2);
+        assert!(
+            holdings
+                .failed
+                .iter()
+                .all(|failure| failure.contains("no configured RPC endpoint"))
         );
+
+        let state = state_with(with_rpcs(&format!("80002={rpc}")));
+        let unreadable = address!("0x00000000000000000000000000000000000000ff");
+        let candidates = [candidate("amoy", unreadable, &["7"], false)]
+            .into_iter()
+            .collect();
+        let holdings = owned_via_rpc(&state, &owner, &candidates).await;
+        assert!(holdings.owned.is_empty());
+        assert_eq!(holdings.failed.len(), 1);
+        assert!(holdings.failed[0].contains("did not return an ERC-721 or ERC-1155 balance"));
     }
 
     #[tokio::test]

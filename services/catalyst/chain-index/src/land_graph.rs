@@ -5,7 +5,7 @@
 //! land index was present; v2 answers both from the land-authz index once it
 //! is published and from this reader before that (`land_authz::routes`).
 //! Without the URL those routes keep the unavailable envelope. Answers are
-//! memoized for [`TTL`], the old cache's budget.
+//! memoized briefly; parcel permissions use a shorter TTL than reverse lookups.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +17,7 @@ use crate::shared::cache::TtlMap;
 use super::ChainIndex;
 use super::graph::{FULL_WALK_PAGES, THE_GRAPH_PAGE_SIZE, graph_query};
 
+const PARCEL_TTL: Duration = Duration::from_secs(5);
 const TTL: Duration = Duration::from_secs(60);
 const MAX_ENTRIES: usize = 50_000;
 /// Pages walked per lookup (1000 rows each): lamb2 walks every page, so
@@ -31,7 +32,7 @@ pub struct Caches {
 impl Default for Caches {
     fn default() -> Self {
         Self {
-            operators: TtlMap::bounded(TTL, MAX_ENTRIES),
+            operators: TtlMap::bounded(PARCEL_TTL, MAX_ENTRIES),
             by_update_operator: TtlMap::bounded(TTL, MAX_ENTRIES),
         }
     }

@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 
 use super::resolve::operator_flags;
 use super::{
-    DecisionSource, LandOperators, ParcelPermissionFlags, SharedState, Unavailable, Verdict,
-    can_deploy_batch, indexer, is_address,
+    DecisionSource, LAMBDAS_FOLD_WINDOW, LandOperators, ParcelPermissionFlags, SharedState,
+    Unavailable, Verdict, can_deploy_batch_within, indexer, is_address,
 };
 use crate::chain_index::source::{Source, unavailable};
 use crate::chain_index::{ChainIndex, land_graph};
@@ -34,7 +34,7 @@ const COORDS_ERR: &str = "Coordinates X and Y must be valid numbers in a valid r
 /// never a truncated batch.
 pub const MAX_BATCH_PARCELS: usize = 100;
 pub const SOURCE_HEADER: &str = "x-land-authz-source";
-const NOT_READY_MSG: &str = "LAND rights are unavailable on this node: the land-authz index has no published fold yet (it is replaying the registries' logs, or the indexer is off) and no LAND subgraph is configured";
+const NOT_READY_MSG: &str = "LAND rights are unavailable on this node: the land-authz index has no fresh published fold and no LAND subgraph is configured";
 const NO_SOURCE_MSG: &str = "LAND rights are unavailable on this node: the land-authz index is not ready and no marketplace subgraph is configured";
 
 pub fn router(state: SharedState) -> Router {
@@ -54,7 +54,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/lambdas/land-authz/status", get(status))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .layer(axum::middleware::from_fn(cors::lambdas_cors))
         .with_state(state)
 }
 
@@ -140,7 +140,7 @@ async fn parcel_operators(
         Ok(c) => c,
         Err(resp) => return *resp,
     };
-    let Some(mut snapshot) = state.ready_snapshot().await else {
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
         let Some(market) = land_graph_reader(&state) else {
             return not_ready();
         };
@@ -197,7 +197,7 @@ async fn user_lands_permissions(
         Ok(p) => p,
         Err(msg) => return bad_request(&msg),
     };
-    let Some(mut snapshot) = state.ready_snapshot().await else {
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
         let Some(market) = land_graph_reader(&state) else {
             return not_ready();
         };
@@ -309,7 +309,7 @@ async fn parcel_permissions(
         return bad_request("Address must be a valid Ethereum address");
     }
     let addr = address.to_lowercase();
-    let Some(mut snapshot) = state.ready_snapshot().await else {
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
         let Some(market) = land_graph_reader(&state) else {
             tracing::warn!(
                 "land-authz: parcel permissions have no source (index not ready, no LAND_SUBGRAPH_URL)"
@@ -405,7 +405,7 @@ async fn parcels_permissions_batch(
         Err(msg) => return bad_request(&msg),
     };
     let coords: Vec<(i32, i32)> = parcels.iter().map(|&(x, y)| (x as i32, y as i32)).collect();
-    match can_deploy_batch(&state, &coords, &addr).await {
+    match can_deploy_batch_within(&state, &coords, &addr, LAMBDAS_FOLD_WINDOW).await {
         Ok(decisions) => {
             let source = decisions
                 .first()
@@ -447,7 +447,12 @@ async fn status(State(state): State<SharedState>) -> Response {
         }
     };
     let ready = observation.as_ref().is_some_and(|o| {
-        indexer::observation_ready(o, &settings.land_registry, &settings.estate_registry)
+        indexer::observation_ready_within(
+            o,
+            &settings.land_registry,
+            &settings.estate_registry,
+            LAMBDAS_FOLD_WINDOW,
+        )
     });
     let fold_age_secs = observation.as_ref().and_then(|o| {
         o.cursor
@@ -461,7 +466,7 @@ async fn status(State(state): State<SharedState>) -> Response {
         "estateRegistry": settings.estate_registry,
         "indexerEnabled": settings.is_configured(),
         "ready": ready,
-        "readyWindowSecs": indexer::READY_WINDOW.num_seconds(),
+        "readyWindowSecs": LAMBDAS_FOLD_WINDOW.num_seconds(),
         "fallback": state.market.as_ref().is_some_and(|m| m.settings.marketplace_subgraph_url.is_some()).then_some("marketplace-subgraph:owner-only"),
         "cursor": row.map(|r| json!({
             "landRegistry": r.land_registry,

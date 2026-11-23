@@ -648,10 +648,12 @@ access.
   managers read the index while it is caught up, its fold is at most 30
   minutes old on the database clock and its registries are the node's; a
   fold older than that drops them to the next source at once.
-  `GET /lambdas/land-authz/status` reports this as top-level `ready`, with
-  `readyWindowSecs` and the cursor's `cursor.foldAgeSecs`,
-  `cursor.foldedBlock` and `cursor.lastBlock` (caught up when the two
-  blocks are equal).
+  The public LAND Lambdas routes require a fold at most five minutes
+  old. They use their configured subgraph fallback when the fold expires.
+  The LAND subgraph can lag the chain and its per-parcel responses are
+  cached locally for five seconds. `GET /lambdas/land-authz/status`
+  reports Lambdas readiness as `ready`, with `readyWindowSecs` and
+  `cursor.foldAgeSecs`, `cursor.foldedBlock` and `cursor.lastBlock`.
 - **Collaborator freshness.** Collaborator readiness is a separate
   condition from status `ready`. The collaborator rule needs a full replay
   started (`cursor.fullReplayStarted`), a published fold

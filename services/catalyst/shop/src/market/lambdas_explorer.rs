@@ -33,8 +33,8 @@ use super::definitions::{
 use super::graph;
 use super::lambdas_catalog::cached_base_wearables;
 use super::readers;
+use super::third_party::collection_provider;
 use super::third_party::{FetchFailure, OnFailure, TpwElement, fetch_all_third_party_wearables};
-use super::user_items::is_third_party_name_urn;
 use super::{MarketplaceState, SharedState, bad_request};
 
 const EXPLORER_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -640,24 +640,18 @@ fn third_party_item(e: TpwElement) -> OwnedItem {
 /// one provider list its wearables twice and the response grows with the
 /// number of values; here a provider is listed once, which keeps the
 /// uncapped value list from multiplying the answer.
-fn third_party_provider_names(collection_ids: &[String]) -> Vec<&str> {
-    let mut seen: HashSet<&str> = HashSet::new();
+fn third_party_providers(collection_ids: &[String]) -> Vec<(&'static str, &str)> {
+    let mut seen = HashSet::new();
     collection_ids
         .iter()
-        .filter_map(|id| {
-            let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
-            if !is_third_party_name_urn(&cleaned) {
-                return None;
-            }
-            id.split(':').nth(4)
-        })
-        .filter(|name| seen.insert(name))
+        .filter_map(|id| collection_provider(id))
+        .filter(|provider| seen.insert(*provider))
         .collect()
 }
 
 /// The third-party leg: every provider's wearables, or with
 /// `thirdPartyCollectionId` only the providers it names
-/// ([`third_party_provider_names`]); a name no approved provider has is
+/// ([`third_party_providers`]); a name no approved provider has is
 /// `Third Party not found`.
 async fn fetch_third_party_items(
     state: &MarketplaceState,
@@ -670,8 +664,9 @@ async fn fetch_third_party_items(
         return Ok(found.into_iter().map(third_party_item).collect());
     }
     let mut items = Vec::new();
-    for name in third_party_provider_names(collection_ids) {
-        let found = fetch_all_third_party_wearables(state, owner, Some(name), on_failure).await?;
+    for provider in third_party_providers(collection_ids) {
+        let found =
+            fetch_all_third_party_wearables(state, owner, Some(provider), on_failure).await?;
         items.extend(found.into_iter().map(third_party_item));
     }
     Ok(items)
@@ -717,7 +712,10 @@ async fn explorer_items(
         if q.third_party_collection_ids.is_empty() {
             String::new()
         } else {
-            let mut names = third_party_provider_names(&q.third_party_collection_ids);
+            let mut names: Vec<_> = third_party_providers(&q.third_party_collection_ids)
+                .into_iter()
+                .map(|(network, name)| format!("{network}:{name}"))
+                .collect();
             names.sort_unstable();
             format!("[{}]", names.join(","))
         },

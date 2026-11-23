@@ -383,6 +383,37 @@ pub fn entity_eth_address(entity: &Value) -> Option<String> {
         .map(|s| s.to_lowercase())
 }
 
+/// The legacy dcl URL resolver accepts one asset path segment.
+fn translate_body_shapes(metadata: &mut Value) {
+    let Some(avatars) = metadata.get_mut("avatars").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for avatar in avatars {
+        let Some(shape) = avatar.pointer_mut("/avatar/bodyShape") else {
+            continue;
+        };
+        let Some(legacy) = shape.as_str().filter(|value| value.starts_with("dcl://")) else {
+            continue;
+        };
+        let urn = url::Url::parse(legacy).ok().and_then(|url| {
+            let collection = url.host_str().filter(|host| !host.is_empty())?;
+            let item = url.path().strip_prefix('/')?;
+            if item.is_empty() || item.contains(['/', ':']) || collection.contains(':') {
+                return None;
+            }
+            // Both captured segments must be decodable by the URN resolver.
+            urlencoding::decode(collection).ok()?;
+            urlencoding::decode(item).ok()?;
+            let namespace = match collection {
+                "base-avatars" | "base-emotes" => "off-chain",
+                _ => "ethereum:collections-v1",
+            };
+            Some(format!("urn:decentraland:{namespace}:{collection}:{item}"))
+        });
+        *shape = Value::String(urn.unwrap_or_default());
+    }
+}
+
 /// The deployed metadata of a profile entity, links and snapshots fixed and
 /// its avatars carrying the pointer's identity; `None` without metadata.
 fn prepare_profile(state: &MarketplaceState, entity: &Value) -> Option<(String, Value)> {
@@ -390,6 +421,7 @@ fn prepare_profile(state: &MarketplaceState, entity: &Value) -> Option<(String, 
     let eid = entity.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let address = entity_eth_address(entity).unwrap_or_default();
     sanitize_links(&mut metadata);
+    translate_body_shapes(&mut metadata);
     rewrite_snapshot_urls(
         eid,
         &mut metadata,
@@ -538,6 +570,9 @@ pub(super) async fn active_entities(
     state: &MarketplaceState,
     pointers: &[String],
 ) -> Result<Vec<Value>, ()> {
+    if pointers.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut docs = match &state.read_through {
         Some(read_through) => read_through.active_docs(false, pointers).await,
         None => active_entity_docs_by_pointers(&state.pool, pointers).await,
@@ -593,21 +628,6 @@ impl Failure {
         match self {
             Failure::Db => tracing::warn!("{context}: profile read failed"),
             Failure::Reader(e) => tracing::warn!(error = %e, "{context}: ownership reader failed"),
-        }
-    }
-
-    fn into_response(self) -> Response {
-        match self {
-            Failure::Db => lambdas_internal_error(),
-            // lamb2's retryable 503 envelope (`ServiceOverloadedError`).
-            Failure::Reader(e) => {
-                tracing::warn!(error = %e, "profiles: ownership reader failed");
-                super::lambdas_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Service overloaded, retry shortly",
-                    "ownership readers unavailable",
-                )
-            }
         }
     }
 }
@@ -805,12 +825,15 @@ pub async fn profiles(
             Ok(profiles) => {
                 Json(profiles.into_iter().map(|(_, p)| p).collect::<Vec<_>>()).into_response()
             }
-            Err(f) => f.into_response(),
+            Err(f) => {
+                f.log("profiles");
+                Json(json!([])).into_response()
+            }
         };
     }
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
-        Err(()) => return lambdas_internal_error(),
+        Err(()) => return Json(json!([])).into_response(),
     };
 
     if let Some(threshold) = modified_since
@@ -824,7 +847,10 @@ pub async fn profiles(
             let profiles: Vec<Value> = profiles.into_iter().map(|(_, profile)| profile).collect();
             Json(Value::Array(profiles)).into_response()
         }
-        Err(e) => Failure::Reader(e).into_response(),
+        Err(e) => {
+            Failure::Reader(e).log("profiles");
+            Json(json!([])).into_response()
+        }
     }
 }
 
@@ -939,17 +965,21 @@ pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<Stri
     match fetch_profile_for_id(&state, &id).await {
         Ok(Some(metadata)) => Json(metadata).into_response(),
         Ok(None) => not_found("Profile not found"),
-        Err(f) => f.into_response(),
+        Err(f) => {
+            f.log("profiles/:id");
+            not_found("Profile not found")
+        }
     }
 }
 
 /// The singular alias never 404s: an unknown address is an empty profile.
 pub async fn profile_alias(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     match fetch_profile_for_id(&state, &id).await {
-        Ok(Some(processed)) => Json(processed).into_response(),
-        Ok(None) => Json(json!({ "avatars": [], "timestamp": 0 })).into_response(),
-        Err(f) => f.into_response(),
+        Ok(Some(processed)) => return Json(processed).into_response(),
+        Ok(None) => {}
+        Err(f) => f.log("profile/:id"),
     }
+    Json(json!({ "avatars": [], "timestamp": 0 })).into_response()
 }
 
 #[cfg(test)]
@@ -1353,6 +1383,33 @@ mod tests {
 
     /// `addBaseUrlToSnapshots`: face and body always rewritten, every other
     /// key left as deployed, a missing object created.
+    #[tokio::test]
+    async fn legacy_body_shapes_are_translated_when_profiles_are_assembled() {
+        let state = super::super::tests::support::state_without_db();
+        let inputs = [
+            (
+                "dcl://base-avatars/BaseFemale",
+                "urn:decentraland:off-chain:base-avatars:BaseFemale",
+            ),
+            (
+                "dcl://some-collection/shape",
+                "urn:decentraland:ethereum:collections-v1:some-collection:shape",
+            ),
+            ("dcl://base-avatars/invalid/path", ""),
+            ("dcl://base-avatars/", ""),
+            (
+                "urn:decentraland:off-chain:base-avatars:BaseMale",
+                "urn:decentraland:off-chain:base-avatars:BaseMale",
+            ),
+        ];
+        for (body_shape, expected) in inputs {
+            let entity =
+                json!({ "metadata": { "avatars": [{ "avatar": { "bodyShape": body_shape } }] } });
+            let (_, metadata) = prepare_profile(&state, &entity).unwrap();
+            assert_eq!(metadata["avatars"][0]["avatar"]["bodyShape"], expected);
+        }
+    }
+
     #[test]
     fn snapshots_point_at_the_cdn_or_at_our_profile_images() {
         let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "https://x/already.png", "face128": "bafy128" } } }] });

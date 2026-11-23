@@ -422,11 +422,11 @@ Data dependency: as in §1. For `collectionId`, as in §3.
 | `collectionId` | `getAll`, lowercased | `qs_get_array`, lowercased | MATCH |
 | `wearableId` | `getAll`, lowercased | Same | MATCH |
 | `textSearch` | `get`, lowercased; an empty string means absent; a value shorter than 3 (UTF-16 length) gives 400 `The text search must be at least 3 characters long` | Same message, but counts **chars** (lambdas_catalog.rs:353-357) | MATCH (P2 for astral characters) |
-| No filter | 400 `You must use one of the filters: 'textSearch', 'collectionId' or 'wearableId'` | Same message. With `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` (on except under the mirror posture) any **extended** filter (`collectionType`, `category`, `rarity`, `name`) also satisfies the requirement (lambdas_catalog.rs `parse_catalog_query`) | MATCH under `NODE_POSTURE=mirror` (LI-22) |
+| No filter | 400 `You must use one of the filters: 'textSearch', 'collectionId' or 'wearableId'` | Same message. With `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` (opt-in) any **extended** filter (`collectionType`, `category`, `rarity`, `name`) also satisfies the requirement (lambdas_catalog.rs `parse_catalog_query`) | MATCH by default (LI-22) |
 | More than 500 ids | 400 `You can't ask for more than 500 wearables` / `You can't filter for more than 500 collection ids` | Same | MATCH |
 | `limit` | `parseInt`; NaN, ≤0 or >500 give 500 (items-catalog.ts:88-97) | `parse_int_js`, same clamp (lambdas_catalog.rs `clamp_limit`) | MATCH (LI-26) |
 | `lastId` | `get`, lowercased; empty means absent | Same (lambdas_catalog.rs:381) | MATCH |
-| `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction` | **Ignored** | Ignored under `NODE_POSTURE=mirror` (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED=false`). With the flag on: parsed and validated; `collectionType=xyz` gives 400 `Invalid collectionType 'xyz'. ...`; an invalid rarity or sort gives 400; `orderBy` without exactly one `collectionType` gives 400 (lambdas_catalog.rs `parse_extended_filters`) | MATCH under the mirror posture (LI-22); a dcl-one extension elsewhere |
+| `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction` | **Ignored** | Ignored by default (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED=false`). With the flag on: parsed and validated; `collectionType=xyz` gives 400 `Invalid collectionType 'xyz'. ...`; an invalid rarity or sort gives 400; `orderBy` without exactly one `collectionType` gives 400 (lambdas_catalog.rs `parse_extended_filters`) | MATCH by default (LI-22) |
 
 ### Responses
 
@@ -654,11 +654,11 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - dcl-one: the items mirror copies `Item.searchText` into `shop.items.search_text` (step `schemas/migrations/0028_shop_items_search_text.sql`; services/catalyst/shop/src/market/mirrors/items.rs), and `fetch_item_urns` (services/catalyst/shop/src/market/lambdas_catalog.rs) matches `COALESCE(search_text, lower(name)) LIKE '%<textSearch>%'`, case-sensitive like `_contains`. A row the mirror has not refilled since the step falls back to its lowercased name until the next pass.
 - Severity: none (closed).
 
-**LI-22 (no work). `/collections/wearables`: the extended filters follow the posture.**
+**LI-22 (no work). `/collections/wearables`: the extended filters are opt-in.**
 
-- Status: MATCH, no work (under `NODE_POSTURE=mirror`).
+- Status: MATCH by default.
 - Upstream: `collectionType`, `category`, `rarity`, `name`, `orderBy` and `direction` are ignored, and alone they do not satisfy "one of the filters" (decentraland/lamb2:src/logic/items-catalog.ts:14-43).
-- dcl-one: `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` gates them (`wearables_query` in services/catalyst/shop/src/market/lambdas_catalog.rs). The mirror posture sets it `false`, and the query is lamb2's; island, journey and a node without a posture keep the dcl-one extension (services/catalyst/config/src/posture.rs). No dcl-one app calls this route.
+- dcl-one: `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` gates them (`wearables_query` in services/catalyst/shop/src/market/lambdas_catalog.rs). Every posture and standalone nodes default to `false`. Operators can opt in by setting it to `true` (services/catalyst/config/src/posture.rs).
 - Severity: none (closed).
 
 **LI-23 (no work). Catalog ordering uses `localeCompare`.**
@@ -738,7 +738,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 - `GET /lambdas/collections`: alias of `/lambdas/nfts/collections` (services/catalyst/shop/src/market/mod.rs:941-944).
 - `GET /explorer/{address}/wearables` and `GET /explorer/{address}/emotes` at the root, besides the `/lambdas` paths (mod.rs:967-974).
-- `/collections/wearables` extended filters, where `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` is on (off under the mirror posture): `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction`, with their 400 messages and `filters` echo keys `collectionTypes`, `categories`, `rarity`, `name`, `orderBy`, `direction` (services/catalyst/shop/src/market/lambdas_catalog.rs:161-264).
+- `/collections/wearables` extended filters, where `LAMBDAS_CATALOG_EXTENSIONS_ENABLED` is enabled explicitly: `collectionType`, `category`, `rarity`, `name`, `orderBy`, `direction`, with their 400 messages and `filters` echo keys `collectionTypes`, `categories`, `rarity`, `name`, `orderBy`, `direction` (services/catalyst/shop/src/market/lambdas_catalog.rs:161-264).
 - Explorer escrow grants (`shop.usage_grants`) merged into the on-chain leg when the operator turns `EXPLORER_ESCROW_GRANTS_ENABLED` on (off by default and under every posture) (services/catalyst/shop/src/market/lambdas_explorer.rs `fetch_owned_items`).
 - `x-as-of` and `x-stale-after-secs` headers on mirror-backed answers (services/catalyst/shop/src/market/mirrors/mod.rs `stamp_copies`).
 - The unavailable envelope (`source`, `configure`, `Retry-After: 60`) when a reader or mirror is not configured or not ready (services/catalyst/chain-index/src/source.rs:88-103).

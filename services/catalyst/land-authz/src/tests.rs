@@ -2539,7 +2539,7 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         Verdict::Denied
     );
 
-    // The freshness window: a stopped indexer falls back after 30 minutes,
+    // The freshness window: the deploy reader falls back after 30 minutes,
     // and a pass with nothing new re-publishes.
     sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '31 minutes'")
         .execute(&db.pool)
@@ -4572,18 +4572,28 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
     assert_eq!(body["ready"], false);
     assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() < 0);
-    for (minutes, expected) in [(29, true), (31, false)] {
+    for (minutes, expected) in [(4, true), (6, false), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
             indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
                 .await
                 .is_some(),
-            expected
+            minutes < 30
         );
-        assert_eq!(state.ready().await.is_some(), expected);
+        assert_eq!(state.ready().await.is_some(), minutes < 30);
         let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
         assert_eq!(body["ready"], expected);
+        assert_eq!(body["readyWindowSecs"], 300);
         assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() >= minutes as i64 * 60);
+        let (status, _, _) = get_json(&app, "/lambdas/parcels/1/2/operators").await;
+        assert_eq!(
+            status,
+            if expected {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+        );
     }
     db.drop().await;
 }

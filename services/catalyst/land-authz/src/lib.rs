@@ -54,10 +54,15 @@
 //! The publish rule is the old one: a reader uses this index only after
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
 //! 25 blocks of the confirmed head, which trails the chain head by
-//! `LAND_AUTHZ_CONFIRMATIONS`) and `folded_at` is at most 30 minutes old;
-//! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
-//! `owns_land_at`) answers the owner leg for the write paths and the
-//! land-manager subgraph answers the read routes above. The job runs only
+//! `LAND_AUTHZ_CONFIRMATIONS`, 12 by default). The fold job runs every
+//! `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120 by default). The public LAND Lambdas
+//! routes use folds up to five minutes old on the database clock;
+//! `/lambdas/land-authz/status` reports their window and the fold's age.
+//! Outside that window, the routes use their configured subgraph fallback
+//! or return an error. The LAND subgraph can lag the chain, and this node
+//! memoizes its per-parcel response for five seconds.
+//! Write paths use the 30-minute fold window and fall back to the marketplace
+//! subgraph's owner leg. The job runs only
 //! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
 //! keep using the fallbacks.
 
@@ -86,6 +91,8 @@ use sqlx::PgPool;
 use crate::chain_index::ChainIndex;
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
+
+const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(5);
 pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 
 pub const SCHEMA: &str = "land_authz";
@@ -391,11 +398,19 @@ impl LandAuthzState {
     /// registries' rows. A database error reads as not ready (the fallback,
     /// never a grant).
     pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
-        match indexer::ready_snapshot(
+        self.ready_snapshot_within(READY_WINDOW).await
+    }
+
+    async fn ready_snapshot_within(
+        &self,
+        max_age: chrono::Duration,
+    ) -> Option<indexer::ReadySnapshot> {
+        match indexer::ready_snapshot_within(
             &self.pool,
             &self.settings.network,
             &self.settings.land_registry,
             &self.settings.estate_registry,
+            max_age,
         )
         .await
         {
@@ -519,10 +534,19 @@ pub async fn can_deploy_batch(
     parcels: &[(i32, i32)],
     actor: &str,
 ) -> Result<Vec<Decision>, Unavailable> {
+    can_deploy_batch_within(state, parcels, actor, READY_WINDOW).await
+}
+
+async fn can_deploy_batch_within(
+    state: &LandAuthzState,
+    parcels: &[(i32, i32)],
+    actor: &str,
+    max_age: chrono::Duration,
+) -> Result<Vec<Decision>, Unavailable> {
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(mut snapshot) = state.ready_snapshot().await {
+    if let Some(mut snapshot) = state.ready_snapshot_within(max_age).await {
         let cursor = &snapshot.cursor;
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
