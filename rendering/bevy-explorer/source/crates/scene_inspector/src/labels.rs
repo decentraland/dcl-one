@@ -168,7 +168,7 @@ mod tests {
         );
         assert_eq!(
             label(&crdt, entity).as_deref(),
-            Some("mesh Box, text \"a sign whose text runs pa…\", hidden, parent 512")
+            Some("mesh Box, text \"a sign whose text runs p…\", hidden, parent 512")
         );
         assert!(renders(&crdt, entity));
         assert_eq!(
