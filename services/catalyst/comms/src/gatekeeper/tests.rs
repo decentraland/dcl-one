@@ -4920,3 +4920,47 @@ async fn community_kick_of_absent_participant_succeeds() {
     );
     assert_eq!(rows, 0);
 }
+
+#[tokio::test]
+async fn community_rpc_kick_reports_failed_livekit_removal() {
+    use super::voice::rooms::{VoiceRooms, VoiceUnavailable};
+    let Some(pool) = scratch().await else { return };
+    let member = wallet();
+    let identity = member.as_str().to_owned();
+    let fixture = axum::Router::new()
+        .route(
+            "/twirp/livekit.RoomService/GetParticipant",
+            axum::routing::post(move || {
+                let identity = identity.clone();
+                async move { Json(serde_json::json!({ "identity": identity })) }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/RemoveParticipant",
+            axum::routing::post(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "code": "unavailable" })),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let state = comms_state(pool.clone(), settings);
+    let community = seed_community(&pool).await;
+    state
+        .voice_db
+        .join_user_to_community_room(community, &member, false)
+        .await
+        .unwrap();
+    let outcome = state
+        .kick_player(community.as_uuid(), member.as_str())
+        .await;
+    server.abort();
+    assert!(
+        matches!(&outcome, Err(VoiceUnavailable::Failed(m)) if m.contains("livekit remove participant")),
+        "{outcome:?}"
+    );
+}
