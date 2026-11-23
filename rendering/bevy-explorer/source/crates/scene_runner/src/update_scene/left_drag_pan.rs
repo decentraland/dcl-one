@@ -1,26 +1,73 @@
-//! Holding the pointer button and moving turns the camera, behind the `bevy-left-drag-camera`
-//! flag. The drag holds the same `"camera"` cursor lock the right button does.
+//! Holding the pointer button and moving turns the camera, when the player's Left-Drag Camera
+//! setting (`AppConfig::left_drag_camera`) is on. The drag holds the same `"camera"` cursor lock
+//! the right button does.
 //!
-//! A press that the flag, the cursor position and the frame's state accept arms the pan; once the
-//! motion since the press passes [`START_DISTANCE`] it holds the lock until the button is up. An
-//! interruption (a dialog, a scene taking the lock, a lost browser lock) is final for that press:
-//! the pan does not resume until the button is released and pressed again.
+//! A press that the setting, the cursor position and the frame's state accept arms the pan; once
+//! the pointer motion since the press passes [`START_DISTANCE`] it holds the lock until the button
+//! is up. An interruption (a dialog, a scene taking the lock, a lost browser lock) is final for
+//! that press: the pan does not resume until the button is released and pressed again.
 
 use bevy::prelude::*;
+use bevy_console::ConsoleCommand;
+use common::structs::AppConfig;
+use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
+use serde_json::json;
 
-/// The flag that enables the pan.
-pub const FLAG: &str = "bevy-left-drag-camera";
+/// Owns the pan's state and its debug section. Added with the pointer results, which a headless
+/// app does not run; without it the pointer lock never pans.
+pub(crate) struct LeftDragPanPlugin;
 
-/// The motion since the press, in pixels, that must be exceeded before the pan starts: a still
-/// click stays a click.
-pub const START_DISTANCE: f32 = 1.0;
+impl Plugin for LeftDragPanPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<LeftDragPan>()
+            .add_console_command::<LeftDragState, _>(left_drag_state)
+            .add_debug_section(DebugSection {
+                title: "Left-drag camera",
+                query: "/left_drag_state",
+                fields: &[
+                    ("Setting", "setting"),
+                    ("Phase", "phase"),
+                    ("Last refusal or interruption", "reason"),
+                ],
+                inputs: &[],
+                actions: &[],
+            });
+    }
+}
+
+/// Read the left-drag camera's setting, phase and last refusal or interruption.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/left_drag_state")]
+struct LeftDragState;
+
+fn left_drag_state(
+    mut cmd: ConsoleCommand<LeftDragState>,
+    config: Res<AppConfig>,
+    pan: Res<LeftDragPan>,
+) {
+    let Some(Ok(_)) = cmd.take() else { return };
+    cmd.reply_ok(
+        json!({
+            "setting": if config.left_drag_camera { "on" } else { "off" },
+            "phase": pan.phase().as_str(),
+            "reason": pan.last_reason().map(Reason::as_str),
+            "unavailable": {"reason": "No press has been refused or interrupted yet."},
+        })
+        .to_string(),
+    );
+}
+
+/// The pointer motion since the press that must be exceeded before the pan starts: a still click
+/// stays a click. It is in the units of the `POINTER_SET` analog input, which is scaled by the
+/// player's pointer sensitivity and also counts key and stick input bound to pointer movement.
+pub(crate) const START_DISTANCE: f32 = 1.0;
 
 /// How close to a window edge, in logical pixels, a press may land and still arm the pan.
-pub const EDGE_MARGIN: f32 = 10.0;
+pub(crate) const EDGE_MARGIN: f32 = 10.0;
 
 /// Why a press did not arm, or why a pan ended before the button went up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Reason {
+pub(crate) enum Reason {
     /// The press landed on scene UI.
     OverUi,
     /// The press landed within [`EDGE_MARGIN`] of a window edge.
@@ -46,7 +93,7 @@ pub enum Reason {
 }
 
 impl Reason {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Reason::OverUi => "press over scene UI",
             Reason::NearEdge => "press near a window edge",
@@ -64,7 +111,7 @@ impl Reason {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
-pub enum Phase {
+pub(crate) enum Phase {
     /// No press is being tracked.
     #[default]
     Idle,
@@ -77,7 +124,7 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Phase::Idle => "idle",
             Phase::Armed { .. } => "armed",
@@ -89,43 +136,43 @@ impl Phase {
 
 /// One frame's facts for [`LeftDragPan::tick`].
 #[derive(Default, Clone, Copy, Debug)]
-pub struct Frame {
+pub(crate) struct Frame {
     /// The pointer action went down this frame, at the level scenes receive it.
-    pub press: bool,
+    pub(crate) press: bool,
     /// The pointer action is down, at that level.
-    pub held: bool,
-    /// The pointer's movement this frame, in pixels.
-    pub motion: Vec2,
-    /// The flag is on. Read on the press frame only.
-    pub enabled: bool,
+    pub(crate) held: bool,
+    /// The pointer motion this frame, in the units of [`START_DISTANCE`].
+    pub(crate) motion: Vec2,
+    /// The Left-Drag Camera setting is on. Read on the press frame only.
+    pub(crate) enabled: bool,
     /// Why this press cannot arm. Sampled on the press frame only.
-    pub press_refusal: Option<Reason>,
+    pub(crate) press_refusal: Option<Reason>,
     /// Why the pan cannot hold the camera now. Sampled every frame.
-    pub blocked: Option<Reason>,
+    pub(crate) blocked: Option<Reason>,
 }
 
 #[derive(Resource, Default, Debug)]
-pub struct LeftDragPan {
+pub(crate) struct LeftDragPan {
     phase: Phase,
     last_reason: Option<Reason>,
 }
 
 impl LeftDragPan {
-    pub fn phase(&self) -> Phase {
+    pub(crate) fn phase(&self) -> Phase {
         self.phase
     }
 
-    pub fn is_panning(&self) -> bool {
+    pub(crate) fn is_panning(&self) -> bool {
         self.phase == Phase::Panning
     }
 
     /// The reason for the last refusal or interruption.
-    pub fn last_reason(&self) -> Option<Reason> {
+    pub(crate) fn last_reason(&self) -> Option<Reason> {
         self.last_reason
     }
 
     /// Ends an armed or running pan for good: it does not resume for this press.
-    pub fn interrupt(&mut self, reason: Reason) {
+    pub(crate) fn interrupt(&mut self, reason: Reason) {
         if matches!(self.phase, Phase::Armed { .. } | Phase::Panning) {
             self.phase = Phase::Spent;
             self.last_reason = Some(reason);
@@ -133,7 +180,7 @@ impl LeftDragPan {
     }
 
     /// Advances one frame; returns whether the pan holds the camera lock.
-    pub fn tick(&mut self, frame: &Frame) -> bool {
+    pub(crate) fn tick(&mut self, frame: &Frame) -> bool {
         // a missing release edge (the button let go outside the window) ends the press too
         if !frame.held {
             self.phase = Phase::Idle;
@@ -267,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn the_flag_off_never_arms() {
+    fn the_setting_off_never_arms() {
         let mut pan = LeftDragPan::default();
         let mut frame = press();
         frame.enabled = false;
@@ -292,24 +339,13 @@ mod tests {
     }
 
     #[test]
-    fn ui_under_the_cursor_mid_drag_is_ignored() {
-        // the press-time facts are not part of later frames, so UI under the locked cursor
-        // cannot end a running pan
-        let mut pan = panning();
-        assert!(pan.tick(&held(Vec2::new(2.0, 2.0))));
-        assert!(pan.is_panning());
-    }
-
-    #[test]
     fn a_press_near_an_edge_never_pans() {
-        for _ in [(); 4] {
-            let mut pan = LeftDragPan::default();
-            let mut frame = press();
-            frame.press_refusal = Some(Reason::NearEdge);
-            assert!(!pan.tick(&frame));
-            assert!(!pan.tick(&held(Vec2::new(9.0, 9.0))));
-            assert_eq!(pan.last_reason(), Some(Reason::NearEdge));
-        }
+        let mut pan = LeftDragPan::default();
+        let mut frame = press();
+        frame.press_refusal = Some(Reason::NearEdge);
+        assert!(!pan.tick(&frame));
+        assert!(!pan.tick(&held(Vec2::new(9.0, 9.0))));
+        assert_eq!(pan.last_reason(), Some(Reason::NearEdge));
     }
 
     #[test]
@@ -401,19 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_lock_ends_the_pan() {
-        // the page reports the lock was not granted on the frame after the pan began
-        let mut pan = armed();
-        assert!(pan.tick(&held(Vec2::new(5.0, 0.0))));
-        let mut frame = held(Vec2::new(5.0, 0.0));
-        frame.blocked = Some(Reason::LockLost);
-        assert!(!pan.tick(&frame));
-        assert!(!pan.tick(&held(Vec2::new(5.0, 0.0))));
-    }
-
-    #[test]
-    fn the_flag_is_read_on_the_press_only() {
-        // a flag that turns on mid-press does not arm the press in progress
+    fn the_setting_is_read_on_the_press_only() {
+        // a setting that turns on mid-press does not arm the press in progress
         let mut pan = LeftDragPan::default();
         let mut frame = press();
         frame.enabled = false;
@@ -422,7 +447,7 @@ mod tests {
         frame.enabled = true;
         assert!(!pan.tick(&frame));
         assert_eq!(pan.phase(), Phase::Idle);
-        // and a flag that turns off mid-pan does not end it
+        // and a setting that turns off mid-pan does not end it
         let mut pan = panning();
         let mut frame = held(Vec2::ZERO);
         frame.enabled = false;

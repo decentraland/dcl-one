@@ -667,6 +667,8 @@ pub struct AppConfig {
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
     pub constrain_scene_ui: bool,
+    /// Holding the pointer button and dragging turns the camera.
+    pub left_drag_camera: bool,
     pub player_settings: PrimaryUser,
     pub max_videos: usize,
     pub max_concurrent_remotes: usize,
@@ -741,6 +743,7 @@ impl Default for AppConfig {
             scene_log_to_console: false,
             max_avatars: 20,
             constrain_scene_ui: false,
+            left_drag_camera: false,
             player_settings: Default::default(),
             max_videos: 1,
             max_concurrent_remotes: 32,

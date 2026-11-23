@@ -1,12 +1,8 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::{
-    feature_flags::FeatureFlags,
-    structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser},
-};
+use common::structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::common::Vector3;
-use scene_runner::update_scene::left_drag_pan::{self, LeftDragPan};
 use serde_json::json;
 
 use crate::avatar_movement::{
@@ -28,9 +24,6 @@ impl Plugin for InputDebugPanelPlugin {
                     ("Far clip (m)", "far"),
                     ("Vertical FOV (degrees)", "fov"),
                     ("Scene override", "override"),
-                    ("Left-drag camera flag", "leftDrag.flag"),
-                    ("Left-drag phase", "leftDrag.phase"),
-                    ("Left-drag last refusal or interruption", "leftDrag.reason"),
                 ],
                 actions: &[],
                 inputs: &[DebugInput {
@@ -97,8 +90,6 @@ fn camera_sensitivity(
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
     camera: Query<(&PrimaryCamera, &Projection)>,
-    flags: Res<FeatureFlags>,
-    pan: Res<LeftDragPan>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let Ok((camera, projection)) = camera.single() else {
@@ -109,14 +100,7 @@ fn camera_state(
         Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
         _ => (None, None),
     };
-    cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some(),
-        "leftDrag":{
-            "flag":if flags.is_on(left_drag_pan::FLAG) { "on" } else { "off" },
-            "phase":pan.phase().as_str(),
-            "reason":pan.last_reason().map(|r| r.as_str()),
-        },
-        "unavailable":{"leftDrag.reason":"No press has been refused or interrupted yet."},
-    }).to_string());
+    cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some()}).to_string());
 }
 
 /// Read the active SDK movement settings and last frame of controller feedback.

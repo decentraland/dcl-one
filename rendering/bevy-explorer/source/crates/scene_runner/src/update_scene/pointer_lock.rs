@@ -2,11 +2,10 @@ use std::marker::PhantomData;
 
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use common::{
-    feature_flags::FeatureFlags,
     inputs::{Action, CommonInputAction, SystemAction, POINTER_SET},
     structs::{
         ActiveDialog, AppConfig, CameraOverride, ClientWindowFocus, CursorLocks, PhotoMode,
-        PointerTargetType, PrimaryCamera,
+        PrimaryCamera,
     },
 };
 use input_manager::{InputManager, InputPriority};
@@ -14,7 +13,7 @@ use platform::{platform_pointer_is_locked, platform_pointer_lock_requested};
 
 use super::{
     left_drag_pan::{self, Frame, LeftDragPan, Reason},
-    pointer_results::{PointerActionTarget, PointerTarget},
+    pointer_results::{PointerActionTarget, UiPointerTarget, UiPointerTargetValue},
 };
 use crate::{
     initialize_scene::SuperUserScene, renderer_context::RendererSceneContext,
@@ -37,11 +36,6 @@ impl Plugin for PointerLockPlugin {
             SceneComponentId::POINTER_LOCK,
             ComponentPosition::EntityOnly,
         );
-        // the pan reads what the pointer results own, which headless apps do not run
-        app.init_resource::<LeftDragPan>()
-            .init_resource::<FeatureFlags>()
-            .init_resource::<PointerTarget>()
-            .init_resource::<PointerActionTarget>();
         app.add_systems(Update, update_pointer_lock.in_set(SceneSets::Input));
     }
 }
@@ -104,30 +98,44 @@ impl CameraInteractionState<'_, '_> {
     }
 }
 
-/// What the left-button pan reads besides the input.
+/// What the left-button pan reads besides the input. The pan and the pointer results it reads are
+/// absent in a headless app (see `LeftDragPanPlugin`), which then never pans; nor does it track
+/// window focus.
 #[derive(SystemParam)]
 pub struct LeftDragCamera<'w, 's> {
-    pan: ResMut<'w, LeftDragPan>,
-    flags: Res<'w, FeatureFlags>,
-    pointer_target: Res<'w, PointerTarget>,
-    action_target: Res<'w, PointerActionTarget>,
+    pan: Option<ResMut<'w, LeftDragPan>>,
+    ui_target: Option<Res<'w, UiPointerTarget>>,
+    action_target: Option<Res<'w, PointerActionTarget>>,
     camera: Query<'w, 's, (&'static PrimaryCamera, Has<PhotoMode>)>,
-    // headless apps run no window focus tracking
     focus: Option<Res<'w, ClientWindowFocus>>,
 }
 
 impl LeftDragCamera<'_, '_> {
+    fn is_panning(&self) -> bool {
+        self.pan.as_ref().is_some_and(|pan| pan.is_panning())
+    }
+
+    fn interrupt(&mut self, reason: Reason) {
+        if let Some(pan) = self.pan.as_mut() {
+            pan.interrupt(reason);
+        }
+    }
+
     /// Advances the pan one frame; returns whether it holds the camera lock.
     fn tick(
         &mut self,
         input: &InputManager,
         window: &Window,
+        enabled: bool,
         dialog_open: bool,
         camera_held_elsewhere: bool,
     ) -> bool {
+        if self.pan.is_none() {
+            return false;
+        }
         let pointer = Action::Scene(CommonInputAction::IaPointer);
         let press = input.just_down(pointer, InputPriority::Scene);
-        let panning = self.pan.is_panning();
+        let panning = self.is_panning();
         let (primary, photo) = self
             .camera
             .single()
@@ -143,7 +151,11 @@ impl LeftDragCamera<'_, '_> {
             Some(Reason::Cinematic)
         } else if photo {
             Some(Reason::PhotoMode)
-        } else if self.action_target.holds_pointer_drag() {
+        } else if self
+            .action_target
+            .as_ref()
+            .is_some_and(|t| t.holds_pointer_drag())
+        {
             Some(Reason::SceneDrag)
         } else if self.focus.as_deref() == Some(&ClientWindowFocus::NoFocus) {
             Some(Reason::NoFocus)
@@ -157,8 +169,7 @@ impl LeftDragCamera<'_, '_> {
             press,
             held: input.is_button_down(pointer, InputPriority::Scene),
             motion: input.get_analog(POINTER_SET, InputPriority::Scroll),
-            // read on the press only: the lookup allocates
-            enabled: press && self.flags.is_on(left_drag_pan::FLAG),
+            enabled,
             press_refusal: if press {
                 self.press_refusal(window)
             } else {
@@ -166,19 +177,21 @@ impl LeftDragCamera<'_, '_> {
             },
             blocked,
         };
-        self.pan.tick(&frame)
+        self.pan.as_mut().is_some_and(|pan| pan.tick(&frame))
     }
 
     fn press_refusal(&self, window: &Window) -> Option<Reason> {
+        // settled in `PreUpdate`, so it is this frame's, unlike the resolved `PointerTarget`
         if self
-            .pointer_target
-            .0
+            .ui_target
             .as_ref()
-            .is_some_and(|t| t.ty == PointerTargetType::Ui)
+            .is_some_and(|t| matches!(t.0, UiPointerTargetValue::Primary(..)))
         {
             return Some(Reason::OverUi);
         }
-        let cursor = window.cursor_position()?;
+        let Some(cursor) = window.cursor_position() else {
+            return Some(Reason::NoCursor);
+        };
         let margin = left_drag_pan::EDGE_MARGIN;
         let inside = cursor.x >= margin
             && cursor.y >= margin
@@ -276,8 +289,14 @@ pub fn update_pointer_lock(
     }
     *dialog_was_open = dialog_open;
 
-    let was_panning = left_drag.pan.is_panning();
-    let panning = left_drag.tick(input_manager, window, dialog_open, *toggle);
+    let was_panning = left_drag.is_panning();
+    let panning = left_drag.tick(
+        input_manager,
+        window,
+        config.left_drag_camera,
+        dialog_open,
+        *toggle,
+    );
     if panning && !was_panning {
         platform_pointer_lock_requested();
     }
@@ -292,7 +311,7 @@ pub fn update_pointer_lock(
             continue;
         }
         info!("lock updated by scene");
-        left_drag.pan.interrupt(Reason::SceneLock);
+        left_drag.interrupt(Reason::SceneLock);
         *toggle = changed_lock.0.is_pointer_locked;
         if *toggle {
             platform_pointer_lock_requested();
@@ -365,7 +384,10 @@ pub fn update_pointer_lock(
 #[cfg(test)]
 mod tests {
     use bevy::{math::FloatOrd, platform::collections::HashSet};
-    use common::inputs::{InputIdentifier, InputMap};
+    use common::{
+        inputs::{InputIdentifier, InputMap},
+        structs::PointerTargetType,
+    };
     use dcl_types::SceneId;
     use input_manager::{CumulativeAxisData, InputPriorities};
     use prost::Message;
@@ -387,7 +409,7 @@ mod tests {
     }
 
     impl Rig {
-        fn new(flag_on: bool) -> Self {
+        fn new(setting_on: bool) -> Self {
             let mut app = App::new();
             let mut map = InputMap::default();
             map.inputs.insert(
@@ -401,17 +423,15 @@ mod tests {
                 .init_resource::<CumulativeAxisData>()
                 .init_resource::<InputPriorities>()
                 .init_resource::<CursorLocks>()
-                .init_resource::<AppConfig>()
+                .insert_resource(AppConfig {
+                    left_drag_camera: setting_on,
+                    ..Default::default()
+                })
                 .init_resource::<InteractableArea>()
                 .init_resource::<HudFocus>()
                 .init_resource::<LeftDragPan>()
-                .init_resource::<PointerTarget>()
+                .init_resource::<UiPointerTarget>()
                 .init_resource::<PointerActionTarget>()
-                .insert_resource(FeatureFlags::from_overrides(if flag_on {
-                    left_drag_pan::FLAG
-                } else {
-                    ""
-                }))
                 .add_systems(Update, update_pointer_lock);
             let mut window = Window::default();
             window.set_cursor_position(Some(Vec2::new(400.0, 300.0)));
@@ -525,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn flag_off_left_drag_changes_nothing() {
+    fn setting_off_left_drag_changes_nothing() {
         let mut rig = Rig::new(false);
         rig.drag();
         assert!(!rig.camera_locked() && !rig.crdt_lock());
@@ -687,7 +707,35 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_window_or_camera_leaves_the_pan_idle() {
+    fn a_press_without_a_cursor_position_never_pans() {
+        let mut rig = Rig::new(true);
+        let mut window = rig
+            .app
+            .world_mut()
+            .query_filtered::<&mut Window, With<PrimaryWindow>>();
+        window
+            .single_mut(rig.app.world_mut())
+            .unwrap()
+            .set_cursor_position(None);
+        rig.drag();
+        assert!(!rig.camera_locked());
+        assert_eq!(rig.phase(), Phase::Spent);
+        assert_eq!(
+            rig.app.world().resource::<LeftDragPan>().last_reason(),
+            Some(Reason::NoCursor)
+        );
+    }
+
+    #[test]
+    fn a_headless_app_without_the_pan_never_pans() {
+        let mut rig = Rig::new(true);
+        rig.app.world_mut().remove_resource::<LeftDragPan>();
+        rig.drag();
+        assert!(!rig.camera_locked() && !rig.crdt_lock());
+    }
+
+    #[test]
+    fn a_missing_camera_leaves_the_pan_idle() {
         let mut rig = Rig::new(true);
         let cameras: Vec<Entity> = rig
             .app

@@ -286,7 +286,7 @@ impl PointerActionTarget {
 
     /// The pointer press was captured by a scene entity that listens for `PetDrag` or
     /// `PetDragLocked`.
-    pub fn holds_pointer_drag(&self) -> bool {
+    pub(crate) fn holds_pointer_drag(&self) -> bool {
         self.entities.contains_key(&InputAction::IaPointer)
     }
 }
@@ -368,20 +368,8 @@ fn update_pointer_target(
     meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
     children: Query<&Children>,
     pan: Res<LeftDragPan>,
-    input: InputManager,
 ) {
     pointer_ray.0 = None;
-
-    // a drag that turns the camera hovers nothing; the release frame already resolves normally
-    if pan.is_panning()
-        && input.is_button_down(
-            Action::Scene(CommonInputAction::IaPointer),
-            InputPriority::Scene,
-        )
-    {
-        world_target.0 = None;
-        return;
-    }
 
     let Ok((camera, camera_position)) = camera.single() else {
         // can't do much without a camera
@@ -426,6 +414,15 @@ fn update_pointer_target(
     };
 
     pointer_ray.0 = Some(ray);
+
+    // a drag that turns the camera hovers nothing, up to and including its release frame: this
+    // runs before the pan sees the release, and the cursor is still locked at the screen centre,
+    // so a target here would send the release to whatever is under the reticle. The ray stays
+    // for trigger areas.
+    if pan.is_panning() {
+        world_target.0 = None;
+        return;
+    }
 
     let nearby_scenes = containing_scenes.get_area(player, PARCEL_SIZE);
     let containing_scenes = containing_scenes.get_area(player, PLAYER_COLLIDER_RADIUS);
