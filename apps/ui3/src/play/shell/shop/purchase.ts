@@ -24,6 +24,7 @@ import { shopChainReader, type ChainReader } from '../../../shop/checkout/chain/
 import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../shop/checkout/purchase/cart'
 import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
+import type { BuiltUseCredits } from '../../../shop/checkout/purchase/credits'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
 import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, findCreditRecords, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitInFlightMessage, splitsInFlight, splitToName, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
@@ -185,6 +186,14 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
 
 /** A split whose credit the node says another transaction spent: not this item, and not Credits to give back. */
 const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another transaction, so this item wasn't bought here."
+/**
+ * A Credits part whose credit was recorded spent in a transaction this page can't read as its purchase (`unverified`): what
+ * it bought, and, from the cart, that it stays there.
+ */
+const unverifiedMessage = (op: Pick<OperationRecord, 'items' | 'cart'>): string => {
+  const several = op.items.reduce((n, l) => n + l.quantity, 0) > 1
+  return `Your Credits were recorded as spent, but we couldn't verify the purchase of ${several ? 'these items' : 'this item'}.${op.cart ? (several ? ' They stay in your cart until it can be verified.' : ' It stays in your cart until it can be verified.') : ''}`
+}
 const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
 const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.'
 const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
@@ -850,10 +859,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /** Purchase in progress; one paid in MANA shows what it offers now (./manaFlow). */
   const showPending = (op: Operation): void => {
     if (!op.mana) {
+      if (op.unverified) {
+        // CHECK AGAIN looks once more: it cancels nothing and signs nothing.
+        const view = (check: 'ready' | 'checking'): void => show(op, { step: 'pending', check, message: unverifiedMessage(op) }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
+        view('ready')
+        return
+      }
       show(op, { step: 'pending' }, { onClose: () => hide(op) })
       return
     }
     manaFlow.showPending(op)
+  }
+  /** Marks a Credits part `unverified` (kept with it) and says so where its dialog is up. */
+  const unverified = (op: Operation): void => {
+    if (op.unverified) return
+    op.unverified = true
+    keep(op)
+    publish(op)
+    if (slot.holds(op) && stillPending(op)) showPending(op)
   }
   /** CHECK AGAIN: one look now, besides the watch's own; the dialog follows if it settled. */
   const checkAgain = async (op: Operation, view: (check: 'ready' | 'checking') => void): Promise<void> => {
@@ -1172,6 +1195,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     op.expiredSince = undefined
     if (record?.status !== 'SETTLED' || !record.txHash) return { kind: 'held' }
     const outcome = await splitExecution(svc.manaEvidence(), sale, record.txHash)
+    // A Credits part (never a split) spent in a transaction this page can't read as its call: held, and said so.
+    if (outcome === 'unreadable' && !op.split) unverified(op)
     return outcome === 'bought' ? { kind: 'bought', txHash: record.txHash } : outcome === 'other' ? { kind: 'elsewhere' } : { kind: 'held' }
   }
 
@@ -1213,6 +1238,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         settled(op, 'failed', {}, SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART)
         return true
       }
+      // A Credits part (never a split) whose credit the node says was spent, in a transaction read but not readable as a
+      // useCredits at the manager (a bundle through an EntryPoint, a smart wallet's own call): not known bought. It says so,
+      // and keeps saying so after a reload, its items still in the cart; nothing is cancelled or signed for it. Only
+      // evidence of its own terms buys it, once.
+      if (outcome === 'unreadable' && !op.split) unverified(op)
       return false
     }
     if (record?.status === 'EXPIRED') {
@@ -1234,6 +1264,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (op.mana) return manaFlow.checkMana(op, op.mana)
     if (op.split) {
       const decided = await checkSplit(op, op.split, store)
+      if (decided !== null) return decided
+    } else if (op.sale) {
+      // A group paid by its credits, kept with its call before it was signed: found out by its own execution as a split is,
+      // never by its checkout's confirmed step, a receipt for the hash it was answered, a watch or its credit's SETTLED alone.
+      const decided = await findOutSplit(op, op.sale, store)
       if (decided !== null) return decided
     }
     const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
@@ -2208,6 +2243,41 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           ctx: { buyer: quote.buyer, provider: svc.guard(prompting(op, wallet, quote.kind), intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
           guard: createSpendGuard(),
+          // A group paid by its credits: what its execution must carry to count as this part, kept before it is signed.
+          ...(split
+            ? {}
+            : {
+                onCreditsCall: ({ creditId, expiresAt, built }: { creditId: string; expiresAt: number; built: BuiltUseCredits }) => {
+                  const { args } = built
+                  const [credit] = args.credits
+                  if (args.credits.length !== 1 || !credit) return false
+                  op.sale = {
+                    buyer: quote.buyer,
+                    chainId,
+                    manager: manager.address,
+                    creditId,
+                    creditWei: args.maxCreditedValue.toString(),
+                    creditValueWei: credit.value.toString(),
+                    gapWei: args.maxUncreditedValue.toString(),
+                    target: args.externalCall.target,
+                    selector: args.externalCall.selector,
+                    callData: args.externalCall.data,
+                    creditExpiresAt: expiresAt
+                  }
+                  return keep(op)
+                },
+                // The very bytes about to go, kept before they do: only a revert of these is this group's own.
+                onCreditsEnvelope: (bytes: Hex) => {
+                  if (!op.sale) return false
+                  op.sale = { ...op.sale, envelope: splitEnvelope(bytes) }
+                  return keep(op)
+                },
+                // A smart wallet sends it as a call to itself: followed as any Credits purchase, its record back with them.
+                onCreditsUnkept: () => {
+                  op.sale = undefined
+                  return keep(op)
+                }
+              }),
           ...(split
             ? {
                 split: {
@@ -2258,9 +2328,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     switch (result.status) {
       case 'confirmed': {
-        // A split is bought only by its own execution: a successful receipt for the hash the relay answered isn't enough.
-        if (op.split) {
-          const outcome = result.txHash ? await splitExecution(svc.manaEvidence(), op.split, result.txHash) : 'unknown'
+        // A purchase is bought only by its own execution: a successful receipt for the hash the relay answered isn't
+        // enough. A split's terms, or its group's call as built when its credits pay it all.
+        const own = op.split ?? op.sale
+        if (own) {
+          const outcome = result.txHash ? await splitExecution(svc.manaEvidence(), own, result.txHash) : 'unknown'
           if (outcome !== 'bought') {
             // Another transaction's hash is never kept, nor read again, as this sale's.
             const notIt = outcome === 'other' || outcome === 'foreign'
@@ -2273,17 +2345,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return { kind: 'confirmed' }
       }
       case 'pending': {
-        // A split's hash is read for what it is: an attributable success bought it; its own revert waits on the node's
-        // record of its credit (afterOwnRevert), and nothing here gives the credit back.
-        if (op.split && result.txHash) {
-          const outcome = await splitExecution(svc.manaEvidence(), op.split, result.txHash)
+        // A split's hash, or a kept group's, is read for what it is: an attributable success bought it; its own revert
+        // waits on the node's record of its credit (afterOwnRevert), and nothing here gives the credit back.
+        const own = op.split ?? op.sale
+        if (own && result.txHash) {
+          const outcome = await splitExecution(svc.manaEvidence(), own, result.txHash)
           if (outcome === 'bought') {
             move(op, 'succeeded', { txHash: result.txHash })
             return { kind: 'confirmed' }
           }
           if (outcome === 'reverted') {
             // Its own bytes reverted; the node's record of its credit still comes first (a replay may have bought it).
-            const after = await afterOwnRevert(op as Operation & { buyer: string }, op.split)
+            const after = await afterOwnRevert(op as Operation & { buyer: string }, own)
             if (after.kind === 'bought') {
               move(op, 'succeeded', { txHash: after.txHash })
               return { kind: 'confirmed' }
