@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 
@@ -48,9 +49,11 @@ function readBridgeAuth() {
   }
   renderToString(
     <QueryClientProvider client={new QueryClient()}>
-      <ChromeAuthBridge>
-        <Probe />
-      </ChromeAuthBridge>
+      <MemoryRouter>
+        <ChromeAuthBridge>
+          <Probe />
+        </ChromeAuthBridge>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return auth;
