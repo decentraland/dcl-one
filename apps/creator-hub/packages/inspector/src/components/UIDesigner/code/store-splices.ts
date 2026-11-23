@@ -199,7 +199,7 @@ export const CHILD_TEMPLATES: Record<UINodeType, string> = {
 };
 
 export const IMAGE_TEMPLATE =
-  "<UiEntity uiTransform={{ width: 200, height: 200 }} uiBackground={{ color: { r: 1, g: 1, b: 1, a: 1 }, textureMode: 'center' }} />";
+  "<UiEntity uiTransform={{ width: 200, height: 200 }} uiBackground={{ textureMode: 'center' }} />";
 
 export const FULLSCREEN_TEMPLATE =
   "<UiEntity uiTransform={{ flexGrow: 1, alignSelf: 'stretch' }} />";

@@ -269,6 +269,7 @@ export const FieldRow = React.memo(function FieldRow({
           key={entity}
           color={componentValue?.color as Color4 | undefined}
           texture={componentValue?.texture as TextureUnion | undefined}
+          textureMode={componentValue?.textureMode as number | undefined}
           entity={entity}
           bindings={bindings}
           onPatch={onPatch}

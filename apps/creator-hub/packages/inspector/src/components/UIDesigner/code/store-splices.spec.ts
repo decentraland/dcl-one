@@ -2,7 +2,9 @@ import { parseSync } from 'oxc-parser';
 import { describe, expect, it } from 'vitest';
 
 import { YGPT_ABSOLUTE } from '../../../lib/sdk/ui-transform-constants';
-import { applyEdits, insertChild } from './emit-adapter';
+import { classifyNode } from '../shared/tree-model';
+import { pbBackgroundPatchToErgoFields } from './ecs-shape';
+import { applyEdits, insertChild, setObjectFields } from './emit-adapter';
 import { codeToUINodes } from './parse-adapter';
 import { componentWrapperJsx, parentIsFree, widgetJsx } from './store-splices';
 
@@ -13,6 +15,15 @@ const transformOf = (jsx: string): Record<string, unknown> => {
   const parsed = codeToUINodes(r.program as any, source)!;
   expect(parsed).not.toBeNull();
   return (parsed.root.uiTransform as Record<string, unknown>) ?? {};
+};
+
+const parseRoot = (jsx: string) => {
+  const source = `export function S() {\n  return ${jsx}\n}`;
+  const r = parseSync('S.tsx', source);
+  expect(r.errors).toHaveLength(0);
+  const parsed = codeToUINodes(r.program as any, source)!;
+  expect(parsed).not.toBeNull();
+  return parsed.root;
 };
 
 const isAbsolute = (t: Record<string, unknown>): boolean => t.positionType === YGPT_ABSOLUTE;
@@ -149,5 +160,36 @@ describe('componentWrapperJsx', () => {
     expect(jsx).not.toContain('positionType');
     expect(jsx).toContain('width: 200, height: 120');
     expect(isAbsolute(transformOf(jsx))).toBe(false);
+  });
+});
+
+describe('widgetJsx image preset', () => {
+  it('should read back as an Image before any texture is set', () => {
+    expect(classifyNode(parseRoot(widgetJsx('UiEntity', 'image', false)))).toBe('Image');
+  });
+
+  it('should write no colour, so nothing paints until an image is chosen', () => {
+    const background = parseRoot(widgetJsx('UiEntity', 'image', false)).uiBackground as
+      | Record<string, unknown>
+      | undefined;
+    expect(background?.color).toBeUndefined();
+  });
+});
+
+describe('when an Image switches to No fill', () => {
+  it('should write source that parses back as an Image with a clear colour', () => {
+    const source = `export function S() {\n  return ${widgetJsx('UiEntity', 'image', false)}\n}`;
+    const parsed = codeToUINodes(parseSync('S.tsx', source).program as any, source)!;
+    const el = parsed.astNodes.get(parsed.root.entity as unknown as number) as any;
+    const fields = pbBackgroundPatchToErgoFields({
+      texture: undefined,
+      color: { r: 0, g: 0, b: 0, a: 0 },
+    });
+
+    const next = applyEdits(source, setObjectFields(el, 'uiBackground', fields));
+    const root = codeToUINodes(parseSync('S.tsx', next).program as any, next)!.root;
+
+    expect(classifyNode(root)).toBe('Image');
+    expect(root.uiBackground).toMatchObject({ textureMode: 1, color: { r: 0, g: 0, b: 0, a: 0 } });
   });
 });

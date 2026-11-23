@@ -118,6 +118,7 @@ export function nodeStyle(node: UINode): React.CSSProperties {
   const t = (node.uiTransform ?? {}) as Record<string, number | undefined>;
   const b = (node.uiBackground ?? {}) as {
     color?: { r: number; g: number; b: number; a?: number };
+    texture?: { tex?: { $case?: string } };
   };
   const text = (node.uiText ?? {}) as {
     color?: { r: number; g: number; b: number; a?: number };
@@ -233,7 +234,7 @@ export function nodeStyle(node: UINode): React.CSSProperties {
   applyBorder('Bottom', 'borderBottomWidth', 'borderBottomWidthUnit', tc.borderBottomColor);
   applyBorder('Left', 'borderLeftWidth', 'borderLeftWidthUnit', tc.borderLeftColor);
 
-  if (b?.color) {
+  if (b?.color && b.texture?.tex?.$case !== 'texture') {
     style.backgroundColor = color4ToRgba(b.color);
   }
   if (text?.color) {
@@ -263,17 +264,13 @@ function safeTextureUrl(url: string): string | undefined {
   return url;
 }
 
-export function textureStyle(
-  url: string,
+type Color4 = { r: number; g: number; b: number; a?: number };
+
+function textureBox(
   textureMode: number | undefined,
   uvs: number[] | undefined,
-): React.CSSProperties {
-  const safe = safeTextureUrl(url);
-  const base: React.CSSProperties = { backgroundRepeat: 'no-repeat' };
-  if (safe) base.backgroundImage = `url("${safe}")`;
-  if (textureMode === BTM_CENTER) {
-    return { ...base, backgroundSize: 'auto', backgroundPosition: 'center' };
-  }
+): { size: string; position: string } {
+  if (textureMode === BTM_CENTER) return { size: 'auto', position: 'center' };
   if (textureMode === 2 && uvs && uvs.length >= 8) {
     const us = [uvs[0], uvs[2], uvs[4], uvs[6]];
     const vs = [uvs[1], uvs[3], uvs[5], uvs[7]];
@@ -287,13 +284,36 @@ export function textureStyle(
       const posX = rw < 1 ? (uMin / (1 - rw)) * 100 : 0;
       const posY = rh < 1 ? ((1 - vMax) / (1 - rh)) * 100 : 0;
       return {
-        ...base,
-        backgroundSize: `${(1 / rw) * 100}% ${(1 / rh) * 100}%`,
-        backgroundPosition: `${posX}% ${posY}%`,
+        size: `${(1 / rw) * 100}% ${(1 / rh) * 100}%`,
+        position: `${posX}% ${posY}%`,
       };
     }
   }
-  return { ...base, backgroundSize: '100% 100%' };
+  return { size: '100% 100%', position: '0% 0%' };
+}
+
+/** The texture layer's image and box. */
+export function textureStyle(
+  url: string,
+  textureMode: number | undefined,
+  uvs: number[] | undefined,
+): React.CSSProperties {
+  const safe = safeTextureUrl(url);
+  const { size, position } = textureBox(textureMode, uvs);
+  return {
+    backgroundImage: safe ? `url("${safe}")` : undefined,
+    backgroundSize: size,
+    backgroundPosition: position,
+  };
+}
+
+/** `feColorMatrix` values multiplying each texel's R, G, B and A by the tint, as the explorer does; undefined when the tint changes nothing. */
+export function tintMatrix(tint: Color4 | undefined): string | undefined {
+  if (!tint) return undefined;
+  const { r, g, b } = tint;
+  const a = tint.a ?? 1;
+  if (r === 1 && g === 1 && b === 1 && a === 1) return undefined;
+  return `${r} 0 0 0 0 0 ${g} 0 0 0 0 0 ${b} 0 0 0 0 0 ${a} 0`;
 }
 
 export const hiddenStyle = (style: React.CSSProperties, hidden?: boolean): React.CSSProperties =>
