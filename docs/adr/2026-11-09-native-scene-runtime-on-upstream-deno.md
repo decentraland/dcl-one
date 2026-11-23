@@ -37,6 +37,9 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
 - **Per scene, nothing shared:** a Blob store per runtime; the lock manager and broadcast ops are
   not registered, and the native BroadcastChannel stays our own bridge shim. deno_web's native
   classes are not installed.
+- **Upstream ops that panic on scene input:** `op_compile_function` is disabled, and
+  `op_structured_clone` (`performance.mark` and `measure` reach it) is replaced by a serializer
+  with no host-object path (`structured_clone.rs`).
 - **Op results** are ordinary objects (`JsPlain<T>`): serde_v8 builds them with a null
   prototype, so `String(result)` would throw.
 - **Clock:** `performance.now()` keeps its 2 ms resolution (`clock.rs`).
