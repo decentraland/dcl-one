@@ -1,6 +1,7 @@
 import type { Entity } from '@dcl/ecs';
 
 import { Event } from '../../lib/logic/analytics';
+import { duplicateEntities, takeSelectionGizmo } from '../../lib/logic/duplicate-entities';
 import { trackEntityAction } from '../../lib/logic/entity-analytics';
 import type { SdkContextValue } from '../../lib/sdk/context';
 import type { GizmoType } from '../../lib/utils/gizmo';
@@ -39,19 +40,12 @@ export function duplicateInTree<T>(
     return;
   }
   const selectedEntities = sdk.operations.getSelectedEntities();
-  const preferredGizmo =
-    selectedEntities.length > 0
-      ? sdk.components.Selection.getOrNull(selectedEntities[0])?.gizmo
-      : undefined;
-  sdk.operations.removeSelectedEntities();
+  const preferredGizmo = takeSelectionGizmo(sdk, selectedEntities);
   let duplicated: Entity[];
   if (selectedEntities.length > 1) {
     duplicated = selectedEntities.filter(entity => typeof entity === typeof value);
-    let insertAfter = selectedEntities[selectedEntities.length - 1];
-    duplicated.forEach(entity => {
-      insertAfter = sdk.operations.duplicateEntity(entity, preferredGizmo, insertAfter);
-    });
-    void sdk.operations.dispatch();
+    const insertAfter = selectedEntities[selectedEntities.length - 1];
+    duplicateEntities(sdk, duplicated, preferredGizmo, insertAfter);
   } else {
     duplicated = isSceneEntity(value) ? [value] : [];
     onDuplicate(value, preferredGizmo);

@@ -31,6 +31,8 @@ export type ConsentPrompt = { downloadMb: number };
 
 type Active = {
   sessionId: string;
+  /** The project recorded, kept because the editor may have moved on by the time it ends. */
+  projectId: string;
   microphone: Microphone | null;
   deviceLost: boolean;
   stopHubDom: () => void;
@@ -174,6 +176,7 @@ export async function startRecording(): Promise<void> {
     setActiveRecordingSession(id);
     active = {
       sessionId: id,
+      projectId: project.id,
       microphone: null,
       deviceLost: false,
       stopHubDom: startHubDomRecorder(),
@@ -202,7 +205,7 @@ export async function startRecording(): Promise<void> {
       microphone?.stop();
       return;
     }
-    trackFailure('start', error);
+    trackFailure(project.id, 'start', error);
     const current = active;
     active = null;
     if (current) release(current);
@@ -247,7 +250,7 @@ export async function stopRecording(
   try {
     const result = await finishing;
     void analytics.track('Session Recording Finished', {
-      project_id: currentProjectId(),
+      project_id: current.projectId,
       reason,
       ended_with: endedWith,
       duration_ms: result.durationMs,
@@ -272,7 +275,7 @@ export async function stopRecording(
       notify('warning', t('editor.recording.no_transcript'), result.transcriptionError);
     }
   } catch (error) {
-    trackFailure('stop', error);
+    trackFailure(current.projectId, 'stop', error);
     if (isCurrentAttempt(token)) fail(error);
   } finally {
     if (stoppingSessionId === current.sessionId) stoppingSessionId = null;
@@ -298,16 +301,12 @@ export function cancelRecording(): void {
   void applyInspectorRecording(false);
   void recordingPreload.cancel(current.sessionId).catch(fail);
   store.dispatch(aiActions.setRecorderState(IDLE));
-  void analytics.track('Session Recording Cancelled', { project_id: currentProjectId() });
+  void analytics.track('Session Recording Cancelled', { project_id: current.projectId });
 }
 
-function currentProjectId(): string | null {
-  return store.getState().editor.project?.id ?? null;
-}
-
-function trackFailure(stage: 'start' | 'stop', error: unknown) {
+function trackFailure(projectId: string, stage: 'start' | 'stop', error: unknown) {
   void analytics.track('Session Recording Failed', {
-    project_id: currentProjectId(),
+    project_id: projectId,
     stage,
     error: describeError(error instanceof Error ? error : { message: String(error) }),
   });

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AppSettings } from '/shared/types/settings';
+import { DeploymentError } from '/@/lib/deploy';
+import { getInitialDeploymentStatus } from '../deployment/utils';
 
 import { actions as deploymentActions } from '../deployment';
 import { actions as editorActions } from '../editor';
 import { actions as workspaceActions } from '../workspace';
+import { actions as aiSharingActions } from '../aiSharing';
 import { analyticsConfig, changedSettings } from './track';
 
 const publishScene = analyticsConfig[editorActions.publishScene.fulfilled.type];
@@ -57,18 +60,72 @@ describe('Publish Scene Failed analytics', () => {
 });
 
 describe('Execute Scene Deployment Failed analytics', () => {
-  it('should report the project and whether it went to a World', () => {
-    expect(
-      payload(
-        deploymentActions.executeDeployment.rejected.type,
-        { meta: { arg: '/scenes/park' }, error: { message: 'Deployment timed out' } },
-        {
-          workspace: { projects: [{ id: 'project-1', path: '/scenes/park' }] },
-          editor: {},
-          deployment: { deployments: { '/scenes/park': { info: { isWorld: true } } } },
-        },
-      ),
-    ).toEqual({ project_id: 'project-1', is_world: true, error: 'Deployment timed out' });
+  const state = (executeRequestId = 'run-1') => ({
+    workspace: { projects: [{ id: 'project-1', path: '/scenes/park' }] },
+    editor: {},
+    deployment: {
+      deployments: { '/scenes/park': { info: { isWorld: true }, executeRequestId } },
+    },
+  });
+  const rejected = (action: object, executeRequestId?: string) =>
+    payload(
+      deploymentActions.executeDeployment.rejected.type,
+      { meta: { arg: '/scenes/park', requestId: 'run-1' }, ...action },
+      state(executeRequestId),
+    );
+  const rejectedWithValue = (error: DeploymentError) =>
+    rejected({
+      payload: error,
+      error: { message: 'Rejected' },
+      meta: {
+        arg: '/scenes/park',
+        requestId: 'run-1',
+        requestStatus: 'rejected',
+        rejectedWithValue: true,
+      },
+    });
+
+  describe('when the run threw', () => {
+    it('should report the error name and message', () => {
+      expect(
+        rejected({ error: { name: 'DEPLOY_REQUEST_TIMEOUT', message: 'Deployment timed out' } }),
+      ).toEqual({
+        project_id: 'project-1',
+        is_world: true,
+        error_name: 'DEPLOY_REQUEST_TIMEOUT',
+        error: 'Deployment timed out',
+      });
+    });
+  });
+
+  describe('when the run failed through rejectWithValue', () => {
+    it('should report the deployment error instead of Rejected', () => {
+      expect(
+        rejectedWithValue(new DeploymentError('DEPLOYMENT_FAILED', getInitialDeploymentStatus())),
+      ).toEqual({
+        project_id: 'project-1',
+        is_world: true,
+        error_name: 'DEPLOYMENT_FAILED',
+        error: 'Deployment error: DEPLOYMENT_FAILED',
+      });
+    });
+  });
+
+  describe('when the creator cancelled the run', () => {
+    it('should send nothing', () => {
+      expect(
+        rejectedWithValue(
+          new DeploymentError('DEPLOYMENT_CANCELLED', getInitialDeploymentStatus()),
+        ),
+      ).toBeNull();
+      expect(rejected({ error: { name: 'DEPLOYMENT_CANCELLED' } })).toBeNull();
+    });
+  });
+
+  describe('when a newer publish replaced the run', () => {
+    it('should send nothing', () => {
+      expect(rejected({ error: { name: 'DEPLOYMENT_FAILED' } }, 'run-2')).toBeNull();
+    });
   });
 });
 
@@ -142,6 +199,23 @@ describe('App Settings Changed analytics', () => {
           { workspace: { settings: previous } },
         ),
       ).toBeNull();
+    });
+  });
+});
+
+describe('AI Sharing Decided analytics', () => {
+  const decided = (saved: boolean) =>
+    payload(aiSharingActions.decide.fulfilled.type, { payload: saved, meta: { arg: true } }, {});
+
+  describe('when the decision was saved', () => {
+    it('should report it', () => {
+      expect(decided(true)).toEqual({ granted: true });
+    });
+  });
+
+  describe('when the creator was signed out and nothing was saved', () => {
+    it('should send nothing', () => {
+      expect(decided(false)).toBeNull();
     });
   });
 });

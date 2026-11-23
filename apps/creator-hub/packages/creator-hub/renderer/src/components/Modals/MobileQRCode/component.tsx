@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { analytics, editor } from '#preload';
 import type { MobileDebugSessionInfo } from '/shared/types/ipc';
 
@@ -20,10 +20,17 @@ export function MobileQRCode({ open, onClose, url, qr }: Props) {
     return unsubscribe;
   }, [open]);
 
-  const connected = sessions.length > 0;
+  // One event per device as it connects, with how many are connected then. Main keeps a
+  // session in the list after its device disconnects.
+  const reported = useRef(new Set<MobileDebugSessionInfo['id']>());
   useEffect(() => {
-    if (connected) void analytics.track('Mobile Preview Connected', { devices: sessions.length });
-  }, [connected]);
+    const live = sessions.filter(session => !session.disconnectedAt);
+    for (const session of live) {
+      if (reported.current.has(session.id)) continue;
+      reported.current.add(session.id);
+      void analytics.track('Mobile Preview Connected', { devices: live.length });
+    }
+  }, [sessions]);
 
   return (
     <Modal

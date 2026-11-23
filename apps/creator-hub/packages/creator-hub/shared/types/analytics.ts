@@ -233,6 +233,8 @@ export type Events = {
   'Execute Scene Deployment Failed': {
     project_id: string | null;
     is_world: boolean | null;
+    /** The `DeploymentError` name, such as `DEPLOYMENT_FAILED` or `INVALID_IDENTITY`. */
+    error_name: string;
     error: string;
   };
   'Preview Scene Failed': {
@@ -325,7 +327,7 @@ export type Events = {
     project_id: string;
   };
   'Session Recording Finished': {
-    project_id: string | null;
+    project_id: string;
     reason: 'user' | 'limit' | 'device';
     ended_with: 'stop' | 'send';
     duration_ms: number;
@@ -333,10 +335,10 @@ export type Events = {
     transcribed: boolean;
   };
   'Session Recording Cancelled': {
-    project_id: string | null;
+    project_id: string;
   };
   'Session Recording Failed': {
-    project_id: string | null;
+    project_id: string;
     stage: 'start' | 'stop';
     error: string;
   };

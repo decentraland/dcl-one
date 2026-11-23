@@ -45,7 +45,7 @@ vi.mock('./steps/Deploy', () => ({ Deploy: () => null }));
 
 const project = { id: 'project-1', title: 'My Scene' } as Project;
 
-function renderModal(onClose = vi.fn()) {
+function renderModal(onClose = vi.fn(), initialStep?: Props['initialStep']) {
   const result = render(
     <TestProviders>
       <p>Editor behind the modal</p>
@@ -53,6 +53,7 @@ function renderModal(onClose = vi.fn()) {
         open
         project={project}
         onClose={onClose}
+        initialStep={initialStep}
       />
     </TestProviders>,
   );
@@ -199,6 +200,22 @@ describe('PublishProject analytics', () => {
           { project_id: 'project-1', step: 'initial' },
         ]);
       });
+    });
+  });
+
+  describe('when the dialog reopens on the deploy step', () => {
+    beforeEach(() => {
+      renderModal(vi.fn(), 'deploy');
+    });
+
+    it('should track the opening with the step it opened on', () => {
+      expect(tracked('Publish Modal Opened')).toEqual([
+        { project_id: 'project-1', initial_step: 'deploy', signed_in: false },
+      ]);
+    });
+
+    it('should not count the deploy step as viewed again', () => {
+      expect(tracked('Publish Step Viewed')).toEqual([]);
     });
   });
 });

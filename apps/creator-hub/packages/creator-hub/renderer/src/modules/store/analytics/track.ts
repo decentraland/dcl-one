@@ -1,4 +1,4 @@
-import type { SerializedError } from '@reduxjs/toolkit';
+import { isRejectedWithValue, type SerializedError } from '@reduxjs/toolkit';
 import type { Events } from '/shared/types/analytics';
 import type { Project } from '/shared/types/projects';
 import type { DeployOptions } from '/shared/types/deploy';
@@ -25,8 +25,26 @@ type ActionWithPayload<P, M = void> = {
 type RejectedAction<M = void> = {
   type: string;
   error: SerializedError;
-  meta: { arg: M };
+  payload?: unknown;
+  meta: { arg: M; requestId?: string; rejectedWithValue?: boolean };
 };
+
+/**
+ * Why a thunk failed. One that fails through `rejectWithValue` carries its error as the payload,
+ * and RTK sets `action.error.message` to `'Rejected'`.
+ */
+function rejectionError(action: RejectedAction<unknown>): { name?: string; message?: string } {
+  const error = isRejectedWithValue(action) ? action.payload : action.error;
+  return (error ?? {}) as { name?: string; message?: string };
+}
+
+/** Where a publish goes. A world publish names no target, only the Worlds content server. */
+function publishTarget(options: DeployOptions) {
+  return {
+    target: options.target || (options.targetContent ? 'worlds' : 'unknown'),
+    targetContent: options.targetContent || 'unknown',
+  };
+}
 
 type AnalyticsHandler<T, E extends keyof Events = keyof Events> = {
   eventName: E;
@@ -109,12 +127,7 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
     ): Events['Publish Scene'] => {
       const projectId = getState().editor.project?.id;
       if (!projectId) throw new Error('No project ID found when trying to publish scene');
-      return {
-        project_id: projectId,
-        // A world publish names no target, only the Worlds content server it deploys to.
-        target: action.meta.arg.target || (action.meta.arg.targetContent ? 'worlds' : 'unknown'),
-        targetContent: action.meta.arg.targetContent || 'unknown',
-      };
+      return { project_id: projectId, ...publishTarget(action.meta.arg) };
     },
   },
   [deploymentActions.executeDeployment.pending.type]: {
@@ -254,9 +267,8 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
       getState: GetState,
     ): Events['Publish Scene Failed'] => ({
       project_id: getState().editor.project?.id ?? null,
-      target: action.meta.arg.target || (action.meta.arg.targetContent ? 'worlds' : 'unknown'),
-      targetContent: action.meta.arg.targetContent || 'unknown',
-      error: describeError(action.error),
+      ...publishTarget(action.meta.arg),
+      error: describeError(rejectionError(action)),
     }),
   },
   [deploymentActions.executeDeployment.rejected.type]: {
@@ -264,13 +276,19 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
     getPayload: (
       action: RejectedAction<string>,
       getState: GetState,
-    ): Events['Execute Scene Deployment Failed'] => {
+    ): Events['Execute Scene Deployment Failed'] | null => {
       const state = getState();
       const deployment = state.deployment.deployments[action.meta.arg];
+      // A run the creator published over: the reducer ignores it, and so does analytics.
+      if (deployment && deployment.executeRequestId !== action.meta.requestId) return null;
+      const error = rejectionError(action);
+      // Cancelling is the creator's choice, not a failure.
+      if (error.name === 'DEPLOYMENT_CANCELLED') return null;
       return {
         project_id: projectIdForPath(state, action.meta.arg),
         is_world: deployment?.info.isWorld ?? null,
-        error: describeError(action.error),
+        error_name: error.name || 'UNKNOWN_ERROR',
+        error: describeError(error),
       };
     },
   },
@@ -282,7 +300,7 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
     ): Events['Preview Scene Failed'] => ({
       project_id: projectIdForPath(getState(), action.meta.arg.path),
       mobile: !!action.meta.arg.mobile,
-      error: describeError(action.error),
+      error: describeError(rejectionError(action)),
     }),
   },
   [editorActions.getMobileQR.fulfilled.type]: {
@@ -383,7 +401,7 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
       getState: GetState,
     ): Events['Optimize Scene Failed'] => ({
       project_id: projectIdForPath(getState(), action.meta.arg.path),
-      error: describeError(action.error),
+      error: describeError(rejectionError(action)),
     }),
   },
   [optimizerActions.revertProject.fulfilled.type]: {
@@ -411,14 +429,16 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
       getState: GetState,
     ): Events['Optimize Tools Install Failed'] => ({
       project_id: projectIdForPath(getState(), action.meta.arg),
-      error: describeError(action.error),
+      error: describeError(rejectionError(action)),
     }),
   },
   [aiSharingActions.decide.fulfilled.type]: {
     eventName: 'AI Sharing Decided',
-    getPayload: (action: ActionWithPayload<void, boolean>): Events['AI Sharing Decided'] => ({
-      granted: action.meta.arg,
-    }),
+    // Signed out: nothing was saved.
+    getPayload: (
+      action: ActionWithPayload<boolean, boolean>,
+    ): Events['AI Sharing Decided'] | null =>
+      action.payload ? { granted: action.meta.arg } : null,
   },
   [aiSharingActions.deleteEverything.fulfilled.type]: {
     eventName: 'AI Sharing Data Deleted',

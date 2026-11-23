@@ -49,7 +49,11 @@ export function PublishProject({
   }, [open]);
 
   useEffect(() => {
-    if (open) void analytics.track('Publish Step Viewed', { project_id: project.id, step });
+    // A dialog reopened on a later step (the deploy snackbar shows the running publish) is no
+    // step of the funnel; Publish Modal Opened names the step it opened on.
+    const reopened = step === initialStep && initialStep !== 'initial';
+    if (open && !reopened)
+      void analytics.track('Publish Step Viewed', { project_id: project.id, step });
   }, [open, step]);
 
   const handleClose = useCallback(() => {
