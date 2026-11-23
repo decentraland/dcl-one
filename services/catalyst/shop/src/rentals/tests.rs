@@ -1077,6 +1077,23 @@ async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
             }
         }
     }
+    let matched = db
+        .get_listings(&ListingQuery {
+            sort_by: None,
+            sort_direction: None,
+            offset: 0,
+            limit: 10,
+            history: false,
+            filter: ListingFilters {
+                token_id: Some("2".to_string()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(matched.total, 1);
+    assert_eq!(matched.results.len(), 1);
+    assert_eq!(matched.results[0].id, ids[1]);
     let empty = db
         .get_listings(&ListingQuery {
             sort_by: None,

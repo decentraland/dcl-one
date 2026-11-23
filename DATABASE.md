@@ -2982,7 +2982,10 @@ the cohort and starts another. Its size is one row per worker and chain,
 not one row per obligation. The schema object pass installs the new table
 from the bootstrap definition. The credit worker uses `credits.revocations_chain_hash_idx`
 on `(chain_id, credit_hash)` for both its upper bound and each hash-ordered
-page. Only pending and sent rows have entries. The partial index adds write
+page. If new arrivals greatly outnumber rows eligible for an ongoing sweep,
+the page query can instead use `credits.revocations_due_idx` to select just
+the rows created on or before the sweep's fixed start time, then sort those
+hashes. Both indexes contain only pending and sent rows. The partial index adds write
 work when revocations enter or leave those states. See [the measured query
 plans](METRICS.md#credit-revocation-sweep).
 
