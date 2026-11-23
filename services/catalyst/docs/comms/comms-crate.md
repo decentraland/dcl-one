@@ -163,10 +163,12 @@ handshake. Each client source, counted like the per-source socket cap, holds at 
 a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
 within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
 `WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) limits sockets per attributable client
-source (IPv4 address or IPv6 /64), with 429 beyond the limit. Both per-source limits skip
-unattributable upgrades. With the socket cap enabled, the first such upgrade logs a warning
-and each increments `comms_ws_unattributed_upgrades_total` (registered at 0, exported with the
-other `comms_` series on `SERVE_METRICS_BIND`). Positions coalesce for ownership control to
+source (IPv4 address or IPv6 /64), with 429 beyond the limit. Catalyst uses a valid `X-Real-IP`
+from a proxy in `HTTP_TRUSTED_PROXY_CIDRS` or the address of an unlisted public TCP peer.
+Both per-source limits skip upgrades without an attributable address. With
+`WS_MAX_SOCKETS_PER_IP` enabled, the first such upgrade logs a warning and each increments
+`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_`
+series on `SERVE_METRICS_BIND`). Positions coalesce for ownership control to
 one per 500 ms. Statistical observations retain every decoded position. A flooding socket
 closes with 1008. Assignment mailboxes, validation and the physical writer share one
 64-item output budget. Accepted assignments retain arrival order. Exhaustion rejects new
