@@ -1,13 +1,14 @@
 const apiUrl = "/docs/apis/apis/archipelago-workers/";
 const connectorUrl = "/docs/contributor/communications/archipelago/";
 const apiTitle = "Comms statistics and WebSocket API";
+const apiAliasTitle = "Comms API reference link";
 const connectorTitle = "Realm WebSocket connector";
 const apiLink = `[${apiTitle}](${apiUrl})`;
 const connectorLink = `[${connectorTitle}](${connectorUrl})`;
 
 const titles = new Map([
   [apiUrl, apiTitle],
-  ["/docs/apis/archipelago-workers/", apiTitle],
+  ["/docs/apis/archipelago-workers/", apiAliasTitle],
   [connectorUrl, connectorTitle],
 ]);
 
@@ -44,7 +45,7 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
     [/^\| Archipelago Workers.*$/m, `| ${apiLink} | Room signaling and statistics | Catalyst WebSocket sessions, peer and island reads, and hot scenes |`],
   ],
   "apis/apis/archipelago-workers/README.md": [[/^# Archipelago Workers\s*$/, statisticsApi]],
-  "apis/archipelago-workers/README.md": [[/^# Archipelago Workers\s*$/, `# ${apiTitle}\n\nSee the ${apiLink} reference for endpoints and client behavior.`]],
+  "apis/archipelago-workers/README.md": [[/^# Archipelago Workers\s*$/, `# ${apiAliasTitle}\n\nSee the ${apiLink} reference for endpoints and client behavior.`]],
   "contributor/architecture/catalyst.md": [
     [/^## Archipelago Workers \(Comms\)\n[\s\S]*?(?=^\*\*\*$)/m,
       `<span id="archipelago-workers-comms"></span>\n\n## Catalyst communications\n\nEvery \`catalyst serve\` process runs Gatekeeper’s room policy and token routes and exposes the read-only statistics API. The primary also runs the signed ${connectorLink} and Gatekeeper’s island subscriber. Gatekeeper issues LiveKit credentials for the connector to deliver. The separate \`catalyst pulse\` process synchronizes avatars, clusters nearby players, and owns the statistics population.\n\nSee the ${apiLink} reference.\n\n`],
@@ -68,16 +69,20 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
     ["| Places                | Catalyst, Archipelago, Comms   | Clients                        |", "| Places                | Catalyst content and comms     | Clients                        |"],
   ],
   "contributor/catalyst/glossary.md": [
-    [/^Main responsibilities were to determine which are the candidates.*$/m, "It selected peers for direct connections and handled WebRTC signaling."],
+    [/^### Lighthouse\n\nThe \[Lighthouse\].*\nMain responsibilities were to determine which are the candidates.*\n\n/m, ""],
+    [/^The \[BFF\].* replacing the Lighthouse\.$/m, "A backend for frontend exposes APIs tailored to a particular client."],
     [/^### Archipelago Service\n\n[^\n]+/m, `<span id="archipelago-service"></span>\n\n### Realm WebSocket connector\n\nThe signed ${connectorLink} in the primary Catalyst API delivers Gatekeeper room assignments. The \`archipelago:\` adapter prefix identifies its compatibility protocol. Pulse groups nearby players into islands.`],
   ],
   "contributor/communications/README.md": [[`[archipelago](${connectorUrl})`, connectorLink]],
   "contributor/communications/main-realm.md": [
-    [/^Decentraland has as many realms[\s\S]*$/, [
-      "MAIN is the shared realm players can join while fetching content from different Catalyst nodes.",
-      "Read the selected realm’s `/about` response to discover its content and communications endpoints. The [realm description contract](https://adr.decentraland.org/adr/ADR-110) describes how those endpoints are advertised.",
-      `In dcl-one, Pulse handles player movement and clustering. The primary Catalyst API serves the signed ${connectorLink}, which delivers Gatekeeper’s assignments for [LiveKit rooms](/docs/contributor/communications/transport-types/livekit/). The ${apiLink} reference lists the compatible statistics routes.`,
-    ].join("\n\n")],
+    [/^Decentraland has as many realms.*$/m, "MAIN is the shared realm players can join while fetching content from different Catalyst nodes."],
+    [/^<img src="\/docs\/contributor\/\.gitbook\/assets\/main-realm\.webp" width="800"\/>\n\n/m, ""],
+    [/^The \[realm provider\].*$/m, "Read the selected realm’s `/about` response to discover its content and communications endpoints. The [realm description contract](https://adr.decentraland.org/adr/ADR-110) describes how those endpoints are advertised."],
+    [/^The MAIN communications service is accessed.*$/m, `In dcl-one, Pulse handles player movement and clustering. The primary Catalyst API serves the signed ${connectorLink}, which delivers Gatekeeper’s assignments for [LiveKit rooms](/docs/contributor/communications/transport-types/livekit/). The ${apiLink} reference lists the compatible statistics routes.`],
+    [/^\[NATS\]\(https:\/\/nats\.io\/\) functions as a broadcasting system.*\n\n/m, ""],
+    [/^The Archipelago stats service shares the same API implementation.*\n\n/m, ""],
+    [/^The \[LiveKit\].* Cloud platform.*\n\n/m, ""],
+    [/^The fundamental concept derived from the MAIN realm.*(?:\n\n|\n?$)/m, ""],
   ],
   "contributor/communications/overview.md": [
     [/^Since most of this functionality[\s\S]*?(?=^## Connections)/m, [

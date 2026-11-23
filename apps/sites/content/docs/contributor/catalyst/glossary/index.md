@@ -76,14 +76,9 @@ When connected to Decentraland, you would only be able to interact with Peers co
 
 A user connected to Decentraland.
 
-### Lighthouse
-
-The [Lighthouse](https://github.com/decentraland/lighthouse) is the name used to reference the previous version of the Communications Service hosted on the Catalyst nodes and used for grouping users in a P2P network.
-It selected peers for direct connections and handled WebRTC signaling.
-
 ### Backend for Frontend (aka BFF)
 
-The [BFF](https://github.com/decentraland/explorer-bff) Service was created to resolve client needs and to enable faster development of new features without breaking the existing APIs. In the context of the Catalyst Communication Service, it will be in charge of managing the P2P signaling and thus replacing the Lighthouse.
+A backend for frontend exposes APIs tailored to a particular client.
 
 ### Catalyst Owner
 

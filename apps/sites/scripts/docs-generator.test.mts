@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, expect, it } from "vitest";
+import { updateCommsDocs } from "./docs-comms-prose.mts";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "docs-generator-"));
 const source = path.join(root, "source");
@@ -57,3 +58,23 @@ it("repairs upstream content, validates links and pinned media, and detects drif
   write(source, "player/README.md", "# Welcome\n\n[broken](/missing.md)\n");
   expect(run(true).stderr).toContain("broken local reference");
 }, 30000);
+
+it("preserves upstream additions around the reviewed main realm paragraphs", () => {
+  const added = "## Realm availability\n\nCustom realm configuration can vary.";
+  const input = [
+    "Decentraland has as many realms as there are Catalyst nodes.",
+    '<img src="/docs/contributor/.gitbook/assets/main-realm.webp" width="800"/>',
+    "The [realm provider](https://github.com/decentraland/realm-provider) exposes realm information.",
+    "The MAIN communications service is accessed through a WebSocket connector.",
+    "[NATS](https://nats.io/) functions as a broadcasting system.",
+    "This new paragraph is independent of the old service description.",
+    "The Archipelago stats service shares the same API implementation.",
+    "The [LiveKit](/docs/contributor/communications/transport-types/livekit/) Cloud platform handles media.",
+    "The fundamental concept derived from the MAIN realm is shared communications.",
+    added,
+  ].join("\n\n");
+  const revised = updateCommsDocs("contributor/communications/main-realm.md", input);
+  expect(revised).toContain("Pulse handles player movement and clustering");
+  expect(revised).toContain("This new paragraph is independent of the old service description.");
+  expect(revised).toContain(added);
+});
