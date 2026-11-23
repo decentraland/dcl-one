@@ -3102,6 +3102,7 @@
         "download_target": {
           "kind": "enum-string",
           "values": [
+            "creator_hub",
             "desktop_installer"
           ],
           "optional": false
@@ -3382,6 +3383,7 @@
         "download_target": {
           "kind": "enum-string",
           "values": [
+            "creator_hub",
             "desktop_installer"
           ],
           "optional": false
@@ -3543,11 +3545,12 @@
             "anchor_native",
             "streamed"
           ],
-          "optional": false
+          "optional": true
         },
         "download_target": {
           "kind": "enum-string",
           "values": [
+            "creator_hub",
             "desktop_installer"
           ],
           "optional": false

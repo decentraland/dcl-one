@@ -104,7 +104,7 @@ it("reports the download and shows the install steps three seconds later", async
   );
   expect(assign).not.toHaveBeenCalled();
   act(() => vi.advanceTimersByTime(3000));
-  expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=windows&arch=amd64");
+  expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=Windows&arch=amd64");
 });
 
 it("reports another build as a secondary download and shows the steps for that build", async () => {
@@ -116,7 +116,7 @@ it("reports another build as a secondary download and shows the steps for that b
     expect.anything(),
   );
   act(() => vi.advanceTimersByTime(3000));
-  expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=macos&arch=amd64");
+  expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=macOS&arch=amd64");
 });
 
 it("stays on the page when the download is opened in another tab", async () => {
@@ -175,7 +175,8 @@ describe("legacy Click (inventory 2.1.a)", () => {
   it("keeps lp_creatorhub_download_clicked unchanged beside it", async () => {
     render(<HeroDownload downloads={onWindows} sid="s1" />);
     await user().click(main());
-    expect(vi.mocked(track).mock.calls.map(([event]) => event)).toEqual(["lp_creatorhub_download_clicked", "Click"]);
+    expect(vi.mocked(track).mock.calls.map(([event]) => event)).toEqual(["lp_creatorhub_download_clicked", "Click", "download_started"]);
+    expect(vi.mocked(track).mock.calls[2]![1]).toMatchObject({ place: "creators-hero", download_target: "creator_hub", os: "Windows" });
     expect(vi.mocked(track).mock.calls[0]).toEqual([
       "lp_creatorhub_download_clicked",
       { os: "windows", arch: "amd64", file_name: "hub-win-x64.exe", kind: "primary" },

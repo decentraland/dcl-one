@@ -66,7 +66,13 @@ type Fingerprint = {
   fp_platform: string | null;
 };
 
-export type FunnelExtra = Partial<Fingerprint> & CampaignParams & Correlated & { mac_arch?: MacArch; download_target: "desktop_installer" };
+/**
+ * An attempt's extra. The Explorer funnel's carries every field and `desktop_installer`; the Creator Hub's only its
+ * target, `creator_hub`, which splits the two funnels in the warehouse.
+ */
+export type FunnelExtra = Partial<Fingerprint> &
+  CampaignParams &
+  Correlated & { mac_arch?: MacArch; download_target: "desktop_installer" | "creator_hub" };
 
 type Base = FunnelExtra & {
   href: string;
@@ -172,7 +178,8 @@ function base(attempt: DownloadAttempt): Base {
 
 export type DownloadTracker = {
   started(): void;
-  success(filename: string, delivery: { mode: DeliveryMode; bytes?: number; requestId?: string }): void;
+  /** `delivery` is left out where nothing was delivered here (the Creator Hub's success page). */
+  success(filename: string, delivery?: { mode: DeliveryMode; bytes?: number; requestId?: string }): void;
   failed(reason: string): void;
 };
 
@@ -184,13 +191,14 @@ export function createDownloadTracker(attempt: DownloadAttempt, session: FunnelS
       startedAt = Date.now();
       track("download_started", { ...base(attempt), started_at: startedAt, ...audit() }, sendContext(session));
     },
-    success(filename, { mode, bytes, requestId }) {
+    success(filename, delivery) {
+      const { mode, bytes, requestId } = delivery ?? {};
       const succeededAt = Date.now();
       const anchor = startedAt ?? succeededAt;
       track(
         "download_success",
         {
-          delivery_mode: mode,
+          ...(mode ? { delivery_mode: mode } : {}),
           ...(requestId ? { gateway_request_id: requestId } : {}),
           ...base(attempt),
           filename,

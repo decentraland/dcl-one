@@ -48,7 +48,7 @@ export type MiscEvents = {
     arch: "amd64" | "arm64";
     auth_state: "anonymous" | "authenticated";
     click_id?: string;
-    download_target: "desktop_installer";
+    download_target: "creator_hub" | "desktop_installer";
     duration_ms: number;
     failed_at: number;
     fp_device_pixel_ratio?: number;
@@ -104,7 +104,7 @@ export type MiscEvents = {
     arch: "amd64" | "arm64";
     auth_state: "anonymous" | "authenticated";
     click_id?: string;
-    download_target: "desktop_installer";
+    download_target: "creator_hub" | "desktop_installer";
     fp_device_pixel_ratio?: number;
     fp_hardware_concurrency?: null | number;
     fp_language?: null | string;
@@ -135,8 +135,8 @@ export type MiscEvents = {
     auth_state: "anonymous" | "authenticated";
     bytes_transferred?: number;
     click_id?: string;
-    delivery_mode: "anchor_fallback" | "anchor_native" | "streamed";
-    download_target: "desktop_installer";
+    delivery_mode?: "anchor_fallback" | "anchor_native" | "streamed";
+    download_target: "creator_hub" | "desktop_installer";
     duration_ms: number;
     filename: string;
     fp_device_pixel_ratio?: number;

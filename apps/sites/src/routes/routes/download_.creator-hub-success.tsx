@@ -4,7 +4,7 @@ import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";
-import { trackCreatorHubClick } from "@/features/download/creator-hub-click";
+import { sendCreatorHubSuccess, trackCreatorHubClick } from "@/features/download/creator-hub-click";
 import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 
 import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-hub.server";
@@ -28,13 +28,18 @@ export function meta({ matches }: Route.MetaArgs) {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const os = url.searchParams.get("os")?.toLowerCase() === "windows" ? "windows" : "macos";
-  const resolved = resolveDownload(await loadLatestRelease(), null, { os, arch: url.searchParams.get("arch") });
+  const rawArch = url.searchParams.get("arch");
+  const resolved = resolveDownload(await loadLatestRelease(), null, { os, arch: rawArch });
   const { sid, wrap } = sidLoader(request, context);
-  return wrap({ sid, os: resolved.detectedOs, retryUrl: resolved.primary.url });
+  // The legacy page's own reading of `?arch=` (allowlist, else the system's default) and its `?anon_user_id=`.
+  const arch: "amd64" | "arm64" = rawArch === "amd64" || rawArch === "arm64" ? rawArch : os === "windows" ? "amd64" : "arm64";
+  // Its download_success needs that exact build: it never reported a build the release did not hold.
+  const exact = resolved.primary.osKey === os && resolved.primary.arch === arch && resolved.primary.fileName ? resolved.primary.url : null;
+  return wrap({ sid, os: resolved.detectedOs, retryUrl: resolved.primary.url, arch, exact, anonUserId: url.searchParams.get("anon_user_id") });
 }
 
 export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.ComponentProps) {
-  const { sid, os, retryUrl } = loaderData;
+  const { sid, os, retryUrl, arch, exact, anonUserId } = loaderData;
   const userId = useAnalyticsUserId();
   const scope = useLegacyTrackScope();
   const fired = useRef(false);
@@ -42,6 +47,9 @@ export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.Com
     if (fired.current) return;
     fired.current = true;
     track("lp_creatorhub_download_success", { os }, { sid, story: STORY });
+    if (exact) sendCreatorHubSuccess({ href: exact, os, arch, anonUserId, sid, userId });
+    // Once per page view, as the legacy arrival guard did.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid, os]);
   const steps = CREATOR_HUB_STEPS[os === "windows" ? "windows" : "macos"];
   return (

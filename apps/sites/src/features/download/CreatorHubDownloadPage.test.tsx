@@ -108,6 +108,8 @@ it("leaves the releases page to load when no release could be read", async () =>
   await user().click(main());
   act(() => vi.advanceTimersByTime(3000));
   expect(assign).not.toHaveBeenCalled();
+  // The legacy hook started nothing for a link with no file behind it.
+  expect(vi.mocked(track).mock.calls.map(([event]) => event)).not.toContain("download_started");
 });
 
 it("still picks the build for this Mac when a link names only the system", () => {
@@ -120,7 +122,7 @@ it("shows the install steps three seconds after a download", async () => {
   render(<CreatorHubDownloadPage {...onMac} />);
   await user().click(screen.getByRole("link", { name: "Download for Windows" }));
   act(() => vi.advanceTimersByTime(3000));
-  expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=windows&arch=amd64");
+  expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=Windows&arch=amd64");
 });
 
 it("does not move to the install steps once the page was left for another", async () => {
@@ -192,5 +194,65 @@ describe("legacy Click (inventory 2.1.a)", () => {
       { os: "macos", arch: "amd64", file_name: "hub-mac-x64.dmg", kind: "secondary" },
       { sid: "s1", story: "landings/creator-hub-download" },
     );
+  });
+});
+
+describe("Creator Hub download_started (legacy useCreatorHubDownload, inventory 2.2)", () => {
+  const ANON = "0b7f4c2e-1d3a-4e5f-9a8b-7c6d5e4f3a2b";
+  const started = () => vi.mocked(track).mock.calls.filter(([event]) => event === "download_started");
+
+  it("sends the build's link, system, arch and the page's place, with no revisit, as a conversion", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    render(<CreatorHubDownloadPage {...onMac} userId="0xabc" />);
+    await user().click(screen.getByRole("link", { name: "Download for Windows" }));
+    expect(started()).toHaveLength(1);
+    const [, props, ctx] = started()[0]!;
+    expect(Object.keys(props as object)).toEqual([
+      "download_target",
+      "href",
+      "os",
+      "arch",
+      "auth_state",
+      "revisit",
+      "place",
+      "started_at",
+      "track_called_at",
+      "track_delivered_at",
+      "track_deferred",
+    ]);
+    expect(props).toEqual({
+      download_target: "creator_hub",
+      href: windows.url,
+      os: "Windows",
+      arch: "amd64",
+      auth_state: "authenticated",
+      revisit: 0,
+      place: "creator-hub-download-page",
+      started_at: 1_800_000_000_000,
+      track_called_at: 1_800_000_000_000,
+      track_delivered_at: 1_800_000_000_000,
+      track_deferred: true,
+    });
+    expect(ctx).toEqual({ sid: "s1", userId: "0xabc", legacy: true, conversion: true });
+  });
+
+  it("carries a UUID visitor's id on the event and on the steps page link, as legacy did", async () => {
+    render(<CreatorHubDownloadPage {...onMac} sid={ANON} />);
+    await user().click(main());
+    expect(started()[0]![1]).toMatchObject({ anon_user_id: ANON, auth_state: "anonymous", os: "macOS", arch: "arm64" });
+    act(() => vi.advanceTimersByTime(3000));
+    expect(assign).toHaveBeenCalledWith(`/download/creator-hub-success?os=macOS&arch=arm64&anon_user_id=${ANON}`);
+  });
+
+  it("still sends download_started for a click that opens the file in a new tab, which moves nowhere", async () => {
+    render(<CreatorHubDownloadPage {...onMac} />);
+    const link = main();
+    link.addEventListener("click", (e) => e.preventDefault());
+    const u = user();
+    await u.keyboard("{Meta>}");
+    await u.click(link);
+    expect(started()).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(3000));
+    expect(assign).not.toHaveBeenCalled();
   });
 });
