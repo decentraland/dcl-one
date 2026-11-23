@@ -142,14 +142,120 @@ impl WaitLateness {
     }
 }
 
-/// The web scene loop's frame: its start, the loop's last end, and the tail estimate.
-#[cfg(target_arch = "wasm32")]
+/// The web scene loop across frames: the frame's start, the loop's last end, the frame's tail and
+/// the lateness of the loop's timed waits.
+#[cfg(any(target_arch = "wasm32", test))]
 #[derive(bevy::prelude::Resource, Default)]
 pub struct WebLoopPacing {
-    pub frame_start: Option<Instant>,
-    pub loop_end: Option<Instant>,
-    pub tail: TailEstimate,
-    pub wait_lateness: WaitLateness,
+    frame_start: Option<Instant>,
+    loop_end: Option<Instant>,
+    tail: TailEstimate,
+    wait_lateness: WaitLateness,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl WebLoopPacing {
+    /// The frame starts at `now`. The previous frame's `handoff` to the render worker and its
+    /// `waits` for that worker close that frame's tail ([`frame_tail`]).
+    pub fn frame_started(&mut self, now: Instant, handoff: Option<Instant>, waits: Duration) {
+        self.frame_start = Some(now);
+        if let (Some(handoff), Some(loop_end)) = (handoff, self.loop_end.take()) {
+            if let Some(tail) = frame_tail(loop_end, handoff, waits) {
+                self.tail.push(tail);
+            }
+        }
+    }
+
+    /// The deadline mode's deadline for a loop that starts at `loop_start`: from the frame's start
+    /// ([`frame_deadline`]) once the tail is measured and the frame rate is capped (`frame`, its
+    /// target), else `grid` ([`legacy_deadline`]).
+    pub fn deadline(&self, grid: Instant, loop_start: Instant, frame: Option<Duration>) -> Instant {
+        match (frame, self.frame_start) {
+            (Some(frame), Some(frame_start)) => match self.tail.reserve(frame) {
+                Some(reserve) => frame_deadline(frame_start, loop_start, frame, reserve),
+                None => grid,
+            },
+            _ => grid,
+        }
+    }
+
+    /// The last moment a timed wait for replies may end, when a reply ends the waits: before
+    /// `deadline` by the recent waits' lateness ([`WaitLateness::wait_end`]).
+    pub fn wait_end(&self, deadline: Instant, loop_start: Instant) -> Instant {
+        self.wait_lateness.wait_end(deadline, loop_start)
+    }
+
+    /// Starts the frame's scene loop under the page's scene loop mode
+    /// (`dcl_wasm::scene_loop_mode`): its deadline, from the frame's start in the deadline mode,
+    /// and the last moment its timed waits may end ([`WaitLateness::wait_end`]) when a reply ends
+    /// them.
+    #[cfg(target_arch = "wasm32")]
+    pub fn begin(
+        &mut self,
+        grid: Instant,
+        loop_start: Instant,
+        frame: Option<Duration>,
+    ) -> WebLoop {
+        let mode = dcl_wasm::scene_loop_mode::get();
+        let deadline = if mode.frame_deadline() {
+            self.deadline(grid, loop_start, frame)
+        } else {
+            grid
+        };
+        let last_wait_end = if mode.loop_waits_for_replies() {
+            self.wait_end(deadline, loop_start)
+        } else {
+            deadline
+        };
+        WebLoop {
+            mode,
+            deadline,
+            last_wait_end,
+            wait_lateness: std::mem::take(&mut self.wait_lateness),
+            replies_seen: 0,
+        }
+    }
+
+    /// Ends the frame's scene loop at `loop_end`, keeping its waits' lateness.
+    #[cfg(target_arch = "wasm32")]
+    pub fn end(&mut self, web_loop: WebLoop, loop_end: Instant) {
+        self.wait_lateness = web_loop.wait_lateness;
+        self.loop_end = Some(loop_end);
+    }
+}
+
+/// One frame's scene loop on the web ([`WebLoopPacing::begin`]).
+#[cfg(target_arch = "wasm32")]
+pub struct WebLoop {
+    mode: dcl_wasm::scene_loop_mode::SceneLoopMode,
+    /// The loop starts no pass after it.
+    pub deadline: Instant,
+    /// No timed wait for replies ends after it.
+    pub last_wait_end: Instant,
+    wait_lateness: WaitLateness,
+    replies_seen: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WebLoop {
+    /// Before a pass: the replies so far, which the pass drains; a reply after them ends the wait
+    /// that follows it.
+    pub fn pass_start(&mut self) {
+        self.replies_seen = dcl_wasm::scene_replies::REPLIES.seen();
+    }
+
+    /// Waits `wait`, until `next_pass`, for a reply. A browser's timed wait can wake a millisecond
+    /// or more late, past the deadline, so in every mode but `legacy` a reply that arrives
+    /// meanwhile ends the wait, and a wait that times out records how late it woke.
+    pub fn wait(&mut self, next_pass: Instant, wait: Duration) {
+        if !self.mode.loop_waits_for_replies() {
+            std::thread::sleep(wait);
+        } else if dcl_wasm::scene_replies::REPLIES.wait(self.replies_seen, wait) {
+            let now = Instant::now();
+            self.wait_lateness
+                .push(now, now.saturating_duration_since(next_pass));
+        }
+    }
 }
 
 /// The frame's work after its scene loop: from the loop's end to the handoff to the render
@@ -161,11 +267,12 @@ pub fn frame_tail(loop_end: Instant, handoff: Instant, waits: Duration) -> Optio
         .map(|tail| tail.saturating_sub(waits))
 }
 
-/// `First`: the frame's start, and the previous frame's tail ([`frame_tail`]): the handoff and the
-/// waits come from the pipelined-rendering diagnostics, which record them together at the end of
-/// the app's update. The waits, for the render app to come back (`WAIT_RENDER`) and for the render
-/// worker's animation frame to take the handoff (`WAIT_HANDOFF`), shrink as the loop runs longer,
-/// so they are not part of what the loop must leave.
+/// `First`: the frame's start, and the previous frame's tail ([`WebLoopPacing::frame_started`]):
+/// the handoff and the waits come from the pipelined-rendering diagnostics, which record them
+/// together at the end of the app's update. The waits, for the render app to come back
+/// (`WAIT_RENDER`) and for the render worker's animation frame to take the handoff
+/// (`WAIT_HANDOFF`), shrink as the loop runs longer, so they are not part of what the loop must
+/// leave.
 #[cfg(target_arch = "wasm32")]
 pub fn web_frame_start(
     mut pacing: bevy::prelude::ResMut<WebLoopPacing>,
@@ -184,7 +291,6 @@ pub fn web_frame_start(
     }
 
     let now = Instant::now();
-    pacing.frame_start = Some(now);
     let store = store.as_deref();
     let handoff = last(store, &WAIT_HANDOFF)
         // bevy's own Instant: carried over as its age
@@ -194,11 +300,7 @@ pub fn web_frame_start(
         .filter_map(|path| last(store, path))
         .map(|measurement| Duration::from_secs_f64(measurement.value.max(0.0) / 1000.0))
         .sum();
-    if let (Some(handoff), Some(loop_end)) = (handoff, pacing.loop_end.take()) {
-        if let Some(tail) = frame_tail(loop_end, handoff, waits) {
-            pacing.tail.push(tail);
-        }
-    }
+    pacing.frame_started(now, handoff, waits);
 }
 
 #[cfg(test)]
@@ -309,6 +411,59 @@ mod tests {
         assert!(close(tail.p90().unwrap(), ms(2.0)));
     }
 
+    #[test]
+    fn a_frame_closes_the_previous_frames_tail() {
+        let mut pacing = WebLoopPacing::default();
+        let s = Instant::now();
+        // no loop has ended yet
+        pacing.frame_started(s, Some(s), Duration::ZERO);
+        assert_eq!(pacing.tail.len, 0);
+        // the loop ends, the frame hands over 9 ms later after 6 ms of waits: 3 ms of tail
+        pacing.loop_end = Some(s + ms(5.0));
+        pacing.frame_started(s + T, Some(s + ms(14.0)), ms(6.0));
+        assert_eq!(pacing.frame_start, Some(s + T));
+        assert_eq!(pacing.tail.len, 1);
+        assert!(close(pacing.tail.ring[0], ms(3.0)));
+        // each loop end closes one tail; a frame without a new one pushes none
+        pacing.frame_started(s + 2 * T, Some(s + ms(20.0)), Duration::ZERO);
+        assert_eq!(pacing.tail.len, 1);
+        // a handoff from before the loop's end is an older frame's
+        pacing.loop_end = Some(s + 2 * T + ms(5.0));
+        pacing.frame_started(s + 3 * T, Some(s + 2 * T), Duration::ZERO);
+        assert_eq!(pacing.tail.len, 1);
+    }
+
+    /// The deadline mode keeps the grid until the tail is measured and with an uncapped frame
+    /// rate, then ends the loop a frame target after the frame's start, less the reserve.
+    #[test]
+    fn the_deadline_mode_keeps_the_grid_until_the_tail_is_measured() {
+        let mut pacing = WebLoopPacing::default();
+        let s = Instant::now();
+        let grid = s + ms(9.0);
+        let loop_start = s + ms(4.0);
+        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), grid);
+        pacing.frame_started(s, None, Duration::ZERO);
+        for _ in 0..TAIL_FRAMES - 1 {
+            pacing.tail.push(ms(3.0));
+        }
+        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), grid);
+        pacing.tail.push(ms(3.0));
+        // the reserve: 3 ms and 6 % of the frame target
+        let reserve = pacing.tail.reserve(T).unwrap();
+        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), s + T - reserve);
+        assert_eq!(pacing.deadline(grid, loop_start, None), grid);
+    }
+
+    #[test]
+    fn the_waits_end_before_the_deadline_by_their_lateness() {
+        let mut pacing = WebLoopPacing::default();
+        let s = Instant::now();
+        let deadline = s + ms(8.0);
+        assert_eq!(pacing.wait_end(deadline, s), deadline);
+        pacing.wait_lateness.push(s, ms(1.0));
+        assert!(close(pacing.wait_end(deadline + T, s + T) - s, ms(7.0) + T));
+    }
+
     /// The first estimate covers a full window: three heavy frames at the start do not reach the
     /// reserve, which would hold the loop on its floor.
     #[test]
@@ -339,7 +494,10 @@ mod tests {
         // back in front, 8 ms budgets: the margin leaves no timed wait, frame after frame
         let mut loop_start = burst;
         while loop_start - burst <= LATENESS_AGE {
-            assert_eq!(lateness.wait_end(loop_start + ms(8.0), loop_start), loop_start);
+            assert_eq!(
+                lateness.wait_end(loop_start + ms(8.0), loop_start),
+                loop_start
+            );
             loop_start += T;
         }
         // the burst aged out: the loop waits up to its deadline, and its first timed-out wait

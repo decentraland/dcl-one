@@ -553,42 +553,20 @@ fn run_scene_loop(world: &mut World) {
         frame_target_duration,
     );
     loop_schedule.next_frame_end = next_frame_end;
-    #[cfg(target_arch = "wasm32")]
-    let mode = dcl_wasm::scene_loop_mode::get();
-    // web: in the deadline mode, from the frame's start once the frame's tail is measured
-    #[cfg(target_arch = "wasm32")]
-    let target_end_time = {
-        let pacing = world.resource::<loop_pacing::WebLoopPacing>();
-        let reserve = pacing.tail.reserve(frame_target_duration);
-        match (
-            mode.frame_deadline() && fps != 0.0,
-            pacing.frame_start,
-            reserve,
-        ) {
-            (true, Some(frame_start), Some(reserve)) => loop_pacing::frame_deadline(
-                frame_start,
-                start_loop_time,
-                frame_target_duration,
-                reserve,
-            ),
-            _ => target_end_time,
-        }
-    };
     // a native sleep can wake late by the sleeper's accuracy, so no wait for replies ends
     // closer to the deadline than that
     #[cfg(not(target_arch = "wasm32"))]
     let last_wait_end =
         target_end_time - Duration::new(0, loop_schedule.sleeper.native_accuracy_ns());
-    // web: a timed wait can wake late too, by as much as the recent timed waits did
+    // web: the deadline mode's deadline, and timed waits that end before it by their lateness
     #[cfg(target_arch = "wasm32")]
-    let last_wait_end = if mode.loop_waits_for_replies() {
-        world
-            .resource::<loop_pacing::WebLoopPacing>()
-            .wait_lateness
-            .wait_end(target_end_time, start_loop_time)
-    } else {
-        target_end_time
-    };
+    let mut web_loop = world.resource_mut::<loop_pacing::WebLoopPacing>().begin(
+        target_end_time,
+        start_loop_time,
+        (fps != 0.0).then_some(frame_target_duration),
+    );
+    #[cfg(target_arch = "wasm32")]
+    let (target_end_time, last_wait_end) = (web_loop.deadline, web_loop.last_wait_end);
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
@@ -605,9 +583,8 @@ fn run_scene_loop(world: &mut World) {
                 || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
     {
         let pass_start = Instant::now();
-        // web: the replies so far, before this pass drains them; one after this ends the wait
         #[cfg(target_arch = "wasm32")]
-        let replies_seen = dcl_wasm::scene_replies::REPLIES.seen();
+        web_loop.pass_start();
         schedule.run(world);
         run_once = true;
         scene_schedule_run_count += 1;
@@ -622,28 +599,16 @@ fn run_scene_loop(world: &mut World) {
                 // the sleep the sleeper's accuracy is for
                 #[cfg(not(target_arch = "wasm32"))]
                 spin_sleep::native_sleep(wait);
-                // a browser's timed wait can wake a millisecond or more late, past the
-                // deadline, so a reply that arrives meanwhile ends the wait
                 #[cfg(target_arch = "wasm32")]
-                if mode.loop_waits_for_replies() {
-                    if dcl_wasm::scene_replies::REPLIES.wait(replies_seen, wait) {
-                        let now = Instant::now();
-                        world
-                            .resource_mut::<loop_pacing::WebLoopPacing>()
-                            .wait_lateness
-                            .push(now, now.saturating_duration_since(next_pass));
-                    }
-                } else {
-                    std::thread::sleep(wait);
-                }
+                web_loop.wait(next_pass, wait);
             }
         }
     }
     let loop_end_time = Instant::now();
     #[cfg(target_arch = "wasm32")]
-    {
-        world.resource_mut::<loop_pacing::WebLoopPacing>().loop_end = Some(loop_end_time);
-    }
+    world
+        .resource_mut::<loop_pacing::WebLoopPacing>()
+        .end(web_loop, loop_end_time);
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
 
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
