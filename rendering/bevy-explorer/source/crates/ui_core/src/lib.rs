@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod bound_node;
 pub mod button;
 pub mod color_picker;
@@ -168,7 +170,6 @@ impl Plugin for UiCorePlugin {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn setup(
     asset_server: Res<AssetServer>,
     mut tracker: ResMut<StateTracker<State>>,

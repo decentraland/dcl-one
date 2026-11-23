@@ -1,0 +1,14 @@
+:global(html:has(.EarnPage)) {
+  scroll-padding-top: calc(130px + var(--cf-sticky-extra, 0px));
+}
+
+.stickyNavbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-bottom: 30px;
+}
+
+.stickyNavbar > :global(.Header.Navbar) {
+  margin-bottom: 0;
+}

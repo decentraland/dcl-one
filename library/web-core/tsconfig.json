@@ -1,0 +1,38 @@
+{
+  // The library's own compile profile: ES and the DOM, with only the host globals in globals.d.ts, so a
+  // module that leans on a declaration one app makes (ui3's or Sites' window globals) does not compile.
+  // Its tests run in apps/ui3's Vitest and are type-checked by apps/ui3's tsconfig.json.
+  "compilerOptions": {
+    "paths": {
+      // No node_modules here: the packages resolve to the copy of the host that runs the suite.
+      "zod": ["../../apps/ui3/node_modules/zod"],
+      "viem": ["../../apps/ui3/node_modules/viem"],
+      "viem/*": ["../../apps/ui3/node_modules/viem/*"],
+      "@walletconnect/sign-client": ["../../apps/ui3/node_modules/@walletconnect/sign-client"],
+      "qrcode-generator": ["../../apps/ui3/node_modules/qrcode-generator"],
+      // Type-checked against the checking implementation, as every host does.
+      "dcl-validate-impl": ["./validate/checked.ts"]
+    },
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "types": [],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false
+  },
+  "include": ["."],
+  "exclude": ["**/*.test.ts"]
+}

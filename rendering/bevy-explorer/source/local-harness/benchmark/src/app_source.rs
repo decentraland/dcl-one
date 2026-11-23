@@ -10,7 +10,7 @@ use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
-use zip06::ZipArchive;
+use zip::ZipArchive;
 
 use crate::failure::Failure;
 use crate::out;
@@ -167,6 +167,10 @@ fn check_archive<R: Read + io::Seek>(archive: &mut ZipArchive<R>) -> Result<(), 
             archive.len()
         )));
     }
+    // The reader keeps one entry of each name, so a name held twice is refused here.
+    if archive.has_duplicate_names() {
+        return Err(Failure::usage("the archive holds one name twice"));
+    }
 
     let mut declared = 0u64;
     for index in 0..archive.len() {
@@ -190,7 +194,7 @@ fn unpack<R: Read + io::Seek>(
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         let link = entry
             .unix_mode()
             .is_some_and(|mode| mode & 0xF000 == 0xA000);

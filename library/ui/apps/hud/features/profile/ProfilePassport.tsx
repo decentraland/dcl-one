@@ -419,15 +419,17 @@ export function ProfilePassport({
   if (!isSelf && onJump != null) {
     options.push({ label: 'Jump to Location', icon: <img src={jumpInIcon} alt="" width={16} height={16} />, onClick: pick(onJump) })
   }
-  // before Block, as the reference client's menu
   if (!isSelf && onGift != null) options.push({ label: 'Gift', icon: <MaskIcon src={giftIcon} size={16} />, onClick: pick(onGift) })
-  if (!isSelf && relationship !== 'blocked' && onBlock != null) {
-    options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
-  }
-  // after Block, as the reference client's menu
   const inviteEntry = isSelf ? null : inviteSubmenuItem(inviteItems, () => setMenuOpen(false))
   if (inviteEntry != null) options.push(inviteEntry)
-  if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
+  // Block and Report together at the end, past a separator, as unity-explorer's passport menu
+  const destructive: ContextMenuItem[] = []
+  if (!isSelf && relationship !== 'blocked' && onBlock != null) {
+    destructive.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
+  }
+  if (!isSelf && onReport != null) destructive.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
+  if (options.length > 0 && destructive.length > 0) options.push({ kind: 'separator' })
+  options.push(...destructive)
   const menuRef = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -519,7 +521,7 @@ export function ProfilePassport({
             ) : profile.bodyImage ? (
               <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
             ) : (
-              <Avatar src={profile.picture} name={base} color={nameColor} size={180} status="online" />
+              <Avatar src={profile.picture} name={base} color={nameColor} size={180} />
             )}
           </div>
 

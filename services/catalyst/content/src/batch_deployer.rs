@@ -173,7 +173,7 @@ impl SyncProgress {
 
 pub struct BatchDeployer {
     config: BatchDeployerConfig,
-    http_client: reqwest::Client,
+    http_client: crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     pool: sqlx::PgPool,
     deployer: Arc<LiveSyncDeployer>,
@@ -198,7 +198,7 @@ impl BatchDeployer {
     /// the database already holds (`LiveDeploymentRepository::seed_deployed_entity_ids`) or empty.
     pub fn new(
         config: BatchDeployerConfig,
-        http_client: reqwest::Client,
+        http_client: crate::http::CheckedRedirectClient,
         storage: Arc<Storage>,
         pool: sqlx::PgPool,
         deployer: Arc<LiveSyncDeployer>,
@@ -346,6 +346,7 @@ impl BatchDeployer {
                     context: DeploymentContext::Synced,
                     report: report.as_ref(),
                     retry_state: None,
+                    discard_overtaken: false,
                 },
             )
             .await;
@@ -521,6 +522,7 @@ mod tests {
         let (storage, tmp) = temp_storage("batch").await;
         let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             2,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         ));
@@ -529,7 +531,7 @@ mod tests {
                 ignored_types: HashSet::from(["outfits".to_string()]),
                 ..Default::default()
             },
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             storage,
             pool.clone(),
             deployer,
@@ -751,6 +753,7 @@ mod tests {
             .unwrap();
         let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             2,
             crate::sync_deployer::SyncValidation::Content(Arc::new(
                 crate::validator::Sources::new(
@@ -764,7 +767,7 @@ mod tests {
         ));
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             storage,
             pool.clone(),
             deployer,
@@ -1010,6 +1013,7 @@ mod tests {
         let (storage, tmp) = temp_storage("access-passed").await;
         let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::Content(Arc::new(
                 crate::validator::Sources::new(

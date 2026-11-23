@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::f32::consts::FRAC_PI_4;
 
 use bevy::{
@@ -139,7 +141,6 @@ fn update_layer_properties(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_avatar_layers(
     mut qs: ParamSet<(
         Query<&mut Propagate<RenderLayers>, Or<(Added<ForeignPlayer>, Added<PrimaryUser>)>>,
@@ -199,7 +200,6 @@ fn update_directional_light_layers(
 #[derive(Component)]
 pub struct TextureCamEntity(Entity);
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_texture_cameras(
     mut commands: Commands,
     q: Query<(
@@ -421,7 +421,6 @@ impl From<PbCameraLayers> for CameraLayers {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_camera_layers(
     mut commands: Commands,
     changed: Query<(Entity, &CameraLayers, &ContainerEntity), Changed<CameraLayers>>,
@@ -484,12 +483,21 @@ impl TextureLayersCache {
     }
 
     pub fn get_layer(&mut self, scene: Entity, layer: u32) -> u32 {
-        if layer == 0 {
-            return 0;
-        } else if layer > LAYERS_PER_SCENE {
+        if layer > LAYERS_PER_SCENE {
             warn!("layer too high");
         }
-        self.get_base(scene) + (layer - 1).min(LAYERS_PER_SCENE)
+        self.get_base(scene);
+        self.layer(scene, layer).unwrap_or_default()
+    }
+
+    /// The render layer of a scene's camera layer, without allocating the scene a base: `None`
+    /// while the scene has none.
+    pub fn layer(&self, scene: Entity, layer: u32) -> Option<u32> {
+        if layer == 0 {
+            return Some(0);
+        }
+        let base = self.lookup.get(&scene)?;
+        Some(base * LAYERS_PER_SCENE + (layer - 1).min(LAYERS_PER_SCENE))
     }
 
     pub fn cleanup(mut slf: ResMut<Self>, scenes: Query<Entity, With<RendererSceneContext>>) {
@@ -503,5 +511,24 @@ impl TextureLayersCache {
         });
         slf.changed_layers.clear();
         slf.free = free;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_layer_lookup_matches_the_allocating_one_and_allocates_nothing() {
+        let mut world = World::new();
+        let scene = world.spawn_empty().id();
+        let mut cache = TextureLayersCache::default();
+        assert_eq!(cache.layer(scene, 1), None);
+        assert!(cache.lookup.is_empty());
+        assert_eq!(cache.layer(scene, 0), Some(0));
+
+        let allocated = cache.get_layer(scene, 3);
+        assert_eq!(cache.layer(scene, 3), Some(allocated));
+        assert_eq!(cache.layer(scene, 0), Some(cache.get_layer(scene, 0)));
     }
 }

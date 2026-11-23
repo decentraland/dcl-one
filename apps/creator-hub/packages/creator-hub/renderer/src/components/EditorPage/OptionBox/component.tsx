@@ -3,7 +3,7 @@ import { useCallback } from 'react';
 import { misc } from '#preload';
 
 import { t } from '/@/modules/store/translation/utils';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import { type Props } from './types';
 
@@ -33,7 +33,13 @@ export function OptionBox({
       />
       <h3>{title}</h3>
       <span className="description">{description}</span>
-      <Button onClick={onClickPublish}>{buttonText}</Button>
+      <Button
+        variant="text"
+        className="hub-button hub-button--primary"
+        onClick={onClickPublish}
+      >
+        {buttonText}
+      </Button>
       {learnMoreUrl && (
         <span
           className="learn-more"

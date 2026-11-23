@@ -1,5 +1,6 @@
-import EventManagement from "@/features/explorer/event-management/EventManagement";
+import { EventsLocaleProvider } from "@/features/events/locale";
+import PendingEventsPage from "@/features/explorer/event-management/PendingEventsPage";
 
 export default function PendingEventsRoute() {
-  return <EventManagement mode="pending" />;
+  return <EventsLocaleProvider><PendingEventsPage /></EventsLocaleProvider>;
 }

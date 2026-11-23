@@ -307,7 +307,7 @@ export function ProfileCardPresentation({
   return (
     <div ref={cardRef} className={styles.card} style={{ left: pos.left, top: pos.top }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Profile">
       <div className={styles.header}>
-        <Avatar src={user.picture} name={base} color={color} size={72} status="online" />
+        <Avatar src={user.picture} name={base} color={color} size={72} />
         <button type="button" className={styles.copyRow} title="Copy name" onClick={() => copy(user.name, 'name')}>
           <span className={styles.name} style={{ color }}>
             {base}

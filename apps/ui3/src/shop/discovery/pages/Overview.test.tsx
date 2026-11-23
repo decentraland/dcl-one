@@ -5,9 +5,16 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PRIMARY_WEARABLE, RESALE_WEARABLE, saleWearable, ShopHarness, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../fixtures";
+import type { ReactNode } from "react";
+
+import { fetchShopItems } from "@shop/discovery/api";
+import { setShopClient } from "../../api/host";
+import { catalogClient, PRIMARY_WEARABLE, RESALE_WEARABLE, saleWearable, ShopHarness, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../fixtures";
+import { primeRemoteFlags } from "../lib/remoteFlags";
 import { invalidateShopQueries } from "../query";
+import { shopReadsAfter } from "../reads";
 import Overview from "./Overview";
+import { prefetchOverviewRails } from "./overviewRails";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
@@ -121,5 +128,61 @@ describe("the Shop overview", () => {
     const rail = await screen.findByTestId("trending-rail");
     const sax = (await within(rail).findAllByTestId("card")).find((c) => within(c).queryByText("Hot Sax"))!;
     expect(within(sax).queryByTestId("card-price-mana")).toBeNull();
+  });
+
+  it("a link's loader sends the rails before the page mounts; the page draws them without asking again", async () => {
+    const client = catalogClient();
+    const page = (children: ReactNode) => (
+      <ShopHarness path="/shop/overview" entry="/shop/overview" client={client} remoteFlags={{ "dapps-shop-creator-sales": true }}>
+        {children}
+      </ShopHarness>
+    );
+    const view = render(page(null));
+    prefetchOverviewRails(Promise.resolve());
+    const asked = (part: string) => client.calls.filter((c) => c.url.includes(part)).length;
+    const rails = () => [asked("sortBy=newest"), asked("/catalog/trending"), asked("discounted=true")];
+    expect(rails()).toEqual([1, 1, 1]);
+    view.rerender(page(<Overview />));
+    await within(await screen.findByRole("region", { name: "New Creations" })).findAllByTestId("card");
+    await within(screen.getByTestId("trending-rail")).findAllByTestId("card");
+    expect(rails()).toEqual([1, 1, 1]);
+  });
+
+  it("an answer sent before the flags are known is mapped with their answer", async () => {
+    setShopClient(catalogClient());
+    primeRemoteFlags(null);
+    let answer!: () => void;
+    const flags = new Promise<void>((resolve) => (answer = resolve));
+    let landed = false;
+    const read = fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, shopReadsAfter(flags)(new AbortController().signal));
+    void read.then(() => (landed = true));
+    await settle();
+    expect(landed).toBe(false);
+    primeRemoteFlags({ "dapps-shop-creator-sales": true });
+    answer();
+    expect((await read).items[0]?.compareAtCredits).toBeGreaterThan(0);
+    setShopClient(null);
+  });
+
+  it("sends Best Deals only once unknown flags say creator sales are on", async () => {
+    for (const [creatorSales, deals] of [
+      [false, 0],
+      [true, 1],
+    ] as const) {
+      invalidateShopQueries();
+      const client = catalogClient();
+      setShopClient(client);
+      primeRemoteFlags(null);
+      let answer!: () => void;
+      const flags = new Promise<void>((resolve) => (answer = resolve));
+      prefetchOverviewRails(flags);
+      const asked = (part: string) => client.calls.filter((c) => c.url.includes(part)).length;
+      expect([asked("sortBy=newest"), asked("/catalog/trending"), asked("discounted=true")]).toEqual([1, 1, 0]);
+      primeRemoteFlags({ "dapps-shop-creator-sales": creatorSales });
+      answer();
+      await settle();
+      expect(asked("discounted=true"), `creator sales ${creatorSales}`).toBe(deals);
+    }
+    setShopClient(null);
   });
 });

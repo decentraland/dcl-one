@@ -1,13 +1,13 @@
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
-import { FeatureFlag } from '/@/modules/store/featureFlags';
+import { FeatureFlag, fetchFeatureFlags } from '/@/modules/store/featureFlags';
 import { actions as creatorFundActions } from '/@/modules/store/creatorFund';
 import * as api from '/@/lib/creatorFundApi';
 import { createTestStore } from '../../../tests/utils/testStore';
@@ -20,7 +20,11 @@ const { isEnabled, auth } = vi.hoisted(() => ({
 }));
 
 vi.mock('/@/hooks/useAuth', () => ({ useAuth: () => auth }));
-vi.mock('/@/lib/creatorFundApi', () => ({ getEnrollment: vi.fn() }));
+vi.mock('/@/lib/creatorFundApi', () => ({
+  getEnrollment: vi.fn(),
+  getPayoutWallet: vi.fn(),
+  getPlaces: vi.fn(),
+}));
 
 vi.mock('/@/hooks/useFeatureFlags', () => ({ useFeatureFlags: () => ({ isEnabled }) }));
 vi.mock('/@/hooks/useEditor', () => ({ useEditor: () => ({ version: '0.0.0' }) }));
@@ -126,7 +130,7 @@ describe('Navbar', () => {
       return store;
     }
 
-    const dot = () => document.querySelector('.notification-dot');
+    const dot = () => screen.getByRole('navigation').querySelector('[aria-hidden="true"]');
 
     afterEach(() => {
       auth.isSignedIn = true;
@@ -163,6 +167,97 @@ describe('Navbar', () => {
 
     it('should hide it while EARN is the active tab', async () => {
       renderNavbar(NavbarItem.EARN, await storeWithEnrollment(Promise.resolve(NOT_ENROLLED)));
+      expect(dot()).toBeNull();
+    });
+  });
+
+  describe('when the joined creator has a Payouts setup step to take', () => {
+    const enrollment = (email_verified_at: string | null) => ({
+      ok: true,
+      status: 200,
+      data: {
+        status: 'active' as const,
+        enrolled_at: '2026-10-30T14:02:11Z',
+        terms_version: 1,
+        first_name: 'Jane',
+        last_name: 'Doe',
+        email: 'jane.doe@example.com',
+        email_verified_at,
+      },
+    });
+    const placesWith = (status: string) => ({
+      ok: true,
+      status: 200,
+      data: { cycle: null, places: [{ id: 'a', status }] },
+    });
+    const NO_WALLET = { ok: false, status: 404, error: 'Not Found' };
+    const WALLET = {
+      ok: true,
+      status: 200,
+      data: { address: '0x0000000000000000000000000000000000000002', updated_at: '' },
+    };
+
+    async function storeWithSetup({
+      verifiedAt = null as string | null,
+      wallet = NO_WALLET as object,
+      places = placesWith('in_program'),
+    } = {}) {
+      vi.mocked(api.getEnrollment).mockResolvedValue(enrollment(verifiedAt) as any);
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(wallet as any);
+      vi.mocked(api.getPlaces).mockResolvedValue(places as any);
+      const store = createTestStore();
+      store.dispatch(
+        fetchFeatureFlags.fulfilled(
+          { flags: { [FeatureFlag.CREATOR_FUND_PAYOUT]: true }, variants: {} },
+          '',
+        ),
+      );
+      await act(async () => {
+        await Promise.all([
+          store.dispatch(creatorFundActions.fetchEnrollment()),
+          store.dispatch(creatorFundActions.fetchPayoutWallet()),
+          store.dispatch(creatorFundActions.fetchHasActivePlace()),
+        ]);
+      });
+      return store;
+    }
+
+    const dot = () => screen.getByRole('navigation').querySelector('[aria-hidden="true"]');
+
+    it('should show the dot on EARN and name the pending setup', async () => {
+      renderNavbar(NavbarItem.HOME, await storeWithSetup());
+
+      const earn = screen.getByRole('link', { name: 'EARN, payout setup not finished' });
+      expect(earn.contains(dot())).toBe(true);
+    });
+
+    it('should show it when only the payout wallet is missing', async () => {
+      renderNavbar(NavbarItem.HOME, await storeWithSetup({ verifiedAt: '2026-11-02T10:00:00Z' }));
+
+      expect(screen.getByRole('link', { name: 'EARN, payout setup not finished' })).toBeTruthy();
+    });
+
+    it('should show no dot while both steps are locked for want of a place in the program', async () => {
+      renderNavbar(NavbarItem.HOME, await storeWithSetup({ places: placesWith('not_eligible') }));
+
+      expect(screen.getByRole('link', { name: 'Earn' })).toBeTruthy();
+      expect(dot()).toBeNull();
+    });
+
+    it('should show no dot once the setup is complete', async () => {
+      renderNavbar(
+        NavbarItem.HOME,
+        await storeWithSetup({ verifiedAt: '2026-11-02T10:00:00Z', wallet: WALLET }),
+      );
+
+      expect(screen.getByRole('link', { name: 'Earn' })).toBeTruthy();
+      expect(dot()).toBeNull();
+    });
+
+    it('should show no dot while EARN is the active page', async () => {
+      renderNavbar(NavbarItem.EARN, await storeWithSetup());
+
+      expect(screen.getByRole('link', { name: 'Earn' })).toBeTruthy();
       expect(dot()).toBeNull();
     });
   });

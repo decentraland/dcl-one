@@ -1,0 +1,272 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_gltf): skip KHR_animation_pointer channels, accept a required EXT_texture_webp
+Date: 2026-11-17T17:51:14+00:00
+
+---
+diff --git a/Cargo.toml b/Cargo.toml
+index a0e17bff9df8d2b9f322c9e07d0615f2ac1eb2c0..13381d1429c264ac3b630b561c0eab4563f5da53 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -4350,3 +4350,7 @@ wasm = false
+ 
+ [patch.crates-io]
+ winit = { git = "https://github.com/robtfm/winit", branch = "v0.30.x" }
++# the gltf commit the explorer pins (rendering/bevy-explorer/source/Cargo.toml), so this
++# workspace's own tests build bevy_gltf against it; a dependent's patch table overrides this one
++gltf = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
++gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
+diff --git a/crates/bevy_gltf/Cargo.toml b/crates/bevy_gltf/Cargo.toml
+index b3f0c9ef476f21b89cdc65f86024f43630a8512d..ff987385673a505b123a487493bfcf42fde18282 100644
+--- a/crates/bevy_gltf/Cargo.toml
++++ b/crates/bevy_gltf/Cargo.toml
+@@ -53,6 +53,8 @@ gltf = { version = "1.4.0", default-features = false, features = [
+   "KHR_materials_unlit",
+   "KHR_materials_emissive_strength",
+   "KHR_texture_transform",
++  # parses pointer channels (no target node) so the loader can skip them instead of panicking
++  "KHR_animation_pointer",
+   # accepts a required KHR_texture_basisu and a texture with no `source`; the loader reads the
+   # extension's image itself (`prefer_basisu_sources`) and the host decodes it
+   "allow_empty_texture",
+diff --git a/crates/bevy_gltf/src/loader/mod.rs b/crates/bevy_gltf/src/loader/mod.rs
+index 0619b115d17247de53ccf3a5aaaee4fb9d89a2e1..9d5e0fca140959e7c029e1be04e5c7bb93dee589 100644
+--- a/crates/bevy_gltf/src/loader/mod.rs
++++ b/crates/bevy_gltf/src/loader/mod.rs
+@@ -243,6 +243,53 @@ impl AssetLoader for GltfLoader {
+     }
+ }
+ 
++/// Parses and validates a glTF, tolerating two kinds of validation error:
++/// - the gltf crate requires every non-sparse accessor to have a bufferView, but the spec allows
++///   both to be omitted (the accessor is zero-filled, optionally overlaid with sparse data -
++///   blender exports morph targets like this). the accessor readers already yield zeros in that
++///   case. draco-compressed accessors also lack bufferViews but their data is not readable, so
++///   those still fail.
++/// - the gltf crate only allows a required `EXT_texture_webp` behind its own feature, which reads
++///   the extension into a typed field that overrides `source`; this loader reads the extension's
++///   image itself (`prefer_extension_sources`).
++///
++/// Validation reports every error, so when those are the only ones the rest of the document
++/// validated and it is parsed again without validation.
++fn parse_gltf(bytes: &[u8]) -> Result<gltf::Gltf, GltfError> {
++    use gltf::json::validation::Error;
++    let errors = match gltf::Gltf::from_slice(bytes) {
++        Ok(gltf) => return Ok(gltf),
++        Err(gltf::Error::Validation(errors)) => errors,
++        Err(e) => return Err(e.into()),
++    };
++    let missing_buffer_view = |(path, error): &(gltf::json::Path, Error)| {
++        matches!(error, Error::Missing)
++            && path.0.starts_with("accessors[")
++            && path.0.ends_with(".bufferView")
++    };
++    let required_webp = |(path, error): &(gltf::json::Path, Error)| {
++        matches!(error, Error::Unsupported)
++            && path.0.starts_with("extensionsRequired[")
++            && path.0.ends_with("= \"EXT_texture_webp\"")
++    };
++    if !errors
++        .iter()
++        .all(|e| missing_buffer_view(e) || required_webp(e))
++    {
++        return Err(gltf::Error::Validation(errors).into());
++    }
++    let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
++    if errors.iter().any(missing_buffer_view)
++        && gltf
++            .document
++            .extensions_used()
++            .any(|ext| ext == "KHR_draco_mesh_compression")
++    {
++        return Err(gltf::Error::Validation(errors).into());
++    }
++    Ok(gltf)
++}
++
+ /// Loads an entire glTF file.
+ async fn load_gltf<'a, 'b, 'c>(
+     loader: &GltfLoader,
+@@ -250,34 +297,7 @@ async fn load_gltf<'a, 'b, 'c>(
+     load_context: &'b mut LoadContext<'c>,
+     settings: &'b GltfLoaderSettings,
+ ) -> Result<Gltf, GltfError> {
+-    let gltf = match gltf::Gltf::from_slice(bytes) {
+-        Ok(gltf) => gltf,
+-        // the gltf crate requires every non-sparse accessor to have a bufferView, but the
+-        // spec allows both to be omitted (the accessor is zero-filled, optionally overlaid
+-        // with sparse data - blender exports morph targets like this). the accessor readers
+-        // already yield zeros in that case, so retry without validation when that is the
+-        // only kind of error reported. draco-compressed accessors also lack bufferViews but
+-        // their data is not readable, so keep failing for those.
+-        Err(gltf::Error::Validation(errors))
+-            if errors.iter().all(|(path, error)| {
+-                matches!(error, gltf::json::validation::Error::Missing)
+-                    && path.0.starts_with("accessors[")
+-                    && path.0.ends_with(".bufferView")
+-            }) =>
+-        {
+-            let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
+-            if gltf
+-                .document
+-                .extensions_used()
+-                .any(|ext| ext == "KHR_draco_mesh_compression")
+-            {
+-                return Err(GltfError::Gltf(gltf::Error::Validation(errors)));
+-            }
+-            gltf
+-        }
+-        Err(e) => return Err(e.into()),
+-    };
+-    let gltf = prefer_extension_sources(gltf);
++    let gltf = prefer_extension_sources(parse_gltf(bytes)?);
+ 
+     let file_name = load_context
+         .asset_path()
+@@ -317,8 +337,27 @@ async fn load_gltf<'a, 'b, 'c>(
+         let mut animation_roots = <HashSet<_>>::default();
+         for animation in gltf.animations() {
+             let mut animation_clip = AnimationClip::default();
+-            for channel in animation.channels() {
+-                let node = channel.target().node();
++            let mut skipped_pointers = 0;
++            let mut first_pointer = None;
++            for (channel_index, channel) in animation.channels().enumerate() {
++                let target = channel.target();
++                // a KHR_animation_pointer channel animates the property a JSON pointer names
++                // (a material's emissive, a camera's fov), not a node; bevy_animation only
++                // drives an entity's components, so the channel is skipped and the rest of
++                // the clip still plays
++                if target.property() == gltf::animation::Property::Pointer {
++                    skipped_pointers += 1;
++                    first_pointer = first_pointer.or(target.animation_pointer());
++                    continue;
++                }
++                let Some(node) = target.node_opt() else {
++                    warn!(
++                        "{}: animation {} channel {channel_index} has no target node; skipped",
++                        load_context.asset_path(),
++                        animation.index(),
++                    );
++                    continue;
++                };
+                 let interpolation = channel.sampler().interpolation();
+                 let reader = channel.reader(|buffer| Some(&buffer_data[buffer.index()]));
+                 let keyframe_timestamps: Vec<f32> = if let Some(inputs) = reader.read_inputs() {
+@@ -548,6 +587,15 @@ async fn load_gltf<'a, 'b, 'c>(
+                     );
+                 }
+             }
++            if skipped_pointers > 0 {
++                warn!(
++                    "{}: animation {} skips {skipped_pointers} KHR_animation_pointer channel(s), \
++                    first targeting {}: only node transforms and morph weights are animated",
++                    load_context.asset_path(),
++                    animation.index(),
++                    first_pointer.unwrap_or("(no pointer)"),
++                );
++            }
+             let handle = load_context.add_labeled_asset(
+                 GltfAssetLabel::Animation(animation.index()).to_string(),
+                 animation_clip,
+@@ -1018,8 +1066,9 @@ async fn load_gltf<'a, 'b, 'c>(
+ 
+ /// The texture extensions whose `source` names an image this loader decodes, in the order one is
+ /// picked when a texture carries several: `KHR_texture_basisu` (KTX2, through the host's
+-/// transcoder), `EXT_texture_webp` and `MSFT_texture_dds`. They are the extensions `gltf`'s
+-/// `allow_empty_texture` lets a file require with no `source` on its textures.
++/// transcoder), `EXT_texture_webp` and `MSFT_texture_dds`. They are the extensions a file may
++/// require with no `source` on its textures: `gltf`'s `allow_empty_texture` feature allows the
++/// basisu and dds ones, and `parse_gltf` the webp one.
+ const SOURCE_EXTENSIONS: [&str; 3] = ["KHR_texture_basisu", "EXT_texture_webp", "MSFT_texture_dds"];
+ 
+ /// The image index a texture's [`SOURCE_EXTENSIONS`] entry names, when the texture has no
+@@ -1042,8 +1091,8 @@ fn extension_source(texture: &gltf::json::Texture, image_count: usize) -> Option
+ /// the asset server, or embedded through `Image::from_buffer_at` at its labelled path. A KTX2
+ /// ends in `bevy_image`'s KTX2 decode, where the host's transcoder
+ /// (`bevy_image::set_ktx2_transcoder`) takes UASTC; a WebP or DDS in bevy's own decoders.
+-/// `gltf`'s `allow_empty_texture` feature is what lets a file that requires one of these, and
+-/// whose textures have no `source`, through validation.
++/// `gltf`'s `allow_empty_texture` feature and `parse_gltf` are what let a file that requires one
++/// of these, and whose textures have no `source`, through validation.
+ fn prefer_extension_sources(gltf: gltf::Gltf) -> gltf::Gltf {
+     let image_count = gltf.document.images().len();
+     if !gltf
+@@ -2155,6 +2204,8 @@ mod test {
+             MeshPlugin,
+             crate::GltfPlugin::default(),
+         ));
++        #[cfg(feature = "bevy_animation")]
++        app.init_asset::<bevy_animation::AnimationClip>();
+ 
+         app.finish();
+         app.cleanup();
+@@ -2242,6 +2293,57 @@ mod test {
+         assert_eq!(gltf_node.asset_label(), GltfAssetLabel::Node(0));
+     }
+ 
++    // a KHR_animation_pointer channel and a channel with no node are skipped; the clip keeps the
++    // node's translation channel
++    #[cfg(feature = "bevy_animation")]
++    #[test]
++    fn animation_pointer_channels_are_skipped() {
++        let gltf_path = "test.gltf";
++        let app = load_gltf_into_app(
++            gltf_path,
++            r#"
++{
++    "asset": { "version": "2.0" },
++    "extensionsUsed": ["KHR_animation_pointer"],
++    "nodes": [{ "name": "Animated" }],
++    "scene": 0,
++    "scenes": [{ "nodes": [0] }],
++    "buffers": [{
++        "byteLength": 32,
++        "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8="
++    }],
++    "bufferViews": [
++        { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
++        { "buffer": 0, "byteOffset": 8, "byteLength": 24 }
++    ],
++    "accessors": [
++        { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR",
++          "min": [0], "max": [1] },
++        { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3" }
++    ],
++    "animations": [{
++        "samplers": [{ "input": 0, "output": 1 }],
++        "channels": [
++            { "sampler": 0, "target": { "path": "pointer", "extensions": {
++                "KHR_animation_pointer": { "pointer": "/materials/0/emissiveFactor" } } } },
++            { "sampler": 0, "target": { "path": "translation" } },
++            { "sampler": 0, "target": { "node": 0, "path": "translation" } }
++        ]
++    }]
++}
++"#,
++        );
++        let asset_server = app.world().resource::<AssetServer>();
++        let handle = asset_server.load(gltf_path);
++        let gltf_root = app.world().resource::<Assets<Gltf>>().get(&handle).unwrap();
++        assert_eq!(gltf_root.animations.len(), 1);
++        let clips = app
++            .world()
++            .resource::<Assets<bevy_animation::AnimationClip>>();
++        let clip = clips.get(&gltf_root.animations[0]).unwrap();
++        assert_eq!(clip.curves().len(), 1, "only the node channel is kept");
++    }
++
+     #[test]
+     fn node_hierarchy_no_hierarchy() {
+         let gltf_path = "test.gltf";
+@@ -2556,9 +2658,9 @@ mod test {
+         assert_eq!(skinned_node.skin.as_ref(), Some(&gltf_root.skins[0]));
+     }
+ 
+-    /// `json` parsed with validation, then through `prefer_extension_sources`.
++    /// `json` parsed as the loader parses it, then through `prefer_extension_sources`.
+     fn parse_basisu(json: &str) -> gltf::Gltf {
+-        super::prefer_extension_sources(gltf::Gltf::from_slice(json.as_bytes()).unwrap())
++        super::prefer_extension_sources(super::parse_gltf(json.as_bytes()).unwrap())
+     }
+ 
+     /// The image index texture `texture` samples.

@@ -11,7 +11,7 @@ import {
 import {
   SignProxyOkSchema,
   ThirdwebAuthResultSchema,
-} from "./thirdwebSchema";
+} from "@web-core/auth/thirdwebSchema";
 
 afterEach(() => {
   vi.unstubAllGlobals();

@@ -65,7 +65,7 @@ impl Enforcement {
         if let (Some(room), true) = (room, self.gatekeeper.connector_livekit_armed()) {
             let gatekeeper = Arc::clone(&self.gatekeeper);
             let addr = address.to_string();
-            tokio::spawn(async move {
+            crate::shared::task::spawn(async move {
                 if !gatekeeper.kick_island_participant(&room, &addr).await {
                     tracing::error!("island ban enforcement request was not persisted");
                 }
@@ -82,7 +82,7 @@ impl Enforcement {
         let banned = futures::stream::iter(addrs)
             .map(|addr| {
                 let checker = Arc::clone(&checker);
-                async move { checker.is_banned_fresh(&addr).await.then_some(addr) }
+                async move { checker.is_banned(&addr).await.then_some(addr) }
             })
             .buffer_unordered(BAN_SWEEP_CONCURRENCY)
             .filter_map(|hit| async move { hit });

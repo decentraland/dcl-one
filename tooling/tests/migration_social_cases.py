@@ -1,7 +1,10 @@
 """Social, referral and global notification imports against the actual target schema."""
+import contextlib
+import io
 import json
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -214,7 +217,11 @@ class SocialMigrationCases:
         CREATE TABLE user_mutes (muter_address text, muted_address text, muted_at timestamp);
         CREATE TABLE communities (id uuid PRIMARY KEY, name text, description text, owner_address text,
           private boolean, active boolean, unlisted boolean, editors_choice boolean,
-          created_at timestamp, updated_at timestamp);
+          created_at timestamp, updated_at timestamp, ranking_score real NOT NULL DEFAULT 0);
+        CREATE TABLE community_ranking_metrics (community_id uuid PRIMARY KEY, events_count integer NOT NULL DEFAULT 0,
+          photos_count integer NOT NULL DEFAULT 0, streams_count integer NOT NULL DEFAULT 0,
+          events_total_attendees integer NOT NULL DEFAULT 0, streams_total_participants integer NOT NULL DEFAULT 0,
+          has_thumbnail boolean NOT NULL DEFAULT false, updated_at timestamp NOT NULL DEFAULT now());
         CREATE TABLE community_members (community_id uuid, member_address text, role text, joined_at timestamp);
         CREATE TABLE community_bans (community_id uuid, banned_address text, banned_by text, banned_at timestamp,
           reason text, active boolean, unbanned_by text, unbanned_at timestamp);
@@ -247,6 +254,125 @@ class SocialMigrationCases:
     def social_ea_community(self, src, owner):
         self.sql(src, f"""INSERT INTO communities VALUES ('{self.SOCIAL_COMMUNITY}', 'c', '', '{owner}',
             false, true, false, false, '2026-01-01', '2026-01-01');""")
+
+    def test_when_copying_community_thumbnails_it_should_fill_the_imported_ones_and_keep_the_nodes(self):
+        from tooling.tests import migration_harness as harness
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        held, none = '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2'
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO communities VALUES
+            ('{held}', 'h', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01'),
+            ('{none}', 'n', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01');""")
+        self.social_ea_run('communities')
+        self.sql(tgt, f"""INSERT INTO social.community_thumbnails VALUES ('{held}', 'QmNodeOwn', now());""")
+        upstream, node = self.tmp / 'social-cdn', self.tmp / 'social-node'
+        self.addCleanup(shutil.rmtree, upstream, True)
+        self.addCleanup(shutil.rmtree, node, True)
+        image = harness.blobs.PNG_MAGIC + b'thumbnail'
+        for cid in (self.SOCIAL_COMMUNITY, held):
+            path = upstream / harness.blobs.community_thumbnail_path(cid)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(image)
+        copy = ('blobs', 'social-service-ea', '--from-dir', str(upstream), '--to', str(node))
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('copied 1, already in the store 0, none upstream 1', out)
+        key = harness.blobs.hash_bytes_v0(image)
+        self.assertEqual(harness.blobs.Store(node).path(key).read_bytes(), image)
+        self.assertEqual(self.sql(tgt, 'SELECT community_id, thumbnail_hash FROM social.community_thumbnails'
+                                       ' ORDER BY community_id;').strip().splitlines(),
+                         [f'{held}\tQmNodeOwn', f'{self.SOCIAL_COMMUNITY}\t{key}'])
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 imported without a thumbnail here', out)
+        # upstream serving something that is not a picture fails the run, unlike a community with none
+        bad = '00000000-0000-4000-8000-0000000000a3'
+        self.sql(src, f"""INSERT INTO communities VALUES
+            ('{bad}', 'b', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01');""")
+        self.social_ea_run('communities')
+        path = upstream / harness.blobs.community_thumbnail_path(bad)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'<html>not found</html>')
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('not an image 1', out)
+
+    RANKING_COLUMNS = ('SELECT ranking_events_count, ranking_photos_count, ranking_streams_count,'
+                       ' ranking_events_total_attendees, ranking_streams_total_participants, ranking_score'
+                       ' FROM social.communities WHERE id = {!r};')
+
+    def ranking_of(self, tgt, community):
+        return self.sql(tgt, self.RANKING_COLUMNS.format(community)).strip().split('\t')
+
+    def test_when_importing_ranking_metrics_it_should_carry_them_and_keep_the_nodes_counts(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        mirrored = '00000000-0000-4000-8000-0000000000b1'
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO communities VALUES
+            ('{mirrored}', 'm', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01', 0.25);
+            UPDATE communities SET ranking_score = 0.5 WHERE id = '{self.SOCIAL_COMMUNITY}';
+            INSERT INTO community_ranking_metrics (community_id, events_count, photos_count, streams_count,
+              events_total_attendees, streams_total_participants, has_thumbnail)
+            VALUES ('{self.SOCIAL_COMMUNITY}', 3, 5, 2, 40, 10, true);""")
+        # a community the mirror held since long ago, tracking from then, and one the node already
+        # holds as local with old tracking and its own counts
+        self.sql(tgt, f"""INSERT INTO social.communities (id, name, owner_address, origin, ranking_tracking_since,
+            created_at, updated_at) VALUES ('{mirrored}', 'm', '{owner}', 'upstream', '2025-01-01', '2025-01-01',
+            '2025-01-01');
+            INSERT INTO social.communities (id, name, owner_address, origin, ranking_tracking_since,
+            ranking_events_count, ranking_photos_count, ranking_streams_count, ranking_streams_total_participants,
+            created_at, updated_at) VALUES ('{self.SOCIAL_COMMUNITY}', 'c', '{owner}', 'local', '2025-01-01',
+            9, 1, 1, 4, '2025-01-01', '2025-01-01');""")
+        before = self.sql(tgt, "SELECT timezone('UTC', now()) - interval '1 second';").strip()
+        self.social_ea_run('communities', 'community_ranking_metrics')
+        # events are upstream's; photos and streams add the node's own
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['3', '6', '3', '40', '14', '0.5'])
+        self.assertEqual(self.ranking_of(tgt, mirrored), ['0', '0', '0', '0', '0', '0.25'])
+        moved = f"SELECT count(*) FROM social.communities WHERE ranking_tracking_since >= '{before}';"
+        self.assertEqual(self.sql(tgt, moved).strip(), '2')
+        # the node counts an event, two photos and a stream; an unchanged upstream leaves them
+        self.sql(tgt, f"""UPDATE social.communities SET ranking_events_count = 4, ranking_photos_count = 8,
+            ranking_streams_count = 4, ranking_streams_total_participants = 18, ranking_score = 0.9
+            WHERE id = '{self.SOCIAL_COMMUNITY}';""")
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['4', '8', '4', '40', '18', '0.9'])
+        # upstream's daily rescore alone is no change
+        self.sql(src, f"UPDATE communities SET ranking_score = 0.6 WHERE id = '{self.SOCIAL_COMMUNITY}';")
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['4', '8', '4', '40', '18', '0.9'])
+        # upstream moves on: events are upstream's, photos and streams keep the node's additions
+        self.sql(src, f"""UPDATE community_ranking_metrics SET events_count = 6, photos_count = 6,
+            events_total_attendees = 55 WHERE community_id = '{self.SOCIAL_COMMUNITY}';""")
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '9', '4', '55', '18', '0.6'])
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '9', '4', '55', '18', '0.6'])
+
+    def test_when_community_places_are_missing_from_the_catalogue_it_should_report_them(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        self.social_ea_community(src, owner)
+        known, unknown = '00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-0000000000d2'
+        scene = '00000000-0000-4000-8000-0000000000d3'
+        self.sql(src, f"""CREATE TABLE community_places (id text, community_id uuid, added_by text, added_at timestamp);
+            INSERT INTO community_places VALUES ('{known}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('{unknown}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('some.dcl.eth', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('{scene}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('{known.upper()}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01');""")
+        self.sql(tgt, f"""INSERT INTO explore.place (id, base_position, title, raw, origin)
+            VALUES ('{known}', '1,1', 'k', '{{"source": "places", "local": true}}', 'local');
+            INSERT INTO explore.world_scene_place (world_name, identity, parcels, active)
+            VALUES ('some.dcl.eth', '{scene}', '{{0,0}}', false);""")
+        notices = io.StringIO()
+        with contextlib.redirect_stderr(notices):
+            self.social_ea_run('communities', 'community_places')
+        # an uppercase spelling stays bare (the lookup is exact) unless the extract lowercases it
+        upper = int(self.sql(tgt, f"SELECT count(*) FROM social.community_places WHERE place_id = '{known.upper()}';"))
+        self.assertIn(f'{1 + upper} place ids of this batch are not in explore.place', notices.getvalue())
+        self.assertEqual(self.sql(tgt, 'SELECT count(*) FROM social.community_places;').strip(), str(4 + upper))
 
     def test_when_the_node_changed_imported_settings_it_should_keep_them_on_a_rerun(self):
         src, tgt = self.social_ea_dbs()
@@ -452,3 +578,19 @@ class SocialMigrationCases:
         self.social_ea_run('blocks', 'user_mutes')
         self.assertEqual(self.sql(tgt, 'SELECT blocked_at FROM social.blocks UNION ALL SELECT muted_at FROM social.user_mutes;')
                          .strip().splitlines(), ['2026-02-01 00:00:00'] * 2)
+
+    def test_when_place_ids_differ_only_in_case_it_should_import_one_lowercase_row(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        self.social_ea_community(src, owner)
+        place = 'AbCdEf00-0000-4000-8000-0000000000aa'
+        self.sql(src, f"""CREATE TABLE community_places (id text, community_id uuid, added_by text, added_at timestamp);
+            INSERT INTO community_places VALUES
+            ('{place}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('{place.upper()}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-02'),
+            ('Mixed.DCL.eth', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-03'),
+            ('mixed.dcl.eth', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-04');""")
+        self.social_ea_run('communities', 'community_places')
+        self.assertEqual(self.sql(tgt, 'SELECT place_id, added_at FROM social.community_places ORDER BY 1;')
+                         .strip().splitlines(),
+                         [f'{place.lower()}\t2026-01-01 00:00:00', 'mixed.dcl.eth\t2026-01-04 00:00:00'])

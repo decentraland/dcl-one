@@ -5,7 +5,7 @@ use common::{
 };
 use dcl_component::transform_and_parent::DclTranslation;
 
-use crate::{two_bone_ik::solve_two_bone, AvatarShape};
+use crate::{pause_hidden::PausedAnimation, two_bone_ik::solve_two_bone, AvatarShape};
 
 pub struct PointAtIkPlugin;
 
@@ -148,7 +148,6 @@ const FINGER_CURLS: &[(&str, f32, Vec3)] = &[
     ("avatar_righthandpinky3", 80.0, Vec3::Z),
 ];
 
-#[allow(clippy::type_complexity)]
 fn cache_point_at_rig(
     mut commands: Commands,
     needs_rig: Query<Entity, (With<AvatarShape>, Without<PointAtIkRig>)>,
@@ -198,12 +197,12 @@ fn cache_point_at_rig(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn apply_point_at_ik(
     time: Res<Time>,
     mut avatars: Query<
         (Entity, &mut PointAtIkRig, &PointAtSync, Has<PrimaryUser>),
-        With<AvatarShape>,
+        // a paused avatar's fingers keep last frame's curl, which another curl would compound on
+        (With<AvatarShape>, Without<PausedAnimation>),
     >,
     parents: Query<&ChildOf>,
     mut tx: ParamSet<(Query<&mut Transform>, TransformHelper)>,

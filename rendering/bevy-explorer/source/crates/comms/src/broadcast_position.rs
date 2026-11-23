@@ -33,8 +33,9 @@ impl Plugin for BroadcastPositionPlugin {
 const ANIM_URN_KEEPALIVE: f64 = 1.0;
 // A head-yaw or head-pitch change beyond this threshold (in degrees) breaks the idle
 // keepalive and gets the next packet sent at the next regular slot (see `MovementPacer`).
-// Smaller deltas are coarsely sampled at 1Hz, which is fine for sub-threshold drift.
-const HEAD_SYNC_EPSILON_DEG: f32 = 10.0;
+// Three degrees exceeds one 7-bit Pulse angle step (360 / 127 degrees). A smaller
+// turn can still cross a wire step. It travels with the next movement or keepalive packet.
+const HEAD_SYNC_EPSILON_DEG: f32 = 3.0;
 
 #[derive(Default)]
 struct LastAnim {
@@ -57,7 +58,6 @@ struct LastAnim {
     sequence: u32,
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn broadcast_position(
     player: Query<
         (
@@ -196,10 +196,7 @@ fn broadcast_position(
             .announcer
             .announce(time, current_hashes.as_ref(), ANIM_URN_KEEPALIVE)
         {
-            Announcement::Clip => current_hashes
-                .as_ref()
-                .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
-                .unwrap_or_default(),
+            Announcement::Clip((scene, content)) => (Some(scene.clone()), Some(content.clone())),
             // Transition active → none: signal clear with an empty scene_hash.
             Announcement::Clear => (Some(String::new()), None),
             Announcement::Nothing => (None, None),

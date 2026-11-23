@@ -52,10 +52,13 @@
         "retry": "重试",
         "outdated_deps": "此场景的依赖项已过时，不支持 Bevy 渲染器。请更新它们以继续。",
         "update_deps": "更新依赖项",
-        "data_layer_crashed": "场景反复意外停止。请返回并重新打开，或查看日志。"
+        "data_layer_crashed": "场景反复意外停止。请重试、返回并重新打开，或查看日志。"
       }
     },
+    "realm_server_restarting": "多人服务器意外停止。正在重新启动，编辑器将重新加载。",
+    "realm_server_unavailable": "多人服务器无法在此电脑上运行，场景将在没有它的情况下运行。",
     "realm_restarted": "场景意外停止，已重新加载。最近几秒的更改可能未保存。",
+    "realm_restart_failed": "重新启动场景失败。正在重试。",
     "header": {
       "actions": {
         "code": "代码",
@@ -177,10 +180,81 @@
         "needs_login_help": "即使显示为已连接，其保存的登录也可能已过期。请先退出再重新登录：在终端中逐条运行以下命令，并在浏览器中完成登录，然后重新发送你的消息：",
         "needs_login_managed_help": "即使显示为已连接，其保存的登录状态也可能已过期。请在“设置 → AI”中点击“退出登录”，然后点击“登录”，再重新发送你的消息。",
         "api_key_alternative": "或者使用 API 密钥：设置 {envVar}，并在“设置 → AI”中开启“{setting}”。"
+      },
+      "recording": {
+        "chip": "会话录制 · {duration} · {actions} 个操作",
+        "chip_no_speech": "会话录制 · {duration} · {actions} 个操作（无语音）",
+        "remove": "丢弃录制",
+        "attachment": "会话录制 {duration}",
+        "chip_many": "{count} 段录制 · {duration} · {actions} 个操作",
+        "chip_many_no_speech": "{count} 段录制 · {duration} · {actions} 个操作（无语音）",
+        "attachment_many": "{count} 段录制 {duration}"
+      },
+      "sharing": {
+        "card_title": "帮助改进 AI 助手",
+        "card_body": "与 Decentraland 分享你的对话，帮助改进助手。AI 模型会阅读这些对话，找出哪些有效、哪些无效。发送前，你的电脑会移除密钥、助记词、邮箱和其他常见个人信息。",
+        "signin_body": "登录后即可分享对话，帮助改进助手。",
+        "details_toggle": "会分享什么、不会分享什么",
+        "details_shared": "会分享：你输入的内容、助手的回复、它使用的工具及其文件名和命令、代理和模型，以及每次回复所用的时间。",
+        "details_not_shared": "不会分享：图片、文件内容、你的场景名称，以及你标记为不分享的对话。",
+        "details_analysis": "用途：由为 Decentraland 工作的服务商提供的 AI 模型为每段对话生成摘要。服务商不保留任何副本，也不会用它训练模型。我们会保留在众多创作者中发现的共性模式，用于改进助手。",
+        "details_publish": "团队会讨论这些模式。据此做出的改动可能会发布在助手公开的指令、技能和文档中，以及这些改动的说明里。改动一旦发布，即使你删除了已分享的内容，也会保持公开。",
+        "details_control": "你可以随时在设置中停止分享或删除所有已分享的内容。停止分享也会停止分析，删除也会删除摘要。已分享的对话及其摘要最多保留 180 天。",
+        "accept": "分享以帮助改进",
+        "decline": "不用了",
+        "not_now": "暂不",
+        "chip": "正在分享",
+        "chip_excluded": "未分享",
+        "chip_menu": "分享选项",
+        "rate_up": "回复不错",
+        "rate_down": "回复不好",
+        "menu_share_chat": "分享此对话",
+        "menu_share_all": "分享所有对话",
+        "menu_chat_erased": "此对话已分享的内容已删除。"
       }
     },
     "publish": {
       "save_failed": "发布前无法保存你的场景，已停止发布以免部署旧内容。{reason}"
+    },
+    "recording": {
+      "record": "录制",
+      "record_panel": "录制语音和操作",
+      "stop": "停止录制",
+      "stop_with_time": "停止 · {time} / {limit}",
+      "live": "正在录制",
+      "discard": "放弃录制",
+      "discard_confirm": {
+        "title": "放弃这段录制？",
+        "body": "录制将停止，已记录的内容会被删除。此操作无法撤销。",
+        "cancel": "继续录制",
+        "confirm": "放弃"
+      },
+      "starting": "正在开始…",
+      "transcribing": "正在转写…",
+      "downloading": "正在下载语音模型… {percent}%",
+      "default_mic": "系统默认麦克风",
+      "tooltip_idle": "为 AI 助手录制你说的话和你的操作，最长 {minutes} 分钟。使用系统默认麦克风；如需使用其他麦克风，请在系统声音设置中更改输入设备。",
+      "tooltip_live": "正在通过 {mic} 录制；{minutes} 分钟后会自动停止。如需使用其他麦克风，请在系统声音设置中更改输入设备后重新录制。",
+      "error": "无法录制：{message}",
+      "no_transcript": "无法转写你的语音。录制仍包含你的所有操作。",
+      "limit_reached": "录制已在 {minutes} 分钟上限处停止。转写完成后会立即发送。",
+      "consent": {
+        "title": "为 AI 助手录制一段会话",
+        "intro": "边工作边说话。Creator Hub 会同时录制你的声音和编辑器操作，帮助 AI 助手结合上下文理解你的指令。例如，指着一个实体说“删除这个”，助手就能准确知道你指的是什么。",
+        "what_title": "会录制哪些内容？",
+        "what": "你的声音、鼠标移动、点击、选择、悬停、菜单、搜索、编辑以及编辑器中的其他操作。",
+        "local_title": "你的数据保存在你的电脑上",
+        "local": "只有在<b>录制</b>按钮开启时才会录制。关闭项目或 Creator Hub 会立即停止录制。",
+        "stored": "你的音频、操作记录和语音转写都保存在你的电脑上。发送录制时，只有转写文本和操作记录会发送给你的 AI 服务商，不包括音频。",
+        "first_title": "首次录制之前",
+        "download": "Creator Hub 会下载一个语音转文字模型（约 {size} MB）。",
+        "microphone": "录制使用系统默认麦克风。你可以在系统声音设置中更改。",
+        "cancel": "取消",
+        "accept": "知道了"
+      },
+      "microphone_lost": "麦克风已断开，录制已停止。转写完成后会立即发送。",
+      "record_tooltip": "录制语音和操作",
+      "send": "停止并发送"
     }
   },
   "scene_list": {
@@ -320,6 +394,7 @@
       "more": "更多"
     },
     "earn_not_joined": "EARN，尚未加入",
+    "earn_payout_pending": "EARN，付款设置未完成",
     "feedback": "给我们反馈",
     "user_menu": {
       "sign_in": "登录",
@@ -383,6 +458,8 @@
         "select_world": {
           "title": "发布到您的世界",
           "description": "选择将发布您的世界的域名。",
+          "domain_type_label": "域名类型",
+          "world_name_label": "世界名称",
           "world_name": "世界（名稱）",
           "placeholder": "選擇名稱",
           "claim_new_name": "索取新名字",
@@ -616,6 +693,9 @@
         "code_editor": {
           "label": "首选代码编辑器",
           "choose_device": "从设备中选择...",
+          "placeholder": "添加或选择默认编辑器",
+          "list": "已添加的代码编辑器",
+          "remove": "移除 {name}",
           "errors": {
             "load": "加载代码编辑器失败",
             "set": "设置默认编辑器失败",
@@ -669,6 +749,55 @@
           "install": "安装",
           "sign_in_label": "登录",
           "copy": "复制"
+        },
+        "ai_sharing": {
+          "label": "分享对话以改进 Creator Hub",
+          "description": "将你向助手提出的内容及其回复发送给 Decentraland，发送前会在你的电脑上移除密钥和常见个人信息。AI 模型会为其生成摘要，用于找出改进助手的方法。最多保留 180 天。",
+          "signin": "登录后即可分享对话。",
+          "queued_title": "等待上传（{count}）",
+          "queued_empty": "没有等待上传的内容。",
+          "delete": "删除我分享的所有内容",
+          "deleting": "正在删除…",
+          "deleted": "已删除 {count} 条分享的对话轮次。",
+          "delete_failed": "无法删除你分享的对话。请检查网络后重试。",
+          "viewer_show": "查看我分享的内容",
+          "viewer_hide": "隐藏我分享的内容",
+          "viewer_empty": "还没有分享任何内容。",
+          "viewer_failed": "无法加载你分享的内容。请检查网络后重试。",
+          "viewer_delete": "删除这一轮",
+          "viewer_more": "显示更多",
+          "delete_confirm": "确定要删除你分享的所有内容吗？此操作无法撤销。",
+          "delete_confirm_yes": "全部删除",
+          "delete_cancel": "取消",
+          "digests_show": "显示根据你的对话生成的摘要",
+          "digests_hide": "隐藏摘要",
+          "digests_empty": "还没有摘要。对话结束几小时后会生成摘要。",
+          "digests_failed": "无法加载摘要。请检查网络后重试。",
+          "digests_more": "显示更多",
+          "digests_problems": "问题：{kinds}",
+          "digest_outcome": {
+            "achieved": "已完成",
+            "partial": "部分完成",
+            "not_achieved": "未完成",
+            "abandoned": "已放弃",
+            "unclear": "不明确"
+          },
+          "digest_friction": {
+            "misunderstood_request": "误解了请求",
+            "wrong_sdk_knowledge": "SDK 知识有误",
+            "tool_failed": "工具失败",
+            "tool_missing": "缺少工具",
+            "skill_missing": "缺少技能",
+            "skill_ignored": "未使用技能",
+            "asset_not_found": "找不到资源",
+            "scene_broke": "场景损坏",
+            "slow_or_stuck": "缓慢或卡住",
+            "creator_corrected_agent": "你纠正了助手",
+            "creator_stopped_reply": "你停止了回复",
+            "setup_or_sign_in": "设置或登录",
+            "other": "其他"
+          },
+          "signin_link": "登录"
         }
       },
       "actions": {
@@ -730,7 +859,6 @@
     },
     "install_client": {
       "title": "要输入，您需要首先安装分散",
-      "download": "下载",
       "download_macos": "下载",
       "download_win": "下载",
       "cancel": "暂不安装"
@@ -778,8 +906,8 @@
       "sent": "感谢你帮助我们改进 Creator Hub！我们已收到你的报告，团队会调查该问题并着手修复。",
       "queued_title": "问题报告已保存",
       "queued": "我们已保存你的报告，会在你恢复联网后立即发送。",
-      "unknown_title": "无法确认你的报告",
-      "unknown": "我们已发送你的报告，但无法确认是否送达。如果问题仍然存在，请再次报告。",
+      "unknown_title": "问题报告已发送",
+      "unknown": "我们已发送你的报告，但暂时无法确认是否送达。无需再次发送。",
       "failed_title": "出了点问题",
       "failed": "无法发送你的报告。请检查网络连接后重试。"
     }
@@ -791,14 +919,13 @@
     "generic": {
       "import_scene": "导入场景...",
       "import_scene_failed": "场景导入失败",
+      "watchlist_not_saved": "无法保存你的关注列表。关闭应用后此更改将丢失。",
       "import_scene_already_imported": "场景已导入",
       "duplicate_scene": "复制场景...",
       "duplicate_scene_failed": "复制场景失败",
       "delete_scene": "删除场景...",
       "delete_scene_failed": "删除场景失败",
       "dependencies_updated": "場景相依性已更新",
-      "multiplayer_sdk_installed": "已安装 Multiplayer Server SDK。",
-      "multiplayer_sdk_uninstalled": "已移除 Multiplayer Server SDK，并安装了最新的 SDK 版本。",
       "updating_sdk_skills": "正在安裝最新的 AI 技能...",
       "sdk_skills_updated": "AI 技能已是最新版本",
       "sdk_skills_update_failed": "無法安裝 AI 技能",
@@ -831,6 +958,13 @@
       "actions": {
         "view": "版本",
         "discard_all": "全部丢弃"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "多人服务器反复停止，场景将在没有它的情况下运行。重试会重新启动它并重新加载编辑器。",
+      "actions": {
+        "dismiss": "关闭",
+        "retry": "重试"
       }
     },
     "external_agent_access": {
@@ -1471,7 +1605,6 @@
         "title": "互动",
         "description": "了解用户如何与你的 Place 互动。",
         "minutes": "分钟",
-        "delta": "{value} 分钟",
         "vs_last_week": "{value}（对比上周）",
         "daily": {
           "title": "平均每日游玩时长",
@@ -1734,7 +1867,8 @@
         "my_places": "我的地点",
         "leaderboard": "排行榜",
         "payouts": "付款",
-        "home": "首页"
+        "home": "首页",
+        "payouts_pending": "付款，设置未完成"
       },
       "title_prefix": "赚取",
       "title": "Creator Fund",
@@ -1747,6 +1881,12 @@
       "contact_support": "联系支持",
       "banner": {
         "region": "公告"
+      },
+      "setup_banner": {
+        "wallet": {
+          "title": "设置你的收款钱包",
+          "description": "添加钱包，以 USDC 接收你的 Creator Fund 收益。"
+        }
       },
       "filter": {
         "cycle": "周期",
@@ -1841,17 +1981,22 @@
           "title": "收款钱包",
           "info_label": "关于收款钱包",
           "info": "数字钱包用于存储和管理你的数字资产。你可以用它安全地发送、接收和追踪资金，包括你的 Creator Fund USDC 奖励。",
+          "payout_info": "收款钱包是 Creator Fund 发放你的奖励的地方：每个周期结束后 14 天内，以以太坊（ERC-20）上的 USDC 发放。它可以是你控制的任何钱包或交易所账户。",
           "learn_more": "了解更多",
           "copy": "复制钱包地址",
           "edit": "编辑",
-          "add": "添加钱包"
+          "add": "添加钱包",
+          "unavailable": "请先验证邮箱，再设置钱包。",
+          "no_active_place": "你需要有一个已发布的场景才能设置钱包。",
+          "notify_failed": "我们无法就此更改向你发送邮件，因此钱包未保存。请重试。"
         },
         "contact": {
           "title": "联系信息",
           "full_name": "全名",
           "email": "电子邮箱",
           "unverified": "未验证",
-          "verify": "验证邮箱"
+          "verify": "验证邮箱",
+          "unavailable": "你需要有一个已发布的场景才能验证邮箱"
         },
         "table": {
           "label": "付款",
@@ -1888,13 +2033,20 @@
         },
         "erc20": "请确保此钱包可以在以太坊（ERC-20）上接收 USDC。发送到不支持的钱包的资金无法找回。",
         "verify": {
-          "title": "验证你的邮箱",
+          "confirm_title": "1. 确认你的邮箱",
+          "confirm_body": "请确认你的邮箱无误。我们会向此地址发送验证码。",
+          "edit_email": "编辑邮箱",
+          "daily_limit": "你今天请求的验证码过多。请明天再试。",
+          "send_soon": "稍后即可向此地址发送验证码。",
+          "continue": "继续",
+          "title": "2. 输入验证码",
           "body_sent": "6 位验证码已发送至 <b>{email}</b>。",
           "body_instruction": "请在下方输入验证码以完成验证。",
           "digit": "第 {n} 位，共 6 位",
           "resend": "重新发送验证码",
           "incorrect": "验证码错误。请检查邮件后重试。",
           "expired": "此验证码已过期。请重新发送。",
+          "back": "返回",
           "submit": "验证"
         },
         "snackbar": {

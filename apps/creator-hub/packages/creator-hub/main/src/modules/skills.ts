@@ -33,7 +33,7 @@ const TARBALL_TIMEOUT_MS = 90_000; // ~4MB over hotel/mobile links; the SHA call
 // default IN. Denylisted skills ship their supporting files but NOT SKILL.md: without
 // frontmatter they can never trigger, yet other skills' ../<name>/references/ paths
 // still resolve.
-const SKILL_DENYLIST = new Set([
+export const SKILL_DENYLIST: ReadonlySet<string> = new Set([
   'create-scene',
   'deploy-scene',
   'deploy-worlds',
@@ -455,7 +455,8 @@ const projectUpdates = new Map<string, Promise<void>>();
 
 // Ensure the cache is present and linked into the project. Awaited before a turn so the
 // CLI finds the skills in its cwd; degrades to a no-op when the cache is unavailable.
-export async function ensureSkillsLinked(projectDir: string): Promise<void> {
+// Returns the sdk-skills commit linked, or null when none was (AI sharing records it).
+export async function ensureSkillsLinked(projectDir: string): Promise<string | null> {
   const dir = await warmSkillsCache();
   // A `skills add` running in this scene would write through our links into the shared
   // cache, so link only once it is done.
@@ -463,7 +464,10 @@ export async function ensureSkillsLinked(projectDir: string): Promise<void> {
   while ((update = projectUpdates.get(path.resolve(projectDir)))) {
     await update.catch(() => {});
   }
-  if (dir !== null) linkSkillsIntoProject(projectDir, dir);
+  if (dir === null) return null;
+  linkSkillsIntoProject(projectDir, dir);
+  const sha = readCacheMeta(path.join(path.dirname(dir), 'meta.json'))?.sha;
+  return typeof sha === 'string' && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
 // ---- Skills the creator installed into the scene themselves ----

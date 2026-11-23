@@ -1,12 +1,13 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { StrictMode } from 'react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import type { AiMessage } from '/@/modules/store/ai/types';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { ChatView, type ChatViewProps } from './ChatView';
 
 vi.mock('#preload', () => ({
@@ -23,10 +24,10 @@ const userMessage: AiMessage = {
   done: true,
 };
 
-function renderChat(props: Partial<ChatViewProps>) {
+function chat(props: Partial<ChatViewProps>) {
   const noop = () => {};
-  return render(
-    <ThemeProvider theme={dark}>
+  return (
+    <TestProviders>
       <ChatView
         providers={[{ id: 'claude', label: 'Claude', available: true, managedSignIn: true }]}
         provider="claude"
@@ -35,6 +36,8 @@ function renderChat(props: Partial<ChatViewProps>) {
         detecting={false}
         selection={[]}
         assetMentions={[]}
+        recording={null}
+        onRemoveRecording={noop}
         billingDismissed
         sessions={[]}
         currentSessionId="s1"
@@ -53,8 +56,13 @@ function renderChat(props: Partial<ChatViewProps>) {
         onClose={noop}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>
   );
+}
+
+function renderChat(props: Partial<ChatViewProps>) {
+  const result = render(chat(props));
+  return { ...result, update: (next: Partial<ChatViewProps>) => result.rerender(chat(next)) };
 }
 
 describe('ChatView working indicator', () => {
@@ -174,6 +182,511 @@ describe('ChatView asset mentions', () => {
     it('should show it by its emote name', () => {
       renderChat({ assetMentions: [{ builtInEmote: 'wave' }] });
       expect(screen.getByText('Built-in animation: wave')).toBeTruthy();
+    });
+  });
+});
+
+describe('ChatView chat history menu', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  describe('when a saved chat is deleted with the keyboard', () => {
+    it('should delete that chat from its menu item and keep the focus in the menu', () => {
+      const onDeleteSession = vi.fn();
+      const now = Date.now();
+      renderChat({
+        sessions: [
+          { id: 's1', title: 'Door', updatedAt: now },
+          { id: 's2', title: 'Window', updatedAt: now },
+        ],
+        onDeleteSession,
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+      const door = screen.getByRole('menuitem', { name: /Door/ });
+      const window = screen.getByRole('menuitem', { name: /Window/ });
+
+      expect(door.getAttribute('aria-keyshortcuts')).toBe('Delete');
+      door.focus();
+      fireEvent.keyDown(door, { key: 'Delete' });
+
+      expect(onDeleteSession).toHaveBeenCalledExactlyOnceWith('s1');
+      expect(document.activeElement).toBe(window);
+    });
+  });
+});
+
+describe('ChatView session recorder', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(cleanup);
+
+  describe('when a session recording is pending', () => {
+    const recording = {
+      sessions: [
+        {
+          dir: '/tmp/recordings/s1',
+          durationMs: 42_000,
+          actionCount: 18,
+          context: '[Session recording] …',
+        },
+      ],
+      durationMs: 42_000,
+      actionCount: 18,
+    };
+
+    const twoRecordings = {
+      sessions: [
+        recording.sessions[0],
+        {
+          dir: '/tmp/recordings/s2',
+          durationMs: 708_000,
+          actionCount: 22,
+          context: '[Session recording 2] …',
+        },
+      ],
+      durationMs: 750_000,
+      actionCount: 40,
+    };
+
+    it('should show it with its duration and action count', () => {
+      renderChat({ recording });
+
+      expect(screen.getByText('Session recording · 0:42 · 18 actions')).toBeTruthy();
+    });
+
+    it('should show one chip for every recording waiting to go out', () => {
+      renderChat({ recording: twoRecordings });
+
+      expect(screen.getByText('2 recordings · 12:30 · 40 actions')).toBeTruthy();
+      expect(screen.getAllByTestId('ai-recording-chip')).toHaveLength(1);
+    });
+
+    it('should say when one of several carried no speech', () => {
+      renderChat({ recording: { ...twoRecordings, transcriptionError: 'no speech found' } });
+
+      expect(screen.getByText('2 recordings · 12:30 · 40 actions (no speech)')).toBeTruthy();
+    });
+
+    it('should say when it carried no speech', () => {
+      renderChat({ recording: { ...recording, transcriptionError: 'no speech found' } });
+
+      expect(screen.getByText('Session recording · 0:42 · 18 actions (no speech)')).toBeTruthy();
+    });
+
+    it('should discard it from the remove button', () => {
+      const onRemoveRecording = vi.fn();
+      renderChat({ recording, onRemoveRecording });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
+
+      expect(onRemoveRecording).toHaveBeenCalled();
+    });
+
+    it('should let the user send it without typing anything', () => {
+      const onSend = vi.fn();
+      renderChat({ recording, onSend });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+      expect(onSend).toHaveBeenCalledWith('', undefined);
+    });
+  });
+
+  describe('when the panel offers the Record button', () => {
+    const idle = {
+      status: 'idle' as const,
+      startedAt: null,
+      stoppedAt: null,
+      micLabel: '',
+      tools: null,
+      actionCount: 0,
+      endedWith: null,
+    };
+
+    it('should show it beside Send and pass presses on', () => {
+      const onToggleRecording = vi.fn();
+      renderChat({ recorder: idle, onToggleRecording });
+
+      const record = screen.getByRole('button', { name: 'Record voice & actions' });
+      expect(
+        record.compareDocumentPosition(screen.getByRole('button', { name: 'Send' })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      fireEvent.click(record);
+
+      expect(onToggleRecording).toHaveBeenCalled();
+      expect(screen.queryByTestId('recording-bar')).toBeNull();
+    });
+
+    it('should not start a recording while no assistant is available', () => {
+      renderChat({
+        providers: [{ id: 'claude', label: 'Claude', available: false, managedSignIn: true }],
+        recorder: idle,
+        onToggleRecording: vi.fn(),
+      });
+
+      expect(
+        (screen.getByRole('button', { name: 'Record voice & actions' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    });
+
+    it('should wait with a spinner while the recording starts', () => {
+      renderChat({ recorder: { ...idle, status: 'starting' }, onToggleRecording: vi.fn() });
+
+      expect(
+        (screen.getByRole('button', { name: 'Record voice & actions' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+      expect(screen.getByRole('progressbar', { name: 'Starting…' })).toBeTruthy();
+    });
+
+    describe('and a recording is running', () => {
+      const recording = () => ({
+        ...idle,
+        status: 'recording' as const,
+        startedAt: Date.now() - 42_000,
+        actionCount: 7,
+      });
+
+      it('should put the recording bar in place of the text field', () => {
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn() });
+
+        expect(screen.getByRole('group', { name: 'Recording' })).toBeTruthy();
+        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Record voice & actions' })).toBeNull();
+      });
+
+      it('should put the keyboard on Stop when the recording has just started', () => {
+        const { update } = renderChat({ recorder: idle, onToggleRecording: vi.fn() });
+
+        update({ recorder: recording(), onToggleRecording: vi.fn() });
+
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Stop recording' }));
+      });
+
+      it('should leave the keyboard alone when the panel opens mid-recording', () => {
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn() });
+
+        expect(document.activeElement).not.toBe(
+          screen.getByRole('button', { name: 'Stop recording' }),
+        );
+      });
+
+      it('should keep what was typed for when the text field comes back', () => {
+        const { update } = renderChat({ recorder: idle, onToggleRecording: vi.fn() });
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: 'make it blue' } });
+
+        update({ recorder: recording(), onToggleRecording: vi.fn() });
+        update({ recorder: idle, onToggleRecording: vi.fn() });
+
+        expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('make it blue');
+      });
+
+      it('should stop from the bar', () => {
+        const onToggleRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+
+        expect(onToggleRecording).toHaveBeenCalled();
+      });
+
+      it('should stop and send from the bar', () => {
+        const onSendRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onSendRecording });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
+
+        expect(onSendRecording).toHaveBeenCalled();
+      });
+
+      it('should discard only after the user confirms', () => {
+        const onCancelRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
+        const dialog = screen.getByRole('dialog', { name: 'Discard this recording?' });
+        expect(onCancelRecording).not.toHaveBeenCalled();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+        expect(onCancelRecording).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep recording when the user backs out of the confirmation', () => {
+        const onCancelRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Keep recording' }));
+
+        expect(onCancelRecording).not.toHaveBeenCalled();
+        expect(screen.getByTestId('recording-bar')).toBeTruthy();
+      });
+    });
+
+    describe('and the recording is being transcribed', () => {
+      const stopping = (endedWith: 'stop' | 'send') => ({
+        ...idle,
+        status: 'stopping' as const,
+        startedAt: Date.now() - 42_000,
+        stoppedAt: Date.now(),
+        endedWith,
+      });
+
+      it('should say so in place of the text field, with nothing to press', () => {
+        renderChat({ recorder: stopping('stop'), onToggleRecording: vi.fn() });
+
+        const bar = screen.getByTestId('recording-transcribing');
+        expect(within(bar).getByRole('status').textContent).toBe('Transcribing…');
+        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(
+          within(bar)
+            .getAllByRole('button')
+            .every(button => (button as HTMLButtonElement).disabled),
+        ).toBe(true);
+      });
+
+      it('should spin where Stop was when the recording was stopped', () => {
+        renderChat({ recorder: stopping('stop'), onToggleRecording: vi.fn() });
+
+        const bar = screen.getByTestId('recording-transcribing');
+        const spinner = within(bar).getByRole('progressbar');
+        expect(
+          spinner.compareDocumentPosition(within(bar).getByRole('button', { name: 'Send' })) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+      });
+
+      it('should spin where Send was when the recording was sent', () => {
+        renderChat({ recorder: stopping('send'), onToggleRecording: vi.fn() });
+
+        const bar = screen.getByTestId('recording-transcribing');
+        const spinner = within(bar).getByRole('progressbar');
+        expect(
+          spinner.compareDocumentPosition(
+            within(bar).getByRole('button', { name: 'Stop recording' }),
+          ) & Node.DOCUMENT_POSITION_PRECEDING,
+        ).toBeTruthy();
+      });
+
+      it('should show the speech model download on first use', () => {
+        renderChat({
+          recorder: {
+            ...stopping('stop'),
+            tools: { state: 'installing', message: '', percent: 42 },
+          },
+          onToggleRecording: vi.fn(),
+        });
+
+        expect(screen.getByRole('status').textContent).toBe('Downloading speech model… 42%');
+      });
+    });
+  });
+
+  describe('when the Record button is not wired', () => {
+    it('should not show it', () => {
+      renderChat({});
+
+      expect(screen.queryByTestId('editor-record-button')).toBeNull();
+    });
+  });
+});
+
+describe('ChatView draft prompt', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(cleanup);
+
+  const composer = () => screen.getByRole('textbox') as HTMLTextAreaElement;
+  const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+
+  describe('when a transcript arrives and the user had already typed', () => {
+    it('should add it after what they wrote', () => {
+      const { update } = renderChat({});
+      fireEvent.change(composer(), { target: { value: 'make it blue' } });
+
+      update({ draftPrompt: { text: 'and taller', nonce: 1, mode: 'append' } });
+
+      expect(composer().value).toBe('make it blue and taller');
+    });
+  });
+
+  describe('when a transcript arrives and the composer is empty', () => {
+    it('should become the whole draft', () => {
+      const { update } = renderChat({});
+
+      update({ draftPrompt: { text: 'add a door', nonce: 1, mode: 'append' } });
+
+      expect(composer().value).toBe('add a door');
+    });
+
+    it('should be consumed so it only lands once', () => {
+      const onDraftConsumed = vi.fn();
+      const { update } = renderChat({ onDraftConsumed });
+
+      update({ draftPrompt: { text: 'add a door', nonce: 1, mode: 'append' }, onDraftConsumed });
+
+      expect(onDraftConsumed).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the user is working outside the chat', () => {
+    it('should leave the focus where it is', async () => {
+      const outside = document.createElement('button');
+      document.body.appendChild(outside);
+      const { update } = renderChat({});
+      outside.focus();
+
+      update({ draftPrompt: { text: 'add a door', nonce: 1, mode: 'append' } });
+      await nextFrame();
+
+      expect(document.activeElement).toBe(outside);
+      outside.remove();
+    });
+  });
+
+  describe('when the user is already in the chat', () => {
+    it('should put them back in the composer', async () => {
+      const { update } = renderChat({});
+      composer().focus();
+
+      update({ draftPrompt: { text: 'add a door', nonce: 1, mode: 'append' } });
+      await nextFrame();
+
+      expect(document.activeElement).toBe(composer());
+    });
+  });
+
+  describe('when another part of the editor seeds a prompt', () => {
+    it('should replace the draft and take the focus', async () => {
+      const outside = document.createElement('button');
+      document.body.appendChild(outside);
+      const { update } = renderChat({});
+      fireEvent.change(composer(), { target: { value: 'typed' } });
+      outside.focus();
+
+      update({ draftPrompt: { text: 'describe a reaction', nonce: 1, mode: 'replace' } });
+      await nextFrame();
+
+      expect(composer().value).toBe('describe a reaction');
+      expect(document.activeElement).toBe(composer());
+      outside.remove();
+    });
+  });
+
+  describe('when a transcribed recording arrives', () => {
+    const pending = { sessions: [], durationMs: 4000, actionCount: 3 };
+
+    it('should send it with what was typed before, once', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ onSend });
+      fireEvent.change(composer(), { target: { value: 'make it blue' } });
+
+      update({
+        onSend,
+        recording: pending,
+        draftPrompt: { text: 'and taller', nonce: 1, mode: 'append', send: true },
+      });
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('make it blue and taller', undefined);
+      expect(composer().value).toBe('');
+    });
+
+    it('should send the recording even when no speech was transcribed', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ onSend });
+
+      update({
+        onSend,
+        recording: pending,
+        draftPrompt: { text: '', nonce: 1, mode: 'append', send: true },
+      });
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('', undefined);
+    });
+
+    it('should wait for the running turn, with the transcript read-only meanwhile', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ onSend, busy: true });
+
+      update({
+        onSend,
+        busy: true,
+        recording: pending,
+        draftPrompt: { text: 'add a door', nonce: 1, mode: 'append', send: true },
+      });
+      expect(onSend).not.toHaveBeenCalled();
+      expect(composer().value).toBe('add a door');
+      expect(composer().disabled).toBe(true);
+
+      update({ onSend, busy: false, recording: pending });
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('add a door', undefined);
+    });
+  });
+
+  describe('when React double-invokes the effect', () => {
+    it('should apply the transcript once', () => {
+      render(
+        <StrictMode>
+          {chat({ draftPrompt: { text: 'add a door', nonce: 1, mode: 'append' } })}
+        </StrictMode>,
+      );
+
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('add a door');
+    });
+  });
+});
+
+describe('ChatView retry after a failed send', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(cleanup);
+
+  const failedTurn: AiMessage[] = [
+    { id: 'u-1', role: 'user', parts: [{ kind: 'text', text: 'make it blue' }], done: true },
+    { id: 't-1', role: 'assistant', parts: [], done: true, error: 'The agent vanished.' },
+  ];
+
+  describe('when the failed prompt was put back in the composer', () => {
+    it('should send it once and leave the composer empty', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ messages: failedTurn, onSend });
+      update({
+        messages: failedTurn,
+        onSend,
+        draftPrompt: { text: 'make it blue', nonce: 1, mode: 'append' },
+      });
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('make it blue');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('make it blue');
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
+    });
+  });
+
+  describe('when the creator typed something else after the failure', () => {
+    it('should keep what they typed', () => {
+      const onSend = vi.fn();
+      renderChat({ messages: failedTurn, onSend });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'something else' } });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('something else');
     });
   });
 });

@@ -63,6 +63,10 @@ impl AppSetting for WindowSetting {
     }
 
     fn apply(&self, mut window: SystemParamItem<Self::Param>, _: Commands, _: &HashSet<Entity>) {
+        #[allow(
+            clippy::unwrap_used,
+            reason = "the settings bridge runs only with a PrimaryWindow; a missing window is an engine bug"
+        )]
         let mut window = window.single_mut().unwrap();
         window.mode = match self {
             #[cfg(not(target_arch = "wasm32"))]

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { CreateProject } from './component';
 
@@ -16,8 +17,7 @@ vi.mock('/@/modules/store/translation/utils', async importOriginal => ({
   t: (id: string) => id,
 }));
 
-/** The ui2 modal shell reads breakpoints this environment does not populate, and the
- * bug lives in the form, not the chrome: render title, fields and actions plainly. */
+/** The bug lives in the form, not the modal shell: render title, fields and actions plainly. */
 vi.mock('../PublishProject/PublishModal', () => ({
   PublishModal: ({
     title,
@@ -53,21 +53,21 @@ const pressCreateWhileNameIsFocused = () => {
 };
 
 describe('CreateProject', () => {
-  let onSubmit: ReturnType<typeof vi.fn>;
+  let onSubmit: Mock;
 
   afterEach(cleanup);
 
   beforeEach(() => {
     onSubmit = vi.fn();
     render(
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <CreateProject
           open
           initialValue={INITIAL_VALUE}
           onClose={vi.fn()}
           onSubmit={onSubmit}
         />
-      </ThemeProvider>,
+      </TestProviders>,
     );
   });
 

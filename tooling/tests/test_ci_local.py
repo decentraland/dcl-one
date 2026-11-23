@@ -93,11 +93,33 @@ class CiLocalTest(unittest.TestCase):
                 with self.subTest(path=path, workflow=workflow):
                     self.assertTrue(ci.triggered(workflow, [path], event='push'))
 
+    def test_shared_ui_edits_run_the_sites_unit_tests_before_commit(self):
+        names = lambda changed: [step.name for step in ci.pre_commit_steps(changed)]
+        for path in ('library/ui/components/Button/Button.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
+                     'apps/sites/src/routes/root.tsx'):
+            with self.subTest(path=path):
+                self.assertIn('sites unit tests', names({path}))
+                self.assertNotIn('ui3 unit tests', names({path}))
+        for path in ('library/ui/apps/shop/ShopChrome.tsx', 'library/ui/apps/hud/Panel.tsx',
+                     'library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/chrome/SitesFooter.tsx'):
+            with self.subTest(path=path):
+                self.assertIn('ui3 unit tests', names({path}))
+                self.assertIn('sites unit tests', names({path}))
+        self.assertNotIn('sites unit tests', names({'docs/README.md'}))
+
     def test_engine_edits_select_the_engine_and_its_sites_consumer(self):
         changed = {'rendering/bevy-explorer/source/src/lib.rs'}
         self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed))
         self.assertTrue(ci.triggered('apis-sites-images.yml', changed))
         self.assertFalse(ci.triggered('development.yml', changed, event='push'))
+
+    def test_zip_extract_edits_select_the_scenes_that_install_it(self):
+        # The bridge scene and the editor scene copy it (pnpm-workspace.yaml); Creator Hub CI builds neither.
+        changed = {'apps/creator-hub/packages/zip-extract/index.js'}
+        for event in ('push', 'pull_request'):
+            self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed, event=event))
+        self.assertTrue(ci.triggered('apis-sites-images.yml', changed))
+        self.assertTrue(ci.triggered('development.yml', changed, event='push'))
 
     def test_root_cargo_and_toolchain_edits_select_sites_and_its_web_producer(self):
         for path in ('.cargo/config.toml', 'rust-toolchain', 'rust-toolchain.toml'):

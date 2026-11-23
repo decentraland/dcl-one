@@ -2,8 +2,8 @@
 // how each opens (key, rail, top-bar tab) and the control that proves it is open. The rail opens a
 // page in two presses: a rail button opens its panel (a dialog named as the button) and a row of
 // the panel opens the page. Names are the HUD's accessible names (library/ui/apps/hud/features);
-// the key hints in the top-bar tabs are the engine's default bindings, so a tab is `Places [ Z ]`
-// as the page joins its text nodes. A panel row's key hint is hidden from the name: the row is
+// the key hints in the top-bar tabs are the engine's default bindings, so a tab is `Places [Z]`:
+// the `[`, the key and the `]` are adjacent text nodes, one run of text as the browser reads it. A panel row's key hint is hidden from the name: the row is
 // `Places`.
 import type { Explorer, Selector } from '../driver/index.ts'
 
@@ -42,13 +42,13 @@ export interface Page {
 export type PageName = 'backpack' | 'communities' | 'gallery' | 'settings' | 'places' | 'events' | 'map'
 
 export const PAGES: Record<PageName, Page> = {
-  backpack: { key: 'KeyI', rail: { button: 'Me', row: 'Backpack' }, tab: 'Backpack [ I ]', marker: { name: 'Backpack', role: 'heading' } },
-  communities: { key: 'KeyO', rail: { button: 'Discover', row: 'Communities' }, tab: 'Communities [ O ]', marker: { name: 'Communities', role: 'heading' } },
-  gallery: { key: 'KeyG', rail: { button: 'Camera', row: 'Gallery' }, tab: 'Gallery [ G ]', marker: { name: 'Gallery', role: 'heading' } },
-  settings: { key: 'KeyP', rail: { button: 'System', row: 'Settings' }, tab: 'Settings [ P ]', marker: { name: 'Settings', role: 'heading' } },
-  places: { key: 'KeyZ', rail: { button: 'Discover', row: 'Places' }, tab: 'Places [ Z ]', marker: { name: 'Places sections', role: 'tablist' } },
-  events: { key: 'KeyX', rail: { button: 'Discover', row: 'Events' }, tab: 'Events [ X ]', marker: { name: 'Events', role: 'heading' } },
-  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search', role: 'textbox' } }
+  backpack: { key: 'KeyI', rail: { button: 'Me', row: 'Backpack' }, tab: 'Backpack [I]', marker: { name: 'Backpack', role: 'heading' } },
+  communities: { key: 'KeyO', rail: { button: 'Discover', row: 'Communities' }, tab: 'Communities [O]', marker: { name: 'Communities', role: 'heading' } },
+  gallery: { key: 'KeyG', rail: { button: 'Camera', row: 'Gallery' }, tab: 'Gallery [G]', marker: { name: 'Gallery', role: 'heading' } },
+  settings: { key: 'KeyP', rail: { button: 'System', row: 'Settings' }, tab: 'Settings [P]', marker: { name: 'Settings', role: 'heading' } },
+  places: { key: 'KeyZ', rail: { button: 'Discover', row: 'Places' }, tab: 'Places [Z]', marker: { name: 'Places sections', role: 'tablist' } },
+  events: { key: 'KeyX', rail: { button: 'Discover', row: 'Events' }, tab: 'Events [X]', marker: { name: 'Events', role: 'heading' } },
+  map: { key: 'KeyM', tab: 'Map [M]', marker: { name: 'Search', role: 'textbox' } }
 }
 
 export const PAGE_OPEN_TIMEOUT_MS = 20_000
@@ -97,11 +97,11 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
  *  page. The top bar's Close button closes a page the Escape did not, and one whose field keeps
  *  the keys through a press (the map's search spends its first Escape clearing itself). Closing
  *  the Backpack deploys the look it changed, so it waits out the catalyst's window since the last
- *  deployment first. */
+ *  deployment first. A page already closed takes no Escape: the engine reports the presses of one
+ *  frame in an order of its own, not the order pressed, so an Escape that shares a frame with the
+ *  next key (an open) can arrive after it and close the page that key opened. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
-  // Restores also run after a successful body already closed the page. An extra Escape
-  // reaches the world instead, and can consume the key used to reopen the page next.
   if (!(await explorer.hud.isVisible(marker))) return
   if (page === 'backpack') await explorer.profileDeployWindow()
   try {

@@ -172,6 +172,12 @@ the columns' range are capped (`max_parcels` at 2^31-1).
 - `forward_outbox`: upstream forwarding of new local publishes.
 - `world_access_log`: upstream has no such table.
 - `worlds.world_scene_identity`: a frozen upgrade source. It is never written.
+- Stream key notifications: the loads of `worlds.world_scenes` (local scenes),
+  `worlds.worlds` (an owner change), `worlds.world_permissions` (a removed grant)
+  and `worlds.world_permission_parcels` fire the `world_authority` triggers of
+  `schemas/20_worlds.sql` in the load's transaction. PostgreSQL sends one
+  notification per world and transaction at commit; the gatekeeper's key
+  listener then checks that world's stream keys. The loads need no change.
 
 ## Blocked names: required cutover preflight
 

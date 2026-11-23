@@ -15,48 +15,76 @@ const UA = {
 };
 
 describe("detectDownloadBrowser", () => {
-  it.each(Object.entries(UA))(
-    "recognizes %s by name, not by engine",
-    (name, ua) => {
-      expect(detectDownloadBrowser(ua)).toBe(name);
-    },
-  );
-
-  it("recognizes Brave from its navigator flag, since its UA reads as Chrome", () => {
-    expect(detectDownloadBrowser(UA.chrome, true)).toBe("brave");
+  describe("when the user agent names a known browser", () => {
+    it.each(Object.entries(UA))(
+      "should recognize %s by name, not by engine",
+      (name, ua) => {
+        expect(detectDownloadBrowser(ua)).toBe(name);
+      },
+    );
   });
 
-  it("falls back to Chrome for an unknown browser", () => {
-    expect(detectDownloadBrowser("curl/8.0")).toBe("chrome");
+  describe("when the navigator reports Brave", () => {
+    it("should recognize Brave even though its UA reads as Chrome", () => {
+      expect(detectDownloadBrowser(UA.chrome, true)).toBe("brave");
+    });
+  });
+
+  describe("when the browser is unknown", () => {
+    it("should fall back to Chrome", () => {
+      expect(detectDownloadBrowser("curl/8.0")).toBe("chrome");
+    });
   });
 });
 
 describe("stepImages", () => {
-  it("highlights the browser's download button on step 1", () => {
-    expect(stepImages("macos", "safari")[0].highlight).toEqual({
-      x: 49.37,
-      y: 26.25,
+  describe("when showing step 1", () => {
+    describe("and the browser is Safari on macOS", () => {
+      it("should highlight the browser's download button", () => {
+        expect(stepImages("macos", "safari")[0].highlight).toEqual({
+          x: 49.37,
+          y: 26.25,
+        });
+      });
     });
-    expect(stepImages("windows", "firefox")[0].highlight).toEqual({
-      x: 76.46,
-      y: 41.35,
+
+    describe("and the browser is Firefox on Windows", () => {
+      it("should highlight the browser's download button", () => {
+        expect(stepImages("windows", "firefox")[0].highlight).toEqual({
+          x: 76.46,
+          y: 41.35,
+        });
+      });
+    });
+
+    describe("and the OS has no capture for the browser", () => {
+      it("should fall back to the Chrome capture", () => {
+        expect(stepImages("windows", "safari")[0]).toEqual(
+          stepImages("windows", "chrome")[0],
+        );
+      });
+    });
+
+    describe("and the browser is Edge on macOS", () => {
+      it("should reuse the Windows Edge capture", () => {
+        expect(stepImages("macos", "edge")[0]).toEqual(
+          stepImages("windows", "edge")[0],
+        );
+      });
     });
   });
 
-  it("falls back to the Chrome capture when the OS has none for the browser", () => {
-    expect(stepImages("windows", "safari")[0]).toEqual(
-      stepImages("windows", "chrome")[0],
-    );
-  });
+  describe("when showing step 2", () => {
+    describe("and the OS is macOS", () => {
+      it("should show the install window whole", () => {
+        expect(stepImages("macos", "chrome")[1].imageFit).toBe("contain");
+      });
+    });
 
-  it("reuses the Windows Edge capture on macOS", () => {
-    expect(stepImages("macos", "edge")[0]).toEqual(
-      stepImages("windows", "edge")[0],
-    );
-  });
-
-  it("shows the macOS install window whole", () => {
-    expect(stepImages("macos", "chrome")[1].imageFit).toBe("contain");
-    expect(stepImages("windows", "chrome")[1].imageFit).toBe("cover");
+    describe("and the OS is Windows", () => {
+      it("should cover the frame with the install window", () => {
+        expect(stepImages("windows", "chrome")[1].imageFit).toBe("cover");
+      });
+    });
   });
 });

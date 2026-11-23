@@ -1,9 +1,9 @@
 import { useLocation, useNavigate, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
 
-import type { PlaceViewer } from "@ui/data/catalyst/places";
-import PlaceDetail, { type SceneChat } from "@ui/explorer/pages/PlaceDetail";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import { PlaceDetail } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
+import { isPlaceholderThumbnail, type PlaceViewer } from "@web-core/place-view";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import UpstreamUnavailable from "@/features/components/UpstreamUnavailable";
 import { openSignIn } from "@/features/components/auth/signin-store";
@@ -13,13 +13,24 @@ import { loadPlace } from "@/data/lib/catalyst/places/index.server";
 import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/catalyst/places/interactions";
 import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
 import { loadPlaceDetail } from "@/features/explorer/place-detail.server";
+import { usePlaceDetailChat, usePlaceDetailCreator } from "@/features/explorer/place-detail-profiles";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { track } from "@/core/lib/telemetry/track";
-import { useSceneChat } from "@/features/explorer/scene-chat/useSceneChat";
+import { useSceneChat, type SceneChat } from "@/features/explorer/scene-chat/useSceneChat";
 
+import { PLACES_SECTION, placeDetailMeta, sectionCard } from "../lib/destination-meta";
+import { publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/places_.$id";
 
 export const handle = { agentMarkdown: "placeDetail" } satisfies AgentMarkdownHandle;
+
+/**
+ * The place's card, canonical at its own row's page and with its schema.org Place. An unknown place
+ * answers 404 and gets no card; while the catalogue is unreachable the page keeps the section card.
+ */
+export function meta({ loaderData, matches, params }: Route.MetaArgs) {
+  return placeDetailMeta(loaderData, publicBase(matches), sectionCard(PLACES_SECTION), `/places/${encodeURIComponent(params.id)}`);
+}
 
 export function loader({ request, params, context }: Route.LoaderArgs) {
   const { id } = params;
@@ -73,6 +84,9 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   // It reads as a guest: the visitor's signer is for the like and favorite writes only. A world place never joins:
   // the node counts each participant of a world's scene rooms against the world's player limit.
   const chat = useSceneChat(place && !place.world && place.base_position && !mobile && (livePlayers ?? 0) > 0 ? { location: place.base_position } : null);
+  const creator = usePlaceDetailCreator(place);
+  const chatView = usePlaceDetailChat(place?.world ? WORLD_CHAT : chat);
+
   function retryTravel() {
     const query = new URLSearchParams(location.search);
     query.set("retry_travel", "1");
@@ -88,7 +102,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
 
   if (!place && unavailable) {
     return (
-      <SitesChrome active="explore" overlayNav>
+      <SitesLayout active="explore" overlayNav>
         <main className="place-detail-route">
           <UpstreamUnavailable
             title="Places are temporarily unavailable"
@@ -97,13 +111,13 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
             backLabel="Back to Places"
           />
         </main>
-      </SitesChrome>
+      </SitesLayout>
     );
   }
 
   const launchError = travel?.launchError;
   return (
-    <SitesChrome active="explore" overlayNav>
+    <SitesLayout active="explore" overlayNav>
       <main className="place-detail-route">
         <PlaceDetail
           key={place?.id}
@@ -113,24 +127,23 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
                   id: place.id,
                   title: place.title ?? "",
                   description: place.description ?? "",
-                  image: place.image,
+                  image: isPlaceholderThumbnail(place.image) ? undefined : place.image,
                   coords: place.base_position ?? "",
                   world: place.world ?? false,
                   worldName: place.world_name,
-                  contactName: place.contact_name,
-                  owner: place.owner,
                   approval: place.like_rate == null ? null : Math.round(place.like_rate * 100),
                   favorites: place.favorites ?? 0,
                 }
               : undefined
           }
+          creator={creator}
           notFound={!place}
           livePlayers={livePlayers ?? 0}
           mobile={mobile}
           onClose={() => navigate("/places")}
           onCreator={(address) => navigate(`/profile/${address}`)}
           jumpHref={jumpHref}
-          chat={place?.world ? WORLD_CHAT : chat}
+          chat={chatView}
           viewer={viewer}
           account={signer?.signer ?? null}
           onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}
@@ -148,6 +161,6 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
           }}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

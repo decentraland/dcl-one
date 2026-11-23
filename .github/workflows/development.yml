@@ -9,7 +9,7 @@ on:
       - 'infra/gateway/**'
       - 'infra/packages/**'
       - 'tooling/dev*'
-      - 'tooling/catalyst-test*.sh'
+      - 'tooling/catalyst-test*'
       - 'tooling/enet-provenance.py'
       - 'tooling/*.py'
       - 'tooling/tests/**'
@@ -21,10 +21,14 @@ on:
       - '.cargo/**'
       - 'apps/sites/**'
       - 'apps/ui3/**'
+      # the editor scene's install copies it (apps/ui3/editor-scene/pnpm-workspace.yaml)
+      - 'apps/creator-hub/packages/zip-extract/**'
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
       - '.github/workflows/bevy-explorer-benchmark.yml'
+      # tooling/tests/test_dev_workflow.py reads its label logic
+      - '.github/workflows/creator-hub-ci.yml'
       - '!**/*.md'
       - '!docs/**'
       - '!services/catalyst/docs/**'
@@ -42,6 +46,8 @@ concurrency:
   group: development-${{ github.ref }}
   # Main runs finish: they are the macOS check for source that PRs test on Linux only.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  ERROR_PAGE_LFS: library/ui/apps/sites/assets/errors/**,library/ui/apps/sites/assets/custom-welcome-background.webp,library/ui/apps/sites/assets/logo-pattern.webp,library/ui/foundations/typography/fonts/**
 jobs:
   changes:
     name: Changes
@@ -70,8 +76,8 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos') && '["ubuntu-26.04"]' || '["ubuntu-26.04", "macos-15"]') }}
-        # Each shard compiles the tests and runs every third test executable. One shard also runs the
-        # provisioned Archipelago tests, which take a fixed time (CATALYST_TEST_PROVISIONED_SHARD).
+        # Each shard builds its assigned integration tests and runs the binaries selected by recorded times.
+        # One shard also runs the provisioned Archipelago tests (CATALYST_TEST_PROVISIONED_SHARD).
         shard: [1, 2, 3]
     runs-on: ${{ matrix.os == 'ubuntu-26.04' && (vars.RUNNER_LINUX_X86 || 'ubuntu-26.04')
       || matrix.os == 'macos-15' && (vars.RUNNER_MACOS || 'macos-15')
@@ -79,7 +85,9 @@ jobs:
     timeout-minutes: 100
     env:
       CATALYST_TEST_SHARD: ${{ matrix.shard }}/3
-      CATALYST_TEST_PROVISIONED_SHARD: '2'
+      CATALYST_TEST_PROVISIONED_SHARD: '1'
+      # The doc-tests run in one shard (tooling/catalyst-test.sh).
+      CATALYST_TEST_DOC_SHARD: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
       FOUNDATION_DEV_STARTUP_TIMEOUT: '120'
@@ -144,6 +152,14 @@ jobs:
         run: |
           if [ -d services/catalyst/target/debug/deps ]; then restored=true; else restored=false; fi
           echo "restored=$restored" >> "$GITHUB_OUTPUT"
+          # The v8 build script copies the prebuilt library to target/debug/gn_out, which the
+          # dependency cache does not keep, while it keeps the script's fingerprint. When a
+          # changed Cargo.lock makes v8 itself recompile, the script counts as fresh and the
+          # link finds no rusty_v8; dropping its fingerprint makes it copy the library again.
+          # An exact cache hit has nothing to recompile, so it keeps the fingerprint.
+          if [ "$restored" = true ] && [ "${{ steps.deps.outputs.cache-hit }}" != true ] && ! compgen -G 'services/catalyst/target/debug/gn_out/obj/*rusty_v8*' > /dev/null; then
+            rm -rf services/catalyst/target/debug/build/v8-* services/catalyst/target/debug/.fingerprint/v8-*
+          fi
       # Optional: without the tool, or without its server, the tests compile as before.
       - name: Install the optional compiler cache
         id: compiler-cache
@@ -220,6 +236,8 @@ jobs:
           fi
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the embedded error-page images and fonts
+        run: git lfs pull --include="$ERROR_PAGE_LFS" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
@@ -259,7 +277,9 @@ jobs:
       - name: Give unchanged sources the file times of the snapshot
         # Cargo compares file times, and a checkout gives every file the current time. Without this
         # step Cargo compiles every workspace crate again although the snapshot holds them.
-        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target
+        run: |
+          if [ -d services/catalyst/target ]; then du -k -d 2 services/catalyst/target | sort -nr; fi
+          python3 tooling/cargo-mtimes.py restore services/catalyst/target
       - name: Restore the pnpm store
         id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -268,11 +288,12 @@ jobs:
           key: foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/*/pnpm-lock.yaml') }}
           restore-keys: |
             foundation-dev-pnpm-${{ runner.os }}-${{ runner.arch }}-
-      - name: Check configuration and PostgreSQL lifecycle
-        timeout-minutes: 20
-        run: nix develop --command python3 -m unittest discover -s tooling/tests -v
       - name: Start the API and web app without upstream data
         run: nix develop --command bash tooling/dev-smoke.sh
+      - name: Measure Rust build directories after smoke
+        if: always()
+        run: |
+          if [ -d services/catalyst/target ]; then du -k -d 2 services/catalyst/target | sort -nr; fi
       - name: Run Sites end-to-end tests against the development stack
         timeout-minutes: 75
         run: nix develop --command bash tooling/dev-test.sh e2e
@@ -285,12 +306,6 @@ jobs:
             tail -n 150 "$log"
             echo "::endgroup::"
           done
-      - name: Report Rust cache size
-        if: always()
-        run: |
-          if [ -d services/catalyst/target ]; then
-            du -sh services/catalyst/target
-          fi
       - name: Preserve startup logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -304,6 +319,14 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+      - name: Prune superseded Rust libraries from the smoke snapshot
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Before pruning (KiB)"
+          du -k -d 2 services/catalyst/target | sort -nr
+          nix develop --command python3 tooling/catalyst-smoke-cache.py
+          echo "After pruning (KiB)"
+          du -k -d 2 services/catalyst/target | sort -nr
       - name: Record the source file times in the snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
         run: python3 tooling/cargo-mtimes.py record services/catalyst/target
@@ -318,6 +341,38 @@ jobs:
             ~/.cargo/git
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
 
+  # The tooling unit tests read only the source and the dev shell, whose binaries start the PostgreSQL
+  # clusters they test, so they run beside smoke.
+  tooling:
+    name: Tooling tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos') && '["ubuntu-26.04"]' || '["ubuntu-26.04", "macos-15"]') }}
+    runs-on: ${{ matrix.os == 'ubuntu-26.04' && (vars.RUNNER_LINUX_X86 || 'ubuntu-26.04')
+      || matrix.os == 'macos-15' && (vars.RUNNER_MACOS || 'macos-15')
+      || matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-default-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-default-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Check configuration and PostgreSQL lifecycle
+        timeout-minutes: 20
+        run: nix develop --command python3 -m unittest discover -s tooling/tests -v
+
   web:
     name: Web tests and contracts
     needs: changes
@@ -326,8 +381,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fetch the pinned docs integration-test diagram
-        run: git lfs pull --include='apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp' --exclude=''
+      - name: Fetch the pinned docs integration-test diagram and the error-page art, background and Inter files the static pages embed
+        run: git lfs pull --include="apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,${ERROR_PAGE_LFS}" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
@@ -363,6 +418,10 @@ jobs:
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20
         run: nix develop --command pnpm --dir apps/ui3 test
+      - name: Run UI3 browser tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
+        timeout-minutes: 10
+        run: nix develop --command pnpm --dir apps/ui3 test:browser
       - name: Run Sites unit tests
         id: sites-tests
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
@@ -384,7 +443,7 @@ jobs:
           nix develop --command pnpm --dir apps/ui3 typecheck
           nix develop --command pnpm --dir apps/sites typecheck
           nix develop --command pnpm --dir apps/sites typecheck:scripts
-          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap gen:seed-catalog:check; do
+          for check in gen:schemas:check schemas:honesty:check schemas:dupes:check telemetry:check check:flowmap; do
             nix develop --command pnpm --dir apps/sites "$check"
           done
       - name: Save the pnpm store from main
@@ -393,25 +452,26 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
-  # The one check to mark required on main. It always reports: green when the Rust, smoke and web jobs passed or
-  # were skipped because nothing they test changed, red when one failed, was cancelled or is missing.
+  # The one check to mark required on main. It always reports: green when the Rust, smoke, tooling and web jobs
+  # passed or were skipped because nothing they test changed, red when one failed, was cancelled or is missing.
   gate:
     name: CI gate
-    # Smoke is needed for its workflow tests: they check that the Rust shards cover every test.
-    needs: [changes, rust, smoke, web]
+    # The tooling tests include the workflow tests: they check that the Rust shards cover every test.
+    needs: [changes, rust, smoke, tooling, web]
     if: ${{ always() }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
-      - name: Require the Rust, smoke and web jobs to pass or be skipped
+      - name: Require the Rust, smoke, tooling and web jobs to pass or be skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           RUST: ${{ needs.rust.result }}
           SMOKE: ${{ needs.smoke.result }}
+          TOOLING: ${{ needs.tooling.result }}
           WEB: ${{ needs.web.result }}
         run: |
-          echo "changes=$CHANGES rust=$RUST smoke=$SMOKE web=$WEB"
-          for result in "$CHANGES" "$RUST" "$SMOKE" "$WEB"; do
+          echo "changes=$CHANGES rust=$RUST smoke=$SMOKE tooling=$TOOLING web=$WEB"
+          for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do
             case "$result" in
               success|skipped) ;;
               *) echo "::error::A required job ended as '$result'"; exit 1 ;;

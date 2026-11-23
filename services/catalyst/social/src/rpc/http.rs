@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use crate::communities::http::DeferredBody;
-use crate::routing::{delete, erase, get, patch, post};
+use crate::shared::routing::{delete, erase, get, patch, post};
 use axum::extract::{OriginalUri, Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -271,7 +271,7 @@ pub fn router(state: Shared) -> Router {
         )
         .route(
             "/v1/community-voice-chats/{communityId}/speakers/{address}",
-            crate::routing::put(promote_speaker)
+            crate::shared::routing::put(promote_speaker)
                 .patch(erase(mute_speaker))
                 .delete(erase(demote_speaker)),
         )
@@ -296,7 +296,7 @@ async fn signer(
 ) -> Result<String, CommError> {
     let path = signed_path(original, local);
     Ok(
-        auth::require_signer(headers, method, &path, state.eip1654.as_deref())
+        auth::require_signer(headers, method, &path, state.eip1654.as_ref())
             .await?
             .into_string(),
     )
@@ -1051,17 +1051,15 @@ async fn update_social_settings(
         &[],
         1,
     )?;
-    let row = state
-        .ctx
-        .db()
-        .upsert_social_settings(
-            &me,
-            text(&object, "privateMessagesPrivacy"),
-            text(&object, "blockedUsersMessagesVisibility"),
-            text(&object, "showSituationReactions"),
-        )
-        .await
-        .map_err(failed)?;
+    let row = ops::update_social_settings(
+        &state.ctx,
+        &me,
+        text(&object, "privateMessagesPrivacy"),
+        text(&object, "blockedUsersMessagesVisibility"),
+        text(&object, "showSituationReactions"),
+    )
+    .await
+    .map_err(failed)?;
     data(StatusCode::OK, settings(&row))
 }
 

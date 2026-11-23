@@ -121,6 +121,8 @@ struct ParticipantEvent {
     room: String,
     current_key: String,
     voice_address: String,
+    /// A Cast watcher's wallet, from the attribute its token set.
+    watcher: Option<crate::Address>,
 }
 
 #[derive(Debug)]
@@ -177,6 +179,13 @@ impl ValidatedEvent {
                 let identity = identity.unwrap();
                 let room = room.clone().unwrap();
                 let participant = ParticipantEvent {
+                    watcher: identity
+                        .starts_with("watch:")
+                        .then(|| {
+                            &event["participant"]["attributes"]
+                                [super::streaming::cast::WATCHER_WALLET_ATTRIBUTE]
+                        })
+                        .and_then(|wallet| crate::Address::parse(wallet.as_str()?).ok()),
                     sid: sid.unwrap(),
                     current_key: identity_key(&room, &identity),
                     room,
@@ -389,6 +398,14 @@ pub async fn livekit_webhook(
         .unwrap()
         .prepare(&event, deadline, now);
     if prepared != Prepared::Apply {
+        // Equal-second sessions are ordered by id, not by which one LiveKit
+        // kept: a superseded join still passes the Cast join guard.
+        if prepared == Prepared::Superseded
+            && let EventKind::ParticipantJoined(p) = &event.kind
+        {
+            let watcher = p.watcher.as_ref();
+            super::streaming::cast::refuse_on_join(&state, &p.room, &p.identity, watcher).await?;
+        }
         // The store orders sessions itself: a superseded event still counts there.
         if prepared == Prepared::Superseded
             && state.room_event_store.is_some()
@@ -525,6 +542,12 @@ async fn store_room_event(
     })
 }
 
+/// `dispatch` of an already authenticated webhook body, for tests.
+#[cfg(test)]
+pub(crate) async fn dispatch_for_tests(state: &CommsState, event: &Value) -> Result<(), ApiError> {
+    dispatch(state, &ValidatedEvent::parse(event)?).await
+}
+
 async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiError> {
     match &event.kind {
         EventKind::IngressStarted | EventKind::IngressEnded => {
@@ -541,16 +564,15 @@ async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiE
         }
         EventKind::ParticipantJoined(participant) => {
             // A revoked Cast key's publisher token stays valid for its TTL:
-            // refuse it on join. Logged, never a webhook failure.
-            if let Err(error) = super::streaming::cast::refuse_revoked_publisher(
+            // refuse it on join. A failed guard fails the webhook, so LiveKit
+            // delivers the join again.
+            super::streaming::cast::on_publisher_joined(
                 state,
                 &participant.room,
                 &participant.identity,
+                participant.watcher.as_ref(),
             )
-            .await
-            {
-                tracing::warn!(room = %participant.room, ?error, "cast join guard failed");
-            }
+            .await?;
             if let Some(call_id) = private_call_id_from_room_name(&participant.room) {
                 handle_private_participant_joined(state, &participant.voice_address, call_id)
                     .await?;
@@ -565,6 +587,19 @@ async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiE
             }
         }
         EventKind::ParticipantLeft(participant, reason) => {
+            // A Cast streamer that left drops out of the room's presenters,
+            // unless this is the old session of a full reconnect (the same
+            // identity joined again). Logged, never a webhook failure.
+            if !matches!(reason, DisconnectReason::DuplicateIdentity)
+                && let Err(error) = super::streaming::cast::forget_departed_streamer(
+                    state,
+                    &participant.room,
+                    &participant.identity,
+                )
+                .await
+            {
+                tracing::warn!(room = %participant.room, ?error, "cast presenter cleanup failed");
+            }
             if let Some(call_id) = private_call_id_from_room_name(&participant.room) {
                 handle_private_participant_left(
                     state,

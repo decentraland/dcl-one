@@ -21,7 +21,7 @@ import { createAdminToolkitSystem } from './admin-toolkit';
 import { wrapWithAssetPathSubstitution } from './asset-pack-provider';
 
 let initialized: boolean = false;
-// TODO: enforce via ESLint `no-restricted-imports` that the global `engine`
+// TODO: enforce via the `no-restricted-imports` lint rule that the global `engine`
 // from `@dcl/ecs` is only imported in this entrypoint and the asset-packs
 // `index.ts` — all other files must accept `engine` as a parameter. With
 // `setCompositeProvider`/`getCompositeProvider` now living as module-level

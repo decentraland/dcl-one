@@ -5,16 +5,18 @@ import { fs, editor, consoleWindow, misc, pkg } from '#preload';
 
 import { type Project } from '/shared/types/projects';
 import type { AiAssetMention } from '/shared/types/ai';
+import type { RecordedEvent } from '/shared/types/recording';
 import { PACKAGES } from '/shared/types/pkg';
 import { getPath } from '../';
 import type { Severity } from '../../store/snackbar/types';
 import { store } from '../../store';
+import { getOpenProject } from '/@/lib/open-project';
 import { actions as aiActions } from '../../store/ai';
 import { actions as snackbarActions } from '../../store/snackbar';
 import { createGenericNotification } from '../../store/snackbar/utils';
 import { actions as workspaceActions } from '../../store/workspace';
 import { actions as optimizerActions } from '../../store/optimizer';
-import { resolveProfiles, sanitizeProfileAddresses, type ProfileSummary } from './profiles';
+import { forwardRecordedEvents } from '../../recording/session';
 
 type NotificationRequest = {
   severity: Severity;
@@ -34,9 +36,6 @@ export enum Method {
   UPDATE_SDK = 'update_sdk',
   GET_SDK_VERSION = 'get_sdk_version',
   SET_UI_DESIGNER_MODE = 'set_ui_designer_mode',
-  INSTALL_MULTIPLAYER = 'install_multiplayer',
-  UNINSTALL_MULTIPLAYER = 'uninstall_multiplayer',
-  GET_PROFILES = 'get_profiles',
   OPTIMIZE_SCENE = 'optimize_scene',
   PROMPT_ASSISTANT = 'prompt_assistant',
   MENTION_ASSET = 'mention_asset',
@@ -44,6 +43,7 @@ export enum Method {
   SET_CONSOLE_WINDOW_OPEN = 'set_console_window_open',
   NOTIFY_SCENE_METADATA = 'notify_scene_metadata',
   NOTIFY_READY = 'notify_ready',
+  RECORD_EVENTS = 'record_events',
 }
 
 export type Params = {
@@ -55,9 +55,6 @@ export type Params = {
   [Method.UPDATE_SDK]: Record<string, never>;
   [Method.GET_SDK_VERSION]: Record<string, never>;
   [Method.SET_UI_DESIGNER_MODE]: { open: boolean };
-  [Method.INSTALL_MULTIPLAYER]: Record<string, never>;
-  [Method.UNINSTALL_MULTIPLAYER]: Record<string, never>;
-  [Method.GET_PROFILES]: { addresses: string[] };
   [Method.OPTIMIZE_SCENE]: Record<string, never>;
   [Method.PROMPT_ASSISTANT]: { text: string };
   [Method.MENTION_ASSET]: AiAssetMention;
@@ -65,6 +62,7 @@ export type Params = {
   [Method.SET_CONSOLE_WINDOW_OPEN]: { open: boolean };
   [Method.NOTIFY_SCENE_METADATA]: { title: string; scene?: Project['scene'] };
   [Method.NOTIFY_READY]: Record<string, never>;
+  [Method.RECORD_EVENTS]: { events: RecordedEvent[] };
 };
 
 export type Result = {
@@ -79,9 +77,6 @@ export type Result = {
   [Method.UPDATE_SDK]: { ok: boolean };
   [Method.GET_SDK_VERSION]: { version: string | null };
   [Method.SET_UI_DESIGNER_MODE]: void;
-  [Method.INSTALL_MULTIPLAYER]: { ok: boolean };
-  [Method.UNINSTALL_MULTIPLAYER]: { ok: boolean };
-  [Method.GET_PROFILES]: { profiles: ProfileSummary[] };
   [Method.OPTIMIZE_SCENE]: void;
   [Method.PROMPT_ASSISTANT]: void;
   [Method.MENTION_ASSET]: void;
@@ -89,6 +84,7 @@ export type Result = {
   [Method.SET_CONSOLE_WINDOW_OPEN]: void;
   [Method.NOTIFY_SCENE_METADATA]: void;
   [Method.NOTIFY_READY]: void;
+  [Method.RECORD_EVENTS]: void;
 };
 
 export type SceneRpcServerCallbacks = {
@@ -96,6 +92,11 @@ export type SceneRpcServerCallbacks = {
   // reloaded iframe).
   onReady?: () => void;
 };
+
+/** Whether an entry of an inspector `record_events` batch is shaped like an event at all. */
+function isRecordedEvent(event: unknown): event is RecordedEvent {
+  return typeof event === 'object' && event !== null && !Array.isArray(event);
+}
 
 /** Identifies a layout regardless of the order its parcels are listed in. */
 const layoutKey = (scene: { base: string; parcels: string[] } | undefined) =>
@@ -109,13 +110,17 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
       callbacks.onReady?.();
     });
 
+    this.handle('record_events', async ({ events }) => {
+      if (Array.isArray(events)) forwardRecordedEvents(events.filter(isRecordedEvent));
+    });
+
     // The layout the editor reported last, seeded with the one it opened with. A notice
     // repeats it whenever only the title changed, and taking it again would undo parcels
     // picked meanwhile in the publish dialog (an editor that could not take them still
     // holds its old layout).
     let lastEditorLayout = layoutKey(project.scene);
     this.handle('notify_scene_metadata', async ({ title, scene }) => {
-      const current = store.getState().editor.project ?? project;
+      const current = getOpenProject(store.getState()) ?? project;
       const layout = scene && layoutKey(scene);
       const layoutChanged = !!layout && layout !== lastEditorLayout;
       if (layout) lastEditorLayout = layout;
@@ -202,48 +207,6 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
       }
     });
 
-    const swapSdk = async (
-      thunk:
-        | typeof workspaceActions.installMultiplayerSdk
-        | typeof workspaceActions.uninstallMultiplayerSdk,
-      failure: string,
-    ) => {
-      const state = store.getState();
-      if (state.editor.isInstallingProject) {
-        return { ok: false };
-      }
-      const currentProject = state.editor.project ?? project;
-      try {
-        await store.dispatch(thunk(currentProject)).unwrap();
-        await store
-          .dispatch(workspaceActions.fetchSdkCommandsVersion(currentProject.path))
-          .unwrap();
-        return { ok: true };
-      } catch (error) {
-        console.error(`[SceneRpc] ${failure}`, error);
-        return { ok: false };
-      }
-    };
-
-    this.handle('install_multiplayer', () =>
-      swapSdk(workspaceActions.installMultiplayerSdk, 'Failed to install the multiplayer SDK'),
-    );
-
-    this.handle('uninstall_multiplayer', () =>
-      swapSdk(workspaceActions.uninstallMultiplayerSdk, 'Failed to restore the latest SDK release'),
-    );
-
-    this.handle('get_profiles', async ({ addresses }) => {
-      const requested = sanitizeProfileAddresses(addresses);
-      if (requested.length === 0) return { profiles: [] };
-      try {
-        return { profiles: await resolveProfiles(store, requested) };
-      } catch (error) {
-        console.error('[SceneRpc] Failed to resolve profiles', error);
-        return { profiles: requested.map(address => ({ address })) };
-      }
-    });
-
     this.handle('optimize_scene', async () => {
       store.dispatch(optimizerActions.open());
     });
@@ -261,7 +224,7 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
         );
         return;
       }
-      store.dispatch(aiActions.setDraftPrompt(text));
+      store.dispatch(aiActions.setDraftPrompt({ text, mode: 'replace' }));
     });
 
     // A double-click on a Local Assets entry. Only lands while the chat is visible (the reducer

@@ -192,6 +192,7 @@ async fn fetch_page(
     url: &str,
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
     let resp = client.get(url).send().await?.error_for_status()?;
+    let resp = crate::sync_types::refuse_redirect(resp, &format!("pointer-changes page {url}"))?;
     let body = crate::http::read_body_capped(resp, MAX_PAGE_BYTES)
         .await
         .map_err(|e| SyncError::Other(format!("pointer-changes page {url}: {e}")))?;
@@ -239,6 +240,8 @@ fn page_entity_ids(page: &[serde_json::Value]) -> HashSet<String> {
 /// as this used to, let a later confirmed entity carry the cursor past an earlier one still in flight
 /// -- a crash in that window skipped it forever. The cursor a boundary confirms is the
 /// [`settled_cursor`], the overlap behind the high-water mark, and the next poll starts there.
+/// `settled_polls` counts the boundaries this run settled.
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy_entities_from_pointer_changes<S>(
     client: &Client,
     server: &str,
@@ -246,6 +249,7 @@ pub async fn deploy_entities_from_pointer_changes<S>(
     target: ScheduleTarget<'_>,
     heartbeat_repo: Option<std::sync::Arc<LiveDeploymentRepository>>,
     progress: &std::sync::atomic::AtomicI64,
+    settled_polls: &std::sync::atomic::AtomicU64,
     should_stop: S,
 ) -> Result<Timestamp, SyncError>
 where
@@ -394,6 +398,7 @@ where
             let span_ms = Timestamp::try_from(span.as_millis()).unwrap_or(Timestamp::MAX);
             confirmed_timestamp = settled_cursor(confirmed_timestamp, greatest_timestamp, span_ms);
             progress.fetch_max(confirmed_timestamp, std::sync::atomic::Ordering::Relaxed);
+            settled_polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(repo) = &heartbeat_repo
                 && confirmed_timestamp > last_persisted
             {
@@ -426,6 +431,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_pointer_changes_page_is_never_followed_through_a_redirect() {
+        let (port, hits) = crate::sync_test_support::redirecting_peer("/pointer-changes", |port| {
+            format!("http://localhost:{port}/target")
+        })
+        .await;
+        let server = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &server,
+        ])
+        .unwrap();
+        let client = crate::sync::sync_http_client(&config).unwrap();
+        let page = fetch_page(&client, &format!("{server}/pointer-changes")).await;
+        assert!(
+            matches!(&page, Err(SyncError::Other(e)) if e.contains("refusing to follow")),
+            "{page:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     fn delta(local_timestamp: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
@@ -727,11 +756,12 @@ mod tests {
         let (storage, tmp) = crate::sync_test_support::temp_storage("pointer-changes").await;
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
-            reqwest::Client::new(),
-            storage,
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            storage.clone(),
             pool.clone(),
             Arc::new(LiveSyncDeployer::new(
                 pool.clone(),
+                storage.clone(),
                 2,
                 crate::sync_deployer::SyncValidation::AuthChainOnly,
             )),
@@ -755,6 +785,7 @@ mod tests {
             },
             None,
             &progress,
+            &std::sync::atomic::AtomicU64::new(0),
             should_stop,
         )
         .await

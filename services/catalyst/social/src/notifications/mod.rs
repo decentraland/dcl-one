@@ -8,7 +8,7 @@
 //! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
-//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
+//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`, `first_wear_outbox`,
 //! `land_transfer_cursor`; the first-wear cursor is the `friend_first_wear`
 //! row of `badge_cursors`.
 //!
@@ -40,7 +40,7 @@ pub mod unsubscribe;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use crate::routing::{erase, get, post, put};
+use crate::shared::routing::{erase, get, post, put};
 use axum::Router;
 use sqlx::PgPool;
 
@@ -88,10 +88,12 @@ pub struct Settings {
     /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never, but
     /// a hold for a missing key still ends): see [`delivery::expire`].
     pub delivery_max_age: Option<Duration>,
-    /// Deployment origin used by event notice links (`/whats-on/{id}`).
+    /// Deployment origin used by event notice links (the Sites `/events` pages).
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,
+    /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
+    pub events_public_base: Option<String>,
     /// `CURRENT_VERSION` and the node's `COMMIT_HASH`, for `GET /status`.
     pub current_version: Option<String>,
     pub commit_hash: Option<String>,
@@ -127,6 +129,7 @@ impl Default for Settings {
             delivery_max_age: Some(delivery::DEFAULT_MAX_AGE),
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
+            events_public_base: None,
             current_version: None,
             commit_hash: None,
             community_cdn_url: "https://decentraland.org".into(),
@@ -281,6 +284,7 @@ impl State {
             events::Links {
                 base: self.settings.events_base_url.clone(),
                 asset_base: self.settings.events_asset_base_url.clone(),
+                public_base: self.settings.events_public_base.clone(),
                 jump_in_site_url: self.settings.jump_in_site_url.clone(),
                 community_cdn: self.settings.community_cdn_url.clone(),
                 slack_notices: self.settings.event_slack_notices,
@@ -339,7 +343,7 @@ pub fn router(state: SharedState) -> Router {
             "/unsubscribe/{address}/{notificationType}",
             get(unsubscribe::unsubscribe_one),
         )
-        .fallback(crate::routing::erase(|| async {
+        .fallback(crate::shared::routing::erase(|| async {
             (axum::http::StatusCode::NOT_FOUND, "Not found")
         }))
         .layer(axum::middleware::from_fn(errors::json_wire))

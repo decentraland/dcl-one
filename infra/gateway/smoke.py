@@ -51,6 +51,8 @@ class Upstream(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
+            self.send_header("Content-Security-Policy", "sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -164,10 +166,10 @@ def client(args):
     for path in ["/", "/play", "/play/engine/pkg/webgpu_build_bg.wasm", "/shop",
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
-                 "/internal/thirdweb-sign", "/api/screens/v1/play", "/api/creator-hub/drafts",
-                 "/profile/alice", "/cast", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
+                 "/internal/thirdweb-sign", "/api/screens/v1/play",
+                 "/profile/alice", "/cast", "/press", "/press/", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
-    for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
+    for path in ["/about", "/press-release", "/content/contents/blob", "/lambdas/profiles", "/api/status",
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
                  "/places/place/?position=1,2", "/places/world/?name=sample.dcl.eth",
                  "/places/world?name=sample.dcl.eth", "/events/api/status",
@@ -189,6 +191,8 @@ def client(args):
                  "/METRICS/x.data", "/%6detrics", "/x/../metrics",
                  "/internal/pulse", "/internal/pulse/room-authority/v1", "/internal/pulse/x.data",
                  "/INTERNAL/PULSE/X.data", "//internal//pulse/x.data", "/internal%2fpulse/x.data",
+                 "/internal/message-router", "/internal/message-router/token/v1",
+                 "/INTERNAL/MESSAGE-ROUTER/token/v1", "//internal//message-router/token/v1",
                  "/__protected_storage/0a/blob"]:
         for host in (public, admitted):
             status, body = request(host, path)
@@ -228,6 +232,8 @@ def client(args):
     print("Internal paths, admin CIDRs, normalized paths and forwarded-header trust passed.", flush=True)
 
     hit("/about", "apis", vhost="peer.example.test")
+    hit("/comms-gatekeeper/scene-admin", "apis", vhost="worlds-content-server.example.test")
+    hit("/cast-presenter-service/presentations/p/slides/s.png", "apis", vhost="realm-provider-ea.example.test")
     hit("/peer/about?x=1", "apis", vhost="gateway.example.test", target="/about?x=1")
     data = hit("/comms-gatekeeper/get-scene-adapter", "apis", vhost="gateway.example.test")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"
@@ -299,6 +305,7 @@ def client(args):
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
                            "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-security-policy": "sandbox",
                            "content-type": "image/png", "accept-ranges": "bytes",
                            "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
                            "access-control-expose-headers":

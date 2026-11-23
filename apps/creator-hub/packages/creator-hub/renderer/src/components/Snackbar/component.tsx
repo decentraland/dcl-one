@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Snackbar } from '@mui/material';
+import { Toast, ToastHost } from '@ui/atoms/Toast';
 
 import type { Notification } from '/@/modules/store/snackbar/types';
 import { useSnackbar } from '/@/hooks/useSnackbar';
@@ -11,11 +11,12 @@ import { NewDependencyVersion } from './DependencyVersion';
 import { SdkSkills } from './SdkSkills';
 import { Deploy } from './Deploy';
 import { ExternalAgentAccess } from './ExternalAgentAccess';
-import { StyledBackdrop } from './component.styled';
+import { RealmServerStopped } from './RealmServerStopped';
 
-import './styles.css';
+import styles from './component.module.css';
 
 const DEFAULT_DURATION_IN_MS = 5_000;
+const SLOT_HEIGHT_IN_PX = 60;
 
 export function SnackbarComponent() {
   const { notifications, close, dismiss } = useSnackbar();
@@ -53,6 +54,13 @@ export function SnackbarComponent() {
         );
       case 'external-agent-access':
         return <ExternalAgentAccess onClose={close(notification.id)} />;
+      case 'realm-server-stopped':
+        return (
+          <RealmServerStopped
+            onClose={close(notification.id)}
+            path={notification.path}
+          />
+        );
       default:
         return null;
     }
@@ -65,28 +73,39 @@ export function SnackbarComponent() {
 
   return (
     <>
-      <StyledBackdrop open={isInstallingDependencies} />
-      <div className="Snackbar">
+      {isInstallingDependencies && (
+        <div
+          className={styles.backdrop}
+          data-testid="install-backdrop"
+          aria-hidden="true"
+        />
+      )}
+      <ToastHost className="Snackbar">
         {notifications.map((notification, idx) => {
-          const component = getComponent(notification);
+          const bottom = (notifications.length - idx) * SLOT_HEIGHT_IN_PX;
+          const duration = getDuration(notification);
 
           return (
-            <Snackbar
-              style={{ bottom: `${(notifications.length - idx) * 60}px` }}
+            <div
+              className={styles.slot}
+              style={{ bottom: `${bottom}px` }}
               key={notification.id}
-              open={true}
-              autoHideDuration={getDuration(notification)}
-              onClose={dismiss(notification.id, idx)}
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             >
-              <div>
-                {/* dont remove this wrapping div... */}
-                {component}
-              </div>
-            </Snackbar>
+              <Toast
+                role="presentation"
+                duration={duration}
+                // The time stops while the window is not active, and a stop that ends gives half of the
+                // duration again.
+                holdOnWindowBlur
+                resumeDuration={duration === null ? undefined : duration / 2}
+                onClose={dismiss(notification.id, idx)}
+              >
+                {getComponent(notification)}
+              </Toast>
+            </div>
           );
         })}
-      </div>
+      </ToastHost>
     </>
   );
 }

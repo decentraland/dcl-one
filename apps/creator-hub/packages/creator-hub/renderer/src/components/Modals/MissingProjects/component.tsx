@@ -5,7 +5,7 @@ import { t } from '/@/modules/store/translation/utils';
 import { ellipsisAtMiddle } from '/@/modules/project';
 
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import { Row } from '../../Row';
 import type { Props } from './types';
@@ -47,13 +47,15 @@ export function MissingProjects({ open, onClose }: Props) {
             {ellipsisAtMiddle(path, 40)}
             <div className="actions">
               <Button
-                color="primary"
+                variant="text"
+                className="hub-button hub-button--primary"
                 onClick={handleFind(path)}
               >
                 {t('modal.missing_projects.find')}
               </Button>
               <Button
-                color="info"
+                variant="text"
+                className="hub-button hub-button--info"
                 onClick={handleDiscard(path)}
               >
                 {t('modal.missing_projects.discard')}
@@ -62,8 +64,8 @@ export function MissingProjects({ open, onClose }: Props) {
           </Row>
         ))}
         <Button
-          className="discard-all"
-          color="info"
+          variant="text"
+          className="hub-button hub-button--info discard-all"
           onClick={handleDiscardAll}
           disabled={missing.length === 0}
         >

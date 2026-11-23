@@ -27,6 +27,26 @@ function noCredits() {
   expect(document.body.textContent ?? "").not.toMatch(/credit/i);
 }
 
+/** jsdom has no canvas: gives the LAND map a 2D context and returns the count of parcels its last paint marked as on sale or for rent. */
+function recordMapMarks() {
+  let marks = 0;
+  const ctx = {
+    fillStyle: "",
+    setTransform() {},
+    clearRect() {
+      marks = 0;
+    },
+    fillRect() {
+      if (this.fillStyle === "--_sale") marks++;
+    },
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ctx) as never);
+  // The map's colours are custom properties of the canvas; each resolves to its own name here.
+  const real = window.getComputedStyle.bind(window);
+  vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => (el instanceof HTMLCanvasElement ? ({ getPropertyValue: (name: string) => name } as CSSStyleDeclaration) : real(el, pseudo)));
+  return () => marks;
+}
+
 async function enabledButton(name: string) {
   await waitFor(() => expect(screen.getByRole("button", { name })).toBeEnabled());
   return screen.getByRole("button", { name });
@@ -144,13 +164,25 @@ describe("/shop/lands", () => {
   });
 
   it("draws the map from the atlas tiles, and an unmirrored grid is an outage with a way to the list", async () => {
+    // The map paints only the marked parcels, each as one rectangle in the colour of the mark.
+    const marks = recordMapMarks();
     renderLands("web3", "/shop/lands?isMap=true", {});
-    expect(await screen.findByRole("region", { name: /LAND map: drag/ })).toBeInTheDocument();
-    expect(document.querySelectorAll(".shop-landmap__sale").length).toBe(1);
+    const map = await screen.findByRole("region", { name: /LAND map: drag/ });
+    await waitFor(() => expect(marks()).toBe(1));
+    // The atlas image stays the base of the map after the tiles load.
+    expect(map.querySelectorAll("img").length).toBe(1);
     fireEvent.click(screen.getByRole("checkbox", { name: "Available to rent" }));
-    await waitFor(() => expect(document.querySelectorAll(".shop-landmap__sale").length).toBe(2));
+    await waitFor(() => expect(marks()).toBe(2));
     fireEvent.click(screen.getByRole("checkbox", { name: "Available to buy" }));
-    await waitFor(() => expect(document.querySelectorAll(".shop-landmap__sale").length).toBe(1));
+    await waitFor(() => expect(marks()).toBe(1));
+  });
+
+  it("shows the atlas image while the map waits for its tiles", async () => {
+    renderLands("web3", "/shop/lands?isMap=true", {}, () => new Promise(() => {}));
+    const map = await screen.findByRole("region", { name: /LAND map: drag/ });
+    expect(screen.getByText("Loading the map…")).toBeInTheDocument();
+    expect(map.querySelectorAll("img").length).toBe(1);
+    expect(map.querySelector("canvas")).toBeNull();
   });
 
   it("reports a map that is not ready", async () => {
@@ -194,7 +226,7 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
     renderManage("web3", result, {}, fakeWallet({ account: OWNER, chainId: 1 }));
     expect(await screen.findByRole("heading", { name: "Selling" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Edit listing" })).toHaveAttribute("href", `/shop/token/${NET.land}/${result.nft.tokenId}/sell`);
-    expect(screen.getByRole("link", { name: "Open in Builder" })).toHaveAttribute("href", "/create/land");
+    expect(screen.getByRole("link", { name: "Open in Creator Hub" })).toHaveAttribute("href", "/download/creator-hub");
     expect(screen.getByRole("link", { name: "Transfer" })).toHaveAttribute("href", `/shop/token/${NET.land}/${result.nft.tokenId}/transfer`);
     expect(screen.getByRole("button", { name: "List for rent" })).toBeEnabled();
     const highlights = await screen.findByRole("region", { name: "Highlights" });
@@ -289,7 +321,7 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
         <ManageAsset client={client} />
       </ShopHarness>,
     );
-    expect(await screen.findByRole("link", { name: "Manage your NAMEs" })).toHaveAttribute("href", "/create/names");
+    expect(await screen.findByRole("link", { name: "Open in Creator Hub" })).toHaveAttribute("href", "/download/creator-hub");
   });
 });
 
@@ -326,7 +358,7 @@ describe("/shop/token/:contract/:tokenId/rent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByRole("heading", { name: "LAND rented" })).toBeInTheDocument();
     expect(wallet.sent.map((t) => t.fn)).toEqual(["approve", "acceptListing"]);
-    expect(screen.getByRole("link", { name: /Manage LAND/ })).toHaveAttribute("href", "/create/land");
+    expect(screen.getByRole("link", { name: /Manage LAND/ })).toHaveAttribute("href", "/download/creator-hub");
     noCredits();
   });
 

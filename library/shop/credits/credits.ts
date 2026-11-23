@@ -120,32 +120,53 @@ export async function getUsdBalance(address: string, client: ShopClient, signal?
 /** One checkout line: what is bought and what it is quoted at. The credit that pays for it is shared. */
 export type CheckoutLine = CreditLineRequest;
 
+/** The session a Credits part is judged on, signed with its request as the quote's was (`walletKind`). */
+export type SignedSession = { walletKind: "web3" | "web2" };
+
 /**
  * ONE credit for ONE settlement group (POST /shop-api/v1/credit-authorizations/batch). useCredits
  * consumes a list of credits in order until the call is covered, so per-line credits leave an
  * unreachable tail; one credit per transaction has none. Call once per group, never per item.
+ * A group of ONE line of one unit may carry that line's `creditsCents` (the Credits part, the rest
+ * paid in MANA), with `session` signed beside it: the node authorizes a part only for a signed web3
+ * session, and refuses it beside any other line.
  */
 export async function authorizeUsdCreditGroup(
   lines: CheckoutLine[],
   source: "website" | "client",
   client: ShopClient,
+  session?: SignedSession,
 ): Promise<CreditBatchAuthorization> {
-  return client.authorizations.authorizeGroup({ items: lines, source });
+  return client.authorizations.authorizeGroup({ items: lines, source }, session ? { metadata: session } : undefined);
 }
 
-/** One line's credit (POST /shop-api/v1/credit-authorizations): single purchases and NAME registrations. */
+/**
+ * One line's credit (POST /shop-api/v1/credit-authorizations): single purchases and NAME registrations. `usdPriceCents`
+ * is the line's whole quoted price; `creditsCents` asks for a credit for that part of it alone, the rest paid in MANA
+ * (the node reserves and signs only the part), with `session` signed beside it: the node authorizes a part only for a
+ * signed web3 session. A whole-price request needs no session.
+ */
 export async function authorizeUsdCredit(
   usdPriceCents: number,
-  opts: { tradeId?: string; item?: { contractAddress: string; itemId: string }; registeredName?: string; source?: "website" | "client" } = {},
+  opts: {
+    tradeId?: string;
+    item?: { contractAddress: string; itemId: string };
+    registeredName?: string;
+    creditsCents?: number;
+    session?: SignedSession;
+    source?: "website" | "client";
+  } = {},
   client: ShopClient,
 ): Promise<CreditAuthorization> {
+  const signed = opts.session ? { metadata: opts.session } : undefined;
   return client.authorizations.authorize({
     usdPriceCents,
     ...(opts.tradeId ? { tradeId: opts.tradeId } : {}),
     ...(opts.item ?? {}),
     ...(opts.registeredName ? { name: opts.registeredName } : {}),
+    ...(opts.creditsCents !== undefined ? { creditsCents: opts.creditsCents } : {}),
     source: opts.source ?? "website",
-  });
+  }, signed);
 }
 
 /** One row of the purchase history: SETTLED on chain, PENDING reserved, EXPIRED released. */
@@ -200,12 +221,15 @@ function pageTotal(json: Json, skip: number, first: number | undefined, count: n
   return skip + count + (size > 0 && count >= size ? 1 : 0);
 }
 
-/** The buyer's purchase history, paginated; `all` includes pending and expired intents. */
+/**
+ * The buyer's purchase history, paginated; `all` includes pending and expired intents. `returned`: the rows the server
+ * sent, the ones the decoder drops (a status it does not know) included, which is where its next page starts.
+ */
 export async function fetchUserPurchases(
   address: string,
   opts: { all?: boolean; first?: number; skip?: number } = {},
   client: ShopClient,
-): Promise<{ items: PurchaseRecord[]; total: number }> {
+): Promise<{ items: PurchaseRecord[]; total: number; returned: number }> {
   const json =
     obj(
       await client.credits.purchases<unknown>(address, {
@@ -214,8 +238,9 @@ export async function fetchUserPurchases(
         ...(opts.skip != null ? { offset: opts.skip } : {}),
       }),
     ) ?? {};
-  const items = (Array.isArray(json.purchases) ? json.purchases : []).map(decodePurchaseRecord).filter((p): p is PurchaseRecord => p !== null);
-  return { items, total: pageTotal(json, opts.skip ?? 0, opts.first, items.length) };
+  const rows = Array.isArray(json.purchases) ? json.purchases : [];
+  const items = rows.map(decodePurchaseRecord).filter((p): p is PurchaseRecord => p !== null);
+  return { items, total: pageTotal(json, opts.skip ?? 0, opts.first, rows.length), returned: rows.length };
 }
 
 /**

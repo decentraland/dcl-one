@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { legalDocToMarkdown } from "../lib/agent/markdown";
 import { toAgentLegalDoc } from "./agent";
@@ -59,12 +59,16 @@ describe("agent markdown of the legal documents", () => {
   describe.each(["brand", "content", "ethics"] as const)(
     "when the document has a markdown fixture (%s)",
     (key) => {
-      it("should be byte-identical to it", () => {
-        const baseline = fs.readFileSync(
+      let baseline: string;
+
+      beforeEach(() => {
+        baseline = fs.readFileSync(
           path.join(FIXTURES, "markdown", `${key}.md`),
           "utf8",
         );
+      });
 
+      it("should be byte-identical to it", () => {
         expect(markdownOf(key)).toBe(baseline);
       });
     },
@@ -79,10 +83,17 @@ describe("agent markdown of the legal documents", () => {
     ["terms", "terms"],
     ["creatorFund", "creator-fund-terms"],
   ] as const)("when the document has new content (%s)", (key, slug) => {
+    let text: string;
+    let frozen: string[];
+
+    beforeEach(() => {
+      text = plain(markdownOf(key));
+      frozen = blocks(fixture(slug).canonical);
+    });
+
     it("should carry every heading and text block of the frozen render, in order", () => {
-      const text = plain(markdownOf(key));
       let from = 0;
-      for (const block of blocks(fixture(slug).canonical)) {
+      for (const block of frozen) {
         const at = text.indexOf(block, from);
         expect(
           at,
@@ -94,22 +105,55 @@ describe("agent markdown of the legal documents", () => {
   });
 
   describe("when a document links to another page", () => {
-    it("should keep every href", () => {
-      const terms = markdownOf("terms");
-      const brand = markdownOf("brand");
+    describe("and the document is the terms", () => {
+      let terms: string;
 
-      expect(terms).toContain("](https://dao.decentraland.org)");
-      expect(terms).toContain("](https://decentraland.org/privacy)");
-      expect(terms).toContain("](https://market.decentraland.org)");
-      expect(terms).toContain("](https://github.com/ethereum/EIPs/issues/20)");
-      expect(terms).toContain("](https://decentraland.org/brand)");
-      expect(brand).toContain("[Terms of Use](https://decentraland.org/terms)");
-      expect(brand).toContain("[Content Policy](https://decentraland.org/content)");
+      beforeEach(() => {
+        terms = markdownOf("terms");
+      });
+
+      it("should keep the DAO href", () => {
+        expect(terms).toContain("](https://dao.decentraland.org)");
+      });
+
+      it("should keep the privacy policy href", () => {
+        expect(terms).toContain("](https://decentraland.org/privacy)");
+      });
+
+      it("should keep the marketplace href", () => {
+        expect(terms).toContain("](https://market.decentraland.org)");
+      });
+
+      it("should keep the ERC-20 href", () => {
+        expect(terms).toContain("](https://github.com/ethereum/EIPs/issues/20)");
+      });
+
+      it("should keep the brand guidelines href", () => {
+        expect(terms).toContain("](https://decentraland.org/brand)");
+      });
+    });
+
+    describe("and the document is the brand guidelines", () => {
+      let brand: string;
+
+      beforeEach(() => {
+        brand = markdownOf("brand");
+      });
+
+      it("should keep the Terms of Use link", () => {
+        expect(brand).toContain("[Terms of Use](https://decentraland.org/terms)");
+      });
+
+      it("should keep the Content Policy link", () => {
+        expect(brand).toContain("[Content Policy](https://decentraland.org/content)");
+      });
     });
   });
 
   describe("when a link opens in a new tab", () => {
-    it("should keep its href", () => {
+    let doc: Parameters<typeof toAgentLegalDoc>[0];
+
+    beforeEach(() => {
       const link = {
         type: "link" as const,
         href: "https://example.com/",
@@ -117,7 +161,7 @@ describe("agent markdown of the legal documents", () => {
         rel: "noopener noreferrer",
         children: ["example"],
       };
-      const doc = {
+      doc = {
         ...LEGAL_DOCS.brand,
         sections: [
           {
@@ -129,7 +173,9 @@ describe("agent markdown of the legal documents", () => {
           },
         ],
       };
+    });
 
+    it("should keep its href", () => {
       expect(legalDocToMarkdown(toAgentLegalDoc(doc))).toContain(
         "[example](https://example.com/)",
       );
@@ -145,18 +191,24 @@ describe("agent markdown of the legal documents", () => {
   });
 
   describe("when an intro has several paragraphs", () => {
-    it("should keep them as separate paragraphs", () => {
-      const intro = LEGAL_DOCS.credits.intro.map((b) =>
+    let intro: string[];
+
+    beforeEach(() => {
+      intro = LEGAL_DOCS.credits.intro.map((b) =>
         b.type === "p" ? b.content.join("") : "",
       );
-      const md = markdownOf("credits");
+    });
 
+    it("should read three paragraphs from the credits intro", () => {
       expect(intro).toHaveLength(3);
-      expect(md).toContain(`${intro[0]}\n\n${intro[1]}\n\n${intro[2]}`);
+    });
+
+    it("should keep them as separate paragraphs", () => {
+      expect(markdownOf("credits")).toContain(`${intro[0]}\n\n${intro[1]}\n\n${intro[2]}`);
     });
   });
 
-  describe("which documents write their intro as blocks", () => {
+  describe("when listing the documents that write their intro as blocks", () => {
     it("should be only security, credits and terms", () => {
       const blocks = (Object.keys(LEGAL_DOCS) as LegalKey[]).filter((key) =>
         Array.isArray(toAgentLegalDoc(LEGAL_DOCS[key]).intro),
@@ -175,14 +227,18 @@ describe("agent markdown of the legal documents", () => {
   });
 
   describe("when a section does not start with its heading", () => {
-    it("should fail instead of dropping the heading", () => {
-      const doc = {
+    let doc: Parameters<typeof toAgentLegalDoc>[0];
+
+    beforeEach(() => {
+      doc = {
         ...LEGAL_DOCS.content,
         sections: [
           { id: "x", blocks: [{ type: "p" as const, content: ["text"] }] },
         ],
       };
+    });
 
+    it("should fail instead of dropping the heading", () => {
       expect(() => toAgentLegalDoc(doc)).toThrow("does not start with its h2");
     });
   });

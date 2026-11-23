@@ -96,10 +96,11 @@ export function NewAccountName({
               checked={newsletter}
               onChange={setNewsletter}
               aria-label="Subscribe to newsletter"
+              id="new-account-newsletter"
             />
-            <span>
+            <label htmlFor="new-account-newsletter">
               Subscribe to newsletter for updates on features, events, contests, and more.
-            </span>
+            </label>
           </div>
         )}
         <div className={styles.row}>
@@ -108,8 +109,9 @@ export function NewAccountName({
             checked={terms}
             onChange={setTerms}
             aria-label="I agree with the Terms of Use and Privacy Policy"
+            id="new-account-terms"
           />
-          <span>
+          <label htmlFor="new-account-terms">
             I agree with Decentraland’s{' '}
             <a
               className={styles.link}
@@ -131,7 +133,7 @@ export function NewAccountName({
               Privacy Policy
             </a>
             .*
-          </span>
+          </label>
         </div>
         <Button
           size="start"

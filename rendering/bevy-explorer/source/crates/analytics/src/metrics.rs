@@ -22,6 +22,9 @@ impl Plugin for MetricsPlugin {
                 refresh_crash_snapshot,
             ),
         );
-        app.add_plugins(crate::page_events::PageEventsPlugin);
+        app.add_plugins((
+            crate::page_events::PageEventsPlugin,
+            crate::feature_flags::FeatureFlagsReportPlugin,
+        ));
     }
 }

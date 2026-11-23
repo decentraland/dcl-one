@@ -35,7 +35,11 @@
 //! take the process down. The Pulse application relay's room authority
 //! (`admission::relay_authority`, `POST /internal/pulse/room-authority/v1`)
 //! answers over the same permission core with the frames and the claim and
-//! proof types of `protocol::room_authority`. `/scene-stream-access`
+//! proof types of `protocol::room_authority`. The community-chat message
+//! router (`catalyst-message-router`, its own process) fetches its join token
+//! from `message_router` (`POST /internal/message-router/token/v1`, contract
+//! in `shared::message_router`), so it never holds the LiveKit secret.
+//! `/scene-stream-access`
 //! mints a place's RTMP ingress credential (`streaming`); the Cast 2.0
 //! routes (`/cast/*`, `streaming::cast`) hand out stream links and the
 //! streamer, watcher and presentation-bot tokens over the same credential.
@@ -60,6 +64,7 @@ pub mod bus;
 pub mod errors;
 pub mod events;
 pub use crate::shared::livekit;
+pub mod message_router;
 pub mod moderation;
 pub(crate) mod removal;
 pub mod removed_places;
@@ -75,9 +80,9 @@ mod tests;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use crate::shared::routing::{delete, erase, get, patch, post, put};
 use anyhow::{Context, anyhow};
 use axum::Router;
-use axum::routing::{delete, get, patch, post, put};
 use sqlx::PgPool;
 
 use crate::Address;
@@ -116,7 +121,8 @@ pub struct RawSettings {
     pub authoritative_server_address: Option<String>,
     /// `MODERATOR_TOKEN`: the bearer of the user-moderation routes.
     pub moderator_token: Option<String>,
-    /// `PLATFORM_USER_MODERATORS`: comma/space-separated moderator wallets.
+    /// `PLATFORM_USER_MODERATORS`: comma/space-separated moderator wallets,
+    /// read only while no `platform_user_moderators` flag document is held.
     pub moderator_addresses: String,
     /// `COMMS_GATEKEEPER_AUTH_TOKEN`: the platform service token in front of
     /// the voice routes and the world ban-status route; unset answers 503.
@@ -129,6 +135,8 @@ pub struct RawSettings {
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.
     pub lease_authorizations_url: Option<String>,
+    /// Whether lease entries marked `onlyDev` count (only on a Sepolia `ETH_NETWORK`).
+    pub lease_dev_entries: bool,
     /// `VOICE_CHAT_CONNECTION_INTERRUPTED_TTL` (ms, default 300000).
     pub voice_connection_interrupted_ttl_ms: i64,
     /// `VOICE_CHAT_INITIAL_CONNECTION_TTL` (ms, default 300000).
@@ -145,6 +153,12 @@ pub struct RawSettings {
     pub cast2_url: String,
     /// `COMMIT_HASH` for `/status`.
     pub commit_hash: Option<String>,
+    /// `ALLOW_LOCAL_PREVIEW`: a local preview scene (a `b64-` id or a
+    /// `preview`/`localpreview` realm) gets a Genesis scene token without a
+    /// deployed scene behind it.
+    pub allow_local_preview: bool,
+    /// `REALM_NAME`: this node's Genesis City realm name (default `main`).
+    pub realm_name: Option<String>,
 }
 
 impl RawSettings {
@@ -179,6 +193,8 @@ pub struct Settings {
     /// The lease document [`admission::scene::get_lease_holders_for_parcels`] reads;
     /// `None` lists no lease holder and fetches nothing.
     pub lease_authorizations_url: Option<String>,
+    /// Whether lease entries marked `onlyDev` count; false on a production node.
+    pub lease_dev_entries: bool,
     pub voice: VoiceDbConfig,
     /// Declared evidence bytes the player report intake accepts in 24 hours
     /// from all wallets and addresses ([`reports`]). The value is the
@@ -187,6 +203,10 @@ pub struct Settings {
     /// The Cast 2.0 web app base of the stream links, no trailing slash.
     pub cast2_url: String,
     pub commit_hash: Option<String>,
+    /// Local preview scenes skip the Genesis deployment check (`ALLOW_LOCAL_PREVIEW`).
+    pub allow_local_preview: bool,
+    /// This node's Genesis City realm name: never read as a world's label.
+    pub realm_name: String,
 }
 
 /// Masks the moderator and gatekeeper tokens (the LiveKit secret is masked
@@ -211,6 +231,7 @@ impl std::fmt::Debug for Settings {
             )
             .field("land_operators_url", &self.land_operators_url)
             .field("lease_authorizations_url", &self.lease_authorizations_url)
+            .field("lease_dev_entries", &self.lease_dev_entries)
             .field("voice", &self.voice)
             .field(
                 "report_evidence_daily_bytes",
@@ -218,6 +239,7 @@ impl std::fmt::Debug for Settings {
             )
             .field("cast2_url", &self.cast2_url)
             .field("commit_hash", &self.commit_hash)
+            .field("allow_local_preview", &self.allow_local_preview)
             .finish()
     }
 }
@@ -301,7 +323,7 @@ impl Settings {
         }
         if moderator_token.is_none() && moderator_addresses.is_empty() {
             tracing::warn!(
-                "neither MODERATOR_TOKEN nor PLATFORM_USER_MODERATORS set; the user-moderation routes reject every caller"
+                "neither MODERATOR_TOKEN nor PLATFORM_USER_MODERATORS set; until a platform_user_moderators flag document is held, the user-moderation routes reject every caller"
             );
         }
         if gatekeeper_auth_token.is_none() {
@@ -336,6 +358,7 @@ impl Settings {
             gatekeeper_auth_token,
             land_operators_url,
             lease_authorizations_url,
+            lease_dev_entries: raw.lease_dev_entries,
             voice: VoiceDbConfig {
                 connection_interrupted_ttl_ms: raw.voice_connection_interrupted_ttl_ms,
                 initial_connection_ttl_ms: raw.voice_initial_connection_ttl_ms,
@@ -348,6 +371,10 @@ impl Settings {
                 url => url.to_string(),
             },
             commit_hash: raw.commit_hash,
+            allow_local_preview: raw.allow_local_preview,
+            realm_name: raw
+                .realm_name
+                .unwrap_or_else(|| crate::world_identity::GENESIS_CITY_REALM.to_string()),
         })
     }
 
@@ -369,6 +396,7 @@ impl Settings {
             gatekeeper_auth_token: None,
             land_operators_url: None,
             lease_authorizations_url: None,
+            lease_dev_entries: false,
             voice: VoiceDbConfig::default(),
             report_evidence_daily_bytes: i64::from(
                 RawSettings::defaults().report_evidence_daily_mib,
@@ -376,65 +404,79 @@ impl Settings {
                 * 1024,
             cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
+            allow_local_preview: false,
+            realm_name: crate::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }
 }
 
-pub struct CommsState {
-    pub deny_list: Arc<crate::deny_list::DenyList>,
-    pub pool: PgPool,
-    /// The guarded client: the LAND operators and the lease authorizations
-    /// (user-influenced URLs).
-    pub http: Outbound,
-    pub settings: Settings,
-    pub livekit: LiveKit,
-    pub moderation: Moderation,
-    pub bans: Arc<dyn moderation::BanStatus>,
-    pub social: Arc<dyn crate::interfaces::SocialDirectory>,
-    metadata_cursor: Mutex<Option<String>>,
-    pub voice_db: VoiceDb,
-    /// The marketplace readers (ENS names, world-name ownership); `None`
-    /// answers empty names and refuses non-admin world moderation.
-    pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
-    /// Shop's source-complete names owner reader for moderation writes.
-    pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
-    /// The worlds permission core: world access, protected wallets and
-    /// scene ownership; `serve` hands in the ONE instance the worlds routes
-    /// share.
-    pub policy: Arc<dyn AccessPolicy>,
-    /// The ONE room resolver: a world's deployed scenes and the world
-    /// mints' rooms.
-    pub scenes: Arc<dyn SceneIdentity>,
-    /// The live world presence the LiveKit webhook feeds and the world
-    /// mints' capacity check reads; `serve` shares it with worlds.
-    pub presence: Arc<crate::presence::Presence>,
-    /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
-    /// `None` refuses such chains.
-    pub eip1654: Option<Arc<dyn Eip1654Validator>>,
-    pub caches: admission::scene::SceneCaches,
-    /// Where the LiveKit webhook's participant events are also handed.
-    pub room_events: Option<Arc<dyn RoomEventSink>>,
-    /// Where every verified participant event is stored before it is acknowledged.
-    pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
-    webhooks: webhook::WebhookCoordinator,
-    /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
-    pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
-    /// The world comms mints' throttle and capacity (`admission::world_mint`).
-    pub world_mint: admission::world_mint::MintState,
-    pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
-    /// The island feed's settings (`admission::cluster`); the subscriber starts with
-    /// [`Self::start_island_feed`].
-    pub cluster: admission::cluster::ClusterConfig,
-    /// `serve`'s one NATS link (`NATS_URL`), whether or not the island subscriber runs: the
-    /// subscriber and the `/ws` connector both use it, and whichever starts first dials it.
-    pub bus: Arc<dyn bus::NatsBus>,
-    /// The realm-lane fence, with a v4 audience: `/island-refresh`, the
-    /// relay authority's island rooms and the subscriber's fenced path.
-    assignments: Option<Arc<admission::cluster::fence::PgAssignmentFence>>,
-    /// The island subscriber [`Self::start_island_feed`] started. Weak: its job owns it, and it
-    /// holds this state through its gateway.
-    island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
-    pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+/// The dapps flag whose variant payload lists the moderator wallets.
+pub const PLATFORM_USER_MODERATORS_FLAG: &str = "platform_user_moderators";
+
+crate::shared::send_sync_once! {
+    pub struct CommsState {
+        pub deny_list: Arc<crate::deny_list::DenyList>,
+        pub pool: PgPool,
+        /// The guarded client: the LAND operators and the lease authorizations
+        /// (user-influenced URLs).
+        pub http: Outbound,
+        pub settings: Settings,
+        pub livekit: LiveKit,
+        pub moderation: Moderation,
+        pub bans: Arc<dyn moderation::BanStatus>,
+        pub social: Arc<dyn crate::interfaces::SocialDirectory>,
+        metadata_cursor: Mutex<Option<String>>,
+        pub voice_db: VoiceDb,
+        /// The marketplace readers (ENS names, world-name ownership); `None`
+        /// answers empty names and refuses non-admin world moderation.
+        pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
+        /// Shop's source-complete names owner reader for moderation writes.
+        pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
+        /// The worlds permission core: world access, protected wallets and
+        /// scene ownership; `serve` hands in the ONE instance the worlds routes
+        /// share.
+        pub policy: Arc<dyn AccessPolicy>,
+        /// The ONE room resolver: a world's deployed scenes and the world
+        /// mints' rooms.
+        pub scenes: Arc<dyn SceneIdentity>,
+        /// The live world presence the LiveKit webhook feeds and the world
+        /// mints' capacity check reads; `serve` shares it with worlds.
+        pub presence: Arc<crate::presence::Presence>,
+        /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
+        /// `None` refuses such chains.
+        pub eip1654: Option<Arc<dyn Eip1654Validator>>,
+        pub caches: admission::scene::SceneCaches,
+        /// Content's moderation denylist: a listed Genesis scene gets no scene token.
+        pub content_denylist: Arc<crate::content::Denylist>,
+        /// Where the LiveKit webhook's participant events are also handed.
+        pub room_events: Option<Arc<dyn RoomEventSink>>,
+        /// Where every verified participant event is stored before it is acknowledged.
+        pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
+        webhooks: webhook::WebhookCoordinator,
+        /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
+        pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
+        /// The message router's token route, mounted when `MESSAGE_ROUTER_KEY` is set.
+        pub message_router: Option<Arc<message_router::MessageRouterAuthority>>,
+        /// The world comms mints' throttle and capacity (`admission::world_mint`).
+        pub world_mint: admission::world_mint::MintState,
+        pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
+        /// The island feed's settings (`admission::cluster`); the subscriber starts with
+        /// [`Self::start_island_feed`].
+        pub cluster: admission::cluster::ClusterConfig,
+        /// `serve`'s one NATS link (`NATS_URL`), whether or not the island subscriber runs: the
+        /// subscriber and the `/ws` connector both use it, and whichever starts first dials it.
+        pub bus: Arc<dyn bus::NatsBus>,
+        /// The realm-lane fence, with a v4 audience: `/island-refresh`, the
+        /// relay authority's island rooms and the subscriber's fenced path.
+        assignments: Option<Arc<admission::cluster::fence::PgAssignmentFence>>,
+        /// The island subscriber [`Self::start_island_feed`] started. Weak: its job owns it, and it
+        /// holds this state through its gateway.
+        island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
+        pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+        /// The dapps flags document whose `platform_user_moderators` variant
+        /// lists the moderator wallets; `serve` attaches it once.
+        platform_moderator_flags: std::sync::OnceLock<Arc<crate::shared::feature_flags::Snapshot>>,
+    }
 }
 
 pub type SharedState = Arc<CommsState>;
@@ -471,17 +513,54 @@ impl CommsState {
             name_owners: None,
             eip1654,
             caches: admission::scene::SceneCaches::default(),
+            content_denylist: Arc::default(),
             room_events: None,
             room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
+            message_router: None,
             world_mint: admission::world_mint::MintState::default(),
             world_access_cursor: std::sync::Mutex::new(None),
             cluster: admission::cluster::ClusterConfig::default(),
             bus: Arc::new(bus::DisabledBus),
             assignments: None,
             island_feed: Mutex::new(Weak::new()),
+            platform_moderator_flags: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Attaches the refreshed dapps flags document the moderator gate reads (once).
+    pub fn set_platform_moderator_flags(&self, flags: Arc<crate::shared::feature_flags::Snapshot>) {
+        let _ = self.platform_moderator_flags.set(flags);
+    }
+
+    /// The wallets the moderator gate admits, read on every check: the
+    /// `platform_user_moderators` flag once a flags document is held (none
+    /// while the flag or its variant is off), `PLATFORM_USER_MODERATORS`
+    /// before that (`FF_URL` unset, or never fetched and none stored).
+    /// A failed refresh keeps the last document with no age limit, so a
+    /// revocation waits for the next successful refresh. Social's
+    /// `social_dapps_flags_last_refresh_timestamp_seconds` shows its age; it
+    /// exists only after a process's first successful refresh, so a staleness
+    /// alert must also fire while it is absent.
+    pub fn platform_moderators(&self) -> std::borrow::Cow<'_, [Address]> {
+        let held = self
+            .platform_moderator_flags
+            .get()
+            .map(|flags| flags.held());
+        let Some((doc, true)) = held else {
+            return std::borrow::Cow::Borrowed(&self.settings.moderator_addresses);
+        };
+        crate::shared::feature_flags::enabled_variant_values(
+            &doc,
+            "dapps",
+            PLATFORM_USER_MODERATORS_FLAG,
+        )
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|value| Address::parse(value).ok())
+        .collect::<Vec<_>>()
+        .into()
     }
 
     pub fn with_ban_status(mut self, bans: Arc<dyn moderation::BanStatus>) -> Self {
@@ -494,6 +573,12 @@ impl CommsState {
         reader: Arc<dyn crate::interfaces::NameOwnerReader>,
     ) -> Self {
         self.name_owners = Some(reader);
+        self
+    }
+
+    /// Content's denylist, shared with the content reads.
+    pub fn with_content_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.content_denylist = denylist;
         self
     }
 
@@ -588,6 +673,49 @@ impl CommsState {
         self
     }
 
+    /// Mounts the message router's token route with `MESSAGE_ROUTER_KEY` (32 base64url bytes,
+    /// distinct from the LiveKit secret) for `<identity_prefix>-<replica>` on the private
+    /// messages room; `None` leaves the route unmounted and community chat unrouted. With a key,
+    /// `MESSAGE_ROUTER_IDENTITY_PREFIX` is required: the Explorer trusts a relayed author only
+    /// from the identity its network names, so a default could leave a node's community chat
+    /// silently undelivered.
+    pub fn with_message_router_key(
+        mut self,
+        encoded_key: Option<&str>,
+        identity_prefix: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let Some(encoded) = encoded_key.map(str::trim).filter(|k| !k.is_empty()) else {
+            tracing::info!(
+                "MESSAGE_ROUTER_KEY unset; the message router's token route is not mounted (community chat is not routed)"
+            );
+            return Ok(self);
+        };
+        let identity_prefix = identity_prefix
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "MESSAGE_ROUTER_IDENTITY_PREFIX is required with MESSAGE_ROUTER_KEY: the identity \
+                     prefix the node's Explorers address (message-router-prd on decentraland.org, \
+                     message-router-dev elsewhere)"
+                )
+            })?;
+        let authority = message_router::MessageRouterAuthority::new(
+            encoded,
+            identity_prefix,
+            &self.settings.private_messages_room_id,
+            self.livekit.clone(),
+        )
+        .map_err(|e| anyhow!("MESSAGE_ROUTER_KEY: {e}"))?;
+        self.message_router = Some(Arc::new(authority));
+        tracing::info!(
+            endpoint = crate::shared::message_router::TOKEN_PATH,
+            identity_prefix,
+            "message router token route mounted"
+        );
+        Ok(self)
+    }
+
     /// Mounts the Pulse room authority with `PULSE_ROOM_AUTHORITY_KEY` (32
     /// base64url bytes, distinct from the LiveKit secret); `None` leaves the
     /// route unmounted and the application relay unusable.
@@ -623,7 +751,8 @@ impl CommsState {
                 self.bans.clone(),
                 self.settings.authoritative_server_address.clone(),
             )
-            .with_assignments(self.assignment_reader()),
+            .with_assignments(self.assignment_reader())
+            .with_local_preview(self.settings.allow_local_preview),
         );
         let authority = if generation_required {
             let audience = self.cluster.control_v4_audience.clone().ok_or_else(|| {
@@ -854,14 +983,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/scene-admin",
             get(moderation::handlers::list_admins)
-                .post(moderation::handlers::add_admin)
-                .delete(moderation::handlers::remove_admin),
+                .post(erase(moderation::handlers::add_admin))
+                .delete(erase(moderation::handlers::remove_admin)),
         )
         .route(
             "/scene-bans",
             get(moderation::handlers::list_bans)
-                .post(moderation::handlers::ban_user)
-                .delete(moderation::handlers::unban_user),
+                .post(erase(moderation::handlers::ban_user))
+                .delete(erase(moderation::handlers::unban_user)),
         )
         .route(
             "/scene-bans/addresses",
@@ -874,13 +1003,13 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/users/{address}/bans",
             get(moderation::handlers::get_user_ban_status)
-                .post(moderation::handlers::post_user_ban)
-                .delete(moderation::handlers::delete_user_ban),
+                .post(erase(moderation::handlers::post_user_ban))
+                .delete(erase(moderation::handlers::delete_user_ban)),
         )
         .route(
             "/users/{address}/warnings",
             get(moderation::handlers::get_user_warnings)
-                .post(moderation::handlers::post_user_warning),
+                .post(erase(moderation::handlers::post_user_warning)),
         )
         .route("/bans", get(moderation::handlers::list_all_bans))
         .route("/livekit-webhook", post(webhook::livekit_webhook))
@@ -930,11 +1059,12 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speak-request",
-            post(voice::community_request_to_speak).delete(voice::community_reject_speak_request),
+            post(voice::community_request_to_speak)
+                .delete(erase(voice::community_reject_speak_request)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speaker",
-            post(voice::community_promote_speaker).delete(voice::community_demote_speaker),
+            post(voice::community_promote_speaker).delete(erase(voice::community_demote_speaker)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/mute",
@@ -947,9 +1077,9 @@ pub fn router(state: SharedState) -> Router {
         .route(
             streaming::PATH,
             get(streaming::scene_stream_access)
-                .post(streaming::scene_stream_access)
-                .put(streaming::scene_stream_access)
-                .delete(streaming::scene_stream_access),
+                .post(erase(streaming::scene_stream_access))
+                .put(erase(streaming::scene_stream_access))
+                .delete(erase(streaming::scene_stream_access)),
         )
         .route(
             "/cast/streamer-token",
@@ -971,7 +1101,8 @@ pub fn router(state: SharedState) -> Router {
         .route("/cast/presenters", get(streaming::cast::list_presenters))
         .route(
             "/cast/presenters/{participant_identity}",
-            put(streaming::cast::promote_presenter).delete(streaming::cast::demote_presenter),
+            put(streaming::cast::promote_presenter)
+                .delete(erase(streaming::cast::demote_presenter)),
         )
         .route(
             admission::island_refresh::ISLAND_REFRESH_PATH,
@@ -1008,6 +1139,14 @@ pub fn room_authority_router<S: Clone + Send + Sync + 'static>(state: &CommsStat
         Some(authority) => admission::relay_authority::router(authority.clone()),
         None => Router::new(),
     }
+}
+
+/// The message router's token route alone (`POST /internal/message-router/token/v1`), empty
+/// when no `MESSAGE_ROUTER_KEY` is configured; `serve` merges it at the root.
+pub fn message_router_token_router<S: Clone + Send + Sync + 'static>(
+    state: &CommsState,
+) -> Router<S> {
+    message_router::router(state.message_router.clone())
 }
 
 #[cfg(test)]

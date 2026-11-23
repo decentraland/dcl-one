@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 
 // Every `docsUrl("…")` the web apps link (the footer of each Sites page, the invite and /create FAQs, the Creator
 // Hub) must name a page of the committed docs tree: /docs answers 404 for any other address.
-const SOURCES = ["src", "../ui3/src"];
+const SOURCES = ["src", "../ui3/src", "../../library/ui/apps/sites"];
 
 function docsLinks(): Array<{ file: string; url: string }> {
   const links: Array<{ file: string; url: string }> = [];
@@ -12,7 +12,7 @@ function docsLinks(): Array<{ file: string; url: string }> {
     for (const name of readdirSync(root, { recursive: true, encoding: "utf8" })) {
       if (!/\.tsx?$/.test(name) || /\.test\.tsx?$/.test(name)) continue;
       const file = path.join(root, name);
-      for (const [, link] of readFileSync(file, "utf8").matchAll(/docsUrl\("([^"]*)"\)/g)) {
+      for (const [, , link] of readFileSync(file, "utf8").matchAll(/docsUrl\((["'])([^"']*)\1\)/g)) {
         const page = link.split("#")[0].replace(/^\/+|\/+$/g, "");
         links.push({ file, url: page ? `/docs/${page}/` : "/docs/" });
       }

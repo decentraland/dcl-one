@@ -111,6 +111,30 @@ impl SceneIdentity for Catalogue {
                         .await?,
                 )
             }
+            // One Genesis scene; any other is not deployed here.
+            RoomRequest::Adapter {
+                realm: realm @ RealmId::Shared(_),
+                scene,
+            } if scene.as_str() == "GenesisA" => {
+                let base = Parcel::parse("5,5").unwrap();
+                return Ok(ResolvedRoom {
+                    room: crate::rooms::gatekeeper_scene_room(realm.as_str(), scene.as_str()),
+                    scene_id: Some(scene.clone()),
+                    deployment: Some(ActiveDeployment {
+                        title: None,
+                        scene_id: scene.clone(),
+                        parcels: [base].into_iter().collect(),
+                        base,
+                        namespace: crate::world_identity::SceneNamespace::new(realm, base, None),
+                        local: true,
+                    }),
+                    realm: realm.clone(),
+                });
+            }
+            RoomRequest::Adapter {
+                realm: RealmId::Shared(_),
+                scene,
+            } => return Err(ResolveError::UnresolvedRoom(scene.to_string())),
             _ => panic!("this fixture resolves world rooms only"),
         };
         let room = match &dep {
@@ -762,6 +786,27 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
         Ok(()),
         "shared scenes preserve their own authority path"
     );
+    // A Genesis room no deployment stands behind is refused, and a store
+    // fault is unavailable, never a ban list on the entity id.
+    assert_eq!(
+        policy
+            .authorize(&verified_room("scene:main:GenesisGone"))
+            .await,
+        Err(DenialReason::NotAuthorized)
+    );
+    let down = CurrentRoomPolicy::new(
+        Arc::new(crate::interfaces::test_support::StubScenes {
+            room: Err(ResolveError::Db(sqlx::Error::PoolClosed)),
+            ..Default::default()
+        }),
+        Arc::new(StubPolicy::default()),
+        Arc::new(StubBanStatus(Ok(None))),
+        None,
+    );
+    assert_eq!(
+        down.authorize(&verified_room("scene:main:GenesisA")).await,
+        Err(DenialReason::Unavailable)
+    );
     for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
         let banned = CurrentRoomPolicy::new(
             Arc::new(Catalogue),
@@ -790,6 +835,58 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
         policy.authorize(&host).await,
         Err(DenialReason::NotAuthorized)
     );
+}
+
+/// A ban of the world scene is answered 403 apart from the world's own 401,
+/// whichever key the permission core found it under.
+#[tokio::test]
+async fn a_world_scene_ban_at_the_adapter_is_answered_apart_from_the_world_refusal() {
+    use crate::access::{Access, Ban};
+    let key = random_key();
+    let metadata = serde_json::json!({
+        "signer": "dcl:explorer", "realmName": "mixed.dcl.eth", "sceneId": "SceneA",
+    })
+    .to_string();
+    for (access, expected) in [
+        (
+            Access::Banned(Ban::Scene),
+            (403, crate::gatekeeper::moderation::store::SCENE_BANNED_MSG),
+        ),
+        (
+            Access::NotAllowed,
+            (
+                401,
+                "Access denied, you are not authorized to access this world",
+            ),
+        ),
+    ] {
+        let Some(pool) = scratch().await else { return };
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name) VALUES ('mixed.dcl.eth') ON CONFLICT DO NOTHING",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The platform and scene-key bans are read from the store; the
+        // world's own answer is the stub's.
+        let mut state = comms_state(pool, with_authoritative(AUTHORITATIVE_KEY));
+        state.scenes = Arc::new(Catalogue);
+        state.presence.complete_empty_fixture();
+        state.policy = Arc::new(StubPolicy {
+            access: Ok(access),
+            ..StubPolicy::default()
+        });
+        let err = handlers::get_scene_adapter(
+            State(Arc::new(state)),
+            at("/get-scene-adapter"),
+            signed(&key, "post", "/get-scene-adapter", &metadata).await,
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!((err.code, err.message.as_str()), expected);
+    }
 }
 
 #[tokio::test]

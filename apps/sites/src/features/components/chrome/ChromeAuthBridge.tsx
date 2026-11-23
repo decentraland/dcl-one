@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useRouteLoaderData } from "react-router";
 
-import { ChromeAuthContext } from "@ui/web/frames/chrome-auth";
+import { ChromeAuthContext } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { installSitesShopClient } from "@/data/lib/auth/shop-client";
@@ -34,7 +34,7 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
 
   usePrivateQueryLifecycle(effSignedIn ? effAddress : null);
 
-  const { name, avatarUrl, avatarColor } = useProfileIdentity(effAddress || null, effSignedIn);
+  const { name, avatarUrl, avatarColor, bodyUrl } = useProfileIdentity(effAddress || null, effSignedIn);
 
   const fetchNotifications = useCallback(async (signal?: AbortSignal): Promise<unknown> => {
     const res = await signedFetch(`${catalystBase()}${NOTIFICATIONS_PREFIX}/notifications?limit=50`, {
@@ -56,12 +56,14 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
       name,
       committee,
       avatarUrl: avatarUrl || undefined,
+      bodyUrl: bodyUrl || undefined,
       avatarColor: avatarColor || undefined,
       onSignIn: openSignIn,
       ...hubAccountActions(disconnect),
       fetchNotifications,
+      notificationsReady: mounted && isConnected,
     }),
-    [effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, fetchNotifications, disconnect],
+    [mounted, isConnected, effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, bodyUrl, fetchNotifications, disconnect],
   );
 
   return <ChromeAuthContext.Provider value={value}>{children}</ChromeAuthContext.Provider>;

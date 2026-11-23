@@ -151,7 +151,6 @@ struct RoomDiagnostics {
     scope: Scope,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn room_diagnostics(
     mut input: ConsoleCommand<RoomDiagnostics>,
     policy: Res<State<ConnectionAvailability>>,

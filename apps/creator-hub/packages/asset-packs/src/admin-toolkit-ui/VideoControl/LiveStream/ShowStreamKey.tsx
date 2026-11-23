@@ -1,5 +1,4 @@
 import type { DeepReadonlyObject, Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity, Label } from '@dcl/react-ecs';
 import { copyToClipboard, openExternalUrl } from '~system/RestrictedActions';
 import { LIVEKIT_STREAM_SRC } from '../../../definitions';
@@ -16,7 +15,9 @@ import { STREAMING_SUPPORT_URL } from '.';
 
 const AUTO_HIDE_DURATION_SECONDS = 30;
 const STREAM_KEY_TIMEOUT_ACTION = 'video_control_stream_key_timeout';
-const RTMP_SERVER_URL = 'rtmps://dcl.rtmp.livekit.cloud/x';
+// Shown only when the gatekeeper's response names no ingress URL. The stream key belongs to the
+// ingress the gatekeeper created it on, so its `streamingUrl` is the server to publish to.
+const FALLBACK_RTMP_SERVER_URL = 'rtmps://dcl.rtmp.livekit.cloud/x';
 
 // A read-only field (RTMP server / stream key) with an optional trailing slot.
 function ReadonlyField({ value, trailing }: { value: string; trailing?: ReactEcs.JSX.Element }) {
@@ -54,14 +55,17 @@ export function ShowStreamKey({
   entity,
   onReset,
   endsAt,
+  streamingUrl,
 }: {
   endsAt: number;
+  streamingUrl?: string;
   engine: IEngine;
   entity: Entity;
   video: DeepReadonlyObject<PBVideoPlayer> | undefined;
   onReset(): void;
 }) {
   const controls = createVideoPlayerControls(entity, engine);
+  const rtmpServerUrl = streamingUrl || FALLBACK_RTMP_SERVER_URL;
   const [showStreamkey, setShowStreamkey] = ReactEcs.useState(false);
   const [streamKey, setStreamKey] = ReactEcs.useState<string | undefined>(undefined);
   const isLive = video?.src === LIVEKIT_STREAM_SRC && state.videoControl.selectedStream === 'live';
@@ -112,10 +116,10 @@ export function ShowStreamKey({
       <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
         <FieldLabel text="RTMP server" />
         <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-          <ReadonlyField value={RTMP_SERVER_URL} />
+          <ReadonlyField value={rtmpServerUrl} />
           <CopyButton
             id="video_control_copy_rtmp_server"
-            onCopy={() => copyToClipboard({ text: RTMP_SERVER_URL })}
+            onCopy={() => copyToClipboard({ text: rtmpServerUrl })}
           />
         </UiEntity>
       </UiEntity>

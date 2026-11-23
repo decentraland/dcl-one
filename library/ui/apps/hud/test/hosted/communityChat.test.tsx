@@ -1,8 +1,8 @@
-import { beforeEach, describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
-import { pingModeFor, resetPingPrefs, setPingMode } from '../../features/chat/ping'
+import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../features/chat/ping'
 import { setAutoTranslate } from '@explorer-core/features/chat/translation'
 import type { CommunityChannel, CommunityMember } from '@explorer-core/engine/protocol'
 
@@ -32,9 +32,21 @@ function me(h: Harness): string {
 }
 
 describe('community chat domain', () => {
+  // the clock the incoming-line sounds are spaced by: it moves only when a test moves it
+  const clock = {
+    now: 0,
+    advance(ms: number): void {
+      this.now += ms
+    }
+  }
   beforeEach(() => {
     localStorage.clear()
     resetPingPrefs()
+    clock.now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => clock.now)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('asks for the channels at world entry, lists them, and tells the engine to listen', async () => {
@@ -62,18 +74,67 @@ describe('community chat domain', () => {
       ['c1', 0, false]
     ])
     expect(chat().unread).toBe(1)
-    expect(h.driver.last('playUiSound')).toEqual({ kind: 'playUiSound', sound: 'chatMessage' })
+    // a conversation other than the one selected has one clip, mention or not
+    expect(h.driver.last('playUiSound')).toEqual({ kind: 'playUiSound', sound: 'chatUnfocused' })
     // the line is not on the Nearby list, and no DM tab opened
     expect(chat().messages.some((m) => m.channel === 'community:c8')).toBe(false)
     expect(chat().conversations).toEqual([])
-    // a mention of the local user (an unclaimed name carries the wallet's tail) marks the tab and
-    // sounds the mention clip
+    // a mention of the local user (an unclaimed name carries the wallet's tail) marks the tab
+    clock.advance(200)
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `@${MY_NAME}#${ME.slice(-4)} are you there?`, channel: 'community:c1', messageId: `${MOJITO}:2` } }))
     expect(chat().communities.map((c) => [c.id, c.unread, c.mention])).toEqual([
       ['c1', 1, true],
       ['c8', 1, false]
     ])
-    expect(h.driver.last('playUiSound')).toEqual({ kind: 'playUiSound', sound: 'chatMention' })
+    expect(h.driver.sent.filter((m) => m.kind === 'playUiSound').map((m) => m.sound)).toEqual(['chatUnfocused', 'chatUnfocused'])
+  })
+
+  it('a line on the selected conversation sounds its own clips, every line, and a sent line sounds on All Messages only', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    const sounds = (): string[] => h.driver.sent.filter((m) => m.kind === 'playUiSound').map((m) => m.sound)
+    act(() => h.session().chat.select('community:c1'))
+    for (let i = 0; i < 3; i++) {
+      clock.advance(200)
+      act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `line ${i}`, channel: 'community:c1', messageId: `${MOJITO}:3${i}` } }))
+    }
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `@${MY_NAME}#${ME.slice(-4)} hey`, channel: 'community:c1', messageId: `${MOJITO}:40` } }))
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'elsewhere', channel: 'community:c8', messageId: `${MOJITO}:41` } }))
+    expect(sounds()).toEqual(['chatMessage', 'chatMessage', 'chatMessage', 'chatMention', 'chatUnfocused'])
+    // a flood of lines does not restart a clip faster than it can be heard; past the floor the
+    // next line sounds again
+    clock.advance(200)
+    const before = sounds().length
+    for (let i = 0; i < 5; i++) {
+      clock.advance(10)
+      act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `flood ${i}`, channel: 'community:c1', messageId: `${MOJITO}:5${i}` } }))
+    }
+    expect(sounds().slice(before)).toEqual(['chatMessage'])
+    clock.advance(100)
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'after the flood', channel: 'community:c1', messageId: `${MOJITO}:60` } }))
+    expect(sounds().slice(before)).toEqual(['chatMessage', 'chatMessage'])
+    // the input's sound has the same floor: a held key sounds once until the floor has passed
+    clock.advance(200)
+    for (let i = 0; i < 5; i++) {
+      clock.advance(10)
+      act(() => h.session().chat.playSound('chatInput'))
+    }
+    expect(sounds().filter((s) => s === 'chatInput')).toHaveLength(1)
+    clock.advance(100)
+    act(() => h.session().chat.playSound('chatInput'))
+    expect(sounds().filter((s) => s === 'chatInput')).toHaveLength(2)
+    // sending: any conversation, gated by the default alone
+    act(() => h.session().chat.send('hello'))
+    expect(sounds().at(-1)).toBe('chatSend')
+    act(() => h.session().chat.select('Nearby'))
+    act(() => h.session().chat.send('hello nearby'))
+    expect(sounds().filter((s) => s === 'chatSend')).toHaveLength(2)
+    setPingMode('Nearby', 'all')
+    setPingDefault('mentions')
+    act(() => h.session().chat.send('quiet'))
+    setPingDefault('none')
+    act(() => h.session().chat.send('quiet'))
+    expect(sounds().filter((s) => s === 'chatSend')).toHaveLength(2)
   })
 
   it('the ping setting gates the sound, and the user\'s own lines never sound', async () => {
@@ -86,10 +147,10 @@ describe('community chat domain', () => {
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: me(h), message: 'my own words', channel: 'community:c1', messageId: `${me(h)}:4` } }))
     expect(h.driver.last('playUiSound')).toBeUndefined()
     expect(h.session().chat.communities.find((c) => c.id === 'c1')?.unread).toBe(2)
-    // a flood of lines on one conversation is one sound, a mention among them another
-    for (let i = 0; i < 5; i++) act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `line ${i}`, channel: 'community:c1', messageId: `${MOJITO}:1${i}` } }))
+    // on Mentions Only a mention still sounds
+    setPingMode('community:c1', 'mentions')
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `@${MY_NAME}#${ME.slice(-4)} hey`, channel: 'community:c1', messageId: `${MOJITO}:20` } }))
-    expect(h.driver.sent.filter((m) => m.kind === 'playUiSound').map((m) => m.sound)).toEqual(['chatMessage', 'chatMention'])
+    expect(h.driver.sent.filter((m) => m.kind === 'playUiSound').map((m) => m.sound)).toEqual(['chatUnfocused'])
   })
 
   it('a line on a community that is not open is dropped', async () => {

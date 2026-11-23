@@ -30,7 +30,7 @@ use super::cluster::subscriber::{ClusterGateway, island_token_not_before};
 use crate::Address;
 use crate::auth::auth_chain::{AuthLink, AuthLinkType, parse_ephemeral_payload};
 use crate::gatekeeper::SharedState;
-use crate::gatekeeper::auth::{device_identifier, verify_signed_fetch};
+use crate::gatekeeper::auth::{device_identifier, verify_wallet_signed_fetch};
 use crate::shared::signed_fetch::SignedPath;
 
 pub const ISLAND_REFRESH_PATH: &str = "/island-refresh";
@@ -99,7 +99,7 @@ async fn refresh_bounded(
 ) -> Result<Response, IslandRefreshError> {
     let chain = crate::shared::signed_fetch::extract_auth_chain(headers)
         .map_err(|_| IslandRefreshError(StatusCode::BAD_REQUEST))?;
-    let signed = verify_signed_fetch(headers, "post", path, &[], state.eip1654())
+    let signed = verify_wallet_signed_fetch(headers, "post", path, state.eip1654())
         .await
         .map_err(|error| {
             IslandRefreshError(
@@ -332,6 +332,56 @@ mod tests {
         );
     }
 
+    struct UnreadAssignments;
+    #[async_trait::async_trait]
+    impl RealmAssignmentReader for UnreadAssignments {
+        async fn current_realm_assignment(
+            &self,
+            _wallet: &str,
+            _session: &str,
+        ) -> Result<RealmAssignmentSnapshot, FenceError> {
+            panic!("a refused request never reads the assignment");
+        }
+    }
+
+    #[tokio::test]
+    async fn scene_signer_is_refused_before_any_assignment_read() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let state: SharedState = Arc::new(CommsState::new(
+            pool,
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        ));
+        let owner = Delegate::new();
+        let uri = ISLAND_REFRESH_PATH.parse().unwrap();
+        for metadata in [
+            json!({ "signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "Signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "signer": " decentraland-kernel-scene" }),
+            json!({ "signer": "Decentraland-Kernel-Scene" }),
+            json!({ "signer": 1 }),
+            json!({ "signer": true }),
+            json!({ "signer": {} }),
+        ] {
+            let headers = owner.headers(&metadata.to_string()).await;
+            let refused = refresh_bounded(
+                &state,
+                &UnreadAssignments,
+                &headers,
+                &SignedPath::at(&uri, ISLAND_REFRESH_PATH),
+            )
+            .await
+            .expect_err("refused");
+            assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{metadata}");
+        }
+    }
+
     const AUDIENCE: &str = "island-refresh-test";
 
     #[tokio::test]
@@ -518,8 +568,6 @@ mod tests {
                 ("identity", snapshot.clone()),
                 ("cleanup", snapshot.clone()),
                 ("unknown", snapshot.clone()),
-                ("wallet", snapshot.clone()),
-                ("session", snapshot.clone()),
                 ("cluster", snapshot.clone()),
                 ("realm", snapshot.clone()),
                 ("source", snapshot.clone()),
@@ -532,8 +580,6 @@ mod tests {
                     }
                     "identity" => changed.selected_identity = Some(0),
                     "cleanup" => changed.assignment_state = 2,
-                    "wallet" => changed.wallet = SESSION_A.into(),
-                    "session" => changed.session = SESSION_A.into(),
                     "cluster" => changed.cluster_id.push_str("-changed"),
                     "realm" => changed.realm.push_str("-changed"),
                     "source" => changed.source_incarnation.push_str("-changed"),
@@ -556,6 +602,25 @@ mod tests {
                 StatusCode::OK
             );
         }
+        // Pulse has no reply for another wallet or session whatever the vector,
+        // so each case waits out the refresh deadline once, not per vector.
+        let current = source.lock().unwrap().clone().expect("a valid vector");
+        for field in ["wallet", "session"] {
+            let mut changed = current.clone();
+            match field {
+                "wallet" => changed.wallet = SESSION_A.into(),
+                _ => changed.session = SESSION_A.into(),
+            }
+            *source.lock().unwrap() = Some(changed);
+            let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+            assert_ne!(status, StatusCode::OK, "{field}");
+            assert!(body.is_empty());
+        }
+        *source.lock().unwrap() = Some(current);
+        assert_eq!(
+            call(&app, owner.headers("{}").await, b"").await.0,
+            StatusCode::OK
+        );
         worker.abort();
         let _ = worker.await;
         pool.close().await;

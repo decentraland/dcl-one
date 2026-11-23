@@ -7,6 +7,7 @@
 // caller builds; nothing here fetches or caches.
 import {
   BLOG_QUERY_MAX,
+  BLOG_QUERY_MIN,
   type BlogAuthor,
   type BlogCard,
   type BlogCategory,
@@ -36,7 +37,7 @@ export const FIRST_PAGE_SIZE = 7;
 export const NEXT_PAGE_SIZE = 6;
 /** Search pages hold 10 posts; a query under 3 characters is not sent (as decentraland/sites). */
 export const SEARCH_PAGE_SIZE = 10;
-export const SEARCH_MIN_LENGTH = 3;
+export const SEARCH_MIN_LENGTH = BLOG_QUERY_MIN;
 /** The deepest `?page=` a list loads: each page is one CMS request, so the cap bounds a request's fan-out. */
 export const MAX_PAGES = 20;
 /** The deepest search page: a search reads its visible results in one request, and cms-server caps a page at 100. */
@@ -126,7 +127,7 @@ export function mapAuthor(entry: CmsEntry): BlogCmsAuthor | null {
 }
 
 /** A post without a known category, as sites. */
-const UNCATEGORIZED: BlogCategory = { slug: "uncategorized", title: "Uncategorized" };
+export const UNCATEGORIZED: BlogCategory = { slug: "uncategorized", title: "Uncategorized" };
 /** A post without a known author, as sites names it; no page to link. */
 const NO_AUTHOR: BlogAuthor = { slug: "", name: "Decentraland", image: "" };
 

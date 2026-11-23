@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { fetchCommunityProfiles } from "../../../data/hooks/useCommunityProfiles";
+import { sameOriginContentUrl } from "../../../data/catalyst/profile";
 import { SHOP_BASE } from "../../routes";
 import { fetchShopTopCreators } from "@shop/discovery/api";
 import { t } from "@shop/discovery/intl";
@@ -29,8 +30,13 @@ function tr(key: string, fallback: string): string {
 
 export async function loadTopCreators(signal?: AbortSignal): Promise<TopCreator[]> {
   const ranked = await fetchShopTopCreators(CANDIDATES, DAYS, shopReads(signal));
-  const raw = ranked.length ? await fetchCommunityProfiles(ranked.map((c) => c.id), { signal }) : {};
+  // Only the creators whose profile the ranking does not carry are asked for.
+  const missing = ranked.filter((c) => !c.profile).map((c) => c.id);
+  const raw = missing.length ? await fetchCommunityProfiles(missing, { signal }) : {};
   const profiles = new Map<string, CreatorProfile>();
+  for (const { id, profile } of ranked) {
+    if (profile) profiles.set(id.toLowerCase(), { name: profile.name, hasClaimedName: profile.claimed, face: profile.face ? sameOriginContentUrl(profile.face) : undefined });
+  }
   for (const [address, p] of Object.entries(raw)) profiles.set(address.toLowerCase(), { name: p.name, hasClaimedName: p.claimed === true, face: p.picture ?? undefined });
   return selectTopCreators(ranked, profiles, CARDS);
 }

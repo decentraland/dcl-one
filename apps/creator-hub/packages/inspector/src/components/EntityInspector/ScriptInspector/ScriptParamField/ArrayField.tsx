@@ -1,5 +1,5 @@
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 
 import type { ScriptParamArray, ScriptParamUnion } from '../types';
 import { Container } from '../../../Container';
@@ -59,6 +59,8 @@ export function ArrayField({ name, param, getError, onUpdate }: Props) {
             }
           />
           <Button
+            variant="secondary"
+            size="sm"
             className="ArrayFieldRemove"
             onClick={() => onUpdate((prev: unknown) => asArray(prev).filter((_, i) => i !== index))}
           >

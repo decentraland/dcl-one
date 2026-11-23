@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import os
 import re
+import runpy
 import subprocess
 import tempfile
 import textwrap
@@ -95,8 +96,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('        shard: [1, 2, 3]\n', rust)
         self.assertIn('      CATALYST_TEST_SHARD: ${{ matrix.shard }}/3\n', rust)
         # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
-        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '2'\n", rust)
+        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '1'\n", rust)
         self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
+        # One shard runs the doc-tests; tooling/catalyst-test.sh rejects a shard outside 1 to n.
+        self.assertIn("      CATALYST_TEST_DOC_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_DOC_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
@@ -193,11 +197,46 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
 
+    def test_the_tooling_tests_run_beside_smoke_on_the_same_platforms(self):
+        # They need only the dev shell, so smoke does not wait for them and they skip its caches.
+        found = jobs()
+        smoke, tooling = found['smoke'], found['tooling']
+        suite = 'nix develop --command python3 -m unittest discover -s tooling/tests -v\n'
+        self.assertEqual(sum(body.count('unittest discover -s tooling/tests -v') for body in found.values()), 1)
+        self.assertIn(suite, tooling)
+        self.assertIn('    name: Tooling tests\n', tooling)
+        self.assertIn('    needs: changes\n', tooling)
+        head = lambda body: body.split('    timeout-minutes:', 1)[0].split('    if:', 1)[1]
+        self.assertEqual(head(tooling), head(smoke))
+        for cache in ('Restore Rust build cache', 'Restore the pnpm store', 'Reserve disk space', 'cargo-mtimes.py'):
+            self.assertNotIn(cache, tooling)
+        self.assertNotRegex(tooling, r'(?m)^    (env|permissions):')
+
+    def test_smoke_snapshot_preserves_all_active_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            stems = ["libcrate-" + str(index) * 16 for index in range(3)]
+            for stem in stems:
+                for suffix in (".rlib", ".rmeta"):
+                    (deps / (stem + suffix)).write_bytes(b"data")
+            other = deps / ("libother-" + "3" * 16 + ".rlib")
+            other.touch()
+            def message(stem):
+                return json.dumps({"reason": "compiler-artifact", "filenames": [str(deps / (stem + ".rlib"))]})
+            receipts = "\n".join(message(stem) for stem in stems[:2])
+            self.assertEqual(prune(deps, receipts), 8)
+            self.assertEqual(prune(deps, receipts), 0)
+            self.assertEqual({path.name for path in deps.iterdir()},
+                             {stem + suffix for stem in stems[:2] for suffix in (".rlib", ".rmeta")} | {other.name})
+            with self.assertRaises(ValueError):
+                prune(deps, "")
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
         smoke = jobs()['smoke']
-        restore = '        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
+        restore = '          python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
         record = '        run: python3 tooling/cargo-mtimes.py record services/catalyst/target\n'
         self.assertEqual(smoke.count(restore), 1)
         self.assertEqual(smoke.count(record), 1)
@@ -210,6 +249,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
         self.assertEqual(condition('Record the source file times in the snapshot'),
                          condition('Save successful smoke build snapshot'))
+        self.assertEqual(condition('Prune superseded Rust libraries from the smoke snapshot'),
+                         condition('Save successful smoke build snapshot'))
+        self.assertLess(smoke.index('python3 tooling/catalyst-smoke-cache.py'), smoke.index(record))
         self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
 
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
@@ -239,7 +281,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 4)
+        self.assertEqual(installs, 5)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -408,9 +450,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
         # main always builds; a skipped build is not a failure for the required check.
         self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
-        # ci:desktop builds macOS and Windows, ci:linux builds Linux; main builds all three.
+        # ci:desktop builds macOS, Windows and Linux, ci:linux builds Linux alone; main builds all three.
         self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
-        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {linux} }}}}\n", found['creator-hub'])
+        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {label} || {linux} }}}}\n", found['creator-hub'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
         self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])
@@ -444,9 +486,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
         selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
-        self.assertEqual(len(selected), 3)
+        self.assertEqual(len(selected), 4)
         for app in ('ui3', 'sites', 'ui3/editor-scene'):
             self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
+        self.assertTrue(any('pnpm --dir apps/ui3 test:browser\n' in step for step in selected))
         contracts = next(step for step in steps if 'name: Check web types' in step)
         self.assertNotIn('\n        if:', contracts)
         self.assertIn('typecheck:scripts', contracts)

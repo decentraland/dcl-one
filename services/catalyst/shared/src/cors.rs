@@ -9,6 +9,11 @@
 //! Registry gateway, the social API and `/lambdas/`. The content routes keep
 //! their own `content_cors` (`content/src/routing.rs`), which also exposes
 //! headers and is not covered by it.
+//! [`decentraland_cors`] is the same answer for the Decentraland front-end
+//! origins only ([`is_decentraland_origin`]); any other origin gets no
+//! allow-origin or credentials, and its preflight no methods or headers.
+//! [`cors_without_credentials`] is [`cors_middleware`] without
+//! `Access-Control-Allow-Credentials`, for routes authorized by signed fetch.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -22,7 +27,83 @@ const ALLOW_HEADERS: &str = "Cache-Control,Content-Type,Origin,Accept,User-Agent
 const MAX_AGE: &str = "86400";
 
 pub async fn cors_middleware(req: Request, next: Next) -> Response {
-    let origin = req.headers().get(header::ORIGIN).cloned();
+    cors(req, next, |_| true, true).await
+}
+
+/// [`cors_middleware`] that never sends `Access-Control-Allow-Credentials`.
+pub async fn cors_without_credentials(req: Request, next: Next) -> Response {
+    cors(req, next, |_| true, false).await
+}
+
+/// [`cors_middleware`] for the origins [`is_decentraland_origin`] lists: a
+/// listed origin is echoed with credentials and its preflight reflects the
+/// requested headers; any other origin gets a 204 preflight without
+/// allow-origin, methods or headers, and no allow-origin on other answers.
+pub async fn decentraland_cors(req: Request, next: Next) -> Response {
+    cors(req, next, is_decentraland_origin, true).await
+}
+
+/// The Decentraland front-end origins (the `CORS_ORIGIN` list the old relay,
+/// rentals and Shop services shared): `http://localhost:<port>`,
+/// `https://decentraland.{zone,today,org}` and their subdomains,
+/// `https://[<name>-]decentraland1.vercel.app`, and the Shop's
+/// `https://tools.decentraland.systems`. A subdomain or preview prefix is at
+/// most 50 characters of `[A-Za-z0-9-]` labels joined by single dots.
+///
+/// This is the list for the Shop's signed routes. The places and events
+/// lists (`explore::cors`) are separate ports of those services' own
+/// configurations and differ on purpose: they add `dcl-preview.vercel.app`
+/// and other hosts and require a preview name, while this list, like the
+/// old services, also accepts the bare `decentraland1.vercel.app`. Change
+/// one list without the other only when its old service differed.
+pub fn is_decentraland_origin(origin: &str) -> bool {
+    if origin == "https://tools.decentraland.systems" {
+        return true;
+    }
+    if let Some(port) = origin.strip_prefix("http://localhost:") {
+        return (1..=10).contains(&port.len()) && port.bytes().all(|b| b.is_ascii_digit());
+    }
+    let Some(host) = origin.strip_prefix("https://") else {
+        return false;
+    };
+    // A prefix of up to 50 host characters ending in `separator`, or none:
+    // non-empty labels of letters, digits and `-`, joined by single dots.
+    let prefixed = |rest: Option<&str>, separator: char| {
+        rest.is_some_and(|rest| {
+            rest.is_empty()
+                || rest.strip_suffix(separator).is_some_and(|prefix| {
+                    prefix.len() <= 50
+                        && prefix.split('.').all(|label| {
+                            !label.is_empty()
+                                && label
+                                    .bytes()
+                                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                        })
+                })
+        })
+    };
+    [
+        "decentraland.zone",
+        "decentraland.today",
+        "decentraland.org",
+    ]
+    .iter()
+    .any(|apex| prefixed(host.strip_suffix(apex), '.'))
+        || prefixed(host.strip_suffix("decentraland1.vercel.app"), '-')
+}
+
+async fn cors(
+    req: Request,
+    next: Next,
+    allows: impl Fn(&str) -> bool,
+    credentials: bool,
+) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .filter(|o| allows(o.to_str().unwrap_or_default()))
+        .cloned();
+    let has_origin = req.headers().contains_key(header::ORIGIN);
     let is_preflight = req.method() == Method::OPTIONS;
     let requested_headers = req
         .headers()
@@ -35,21 +116,25 @@ pub async fn cors_middleware(req: Request, next: Next) -> Response {
             .body(Body::empty())
             .unwrap();
         let h = resp.headers_mut();
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static(ALLOW_METHODS),
-        );
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_HEADERS,
-            requested_headers.unwrap_or(HeaderValue::from_static(ALLOW_HEADERS)),
-        );
+        // An unlisted origin is granted no method or header: the gateway adds
+        // `*` to an answer without an allow-origin.
+        if origin.is_some() || !has_origin {
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_METHODS,
+                HeaderValue::from_static(ALLOW_METHODS),
+            );
+            h.insert(
+                header::ACCESS_CONTROL_ALLOW_HEADERS,
+                requested_headers.unwrap_or(HeaderValue::from_static(ALLOW_HEADERS)),
+            );
+        }
         h.insert(
             header::ACCESS_CONTROL_MAX_AGE,
             HeaderValue::from_static(MAX_AGE),
         );
         h.insert(header::VARY, HeaderValue::from_static("Origin"));
         if let Some(origin) = origin {
-            allow_origin(&mut resp, origin);
+            allow_origin(&mut resp, origin, credentials);
         }
         add_security_headers(&mut resp);
         return resp;
@@ -57,10 +142,13 @@ pub async fn cors_middleware(req: Request, next: Next) -> Response {
 
     let mut resp = next.run(req).await;
 
+    if has_origin {
+        resp.headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Origin"));
+    }
     if let Some(origin) = origin {
-        allow_origin(&mut resp, origin);
+        allow_origin(&mut resp, origin, credentials);
         let h = resp.headers_mut();
-        h.insert(header::VARY, HeaderValue::from_static("Origin"));
         if !h.contains_key(header::ACCESS_CONTROL_EXPOSE_HEADERS) {
             h.insert(
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
@@ -73,13 +161,15 @@ pub async fn cors_middleware(req: Request, next: Next) -> Response {
     resp
 }
 
-fn allow_origin(resp: &mut Response, origin: HeaderValue) {
+fn allow_origin(resp: &mut Response, origin: HeaderValue, credentials: bool) {
     let h = resp.headers_mut();
     h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-    h.insert(
-        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
-        HeaderValue::from_static("true"),
-    );
+    if credentials {
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            HeaderValue::from_static("true"),
+        );
+    }
 }
 
 fn add_security_headers(resp: &mut Response) {
@@ -318,6 +408,224 @@ mod tests {
                 .is_none()
         );
         assert_eq!(resp.headers().get(header::VARY).unwrap(), "Origin");
+    }
+
+    #[tokio::test]
+    async fn without_credentials_reflects_the_origin_and_signed_fetch_headers() {
+        let app = Router::new()
+            .route("/x", get(|| async { "ok" }).delete(|| async { "gone" }))
+            .layer(axum::middleware::from_fn(cors_without_credentials));
+        let requested = "x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata,x-confirm-delete-all,content-type";
+        let preflight = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/x")
+            .header(header::ORIGIN, "https://example.org")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "DELETE")
+            .header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(preflight).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let h = resp.headers();
+        assert_eq!(
+            h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            "https://example.org"
+        );
+        assert_eq!(
+            h.get(header::ACCESS_CONTROL_ALLOW_HEADERS).unwrap(),
+            requested
+        );
+        assert!(
+            h.get(header::ACCESS_CONTROL_ALLOW_METHODS)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .split(',')
+                .any(|m| m == "DELETE")
+        );
+        assert_eq!(h.get(header::VARY).unwrap(), "Origin");
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+
+        let resp = app
+            .oneshot(req(Method::GET, Some("https://example.org")))
+            .await
+            .unwrap();
+        let h = resp.headers();
+        assert_eq!(
+            h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            "https://example.org"
+        );
+        assert_eq!(h.get(header::ACCESS_CONTROL_EXPOSE_HEADERS).unwrap(), "*");
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+    }
+
+    #[test]
+    fn the_decentraland_origins_are_the_legacy_list() {
+        for listed in [
+            "http://localhost:5173",
+            "https://decentraland.org",
+            "https://decentraland.zone",
+            "https://decentraland.today",
+            "https://market.decentraland.org",
+            "https://a.b.decentraland.org",
+            "https://decentraland1.vercel.app",
+            "https://shop-git-main-decentraland1.vercel.app",
+            "https://tools.decentraland.systems",
+        ] {
+            assert!(is_decentraland_origin(listed), "{listed}");
+        }
+        for unlisted in [
+            "http://localhost",
+            "http://localhost:",
+            "http://localhost:12345678901",
+            "https://localhost:5173",
+            "http://decentraland.org",
+            "https://notdecentraland.org",
+            "https://decentraland.org.example.com",
+            "https://decentraland.org:8443",
+            "https://.decentraland.org",
+            "https://.a.decentraland.org",
+            "https://a..decentraland.org",
+            "https://a..b-decentraland1.vercel.app",
+            "https://a_b.decentraland.org",
+            "https://example.org",
+            "https://decentraland1.vercel.app.example.com",
+            "https://xdecentraland1.vercel.app",
+            "https://-decentraland1.vercel.app",
+            "https://other.decentraland.systems",
+        ] {
+            assert!(!is_decentraland_origin(unlisted), "{unlisted}");
+        }
+    }
+
+    fn decentraland_app() -> Router {
+        Router::new()
+            .route("/x", axum::routing::post(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(decentraland_cors))
+    }
+
+    /// A listed origin's signed preflight is answered 204 with the origin,
+    /// credentials and the requested `x-identity-*` headers; an unlisted
+    /// origin gets the 204 without allow-origin, credentials, methods or headers.
+    #[tokio::test]
+    async fn decentraland_cors_answers_only_listed_origins() {
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-2,x-identity-metadata,x-identity-timestamp";
+        for (origin, listed) in [
+            ("https://decentraland.org", true),
+            ("https://example.org", false),
+        ] {
+            let preflight = Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/x")
+                .header(header::ORIGIN, origin)
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, requested)
+                .body(Body::empty())
+                .unwrap();
+            let resp = decentraland_app().oneshot(preflight).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{origin}");
+            let h = resp.headers();
+            assert_eq!(
+                h.get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+                    .map(|v| v.to_str().unwrap()),
+                listed.then_some(requested),
+            );
+            assert_eq!(h.contains_key(header::ACCESS_CONTROL_ALLOW_METHODS), listed);
+            assert_eq!(h[header::VARY], "Origin");
+            assert_eq!(
+                h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .map(|v| v.to_str().unwrap()),
+                listed.then_some(origin),
+            );
+            assert_eq!(
+                h.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+                listed
+            );
+
+            let resp = decentraland_app()
+                .oneshot(req(Method::POST, Some(origin)))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{origin}");
+            let h = resp.headers();
+            assert_eq!(h[header::VARY], "Origin");
+            assert_eq!(
+                h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .map(|v| v.to_str().unwrap()),
+                listed.then_some(origin),
+            );
+            assert_eq!(
+                h.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+                listed
+            );
+        }
+    }
+
+    /// A request without `Origin` gets no allow-origin, credentials or `Vary`;
+    /// its preflight still answers 204 with the methods and headers.
+    #[tokio::test]
+    async fn decentraland_cors_without_an_origin() {
+        let resp = decentraland_app()
+            .oneshot(req(Method::POST, None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let h = resp.headers();
+        for absent in [
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            header::VARY,
+        ] {
+            assert!(h.get(&absent).is_none(), "{absent}");
+        }
+        assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+
+        let resp = decentraland_app()
+            .oneshot(req(Method::OPTIONS, None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let h = resp.headers();
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        assert!(h.get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).is_none());
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_METHODS], ALLOW_METHODS);
+        assert_eq!(h[header::ACCESS_CONTROL_ALLOW_HEADERS], ALLOW_HEADERS);
+    }
+
+    /// `Origin: null` and an origin that is not UTF-8 are unlisted origins.
+    #[tokio::test]
+    async fn decentraland_cors_treats_null_and_non_utf8_origins_as_unlisted() {
+        for origin in [
+            HeaderValue::from_static("null"),
+            HeaderValue::from_bytes(b"https://\xffdecentraland.org").unwrap(),
+        ] {
+            for method in [Method::OPTIONS, Method::POST] {
+                let request = Request::builder()
+                    .method(method.clone())
+                    .uri("/x")
+                    .header(header::ORIGIN, origin.clone())
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "x-identity-metadata",
+                    )
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = decentraland_app().oneshot(request).await.unwrap();
+                assert!(resp.status().is_success(), "{origin:?} {method}");
+                let h = resp.headers();
+                for absent in [
+                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                    header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                    header::ACCESS_CONTROL_ALLOW_METHODS,
+                    header::ACCESS_CONTROL_ALLOW_HEADERS,
+                ] {
+                    assert!(h.get(&absent).is_none(), "{origin:?} {method} {absent}");
+                }
+                assert_eq!(h[header::VARY], "Origin", "{origin:?} {method}");
+            }
+        }
     }
 
     const REGISTRY: HttpServerCors = HttpServerCors {

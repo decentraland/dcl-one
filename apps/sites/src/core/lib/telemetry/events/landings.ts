@@ -77,25 +77,6 @@ export type LandingsEvents = {
   jump_in_started: {
     place_id: string;
   };
-  landings_subscription_edited: {
-    enabled: boolean;
-    notification_type: string;
-  };
-  landings_subscription_error: {
-    kind: "subscribe" | "unsubscribe";
-    message?: string;
-  };
-  landings_subscription_signed_in: Record<string, never>;
-  landings_subscription_signin_required: Record<string, never>;
-  landings_subscription_started: Record<string, never>;
-  landings_subscription_submitting: {
-    enabled_count: number;
-  };
-  landings_subscription_subscribed: {
-    enabled_count: number;
-  };
-  landings_subscription_unsubscribed: Record<string, never>;
-  landings_subscription_unsubscribing: Record<string, never>;
   lp_blog_post_clicked: {
     slug: string;
   };
@@ -110,9 +91,6 @@ export type LandingsEvents = {
     stub: true;
   };
   lp_community_gate_viewed: Record<string, never>;
-  lp_community_private_gated: {
-    community_id: string;
-  };
   lp_community_review_reached: {
     places: number;
     privacy: "private" | "public";
@@ -126,16 +104,11 @@ export type LandingsEvents = {
   lp_community_submit_failed: {
     error?: string;
   };
-  lp_community_viewed: {
-    community_id: string;
-    members_count: null | number;
-    privacy: "private" | "public";
-    source: "fixture" | "live";
-  };
+  lp_creatorhub_docs_clicked: Record<string, never>;
   lp_creatorhub_download_clicked: {
-    arch: string;
+    arch: "amd64" | "arm64";
     file_name: null | string;
-    kind: string;
+    kind: "primary" | "secondary";
     os: "macos" | "windows";
   };
   lp_creatorhub_download_success: {
@@ -146,6 +119,9 @@ export type LandingsEvents = {
     os: "macos" | "windows";
     overridden: boolean;
     version: string;
+  };
+  lp_creatorhub_link_shared: {
+    method: "copy" | "share";
   };
   lp_discover_viewed: Record<string, never>;
   lp_event_card_clicked: {
@@ -202,40 +178,10 @@ export type LandingsEvents = {
   lp_legal_viewed: {
     doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
   };
-  lp_rsvp_cancelled: {
-    count: number;
-    event_id: string;
-    stub: boolean;
-  };
-  lp_rsvp_cancelling: {
-    event_id: string;
-  };
-  lp_rsvp_confirmed: {
-    event_id: string;
-  };
-  lp_rsvp_error: {
-    event_id: string;
-    reason: string;
-  };
-  lp_rsvp_going: {
-    count: number;
-    event_id: string;
-    stub: boolean;
-  };
-  lp_rsvp_signin: {
-    event_id: string;
-    simulated: boolean;
-  };
-  lp_rsvp_started: {
-    event_id: string;
-  };
-  lp_rsvp_submitting: {
-    event_id: string;
-  };
   lp_whatson_viewed: {
     filter: null | string;
     live_count: number;
-    search: null | string;
+    search: null;
     upcoming_count: number;
   };
   report_category_set: {
@@ -244,7 +190,7 @@ export type LandingsEvents = {
   report_completed: {
     evidence_count: number;
     reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
-    report_id?: string;
+    report_id: string;
   };
   report_details_set: {
     description_len: number;
@@ -253,7 +199,7 @@ export type LandingsEvents = {
     file_count: number;
   };
   report_failed: {
-    reason?: string;
+    reason: string;
   };
   report_review_reached: Record<string, never>;
   report_started: Record<string, never>;

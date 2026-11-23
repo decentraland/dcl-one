@@ -97,6 +97,13 @@ pub(crate) async fn apply_friendship_action(
         .await;
     if action == Action::Accept {
         announce_accepted_connectivity(ctx, me, other).await;
+        // Subscribers on other replicas hear the accept through their own topology.
+        ctx.pubsub()
+            .forward_mutation(crate::rpc::fanout::Event::FriendshipAccepted {
+                actor: me.to_lowercase(),
+                friend: other.to_lowercase(),
+            })
+            .await;
     }
     notify_friendship_action(ctx, action, action_id, me, other, message).await;
     Ok((id, created_ms))
@@ -107,7 +114,7 @@ pub(crate) async fn apply_friendship_action(
 /// current ONLINE peers; the stream's existing relationship and topology
 /// guards recheck them before delivery. A wallet the profile source holds no
 /// profile for is skipped, as upstream's live loop skips it.
-async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
+pub(crate) async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
     let snapshot = ctx.topology().snapshot();
     for (recipient, friend) in [(other, me), (me, other)] {
         if !snapshot.is_online(friend) {

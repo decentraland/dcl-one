@@ -23,12 +23,12 @@
 //! selection (`GET /v3/catalog/unified?contractAddress=`), which fails
 //! closed when the set is empty; nothing here filters the catalog itself.
 
+use crate::shared::routing::{erase, get, put};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
 use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -505,7 +505,7 @@ pub fn router() -> Router<SharedState> {
         .route("/v1/campaign-collections", get(get_collections_by_tag))
         .route(
             "/v1/admin/campaigns/{id}",
-            put(put_campaign).delete(delete_campaign_route),
+            put(put_campaign).delete(erase(delete_campaign_route)),
         )
         .route("/v1/admin/campaigns/{id}/collections", put(put_collections))
 }
@@ -515,7 +515,7 @@ pub fn admin_router() -> Router<SharedState> {
     Router::new()
         .route(
             "/admin/campaigns/{id}",
-            put(put_campaign).delete(delete_campaign_route),
+            put(put_campaign).delete(erase(delete_campaign_route)),
         )
         .route("/admin/campaigns/{id}/collections", put(put_collections))
 }

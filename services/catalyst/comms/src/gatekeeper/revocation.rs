@@ -44,7 +44,7 @@ impl CommsState {
             return;
         }
         let state = self.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             match &revocation {
                 RoomRevocation::WorldAddress { world, address } => {
                     let rooms = match live_world_rooms(&state, world).await {
@@ -94,6 +94,8 @@ impl CommsState {
                         tracing::error!(%error,%address,"operator-block removal intent was not accepted; worlds write is already committed");
                         return;
                     }
+                    let wallet = super::streaming::cast::Keys::Minter(address.as_str());
+                    super::streaming::cast::recheck_keys(&state, wallet).await;
                 }
             }
             tracing::info!(
@@ -334,7 +336,8 @@ mod completion_tests {
         };
         let world = format!("locked-{}.dcl.eth", uuid::Uuid::new_v4());
         let revision = queue(&pool, &world).await;
-        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '10 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
+        // Long enough to observe the lock wait before the lease expires.
+        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '3 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
             .bind(&world).fetch_one(&pool).await.unwrap();
         let mut blocker = pool.begin().await.unwrap();
         sqlx::query(
@@ -426,10 +429,7 @@ mod recheck_regressions {
             .connect_with(base.connect_options().as_ref().clone().database("postgres"))
             .await
             .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         use futures::FutureExt;
         let mut server = None;
         let outcome = std::panic::AssertUnwindSafe(async {
@@ -438,7 +438,6 @@ mod recheck_regressions {
                 .connect_with(base.connect_options().as_ref().clone().database(&name))
                 .await
                 .unwrap();
-            crate::db::apply_schema(&pool).await.unwrap();
             sqlx::query("INSERT INTO social.world_access_rechecks(world_name,next_attempt_at) VALUES ('a-fault.dcl.eth',timestamp '2000-01-01'),('b-later.dcl.eth',timestamp '2000-01-02')")
                 .execute(&pool).await.unwrap();
             sqlx::raw_sql("CREATE FUNCTION social.fail_test_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.world_name='a-fault.dcl.eth' AND NEW.next_attempt_at='infinity'::timestamp THEN RAISE EXCEPTION 'injected completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_test_completion BEFORE UPDATE ON social.world_access_rechecks FOR EACH ROW EXECUTE FUNCTION social.fail_test_completion();")

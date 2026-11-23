@@ -157,7 +157,7 @@ pub struct OwnedLand {
 pub struct Caches {
     /// `(owner, category)` -> every copy the owner holds across both networks.
     owned: TtlMap<(String, String), Arc<Vec<OwnedCopy>>>,
-    /// `owner` -> the ENS names the owner holds, cut off at [`MAX_PAGES`].
+    /// `owner` -> the complete ENS names read within [`MAX_PAGES`].
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
     all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
@@ -209,8 +209,30 @@ pub async fn graph_query(
     query: &str,
     variables: Value,
 ) -> Result<Value, String> {
+    graph_query_classified(state, url, query, variables)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GraphQueryError {
+    #[error("{0}")]
+    Transient(String),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Retains the transport/response distinction for durable retry queues.
+pub async fn graph_query_classified(
+    state: &ChainIndex,
+    url: &str,
+    query: &str,
+    variables: Value,
+) -> Result<Value, GraphQueryError> {
     if !state.upstream_allowed(url) {
-        return Err("subgraph URL is not a publicly routable http(s) endpoint".to_string());
+        return Err(GraphQueryError::Invalid(
+            "subgraph URL is not a publicly routable http(s) endpoint".into(),
+        ));
     }
     let client = &state.http;
     let body = json!({ "query": query, "variables": variables });
@@ -256,19 +278,30 @@ pub async fn graph_query(
         }
     })
     .await
-    .map_err(|e| e.to_string())?;
-    let body = outcome.ok_or_else(|| "subgraph unavailable after retries".to_string())?;
+    .map_err(|e| {
+        if e.downcast_ref::<reqwest::Error>().is_some() {
+            // Interrupted response bodies are retryable after headers were received.
+            GraphQueryError::Transient(e.to_string())
+        } else {
+            GraphQueryError::Invalid(e.to_string())
+        }
+    })?;
+    let body = outcome
+        .ok_or_else(|| GraphQueryError::Transient("subgraph unavailable after retries".into()))?;
     if let Some(errors) = body
         .get("errors")
         .and_then(Value::as_array)
         .filter(|e| !e.is_empty())
     {
-        return Err(format!("subgraph errors: {}", Value::Array(errors.clone())));
+        return Err(GraphQueryError::Invalid(format!(
+            "subgraph errors: {}",
+            Value::Array(errors.clone())
+        )));
     }
     body.get("data")
         .cloned()
         .filter(|d| !d.is_null())
-        .ok_or_else(|| format!("subgraph response without data: {body}"))
+        .ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
 }
 
 const QUERY_OWNED: &str = r#"
@@ -339,11 +372,20 @@ fn last_id(data: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-fn page_len(data: &Value) -> usize {
-    data.get("nfts")
+/// A short NFT page proves completion. A full page needs a usable continuation.
+fn next_nft_cursor(data: &Value, previous: &str) -> Result<Option<String>, String> {
+    let rows = data
+        .get("nfts")
         .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0)
+        .ok_or("subgraph response without nfts")?;
+    match rows.len().cmp(&(THE_GRAPH_PAGE_SIZE as usize)) {
+        std::cmp::Ordering::Less => Ok(None),
+        std::cmp::Ordering::Greater => Err("subgraph returned more NFTs than requested".into()),
+        std::cmp::Ordering::Equal => last_id(data)
+            .filter(|id| id.as_str() > previous)
+            .map(Some)
+            .ok_or_else(|| "NFT cursor is missing or does not advance".into()),
+    }
 }
 
 async fn owned_on_network(
@@ -382,13 +424,9 @@ where
     let mut out = Vec::new();
     let mut id_from = String::new();
     for _ in 0..max_pages {
-        let data = page(id_from).await?;
-        let n = page_len(&data);
-        let next = last_id(&data);
+        let data = page(id_from.clone()).await?;
+        let next = next_nft_cursor(&data, &id_from)?;
         out.push(data);
-        if (n as i64) < THE_GRAPH_PAGE_SIZE {
-            return Ok(out);
-        }
         match next {
             Some(id) => id_from = id,
             None => return Ok(out),
@@ -506,12 +544,12 @@ pub async fn owned_tokens(
             let data = graph_query(state, url, &ownership_document(chunk), json!({})).await?;
             for (i, (owner, _)) in chunk.iter().enumerate() {
                 let held = owned.entry((*owner).to_string()).or_default();
-                for nft in data
-                    .get(alias(i))
+                let key = alias(i);
+                let rows = data
+                    .get(&key)
                     .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
+                    .ok_or_else(|| format!("subgraph response without {key} ownership rows"))?;
+                for nft in rows {
                     let Some(urn) = nft.get("urn").and_then(Value::as_str) else {
                         continue;
                     };
@@ -558,8 +596,8 @@ pub(crate) fn parse_names(data: &Value) -> Vec<OwnedName> {
         .collect()
 }
 
-/// The ENS names the owner holds, in subgraph id order, cut off at
-/// [`MAX_PAGES`]. `Ok(empty)` when no marketplace subgraph is configured.
+/// The ENS names the owner holds, in subgraph id order. An incomplete walk at
+/// [`MAX_PAGES`] returns an error. `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedName>>, String> {
     walk_names(state, &state.graph.names, owner, MAX_PAGES).await
 }
@@ -598,17 +636,14 @@ async fn walk_names(
                     json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(parse_names(&data));
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
-                    break;
-                }
-                match last_id(&data) {
+                match next {
                     Some(id) => id_from = id,
-                    None => break,
+                    None => return Ok(Arc::new(out)),
                 }
             }
-            Ok::<_, String>(Arc::new(out))
+            Err(format!("no terminal NFT page after {max_pages} pages"))
         })
         .await
 }
@@ -712,21 +747,20 @@ pub async fn parcels_at(
                     json!({ "xs": xs, "ys": ys, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(
                     parse_parcels(&data)
                         .into_iter()
                         .filter(|p| key.binary_search(&(p.x, p.y)).is_ok()),
                 );
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
-                    break;
-                }
-                match last_id(&data) {
+                match next {
                     Some(id) => id_from = id,
-                    None => break,
+                    None => return Ok(Arc::new(out)),
                 }
             }
-            Ok::<_, String>(Arc::new(out))
+            Err(format!(
+                "no terminal parcel NFT page after {MAX_PAGES} pages"
+            ))
         })
         .await
 }
@@ -794,7 +828,7 @@ pub async fn name_owners(
     };
     for chunk in names.chunks(NAMES_PER_QUERY) {
         let mut id_from = String::new();
-        for _ in 0..MAX_PAGES {
+        for page in 1..=MAX_PAGES {
             let data = graph_query(
                 state,
                 url,
@@ -802,6 +836,7 @@ pub async fn name_owners(
                 json!({ "names": chunk, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
             )
             .await?;
+            let next = next_nft_cursor(&data, &id_from)?;
             for nft in data
                 .get("nfts")
                 .and_then(Value::as_array)
@@ -814,19 +849,21 @@ pub async fn name_owners(
                         .and_then(Value::as_str)
                         .filter(|s| !s.is_empty()),
                 ) else {
-                    continue;
+                    return Err("name owner row without name or holder".into());
                 };
                 if let Some(slot @ None) = out.get_mut(&name.to_lowercase()) {
                     *slot = Some(owner.to_lowercase());
                 }
             }
-            if (page_len(&data) as i64) < THE_GRAPH_PAGE_SIZE {
+            let Some(next) = next else {
                 break;
+            };
+            if page == MAX_PAGES {
+                return Err(format!(
+                    "no terminal NAME owner page after {MAX_PAGES} pages"
+                ));
             }
-            match last_id(&data) {
-                Some(id) => id_from = id,
-                None => break,
-            }
+            id_from = next;
         }
     }
     Ok(out)
@@ -918,7 +955,7 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             }
             let mut out = Vec::new();
             let mut id_from = String::new();
-            for _ in 0..FULL_WALK_PAGES {
+            for page in 1..=FULL_WALK_PAGES {
                 let data = graph_query(
                     state,
                     url,
@@ -926,15 +963,17 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
                     json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(parse_owned_lands(&data));
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
+                let Some(next) = next else {
                     break;
+                };
+                if page == FULL_WALK_PAGES {
+                    return Err(format!(
+                        "no terminal LAND NFT page after {FULL_WALK_PAGES} pages"
+                    ));
                 }
-                match last_id(&data) {
-                    Some(id) => id_from = id,
-                    None => break,
-                }
+                id_from = next;
             }
             out.sort_by(|a, b| {
                 b.transferred_at
@@ -1140,7 +1179,6 @@ mod tests {
             ("", "")
         );
         assert_eq!(last_id(&data).as_deref(), Some("no-urn"));
-        assert_eq!(page_len(&data), 3);
 
         let data = json!({ "nfts": [ { "id": "e", "urn": "urn:decentraland:matic:collections-v2:0xc0ffee:3",
             "tokenId": "1", "transferredAt": "400", "item": { "rarity": "rare", "price": "5" },
@@ -1182,6 +1220,88 @@ mod tests {
             .map(|i| json!({ "id": format!("0xc-{i:08}"), "urn": format!("urn:x:{i}") }))
             .collect();
         json!({ "nfts": nfts })
+    }
+
+    #[tokio::test]
+    async fn incomplete_pages_cannot_establish_ownership_or_enter_the_name_cache() {
+        use std::collections::VecDeque;
+        use std::sync::Mutex;
+        let wallet = format!("0x{}", "1".repeat(40));
+        let urn = "urn:decentraland:matic:collections-v2:0xc0ffee:1";
+        let input = HashSet::from([(wallet.clone(), urn.to_string())]);
+        let labels = vec!["alice".to_string()];
+        let replies = Arc::new(Mutex::new(VecDeque::from([
+            page_of(0, THE_GRAPH_PAGE_SIZE as usize),
+            json!({"nfts": []}),
+            json!({}),
+            json!({"nfts": [{"searchText": "alice"}]}),
+            json!({"nfts": []}),
+            json!({}),
+            json!({}),
+            json!({}),
+            json!({"o0": []}),
+        ])));
+        let captured = replies.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move || {
+                let data = captured.lock().unwrap().pop_front().unwrap();
+                async move { axum::Json(json!({"data": data})) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::IndexSettings {
+                matic_collections_subgraph_url: Some(url.clone()),
+                marketplace_subgraph_url: Some(url),
+                ..Default::default()
+            },
+        );
+        state.allow_loopback_for_tests();
+        assert_eq!(
+            walk_names(&state, &state.graph.names, &wallet, 1)
+                .await
+                .unwrap_err(),
+            "no terminal NFT page after 1 pages"
+        );
+        assert!(owned_names(&state, &wallet).await.unwrap().is_empty());
+        assert_eq!(
+            name_owners(&state, &labels).await.unwrap_err(),
+            "subgraph response without nfts"
+        );
+        assert_eq!(
+            name_owners(&state, &labels).await.unwrap_err(),
+            "name owner row without name or holder"
+        );
+        assert_eq!(name_owners(&state, &labels).await.unwrap()["alice"], None);
+        assert_eq!(
+            parcels_at(&state, &[(1, 2)]).await.unwrap_err(),
+            "subgraph response without nfts"
+        );
+        assert_eq!(
+            owned_lands(&state, &wallet).await.unwrap_err(),
+            "subgraph response without nfts"
+        );
+        assert_eq!(
+            owned_tokens(&state, &input).await.unwrap_err(),
+            "subgraph response without o0 ownership rows"
+        );
+        assert!(owned_tokens(&state, &input).await.unwrap()[&wallet].is_empty());
+        assert!(replies.lock().unwrap().is_empty());
+        server.abort();
+    }
+
+    #[test]
+    fn nft_cursor_rejects_missing_rows_and_broken_continuations() {
+        assert!(next_nft_cursor(&json!({}), "").is_err());
+        let n = THE_GRAPH_PAGE_SIZE as usize;
+        assert!(next_nft_cursor(&json!({"nfts": vec![Value::Null; n]}), "").is_err());
+        assert!(next_nft_cursor(&page_of(0, n), "z").is_err());
+        assert!(next_nft_cursor(&page_of(0, n + 1), "").is_err());
+        assert_eq!(next_nft_cursor(&json!({"nfts":[]}), "").unwrap(), None);
     }
 
     #[tokio::test]
@@ -1288,6 +1408,27 @@ pub mod test_support {
                 .or_default()
                 .push(label.to_string());
         }
+        /// Makes `owner` the label's only holder.
+        pub fn transfer(&self, owner: &Address, label: &str) {
+            for labels in self.0.lock().unwrap().values_mut() {
+                labels.retain(|l| !l.eq_ignore_ascii_case(label));
+            }
+            self.set(owner, label);
+        }
+
+        #[cfg(test)]
+        fn holders(&self, label: &str) -> Vec<String> {
+            let mut holders: Vec<String> = self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, labels)| labels.iter().any(|l| l.eq_ignore_ascii_case(label)))
+                .map(|(owner, _)| owner.clone())
+                .collect();
+            holders.sort();
+            holders
+        }
         pub fn forget(&self, owner: &Address) {
             self.0.lock().unwrap().remove(owner.as_str());
         }
@@ -1369,10 +1510,14 @@ pub mod test_support {
     }
 
     pub async fn fake_names_subgraph(names: Names) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        serve_names(listener, names)
+    }
+
+    fn serve_names(listener: tokio::net::TcpListener, names: Names) -> String {
         let app = Router::new()
             .route("/subgraph", post(answer))
             .with_state(names);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         format!("http://{addr}/subgraph")
@@ -1382,6 +1527,19 @@ pub mod test_support {
     pub async fn index_with_names() -> (Arc<ChainIndex>, Names) {
         let names = Names::default();
         let subgraph = fake_names_subgraph(names.clone()).await;
+        (names_index(subgraph), names)
+    }
+
+    /// A chain index reading `names`, built from a synchronous caller inside
+    /// a Tokio runtime.
+    pub fn index_reading(names: Names) -> Arc<ChainIndex> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        names_index(serve_names(listener, names))
+    }
+
+    fn names_index(subgraph: String) -> Arc<ChainIndex> {
         let settings = IndexSettings {
             marketplace_subgraph_url: Some(subgraph),
             eth_network: "mainnet".to_string(),
@@ -1389,6 +1547,34 @@ pub mod test_support {
         };
         let index = ChainIndex::new(Outbound::for_tests(), settings);
         index.allow_loopback_for_tests();
-        (Arc::new(index), names)
+        Arc::new(index)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn address(byte: char) -> Address {
+            Address::parse(&format!("0x{}", byte.to_string().repeat(40))).unwrap()
+        }
+
+        #[test]
+        fn transfer_leaves_the_new_owner_as_the_only_holder() {
+            let names = Names::default();
+            let (previous, current) = (address('a'), address('b'));
+            names.set(&previous, "label");
+            names.set(&previous, "kept");
+            names.transfer(&current, "LABEL");
+            assert_eq!(names.holders("label"), vec![current.as_str().to_string()]);
+            assert_eq!(names.holders("kept"), vec![previous.as_str().to_string()]);
+        }
+
+        #[test]
+        fn set_adds_a_holder() {
+            let names = Names::default();
+            names.set(&address('a'), "label");
+            names.set(&address('b'), "label");
+            assert_eq!(names.holders("label").len(), 2);
+        }
     }
 }
