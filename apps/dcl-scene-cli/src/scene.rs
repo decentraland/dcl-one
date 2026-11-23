@@ -12,6 +12,12 @@ pub struct Project {
     pub scene_json: Value,
 }
 
+/// Whether the project at `root` is a smart wearable: upstream's project kind
+/// `smart-wearable`, a `wearable.json` beside the `scene.json`.
+pub fn is_smart_wearable(root: &Path) -> bool {
+    root.join("wearable.json").is_file()
+}
+
 /// `.dcl-one/`, created with its own `.gitignore` so no scene-level ignore
 /// file has to list it.
 pub fn work_dir(root: &Path) -> std::io::Result<PathBuf> {

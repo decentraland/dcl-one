@@ -9,6 +9,10 @@ use crate::CollectibleType;
 /// of the type's `source_collections`. Never sent to a content server.
 pub const UNKNOWN_SOURCE_COLLECTION: &str = "urn:decentraland:off-chain:unknown-source";
 
+/// The collection of a wearable a creator preview defines (`dcl-scene-cli start`), registered by
+/// the engine from the preview's listing. Never sent to a content server.
+pub const PREVIEW_COLLECTION: &str = "urn:decentraland:off-chain:preview";
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct CollectibleUrnErr {
     msg: &'static str,
@@ -108,7 +112,9 @@ impl<T: CollectibleType> CollectibleUrn<T> {
         };
 
         let collection_segments = match *collection {
-            "base-avatars" | "base-emotes" | "base-scene-emotes" | "unknown-source" => 4,
+            "base-avatars" | "base-emotes" | "base-scene-emotes" | "unknown-source" | "preview" => {
+                4
+            }
             "collections-v1" | "collections-v2" | "scene-emote" => 5,
             "collections-thirdparty" => 6,
             _ => {

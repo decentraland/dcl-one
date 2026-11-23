@@ -158,7 +158,7 @@ async fn full_flow_through_the_tunnel_origin() {
     // service waits on before answering ours, only after that answer.
     let (mut reload_ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
     reload_tx
-        .send(ReloadFrame::Text(scene_update_json("scene-1")))
+        .send(ReloadFrame::Text(scene_update_json("scene-1", "scene")))
         .unwrap();
     reload_tx
         .send(ReloadFrame::Binary(update_scene_frame("scene-1")))

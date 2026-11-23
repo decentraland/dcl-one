@@ -249,7 +249,7 @@ fn preview_wearables_parse_the_catalyst_shape() {
 }
 
 #[test]
-fn preview_wearables_parse_the_scene_cli_shape() {
+fn preview_wearables_parse_top_level_contents() {
     let body = br#"{ "ok": true, "data": [ {
         "id": "a0f68dc0-1a46-41b8-a7dc-e17fc3885dce",
         "name": "Fixture",
@@ -287,6 +287,7 @@ fn previews_replace_the_previous_realms() {
         name: urn.to_owned(),
         content: ContentMap::from_content([("scene.json".to_owned(), "h".to_owned())]),
         base_url: "http://x/".to_owned(),
+        data: None,
     };
     model.set_previews(vec![preview("a"), preview("b")]);
     assert_eq!(model.preview_count(), 2);
@@ -319,4 +320,227 @@ fn the_listing_has_a_header_and_one_line_per_entry() {
         format!("current scene allows: true\n{hat} stopped\n{cape} notSmart")
     );
     assert_eq!(diagnostics::format_listing(true, &[]), "no smart wearables");
+}
+
+/// `dcl-scene-cli start` and upstream's `sdk-commands start` list a preview wearable with every
+/// file under `male/` in each representation, whichever body shapes it names: both bodies run it.
+#[test]
+fn a_creator_preview_runs_for_either_body_shape() {
+    let body = br#"{ "ok": true, "data": [ {
+        "id": "urn:6f1d3c2e-0000-4000-8000-000000000001",
+        "name": "One representation",
+        "baseUrl": "http://127.0.0.1:8000/content/contents/",
+        "data": { "category": "hat", "representations": [ {
+            "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale",
+                "urn:decentraland:off-chain:base-avatars:BaseFemale"
+            ],
+            "mainFile": "male/model.glb",
+            "contents": [
+                { "key": "male/scene.json", "url": "http://127.0.0.1:8000/content/contents/b64-s", "hash": "b64-s" },
+                { "key": "male/bin/index.js", "url": "http://127.0.0.1:8000/content/contents/b64-i", "hash": "b64-i" }
+            ]
+        } ] }
+    }, {
+        "id": "urn:6f1d3c2e-0000-4000-8000-000000000002",
+        "name": "A representation per body",
+        "baseUrl": "http://127.0.0.1:8000/content/contents/",
+        "data": { "category": "hat", "representations": [ {
+            "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseMale"],
+            "contents": [ { "key": "male/scene.json", "url": "u", "hash": "b64-s2" } ]
+        }, {
+            "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseFemale"],
+            "contents": [ { "key": "male/scene.json", "url": "u", "hash": "b64-s2" } ]
+        } ] }
+    } ] }"#;
+    let previews = parse_preview_wearables(body).unwrap();
+    assert_eq!(previews.len(), 2);
+    for preview in previews {
+        let aliases = with_scene_aliases(preview.content.clone());
+        for shape in [MALE, FEMALE] {
+            assert!(
+                aliases.hash(&scene_file(shape)).is_some(),
+                "{} runs for {shape}",
+                preview.name
+            );
+            assert!(preview_collection(&preview.content, shape).is_some());
+        }
+    }
+}
+
+fn preview(urn: &str, main: &str) -> PreviewWearable {
+    PreviewWearable {
+        urn: urn.to_owned(),
+        name: urn.to_owned(),
+        content: ContentMap::from_content([
+            ("male/scene.json".to_owned(), "b64-scene".to_owned()),
+            ("male/bin/index.js".to_owned(), main.to_owned()),
+        ]),
+        base_url: "http://127.0.0.1:8000/content/contents/".to_owned(),
+        data: None,
+    }
+}
+
+/// What `resolve_entries` decides for a loading preview, without the IPFS registration.
+fn resolve_previews(model: &mut Model) {
+    let shape = model.shape();
+    let loading: Vec<String> = model
+        .entries
+        .iter()
+        .filter(|(_, e)| e.phase == Phase::Loading)
+        .map(|(urn, _)| urn.clone())
+        .collect();
+    for urn in loading {
+        let Some(ForcedSource::Preview(p)) = model.forced.get(&urn) else {
+            continue;
+        };
+        let collection = preview_collection(&p.content, shape).unwrap();
+        model.set_phase(&urn, ready(&collection));
+    }
+}
+
+/// Saving a previewed smart wearable's project restarts its scene on the new files, even one the
+/// creator had stopped; another previewed wearable keeps running untouched.
+#[test]
+fn saving_a_previewed_smart_wearable_restarts_its_scene() {
+    let mut model = logged_in();
+    model.set_previews(vec![
+        preview("urn:hat", "b64-main-1"),
+        preview("urn:cape", "b64-cape"),
+    ]);
+    resolve_previews(&mut model);
+    let before = model.effective();
+    let hat_before = model.entries["urn:hat"].scene_id().unwrap();
+    let cape = model.entries["urn:cape"].scene_id().unwrap();
+    assert_eq!(before.len(), 2);
+    assert!(model.stop("urn:hat"));
+
+    model.reload_preview(preview("urn:hat", "b64-main-2"));
+    resolve_previews(&mut model);
+
+    assert_eq!(state(&model, "urn:hat"), Some(PortableState::Running));
+    let hat_after = model.entries["urn:hat"].scene_id().unwrap();
+    assert_ne!(hat_after, hat_before, "a new scene id is a restart");
+    assert_eq!(model.entries["urn:cape"].scene_id().unwrap(), cape);
+    assert_eq!(
+        model.effective().keys().cloned().collect::<BTreeSet<_>>(),
+        BTreeSet::from([hat_after, cape])
+    );
+    assert_eq!(model.preview_count(), 2);
+}
+
+/// A preview reload names the saved project's scene id, the id the realm keys
+/// `/preview-wearables/{id}` on; a model reload names it too.
+#[test]
+fn a_preview_reload_asks_the_realm_for_the_saved_projects_wearable() {
+    let about = "http://127.0.0.1:8000/about";
+    let reload = common::structs::PreviewCommand::ReloadScene {
+        hash: "b64-scene-id".to_owned(),
+    };
+    assert_eq!(
+        preview_reload_url(about, &reload).as_deref(),
+        Some("http://127.0.0.1:8000/preview-wearables/b64-scene-id")
+    );
+    let model = common::structs::PreviewCommand::ReloadModel {
+        hash: "b64-model".to_owned(),
+        src: "model.glb".to_owned(),
+        scene_id: "b64-scene-id".to_owned(),
+    };
+    assert_eq!(
+        preview_reload_url(about, &model).as_deref(),
+        Some("http://127.0.0.1:8000/preview-wearables/b64-scene-id")
+    );
+    assert_eq!(preview_reload_url("", &reload), None);
+}
+
+const PREVIEW_HAT: &[u8] = br#"{ "ok": true, "data": [ {
+    "id": "urn:6f1d3c2e-0000-4000-8000-000000000003",
+    "name": "Preview Hat",
+    "baseUrl": "http://127.0.0.1:8000/content/contents/",
+    "data": { "category": "hat", "replaces": [], "hides": ["hair"], "tags": [], "representations": [ {
+        "bodyShapes": [
+            "urn:decentraland:off-chain:base-avatars:BaseMale",
+            "urn:decentraland:off-chain:base-avatars:BaseFemale"
+        ],
+        "mainFile": "male/model.glb",
+        "overrideHides": [],
+        "overrideReplaces": [],
+        "contents": [
+            { "key": "male/model.glb", "url": "http://127.0.0.1:8000/content/contents/b64-m", "hash": "b64-m" },
+            { "key": "male/scene.json", "url": "http://127.0.0.1:8000/content/contents/b64-s", "hash": "b64-s" }
+        ]
+    } ] }
+} ] }"#;
+
+/// The preview listing is the wearable's whole definition: its category and hides, and for each
+/// body shape a model file that is in its content.
+#[test]
+fn a_preview_wearable_is_defined_for_each_body_from_the_listing() {
+    let preview = parse_preview_wearables(PREVIEW_HAT).unwrap().remove(0);
+    let data = preview.data.as_ref().expect("a wearable definition");
+    assert_eq!(data.category, WearableCategory::HAT);
+    assert_eq!(data.hides, vec![WearableCategory::HAIR]);
+    let bodies: Vec<(Vec<String>, String)> = data
+        .representations
+        .iter()
+        .map(|r| (r.body_shapes.clone(), r.main_file.clone()))
+        .collect();
+    assert_eq!(
+        bodies,
+        vec![
+            (
+                vec!["urn:decentraland:off-chain:base-avatars:BaseMale".to_owned()],
+                "male/model.glb".to_owned()
+            ),
+            (
+                vec!["urn:decentraland:off-chain:base-avatars:BaseFemale".to_owned()],
+                "female/model.glb".to_owned()
+            ),
+        ]
+    );
+    for representation in data.representations.iter() {
+        assert!(
+            preview.content.hash(&representation.main_file).is_some(),
+            "{} is in the content",
+            representation.main_file
+        );
+    }
+}
+
+/// The local avatar wears every preview wearable ahead of the profile's, so each takes its
+/// category's slot; a preview that goes, or is replaced by a save, leaves the avatar.
+#[test]
+fn the_local_avatar_wears_the_previews_ahead_of_its_profile() {
+    let first = preview_wearable_urn(&preview("urn:hat", "b64-main-1").content);
+    let saved = preview_wearable_urn(&preview("urn:hat", "b64-main-2").content);
+    let profile = vec![
+        "urn:decentraland:matic:collections-v2:0xabc:1".to_owned(),
+        "urn:decentraland:off-chain:base-avatars:eyebrows_00".to_owned(),
+    ];
+
+    let worn = with_previews(&profile, std::slice::from_ref(&first));
+    assert_eq!(worn[0], first);
+    assert_eq!(worn[1..], profile[..]);
+    assert_eq!(with_previews(&worn, std::slice::from_ref(&first)), worn);
+
+    let after_save = with_previews(&worn, std::slice::from_ref(&saved));
+    assert_eq!(after_save[0], saved);
+    assert_eq!(after_save[1..], profile[..]);
+
+    assert_eq!(with_previews(&after_save, &[]), profile);
+}
+
+/// A preview wearable is a collectible of its own, never looked up on a catalyst, and a save that
+/// changes its files makes it a new one, so the avatar loads the new model.
+#[test]
+fn a_save_that_changes_a_preview_wearable_makes_a_new_collectible() {
+    let first = preview_wearable_urn(&preview("urn:hat", "b64-main-1").content);
+    let unchanged = preview_wearable_urn(&preview("urn:hat", "b64-main-1").content);
+    let saved = preview_wearable_urn(&preview("urn:hat", "b64-main-2").content);
+    assert_eq!(first, unchanged);
+    assert_ne!(first, saved);
+    for urn in [&first, &saved] {
+        let parsed = WearableUrn::new(urn).expect("a collectible urn");
+        assert_eq!(parsed.as_str(), urn.as_str());
+    }
 }

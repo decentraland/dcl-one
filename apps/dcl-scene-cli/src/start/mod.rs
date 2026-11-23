@@ -53,7 +53,8 @@ use http::{
     signed_login,
 };
 use proxy::{
-    catalyst_proxy, lambdas_contracts_servers, lambdas_explore_realms, world_about, world_content,
+    catalyst_proxy, lambdas_contracts_servers, lambdas_explore_realms, lambdas_profiles,
+    world_about, world_content,
 };
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -1500,6 +1501,10 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
         .route("/content/entities", post(catalyst_proxy))
         .route("/lambdas/explore/realms", get(lambdas_explore_realms))
         .route("/lambdas/contracts/servers", get(lambdas_contracts_servers))
+        .route(
+            "/lambdas/profiles",
+            get(lambdas_profiles).fallback(catalyst_proxy),
+        )
         .route("/lambdas/{*path}", any(catalyst_proxy))
         .route("/explorer/{*path}", any(catalyst_proxy))
         .route("/world/{name}/about", get(world_about))

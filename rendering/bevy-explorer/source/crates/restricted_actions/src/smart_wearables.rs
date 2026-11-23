@@ -1,7 +1,8 @@
 //! Smart wearables: equipped (or previewed, or console-run) wearables whose content carries an
 //! SDK7 scene, run as portable experiences.
 //!
-//! The plugin follows the primary user's profile and the realm's `/preview-wearables`, decides
+//! The plugin follows the primary user's profile and the realm's `/preview-wearables` (restarting a
+//! preview wearable on the new files when the preview server reports its project saved), decides
 //! from the wearable's data whether it has a scene for the player's body shape, and keeps the
 //! smart-wearable entries of [`PortableScenes`] equal to the wearables that should run: smart and
 //! not stopped. The scene itself loads like any other portable, from the wearable's
@@ -14,8 +15,12 @@
 
 mod diagnostics;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
+use avatar::AvatarShape;
 use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -25,12 +30,16 @@ use bevy_console::ConsoleCommand;
 use collectibles::{
     request_collectibles,
     smart_wearables::{scene_file, scene_id, scene_json_key, with_scene_aliases},
-    wearables::{Wearable, WearableUrn},
+    urn::PREVIEW_COLLECTION,
+    wearables::{
+        inline_wearable, Wearable, WearableCategory, WearableData, WearableMeta,
+        WearableRepresentation, WearableUrn,
+    },
     CollectibleError, CollectibleManager,
 };
 use common::{
     sets::SceneSets,
-    structs::{server_mode, CurrentRealm, NoRenderApp, PrimaryUser},
+    structs::{server_mode, CurrentRealm, NoRenderApp, PreviewCommand, PrimaryUser},
     util::{TaskCompat, TaskExt},
 };
 use comms::profile::UserProfile;
@@ -60,6 +69,7 @@ impl Plugin for SmartWearablesPlugin {
                 preview_wearables,
                 resolve_entries,
                 reconcile,
+                wear_previews,
             )
                 .chain()
                 .in_set(SceneSets::RestrictedActions)
@@ -76,9 +86,9 @@ const FEMALE: &str = "female";
 
 /// The key every smart wearable state is held under: a parsed wearable urn (lowercase, without a
 /// token id), else the lowercased string (a preview wearable's id need not be a catalyst urn: a
-/// `dcl-scene-cli start` preview lists its `wearable.json` uuid, which must not become a
-/// bare-name urn). Parsed quietly: this runs on every profile change and command, and an
-/// off-chain preview id is not a failure worth a log line.
+/// creator preview lists a `urn:` uuid, which must not become a bare-name urn). Parsed quietly:
+/// this runs on every profile change and command, and an off-chain preview id is not a failure
+/// worth a log line.
 pub fn normalize_urn(urn: &str) -> String {
     let urn = urn.trim();
     if !urn.contains(':') {
@@ -96,6 +106,8 @@ pub struct PreviewWearable {
     pub name: String,
     pub content: ContentMap,
     pub base_url: String,
+    /// the wearable it defines, for the local avatar to wear
+    pub data: Option<Box<WearableData>>,
 }
 
 /// Why the engine runs a wearable it may not have equipped.
@@ -327,12 +339,25 @@ impl Model {
         self.forced
             .retain(|_, forced| !matches!(forced, ForcedSource::Preview(_)));
         for preview in previews {
-            // a console run of the same urn becomes the preview
-            self.entries.remove(&preview.urn);
-            self.forced
-                .insert(preview.urn.clone(), ForcedSource::Preview(preview));
+            self.insert_preview(preview);
         }
         self.sync_entries();
+    }
+
+    /// A save of a previewed wearable's project: the new files replace the preview's and it runs
+    /// again, stopped or not.
+    pub fn reload_preview(&mut self, preview: PreviewWearable) {
+        self.stopped.remove(&preview.urn);
+        self.insert_preview(preview);
+        self.sync_entries();
+    }
+
+    /// Hold `preview` for its urn, resolved afresh; a console run of the same urn becomes the
+    /// preview.
+    fn insert_preview(&mut self, preview: PreviewWearable) {
+        self.entries.remove(&preview.urn);
+        self.forced
+            .insert(preview.urn.clone(), ForcedSource::Preview(preview));
     }
 
     pub fn preview_count(&self) -> usize {
@@ -349,10 +374,10 @@ struct PreviewDocument {
     data: Vec<PreviewDocumentWearable>,
 }
 
-/// A catalyst (and e2e realm) entry nests the content under `data.representations`, with keys
-/// under the body-shape folders; a `dcl-scene-cli start` entry lists unprefixed `contents` at the
-/// top level with a `baseUrl`, and keeps the `wearable.json` `data` (whose representation
-/// `contents` are bare file names), so `data` is read only in the first shape.
+/// A catalyst, e2e realm or creator preview (`dcl-scene-cli start`, `sdk-commands start`) entry
+/// nests the content under `data.representations`, with keys under the body-shape folders; an
+/// entry may instead list unprefixed `contents` at the top level with a `baseUrl`, and then its
+/// `data` is not read for content.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviewDocumentWearable {
@@ -364,17 +389,128 @@ struct PreviewDocumentWearable {
     data: serde_json::Value,
 }
 
-/// The `{ key, url, hash }` entries of `data.representations[*].contents`; anything else there is
-/// ignored.
+/// The `{ key, url, hash }` entries of `data.representations[*].contents`, each under the folder
+/// of every body shape its representation's `bodyShapes` names, in place of the folder its key
+/// has: a creator preview lists every file under `male/` in each representation, whichever bodies
+/// it is for. Entries of a representation naming no body shape keep their keys; anything else
+/// there is ignored.
 fn representation_contents(data: &serde_json::Value) -> Vec<PreviewDocumentContent> {
-    data.get("representations")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|r| r.get("contents")?.as_array())
-        .flatten()
-        .filter_map(|c| serde_json::from_value(c.clone()).ok())
-        .collect()
+    let mut contents = Vec::new();
+    let representations = data
+        .get("representations")
+        .and_then(serde_json::Value::as_array);
+    for representation in representations.into_iter().flatten() {
+        let shapes: Vec<&str> = representation
+            .get("bodyShapes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|urn| body_shape_folder(urn.as_str()?))
+            .collect();
+        let entries = representation
+            .get("contents")
+            .and_then(serde_json::Value::as_array);
+        for entry in entries.into_iter().flatten() {
+            let Ok(entry) = serde_json::from_value::<PreviewDocumentContent>(entry.clone()) else {
+                continue;
+            };
+            if shapes.is_empty() {
+                contents.push(entry);
+                continue;
+            }
+            let file = unshaped(&entry.key);
+            for shape in shapes.iter() {
+                contents.push(PreviewDocumentContent {
+                    key: format!("{shape}/{file}"),
+                    url: entry.url.clone(),
+                    hash: entry.hash.clone(),
+                });
+            }
+        }
+    }
+    contents
+}
+
+/// `key` without its body-shape folder.
+fn unshaped(key: &str) -> &str {
+    [MALE, FEMALE]
+        .iter()
+        .find_map(|shape| key.strip_prefix(&format!("{shape}/")))
+        .unwrap_or(key)
+}
+
+/// The wearable a preview entry defines: its `data` with one representation for each body shape a
+/// representation names, its files under that body's folder as [`representation_contents`] keys
+/// them. `None` without a category or a representation for a body shape.
+fn preview_definition(data: &serde_json::Value) -> Option<WearableData> {
+    let category: WearableCategory = serde_json::from_value(data.get("category")?.clone()).ok()?;
+    let categories = |value: &serde_json::Value, field: &str| -> Vec<WearableCategory> {
+        value
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|category| serde_json::from_value(category.clone()).ok())
+            .collect()
+    };
+    let mut representations = Vec::new();
+    let listed = data
+        .get("representations")
+        .and_then(serde_json::Value::as_array);
+    for representation in listed.into_iter().flatten() {
+        let Some(main_file) = representation
+            .get("mainFile")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let files: Vec<&str> = representation
+            .get("contents")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.get("key")?.as_str())
+            .map(unshaped)
+            .collect();
+        let body_shapes = representation
+            .get("bodyShapes")
+            .and_then(serde_json::Value::as_array);
+        for urn in body_shapes
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+        {
+            let Some(shape) = body_shape_folder(urn) else {
+                continue;
+            };
+            representations.push(WearableRepresentation {
+                body_shapes: vec![urn.to_owned()],
+                main_file: format!("{shape}/{}", unshaped(main_file)),
+                override_replaces: categories(representation, "overrideReplaces"),
+                override_hides: categories(representation, "overrideHides"),
+                contents: files.iter().map(|file| format!("{shape}/{file}")).collect(),
+            });
+        }
+    }
+    (!representations.is_empty()).then(|| WearableData {
+        tags: Vec::new(),
+        category,
+        representations,
+        hides: categories(data, "hides"),
+        replaces: categories(data, "replaces"),
+        removes_default_hiding: None,
+        outline_compatible: None,
+        spring_bones: None,
+    })
+}
+
+/// The content folder of a body shape urn (`...:BaseMale`, `...:BaseFemale`).
+fn body_shape_folder(urn: &str) -> Option<&'static str> {
+    match urn.rsplit(':').next()?.to_ascii_lowercase().as_str() {
+        "basemale" => Some(MALE),
+        "basefemale" => Some(FEMALE),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize)]
@@ -424,9 +560,75 @@ pub fn parse_preview_wearables(body: &[u8]) -> Result<Vec<PreviewWearable>, Stri
                 urn,
                 content: ContentMap::from_content(contents.into_iter().map(|c| (c.key, c.hash))),
                 base_url,
+                data: preview_definition(&wearable.data).map(Box::new),
             })
         })
         .collect())
+}
+
+/// A digest of a preview's whole content: a preview whose files changed gets a new one.
+fn content_digest(content: &ContentMap) -> String {
+    let mut files: Vec<(&String, &String)> = content.values().collect();
+    files.sort();
+    let mut hasher = DefaultHasher::new();
+    files.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// The collection a preview's content is registered under.
+fn content_collection(content: &ContentMap) -> String {
+    format!("{}-preview", content_digest(content))
+}
+
+/// The collection a preview's scene for `shape` loads from, `None` when it has no scene for that
+/// body. Named after the whole content, so a preview whose files changed is a new collection and
+/// its scene a new scene.
+pub fn preview_collection(content: &ContentMap, shape: &str) -> Option<String> {
+    scene_json_key(content.files(), shape)?;
+    Some(content_collection(content))
+}
+
+/// The collectible urn a preview's wearable is registered under, in [`PREVIEW_COLLECTION`] and
+/// named after the whole content, so a save that changes its files makes a new collectible.
+pub fn preview_wearable_urn(content: &ContentMap) -> String {
+    format!("{PREVIEW_COLLECTION}:{}", content_digest(content))
+}
+
+fn is_preview_wearable(urn: &str) -> bool {
+    urn.strip_prefix(PREVIEW_COLLECTION)
+        .is_some_and(|rest| rest.starts_with(':'))
+}
+
+/// The wearables the local avatar shows: `previews` first, so each takes its category's slot from
+/// whatever `worn` has there, then `worn` without any earlier preview wearable.
+pub fn with_previews(worn: &[String], previews: &[String]) -> Vec<String> {
+    previews
+        .iter()
+        .chain(worn.iter().filter(|urn| !is_preview_wearable(urn)))
+        .cloned()
+        .collect()
+}
+
+/// The realm's `/preview-wearables/{scene id}` for a preview reload: the preview server keys the
+/// route on the id it sends when a project is saved.
+pub fn preview_reload_url(about_url: &str, command: &PreviewCommand) -> Option<String> {
+    let scene = match command {
+        PreviewCommand::ReloadScene { hash } => hash,
+        PreviewCommand::ReloadModel { scene_id, .. }
+        | PreviewCommand::RemoveModel { scene_id, .. } => scene_id,
+    };
+    Some(format!(
+        "{}/preview-wearables/{scene}",
+        realm_base(about_url)?
+    ))
+}
+
+fn realm_base(about_url: &str) -> Option<&str> {
+    let base = about_url
+        .strip_suffix("/about")
+        .unwrap_or(about_url)
+        .trim_end_matches('/');
+    base.starts_with("http").then_some(base)
 }
 
 /// The plugin's state: the [`Model`] plus what cannot be plain data.
@@ -434,6 +636,9 @@ pub fn parse_preview_wearables(body: &[u8]) -> Result<Vec<PreviewWearable>, Stri
 pub struct SmartWearables {
     pub model: Model,
     preview_task: Option<Task<Result<Vec<PreviewWearable>, String>>>,
+    reload_tasks: Vec<Task<Result<Vec<PreviewWearable>, String>>>,
+    /// preview collectible urns registered with the wearables manager, and whether that worked
+    dressed: HashMap<String, bool>,
 }
 
 fn equipped_set(profile: &UserProfile) -> EquippedSet {
@@ -469,33 +674,66 @@ fn observe_equipped(
     sw.model.observe_profile(equipped);
 }
 
+fn fetch_previews(
+    client: reqwest::Client,
+    url: String,
+) -> Task<Result<Vec<PreviewWearable>, String>> {
+    IoTaskPool::get().spawn_compat(async move {
+        let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        if !response.status().is_success() {
+            return Err(format!("status {}", response.status()));
+        }
+        let body = response.bytes().await.map_err(|e| e.to_string())?;
+        parse_preview_wearables(&body)
+    })
+}
+
+/// Follow the realm's preview wearables, and restart the one whose project a preview reload names.
 fn preview_wearables(
     mut sw: ResMut<SmartWearables>,
     realm: Res<CurrentRealm>,
     ipfas: IpfsAssetServer,
+    mut reloads: EventReader<PreviewCommand>,
 ) {
     if realm.is_changed() {
         sw.model.set_previews(Vec::new());
         sw.preview_task = None;
-        let base = realm
-            .about_url
-            .strip_suffix("/about")
-            .unwrap_or(&realm.about_url)
-            .trim_end_matches('/');
-        if base.starts_with("http") {
+        sw.reload_tasks.clear();
+        if let Some(base) = realm_base(&realm.about_url) {
             let url = format!("{base}/preview-wearables");
-            let client = ipfas.ipfs().client();
-            sw.preview_task = Some(IoTaskPool::get().spawn_compat(async move {
-                let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
-                if response.status() == StatusCode::NOT_FOUND {
-                    return Ok(Vec::new());
+            sw.preview_task = Some(fetch_previews(ipfas.ipfs().client(), url));
+        }
+    }
+
+    for command in reloads.read() {
+        if sw.model.preview_count() == 0 {
+            continue;
+        }
+        if let Some(url) = preview_reload_url(&realm.about_url, command) {
+            let task = fetch_previews(ipfas.ipfs().client(), url);
+            sw.reload_tasks.push(task);
+        }
+    }
+    let mut reloaded = Vec::new();
+    sw.reload_tasks.retain_mut(|task| match task.complete() {
+        Some(result) => {
+            reloaded.push(result);
+            false
+        }
+        None => true,
+    });
+    for result in reloaded {
+        match result {
+            Ok(previews) => {
+                for preview in previews {
+                    info!("reloading preview smart wearable {}", preview.urn);
+                    sw.model.reload_preview(preview);
                 }
-                if !response.status().is_success() {
-                    return Err(format!("status {}", response.status()));
-                }
-                let body = response.bytes().await.map_err(|e| e.to_string())?;
-                parse_preview_wearables(&body)
-            }));
+            }
+            Err(e) => warn!("preview smart wearable reload failed: {e}"),
         }
     }
 
@@ -540,13 +778,9 @@ fn resolve_entries(
         let phase = match preview {
             Some(preview) => {
                 sw.model.set_name(&urn, &preview.name);
-                match scene_json_key(preview.content.files(), shape)
-                    .and_then(|key| preview.content.hash(&key).map(|h| h.into_owned()))
-                {
+                match preview_collection(&preview.content, shape) {
                     None => Phase::NotSmart,
-                    Some(scene_json_hash) => {
-                        // the preview's content, registered as a wearable's collection would be
-                        let collection = format!("{scene_json_hash}-preview");
+                    Some(collection) => {
                         ipfas.ipfs().add_collection(
                             collection.clone(),
                             with_scene_aliases(preview.content),
@@ -597,6 +831,81 @@ fn resolve_entries(
             );
         }
         sw.model.set_phase(&urn, phase);
+    }
+}
+
+/// Dress the local avatar in the realm's preview wearables, for this client's rendering alone: each
+/// is registered as a collectible from its listing, never looked up on a catalyst, and worn ahead
+/// of the profile's wearables. The profile, what other players see and what is deployed keep the
+/// wearables the player has.
+fn wear_previews(
+    mut sw: ResMut<SmartWearables>,
+    mut wearables: CollectibleManager<Wearable>,
+    mut avatars: Query<&mut AvatarShape, With<PrimaryUser>>,
+    ipfas: IpfsAssetServer,
+) {
+    let sw = &mut *sw;
+    let mut worn = Vec::new();
+    for forced in sw.model.forced.values() {
+        let ForcedSource::Preview(preview) = forced else {
+            continue;
+        };
+        let Some(data) = &preview.data else {
+            continue;
+        };
+        let urn = preview_wearable_urn(&preview.content);
+        let registered = *sw.dressed.entry(urn.clone()).or_insert_with(|| {
+            let Ok(collectible_urn) = WearableUrn::new(&urn) else {
+                return false;
+            };
+            let collection = content_collection(&preview.content);
+            ipfas.ipfs().add_collection(
+                collection.clone(),
+                with_scene_aliases(preview.content.clone()),
+                Some(IpfsModifier {
+                    base_url: Some(preview.base_url.clone()),
+                }),
+                None,
+            );
+            let meta = WearableMeta {
+                id: preview.urn.clone(),
+                name: Some(preview.name.clone()),
+                description: None,
+                thumbnail: String::new(),
+                rarity: None,
+                data: WearableData::clone(data),
+            };
+            match inline_wearable(
+                meta,
+                &preview.content,
+                &collection,
+                urn.clone(),
+                ipfas.asset_server(),
+            ) {
+                Ok(collectible) => {
+                    info!(
+                        "the local avatar wears preview wearable {} as {urn}",
+                        preview.urn
+                    );
+                    wearables.add_builtin(collectible_urn, collectible);
+                    true
+                }
+                Err(e) => {
+                    warn!("preview wearable {} cannot be worn: {e}", preview.urn);
+                    false
+                }
+            }
+        });
+        if registered {
+            worn.push(urn);
+        }
+    }
+    worn.sort();
+    for mut avatar in avatars.iter_mut() {
+        let next = with_previews(&avatar.0.wearables, &worn);
+        if next != avatar.0.wearables {
+            avatar.0.wearables = next;
+        }
     }
 }
 

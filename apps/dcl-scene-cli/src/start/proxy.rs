@@ -353,6 +353,47 @@ pub(super) async fn catalyst_proxy(req: Request) -> Response {
     }
 }
 
+/// Upstream's `GET /lambdas/profiles`: with exactly one smart wearable served,
+/// a catalyst answer of one profile comes back wearing it; anything else is
+/// relayed as it came.
+pub(super) async fn lambdas_profiles(State(st): State<Arc<AppState>>, req: Request) -> Response {
+    let ids = super::http::preview_wearable_ids(&st);
+    if ids.len() != 1 {
+        return catalyst_proxy(req).await;
+    }
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map_or_else(|| req.uri().path().to_string(), |pq| pq.to_string());
+    match forward_to_catalyst(Method::GET, path_and_query, req.headers(), Bytes::new()).await {
+        Ok((status, ct, bytes)) => {
+            let worn = serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .filter(|_| status == StatusCode::OK)
+                .and_then(|mut profiles| wear(&mut profiles, &ids).then_some(profiles));
+            match worn {
+                Some(profiles) => relay(status, ct, Bytes::from(profiles.to_string())),
+                None => relay(status, ct, bytes),
+            }
+        }
+        Err(resp) => *resp,
+    }
+}
+
+fn wear(profiles: &mut Value, ids: &[String]) -> bool {
+    let Some([profile]) = profiles.as_array_mut().map(Vec::as_mut_slice) else {
+        return false;
+    };
+    let Some(worn) = profile
+        .pointer_mut("/avatars/0/avatar/wearables")
+        .and_then(Value::as_array_mut)
+    else {
+        return false;
+    };
+    worn.extend(ids.iter().map(|id| json!(id)));
+    true
+}
+
 /// World name (lowercased) -> candidate upstream contents prefixes, best first,
 /// learned from the world's own /about.
 static WORLD_CONTENT_UPSTREAMS: LazyLock<Mutex<HashMap<String, Vec<String>>>> =

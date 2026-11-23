@@ -2556,3 +2556,276 @@ fn the_link_flags_select_the_parameters_the_deep_link_turns_on() {
         ["multi-instance", "skip-auth-screen"]
     );
 }
+
+const BASE_MALE: &str = "urn:decentraland:off-chain:base-avatars:BaseMale";
+const BASE_FEMALE: &str = "urn:decentraland:off-chain:base-avatars:BaseFemale";
+
+/// A smart-wearable project as `init --project smart-wearable` lays it out:
+/// a portable scene with a `wearable.json`, its model and its thumbnail.
+fn smart_wearable(tmp: &Tmp, name: &str) -> (Project, Value) {
+    let project = project_with(
+        &tmp.0,
+        name,
+        json!({
+            "main": "bin/index.js",
+            "runtimeVersion": "7",
+            "isPortableExperience": true,
+            "scene": { "parcels": ["0,0"], "base": "0,0" }
+        }),
+        "module.exports={}",
+    );
+    let wearable = json!({
+        "id": "6f1d3c2e-0000-4000-8000-000000000001",
+        "name": "Preview Hat",
+        "description": "A hat under preview",
+        "rarity": "mythic",
+        "data": {
+            "replaces": ["hat"],
+            "hides": ["hair"],
+            "tags": ["special"],
+            "category": "hat",
+            "representations": [{
+                "bodyShapes": [BASE_MALE, BASE_FEMALE],
+                "mainFile": "model.glb",
+                "contents": ["model.glb"],
+                "overrideHides": [],
+                "overrideReplaces": []
+            }]
+        }
+    });
+    std::fs::write(project.root.join("wearable.json"), wearable.to_string()).unwrap();
+    std::fs::write(project.root.join("model.glb"), b"glb-bytes").unwrap();
+    std::fs::write(project.root.join("thumbnail.png"), b"png-bytes").unwrap();
+    (project, wearable)
+}
+
+async fn post_pointers(addr: SocketAddr, pointers: &[&str]) -> Vec<Value> {
+    reqwest::Client::new()
+        .post(format!("http://{addr}/content/entities/active"))
+        .json(&json!({ "pointers": pointers }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+/// Upstream serves a smart-wearable project as a `wearable` entity on its own
+/// id, never as a scene on its parcels: the explorer runs it as a portable,
+/// not as the land under the player.
+#[tokio::test]
+async fn a_smart_wearable_project_is_a_wearable_entity_not_a_parcel_scene() {
+    let tmp = Tmp::new("sw-entity");
+    let (project, wearable) = smart_wearable(&tmp, "hat");
+    let st = Arc::new(state(vec![project.clone()]));
+    let (addr, server) = serve(&st).await;
+    let id = scene_id_for(&project, &st.machine);
+
+    let found = post_pointers(addr, &[&id]).await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    let entity = &found[0];
+    assert_eq!(entity["type"], "wearable");
+    assert_eq!(entity["id"], json!(id));
+    assert_eq!(entity["pointers"], json!([id]));
+    assert_eq!(entity["metadata"], wearable);
+    assert!(
+        entity["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["file"] == "model.glb")
+    );
+
+    let root: Value = fetch(addr, &format!("/content/contents/{id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(root["type"], "wearable");
+
+    assert!(post_pointers(addr, &["0,0"]).await.is_empty());
+    let about: Value = fetch(addr, "/about").await.json().await.unwrap();
+    assert_eq!(about["configurations"]["scenesUrn"], json!([]));
+    server.abort();
+}
+
+/// `/preview-wearables` lists the project the way upstream does: a `urn:`
+/// uuid kept for the run, the lambdas wearable fields, and every file under
+/// `male/` in each representation, each url fetching that file.
+#[tokio::test]
+async fn the_preview_wearable_is_listed_in_upstreams_shape() {
+    let tmp = Tmp::new("sw-list");
+    let (project, _) = smart_wearable(&tmp, "hat");
+    let st = Arc::new(state(vec![project.clone()]));
+    let (addr, server) = serve(&st).await;
+    let base = format!("http://{addr}/content/contents");
+
+    let listed: Value = fetch(addr, "/preview-wearables")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["ok"], true);
+    let data = listed["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1);
+    let w = &data[0];
+    let urn = w["id"].as_str().unwrap().to_string();
+    let uuid = urn.strip_prefix("urn:").expect("a urn: id");
+    assert_eq!(uuid.len(), 36, "{urn}");
+    assert_ne!(uuid, "6f1d3c2e-0000-4000-8000-000000000001");
+    assert_eq!(w["name"], "Preview Hat");
+    assert_eq!(w["description"], "A hat under preview");
+    assert_eq!(w["rarity"], "mythic");
+    assert_eq!(w["i18n"], json!([{ "code": "en", "text": "Preview Hat" }]));
+    assert_eq!(w["collectionAddress"], "0x0");
+    assert_eq!(w["baseUrl"], json!(format!("{base}/")));
+    assert_eq!(w["data"]["category"], "hat");
+    assert_eq!(w["data"]["replaces"], json!([]));
+    assert_eq!(w["data"]["hides"], json!([]));
+    assert_eq!(w["data"]["tags"], json!([]));
+
+    let thumbnail = w["thumbnail"].as_str().unwrap();
+    assert_eq!(w["image"], json!(thumbnail));
+    assert!(
+        thumbnail.starts_with(&format!("{base}/b64-")),
+        "{thumbnail}"
+    );
+    let bytes = reqwest::get(thumbnail)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(&bytes[..], b"png-bytes");
+
+    let representation = &w["data"]["representations"][0];
+    assert_eq!(
+        representation["bodyShapes"],
+        json!([BASE_MALE, BASE_FEMALE])
+    );
+    assert_eq!(representation["mainFile"], "male/model.glb");
+    let contents = representation["contents"].as_array().unwrap();
+    let keyed = |key: &str| {
+        contents
+            .iter()
+            .find(|c| c["key"] == key)
+            .unwrap_or_else(|| panic!("{key} in {contents:?}"))
+            .clone()
+    };
+    keyed("male/scene.json");
+    keyed("male/wearable.json");
+    let main = keyed("male/bin/index.js");
+    assert_eq!(
+        main["url"],
+        json!(format!("{base}/{}", main["hash"].as_str().unwrap()))
+    );
+    let body = reqwest::get(main["url"].as_str().unwrap())
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(body, "module.exports={}");
+    assert!(
+        contents
+            .iter()
+            .all(|c| c["key"].as_str().unwrap().starts_with("male/"))
+    );
+
+    let again: Value = fetch(addr, "/preview-wearables")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        again["data"][0]["id"],
+        json!(urn),
+        "the id is kept for the run"
+    );
+
+    let id = scene_id_for(&project, &st.machine);
+    for asked in [id.as_str(), urn.as_str()] {
+        let one: Value = fetch(addr, &format!("/preview-wearables/{asked}"))
+            .await
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(one["data"][0]["id"], json!(urn), "{asked}");
+    }
+    let none: Value = fetch(addr, "/preview-wearables/somebody-else")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(none, json!({ "ok": true, "data": [] }));
+    server.abort();
+}
+
+/// A catalyst that answers every profile request with one profile wearing
+/// `urn:base`.
+async fn profile_catalyst() -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let app = Router::new().route(
+        "/lambdas/profiles",
+        any(|| async {
+            Json(json!([{ "avatars": [{ "avatar": { "wearables": ["urn:base"] } }] }]))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    (
+        addr,
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        }),
+    )
+}
+
+async fn worn(addr: SocketAddr, method: reqwest::Method) -> Value {
+    let profiles: Value = reqwest::Client::new()
+        .request(method, format!("http://{addr}/lambdas/profiles?id=0xabc"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    profiles[0]["avatars"][0]["avatar"]["wearables"].clone()
+}
+
+/// With one smart wearable served, the player's own profile comes back
+/// wearing it, as upstream does; a scene-only preview and other methods
+/// pass the catalyst's profile through untouched.
+#[tokio::test]
+async fn the_player_profile_wears_the_one_previewed_wearable() {
+    let _env = crate::deploy::ENV_LOCK.lock().await;
+    let (catalyst, upstream) = profile_catalyst().await;
+    crate::set_test_env("DCL_SCENE_CLI_CATALYST", format!("http://{catalyst}"));
+
+    let tmp = Tmp::new("sw-profile");
+    let (project, _) = smart_wearable(&tmp, "hat");
+    let st = Arc::new(state(vec![project]));
+    let (addr, server) = serve(&st).await;
+    let listed: Value = fetch(addr, "/preview-wearables")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let urn = listed["data"][0]["id"].clone();
+    assert_eq!(
+        worn(addr, reqwest::Method::GET).await,
+        json!(["urn:base", urn])
+    );
+    assert_eq!(worn(addr, reqwest::Method::POST).await, json!(["urn:base"]));
+    server.abort();
+
+    let (_scene_tmp, _scene, scene_only) = one_scene("sw-profile-scene");
+    let (addr, server) = serve(&scene_only).await;
+    assert_eq!(worn(addr, reqwest::Method::GET).await, json!(["urn:base"]));
+    server.abort();
+
+    crate::remove_test_env("DCL_SCENE_CLI_CATALYST");
+    upstream.abort();
+}

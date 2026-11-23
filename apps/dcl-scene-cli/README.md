@@ -226,9 +226,32 @@ page (deep-link knobs, web **Player** via `?where=web&player=<url>`). abgen on 5
 `{realm}/optimized-assets`. Scene errors print via the client's MCP port (default 8123, range
 1024-65535). `/content/contents/{hash}` resolves by path: a stale digest gets the current bytes.
 `--data-layer` serves the Creator Hub protocol at `/data-layer` and `/inspector/`.
-`/preview-wearables` lists the smart wearables this preview serves and `/preview-wearables/{id}`
-answers one by its scene id or wearable id (empty `data` when none matches, as upstream), the
-routes the wearable preview page polls.
+
+### Smart wearables
+
+A project with a `wearable.json` beside its `scene.json` is a smart wearable, served as
+`@dcl/sdk-commands start` serves one:
+
+- `/content/entities/active` and `/content/contents/{scene id}` answer a `wearable` entity whose
+  only pointer is its scene id and whose metadata is `wearable.json`. No parcel pointer returns it
+  and `/about` lists no `scenesUrn` for it, so it does not load as a scene on its parcels.
+- `/preview-wearables` lists each smart wearable as a lambdas wearable: its id is a `urn:` uuid
+  kept until `start` exits, `baseUrl` is this preview's `/content/contents/`, `thumbnail` and
+  `image` name `thumbnail.png`, and every representation of `wearable.json` lists every published
+  file under `male/`, with `mainFile` under `male/` too. `/preview-wearables/{id}` answers the one
+  whose scene id or listed id is `{id}` (empty `data` when none matches).
+- With exactly one smart wearable served, `GET /lambdas/profiles` adds its id to
+  `avatars[0].avatar.wearables` of a catalyst answer holding one profile; other answers and
+  methods pass through.
+- A save sends the scene update with the project's scene id; its JSON text frame carries
+  `sceneType: "smart-wearable"` (`scene` for a scene).
+
+The Explorer runs each listed wearable as a portable experience for either body shape and, on a
+scene update, reads `/preview-wearables/{scene id}` and restarts that wearable on the new files.
+It also shows the player's own avatar wearing each listed wearable, built from the listing in
+place of whatever the avatar wears in that category, and shows the new model after a save. Only
+that client shows it: the player's profile, what other players see and what is deployed keep the
+wearables the player has.
 
 The join block always prints the desktop deep link and the web URL; nothing launches unless asked.
 `--mobile` adds a scan-to-join QR code for the web URL (also served at `/mobile-preview`).
