@@ -133,6 +133,18 @@ impl BlockSearch {
         )
     }
 
+    /// Whether `answer`, a [`Self::block_at`] answer for `timestamp`, is final: before the
+    /// first block, or the first known block after `timestamp` is its successor. A head-bound
+    /// answer is not, even when another search has read past `timestamp` since.
+    pub fn is_final(&self, timestamp: i64, answer: Option<BlockInfo>) -> bool {
+        let Some(answer) = answer else {
+            return true;
+        };
+        self.bounds(timestamp)
+            .1
+            .is_some_and(|next| next.number == answer.number + 1)
+    }
+
     /// The last block at or before `timestamp` (unix seconds); the head when
     /// the head is older, `None` before the first block. `fetch` reads one block.
     pub async fn block_at<F, Fut, E>(
@@ -224,8 +236,40 @@ mod tests {
             1000,
             "past the head: the head"
         );
+        let found = search.block_at(1501, chain(&reads)).await.unwrap();
+        assert!(search.is_final(1501, found), "its successor was read");
+        let head = search.block_at(5000, chain(&reads)).await.unwrap();
+        assert!(!search.is_final(5000, head), "the head may move");
         assert_eq!(at(1000).await.unwrap().unwrap().number, 0);
         assert_eq!(at(999).await.unwrap(), None, "before the first block");
+    }
+
+    /// A head-bound answer stays unsettled after a later search reads past its timestamp.
+    #[tokio::test]
+    async fn a_head_bound_answer_is_not_final_once_another_search_reads_past_it() {
+        let reads = AtomicUsize::new(0);
+        let search = BlockSearch::new();
+        let head_at = |head: u64| {
+            let reads = &reads;
+            move |tag| {
+                reads.fetch_add(1, Ordering::SeqCst);
+                let number = match tag {
+                    BlockTag::Latest => head,
+                    BlockTag::Number(n) => n.min(head),
+                };
+                std::future::ready(Ok::<_, ()>(BlockInfo {
+                    number,
+                    timestamp: 1000 + 2 * number as i64,
+                }))
+            }
+        };
+        let stale = search.block_at(1030, head_at(10)).await.unwrap();
+        assert_eq!(stale.unwrap().number, 10, "the head then");
+        let later = search.block_at(1029, head_at(20)).await.unwrap();
+        assert_eq!(later.unwrap().number, 14);
+        assert!(!search.is_final(1030, stale), "block 15 is at 1030");
+        assert!(search.is_final(1029, later));
+        assert!(search.is_final(999, None), "before the first block");
     }
 
     #[tokio::test]
