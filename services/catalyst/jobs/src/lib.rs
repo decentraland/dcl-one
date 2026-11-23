@@ -1253,7 +1253,8 @@ async fn sleep_or_cancel(cancel: &CancellationToken, wait: Duration) -> bool {
     }
 }
 
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+/// The text of a caught panic, or a placeholder for a non-string payload.
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
     } else if let Some(s) = payload.downcast_ref::<String>() {

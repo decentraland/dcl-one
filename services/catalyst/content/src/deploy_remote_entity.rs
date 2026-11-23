@@ -454,7 +454,27 @@ pub struct RemoteDeployment<'a> {
     pub discard_overtaken: bool,
 }
 
+/// A panic in the deployment is returned as an error, so every caller records it like any
+/// other failure (backed off and counted against the retry cap) instead of unwinding.
 pub async fn deploy_entity_streaming(
+    source: ContentSource<'_>,
+    deployer: &LiveSyncDeployer,
+    target: RemoteDeployment<'_>,
+) -> Result<(), SyncError> {
+    use futures::FutureExt;
+    // Unwind safe: every lock, permit and reservation it holds is RAII or poison-tolerant.
+    std::panic::AssertUnwindSafe(deploy_entity_streaming_unguarded(source, deployer, target))
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|panic| {
+            Err(SyncError::Other(format!(
+                "the deployment panicked: {}",
+                crate::jobs::panic_message(panic.as_ref())
+            )))
+        })
+}
+
+async fn deploy_entity_streaming_unguarded(
     source: ContentSource<'_>,
     deployer: &LiveSyncDeployer,
     target: RemoteDeployment<'_>,

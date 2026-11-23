@@ -6,7 +6,6 @@
 //! can be neither deployed nor recorded is counted lost, and the caller must not
 //! advance its cursor past it.
 
-use futures::FutureExt;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -173,18 +172,18 @@ impl SyncProgress {
 }
 
 /// An entity's queue slot: released, then `on_idle` woken, even when its task panics. An
-/// entity whose outcome was never settled is counted lost, so the sync frontier holds.
+/// entity whose outcome was never acknowledged is counted lost, so the sync frontier holds.
 struct InFlight {
     permit: Option<tokio::sync::OwnedSemaphorePermit>,
     idle_notify: Arc<tokio::sync::Notify>,
     lost: Arc<AtomicU64>,
     report: Option<Arc<DeploymentReport>>,
-    settled: bool,
+    acknowledged: bool,
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        if !self.settled {
+        if !self.acknowledged {
             self.lost.fetch_add(1, Ordering::SeqCst);
             if let Some(report) = &self.report {
                 report.record_lost();
@@ -361,9 +360,9 @@ impl BatchDeployer {
                 idle_notify,
                 lost: lost.clone(),
                 report: report.clone(),
-                settled: false,
+                acknowledged: false,
             };
-            let deploy = super::deploy_remote_entity::deploy_entity_streaming(
+            let result = super::deploy_remote_entity::deploy_entity_streaming(
                 super::deploy_remote_entity::ContentSource {
                     client: &http_client,
                     storage,
@@ -379,12 +378,8 @@ impl BatchDeployer {
                     retry_state: None,
                     discard_overtaken: false,
                 },
-            );
-            // A panic is a failed deployment, recorded like any other.
-            let result = std::panic::AssertUnwindSafe(deploy)
-                .catch_unwind()
-                .await
-                .unwrap_or_else(|_| Err(SyncError::Other("the deployment task panicked".into())));
+            )
+            .await;
 
             let acknowledged = match result {
                 Ok(()) => {
@@ -421,10 +416,6 @@ impl BatchDeployer {
                     {
                         Ok(()) => true,
                         Err(record_err) => {
-                            lost.fetch_add(1, Ordering::SeqCst);
-                            if let Some(report) = &report {
-                                report.record_lost();
-                            }
                             error!(
                                 entity_id = %entity.entity_id,
                                 error = %record_err,
@@ -441,7 +432,7 @@ impl BatchDeployer {
                 report.record_acknowledged();
             }
 
-            slot.settled = true;
+            slot.acknowledged = acknowledged;
             drop(slot);
             progress.maybe_summarize(
                 queue_depth - queue.available_permits(),
@@ -483,6 +474,7 @@ mod tests {
         signed_chain, signed_chain_behind_contract, spawn_content_server, temp_storage, test_pool,
         unique,
     };
+    use futures::FutureExt;
 
     #[test]
     fn the_summary_is_due_once_per_interval_and_reports_the_rate_since_the_last() {
@@ -696,6 +688,8 @@ mod tests {
         failure: Option<(i32, String)>,
         /// The retry worker would pick the failure up now.
         due: bool,
+        /// The retry cycle run after the sync, if any.
+        retried: Option<crate::sync::retry_failed::RetryStats>,
     }
 
     /// A contract wallet that refuses today; at a past block it accepts, or cannot answer.
@@ -763,7 +757,23 @@ mod tests {
         eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
         settings: crate::validator::Settings,
     ) -> Option<SyncOutcome> {
-        let pool = test_pool(3).await?;
+        sync_then_retry(entity, chain, eip1654, settings, false).await
+    }
+
+    /// [`sync_one`], then with `retry` one retry cycle over the failures, in a database of
+    /// its own: a cycle walks every due record.
+    async fn sync_then_retry(
+        entity: serde_json::Value,
+        chain: Chain,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+        settings: crate::validator::Settings,
+        retry: bool,
+    ) -> Option<SyncOutcome> {
+        let pool = if retry {
+            crate::db::scratch::isolated_pool(3).await?
+        } else {
+            test_pool(3).await?
+        };
         let pointer = entity["pointers"][0].as_str().unwrap().to_string();
         let entity_type = entity["type"].as_str().unwrap().to_string();
         let timestamp = entity["timestamp"].as_i64().unwrap();
@@ -800,13 +810,14 @@ mod tests {
                 ),
             )),
         ));
+        let failed_store = Arc::new(LiveFailedDeploymentsStore::new(pool.clone()));
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
             crate::sync::test_sync_client(reqwest::Client::new()),
-            storage,
+            storage.clone(),
             pool.clone(),
-            deployer,
-            Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
+            deployer.clone(),
+            failed_store.clone(),
             BloomFilter::with_capacity(100),
         );
         batch
@@ -825,6 +836,21 @@ mod tests {
             .await
             .unwrap();
         batch.on_idle().await.unwrap();
+        let retried = if retry {
+            let worker = crate::sync::retry_failed::RetryFailedDeployments::new(
+                Default::default(),
+                crate::sync::test_sync_client(reqwest::Client::new()),
+                storage,
+                deployer.clone(),
+                failed_store,
+                Arc::new(tokio::sync::RwLock::new(vec![base.clone()])),
+            );
+            let stats = worker.execute_retry_cycle().await.unwrap();
+            deployer.flush().await.unwrap();
+            Some(stats)
+        } else {
+            None
+        };
 
         let outcome = SyncOutcome {
             deployed: is_entity_deployed(&pool, &entity_id, 0).await.unwrap(),
@@ -850,6 +876,7 @@ mod tests {
                 .failures
                 .iter()
                 .any(|f| f.entity_id == entity_id),
+            retried,
         };
         let active_is_this = outcome.active.as_deref() == Some(entity_id.as_str());
 
@@ -996,7 +1023,102 @@ mod tests {
         assert!(outcome.due, "retried");
         let (retry_count, description) = outcome.failure.expect("recorded as failed");
         assert_eq!(retry_count, 0);
-        assert!(description.contains("panicked"), "{description}");
+        assert!(
+            description.contains("the deployment panicked: contract wallet check panicked"),
+            "{description}"
+        );
+    }
+
+    /// The retry worker records a deploy that panics again as a spent attempt with a backoff,
+    /// and its cycle returns.
+    #[tokio::test]
+    async fn a_retry_that_panics_spends_an_attempt_and_backs_off() {
+        let blocks =
+            crate::validator::fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        let entity = serde_json::json!({
+            "version": "v3", "type": "outfits",
+            "pointers": [format!("{CONTRACT_SIGNER}:outfits")],
+            "timestamp": 1_700_000_000_000i64, "content": [],
+            "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
+        });
+        let synced = tokio::time::timeout(
+            Duration::from_secs(60),
+            sync_then_retry(
+                entity,
+                Chain::BehindContract,
+                Some(Arc::new(PanickingWallet)),
+                over(&blocks),
+                true,
+            ),
+        )
+        .await
+        .expect("the retry cycle returned");
+        let Some(outcome) = synced else {
+            return;
+        };
+        let stats = outcome.retried.expect("a retry cycle ran");
+        assert_eq!((stats.succeeded, stats.still_failing), (0, 1));
+        assert!(!outcome.deployed);
+        assert!(!outcome.due, "backed off");
+        let (retry_count, description) = outcome.failure.expect("still recorded");
+        assert_eq!(retry_count, 1, "the attempt counts toward the cap");
+        assert!(
+            description.contains("the deployment panicked: contract wallet check panicked"),
+            "{description}"
+        );
+    }
+
+    fn in_flight(
+        queue: &Arc<tokio::sync::Semaphore>,
+        report: &Arc<DeploymentReport>,
+    ) -> (InFlight, Arc<tokio::sync::Notify>, Arc<AtomicU64>) {
+        let idle_notify = Arc::new(tokio::sync::Notify::new());
+        let lost = Arc::new(AtomicU64::new(0));
+        let slot = InFlight {
+            permit: Some(queue.clone().try_acquire_owned().unwrap()),
+            idle_notify: idle_notify.clone(),
+            lost: lost.clone(),
+            report: Some(report.clone()),
+            acknowledged: false,
+        };
+        (slot, idle_notify, lost)
+    }
+
+    /// A slot dropped before its outcome was acknowledged (its task unwound) counts the entity
+    /// lost, releases the queue and wakes `on_idle`.
+    #[test]
+    fn an_unacknowledged_slot_counts_lost_releases_the_queue_and_wakes_the_idle_waiter() {
+        let queue = Arc::new(tokio::sync::Semaphore::new(1));
+        let report = Arc::new(DeploymentReport::default());
+        let (slot, idle_notify, lost) = in_flight(&queue, &report);
+        let woken = idle_notify.notified();
+        tokio::pin!(woken);
+        woken.as_mut().enable();
+        assert_eq!(queue.available_permits(), 0);
+
+        drop(slot);
+
+        assert_eq!(lost.load(Ordering::SeqCst), 1);
+        assert_eq!(report.lost(), 1);
+        assert_eq!(queue.available_permits(), 1);
+        assert!(woken.now_or_never().is_some(), "on_idle woken");
+    }
+
+    #[test]
+    fn an_acknowledged_slot_counts_nothing_lost() {
+        let queue = Arc::new(tokio::sync::Semaphore::new(1));
+        let report = Arc::new(DeploymentReport::default());
+        let (mut slot, idle_notify, lost) = in_flight(&queue, &report);
+        let woken = idle_notify.notified();
+        tokio::pin!(woken);
+        woken.as_mut().enable();
+
+        slot.acknowledged = true;
+        drop(slot);
+
+        assert_eq!((lost.load(Ordering::SeqCst), report.lost()), (0, 0));
+        assert_eq!(queue.available_permits(), 1);
+        assert!(woken.now_or_never().is_some(), "on_idle woken");
     }
 
     /// Mainnet contracts over `chain` on both layers.
