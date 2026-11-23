@@ -3,6 +3,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 
 import { newCheckout } from "@shop/cart/machine";
 import { partitionCart } from "@shop/cart/partition";
+import type { CartLine } from "@shop/model/purchase";
 import { rarityCardPalette } from "@shop/discovery/lib/rarity";
 import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "@shop/payment/fixtures";
 import { marketplaceOn } from "../market/testing-flags";
@@ -599,6 +600,9 @@ describe("the cart page", () => {
 
   it("closed, the cart's dialog gives focus back to the Checkout that opened it", async () => {
     renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
+    // Once the cart is first priced, the wallet's account and chain price it again (wallet.revision), and Checkout is
+    // disabled until that check returns: waiting only for an enabled Checkout can press it disabled, and nothing opens.
+    await walletSettled();
     await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
     const checkout = screen.getByTestId("pay-with-credits-topup");
     checkout.focus();
@@ -668,6 +672,62 @@ describe("the cart page", () => {
     await act(async () => fireEvent.click(screen.getByTestId("resume-checkout")));
     await waitFor(() => expect(demo.cart.getSnapshot().lines).toHaveLength(0));
     expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("CHECK AGAIN only checks: a payment held behind one in flight starts on the buyer's own Resume, not on the check", async () => {
+    const hash = `0x${"e".repeat(64)}`;
+    let clock = 0;
+    let gaveUp!: () => void;
+    const watchGaveUp = new Promise<void>((resolve) => (gaveUp = resolve));
+    const wait = {
+      timeoutMs: 40,
+      pollMs: 10,
+      now: () => {
+        if (clock >= 40) gaveUp();
+        return clock;
+      },
+      sleep: async (ms: number) => {
+        clock += ms;
+      },
+    };
+    const session = { kind: "web3" as const, wallet: BOOK.buyer };
+    const { demo } = renderCart(
+      {
+        session: "web3",
+        lines: [
+          { offer: (s) => storeMint(s), name: "Rainbow Hat" },
+          { offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" },
+        ],
+        // A (the store's mint) was relayed and isn't mined yet; B (the creator's order) waited on it.
+        checkout: (_lines, cart) => {
+          const [hat, order] = cart.getSnapshot().lines as [CartLine, CartLine];
+          const part = partitionCart([{ line: hat, offer: storeMint(session) }, { line: order, offer: creatorOrder(session) }], session);
+          const state = newCheckout(BOOK.buyer, part.groups, Date.now(), "earlier");
+          const a = state.groups.findIndex((g) => g.key.call.kind === "storeBuy");
+          state.groups[a] = { ...state.groups[a]!, status: "pending", txHash: hash, creditIds: ["0xabc"], attempts: 1 };
+          return state;
+        },
+      },
+      (d) => {
+        d.services.wait = wait;
+      },
+    );
+    const statusOf = (call: string) => demo.cart.getSnapshot().checkout!.groups.find((g) => g.key.call.kind === call)!.status;
+    expect(screen.getByText("A purchase from this cart is still being confirmed")).toBeTruthy();
+    await act(() => watchGaveUp);
+    expect(statusOf("storeBuy")).toBe("pending");
+    // A's receipt lands just before the buyer checks again.
+    demo.chain.receipts.set(hash, "success");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Check again" })));
+    await waitFor(() => expect(statusOf("storeBuy")).toBe("confirmed"));
+    await act(async () => {});
+    // The check confirmed A and started nothing: B is still idle, with no credit and no signature for it.
+    expect(statusOf("accept")).toBe("idle");
+    expect(demo.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+    expect(demo.relay.posts).toHaveLength(0);
+    // B starts from the buyer's own Resume.
+    await clickWhenEnabled(() => screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(demo.shop.log.filter((r) => r.name === "authorizeCreditBatch")).toHaveLength(1), { timeout: 5000 });
   });
 
   function seeded(status: "failed" | "authorizing", creditIds: string[] = []): DemoScenario["checkout"] {

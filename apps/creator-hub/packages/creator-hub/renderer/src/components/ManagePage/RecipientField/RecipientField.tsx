@@ -12,7 +12,8 @@ import {
   type RecipientPurpose,
   type Resolution,
 } from './resolveRecipient';
-import { ErrorText, Root } from './RecipientField.styled';
+
+import styles from './RecipientField.module.css';
 
 const RESOLVE_DELAY_MS = 400;
 
@@ -60,7 +61,7 @@ export function RecipientField({ purpose, self, onResolved, action, autoFocus }:
   const error = resolution.kind === 'error' ? resolution.error : undefined;
 
   return (
-    <Root>
+    <div className={styles.root}>
       <TextInput
         value={value}
         placeholder={t(PLACEHOLDER[purpose])}
@@ -80,10 +81,17 @@ export function RecipientField({ purpose, self, onResolved, action, autoFocus }:
           </>
         }
       />
-      {error && <ErrorText id={errorId}>{t(error)}</ErrorText>}
+      {error && (
+        <span
+          id={errorId}
+          className={styles.error}
+        >
+          {t(error)}
+        </span>
+      )}
       <div role="status">
         {resolution.kind === 'resolved' && <AvatarWithInfo value={resolution.recipient.address} />}
       </div>
-    </Root>
+    </div>
   );
 }

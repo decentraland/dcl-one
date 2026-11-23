@@ -18,7 +18,7 @@ SPEC.loader.exec_module(dev)
 
 class DevCiTest(unittest.TestCase):
     def setUp(self):
-        # The smoke job runs these tests; they must not write its outputs or summary.
+        # The tooling job runs these tests; they must not write its outputs or summary.
         environment = patch.dict(os.environ)
         environment.start()
         self.addCleanup(environment.stop)
@@ -35,7 +35,7 @@ class DevCiTest(unittest.TestCase):
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
-                        ['schemas/50_create.sql']):
+                        ['schemas/50_create.sql'], ['apps/creator-hub/packages/zip-extract/index.js']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
@@ -46,7 +46,7 @@ class DevCiTest(unittest.TestCase):
                      'library/vendor/rusty_enet/src/lib.rs', '.cargo/config.toml', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'tooling/dev.py',
                      'tooling/dev-test.sh', 'tooling/dev-ci.py', 'tooling/enet-provenance.py',
-                     'tooling/catalyst-test.sh', 'tooling/catalyst-test-resources.sh',
+                     'tooling/catalyst-test.sh', 'tooling/catalyst-test-resources.sh', 'tooling/catalyst-test-targets.py',
                      'tooling/tests/test_catalyst_test_resources.py',
                      'tooling/tests/test_dev_regressions.py', 'tooling/tests/test_enet_provenance.py',
                      '.github/workflows/development.yml'):
@@ -55,7 +55,7 @@ class DevCiTest(unittest.TestCase):
 
     def test_descriptor_provisioning_is_confined_to_the_auth_stress_step(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
-        for job in ('rust', 'smoke'):
+        for job in ('rust', 'smoke', 'tooling'):
             with self.subTest(job=job):
                 steps = workflow.split(f'\n  {job}:', 1)[1]
                 steps = re.split(r'\n  [a-z][a-z-]*:', steps, maxsplit=1)[0]
@@ -92,7 +92,7 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('needs.changes.outputs.macos', workflow)
         self.assertEqual(workflow.count(
             "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos')"
-            " && '[\"ubuntu-26.04\"]' || '[\"ubuntu-26.04\", \"macos-15\"]'"), 2)
+            " && '[\"ubuntu-26.04\"]' || '[\"ubuntu-26.04\", \"macos-15\"]'"), 3)
 
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         # PRs test source on Linux only; finished main runs are its macOS check.
@@ -166,7 +166,7 @@ class DevCiTest(unittest.TestCase):
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[2])
 
-    def test_the_gate_always_reports_and_requires_rust_smoke_and_web(self):
+    def test_the_gate_always_reports_and_requires_rust_smoke_tooling_and_web(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         on = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
         pull_request = on.split('  pull_request:', 1)[1]
@@ -174,15 +174,15 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         gate = workflow.split('\n  gate:\n', 1)[1]
         self.assertIn('name: CI gate', gate)
-        self.assertIn('needs: [changes, rust, smoke, web]', gate)
-        self.assertIn('for result in "$CHANGES" "$RUST" "$SMOKE" "$WEB"; do', gate)
+        self.assertIn('needs: [changes, rust, smoke, tooling, web]', gate)
+        self.assertIn('for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn('success|skipped)', gate)
-        for job in ('rust', 'smoke', 'web'):
+        for job in ('rust', 'smoke', 'tooling', 'web'):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
             with self.subTest(job=job):
                 self.assertIn("needs.changes.outputs.run != 'false'", body)
-                # Only the Rust job reads the Rust answer: smoke and web run on every watched change.
+                # Only the Rust job reads the Rust answer: the others run on every watched change.
                 self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job == 'rust')
         self.assertIn('      rust: ${{ steps.plan.outputs.rust }}\n', workflow)
 

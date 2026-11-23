@@ -2,17 +2,24 @@ import path from 'path';
 import fs from 'fs';
 import { platform } from 'os';
 import { app } from 'electron';
-import cmdShim from 'cmd-shim';
 import log from 'electron-log/main';
-import { getBinPath } from './path';
+import { writeCmdShim } from './cmd-shim';
+import { getBinPath, getNodeCmdPath } from './path';
 
-const APP_UNPACKED_PATH = path.join(
-  app.getAppPath(),
-  import.meta.env.DEV ? '.' : '../app.asar.unpacked',
-);
+// Where releases up to 0.56 put the `node` link: inside the app bundle.
+const LEGACY_NODE_LINK = path.join(app.getAppPath(), '../app.asar.unpacked', 'node');
 
-function getNodeCmdPath() {
-  return path.join(APP_UNPACKED_PATH, platform() === 'win32' ? 'node.cmd' : 'node');
+/**
+ * Removes the `node` link an earlier release left inside the bundle, so the installed app passes
+ * its signature check again. Only a symlink is removed; failing to is harmless.
+ */
+function removeLegacyNodeLink() {
+  if (platform() === 'win32') return;
+  try {
+    if (fs.lstatSync(LEGACY_NODE_LINK).isSymbolicLink()) fs.rmSync(LEGACY_NODE_LINK);
+  } catch {
+    /* not there, or the bundle is read-only */
+  }
 }
 
 function joinEnvPaths(...paths: string[]) {
@@ -34,55 +41,71 @@ export function getInjectedPathEntries(): string[] {
   return injectedPathEntries;
 }
 
+/**
+ * True when the shim folder can't be written (a locked-down home folder, say).
+ */
+function isReadOnlyFolder(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EROFS' || code === 'EACCES' || code === 'EPERM';
+}
+
+/**
+ * Makes `nodeCmdPath` start `nodeBinPath`, replacing any other file there. False when the shim
+ * folder is read-only: child processes then run on the bundled Node (node-runtime.ts), which
+ * needs no link. `lstat`, because `stat` follows the link and never reports one.
+ */
+function linkNode(nodeCmdPath: string, nodeBinPath: string): boolean {
+  let existing: fs.Stats | undefined;
+  try {
+    existing = fs.lstatSync(nodeCmdPath);
+  } catch {
+    existing = undefined;
+  }
+  if (existing?.isSymbolicLink() && fs.readlinkSync(nodeCmdPath) === nodeBinPath) {
+    log.info('[Install] Node binaries already installed');
+    return true;
+  }
+
+  log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
+  try {
+    fs.mkdirSync(path.dirname(nodeCmdPath), { recursive: true });
+    if (existing) fs.rmSync(nodeCmdPath);
+    if (platform() === 'win32') {
+      // writeCmdShim adds the .cmd extension itself
+      writeCmdShim(nodeBinPath, nodeCmdPath.replace(/\.cmd$/, '')).catch(error =>
+        log.error('[Install] Could not write the node launchers:', error),
+      );
+    } else {
+      fs.symlinkSync(nodeBinPath, nodeCmdPath);
+    }
+    return true;
+  } catch (error) {
+    if (!isReadOnlyFolder(error)) throw error;
+    log.warn(`[Install] The node shim folder is read-only, no node link: ${nodeCmdPath}`);
+    return false;
+  }
+}
+
 export function setupNodeBinary() {
   // Only run in production mode
   if (import.meta.env.DEV || import.meta.env.TEST) {
     return;
   }
 
+  removeLegacyNodeLink();
   const nodeCmdPath = getNodeCmdPath();
   const nodeBinPath = process.execPath;
   const npmBinPath = getBinPath('npm', 'npm');
 
-  try {
-    // check if link exists
-    const stat = fs.statSync(nodeCmdPath);
-    // check if it is a symlink
-    if (stat.isSymbolicLink()) {
-      const link = fs.readlinkSync(nodeCmdPath);
-      // check if link points to the right bin
-      if (link === process.execPath) {
-        // skip linking
-        log.info('[Install] Node binaries already installed');
-        return;
-      }
-    }
-    // if not a symlink or points to wrong location, delete
-    fs.rmSync(nodeCmdPath);
-  } catch (error) {
-    // if link is not found, continue installing
+  if (linkNode(nodeCmdPath, nodeBinPath)) {
+    // Update PATH environment variable
+    injectedPathEntries = [path.dirname(nodeCmdPath), path.dirname(npmBinPath)];
+    process.env.PATH = joinEnvPaths(...injectedPathEntries, process.env.PATH || '');
   }
-
-  log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
-  // on windows we use a cmd file
-  if (platform() === 'win32') {
-    cmdShim(
-      nodeBinPath,
-      // remove the .cmd part if present, since it will get added by cmdShim
-      nodeCmdPath.endsWith('.cmd') ? nodeCmdPath.replace(/\.cmd$/, '') : nodeCmdPath,
-    );
-  } else {
-    // otherwise we use a symlink
-    fs.symlinkSync(nodeBinPath, nodeCmdPath);
-  }
-
-  // Update PATH environment variable
-  injectedPathEntries = [path.dirname(nodeCmdPath), path.dirname(npmBinPath)];
-  process.env.PATH = joinEnvPaths(...injectedPathEntries, process.env.PATH || '');
 
   if (platform() !== 'win32') {
     // on unix systems we need to install the path to the local bin folder for the Open in VSCode feature to work
-    process.env.PATH = joinEnvPaths(process.env.PATH, '/usr/local/bin');
+    process.env.PATH = joinEnvPaths(process.env.PATH || '', '/usr/local/bin');
   }
 
   log.info('[Install] node command:', nodeCmdPath);

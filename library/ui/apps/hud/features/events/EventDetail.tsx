@@ -3,6 +3,7 @@
 // reminder set here shows on the card too.
 
 import { useEffect } from 'react'
+import type { EventData } from '@explorer-core/engine/protocol'
 import { Button, MaskIcon, openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
@@ -15,7 +16,10 @@ import { eventPlaceText, eventTimeText, scheduleDates, scheduleText } from './ev
 import { useEventActions } from './useEventActions'
 import styles from './EventDetail.module.css'
 
-function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => void }): React.JSX.Element | null {
+/** Travels to the event; false when it could not, and the detail stays open. */
+export type EventJumpIn = (event: EventData) => boolean
+
+function EventDetail({ eventId, onJumpIn, onClose }: { eventId: string; onJumpIn?: EventJumpIn; onClose: () => void }): React.JSX.Element | null {
   const { store } = useSession().events.data
   const actions = useEventActions()
   const event = store.byId[eventId]
@@ -27,7 +31,7 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
   if (event == null) return null
   const place = event.place_id != null ? store.places[event.place_id] : undefined
   const jumpIn = (): boolean => {
-    const travelling = actions.jumpIn(event)
+    const travelling = (onJumpIn ?? actions.jumpIn)(event)
     if (travelling) onClose()
     return travelling
   }
@@ -83,6 +87,6 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
   )
 }
 
-export function openEventDetail(eventId: string): void {
-  openPopup((close) => <EventDetail eventId={eventId} onClose={close} />, { deep: true })
+export function openEventDetail(eventId: string, onJumpIn?: EventJumpIn): void {
+  openPopup((close) => <EventDetail eventId={eventId} onJumpIn={onJumpIn} onClose={close} />, { deep: true })
 }

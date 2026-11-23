@@ -1,10 +1,9 @@
 import {
-  sitesNavigationLinks,
-  sitesNavigationOrder,
-  type SitesNavigationId,
-  type SitesNavigationLink,
-} from "../../../../../library/ui/apps/sites/chrome/navigation";
-import type { ReactNode } from "react";
+  decentralandNavigation,
+  decentralandNavigationSection,
+  type DecentralandNavigationArea,
+  type DecentralandNavigationEntry,
+} from "@dcl/one-ui";
 import { useEffect, useId, useRef, useState } from "react";
 import { NavMenuItem, NavMenuTab, NavNotificationsButton, NavProfileButton } from "@dcl/one-ui";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
@@ -17,22 +16,20 @@ import {
   parseNotificationsLoose,
   relativeTime,
   type Notification,
-} from "../../data/catalyst/notificationsView";
-import { useChromeAuth } from "./chrome-auth";
-import { useChromeNav, type ChromeNavigate } from "./chrome-nav";
-import ChromeLink from "./ChromeLink";
+} from "@web-core/notifications/notificationsView";
+import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import { useChromeNav, type ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import AccountMenu from "./AccountMenu";
-import { docsUrl } from "../../data/docs";
 import "../../atoms/maskicon.css";
+import "../../components/site-navigation.css";
 import "./dcltopbar.css";
-import { useSiteLayout } from "./SiteLayout";
-import { getAvatarBackgroundColor, getDisplayName } from "../../shop/discovery/lib/avatarColor";
+import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
-type DclTopBarVariant = "default" | "sites";
 
-type NavLink = SitesNavigationLink;
-const LINK_DEFS = sitesNavigationLinks(docsUrl());
-export type DclTopBarNavId = SitesNavigationId;
+type NavLink = DecentralandNavigationEntry;
+export type DclTopBarNavId = DecentralandNavigationArea;
 
 // from: decentraland-ui2@3.23.8:dist/components/Navbar/icons.js (BellIcon): the filled bell of DCL's navbar.
 const BellMark = ({ size = 24 }: { size?: number }) => (
@@ -44,30 +41,12 @@ const BellMark = ({ size = 24 }: { size?: number }) => (
   </svg>
 );
 
-const DCL_LINKS: NavLink[] = sitesNavigationOrder
-  .map((id) => LINK_DEFS[id]);
-
 type NotifState =
   | { phase: "idle" | "loading" }
   | { phase: "error" }
   | { phase: "ready"; rows: Notification[] };
 
-export type DclTopBarProps = {
-  variant?: DclTopBarVariant;
-  active?: DclTopBarNavId | "";
-  signedIn?: boolean;
-  account?: string;
-  transparent?: boolean;
-  onSignIn?: () => void;
-  onSignOut?: () => void;
-  signInHref?: string;
-  fetchNotifications?: (signal?: AbortSignal) => Promise<unknown>;
-  onNavigate?: ChromeNavigate;
-  mobileNavigation?: (closeMenu: () => void) => ReactNode;
-  accountControl?: ReactNode;
-  /** Balance chips for a signed-in account, before the bell (the Shop's credits). */
-  balances?: ReactNode;
-};
+export type DclTopBarProps = ChromeTopBarProps;
 
 const accountLinks = (account: string) => [
   { label: "My profile", href: `/profile/${encodeURIComponent(account.toLowerCase())}` },
@@ -105,8 +84,8 @@ function LegacyDclTopBar({
         }
       : undefined);
   const fetchNotifs = fetchNotifications ?? auth.fetchNotifications;
-  const links = DCL_LINKS;
-  const activeId = active === "explore" || active === "events" ? "whatson" : active;
+  const links = decentralandNavigation;
+  const activeId = decentralandNavigationSection(active);
   const [menuOpen, setMenuOpen] = useState(false);
   const mobileMenuId = useId();
   const burgerRef = useRef<HTMLButtonElement>(null);
@@ -241,7 +220,7 @@ function LegacyDclTopBar({
   };
 
   const renderNavLink = (link: NavLink) => {
-    if (!link.menu?.length) return renderTab(link);
+    if (!link.items?.length) return renderTab(link);
     const open = openDropdown === link.id;
     return (
       <div
@@ -268,7 +247,7 @@ function LegacyDclTopBar({
         {renderTab(link, { open })}
         {open ? (
           <div className="dtb__ddmenu is-open" role="menu" aria-label={`${link.label} menu`}>
-            {link.menu.map((item) => sites ? (
+            {link.items.map((item) => sites ? (
               <NavMenuItem as={ChromeLink} key={item.label} href={item.href} onNavigate={onNavigate} label={item.label} />
             ) : (
               <ChromeLink key={item.label} href={item.href} onNavigate={onNavigate} className="dtb__dditem" role="menuitem">
@@ -413,17 +392,17 @@ function LegacyDclTopBar({
                   <ChromeLink
                     key={link.id}
                     href={link.href} onNavigate={onNavigate}
-                    className={"dtb__menulink" + (link.id === activeId ? " is-active" : "") + (link.caret ? " dtb__menulink--caret" : "")}
+                    className={"dtb__menulink" + (link.id === activeId ? " is-active" : "") + (link.items?.length ? " dtb__menulink--caret" : "")}
                     aria-current={link.id === activeId ? "page" : undefined}
                     onClick={() => setMenuOpen(false)}
                   >
                     {link.label}
                   </ChromeLink>
                 );
-                return link.menu?.length ? (
+                return link.items?.length ? (
                   <span key={link.id} className="dtb__menugroup">
                     {top}
-                    {link.menu.map((item) => (
+                    {link.items.map((item) => (
                       <ChromeLink
                         key={item.label}
                         href={item.href} onNavigate={onNavigate}
@@ -437,7 +416,7 @@ function LegacyDclTopBar({
                 ) : top;
               })}
             </nav>
-            {renderMobileNavigation ? <div className="site-layout__mobile-sections">{renderMobileNavigation(() => setMenuOpen(false))}</div> : null}
+            {renderMobileNavigation ? <div className="dtb__mobile-sections">{renderMobileNavigation(() => setMenuOpen(false))}</div> : null}
           </>
         ) : null}
       </div>

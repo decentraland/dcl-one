@@ -20,11 +20,11 @@ vi.mock('@explorer-core/lib/shell', () => ({
   }
 }))
 
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import { inWorldCart } from '../features/shop/cartStore'
+import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import { inWorldCart } from '@dcl/one-ui/apps/shop/cartStore'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
-import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
+import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { Wearable } from '@explorer-core/engine/protocol'
 import { fakeProfileState } from '@hud/test/harness'
 import { PopupHost, resetPopups, ToastHost } from '@hud/design'

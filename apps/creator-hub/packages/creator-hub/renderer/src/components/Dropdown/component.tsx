@@ -1,16 +1,18 @@
 import React, { useCallback, useState, type MouseEvent } from 'react';
-import cx from 'classnames';
-import { MenuItem, useMediaQuery } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import IconButton from '@ui/atoms/IconButton';
+import { Menu, MenuItem, MenuSeparator } from '@ui/atoms/Menu';
 
 import { KebabIcon } from '../Icons';
 import type { Option, Props } from './types';
-import { MenuSeparator, StyledMenu, Trigger } from './component.styled';
 import { useArrowKeyed } from './useArrowKeyed';
+import styles from './component.module.css';
+
+const MENU_GAP = 9;
 
 function Dropdown(props: Props) {
   const { label, options, className, selected, variant = 'ghost' } = props;
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const { arrowKeyedClass, onKeyDownCapture, resetArrowKeyed } = useArrowKeyed();
   const open = Boolean(anchorEl);
   const hasGlyphs = options.some(option => option.icon);
@@ -19,49 +21,50 @@ function Dropdown(props: Props) {
     e.stopPropagation();
     e.currentTarget.focus();
     resetArrowKeyed();
-    setAnchorEl(e.currentTarget);
+    const target = e.currentTarget;
+    setAnchorEl(current => (current ? null : target));
   }, []);
 
-  const handleSelect = useCallback((e: MouseEvent<HTMLLIElement>, option: Option) => {
+  const handleSelect = useCallback((e: MouseEvent<HTMLElement>, option: Option) => {
     e.stopPropagation();
     setAnchorEl(null);
     option.handler();
   }, []);
 
-  const handleClose = useCallback((e: MouseEvent<HTMLElement>) => {
-    e.stopPropagation();
-    setAnchorEl(null);
-  }, []);
+  const handleClose = useCallback(() => setAnchorEl(null), []);
 
   return (
     <>
-      <Trigger
-        look={variant}
+      <IconButton
+        className={styles.trigger}
+        data-look={variant}
         onClick={handleClick}
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <KebabIcon />
-      </Trigger>
-      <StyledMenu
-        className={cx(className, arrowKeyedClass)}
-        onKeyDownCapture={onKeyDownCapture}
-        anchorEl={anchorEl}
+      </IconButton>
+      <Menu
+        className={cx(styles.menu, className, arrowKeyedClass)}
+        anchor={anchorEl}
         open={open}
         onClose={handleClose}
-        disableScrollLock
-        transitionDuration={reduceMotion ? 0 : 'auto'}
-        MenuListProps={{ 'aria-label': label }}
-        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
-        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+        placement="bottom-end"
+        offset={MENU_GAP}
+        aria-label={label}
+        // The press that closes the menu does not reach the card or the row under it. The page keeps its scrollbar.
+        modal
+        lockScroll={false}
       >
         {options.flatMap(option => [
           <MenuItem
             key={option.text}
-            className={option.tone === 'danger' ? 'Danger' : undefined}
+            className={styles.item}
+            tone={option.tone === 'danger' ? 'danger' : 'default'}
             selected={option.text === selected}
             onClick={e => handleSelect(e, option)}
+            onKeyDownCapture={onKeyDownCapture}
             disabled={option.disabled}
           >
             {hasGlyphs && <span className="MenuGlyph">{option.icon}</span>}
@@ -71,12 +74,12 @@ function Dropdown(props: Props) {
             ? [
                 <MenuSeparator
                   key={`${option.text}-separator`}
-                  role="separator"
+                  className={styles.separator}
                 />,
               ]
             : []),
         ])}
-      </StyledMenu>
+      </Menu>
     </>
   );
 }

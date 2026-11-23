@@ -13,7 +13,7 @@
 // checked again here on every open, not only in the capabilities the HUD reads.
 
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { CatalystError, catalystBase, getJSON } from '../../../data/catalyst/client'
+import { catalystBase, forwardFailure, getJSON } from '../../../data/catalyst/client'
 import { fetchProfile, mapProfile, profileFaceUrl } from '../../../data/catalyst/profile'
 import { encodeManaTransfer, fetchTipTarget, manaToWei, TIP_DELIVERY_WINDOW_MS, TIP_FORWARD_PATH, type TipTarget } from '../../../explorer/components/manaTip'
 import { settlementChainId } from '../../../shop/checkout/chain/config'
@@ -45,6 +45,7 @@ import {
 import { ShellError } from '@explorer-core/lib/shellReply'
 import type { ShellShopWallet } from '../shop/purchase'
 import { loginSigner } from '../loginSigner'
+import { safeCreator } from '../safeDisplay'
 import { pageLocks, webLock } from '../webLock'
 import { guardedDonationProvider, type DonationIntent } from './guard'
 import type { DonateCreator, DonateHandlers, DonateView } from '@hud/features/donate/types'
@@ -239,12 +240,9 @@ const LIVE: ShellDonateServices = {
       await res.body?.cancel().catch(() => {})
       return
     }
-    // The status decides a retry (forwardUntil: a 429 or 5xx is asked again, any other 4xx is the catalyst refusing
-    // the claim), never sooner than the Retry-After the server repeats in its body.
-    const body = (await res.json().catch(() => null)) as { retryAfter?: unknown } | null
-    const err = new CatalystError(`The tip forward answered ${res.status}`, url, res.status)
-    if (typeof body?.retryAfter === 'number' && Number.isFinite(body.retryAfter) && body.retryAfter > 0) err.retryAfterSecs = body.retryAfter
-    throw err
+    // forwardUntil decides from the status and body code: it asks again after a 429 or a 5xx, and stops at another 4xx
+    // or at a 503 coded as having no tip index. It never asks sooner than the Retry-After the body repeats.
+    throw forwardFailure(url, res.status, await res.text().catch(() => ''))
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
@@ -273,20 +271,6 @@ export function resolvePlace(place: DonatePlace, rows: DestinationRow[]): Resolv
   return { creator, title: placeTitle(place, row.title), positions: row.positions }
 }
 
-/**
- * The creator as the money panel may draw them: a name, a `#rgb`-style colour and an `https:` face only, so a
- * profile can't make the page that holds the wallet load anything else. Null without a valid address.
- */
-export function safeCreator(c: Partial<DonateCreator> | null | undefined): DonateCreator | null {
-  if (!c || typeof c.address !== 'string' || !/^0x[0-9a-f]{40}$/.test(c.address)) return null
-  return {
-    address: c.address,
-    ...(typeof c.name === 'string' ? { name: c.name } : {}),
-    ...(c.claimed === true ? { claimed: true } : {}),
-    ...(typeof c.nameColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c.nameColor) ? { nameColor: c.nameColor } : {}),
-    ...(typeof c.face === 'string' && /^https:\/\/[^\s"'()\\]+$/.test(c.face) ? { face: c.face } : {})
-  }
-}
 
 /**
  * The relay answered and refused the tip (`ok: false`). It may have broadcast and lost it first, but a refused tip

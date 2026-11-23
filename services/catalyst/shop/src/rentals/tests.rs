@@ -27,7 +27,7 @@ use crate::shared::signed_fetch::{
 };
 
 const LAND: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
-const RENTALS_GOERLI: &str = "0x92159c78f0f4523b9c60382bb888f30f10a46b3b";
+const RENTALS: &str = super::index::RENTALS_MAINNET;
 const LESSOR: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 
 fn lazy_pool() -> sqlx::PgPool {
@@ -45,7 +45,7 @@ fn random_token_id() -> String {
 fn creation(token_id: &str, signature: &str) -> RentalListingCreation {
     RentalListingCreation {
         network: "ETHEREUM".into(),
-        chain_id: 5,
+        chain_id: 1,
         expiration: 4_102_444_800_000,
         contract_address: LAND.into(),
         token_id: token_id.into(),
@@ -62,7 +62,7 @@ fn creation(token_id: &str, signature: &str) -> RentalListingCreation {
                 price_per_day: "1000000000000000000".into(),
             },
         ],
-        rental_contract_address: RENTALS_GOERLI.into(),
+        rental_contract_address: RENTALS.into(),
         signature: signature.into(),
         target: "0x0000000000000000000000000000000000000000".into(),
     }
@@ -137,7 +137,7 @@ async fn insert_listing_lands_all_rows_in_one_statement() {
     assert_eq!(listing.lessor.as_deref(), Some(LESSOR));
     assert_eq!(listing.tenant, None);
     assert_eq!(listing.status, "open");
-    assert_eq!(listing.chain_id, 5);
+    assert_eq!(listing.chain_id, 1);
     assert_eq!(listing.expiration, 4_102_444_800_000);
     assert_eq!(listing.nonces, vec!["0", "1", "2"]);
     assert_eq!(listing.token_id, token);
@@ -850,4 +850,265 @@ async fn live_marketplace_subgraph_answers_a_land_parcel() {
         "{nft:?}"
     );
     assert_eq!(nft.nft_id, format!("{LAND}-0"));
+}
+
+#[tokio::test]
+async fn a_listing_is_refused_off_the_served_chain_or_rentals_contract() {
+    let w = wallet();
+    let path = "/v1/rentals-listings";
+    let app = router(state_over(lazy_pool(), Some(market_with(None)), true));
+    let chain_refusal =
+        "The chain id and network of the listing are not the ones supported by the server";
+    let contract_refusal =
+        "The rental contract address does not match the Rentals contract of the given chain";
+    let goerli = |b: &mut RentalListingCreation| {
+        b.chain_id = 5;
+        b.rental_contract_address = "0x92159c78f0f4523b9c60382bb888f30f10a46b3b".into();
+    };
+    let matic = |b: &mut RentalListingCreation| b.network = "MATIC".into();
+    let other_contract = |b: &mut RentalListingCreation| b.rental_contract_address = LESSOR.into();
+    type Change<'a> = &'a dyn Fn(&mut RentalListingCreation);
+    let cases: [(Change, &str); 3] = [
+        (&goerli, chain_refusal),
+        (&matic, chain_refusal),
+        (&other_contract, contract_refusal),
+    ];
+    for (change, expected) in cases {
+        let mut body = creation(&random_token_id(), "");
+        change(&mut body);
+        body.signature = sign_listing(&w, &body).await;
+        let (status, _, out) = send(
+            app.clone(),
+            "POST",
+            path,
+            signed_headers(&w, "post", path).await,
+            Some(creation_json(&body)),
+        )
+        .await;
+        assert_eq!(
+            (status, out["error"].as_str().unwrap_or_default()),
+            (StatusCode::BAD_REQUEST, expected),
+            "{out}"
+        );
+    }
+}
+
+/// The asset's rents at the served Rentals contract: a running one refuses
+/// the listing; once it ended, the contract still holding the asset lets its
+/// last lessor list it, read from a published rentals index only.
+#[tokio::test]
+async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let graph = stub_graph().await;
+    *graph.answer.lock().unwrap() = nft_row(RENTALS, "parcel", None);
+    let w = wallet();
+    let token = random_token_id();
+    let mut body = creation(&token, "");
+    body.signature = sign_listing(&w, &body).await;
+    let doc = creation_json(&body);
+    let path = "/v1/rentals-listings";
+    let state = state_over(
+        pool.clone(),
+        Some(market_with(Some(graph.url.clone()))),
+        true,
+    );
+    let post = || async {
+        send(
+            router(state.clone()),
+            "POST",
+            path,
+            signed_headers(&w, "post", path).await,
+            Some(doc.clone()),
+        )
+        .await
+    };
+    let now = chrono::Utc::now().timestamp();
+    let rent = |block: i64, lessor: String, started: i64| {
+        let pool = pool.clone();
+        let token = token.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, signer, tenant, rental_days, price_per_day, signature, tx_hash) \
+                 VALUES ('ethereum', $1, 0, $2, $3, 'rented', $4, $5::numeric, $6, $7, 30, 1, $8, '0x')",
+            )
+            .bind(block)
+            .bind(started)
+            .bind(RENTALS)
+            .bind(LAND)
+            .bind(&token)
+            .bind(lessor)
+            .bind(LESSOR)
+            .bind(format!("0x{block:x}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+
+    rent(1, w.address.clone(), now - 86_400).await;
+    let (status, _, out) = post().await;
+    assert_eq!(
+        (status, out["error"].as_str().unwrap_or_default()),
+        (
+            StatusCode::CONFLICT,
+            "An open rental already exists for this token"
+        )
+    );
+
+    rent(2, w.address.clone(), now - 40 * 86_400).await;
+    let (status, _, out) = post().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "rentals-index");
+
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('rentals', 'ethereum', 0, 10, 10, timezone('UTC', now()), true, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    rent(3, LESSOR.to_string(), now - 40 * 86_400).await;
+    let (status, _, out) = post().await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{out}");
+
+    rent(4, w.address.clone(), now - 40 * 86_400).await;
+    let (status, _, out) = post().await;
+    assert_eq!(status, StatusCode::CREATED, "{out}");
+    assert_eq!(out["data"]["rentalContractAddress"], RENTALS);
+}
+
+/// The index walks only the mainnet contract: off it no lessor is ever named,
+/// so an asset that contract holds is refused at once rather than waiting on
+/// a readiness that never comes; at mainnet's it waits for the index.
+#[tokio::test]
+async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
+    let sepolia = super::signature::rentals_contract(11_155_111).unwrap();
+    let now = chrono::Utc::now();
+    let last_rent = (LESSOR.to_string(), now.timestamp() - 86_400);
+    assert_eq!(
+        super::handlers::held_for_lessor(&lazy_pool(), now, sepolia, Some(&last_rent), LESSOR)
+            .await,
+        Some(false)
+    );
+
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    assert_eq!(
+        super::handlers::held_for_lessor(&pool, now, RENTALS, Some(&last_rent), LESSOR).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
+    use super::db::{ListingFilters, ListingQuery};
+    let Some(own) = crate::test_db::OwnDatabase::create("rental_page_totals").await else {
+        return;
+    };
+    let db = Database::new(own.pool.clone());
+    let mut ids = Vec::new();
+    for token in ["1", "2", "3"] {
+        let listing = insert(&db, token, LESSOR, &format!("signature-{token}"))
+            .await
+            .unwrap();
+        ids.push(listing.id);
+    }
+    // Each sort has its own order. Two listings share a maximum price across
+    // the page boundary, so the listing ID decides which one appears first.
+    sqlx::raw_sql("UPDATE signatures.rental_assets SET
+            search_text = CASE token_id WHEN 1 THEN 'B' WHEN 2 THEN 'A' ELSE 'C' END,
+            nft_created_at = timestamp '2020-01-01' - token_id::int * interval '1 day';
+        UPDATE signatures.rentals SET created_at = timestamp '2020-01-01' + token_id::int * interval '1 day';
+        UPDATE signatures.rental_periods p SET price_per_day = CASE
+            WHEN p.min_days = 30 AND r.token_id = 2 THEN 30
+            WHEN p.min_days = 30 THEN 20
+            WHEN r.token_id = 1 THEN 3 WHEN r.token_id = 2 THEN 1 ELSE 2 END
+        FROM signatures.rentals r WHERE r.id = p.rental_id;")
+        .execute(&own.pool).await.unwrap();
+    for history in [false, true] {
+        for (sort_by, ranks) in [
+            ("land_creation_date", [3, 2, 1]),
+            ("name", [2, 1, 3]),
+            ("max_rental_price", [20, 30, 20]),
+            ("min_rental_price", [3, 1, 2]),
+            ("created_at", [1, 2, 3]),
+        ] {
+            for direction in ["asc", "desc"] {
+                let mut expected = [0, 1, 2];
+                expected.sort_by(|&a, &b| {
+                    let order = if direction == "asc" {
+                        ranks[a].cmp(&ranks[b])
+                    } else {
+                        ranks[b].cmp(&ranks[a])
+                    };
+                    order.then_with(|| ids[a].cmp(&ids[b]))
+                });
+                for (offset, limit) in [(0, 2), (2, 2), (3, 2), (4, 2), (0, 0)] {
+                    let page = db
+                        .get_listings(&ListingQuery {
+                            sort_by: Some(sort_by.to_string()),
+                            sort_direction: Some(direction.to_string()),
+                            offset,
+                            limit,
+                            history,
+                            filter: ListingFilters {
+                                rental_days: vec![10],
+                                ..Default::default()
+                            },
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(page.total, 3);
+                    let actual: Vec<_> = page.results.iter().map(|r| &r.id).collect();
+                    let wanted: Vec<_> = expected
+                        .iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
+                        .map(|&i| &ids[i])
+                        .collect();
+                    assert_eq!(
+                        actual, wanted,
+                        "{sort_by} {direction}, history {history}, offset {offset}, limit {limit}"
+                    );
+                }
+            }
+        }
+    }
+    let matched = db
+        .get_listings(&ListingQuery {
+            sort_by: None,
+            sort_direction: None,
+            offset: 0,
+            limit: 10,
+            history: false,
+            filter: ListingFilters {
+                token_id: Some("2".to_string()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(matched.total, 1);
+    assert_eq!(matched.results.len(), 1);
+    assert_eq!(matched.results[0].id, ids[1]);
+    let empty = db
+        .get_listings(&ListingQuery {
+            sort_by: None,
+            sort_direction: None,
+            offset: 0,
+            limit: 10,
+            history: false,
+            filter: ListingFilters {
+                token_id: Some("4".to_string()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(empty.total, 0);
+    assert!(empty.results.is_empty());
+    own.drop().await;
 }

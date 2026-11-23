@@ -111,6 +111,30 @@ impl SceneIdentity for Catalogue {
                         .await?,
                 )
             }
+            // One Genesis scene; any other is not deployed here.
+            RoomRequest::Adapter {
+                realm: realm @ RealmId::Shared(_),
+                scene,
+            } if scene.as_str() == "GenesisA" => {
+                let base = Parcel::parse("5,5").unwrap();
+                return Ok(ResolvedRoom {
+                    room: crate::rooms::gatekeeper_scene_room(realm.as_str(), scene.as_str()),
+                    scene_id: Some(scene.clone()),
+                    deployment: Some(ActiveDeployment {
+                        title: None,
+                        scene_id: scene.clone(),
+                        parcels: [base].into_iter().collect(),
+                        base,
+                        namespace: crate::world_identity::SceneNamespace::new(realm, base, None),
+                        local: true,
+                    }),
+                    realm: realm.clone(),
+                });
+            }
+            RoomRequest::Adapter {
+                realm: RealmId::Shared(_),
+                scene,
+            } => return Err(ResolveError::UnresolvedRoom(scene.to_string())),
             _ => panic!("this fixture resolves world rooms only"),
         };
         let room = match &dep {
@@ -762,6 +786,27 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
         Ok(()),
         "shared scenes preserve their own authority path"
     );
+    // A Genesis room no deployment stands behind is refused, and a store
+    // fault is unavailable, never a ban list on the entity id.
+    assert_eq!(
+        policy
+            .authorize(&verified_room("scene:main:GenesisGone"))
+            .await,
+        Err(DenialReason::NotAuthorized)
+    );
+    let down = CurrentRoomPolicy::new(
+        Arc::new(crate::interfaces::test_support::StubScenes {
+            room: Err(ResolveError::Db(sqlx::Error::PoolClosed)),
+            ..Default::default()
+        }),
+        Arc::new(StubPolicy::default()),
+        Arc::new(StubBanStatus(Ok(None))),
+        None,
+    );
+    assert_eq!(
+        down.authorize(&verified_room("scene:main:GenesisA")).await,
+        Err(DenialReason::Unavailable)
+    );
     for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
         let banned = CurrentRoomPolicy::new(
             Arc::new(Catalogue),
@@ -790,6 +835,58 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
         policy.authorize(&host).await,
         Err(DenialReason::NotAuthorized)
     );
+}
+
+/// A ban of the world scene is answered 403 apart from the world's own 401,
+/// whichever key the permission core found it under.
+#[tokio::test]
+async fn a_world_scene_ban_at_the_adapter_is_answered_apart_from_the_world_refusal() {
+    use crate::access::{Access, Ban};
+    let key = random_key();
+    let metadata = serde_json::json!({
+        "signer": "dcl:explorer", "realmName": "mixed.dcl.eth", "sceneId": "SceneA",
+    })
+    .to_string();
+    for (access, expected) in [
+        (
+            Access::Banned(Ban::Scene),
+            (403, crate::gatekeeper::moderation::store::SCENE_BANNED_MSG),
+        ),
+        (
+            Access::NotAllowed,
+            (
+                401,
+                "Access denied, you are not authorized to access this world",
+            ),
+        ),
+    ] {
+        let Some(pool) = scratch().await else { return };
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name) VALUES ('mixed.dcl.eth') ON CONFLICT DO NOTHING",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The platform and scene-key bans are read from the store; the
+        // world's own answer is the stub's.
+        let mut state = comms_state(pool, with_authoritative(AUTHORITATIVE_KEY));
+        state.scenes = Arc::new(Catalogue);
+        state.presence.complete_empty_fixture();
+        state.policy = Arc::new(StubPolicy {
+            access: Ok(access),
+            ..StubPolicy::default()
+        });
+        let err = handlers::get_scene_adapter(
+            State(Arc::new(state)),
+            at("/get-scene-adapter"),
+            signed(&key, "post", "/get-scene-adapter", &metadata).await,
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!((err.code, err.message.as_str()), expected);
+    }
 }
 
 #[tokio::test]
@@ -900,6 +997,14 @@ async fn canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobb
         let capture=capture.clone(); async move {
             capture.lock().unwrap().push((method.clone(),body.clone()));
             if method=="ListRooms" { Json(serde_json::json!({"rooms":[{"name":body["names"][0],"metadata":"{\"presenters\":[\"retained\"]}"}]})) }
+            else if method=="ListParticipants" {
+                // The banned wallet's Cast watcher and another viewer's.
+                let room = body["room"].as_str().unwrap();
+                Json(serde_json::json!({"participants":[
+                    {"identity":format!("watch:{room}:banned"),"sid":"PA_w1","attributes":{"dcl.castWatcher":address_of(KEY)}},
+                    {"identity":format!("watch:{room}:other"),"sid":"PA_w2","attributes":{"dcl.castWatcher":address_of(OUTSIDER_KEY)}},
+                ]}))
+            }
             else { Json(serde_json::json!({})) }
         }
     }));
@@ -951,6 +1056,13 @@ async fn canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobb
                     && body["identity"] == actor.as_str()),
             "kick must reach {room}"
         );
+        let watchers: Vec<&str> = requests
+            .iter()
+            .filter(|(method, body)| method == "RemoveParticipant" && body["room"] == room)
+            .filter_map(|(_, body)| body["identity"].as_str())
+            .filter(|identity| identity.starts_with("watch:"))
+            .collect();
+        assert_eq!(watchers, [format!("watch:{room}:banned")], "{room}");
     }
     assert!(
         !requests
@@ -1568,10 +1680,18 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = requests.clone();
-    let everyone: Vec<serde_json::Value> = [&owner, &denied]
+    let mut everyone: Vec<serde_json::Value> = [&owner, &denied]
         .iter()
         .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
         .collect();
+    // Cast watchers: the world policy reaches them through their token's wallet.
+    let (denied_watcher, owner_watcher) = ("watch:mixed:denied", "watch:mixed:owner");
+    for (identity, wallet) in [(denied_watcher, &denied), (owner_watcher, &owner)] {
+        everyone.push(
+            serde_json::json!({"identity": identity, "sid": "PA", "metadata": "{}",
+            "attributes": {"dcl.castWatcher": wallet.as_str()}}),
+        );
+    }
     let fixture = axum::Router::new().route(
         "/twirp/livekit.RoomService/{method}",
         axum::routing::post(
@@ -1631,10 +1751,16 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
         .collect();
     assert_eq!(
         removed,
-        vec![(
-            "w1:d:mixed.dcl.ethSceneA".to_string(),
-            denied.as_str().to_string()
-        )]
+        vec![
+            (
+                "w1:d:mixed.dcl.ethSceneA".to_string(),
+                denied.as_str().to_string()
+            ),
+            (
+                "w1:d:mixed.dcl.ethSceneA".to_string(),
+                denied_watcher.to_string()
+            )
+        ]
     );
     server.abort();
 }
@@ -1722,6 +1848,22 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
             )
         })
         .to_string();
+        // Cast watchers of the same wallet: one whose token carries a proof
+        // signed after the edit, one without any.
+        let (fresh_watcher, stale_watcher) = (
+            "watch:w1:d:mixed.dcl.ethSceneA:fresh",
+            "watch:w1:d:mixed.dcl.ethSceneA:stale",
+        );
+        let watcher_proof = serde_json::json!({
+            "worldAuthorization": super::super::admission::world_mint::authorization_proof(
+                &state.livekit.api_secret,
+                &WorldName::parse("mixed.dcl.eth").unwrap(),
+                fresh_watcher,
+                "w1:d:mixed.dcl.ethSceneA",
+                chrono::DateTime::from_timestamp(201, 0).unwrap().naive_utc(),
+            )
+        })
+        .to_string();
         let requests = Arc::new(std::sync::Mutex::new(
             Vec::<(String, serde_json::Value)>::new(),
         ));
@@ -1731,6 +1873,15 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
             {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "201"},
             {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": "{\"displayName\":\"Unity replacement\"}", "attributes": {"dcl.worldAuthorization": fresh_metadata}, "joinedAt": "201"},
         ]});
+        for (identity, proof) in [(fresh_watcher, Some(&watcher_proof)), (stale_watcher, None)] {
+            let mut attributes = serde_json::json!({"dcl.castWatcher": rejoined.as_str()});
+            if let Some(proof) = proof {
+                attributes["dcl.worldAuthorization"] = serde_json::json!(proof);
+            }
+            roster["participants"].as_array_mut().unwrap().push(serde_json::json!({
+                "identity": identity, "sid": "PA_w", "metadata": "{}", "attributes": attributes, "joinedAt": "201",
+            }));
+        }
         if mode != "attribute" {
             roster["participants"][1]["metadata"] = serde_json::json!(fresh_metadata);
             if mode == "legacy" {
@@ -1795,9 +1946,13 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
             .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
             .collect();
         let expected = if mode == "invalid-attribute" {
-            vec![stale.as_str().to_string(), rejoined.as_str().to_string()]
+            vec![
+                stale.as_str().to_string(),
+                rejoined.as_str().to_string(),
+                stale_watcher.to_string(),
+            ]
         } else {
-            vec![stale.as_str().to_string()]
+            vec![stale.as_str().to_string(), stale_watcher.to_string()]
         };
         assert_eq!(removed, expected, "{mode}");
         server.abort();

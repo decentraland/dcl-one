@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { data, useLoaderData } from "react-router";
 
 import { buildEphemeralMessage } from "@/data/lib/auth/identity";
-import { hasWalletConnect, startWalletConnect, type WalletConnectSession } from "@ui/data/auth/walletconnect";
+import { hasWalletConnect, startWalletConnect, type WalletConnectSession } from "@web-core/auth/walletconnect";
 import { pairStore } from "@/data/lib/auth/pair-store.server";
 import { connectWallet, hasWallet, personalSign } from "@/data/lib/auth/wallet";
 
@@ -20,7 +20,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const host = new URL(request.url).host;
   const id = params.session ?? "";
   if (!ID_RE.test(id)) return data({ state: "missing" as const, host }, NO_STORE);
-  const session = pairStore.get(id);
+  const session = await pairStore.get(id);
   if (!session) return data({ state: "missing" as const, host }, NO_STORE);
   if (Date.now() > session.expiresAt) {
     return data({ state: "expired" as const, host }, NO_STORE);

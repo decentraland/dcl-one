@@ -5,9 +5,11 @@ import EmptyWorlds from '/assets/images/empty-worlds.svg';
 
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
+import { ExternalLink } from '../../ExternalLink';
 import { InfoTip } from '../InfoTip';
-import { Body, Illustration, ReadMore, Root, Title, TitleRow } from './EmptyState.styled';
+
+import styles from './EmptyState.module.css';
 
 type EmptyStateIcon = 'wave' | 'world' | 'land';
 
@@ -22,9 +24,12 @@ type EmptyStateInfo = { label: string; text: string; readMoreUrl: string };
 const EMPTY_STATE_ICONS = { wave: EmptySignedOut, world: EmptyWorlds, land: EmptyLands };
 
 const BUTTON_BY_VARIANT = {
-  primary: { variant: 'contained', color: 'primary' },
-  secondary: { variant: 'contained', color: 'secondary' },
-  tertiary: { variant: 'outlined', color: 'secondary' },
+  primary: { variant: 'primary', className: 'hub-button hub-button--primary' },
+  secondary: { variant: 'primary', className: 'hub-button hub-button--secondary' },
+  tertiary: {
+    variant: 'outline',
+    className: 'hub-button hub-button--secondary hub-button--outlined',
+  },
 } as const;
 
 type Props = {
@@ -38,31 +43,38 @@ type Props = {
 /** The Manage page's empty, signed-out and error views. */
 export function EmptyState({ icon, title, info, description, action }: Props) {
   return (
-    <Root>
+    <section className={styles.root}>
       {icon && (
-        <Illustration
+        <img
+          className={styles.illustration}
           src={EMPTY_STATE_ICONS[icon]}
           alt=""
         />
       )}
-      <TitleRow>
-        <Title>{title}</Title>
+      <div className={styles.titleRow}>
+        <h2 className={styles.title}>{title}</h2>
         {info && (
           <InfoTip label={info.label}>
-            {info.text} <ReadMore href={info.readMoreUrl}>{t('manage.read_more')}</ReadMore>
+            {info.text}{' '}
+            <ExternalLink
+              className={styles.readMore}
+              href={info.readMoreUrl}
+            >
+              {t('manage.read_more')}
+            </ExternalLink>
           </InfoTip>
         )}
-      </TitleRow>
-      {description && <Body>{description}</Body>}
+      </div>
+      {description && <p className={styles.body}>{description}</p>}
       {action && (
         <Button
-          size="large"
+          size="lg"
           {...BUTTON_BY_VARIANT[action.variant]}
           onClick={action.onClick}
         >
           {action.label}
         </Button>
       )}
-    </Root>
+    </section>
   );
 }

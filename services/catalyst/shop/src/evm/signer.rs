@@ -362,13 +362,10 @@ impl DirectSigner {
     ) -> Result<String, ApiError> {
         let _guard = self.send_lock.lock().await;
         let signed = self.sign_call(to, data).await?;
-        let tx_hash = self.send_raw(&signed.raw).await.map_err(|e| {
-            if e.is_execution_revert() {
-                ApiError::RelayReverted(format!("transaction reverted: {}", e.message()))
-            } else {
-                ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
-            }
-        })?;
+        let tx_hash = self
+            .send_raw(&signed.raw)
+            .await
+            .map_err(|e| send_failure(&signed.hash, e))?;
         tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
         Ok(tx_hash)
     }
@@ -399,6 +396,7 @@ impl DirectSigner {
         let raw = signed.raw.clone();
         record(signed).await?;
         if let Err(e) = self.send_raw(&raw).await {
+            log_an_unfunded_send(&tx_hash, &e);
             tracing::warn!(tx_hash = %tx_hash, error = %e, "recorded transaction's broadcast failed; a resume re-sends it");
             return Err(ApiError::RelayerTimeout(format!(
                 "transaction {tx_hash} is recorded but its broadcast failed ({e}); retry with the \
@@ -469,6 +467,7 @@ impl DirectSigner {
         match self.send_raw(raw_hex.trim()).await {
             Ok(_) => tracing::info!(tx_hash = %tx_hash, "re-sent recorded transaction"),
             Err(e) => {
+                log_an_unfunded_send(tx_hash, &e);
                 tracing::warn!(tx_hash = %tx_hash, error = %e, "re-send of recorded transaction refused; its receipt decides")
             }
         }
@@ -644,6 +643,44 @@ impl DirectSigner {
     }
 }
 
+/// What a failed `eth_sendRawTransaction` of a just-signed transaction (`hash`) tells the caller:
+/// never that it was not sent. The failure comes after the send was attempted, and nothing in it
+/// proves the transaction did not go out. No answer at all (a timeout, a cut connection, a gateway
+/// error, an unreadable body) can follow the node taking it. An error the node answers can be about
+/// a retry of a send it already took: a gateway that retried gets "already known", "nonce too low",
+/// or a revert from a node that simulates. So every send failure is `RelayerTimeout` (504): the
+/// buyer's quota slot is kept and a client follows the purchase instead of signing again. The
+/// refusals that prove nothing was sent come before this, from validation and gas estimation.
+fn send_failure(hash: &str, e: RpcError) -> ApiError {
+    log_an_unfunded_send(hash, &e);
+    ApiError::RelayerTimeout(format!(
+        "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
+    ))
+}
+
+/// Logs a send the relayer wallet could not fund (`cannot_pay_for_gas`) on its own, apart from a
+/// slow or unreachable node. Every path that sends a signed transaction calls it: a relayed call
+/// (`send_failure`), a recorded contract call, and the re-send of a recorded one. It changes no
+/// answer.
+fn log_an_unfunded_send(hash: &str, e: &RpcError) {
+    if cannot_pay_for_gas(e) {
+        tracing::error!(
+            tx_hash = %hash,
+            error = %e,
+            "economy: the relayer wallet could not fund this transaction's gas; check its balance"
+        );
+    }
+}
+
+/// Whether the node refused the send because the relayer's wallet held too little to pay for this
+/// transaction's gas. A relayed call still answers a 504 that keeps the slot (`send_failure`);
+/// this only lets the send be logged on its own (`log_an_unfunded_send`), so a wallet running dry
+/// is seen. Matched on the error message nodes answer for it ("insufficient funds for gas * price
+/// + value").
+fn cannot_pay_for_gas(e: &RpcError) -> bool {
+    matches!(e, RpcError::Response { message, .. } if message.to_ascii_lowercase().contains("insufficient funds"))
+}
+
 /// The nonce a signed EIP-2718 transaction carries.
 fn signed_nonce(raw: &[u8]) -> Option<u64> {
     use alloy_consensus::Transaction;
@@ -665,6 +702,68 @@ fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No failure of the send itself proves the transaction never went out: no answer, an answer
+    /// that the node already holds it, a revert, or a plain refusal all keep the slot and answer 504.
+    #[test]
+    fn a_failed_send_is_indeterminate_never_a_refusal() {
+        use crate::evm::transaction::{ReservationDisposition, reservation_disposition};
+        let answered = |code: i64, message: &str| RpcError::Response {
+            code,
+            message: message.into(),
+        };
+        for failure in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered(3, "execution reverted"),
+            answered(-32000, "already known"),
+            answered(-32000, "nonce too low: next nonce 6, tx nonce 5"),
+            answered(-32000, "replacement transaction underpriced"),
+            answered(-32000, "insufficient funds for gas * price + value"),
+        ] {
+            let what = failure.to_string();
+            let error = send_failure("0x01", failure);
+            assert!(
+                matches!(error, ApiError::RelayerTimeout(_)),
+                "{what}: {error}"
+            );
+            assert_eq!(
+                error.status(),
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                "{what}"
+            );
+            assert_eq!(
+                reservation_disposition(&error),
+                ReservationDisposition::Keep,
+                "{what}"
+            );
+        }
+    }
+
+    /// An empty relayer wallet is the node's answer about the wallet, not about the network: it
+    /// is logged on its own. A timeout, a gateway error or another refusal is not.
+    #[test]
+    fn an_empty_relayer_wallet_is_told_apart_from_a_slow_node() {
+        let answered = |message: &str| RpcError::Response {
+            code: -32000,
+            message: message.into(),
+        };
+        assert!(cannot_pay_for_gas(&answered(
+            "insufficient funds for gas * price + value"
+        )));
+        assert!(cannot_pay_for_gas(&answered(
+            "Insufficient funds for gas * price + value: balance 0, tx cost 21000"
+        )));
+        for other in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered("nonce too low: next nonce 6, tx nonce 5"),
+            answered("already known"),
+            answered("execution reverted"),
+        ] {
+            assert!(!cannot_pay_for_gas(&other), "{other}");
+        }
+    }
 
     /// The cap bounds the fee per gas a transaction may pay: an EIP-1559 `max_fee_per_gas`
     /// (a tip under the cap is not enough) or a legacy `gas_price`, the cap itself included.

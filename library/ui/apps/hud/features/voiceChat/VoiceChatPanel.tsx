@@ -264,7 +264,7 @@ function ParticipantMenu({ p, me, moderator }: { p: VoiceChatParticipant; me: bo
     }
     const viewProfile = (): void => {
       const r = ref.current?.getBoundingClientRect()
-      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true, invite: false })
+      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true, invite: false, gift: false })
     }
     const list: ContextMenuItem[] = [{ label: 'View profile', onClick: then(viewProfile) }]
     if (moderator && !isModerator(p.role)) {
@@ -312,7 +312,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
   }, [state.participants, query])
 
   const openProfile = (p: VoiceChatParticipant) => (e: React.MouseEvent): void => {
-    openProfileCard(p.address, e.clientX, e.clientY, { invite: false })
+    openProfileCard(p.address, e.clientX, e.clientY, { invite: false, gift: false })
   }
   const shown = (p: VoiceChatParticipant): string => (p.address.toLowerCase() === me ? 'You' : splitName(p.name || p.address).base)
 
@@ -363,7 +363,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
         <div className={styles.headActions}>
           {collapsed && controls}
           {moderator && !collapsed && (
-            <Tooltip label="End stream for everyone" side="bottom">
+            <Tooltip label="End stream for everyone" side="bottom" align="end">
               <ControlButton variant="faint" size="sm" aria-label="End stream" onClick={() => act({ op: 'endCommunityCall' })}>
                 <MaskIcon src={endStreamIcon} size={16} />
               </ControlButton>

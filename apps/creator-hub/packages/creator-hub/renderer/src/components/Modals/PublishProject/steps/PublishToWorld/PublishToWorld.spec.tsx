@@ -1,10 +1,11 @@
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
+import { misc } from '#preload';
 import { useAuth } from '/@/hooks/useAuth';
 import { useEditor } from '/@/hooks/useEditor';
 import { en } from '/@/modules/store/translation/locales';
@@ -90,14 +91,14 @@ async function renderStep(
   render(
     <Provider store={store as never}>
       <MemoryRouter>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <PublishToWorld
             open
             project={stepProject}
             onClose={vi.fn()}
             onStep={vi.fn()}
           />
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );
@@ -107,7 +108,7 @@ async function renderStep(
 
 async function pickWorld(worldName: string) {
   const [, worldSelect] = screen.getAllByRole('combobox');
-  fireEvent.mouseDown(worldSelect);
+  fireEvent.click(worldSelect);
   fireEvent.click(
     await screen.findByTestId(
       `publish-modal-publish-to-world-select-world-select-item-${worldName}`,
@@ -132,11 +133,20 @@ describe('PublishToWorld', () => {
     it('should offer no World settings shortcut', async () => {
       await renderStep();
 
-      fireEvent.click(screen.getAllByRole('checkbox')[0]);
+      fireEvent.click(screen.getByRole('switch', { name: 'Multi-Scene World (Advanced)' }));
       await act(async () => {});
 
       expect(screen.getByText('Current World')).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+    });
+  });
+
+  describe('when the owner picks one of their Worlds', () => {
+    it('should not ask for their parcel permissions, which the server has none of', async () => {
+      await renderStep();
+
+      expect(api.fetchWorldSettings).toHaveBeenCalled();
+      expect(api.fetchParcelsPermission).not.toHaveBeenCalled();
     });
   });
 
@@ -225,6 +235,52 @@ describe('PublishToWorld', () => {
 
     it('should not show the load error', () => {
       expect(screen.queryByText(LOAD_ERROR)).toBeNull();
+    });
+
+    it('should name each select on its own and describe both with the step description', () => {
+      const domainType = screen.getByRole('combobox', { name: 'Domain type' });
+      const worldName = screen.getByRole('combobox', { name: 'World name' });
+      const description = screen.getByText('Choose the domain where your world will be published.');
+
+      for (const select of [domainType, worldName]) {
+        expect(select.getAttribute('aria-describedby')).toBe(description.id);
+        expect(select.hasAttribute('aria-labelledby')).toBe(false);
+      }
+    });
+  });
+
+  describe('when the list of names is open', () => {
+    beforeEach(async () => {
+      await renderStep();
+      fireEvent.click(screen.getAllByRole('combobox')[1]);
+    });
+
+    it('should list the placeholder, the names and the claim row', () => {
+      expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
+        'Select a Name',
+        'plaza.dcl.eth',
+        'Claim a new NAME',
+      ]);
+      expect(
+        screen.getByRole('option', { name: 'Select a Name' }).getAttribute('aria-disabled'),
+      ).toBe('true');
+    });
+
+    describe('and the claim row is chosen', () => {
+      beforeEach(() => {
+        fireEvent.click(screen.getByRole('option', { name: 'Claim a new NAME' }));
+      });
+
+      it('should open the claim page', () => {
+        expect(misc.openExternal).toHaveBeenCalledWith(
+          'https://decentraland.org/marketplace/names/claim',
+        );
+      });
+
+      it('should close the list and keep the selected name', () => {
+        expect(screen.queryByRole('listbox')).toBeNull();
+        expect(screen.getAllByRole('combobox')[1].textContent).toBe('plaza.dcl.eth');
+      });
     });
   });
 

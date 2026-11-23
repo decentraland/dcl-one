@@ -17,6 +17,10 @@
 //! them the way the old gateway's location table did, behind the [`writes`]
 //! switch.
 
+// Production routes go through `shared::routing` (social/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 use catalyst_comms as comms;
@@ -47,6 +51,7 @@ pub mod messaging;
 mod mls;
 pub mod notifications;
 pub mod profile_images;
+pub mod request_auth;
 pub mod rpc;
 pub mod segment_webhooks;
 #[cfg(any(test, feature = "test-support"))]
@@ -82,14 +87,14 @@ pub fn social_api_gateway(router: Router) -> Router {
 pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> Router {
     // Wrap the complete method router: Axum adds Allow after each individual
     // route's layers, whereas source allowedMethods and CORS surround routing.
-    let router = router.fallback(|| async {
+    let router = router.fallback(shared::routing::erase(|| async {
         use axum::response::IntoResponse;
         let mut response = (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
         response
             .extensions_mut()
             .insert(communities::http::SocialApiNotFound);
         response
-    });
+    }));
     Router::new()
         .fallback_service(router)
         .layer(axum::middleware::from_fn(
@@ -146,7 +151,7 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
                 social_api()
                     .route(
                         "/openapi.json",
-                        axum::routing::get(|| async {
+                        shared::routing::get(|| async {
                             crate::shared::openapi::document(crate::shared::openapi::COMMUNITIES)
                         }),
                     )
@@ -174,4 +179,28 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
             guard(profile_images::router(states.profile_images.clone())),
         )
         .merge(guard(rpc::router(states.rpc.clone())))
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
+}
+
+/// Production spawns stay on `shared::task` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_spawns_use_shared_task() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_tokio_spawns(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::task instead of tokio::spawn at {found:?}"
+    );
 }

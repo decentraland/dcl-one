@@ -1,34 +1,21 @@
-import { useRef, useState } from 'react';
-import CheckIcon from '@mui/icons-material/Check';
-import { MenuItem } from 'decentraland-ui2';
+import { useRef } from 'react';
+import IconButton from '@ui/atoms/IconButton';
 
 import { SceneCategory, type WorldSettings } from '/@/lib/worlds';
 import { t } from '/@/modules/store/translation/utils';
 
-import { menuSurfaceStyles } from '../../Dropdown/component.styled';
-import { ChevronDownIcon, EditIcon } from '../../Icons';
+import { EditIcon } from '../../Icons';
 import { DESCRIPTION_MAX, NAME_MAX } from '../../LandDetailPage/DetailsTab/details';
 import { DetailsField } from '../../LandDetailPage/DetailsTab/DetailsField';
-import { DomainSelect, Field, FieldTitle } from '../../LandDetailPage/DetailsTab/DetailsTab.styled';
+import { Field, FieldTitle } from '../../LandDetailPage/DetailsTab/DetailsTab.styled';
 import { Loader } from '../../Loader';
+import { FieldSelect, OptionCheck, SelectOption } from '../FieldSelect';
 import { useWorldSettings } from '../useWorldSettings';
 import { useWorldSettingsDraft } from '../useWorldSettingsDraft';
-import { selectRowStyles } from '../../ManagePage/ViewBar/ViewBar.styled';
-import {
-  CheckSlot,
-  Columns,
-  EditButton,
-  Form,
-  NoImage,
-  ThumbnailBox,
-  ThumbnailColumn,
-  ThumbnailHint,
-  ThumbnailTitle,
-} from './DetailsTab.styled';
+
+import styles from './DetailsTab.module.css';
 
 const MAX_CATEGORIES = 3;
-const MENU_GAP = 10;
-const MENU_MARGIN = 16;
 const CATEGORIES = Object.values(SceneCategory);
 
 type Draft = {
@@ -62,7 +49,6 @@ function changesOf(draft: Draft, saved: WorldSettings): Partial<WorldSettings> {
 
 function DetailsForm({ worldName, saved }: { worldName: string; saved: WorldSettings }) {
   const fileInput = useRef<HTMLInputElement>(null);
-  const [menuMaxHeight, setMenuMaxHeight] = useState<number>();
   const [draft, setDraft] = useWorldSettingsDraft({
     worldName,
     saved,
@@ -88,8 +74,8 @@ function DetailsForm({ worldName, saved }: { worldName: string; saved: WorldSett
   const thumbnail = draft.thumbnail ?? saved.thumbnail;
 
   return (
-    <Columns>
-      <Form>
+    <div className={styles.columns}>
+      <div className={styles.form}>
         <DetailsField
           label={t('world_detail.details.name')}
           value={draft.title}
@@ -110,73 +96,49 @@ function DetailsForm({ worldName, saved }: { worldName: string; saved: WorldSett
         />
         <Field>
           <FieldTitle as="span">{t('world_detail.details.categories')}</FieldTitle>
-          <DomainSelect
+          <FieldSelect<SceneCategory>
             multiple
             value={draft.categories}
-            IconComponent={ChevronDownIcon}
-            inputProps={{ 'aria-label': t('world_detail.details.categories') }}
-            renderValue={selected => (selected as SceneCategory[]).map(categoryLabel).join(', ')}
-            onChange={event =>
-              setDraft(current => ({
-                ...current,
-                categories: event.target.value as SceneCategory[],
-              }))
-            }
-            onOpen={event => {
-              const field = (event.currentTarget as HTMLElement).closest('.MuiInputBase-root');
-              if (field)
-                setMenuMaxHeight(
-                  window.innerHeight -
-                    field.getBoundingClientRect().bottom -
-                    MENU_GAP -
-                    MENU_MARGIN,
-                );
-            }}
-            MenuProps={{
-              anchorOrigin: { vertical: 'bottom', horizontal: 'left' },
-              transformOrigin: { vertical: 'top', horizontal: 'left' },
-              slotProps: {
-                paper: { sx: { marginTop: `${MENU_GAP}px`, maxHeight: menuMaxHeight } },
-              },
-              sx: [theme => menuSurfaceStyles({ theme }), theme => selectRowStyles({ theme })],
-            }}
+            aria-label={t('world_detail.details.categories')}
+            menuClassName={styles.menu}
+            renderValue={selected => selected.map(categoryLabel).join(', ')}
+            onChange={categories => setDraft(current => ({ ...current, categories }))}
           >
             {CATEGORIES.map(category => (
-              <MenuItem
+              <SelectOption
                 key={category}
                 value={category}
+                label={categoryLabel(category)}
                 disabled={
                   draft.categories.length >= MAX_CATEGORIES && !draft.categories.includes(category)
                 }
               >
-                <CheckSlot className="MenuGlyph">
-                  {draft.categories.includes(category) && <CheckIcon aria-hidden />}
-                </CheckSlot>
+                <OptionCheck checked={draft.categories.includes(category)} />
                 {categoryLabel(category)}
-              </MenuItem>
+              </SelectOption>
             ))}
-          </DomainSelect>
+          </FieldSelect>
         </Field>
-      </Form>
-      <ThumbnailColumn>
-        <ThumbnailTitle>{t('world_detail.details.thumbnail')}</ThumbnailTitle>
-        <ThumbnailHint>{t('world_detail.details.thumbnail_hint')}</ThumbnailHint>
-        <ThumbnailBox>
+      </div>
+      <div className={styles.thumbnailColumn}>
+        <h3 className={styles.thumbnailTitle}>{t('world_detail.details.thumbnail')}</h3>
+        <p className={styles.thumbnailHint}>{t('world_detail.details.thumbnail_hint')}</p>
+        <div className={styles.thumbnailBox}>
           {thumbnail ? (
             <img
               src={thumbnail}
               alt={t('world_detail.details.thumbnail')}
             />
           ) : (
-            <NoImage>{t('world_detail.details.no_image')}</NoImage>
+            <div className={styles.noImage}>{t('world_detail.details.no_image')}</div>
           )}
-          <EditButton
-            disableFocusRipple
+          <IconButton
+            className={styles.editButton}
             aria-label={t('world_detail.details.change_thumbnail')}
             onClick={() => fileInput.current?.click()}
           >
             <EditIcon />
-          </EditButton>
+          </IconButton>
           <input
             ref={fileInput}
             type="file"
@@ -184,9 +146,9 @@ function DetailsForm({ worldName, saved }: { worldName: string; saved: WorldSett
             hidden
             onChange={pickThumbnail}
           />
-        </ThumbnailBox>
-      </ThumbnailColumn>
-    </Columns>
+        </div>
+      </div>
+    </div>
   );
 }
 

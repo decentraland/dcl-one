@@ -1,5 +1,5 @@
 import { createRequestHandler, data, redirect, RouterContextProvider, type ServerBuild } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { markPublicResponse, pageSid, requestSession, sessionMiddleware, sidLoader } from "./session";
 
@@ -75,7 +75,7 @@ function app(seen: Seen) {
           throw new Error("boom");
         },
       }),
-      // A resource route with a publicly cacheable reply, like internal/dapps-flags.
+      // A resource route with a publicly cacheable reply, like internal/feature-flags.
       "routes/asset": route("routes/asset", "root", "asset", {
         default: undefined,
         loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=60" } }),
@@ -136,182 +136,351 @@ const sidCookies = (response: Response) => response.headers.getSetCookie().filte
 const cookieSid = (cookie: string) => decodeURIComponent(cookie.split(";")[0]!.slice("sid=".length));
 
 describe("session middleware, through the request handler", () => {
-  it("gives a first visit one sid: the root, the page and the single cookie agree", async () => {
-    const seen: Seen = {};
+  let seen: Seen;
+  let response: Response;
 
-    const response = await app(seen)(get("/page"));
-
-    expect(response.status).toBe(200);
-    expect(seen.root).toBeTruthy();
-    expect(seen.page).toBe(seen.root);
-    const cookies = sidCookies(response);
-    expect(cookies).toHaveLength(1);
-    expect(cookieSid(cookies[0]!)).toBe(seen.root);
-    expect(cookies[0]).toContain("HttpOnly");
-    expect(cookies[0]).toContain("Max-Age=31536000");
+  beforeEach(() => {
+    seen = {};
   });
 
-  it("keeps an existing session and sets no cookie", async () => {
-    const seen: Seen = {};
+  describe("when a first visit asks for a page", () => {
+    let cookies: string[];
 
-    const response = await app(seen)(get("/page", "sid=existing-session"));
+    beforeEach(async () => {
+      response = await app(seen)(get("/page"));
+      cookies = sidCookies(response);
+    });
 
-    expect(seen.root).toBe("existing-session");
-    expect(seen.page).toBe("existing-session");
-    expect(sidCookies(response)).toEqual([]);
+    it("should answer the page", () => {
+      expect(response.status).toBe(200);
+    });
+
+    it("should mint a sid in the root", () => {
+      expect(seen.root).toBeTruthy();
+    });
+
+    it("should give the page the root's sid", () => {
+      expect(seen.page).toBe(seen.root);
+    });
+
+    it("should set a single sid cookie with the root's sid", () => {
+      expect(cookies).toHaveLength(1);
+      expect(cookieSid(cookies[0]!)).toBe(seen.root);
+    });
+
+    it("should make the cookie HttpOnly", () => {
+      expect(cookies[0]).toContain("HttpOnly");
+    });
+
+    it("should keep the cookie for a year", () => {
+      expect(cookies[0]).toContain("Max-Age=31536000");
+    });
   });
 
-  it("treats an empty sid cookie as no session and mints one", async () => {
-    const seen: Seen = {};
+  describe("when the visit carries an existing session", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/page", "sid=existing-session"));
+    });
 
-    const response = await app(seen)(get("/page", "sid="));
+    it("should keep the session in the root", () => {
+      expect(seen.root).toBe("existing-session");
+    });
 
-    expect(seen.root).toBeTruthy();
-    expect(seen.page).toBe(seen.root);
-    expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    it("should keep the session in the page", () => {
+      expect(seen.page).toBe("existing-session");
+    });
+
+    it("should set no cookie", () => {
+      expect(sidCookies(response)).toEqual([]);
+    });
   });
 
-  it("serves a client navigation's data request with the session the document set", async () => {
-    const first: Seen = {};
-    const document = await app(first)(get("/page"));
-    const sid = cookieSid(sidCookies(document)[0]!);
+  describe("when the sid cookie is empty", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/page", "sid="));
+    });
 
-    const later: Seen = {};
-    const navigation = await app(later)(get("/page.data", `sid=${encodeURIComponent(sid)}`));
+    it("should mint a sid in the root", () => {
+      expect(seen.root).toBeTruthy();
+    });
 
-    expect(navigation.status).toBe(200);
-    expect(later.page).toBe(sid);
-    expect(sidCookies(navigation)).toEqual([]);
+    it("should give the page the root's sid", () => {
+      expect(seen.page).toBe(seen.root);
+    });
+
+    it("should set the minted sid's cookie", () => {
+      expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    });
   });
 
-  it("sets the one cookie on a first visit that a loader answers with an error status", async () => {
-    const seen: Seen = {};
+  describe("when a client navigation's data request follows the document", () => {
+    let sid: string;
+    let navigation: Response;
 
-    const response = await app(seen)(get("/fail"));
+    beforeEach(async () => {
+      const document = await app(seen)(get("/page"));
+      sid = cookieSid(sidCookies(document)[0]!);
+      seen = {};
+      navigation = await app(seen)(get("/page.data", `sid=${encodeURIComponent(sid)}`));
+    });
 
-    expect(response.status).toBe(503);
-    expect(seen.page).toBe(seen.root);
-    expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    it("should answer the data request", () => {
+      expect(navigation.status).toBe(200);
+    });
+
+    it("should serve it with the session the document set", () => {
+      expect(seen.page).toBe(sid);
+    });
+
+    it("should set no cookie", () => {
+      expect(sidCookies(navigation)).toEqual([]);
+    });
   });
 
-  it("sets the one cookie on a first visit that a loader redirects", async () => {
-    const seen: Seen = {};
+  describe("when a loader answers a first visit with an error status", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/fail"));
+    });
 
-    const response = await app(seen)(get("/move"));
+    it("should answer the error status", () => {
+      expect(response.status).toBe(503);
+    });
 
-    expect(response.status).toBe(302);
-    expect(response.headers.get("Location")).toBe("/page");
-    expect(seen.page).toBe(seen.root);
-    expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    it("should give the page the root's sid", () => {
+      expect(seen.page).toBe(seen.root);
+    });
+
+    it("should set the one cookie", () => {
+      expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    });
   });
 
-  it("still answers, with its cookie, when a loader crashes", async () => {
-    const seen: Seen = {};
+  describe("when a loader redirects a first visit", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/move"));
+    });
 
-    const response = await app(seen)(get("/crash"));
+    it("should answer the redirect", () => {
+      expect(response.status).toBe(302);
+      expect(response.headers.get("Location")).toBe("/page");
+    });
 
-    expect(response.status).toBe(500);
-    expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    it("should give the page the root's sid", () => {
+      expect(seen.page).toBe(seen.root);
+    });
+
+    it("should set the one cookie", () => {
+      expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    });
   });
 
-  it("gives two interleaved first visits different sessions", async () => {
-    const a: Seen = {};
-    const b: Seen = {};
+  describe("when a loader crashes", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/crash"));
+    });
 
-    const [ra, rb] = await Promise.all([app(a)(get("/page")), app(b)(get("/page"))]);
+    it("should still answer", () => {
+      expect(response.status).toBe(500);
+    });
 
-    expect(a.root).not.toBe(b.root);
-    expect(cookieSid(sidCookies(ra)[0]!)).toBe(a.root);
-    expect(cookieSid(sidCookies(rb)[0]!)).toBe(b.root);
+    it("should set the cookie", () => {
+      expect(sidCookies(response).map(cookieSid)).toEqual([seen.root]);
+    });
+  });
+
+  describe("when two first visits interleave", () => {
+    let other: Seen;
+    let ra: Response;
+    let rb: Response;
+
+    beforeEach(async () => {
+      other = {};
+      [ra, rb] = await Promise.all([app(seen)(get("/page")), app(other)(get("/page"))]);
+    });
+
+    it("should give them different sessions", () => {
+      expect(seen.root).not.toBe(other.root);
+    });
+
+    it("should set each visit's own sid cookie", () => {
+      expect(cookieSid(sidCookies(ra)[0]!)).toBe(seen.root);
+      expect(cookieSid(sidCookies(rb)[0]!)).toBe(other.root);
+    });
   });
 });
 
 describe("session middleware and shared caches", () => {
-  it("sets no cookie on a publicly cacheable resource reply", async () => {
-    const response = await app({})(get("/asset"));
+  let seen: Seen;
+  let response: Response;
 
-    expect(response.status).toBe(200);
-    expect(sidCookies(response)).toEqual([]);
+  beforeEach(() => {
+    seen = {};
   });
 
-  it("sets no cookie on a reply only a shared cache may store (s-maxage)", async () => {
-    const response = await app({})(get("/shared"));
+  describe("when a resource reply is publicly cacheable", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/asset"));
+    });
 
-    expect(response.status).toBe(200);
-    expect(sidCookies(response)).toEqual([]);
+    it("should answer it", () => {
+      expect(response.status).toBe(200);
+    });
+
+    it("should set no cookie", () => {
+      expect(sidCookies(response)).toEqual([]);
+    });
   });
 
-  it("gives a public document route neither a session id in root data nor a cookie", async () => {
-    const seen: Seen = {};
+  describe("when only a shared cache may store the reply (s-maxage)", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/shared"));
+    });
 
-    const response = await app(seen)(get("/docs"));
+    it("should answer it", () => {
+      expect(response.status).toBe(200);
+    });
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toContain("public");
-    expect(seen.root).toBeNull();
-    expect(sidCookies(response)).toEqual([]);
+    it("should set no cookie", () => {
+      expect(sidCookies(response)).toEqual([]);
+    });
   });
 
-  it("still sets the cookie when a child middleware answers before the loaders", async () => {
-    const response = await app({})(get("/early"));
+  describe("when the route is a public document", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/docs"));
+    });
 
-    expect(await response.text()).toBe("early");
-    expect(sidCookies(response)).toHaveLength(1);
+    it("should answer it as publicly cacheable", () => {
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Cache-Control")).toContain("public");
+    });
+
+    it("should give the root data no session id", () => {
+      expect(seen.root).toBeNull();
+    });
+
+    it("should set no cookie", () => {
+      expect(sidCookies(response)).toEqual([]);
+    });
   });
 
-  it("sets the cookie on a reply whose headers cannot change, by copying it", async () => {
-    const response = await app({})(get("/frozen"));
+  describe("when a child middleware answers before the loaders", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/early"));
+    });
 
-    expect(response.status).toBe(302);
-    expect(sidCookies(response)).toHaveLength(1);
+    it("should answer the middleware's reply", async () => {
+      expect(await response.text()).toBe("early");
+    });
+
+    it("should still set the cookie", () => {
+      expect(sidCookies(response)).toHaveLength(1);
+    });
+  });
+
+  describe("when the reply's headers cannot change", () => {
+    beforeEach(async () => {
+      response = await app(seen)(get("/frozen"));
+    });
+
+    it("should answer the reply", () => {
+      expect(response.status).toBe(302);
+    });
+
+    it("should set the cookie by copying the reply", () => {
+      expect(sidCookies(response)).toHaveLength(1);
+    });
   });
 });
 
 describe("session middleware and the shared cookie domain", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("moves a split sid cookie to the shared domain once", async () => {
-    vi.stubEnv("SID_COOKIE_DOMAIN", "sites.test");
-    const seen: Seen = {};
+  describe("when the sid cookie is split across domains", () => {
+    let seen: Seen;
+    let cookies: string[];
 
-    const response = await app(seen)(get("/page", "sid=first; sid=second"));
+    beforeEach(async () => {
+      vi.stubEnv("SID_COOKIE_DOMAIN", "sites.test");
+      seen = {};
+      cookies = sidCookies(await app(seen)(get("/page", "sid=first; sid=second")));
+    });
 
-    const cookies = sidCookies(response);
-    expect(cookies).toHaveLength(2);
-    expect(cookies[0]).toContain(`sid=${seen.root}`);
-    expect(cookies[0]).toContain("Domain=sites.test");
-    expect(cookies[1]).toContain("Max-Age=0");
+    it("should set two cookies", () => {
+      expect(cookies).toHaveLength(2);
+    });
+
+    it("should move the root's sid to the shared domain once", () => {
+      expect(cookies[0]).toContain(`sid=${seen.root}`);
+      expect(cookies[0]).toContain("Domain=sites.test");
+    });
+
+    it("should expire the host-only cookie", () => {
+      expect(cookies[1]).toContain("Max-Age=0");
+    });
   });
 });
 
 describe("sign-in and sign-out", () => {
-  it("keep the session id; only the wallet the page reads changes", async () => {
-    const wallet = `0x${"a".repeat(40)}`;
-    const signedIn: Seen = {};
-    const signedOut: Seen = {};
+  const wallet = `0x${"a".repeat(40)}`;
+  let signedIn: Seen;
+  let signedOut: Seen;
+  let rin: Response;
+  let rout: Response;
 
-    const rin = await app(signedIn)(get("/page", `sid=s1; dcl_wallet_verified=${wallet}`));
-    const rout = await app(signedOut)(get("/page", "sid=s1"));
+  beforeEach(async () => {
+    signedIn = {};
+    signedOut = {};
+    rin = await app(signedIn)(get("/page", `sid=s1; dcl_wallet_verified=${wallet}`));
+    rout = await app(signedOut)(get("/page", "sid=s1"));
+  });
 
-    expect(signedIn).toMatchObject({ root: "s1", page: "s1", wallet });
-    expect(signedOut).toMatchObject({ root: "s1", page: "s1", wallet: null });
+  describe("when the member is signed in", () => {
+    it("should keep the session id and read the wallet", () => {
+      expect(signedIn).toMatchObject({ root: "s1", page: "s1", wallet });
+    });
+  });
+
+  describe("when the member is signed out", () => {
+    it("should keep the session id and read no wallet", () => {
+      expect(signedOut).toMatchObject({ root: "s1", page: "s1", wallet: null });
+    });
+  });
+
+  it("should set no cookie on either", () => {
     expect([...sidCookies(rin), ...sidCookies(rout)]).toEqual([]);
   });
 });
 
 describe("sidLoader without the middleware", () => {
-  it("mints and sets the cookie itself, as before, when called on its own", () => {
-    const session = sidLoader(get("/page"), new RouterContextProvider());
-    const wrapped = session.wrap({}) as unknown as { init?: { headers?: Headers } };
+  describe("when called on its own", () => {
+    let session: ReturnType<typeof sidLoader>;
+    let wrapped: { init?: { headers?: Headers } };
 
-    expect(session.created).toBe(true);
-    expect(new Headers(wrapped.init?.headers).getSetCookie().map(cookieSid)).toEqual([session.sid]);
+    beforeEach(() => {
+      session = sidLoader(get("/page"), new RouterContextProvider());
+      wrapped = session.wrap({}) as unknown as { init?: { headers?: Headers } };
+    });
+
+    it("should mint the session", () => {
+      expect(session.created).toBe(true);
+    });
+
+    it("should set the cookie itself, as before", () => {
+      expect(new Headers(wrapped.init?.headers).getSetCookie().map(cookieSid)).toEqual([session.sid]);
+    });
   });
 
-  it("refuses a route marked public, so no sid reaches shared page data", () => {
-    const context = new RouterContextProvider();
-    markPublicResponse(context);
+  describe("when the route is marked public", () => {
+    let context: RouterContextProvider;
 
-    expect(() => sidLoader(get("/docs"), context)).toThrow(/publicly cacheable/);
+    beforeEach(() => {
+      context = new RouterContextProvider();
+      markPublicResponse(context);
+    });
+
+    it("should refuse, so no sid reaches shared page data", () => {
+      expect(() => sidLoader(get("/docs"), context)).toThrow(/publicly cacheable/);
+    });
   });
 });

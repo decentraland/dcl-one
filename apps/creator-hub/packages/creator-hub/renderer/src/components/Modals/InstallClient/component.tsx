@@ -1,79 +1,110 @@
-import { useCallback, useMemo } from 'react';
-import { useAdvancedUserAgentData } from '@dcl/hooks';
-import {
-  DownloadButtonAppleIcon,
-  DownloadButtonWindowsIcon,
-} from 'decentraland-ui2/dist/components/DownloadButton/DownloadButton.styled';
-import { Box, OperativeSystem, Typography } from 'decentraland-ui2';
+import { useCallback, useEffect, useId } from 'react';
+import { AppleIcon } from '@ui/atoms/BrandIcons';
+import Text from '@ui/atoms/Text';
 import { actions } from '/@/modules/store/editor';
+import { analytics } from '#preload';
 import { useDispatch } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import LogoDCLSVG from '/assets/images/logo-dcl.svg';
 import type { Props } from './types';
 
 import './styles.css';
 
-export function InstallClient({ open, onClose }: Props) {
-  const [_, agent] = useAdvancedUserAgentData();
-  const dispatch = useDispatch();
+const MACOS = 'macOS';
 
-  const handleDownload = useCallback(async () => {
-    if (!agent) return;
+function isMacOS() {
+  const { userAgentData } = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = userAgentData?.platform;
+  return platform ? platform === MACOS : navigator.userAgent.includes('Macintosh');
+}
+
+const windowsIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    width={20}
+    height={20}
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path
+      fill="#fff"
+      d="M3,12V6.75L9,5.43V11.91L3,12M20,3V11.75L10,11.9V5.21L20,3M3,13L9,13.09V19.9L3,18.75V13M20,13.25V22L10,20.09V13.1L20,13.25Z"
+    />
+  </svg>
+);
+
+export function InstallClient({ open, onClose }: Props) {
+  const dispatch = useDispatch();
+  const titleId = useId();
+
+  useEffect(() => {
+    if (open) void analytics.track('Install Client Prompt', { action: 'shown' });
+  }, [open]);
+
+  const handleDownload = useCallback(() => {
+    void analytics.track('Install Client Prompt', { action: 'download' });
     dispatch(actions.openExternalURL('https://decentraland.org/download/'));
     onClose();
-  }, [agent, onClose]);
-  const { icon, text } = useMemo(() => {
-    if (!agent) {
-      return { text: t('modal.install_client.download'), icon: <div /> };
-    }
-    if (agent.os.name === OperativeSystem.MACOS) {
-      return { icon: <DownloadButtonAppleIcon />, text: t('modal.install_client.download_macos') };
-    }
-    return { icon: <DownloadButtonWindowsIcon />, text: t('modal.install_client.download_win') };
-  }, [agent]);
+  }, [dispatch, onClose]);
+
+  const handleDismiss = useCallback(() => {
+    void analytics.track('Install Client Prompt', { action: 'dismiss' });
+    onClose();
+  }, [onClose]);
+  const { icon, text } = isMacOS()
+    ? {
+        icon: (
+          <AppleIcon
+            size={14}
+            className="AppleIcon"
+          />
+        ),
+        text: t('modal.install_client.download_macos'),
+      }
+    : { icon: windowsIcon, text: t('modal.install_client.download_win') };
 
   return (
     <Modal
       className="InstallClientModal"
-      data-testid="install-client-modal"
+      aria-labelledby={titleId}
       open={open}
       size="tiny"
     >
-      <Box className="InstallClientBox">
-        <Box className="LogoContainer">
+      <div className="InstallClientBox">
+        <div className="LogoContainer">
           <img
             src={LogoDCLSVG}
             alt="Decentraland Logo"
             className="Logo"
           />
-        </Box>
-        <Typography
+        </div>
+        <Text
           variant="h5"
+          id={titleId}
           className="Title"
         >
           {t('modal.install_client.title')}
-        </Typography>
-        <Box className="Actions">
+        </Text>
+        <div className="Actions">
           <Button
-            variant="contained"
-            color="primary"
+            className="hub-button hub-button--primary"
             onClick={handleDownload}
             startIcon={icon}
           >
             {text}
           </Button>
           <Button
-            variant="outlined"
-            color="secondary"
+            variant="outline"
+            className="hub-button hub-button--secondary hub-button--outlined"
             fullWidth
-            onClick={onClose}
+            onClick={handleDismiss}
           >
             {t('modal.install_client.cancel')}
           </Button>
-        </Box>
-      </Box>
+        </div>
+      </div>
     </Modal>
   );
 }

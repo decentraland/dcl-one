@@ -57,17 +57,20 @@ mod lookup;
 #[cfg(test)]
 use lookup::listing_key_candidate;
 pub use lookup::{
-    PlaceInfo, PlaceLookup, place_from_metadata, realm_name_from_metadata,
-    resolve_listing_place_id, resolve_world_scene_id, try_load_place_info,
+    NO_ADMINS, PlaceInfo, PlaceLookup, realm_name_from_metadata, resolve_listing_place_id,
+    resolve_world_scene_id, try_load_place_info,
 };
-pub(crate) use lookup::{meta_str, participant_room, resolve_adapter_room};
+pub(crate) use lookup::{
+    meta_str, participant_room, require_genesis_deployment, resolve_adapter_room, signed_realm_url,
+};
 #[path = "scene_policy.rs"]
 mod policy;
 pub(crate) use policy::try_get_lease_holders_for_parcels;
 pub use policy::{
-    SceneCaches, ensure_target_not_protected, get_extra_addresses, get_lease_holders_for_parcels,
-    has_world_access_permission, holds_extended_permission, names_for,
-    scene_owner_or_admin_decision, try_get_extra_addresses,
+    SceneCaches, WorldAccess, ensure_target_not_protected, get_extra_addresses,
+    get_lease_holders_for_parcels, has_world_access_permission, holds_extended_permission,
+    names_for, scene_manager_decision, scene_owner_or_admin_decision, try_get_extra_addresses,
+    world_access,
 };
 #[path = "scene_effects.rs"]
 mod effects;
@@ -252,61 +255,125 @@ mod tests {
         let flat = RoomContext::from_metadata(
             &json!({ "realmName": "main", "sceneId": "bafkreiabc" }),
             "place-1",
+            "main",
         );
         assert_eq!(plan(&flat), RoomPlan::Scene("scene:main:bafkreiabc".into()));
         let nested = RoomContext::from_metadata(
             &json!({ "realm": { "serverName": "main" }, "sceneId": "bafkreiabc" }),
             "place-1",
+            "main",
         );
         assert_eq!(
             plan(&nested),
             RoomPlan::Scene("scene:main:bafkreiabc".into())
         );
         assert_eq!(
-            plan(&RoomContext::from_metadata(&json!({}), "place-1")),
+            plan(&RoomContext::from_metadata(&json!({}), "place-1", "main")),
             RoomPlan::FromPlace
         );
         let with_parcel = RoomContext::from_metadata(
             &json!({ "realmName": "main", "sceneId": "bafkreiabc", "parcel": "10,20" }),
             "place-1",
+            "main",
         );
         assert_eq!(with_parcel.parcel.as_deref(), Some("10,20"));
     }
 
     #[test]
-    fn listing_key_and_place_from_metadata() {
+    fn listing_key_from_metadata() {
         assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth", "sceneId": "bafkreiabc" }))
-                .as_deref(),
+            listing_key_candidate(
+                &json!({ "realmName": "foo.dcl.eth", "sceneId": "bafkreiabc" }),
+                "main"
+            )
+            .as_deref(),
             Some("bafkreiabc")
         );
         assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth", "sceneId": "foo.dcl.eth" }))
+            listing_key_candidate(
+                &json!({ "realmName": "foo.dcl.eth", "sceneId": "foo.dcl.eth" }),
+                "main"
+            )
+            .as_deref(),
+            Some("foo.dcl.eth")
+        );
+        assert_eq!(
+            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth" }), "main").as_deref(),
+            Some("foo.dcl.eth")
+        );
+        assert_eq!(
+            listing_key_candidate(&json!({ "realm": { "serverName": "bar.eth" } }), "main")
                 .as_deref(),
-            Some("foo.dcl.eth")
-        );
-        assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth" })).as_deref(),
-            Some("foo.dcl.eth")
-        );
-        assert_eq!(
-            listing_key_candidate(&json!({ "realm": { "serverName": "bar.eth" } })).as_deref(),
             Some("bar.eth")
         );
         assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "main", "sceneId": "bafkreixyz" }))
-                .as_deref(),
+            listing_key_candidate(
+                &json!({ "realmName": "main", "sceneId": "bafkreixyz" }),
+                "main"
+            )
+            .as_deref(),
             Some("bafkreixyz")
         );
-        assert_eq!(listing_key_candidate(&json!({})), None);
-        assert_eq!(listing_key_candidate(&json!({ "realmName": "main" })), None);
+        assert_eq!(listing_key_candidate(&json!({}), "main"), None);
         assert_eq!(
-            place_from_metadata(&json!({ "realmName": "foo.dcl.eth", "sceneId": "x" })).as_deref(),
+            listing_key_candidate(&json!({ "realmName": "main" }), "main"),
+            None
+        );
+    }
+
+    /// A world published here signs its stripped `/about` realm name (or an
+    /// override) beside the realm URL `<host>/world/<name>`: every reading of
+    /// the signed realm takes the world; a realm URL without one keeps Genesis.
+    #[test]
+    fn a_stripped_realm_name_signed_beside_a_world_realm_url_is_that_world() {
+        let stripped = json!({
+            "realm": { "serverName": "foo", "hostname": "node.example/world/foo.dcl.eth" },
+            "sceneId": "bafkreiabc",
+            "parcel": "0,0",
+        });
+        assert_eq!(
+            realm_name_from_metadata(&stripped, "main").as_deref(),
             Some("foo.dcl.eth")
         );
         assert_eq!(
-            place_from_metadata(&json!({ "realmName": "main", "sceneId": "x" })).as_deref(),
-            Some("x")
+            listing_key_candidate(&stripped, "main").as_deref(),
+            Some("bafkreiabc")
+        );
+        assert_eq!(
+            plan(&RoomContext::from_metadata(&stripped, "place-1", "main")),
+            RoomPlan::World {
+                world: "foo.dcl.eth".into(),
+                scene_id: Some("bafkreiabc".into()),
+            }
+        );
+        let unity = json!({
+            "realm": { "serverName": "foo", "hostname": "worlds-content-server.node.example" },
+        });
+        assert_eq!(
+            realm_name_from_metadata(&unity, "main").as_deref(),
+            Some("foo.dcl.eth"),
+            "the Unity client signs the worlds host alone"
+        );
+        let genesis = json!({
+            "realm": { "serverName": "main", "hostname": "node.example" },
+            "sceneId": "bafkreiabc",
+        });
+        assert_eq!(
+            realm_name_from_metadata(&genesis, "main").as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            plan(&RoomContext::from_metadata(&genesis, "place-1", "main")),
+            RoomPlan::Scene("scene:main:bafkreiabc".into())
+        );
+        let signed_world = json!({
+            "realmName": "bar.dcl.eth",
+            "realm": { "serverName": "bar.dcl.eth", "hostname": "node.example/world/foo.dcl.eth" },
+        });
+        assert_eq!(
+            realm_name_from_metadata(&signed_world, "main").as_deref(),
+            Some("bar.dcl.eth"),
+            "a signed world name is kept as signed"
         );
     }
 
@@ -368,5 +435,62 @@ mod tests {
             BTreeSet::from(["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()])
         );
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// Only entries in force today count: expired, not yet started and unreadable dates never
+    /// do, and `onlyDev` entries only when the node takes development entries. A malformed entry
+    /// is skipped without hiding the others.
+    #[tokio::test]
+    async fn lease_holders_skip_entries_out_of_their_dates_and_dev_only_entries() {
+        let stub = axum::Router::new().route(
+            "/authorizations.json",
+            axum::routing::get(|| async {
+                axum::Json(json!([
+                    { "addresses": ["0x1111111111111111111111111111111111111111"], "plots": ["1,2"], "startDate": "2000-01-01", "endDate": "2999-01-01" },
+                    { "addresses": ["0x2222222222222222222222222222222222222222"], "plots": ["1,2"], "endDate": "2001-01-01" },
+                    { "addresses": ["0x3333333333333333333333333333333333333333"], "plots": ["1,2"], "startDate": "2999-01-01" },
+                    { "addresses": ["0x4444444444444444444444444444444444444444"], "plots": ["1,2"], "onlyDev": true },
+                    { "addresses": ["0x5555555555555555555555555555555555555555"], "plots": ["1,2"], "endDate": "soon" },
+                    { "addresses": ["0x6666666666666666666666666666666666666666"], "plots": ["1,2"], "onlyDev": "true" },
+                    { "addresses": ["0x7777777777777777777777777777777777777777"], "plots": ["1,2"], "endDate": 20240101 },
+                    "not an entry"
+                ]))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+        let state_with = |dev_entries: bool| {
+            let settings = crate::gatekeeper::Settings {
+                lease_authorizations_url: Some(format!("http://{addr}/authorizations.json")),
+                lease_dev_entries: dev_entries,
+                ..crate::gatekeeper::Settings::for_tests()
+            };
+            let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects");
+            CommsState::new(
+                pool,
+                crate::http::Outbound::for_tests(),
+                settings,
+                None,
+                None,
+                Arc::new(StubPolicy::default()),
+                Arc::new(StubScenes::default()),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+            )
+        };
+        let parcels = vec!["1,2".to_string()];
+        assert_eq!(
+            get_lease_holders_for_parcels(&state_with(false), &parcels).await,
+            BTreeSet::from(["0x1111111111111111111111111111111111111111".to_string()])
+        );
+        assert_eq!(
+            get_lease_holders_for_parcels(&state_with(true), &parcels).await,
+            BTreeSet::from([
+                "0x1111111111111111111111111111111111111111".to_string(),
+                "0x4444444444444444444444444444444444444444".to_string(),
+            ])
+        );
     }
 }

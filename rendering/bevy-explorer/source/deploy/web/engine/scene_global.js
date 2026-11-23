@@ -134,7 +134,7 @@ export function scrubSceneGlobal() {
   // two scenes agreeing on a bucket name would have a shared filesystem.
   deleteFromPrototypeChain(self.navigator, "storage");
   deleteFromPrototypeChain(self.navigator, "storageBuckets");
-  // the page's service worker registration (and its cache routes) is no scene's business
+  // Scenes cannot access the page's service worker registration.
   deleteFromPrototypeChain(self.navigator, "serviceWorker");
   // the scene server's one-per-scene lock (headless.js) is held by name, which a scene could take
   deleteFromPrototypeChain(self.navigator, "locks");

@@ -22,13 +22,16 @@
   border: 1px solid white;
 }
 
-.SceneList .projects-menu .actions .action-button.MuiButton-textSecondary,
-.SceneList .projects-menu .actions .action-button.MuiButton-textSecondary:hover {
+.SceneList .projects-menu .actions .action-button.hub-button--secondary,
+.SceneList
+  .projects-menu
+  .actions
+  .action-button.hub-button--secondary:hover {
   background-color: transparent !important;
 }
 
-.SceneList .projects-menu .actions .action-button.MuiButton-textPrimary,
-.SceneList .projects-menu .actions .action-button.MuiButton-textPrimary:hover {
+.SceneList .projects-menu .actions .action-button.hub-button--primary,
+.SceneList .projects-menu .actions .action-button.hub-button--primary:hover {
   background-color: white !important;
   color: black !important;
 }
@@ -92,7 +95,7 @@
   background-image: url(./images/empty-state-button-hover.svg);
 }
 
-.SceneList .no-scenes-title {
+.SceneList .no-scenes-card .no-scenes-title {
   font-size: 24px;
 }
 

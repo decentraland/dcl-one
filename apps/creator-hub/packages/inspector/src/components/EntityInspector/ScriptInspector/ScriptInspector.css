@@ -22,7 +22,7 @@
   color: var(--text-color);
 }
 
-.ScriptInspector .CodeButton:hover {
+.ScriptInspector .CodeButton:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
 }
 

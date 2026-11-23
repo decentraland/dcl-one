@@ -13,15 +13,15 @@ fn connection_limiter_precedes_admission_and_rolls_back_refused_pre_auth() {
     assert!(!srv.peers.contains_key(&4096));
     srv.ip_limiter_options.whitelist =
         crate::pulse::hardening::IpWhitelist::parse("192.0.2.1").unwrap();
-    srv.pre_auth_enet = PreAuthAdmission::new(1, 1);
-    srv.pre_auth_enet.try_admit(1, "192.0.2.1");
+    srv.pre_auth = PreAuthAdmission::new(1, 1);
+    srv.pre_auth.try_admit(1, "192.0.2.1");
     assert_eq!(
         srv.connect_pending(2, "192.0.2.1".into(), 0),
         Err(DisconnectReason::PreAuthIpLimitExhausted)
     );
     srv.ip_limiter_options.whitelist = crate::pulse::hardening::IpWhitelist::new();
     srv.ip_limiter.release(1);
-    srv.pre_auth_enet.release_on_disconnect(1);
+    srv.pre_auth.release_on_disconnect(1);
     assert_eq!(srv.connect_pending(3, "192.0.2.1".into(), 0), Ok(()));
 }
 
@@ -992,7 +992,72 @@ async fn duplicate_committed_handshake_replies_without_reapplying_admission() {
 }
 
 #[tokio::test]
-async fn future_dated_signature_is_consumed_before_reply_and_across_restart() {
+async fn handshake_signed_ahead_of_the_server_clock_is_admitted_once_inside_the_window() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let skew = crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS;
+    let mut srv = PulseServer::with_config(4, 2, &[50], false);
+    for peer in 1..=4 {
+        srv.peers
+            .insert(peer, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    }
+    // More than the window ahead: refused with a retryable reply, before any replay state.
+    match srv.dispatch(1, channel::RELIABLE, &bytes, timestamp - skew - 1, 0) {
+        Action::Reply(ServerMessage {
+            message: Some(server_message::Message::Handshake(h)),
+        }) => assert!(!h.success),
+        other => panic!("a handshake signed beyond the window should be refused, got {other:?}"),
+    }
+    assert_eq!(
+        srv.peers[&1].connection_state,
+        PeerConnectionState::PendingAuth
+    );
+    // A client clock 310 ms fast, as measured against a deployed Pulse.
+    match srv.dispatch(2, channel::RELIABLE, &bytes, timestamp - 310, 0) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("a handshake signed 310 ms ahead should authenticate, got {other:?}"),
+    }
+    // The bytes stay used for the rest of their window.
+    for (peer, now_ms) in [(3, timestamp), (4, timestamp + skew)] {
+        assert!(matches!(
+            srv.dispatch(peer, channel::RELIABLE, &bytes, now_ms, 0),
+            Action::Reject {
+                reason: DisconnectReason::HandshakeReplayRejected,
+                ..
+            }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn replay_refusal_of_a_far_ahead_signature_is_retryable_and_names_the_clock() {
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let mut srv = PulseServer::with_config(4, 2, &[50], false);
+    // A replay window narrower than the signature's, so the replay policy is what refuses.
+    srv.replay_policy = HandshakeReplayPolicy::new(true, 1_000, 4);
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    match srv.dispatch(1, channel::RELIABLE, &bytes, timestamp - 1_001, 0) {
+        Action::Reply(ServerMessage {
+            message: Some(server_message::Message::Handshake(h)),
+        }) => {
+            assert!(!h.success);
+            assert_eq!(
+                h.error.as_deref(),
+                Some(
+                    "timestamp is too far ahead of this server; synchronize the clock and sign a new handshake"
+                )
+            );
+        }
+        other => panic!("expected a failed handshake reply, got {other:?}"),
+    }
+    assert_eq!(
+        srv.peers[&1].connection_state,
+        PeerConnectionState::PendingAuth
+    );
+}
+
+#[tokio::test]
+async fn clock_ahead_signature_is_consumed_before_reply_and_across_restart() {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
@@ -1015,14 +1080,10 @@ async fn future_dated_signature_is_consumed_before_reply_and_across_restart() {
         server
             .peers
             .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+        // Signed a whole window ahead of this server's clock: admitted, and journaled first.
         assert!(matches!(
             server.dispatch(1, channel::RELIABLE, &bytes, earliest, 0),
-            Action::Reply(ServerMessage {
-                message: Some(server_message::Message::Handshake(HandshakeResponse {
-                    success: false,
-                    ..
-                }))
-            })
+            Action::Authenticated { .. }
         ));
     }
 
@@ -1936,59 +1997,212 @@ async fn handshake_initial_state_rejects_overlong_realm() {
 }
 
 #[test]
-fn wt_flood_at_budget_does_not_starve_enet_admission() {
-    use crate::pulse::hardening::AdmitResult;
-    let mut srv = PulseServer::new();
+fn pending_auth_budget_is_shared_by_enet_and_webtransport() {
+    let mut server = PulseServer::new();
     let wt_base = ENET_CAPACITY as u32;
+    let half = DEFAULT_PRE_AUTH_BUDGET as u32 / 2;
 
-    for i in 0..DEFAULT_PRE_AUTH_BUDGET_WT as u32 {
-        let peer = wt_base + i;
-        let ip = format!("10.{}.{}.1", i / 256, i % 256);
-        assert_eq!(srv.pre_auth_for(peer).try_admit(peer, &ip), AdmitResult::Ok);
+    for i in 0..half {
+        let ip = format!("192.0.2.{}", i % 256);
+        server.connect_pending(i, ip.clone(), 0).unwrap();
+        server.connect_pending(wt_base + i, ip, 0).unwrap();
     }
-    assert_eq!(srv.pre_auth_wt.in_flight(), DEFAULT_PRE_AUTH_BUDGET_WT);
 
-    let extra = wt_base + DEFAULT_PRE_AUTH_BUDGET_WT as u32;
-    assert_eq!(
-        srv.pre_auth_for(extra).try_admit(extra, "192.0.2.254"),
-        AdmitResult::BudgetExhausted
-    );
-
-    assert_eq!(srv.pre_auth_for(7).try_admit(7, "1.2.3.4"), AdmitResult::Ok);
-    assert_eq!(srv.pre_auth_enet.in_flight(), 1);
+    for peer in [half, wt_base + half] {
+        assert_eq!(
+            server.connect_pending(peer, "198.51.100.1".into(), 0),
+            Err(DisconnectReason::PreAuthBudgetExhausted)
+        );
+    }
+    server.remove_peer_state(wt_base);
+    server
+        .connect_pending(half, "198.51.100.1".into(), 0)
+        .unwrap();
 }
 
 #[test]
-fn pre_auth_release_credits_the_admitting_transport() {
-    use crate::pulse::hardening::AdmitResult;
-    let mut srv = PulseServer::new();
-    let enet = 3u32;
-    let wt = ENET_CAPACITY as u32 + 1;
+fn pending_auth_source_budget_is_shared_with_mapped_ipv4_addresses() {
+    let mut server = PulseServer::new();
+    let wt_base = ENET_CAPACITY as u32;
+    let half = DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP as u32 / 2;
+
+    for i in 0..half {
+        server.connect_pending(i, "192.0.2.1".into(), 0).unwrap();
+        server
+            .connect_pending(wt_base + i, "::ffff:192.0.2.1".into(), 0)
+            .unwrap();
+    }
 
     assert_eq!(
-        srv.pre_auth_for(enet).try_admit(enet, "1.1.1.1"),
-        AdmitResult::Ok
+        server.connect_pending(wt_base + half, "192.0.2.1".into(), 0),
+        Err(DisconnectReason::PreAuthIpLimitExhausted)
     );
-    assert_eq!(
-        srv.pre_auth_for(wt).try_admit(wt, "2.2.2.2"),
-        AdmitResult::Ok
-    );
-    assert_eq!(srv.pre_auth_enet.in_flight(), 1);
-    assert_eq!(srv.pre_auth_wt.in_flight(), 1);
+    server.remove_peer_state(0);
+    server
+        .connect_pending(wt_base + half, "::ffff:192.0.2.1".into(), 0)
+        .unwrap();
+}
 
-    srv.pre_auth_for(wt).release_on_disconnect(wt);
-    assert_eq!(srv.pre_auth_wt.in_flight(), 0);
+#[tokio::test]
+async fn shared_connection_capacity_is_held_until_transport_disconnect() {
+    let mut server = PulseServer::new();
+    let wt_base = ENET_CAPACITY as u32;
+    for peer in (0..wt_base - 1).chain([wt_base]) {
+        // Embedded transports can report no IP. The connection still holds a slot.
+        server.connect_pending(peer, String::new(), 0).unwrap();
+        server.remove_peer_state(peer);
+    }
+
+    let extra = wt_base + 1;
     assert_eq!(
-        srv.pre_auth_enet.in_flight(),
-        1,
-        "enet budget untouched by a WT release"
+        server.connect_pending(extra, String::new(), 0),
+        Err(DisconnectReason::ServerFull)
     );
 
-    srv.pre_auth_for(enet).release_on_promotion(enet);
-    assert_eq!(srv.pre_auth_enet.in_flight(), 0);
+    let host = Host::bind(HostConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        max_peers: 4,
+        channel_limit: 8,
+    })
+    .await
+    .unwrap();
+    let mut transports = Transports::enet_only(host, wt_base);
+    server.on_disconnect(&mut transports, 0).await.unwrap();
+    server.on_disconnect(&mut transports, 0).await.unwrap();
+    server.connect_pending(extra, String::new(), 0).unwrap();
+    assert_eq!(
+        server.connect_pending(wt_base - 1, String::new(), 0),
+        Err(DisconnectReason::ServerFull)
+    );
+}
+
+#[tokio::test]
+async fn shared_capacity_refusal_names_the_webtransport_connection_that_was_refused() {
+    use crate::shared::test_wait::HANG_GUARD;
+
+    async fn next_event(events: &mut tokio::sync::mpsc::UnboundedReceiver<Event>) -> Event {
+        tokio::time::timeout(HANG_GUARD, events.recv())
+            .await
+            .expect("WebTransport lifecycle event timed out")
+            .expect("WebTransport host closed")
+    }
+
+    let wt_base = ENET_CAPACITY as u32;
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let client = web_transport_quinn::ClientBuilder::new()
+        .with_server_certificate_hashes(vec![Sha256::digest(cert.cert.der()).to_vec()])
+        .unwrap();
+    let config = WtConfig {
+        bind_addr: "127.0.0.1:0".parse().unwrap(),
+        cert_pem: cert.cert.pem(),
+        key_pem: cert.signing_key.serialize_pem(),
+        slot_base: wt_base,
+        slot_capacity: 1,
+        max_message_bytes: 4096,
+        max_datagram_bytes: 1200,
+        service_timeout_ms: 1,
+        server_full_reason: DisconnectReason::ServerFull.code(),
+    };
+    let (wt, mut events) = tokio::task::spawn_blocking(move || WtHost::start(config))
+        .await
+        .unwrap()
+        .unwrap();
+    let url = url::Url::parse(&format!("https://{}/", wt.local_addr())).unwrap();
+    let first = tokio::time::timeout(HANG_GUARD, client.connect(url.clone()))
+        .await
+        .unwrap()
+        .unwrap();
+    let Event::Connect {
+        peer,
+        webtransport_connection: Some(first_id),
+        ..
+    } = next_event(&mut events).await
+    else {
+        panic!("expected the first connection");
+    };
+    first.close(0, b"");
+    assert!(matches!(next_event(&mut events).await, Event::Disconnect { peer: id } if id == peer));
+
+    let replacement = tokio::time::timeout(HANG_GUARD, client.connect(url))
+        .await
+        .unwrap()
+        .unwrap();
+    let Event::Connect {
+        peer: reused,
+        webtransport_connection: Some(replacement_id),
+        ..
+    } = next_event(&mut events).await
+    else {
+        panic!("expected the replacement connection");
+    };
+    assert_eq!(peer, reused);
+    assert_ne!(first_id, replacement_id);
+
+    let enet = Host::bind(HostConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        max_peers: 2,
+        channel_limit: 3,
+    })
+    .await
+    .unwrap();
+    let transports = Transports::with_webtransport(enet, wt_base, wt, events);
+    let mut server = PulseServer::new();
+    server.max_admitted_connections = 1;
+    server.connect_pending(0, "127.0.0.1".into(), 0).unwrap();
+    let reason = server
+        .connect_pending(u32::from(reused), "127.0.0.1".into(), 0)
+        .unwrap_err();
+    assert_eq!(reason, DisconnectReason::ServerFull);
+
+    // A different reason on the stale refusal makes misrouting visible on the wire.
+    transports
+        .refuse_webtransport_connection(first_id, DisconnectReason::PreAuthIpLimitExhausted.code());
+    transports.refuse_webtransport_connection(replacement_id, reason.code());
+    let closed = tokio::time::timeout(HANG_GUARD, replacement.closed())
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            closed,
+            web_transport_quinn::SessionError::WebTransportError(
+                web_transport_quinn::WebTransportError::Closed(code, _)
+            ) if code == DisconnectReason::ServerFull.code()
+        ),
+        "{closed:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn run_uses_the_configured_simulation_base_tick() {
+    use std::time::Duration;
+
+    let recorder = crate::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let handle = recorder.handle();
+    let _local_recorder = ::metrics::set_default_local_recorder(&recorder);
+    let server = PulseServer::with_config(4, 2, &[75, 150, 300], false);
+    let running = crate::shared::task::spawn_with(server.run("127.0.0.1:0".parse().unwrap()));
+
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert!(
+        handle
+            .render()
+            .contains("pulse_simulation_tick_duration_seconds_count 1")
+    );
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(
+        handle
+            .render()
+            .contains("pulse_simulation_tick_duration_seconds_count 2")
+    );
+
+    running.abort();
+    assert!(running.await.unwrap_err().is_cancelled());
 }
 
 mod scene_listener;
+mod socket_errors;
 
 #[tokio::test]
 async fn bans_snapshot_evicts_all_matching_peers_and_retains_other_players() {
@@ -2420,13 +2634,14 @@ async fn baseline_input_boundaries_preserve_inclusive_pulse6_freshness() {
         let mut srv = PulseServer::with_config(4, 2, &[50], false);
         srv.peers
             .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
-        // pulse-6 keeps inclusive signature freshness while consuming/refusing future signatures.
+        // pulse-6: one inclusive window of 60 s either side, the replay journal included.
         assert_eq!(
             matches!(
                 srv.dispatch(1, channel::RELIABLE, &bytes, timestamp + offset, 1000),
                 Action::Authenticated { .. }
             ),
-            accepted && offset >= 0
+            accepted,
+            "offset={offset}"
         );
     }
 }
@@ -3065,7 +3280,7 @@ async fn native_aggregate_limit_disconnect_releases_preauth_and_reuses_slot() {
     )
     .unwrap();
     let mut server = PulseServer::new();
-    server.pre_auth_enet = PreAuthAdmission::new(1, 1);
+    server.pre_auth = PreAuthAdmission::new(1, 1);
     server.ip_limiter_options.enabled = true;
     server.ip_limiter_options.max_concurrency = 1;
     client.connect(address, 3, 0).unwrap();
@@ -3086,7 +3301,7 @@ async fn native_aggregate_limit_disconnect_releases_preauth_and_reuses_slot() {
             connected = true;
         }
     }
-    assert_eq!(server.pre_auth_enet.in_flight(), 1);
+    assert_eq!(server.pre_auth.in_flight(), 1);
     assert!(server.ip_limiter.contains_peer(0));
     assert_eq!(
         server.peers[&0].connection_state,
@@ -3135,7 +3350,7 @@ async fn native_aggregate_limit_disconnect_releases_preauth_and_reuses_slot() {
                     .receive_limit(&mut transports, peer as u32, kind)
                     .await
                     .unwrap();
-                assert_eq!(server.pre_auth_enet.in_flight(), 1);
+                assert_eq!(server.pre_auth.in_flight(), 1);
                 assert!(server.ip_limiter.contains_peer(0));
                 limited = true;
             }
@@ -3152,7 +3367,7 @@ async fn native_aggregate_limit_disconnect_releases_preauth_and_reuses_slot() {
             None => {}
         }
     }
-    assert_eq!(server.pre_auth_enet.in_flight(), 0);
+    assert_eq!(server.pre_auth.in_flight(), 0);
     assert!(!server.ip_limiter.contains_peer(0));
     assert!(!server.peers.contains_key(&0));
 
@@ -3171,6 +3386,6 @@ async fn native_aggregate_limit_disconnect_releases_preauth_and_reuses_slot() {
         }
         let _ = client.service().unwrap();
     }
-    assert_eq!(server.pre_auth_enet.in_flight(), 1);
+    assert_eq!(server.pre_auth.in_flight(), 1);
     assert!(server.ip_limiter.contains_peer(0));
 }

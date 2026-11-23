@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { findBrowser, openSession } from "../../../../../library/ui/figma/review/scripts/capture-browser.mjs";
 import StWhatSOn, { type WoDayEvent, type WoLiveCard, type WoUpcomingCard } from "./StWhatSOn";
 
@@ -37,7 +37,7 @@ async function evaluate<T>(expression: string): Promise<T> {
 }
 
 // The Sites surface's outward focus ring (apps/ui3/src/components/surface.css), which the pages run under.
-const surfaceFocus = ":where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid #ff829d; outline-offset: 3px; }";
+const surfaceFocus = "@layer dcl.reset { :where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid #ff829d; outline-offset: 3px; } }";
 
 async function load(width: number, items: WoUpcomingCard[] = upcoming) {
   await session.send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -152,19 +152,27 @@ describe.each([390, 768, 1440])("when What's On renders at %ipx", (width) => {
     expect(ring).toEqual({ visible: true, style: "solid", width: 2, offset: -2, inside: true });
   });
 
-  it("should keep the time on an Upcoming card that has no actions (an event schedule)", async () => {
-    await load(width, upcoming.map((item) => ({ ...item, href: `?mode=edit&id=${item.id}`, actions: false })));
-    const point = await cardCentre(".wo-up .wo-sm");
-    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point!.x, y: point!.y });
-    expect(await evaluate<string>(`getComputedStyle(document.querySelector('[data-probe] [data-role="time-pill"]')).opacity`)).toBe("1");
+  describe("and the Upcoming cards have no actions (an event schedule)", () => {
+    let schedule: WoUpcomingCard[];
+    beforeEach(() => {
+      schedule = upcoming.map((item) => ({ ...item, href: `?mode=edit&id=${item.id}`, actions: false }));
+    });
+
+    it("should keep the time on a hovered Upcoming card", async () => {
+      await load(width, schedule);
+      const point = await cardCentre(".wo-up .wo-sm");
+      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point!.x, y: point!.y });
+      expect(await evaluate<string>(`getComputedStyle(document.querySelector('[data-probe] [data-role="time-pill"]')).opacity`)).toBe("1");
+    });
   });
 
-  it("should neither lift nor glow the Upcoming and All Events cards, as in Figma", async () => {
+  it.each([
+    ["an Upcoming card", ".wo-up .wo-sm"],
+    ["an All Events card", ".wo-all .wo-fc, .wo-all__list .wo-sm"],
+  ])("should neither lift nor glow %s on hover, as in Figma", async (_, selector) => {
     await load(width);
-    for (const selector of [".wo-up .wo-sm", ".wo-all .wo-fc, .wo-all__list .wo-sm"]) {
-      const point = await cardCentre(selector);
-      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point!.x, y: point!.y });
-      expect(await evaluate<Clip>(clipped)).toMatchObject({ shadow: "none", transform: "none" });
-    }
+    const point = await cardCentre(selector);
+    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point!.x, y: point!.y });
+    expect(await evaluate<Clip>(clipped)).toMatchObject({ shadow: "none", transform: "none" });
   });
 });

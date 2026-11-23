@@ -1,7 +1,7 @@
 //! The state every procedure shares: the queries, the fan-out, the voice
 //! runtime, profile enrichment, the connection identities and the presence
-//! counters. Socket counters are transport bookkeeping; online state comes from
-//! the complete Pulse topology shared by every serving replica.
+//! counters. Socket counters track transports. Online state comes from the shared
+//! topology of Pulse islands and World presence.
 
 use crate::comms::gatekeeper::voice::rooms::VoiceRooms;
 use crate::rpc::db::Db;
@@ -58,6 +58,8 @@ pub struct ContextInner {
     /// reads its places and thumbnail through it.
     communities: std::sync::OnceLock<crate::communities::SharedState>,
     connectivity_operations: tokio::sync::Semaphore,
+    // Membership mutations use their own delivery slots to keep topology fan-out moving.
+    membership_delivery_operations: tokio::sync::Semaphore,
     kill_handles: DashMap<u32, Arc<SocketClose>>,
     /// Every open socket of both protocols, from the moment it opens
     /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
@@ -165,6 +167,7 @@ impl Context {
             topology: std::sync::OnceLock::new(),
             communities: std::sync::OnceLock::new(),
             connectivity_operations: tokio::sync::Semaphore::new(4),
+            membership_delivery_operations: tokio::sync::Semaphore::new(2),
             kill_handles: DashMap::new(),
             sockets: parking_lot::Mutex::new(HashMap::new()),
             socket_counts: [AtomicUsize::new(0), AtomicUsize::new(0)],
@@ -371,8 +374,12 @@ impl Context {
             .get_or_init(|| Arc::new(crate::comms::topology::Topology::default()))
     }
 
-    /// Attaches the communities state (once).
+    /// Attaches the communities state (once), and the topology to it when
+    /// that is already attached ([`super::State::start_topology`] does it otherwise).
     pub fn set_communities(&self, communities: crate::communities::SharedState) {
+        if let Some(topology) = self.0.topology.get() {
+            communities.set_topology(topology.clone());
+        }
         let _ = self.0.communities.set(communities);
     }
 
@@ -398,7 +405,7 @@ impl Context {
         online: bool,
         generation: u64,
     ) -> crate::rpc::drpc::stream_protocol::DeliveryGuard {
-        self.delivery_guard(recipient, actor, online, generation, None)
+        self.delivery_guard(recipient, actor, online, Some(generation), None)
     }
 
     fn delivery_guard(
@@ -406,7 +413,7 @@ impl Context {
         recipient: String,
         actor: String,
         online: bool,
-        generation: u64,
+        topology_generation: Option<u64>,
         community: Option<uuid::Uuid>,
     ) -> crate::rpc::drpc::stream_protocol::DeliveryGuard {
         let ctx = self.clone();
@@ -415,26 +422,41 @@ impl Context {
             let recipient = recipient.clone();
             let actor = actor.clone();
             Box::pin(async move {
-                let Ok(_permit) = ctx.0.connectivity_operations.acquire().await else {
+                let operations = if topology_generation.is_some() {
+                    &ctx.0.connectivity_operations
+                } else {
+                    &ctx.0.membership_delivery_operations
+                };
+                let Ok(_permit) = operations.acquire().await else {
                     return Err(());
                 };
-                let allowed = match community {
-                    Some(community) => {
-                        ctx.db()
-                            .connectivity_member_allowed(&actor, &recipient, community)
-                            .await
-                    }
-                    None => {
-                        ctx.db()
-                            .connectivity_friend_allowed(&actor, &recipient)
-                            .await
-                    }
+                let allowed = if let Some(community) = community {
+                    let Some(actor_is_member) = ctx
+                        .db()
+                        .connectivity_community_membership(&actor, &recipient, community)
+                        .await
+                        .map_err(|_| ())?
+                    else {
+                        return Ok(false);
+                    };
+                    actor_is_member
+                } else {
+                    ctx.db()
+                        .connectivity_friend_allowed(&actor, &recipient)
+                        .await
+                        .map_err(|_| ())?
                 };
-                let allowed = allowed.map_err(|_| ())?;
-                Ok(allowed
-                    && ctx
-                        .topology()
-                        .queued_status_is_current(generation, &actor, online))
+                Ok(match topology_generation {
+                    Some(generation) => {
+                        allowed
+                            && ctx
+                                .topology()
+                                .queued_status_is_current(generation, &actor, online)
+                    }
+                    // Membership changes report the community roster. A former member
+                    // is removed from that roster even if they are still in-game.
+                    None => online == (allowed && ctx.is_online(&actor)),
+                })
             })
         })
     }
@@ -449,16 +471,30 @@ impl Context {
                 recipient.to_string(),
                 update.member.as_ref()?.address.clone(),
                 update.status == ConnectivityStatus::Online as i32,
-                *generation,
+                Some(*generation),
                 Some(update.community_id.parse().ok()?),
             )),
             SocialEvent::CommunityMember(update) => Some(self.delivery_guard(
                 recipient.to_string(),
                 update.member.as_ref()?.address.clone(),
                 update.status == ConnectivityStatus::Online as i32,
-                self.topology().snapshot().generation,
+                Some(self.topology().snapshot().generation),
                 Some(update.community_id.parse().ok()?),
             )),
+            SocialEvent::CommunityMemberStatus(update) => {
+                let actor = update.member.as_ref()?.address.clone();
+                // A self update tells the client to add or remove the community tab.
+                if recipient.eq_ignore_ascii_case(&actor) {
+                    return Some(Arc::new(|| Box::pin(async { Ok(true) })));
+                }
+                Some(self.delivery_guard(
+                    recipient.to_string(),
+                    actor,
+                    update.status == ConnectivityStatus::Online as i32,
+                    None,
+                    Some(update.community_id.parse().ok()?),
+                ))
+            }
             _ => None,
         }
     }
@@ -527,12 +563,12 @@ impl Context {
 
     /// Administrative broadcasts also cannot publish a status contrary to current topology.
     pub async fn fan_connectivity(&self, address: &str, status: ConnectivityStatus) {
-        let snapshot = self.topology().snapshot();
+        let generation = self.topology().snapshot().generation;
         let _ = tokio::time::timeout(crate::comms::topology::TOPOLOGY_RECEIPT_TTL, async {
             let mut cursor = ConnectivityCursor::default();
             loop {
                 if !self.topology().deliver_if_current(
-                    snapshot.generation,
+                    generation,
                     address,
                     status == ConnectivityStatus::Online,
                     || {},
@@ -543,7 +579,7 @@ impl Context {
                     .fan_topology_page(
                         address,
                         status == ConnectivityStatus::Online,
-                        snapshot.generation,
+                        generation,
                         cursor,
                     )
                     .await
@@ -802,6 +838,34 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn community_membership_delivery_can_proceed_during_topology_fanout() {
+        let pool = crate::rpc::tests::closed_pool();
+        pool.close().await;
+        let ctx = Context::new(
+            VoiceSettings::default(),
+            Db::new(pool),
+            Profiles::new(None),
+            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+        );
+        let _topology_slots = ctx.0.connectivity_operations.try_acquire_many(4).unwrap();
+        let recipient = format!("0x{:040x}", 1);
+        let actor = format!("0x{:040x}", 2);
+        let event = SocialEvent::CommunityMemberStatus(CommunityMemberConnectivityUpdate {
+            stream_closed: None,
+            community_id: uuid::Uuid::new_v4().to_string(),
+            member: Some(User { address: actor }),
+            status: ConnectivityStatus::Online as i32,
+        });
+        let guard = ctx.event_delivery_guard(&recipient, &event).unwrap();
+        let mut delivery = guard();
+        // Reaching the closed database reports an error without waiting on fan-out.
+        assert!(matches!(
+            futures::poll!(delivery.as_mut()),
+            std::task::Poll::Ready(Err(()))
+        ));
+    }
 
     #[tokio::test]
     async fn presence_counts_sockets_per_address() {

@@ -87,7 +87,7 @@ fn validate_spring_bones_schema(spring_bones: &serde_json::Value) -> Vec<String>
     match obj.get("version") {
         None => errors.push("springBones must have required property 'version'".to_string()),
         Some(v) => {
-            if v.as_i64() != Some(1) {
+            if v.as_f64() != Some(1.0) {
                 errors.push(
                     "springBones/version must be equal to one of the allowed values".to_string(),
                 );
@@ -311,6 +311,27 @@ mod spring_bones_tests {
     fn empty_models_passes() {
         let entity = wearable_with_spring_bones(json!({ "version": 1, "models": {} }));
         assert!(validate_spring_bones_metadata(&entity).is_ok());
+    }
+
+    #[test]
+    fn version_one_passes_in_every_json_number_form() {
+        for version in ["1", "1.0", "1e0"] {
+            let spring_bones =
+                serde_json::from_str(&format!(r#"{{"version": {version}, "models": {{}}}}"#))
+                    .unwrap();
+            let entity = wearable_with_spring_bones(spring_bones);
+            assert!(validate_spring_bones_metadata(&entity).is_ok(), "{version}");
+        }
+        for version in ["1.5", "2.0", "\"1\""] {
+            let spring_bones =
+                serde_json::from_str(&format!(r#"{{"version": {version}, "models": {{}}}}"#))
+                    .unwrap();
+            let entity = wearable_with_spring_bones(spring_bones);
+            assert!(
+                !validate_spring_bones_metadata(&entity).is_ok(),
+                "{version}"
+            );
+        }
     }
 
     #[test]

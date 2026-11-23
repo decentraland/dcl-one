@@ -2,16 +2,18 @@
 //       webapp/src/modules/order/sagas.ts (EXECUTE_ORDER for an order with a tradeId: accept the signed trade)
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
-import { declined, isTxPending, isTxReverted } from "../../market/lib/tx";
+import { APPROVAL_STILL_PENDING, purchaseFailure, type PurchaseFailure } from "../../market/lib/tx";
 import { fetchTrade, TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { buyTradeWithMana, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";
+import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import "./legacyorderbuy.css";
 
 type LandTradeBuyProps = {
@@ -20,11 +22,14 @@ type LandTradeBuyProps = {
    quoted: ManaWei;
   onClose(): void;
   onDone?(txHash: string): void;
+  /** The sale was sent and is still confirming: the dialog stays on its notice, and the page may read the LAND again. */
+  onPending?(txHash: string): void;
    loadTrade?: (tradeId: string) => Promise<Trade>;
+  /** The LAND on sale, as its page's queries key it: a purchase reads that token again, not every token. */
+  land?: { contractAddress: string; tokenId: string };
 };
 
-type Phase =
-  { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | { kind: "pending"; txHash: string } | { kind: "error"; message: string };
+type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | PurchaseFailure;
 
 const STEP_TEXT: Record<OrderPhase, string> = {
   approving: "Allow the marketplace to use your MANA in your wallet…",
@@ -37,8 +42,9 @@ export function tradeManaPrice(trade: Trade): ManaWei | null {
   return leg && "amount" in leg ? (BigInt(leg.amount) as ManaWei) : null;
 }
 
-export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, loadTrade = fetchTrade }: LandTradeBuyProps) {
+export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, onPending, loadTrade = fetchTrade, land }: LandTradeBuyProps) {
   const wallet = useShopWallet();
+  const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
   const [accepted, setAccepted] = useState(false);
   const [trade, setTrade] = useState<{ value: Trade | null; failed: boolean }>({ value: null, failed: false });
@@ -89,13 +95,17 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, l
         },
       });
       setPhase({ kind: "success", txHash: hash });
+      // The trade spent MANA: the balances, the token and the buyer's lists are read again.
+      invalidateAfterPurchase(qc, land);
       onDone?.(hash);
     } catch (e) {
-      if (isTxPending(e)) setPhase({ kind: "pending", txHash: (e as { txHash: string }).txHash });
-      else if (declined(e)) setPhase({ kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." });
-      else if (isTxReverted(e)) setPhase({ kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." });
-      else if (sent) setPhase({ kind: "pending", txHash: sent });
-      else setPhase({ kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." });
+      const failure = purchaseFailure(e, sent);
+      setPhase(failure);
+      if (failure.kind === "pending") {
+        // The sale sent but not confirmed: the MANA is probably spent, so the balances are read again here too.
+        invalidateAfterPurchase(qc, land);
+        onPending?.(failure.txHash);
+      }
     }
   }
 
@@ -111,6 +121,11 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, l
         ) : phase.kind === "pending" ? (
           <>
             <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your activity in a moment.</p>
+            <Button onClick={onClose}>Close</Button>
+          </>
+        ) : phase.kind === "approval-pending" ? (
+          <>
+            <p role="status">{APPROVAL_STILL_PENDING}</p>
             <Button onClick={onClose}>Close</Button>
           </>
         ) : (

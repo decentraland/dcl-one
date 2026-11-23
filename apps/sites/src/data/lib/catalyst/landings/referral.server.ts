@@ -45,6 +45,7 @@ function readFixture() {
       address: raw.referrer.ethAddress?.toLowerCase() ?? null,
       hasClaimedName: Boolean(raw.referrer.hasClaimedName),
       resolved: false,
+      face256: null,
     },
   };
   return cached;

@@ -108,6 +108,10 @@ export class EngineDriver implements LoginDriver {
     this.ch.expectReady()
   }
 
+  bridgeReady(): boolean {
+    return this.ch.isReady()
+  }
+
   on(fn: (msg: SceneToPage) => void): () => void {
     this.listeners.add(fn)
     return () => this.listeners.delete(fn)
@@ -155,7 +159,7 @@ export class EngineDriver implements LoginDriver {
     attachEngine((line) => this.rpc.command(line))
   }
 
-  homeScene(): { realm: string | null; parcel: string } | null {
+  homeScene(): { realm: string | null; parcel: string; pinned: boolean } | null {
     return this.rpc.homeScene()
   }
 

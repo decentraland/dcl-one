@@ -16,6 +16,7 @@ before planning, dispatching or merging work.
 - A decision without `current_stack` is not ready for a verdict. Only the user's verdict changes acceptance; record `decided_by`.
 - The main session reconciles specialist reports, checks their evidence at the target revision and records the user's decisions before claiming completion.
 - When what runs where changes, describe the changed deployment boundaries in the report and update the public ownership guidance. Keep accepted, public architectural decisions in root `docs/adr/`.
+- Put helpers other crates' tests use behind a `test-support` feature.
 
 Agents (`.claude/agents/`, start the session here): `comms-architect`,
 `comms-ci-engineer` (`build`, `gate`, `audit`, `release`), `divergence-analyst`.

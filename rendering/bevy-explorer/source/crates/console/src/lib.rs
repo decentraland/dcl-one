@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{ecs::system::ScheduleSystem, prelude::*, scene::scene_spawner_system};
 use bevy_console::{
     Command, ConsoleCommand, ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder,
@@ -9,6 +11,8 @@ use std::sync::Mutex;
 
 mod debug_panel;
 pub use debug_panel::{AddDebugSection, DebugInput, DebugInputKind, DebugSection};
+pub mod line;
+pub mod reply;
 
 pub trait DoAddConsoleCommand {
     fn add_console_command<T: Command, U>(

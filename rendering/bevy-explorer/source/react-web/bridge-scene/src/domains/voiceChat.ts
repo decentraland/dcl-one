@@ -9,8 +9,11 @@ import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { serviceBase, signed } from '../http'
-import { relay } from '../system-helpers'
+import { relay, waitMs } from '../system-helpers'
 import type { ActiveCommunityVoiceChat, CommunityVoiceUpdateMessage } from '@explorer-core/engine/protocol'
+
+/** After leaving a stream: the wait for LiveKit's leave report before the list is read again. */
+const LEFT_REREAD_MS = 3000
 
 type ActiveChatRaw = {
   communityId?: string
@@ -111,13 +114,19 @@ export function registerVoiceChat(ctx: Ctx): void {
   // The social service leaves the starter out of its stream's start broadcast (the end reaches
   // everyone), and neither broadcast carries counts, so the list is also re-read when the user's own
   // community stream is entered or left: it lists the starter's stream and refreshes its counts.
+  // Leaving is only a disconnect: the service drops the user's seat (and, for the last moderator,
+  // the stream) when LiveKit reports it, which can land after the first re-read, and the ENDED
+  // broadcast for such an end waits for the next poll. A second re-read once that report is in
+  // keeps a stream the user left last from showing as live.
   let inStream = ''
   relay('voiceChatState', async () => api.getStateStream(), (state) => {
     ctx.send({ kind: 'voiceChatState', state })
     const now = state.kind === 'community' && state.status === 'inCall' ? (state.communityId ?? '') : ''
     if (now !== inStream) {
+      const left = inStream !== ''
       inStream = now
       void refreshActive()
+      if (left) void waitMs(LEFT_REREAD_MS).then(refreshActive)
     }
   })
   ctx.on('hello', () => {

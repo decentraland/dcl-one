@@ -11,7 +11,7 @@ const UNKNOWN_PARAM: IncompatibleComponent = {
 };
 
 describe('IncompatibleAssetModal', () => {
-  let onUpdateSdk: ReturnType<typeof vi.fn<[], Promise<boolean>>>;
+  let onUpdateSdk: ReturnType<typeof vi.fn<() => Promise<boolean>>>;
 
   const renderModal = (
     incompatibleComponents: IncompatibleComponent[],
@@ -28,7 +28,7 @@ describe('IncompatibleAssetModal', () => {
   const updateButton = () => screen.queryByRole('button', { name: 'Update SDK' });
 
   beforeEach(() => {
-    onUpdateSdk = vi.fn<[], Promise<boolean>>();
+    onUpdateSdk = vi.fn<() => Promise<boolean>>();
   });
 
   describe('when the scene has an older SDK than the asset needs', () => {

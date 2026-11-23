@@ -9,8 +9,10 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-dead-code-check.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-workspace-lints.py
       - tooling/patched-sources.py
       - tooling/vendor-provenance.py
       - tooling/enet-provenance.py
@@ -31,6 +33,7 @@
       - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
+      - rendering/avatar-preview/**
       - .github/workflows/bevy-explorer-ci.yml
       - tooling/fetch-play.py
       - infra/packages/**
@@ -41,6 +44,8 @@
       - library/**
       - apps/sites/**
       - apps/ui3/**
+      # the bridge scene's install copies it (react-web/bridge-scene/pnpm-workspace.yaml)
+      - apps/creator-hub/packages/zip-extract/**
       - tooling/image-*
       - tooling/ci-publication.py
       - tooling/tests/test_ci_publication.py
@@ -56,8 +61,10 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-dead-code-check.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-workspace-lints.py
       - tooling/patched-sources.py
       - tooling/vendor-provenance.py
       - tooling/enet-provenance.py
@@ -78,6 +85,7 @@
       - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
+      - rendering/avatar-preview/**
       - .github/workflows/bevy-explorer-ci.yml
       - tooling/fetch-play.py
       - infra/packages/**
@@ -88,6 +96,8 @@
       - library/**
       - apps/sites/**
       - apps/ui3/**
+      # the bridge scene's install copies it (react-web/bridge-scene/pnpm-workspace.yaml)
+      - apps/creator-hub/packages/zip-extract/**
       - tooling/image-*
       - tooling/ci-publication.py
       - tooling/tests/test_ci_publication.py
@@ -101,7 +111,7 @@
   workflow_dispatch:
     inputs:
       publish-tag:
-        description: 'npm dist-tag to publish the web package under from a branch (empty = build only). Not next/latest; not on main.'
+        description: 'Registry dist-tag to publish the web package under from a branch (empty = build only). Not next/latest; not on main.'
         required: false
         default: ''
 concurrency:
@@ -132,6 +142,10 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_upstream_*.py' -v
+      - name: Reject suppressed dead code
+        run: python3 tooling/bevy-dead-code-check.py
+      - name: Check the avatar preview boot contract
+        run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs
       - name: Check the CI status comment scripts
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
@@ -422,7 +436,7 @@ jobs:
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
-            --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
+            --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
@@ -647,8 +661,9 @@ jobs:
         with:
           node-version: 24
       - name: Stamp snapshot version
-        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        uses: decentraland/oddish-action@9c6485d7f0cef927f7485cf01726b98c5ff773f5 # v1.1.0
         with:
+          package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
           deterministic-snapshot: true
           only-update-versions: true
@@ -667,7 +682,7 @@ jobs:
             --sidecar ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc \
             --out deploy/headless/dist
           cd deploy/headless/dist/bevy-headless-server-linux-x64
-          npm pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
+          corepack pnpm@12.21.0 pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bevy-headless-linux-x64-${{ github.sha }}
@@ -759,6 +774,24 @@ jobs:
         with:
           toolchain: 1.99.1
       - run: rustup component add clippy
+      # `common`'s tests include a shader from the patched Bevy tree; restored and written as in the Test Suite.
+      # The tool needs the runner's python3 at 3.11 or later and exits with a message on an older one. No
+      # setup-python here: it rewrites PKG_CONFIG_PATH, which the native build cache key tracks.
+      - name: Identify the upstream commits
+        id: bases
+        working-directory: .
+        run: echo "key=$(grep -hE '^[[:space:]]*(upstream|commit|url)[[:space:]]*=' rendering/bevy-explorer/patches/*/source.toml | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+      - name: Restore the upstream commits
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/patched-sources
+          key: bevy-explorer-patch-bases-${{ steps.bases.outputs.key }}
+          restore-keys: |
+            bevy-explorer-patch-bases-
+      - name: Rebuild the patched Bevy tree
+        env:
+          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources
+        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
@@ -786,7 +819,10 @@ jobs:
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - run: cargo clippy --locked -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        shell: bash
+      - name: Avatar crate without the explorer feature
+        run: cargo check --locked -p avatar --no-default-features
         shell: bash
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -837,6 +873,9 @@ jobs:
       - name: Taplo info
         if: failure()
         run: echo "Run taplo fmt to apply TOML formatting; taplo fmt --check --diff shows the changes."
+      - name: Check that every package inherits the workspace lints
+        if: ${{ !cancelled() }}
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-workspace-lints.py"
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -1095,8 +1134,9 @@ jobs:
       # Upstream's publish steps: the version is stamped into the working tree's deploy/web and
       # the page is rebuilt for its versioned CDN base. Nothing is committed.
       - name: Set package.json version
-        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        uses: decentraland/oddish-action@9c6485d7f0cef927f7485cf01726b98c5ff773f5 # v1.1.0
         with:
+          package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/web
           deterministic-snapshot: true
           only-update-versions: true
@@ -1186,13 +1226,14 @@ jobs:
       - name: Publish
         id: publish
         continue-on-error: ${{ github.event_name == 'pull_request' }}
-        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        uses: decentraland/oddish-action@9c6485d7f0cef927f7485cf01726b98c5ff773f5 # v1.1.0
         with:
+          package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/web
           deterministic-snapshot: true
           registry-url: 'https://registry.npmjs.org'
           access: public
-          # npm refuses provenance for a private repository.
+          # Under trusted publishing pnpm attaches provenance to this public package on its own.
           provenance: false
           # oddish only publishes from main (-> next) or from a branch it is told about;
           # both inputs are empty on push, leaving that behaviour unchanged.
@@ -1202,7 +1243,7 @@ jobs:
           # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
           BRANCH_NAME: ${{ github.head_ref }}
           # The package comes from package-web; none of its scripts run beside the publish tokens.
-          NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+          pnpm_config_ignore_scripts: 'true'
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && (steps.cdn.outcome == 'failure' || steps.publish.outcome == 'failure')
         run: echo '::warning::The PR preview did not publish; see the Upload to the CDN and Publish step logs.'
@@ -1399,14 +1440,14 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      # dist-tag over OIDC needs npm 11.21.0+, newer than any Node release bundles.
+      # pnpm manages dist-tags over OIDC since 12.12.1.
       - env:
           TAG: pr-${{ github.event.pull_request.number }}
         run: |
           pkg=@dcl-regenesislabs/bevy-explorer-web
-          tags=$(npm view "$pkg" dist-tags --json)
+          tags=$(corepack pnpm@12.21.0 view "$pkg" dist-tags --json)
           if jq -e --arg t "$TAG" 'has($t)' <<<"$tags" >/dev/null; then
-            npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"
+            corepack pnpm@12.21.0 dist-tag rm "$pkg" "$TAG"
           fi
     timeout-minutes: 5
 permissions:

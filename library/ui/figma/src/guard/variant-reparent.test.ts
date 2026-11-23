@@ -86,18 +86,16 @@ describe('when a retired component reappears as a variant of a live set', () => 
   describe('and the successor has a different id on the same page', () => {
     beforeEach(async () => {
       await recapture((page) => [...page, successor('3:1', 'Merged', retired)])
+      await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
     })
 
     it('should capture the successor with nothing pending and no ownership violation', async () => {
-      await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
-
       expect(await pendingRetirements(root, records)).toEqual([])
       expect(await guard()).toEqual({ ok: true, violations: [] })
       expect(await readFile(path.join(root, GEN, 'page/Merged.tsx'), 'utf8')).toContain('Merged')
     })
 
     it('should keep the successor through apply-retirements and repeat byte-identically', async () => {
-      await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
       await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
 
       const ids = (await json(root, PAGE)).components.map(
@@ -114,11 +112,12 @@ describe('when a retired component reappears as a variant of a live set', () => 
   })
 
   describe('and the retired component itself comes back at the top level', () => {
-    it('should keep it out of generation without reporting the capture as pending', async () => {
+    beforeEach(async () => {
       await recapture((page) => [retired, ...page])
-
       await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
+    })
 
+    it('should keep it out of generation without reporting the capture as pending', async () => {
       expect(await pendingRetirements(root, records)).toEqual([])
       await expect(readFile(path.join(root, GEN, 'page/First.tsx'))).rejects.toMatchObject({
         code: 'ENOENT'
@@ -127,9 +126,11 @@ describe('when a retired component reappears as a variant of a live set', () => 
   })
 
   describe('and a live component is merged into another set', () => {
-    it('should still reject the identity move', async () => {
+    beforeEach(async () => {
       await recapture((page) => [successor('3:1', 'Merged', page[0]!)])
+    })
 
+    it('should still reject the identity move', async () => {
       expect((await guard()).violations.map((violation) => violation.cause)).toContainEqual(
         expect.stringMatching(
           /^artifactIdentity ".*Page\.json#variant:2:2" moved from .*"2:2".* to .*"3:1"/
@@ -139,13 +140,15 @@ describe('when a retired component reappears as a variant of a live set', () => 
   })
 
   describe('and two live sets list the variant', () => {
-    it('should reject the snapshot instead of resolving either set', async () => {
+    beforeEach(async () => {
       await recapture((page) => [
         ...page,
         successor('3:1', 'Merged', retired),
         successor('4:1', 'Other', retired, '4:9')
       ])
+    })
 
+    it('should reject the snapshot instead of resolving either set', async () => {
       expect((await guard()).violations.map((violation) => violation.cause)).toContainEqual(
         expect.stringContaining('duplicate entry variant:2:1')
       )
@@ -153,12 +156,14 @@ describe('when a retired component reappears as a variant of a live set', () => 
   })
 
   describe('and the only set listing it is an external copy', () => {
-    it('should fail the guard without reporting the capture as pending', async () => {
+    beforeEach(async () => {
       await recapture((page) => [
         ...page,
         { ...successor('3:1', 'Merged', retired), external: true }
       ])
+    })
 
+    it('should fail the guard without reporting the capture as pending', async () => {
       expect(await pendingRetirements(root, records)).toEqual([])
       expect((await guard()).ok).toBe(false)
     })
@@ -168,18 +173,21 @@ describe('when a retired component reappears as a variant of a live set', () => 
     ['the only set listing it is truncated', { truncated: true }],
     ['the only component listing it is not a set', { kind: 'component', others: [] }]
   ])('and %s', (_, change) => {
-    it('should fail the guard without reporting the capture as pending', async () => {
+    beforeEach(async () => {
       await recapture((page) => [...page, { ...successor('3:1', 'Merged', retired), ...change }])
+    })
 
+    it('should fail the guard without reporting the capture as pending', async () => {
       expect(await pendingRetirements(root, records)).toEqual([])
       expect((await guard()).ok).toBe(false)
     })
   })
 
   describe('and the successor is retired too', () => {
-    it('should not report the capture as pending', async () => {
+    let both: Retirements
+    beforeEach(async () => {
       await recapture((page) => [...page, successor('3:1', 'Merged', retired)])
-      const both: Retirements = {
+      both = {
         ...records,
         retired: [
           ...records.retired,
@@ -192,39 +200,58 @@ describe('when a retired component reappears as a variant of a live set', () => 
           }
         ]
       }
+    })
 
+    it('should not report the capture as pending', async () => {
       expect(await pendingRetirements(root, both)).toEqual([])
     })
   })
 
   describe('and another saved page is unreadable', () => {
-    it('should fail the guard without reporting the capture as pending', async () => {
+    beforeEach(async () => {
       await recapture((page) => [...page, successor('3:1', 'Merged', retired)])
       await put(root, `${SNAP}/components/Broken.json`, '{"page":')
+    })
 
+    it('should fail the guard without reporting the capture as pending', async () => {
       expect(await pendingRetirements(root, records)).toEqual([])
       expect((await guard()).ok).toBe(false)
     })
   })
 })
 
-describe('when a retirement is applied before any recapture', () => {
-  it('should clean the outputs and leave the variant in the capture', async () => {
-    const { root, app, records } = await lifecycleFixture()
-    try {
-      await put(root, `figma/ledger/retirements.json`, records)
-      const pending = await pendingRetirements(root, records)
-      expect(pending.length).toBeGreaterThan(0)
-      expect(pending.filter((artifact) => artifact.startsWith(`${SNAP}/`))).toEqual([])
-      const capture = await readFile(path.join(root, PAGE))
+describe('when a retirement is recorded before any recapture', () => {
+  let root: string
+  let app: App
+  let records: Retirements
+  let capture: Buffer
+  beforeEach(async () => {
+    ;({ root, app, records } = await lifecycleFixture())
+    await put(root, `figma/ledger/retirements.json`, records)
+    capture = await readFile(path.join(root, PAGE))
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
 
+  it('should report only outputs as pending, never the capture', async () => {
+    const pending = await pendingRetirements(root, records)
+    expect(pending.length).toBeGreaterThan(0)
+    expect(pending.filter((artifact) => artifact.startsWith(`${SNAP}/`))).toEqual([])
+  })
+
+  describe('and the retirement is applied', () => {
+    beforeEach(async () => {
       await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
+    })
 
+    it('should clean the outputs', async () => {
       expect(await pendingRetirements(root, records)).toEqual([])
+    })
+
+    it('should leave the variant in the capture', async () => {
       expect(await readFile(path.join(root, PAGE))).toEqual(capture)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+    })
   })
 })
 
@@ -245,7 +272,7 @@ describe('reparentedTo', () => {
   })
 
   const live = { pageId: '1:1', componentId: '3:1' }
-  it.each<{ when: string; ownership: Ownership; expected: string | undefined }>([
+  describe.each<{ when: string; ownership: Ownership; expected: string | undefined }>([
     { when: 'no set lists the variant', ownership: emptyOwnership(), expected: undefined },
     { when: 'one live set on the same page lists it', ownership: parents(live), expected: '3:1' },
     {
@@ -288,12 +315,20 @@ describe('reparentedTo', () => {
       ownership: { ...parents(live), conflicts: ['Invalid snapshot page identity'] },
       expected: undefined
     }
-  ])('should resolve the parent when $when', ({ ownership, expected }) => {
-    expect(reparentedTo(ownership, retirements, record, '2:1')).toBe(expected)
+  ])('when $when', ({ ownership, expected }) => {
+    it(`should resolve the parent to ${String(expected)}`, () => {
+      expect(reparentedTo(ownership, retirements, record, '2:1')).toBe(expected)
+    })
   })
 
-  it('should not re-parent the variants of a page-level retirement', () => {
-    const page = { ...record, componentId: undefined }
-    expect(reparentedTo(parents(live), retirements, page, '2:1')).toBeUndefined()
+  describe('when the retirement is page-level', () => {
+    let page: Omit<typeof record, 'componentId'> & { componentId: undefined }
+    beforeEach(() => {
+      page = { ...record, componentId: undefined }
+    })
+
+    it('should not re-parent its variants', () => {
+      expect(reparentedTo(parents(live), retirements, page, '2:1')).toBeUndefined()
+    })
   })
 })

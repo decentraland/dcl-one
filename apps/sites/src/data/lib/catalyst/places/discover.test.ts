@@ -1,5 +1,5 @@
 import { dehydrate, QueryClient } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { destination } from "./destination.fixture";
 import type { Destination, DestinationPage } from "./destinations";
@@ -7,6 +7,8 @@ import {
   browsePageRows,
   effectiveSearch,
   fetchPlaceCreators,
+  liveMinUsers,
+  liveMinUsersFrom,
   nextBrowseOffset,
   parseCategory,
   parseSection,
@@ -21,41 +23,87 @@ function page(data: Destination[], total = data.length, received = data.length):
   return { data, total, received, copy: null };
 }
 
-afterEach(() => vi.unstubAllGlobals());
-
 describe("when parsing the /places URL", () => {
-  it("should accept Featured and known categories case-insensitively and read anything else as All", () => {
-    expect(parseCategory(" Music ")).toBe("music");
-    expect(parseCategory("FEATURED")).toBe("featured");
-    expect(parseCategory("casino")).toBe("all");
-    expect(parseCategory(null)).toBe("all");
+  describe("and reading the category", () => {
+    it("should accept a known category case-insensitively", () => {
+      expect(parseCategory(" Music ")).toBe("music");
+    });
+
+    it("should accept Featured case-insensitively", () => {
+      expect(parseCategory("FEATURED")).toBe("featured");
+    });
+
+    it("should read an unknown category as All", () => {
+      expect(parseCategory("casino")).toBe("all");
+    });
+
+    it("should read a missing category as All", () => {
+      expect(parseCategory(null)).toBe("all");
+    });
   });
 
-  it("should read both spellings of favourites and default unknown tabs to Explore all", () => {
-    expect(parseSection("favourites")).toBe("favourites");
-    expect(parseSection("favorites")).toBe("favourites");
-    expect(parseSection("my")).toBe("my");
-    expect(parseSection("admin")).toBe("all");
-    expect(parseSection(null)).toBe("all");
+  describe("and reading the section", () => {
+    it("should read the British spelling of favourites", () => {
+      expect(parseSection("favourites")).toBe("favourites");
+    });
+
+    it("should read the American spelling of favourites", () => {
+      expect(parseSection("favorites")).toBe("favourites");
+    });
+
+    it("should read my places", () => {
+      expect(parseSection("my")).toBe("my");
+    });
+
+    it("should default an unknown tab to Explore all", () => {
+      expect(parseSection("admin")).toBe("all");
+    });
+
+    it("should default a missing tab to Explore all", () => {
+      expect(parseSection(null)).toBe("all");
+    });
   });
 
-  it("should drop a search shorter than three characters, which places-api rejects", () => {
-    expect(effectiveSearch("  ab ")).toBe("");
-    expect(effectiveSearch(" abc ")).toBe("abc");
-    expect(effectiveSearch(undefined)).toBe("");
+  describe("and reading the search", () => {
+    it("should drop a search shorter than three characters, which places-api rejects", () => {
+      expect(effectiveSearch("  ab ")).toBe("");
+    });
+
+    it("should keep a trimmed search of three characters", () => {
+      expect(effectiveSearch(" abc ")).toBe("abc");
+    });
+
+    it("should read a missing search as none", () => {
+      expect(effectiveSearch(undefined)).toBe("");
+    });
   });
 });
 
 describe("when keying the places queries", () => {
-  it("should give every category and search its own browse entry", () => {
-    const base = placesKeys.browse({ category: "all", search: "" });
-    expect(placesKeys.browse({ category: "music", search: "" })).not.toEqual(base);
-    expect(placesKeys.browse({ category: "all", search: "plaza" })).not.toEqual(base);
+  describe("and keying the browse feed", () => {
+    let base: ReturnType<typeof placesKeys.browse>;
+
+    beforeEach(() => {
+      base = placesKeys.browse({ category: "all", search: "" });
+    });
+
+    it("should give every category its own browse entry", () => {
+      expect(placesKeys.browse({ category: "music", search: "" })).not.toEqual(base);
+    });
+
+    it("should give every search its own browse entry", () => {
+      expect(placesKeys.browse({ category: "all", search: "plaza" })).not.toEqual(base);
+    });
   });
 
-  it("should put member reads under the private prefix of the lowercased account", () => {
-    expect(placesKeys.favourites("0xABC")).toEqual(["private", "0xabc", "places", "favourites"]);
-    expect(placesKeys.mine("0xABC")).toEqual(["private", "0xabc", "places", "mine"]);
+  describe("and keying member reads", () => {
+    it("should put favourites under the private prefix of the lowercased account", () => {
+      expect(placesKeys.favourites("0xABC")).toEqual(["private", "0xabc", "places", "favourites"]);
+    });
+
+    it("should put my places under the private prefix of the lowercased account", () => {
+      expect(placesKeys.mine("0xABC")).toEqual(["private", "0xabc", "places", "mine"]);
+    });
   });
 
   it("should share one creators entry whatever the order or case of the addresses", () => {
@@ -64,16 +112,22 @@ describe("when keying the places queries", () => {
 });
 
 describe("when paging the browse feed", () => {
-  it("should continue after a full page while the total has more", () => {
-    expect(nextBrowseOffset(page([], 200, 48), 0)).toBe(48);
+  describe("and the page was full while the total has more", () => {
+    it("should continue", () => {
+      expect(nextBrowseOffset(page([], 200, 48), 0)).toBe(48);
+    });
   });
 
-  it("should stop after a short page even when the total claims more", () => {
-    expect(nextBrowseOffset(page([], 200, 10), 48)).toBeUndefined();
+  describe("and the page was short even though the total claims more", () => {
+    it("should stop", () => {
+      expect(nextBrowseOffset(page([], 200, 10), 48)).toBeUndefined();
+    });
   });
 
-  it("should stop once the offset reaches the total", () => {
-    expect(nextBrowseOffset(page([], 96, 48), 48)).toBeUndefined();
+  describe("and the offset reaches the total", () => {
+    it("should stop", () => {
+      expect(nextBrowseOffset(page([], 96, 48), 48)).toBeUndefined();
+    });
   });
 });
 
@@ -84,111 +138,257 @@ describe("when a page lost rows to schema drift", () => {
 });
 
 describe("when building the grid rows", () => {
-  it("should drop rows repeated across pages and unfinished catalogue entries", () => {
-    const rows = browsePageRows(
-      [
+  describe("and rows repeat across pages or are unfinished catalogue entries", () => {
+    let pages: DestinationPage[];
+
+    beforeEach(() => {
+      pages = [
         page([destination({ id: "a" }), destination({ id: "road", title: "Road at 1,2", categories: [] })]),
         page([destination({ id: "a" }), destination({ id: "b" })]),
-      ],
-      { category: "all", search: "" },
-    );
-    expect(rows.flat().map((row) => row.id)).toEqual(["a", "b"]);
+      ];
+    });
+
+    it("should drop them", () => {
+      expect(browsePageRows(pages, { category: "all", search: "" }).flat().map((row) => row.id)).toEqual(["a", "b"]);
+    });
   });
 
-  it("should retain a curated placeholder under Featured and hide it on the default view", () => {
-    const curated = destination({ id: "curated", image: null, highlighted: true });
-    expect(
-      browsePageRows([page([curated])], { category: "featured", search: "" })
-        .flat()
-        .map((row) => row.id),
-    ).toEqual(["curated"]);
-    expect(browsePageRows([page([curated])], { category: "all", search: "" })).toEqual([[]]);
+  describe("and a curated placeholder has no cover", () => {
+    let curated: Destination;
+
+    beforeEach(() => {
+      curated = destination({ id: "curated", image: null, highlighted: true });
+    });
+
+    describe("and the view is Featured", () => {
+      it("should retain it", () => {
+        expect(
+          browsePageRows([page([curated])], { category: "featured", search: "" })
+            .flat()
+            .map((row) => row.id),
+        ).toEqual(["curated"]);
+      });
+    });
+
+    describe("and the view is the default", () => {
+      it("should hide it", () => {
+        expect(browsePageRows([page([curated])], { category: "all", search: "" })).toEqual([[]]);
+      });
+    });
   });
-  it.each([null, "https://example.com/v2/map.png", "https://example.com/bafkreidj26s7aenyxfthfdibnqonzqm5ptc4iamml744gmcyuokewkr76y"])(
-    "should preserve explicit search and category matches with cover %s",
+
+  describe.each([null, "https://example.com/v2/map.png", "https://example.com/bafkreidj26s7aenyxfthfdibnqonzqm5ptc4iamml744gmcyuokewkr76y"])(
+    "and a row has the cover %s",
     (image) => {
-      const row = destination({ image });
-      for (const filters of [
+      let row: Destination;
+
+      beforeEach(() => {
+        row = destination({ image });
+      });
+
+      it.each([
         { category: "all", search: "plaza" },
         { category: "music", search: "" },
-      ] as const) {
+      ] as const)("should preserve an explicit match for %j", (filters) => {
         expect(browsePageRows([page([row])], filters)).toEqual([[row]]);
-      }
-      expect(browsePageRows([page([row])], { category: "all", search: "" })).toEqual([[]]);
+      });
+
+      it("should hide it on the default view", () => {
+        expect(browsePageRows([page([row])], { category: "all", search: "" })).toEqual([[]]);
+      });
     },
   );
 });
 
 describe("when choosing Live Now", () => {
-  it("should keep the four busiest visible scenes, busiest first", () => {
-    const rows = [1, 9, 4, 7, 3].map((count) => destination({ id: `p${count}`, user_count: count }));
-    rows.push(destination({ id: "junk", title: "Empty", user_count: 50 }));
-    expect(selectLiveRail(rows).map((row) => row.id)).toEqual(["p9", "p7", "p4", "p3"]);
+  describe("and there are more busy scenes than the rail holds", () => {
+    let rows: Destination[];
+
+    beforeEach(() => {
+      rows = [1, 9, 4, 7, 3].map((count) => destination({ id: `p${count}`, user_count: count }));
+      rows.push(destination({ id: "junk", title: "Empty", user_count: 50 }));
+    });
+
+    it("should keep the four busiest visible scenes, busiest first", () => {
+      expect(selectLiveRail(rows).map((row) => row.id)).toEqual(["p9", "p7", "p4", "p3"]);
+    });
   });
 
-  it("should exclude empty, missing and negative head counts by default", () => {
-    expect(selectLiveRail([destination({ user_count: 0 }), destination({ user_count: null }), destination({ user_count: -1 })])).toEqual(
-      [],
-    );
+  describe("and head counts are empty or missing", () => {
+    it("should keep them by default, so a quiet node still shows the most active scenes", () => {
+      const plaza = destination({ id: "plaza", user_count: 0 });
+      const unknown = destination({ id: "unknown", user_count: null });
+      expect(selectLiveRail([plaza, unknown]).map((row) => row.id)).toEqual(["plaza", "unknown"]);
+    });
   });
 
-  it("should leave out scenes under the minimum head count", () => {
-    expect(selectLiveRail([destination({ user_count: 1 })], 2)).toEqual([]);
+  describe("and a head count is negative", () => {
+    it("should exclude it", () => {
+      expect(selectLiveRail([destination({ user_count: -1 })])).toEqual([]);
+    });
+  });
+
+  describe("and every scene is empty", () => {
+    it("should still hide entries the grid hides", () => {
+      expect(selectLiveRail([destination({ title: "Empty", user_count: 0 })])).toEqual([]);
+    });
+  });
+
+  describe("and a scene is under the minimum head count", () => {
+    it("should leave it out", () => {
+      expect(selectLiveRail([destination({ user_count: 1 })], 2)).toEqual([]);
+    });
+  });
+});
+
+describe("when reading Live Now's head count from the dapps-places-live-min-user variant", () => {
+  it.each([
+    ["5", 5],
+    ["0", 0],
+    [" 3 ", 3],
+    ["5\n", 5],
+  ])("should read %j as %i", (variant, expected) => {
+    expect(liveMinUsers(variant)).toBe(expected);
+  });
+
+  it.each(["abc", "-1", "1.5", "", "   ", "1e3", "5px"])("should fall back to 0 for the unusable payload %j", (variant) => {
+    expect(liveMinUsers(variant)).toBe(0);
+  });
+
+  it.each([null, undefined])("should fall back to 0 without a variant (%s)", (variant) => {
+    expect(liveMinUsers(variant)).toBe(0);
+  });
+
+  it("should take the variant while its flag is on", () => {
+    const on = vi.fn(() => true);
+    const variant = vi.fn(() => "5");
+    expect(liveMinUsersFrom(on, variant)).toBe(5);
+    expect(on).toHaveBeenCalledWith("places-live-min-user");
+    expect(variant).toHaveBeenCalledWith("places-live-min-user");
+  });
+
+  it("should ignore the variant while its flag is off", () => {
+    expect(liveMinUsersFrom(() => false, () => "5")).toBe(0);
+  });
+
+  it("should be 0 when the flag is on without a variant", () => {
+    expect(liveMinUsersFrom(() => true, () => null)).toBe(0);
+  });
+
+  it("should let a nonzero head count drop quieter scenes from the rail", () => {
+    const rows = [destination({ id: "busy", user_count: 6 }), destination({ id: "quiet", user_count: 2 })];
+    expect(selectLiveRail(rows, liveMinUsersFrom(() => true, () => "5")).map((row) => row.id)).toEqual(["busy"]);
   });
 });
 
 describe("when crediting a place", () => {
-  it("should prefer the deployer over the owner and ignore values that are not wallets", () => {
-    expect(
-      placeCreatorAddress({
-        creator_address: "0x00000000000000000000000000000000000000BB",
-        owner: "0x00000000000000000000000000000000000000aa",
-      }),
-    ).toBe("0x00000000000000000000000000000000000000bb");
-    expect(placeCreatorAddress({ creator_address: "Decentraland", owner: null })).toBeUndefined();
+  describe("and it has a deployer and an owner", () => {
+    it("should prefer the deployer, lowercased", () => {
+      expect(
+        placeCreatorAddress({
+          creator_address: "0x00000000000000000000000000000000000000BB",
+          owner: "0x00000000000000000000000000000000000000aa",
+        }),
+      ).toBe("0x00000000000000000000000000000000000000bb");
+    });
+  });
+
+  describe("and the values are not wallets", () => {
+    it("should ignore them", () => {
+      expect(placeCreatorAddress({ creator_address: "Decentraland", owner: null })).toBeUndefined();
+    });
   });
 });
 
 describe("when reading creator profiles", () => {
-  it("should post every address once and key the faces by lowercased address", async () => {
-    const fetchMock = vi.fn(async () =>
-      Response.json([
-        { avatars: [{ ethAddress: "0xAA", name: "Ann", avatar: { snapshots: { face256: "https://cdn.example/face.png" } } }] },
-      ]),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const result = await fetchPlaceCreators(["0xaa"]);
-    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toEqual({ ids: ["0xaa"] });
-    expect(result["0xaa"]?.name).toBe("Ann");
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("should not call the network without addresses", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    await expect(fetchPlaceCreators([])).resolves.toEqual({});
-    expect(fetchMock).not.toHaveBeenCalled();
+  describe("and there are addresses", () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+    let result: Awaited<ReturnType<typeof fetchPlaceCreators>>;
+
+    beforeEach(async () => {
+      fetchMock = vi.fn(async () =>
+        Response.json([
+          { avatars: [{ ethAddress: "0xAA", name: "Ann", avatar: { snapshots: { face256: "https://cdn.example/face.png" } } }] },
+        ]),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      result = await fetchPlaceCreators(["0xaa"]);
+    });
+
+    it("should post every address once", () => {
+      expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toEqual({ ids: ["0xaa"] });
+    });
+
+    it("should key the faces by lowercased address", () => {
+      expect(result["0xaa"]?.name).toBe("Ann");
+    });
   });
 
-  it("should release the body of a failed read and reject so the cards keep their initials", async () => {
-    const failed = new Response("upstream error", { status: 502 });
-    const cancel = vi.spyOn(failed.body!, "cancel");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => failed),
-    );
-    await expect(fetchPlaceCreators(["0xaa"])).rejects.toThrow("502");
-    expect(cancel).toHaveBeenCalledOnce();
+  describe("and there are no addresses", () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+    });
+
+    it("should answer no profiles", async () => {
+      await expect(fetchPlaceCreators([])).resolves.toEqual({});
+    });
+
+    it("should not call the network", async () => {
+      await fetchPlaceCreators([]);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("and the read fails", () => {
+    let cancel: ReturnType<typeof vi.spyOn>;
+    let result: Promise<unknown>;
+
+    beforeEach(() => {
+      const failed = new Response("upstream error", { status: 502 });
+      cancel = vi.spyOn(failed.body!, "cancel");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => failed),
+      );
+      result = fetchPlaceCreators(["0xaa"]);
+    });
+
+    it("should reject so the cards keep their initials", async () => {
+      await expect(result).rejects.toThrow("502");
+    });
+
+    it("should release the body", async () => {
+      await result.catch(() => undefined);
+      expect(cancel).toHaveBeenCalledOnce();
+    });
   });
 });
 
 describe("when the agent markdown reads a dehydrated page", () => {
-  it("should return the first browse page", () => {
-    const client = new QueryClient();
-    client.setQueryData(placesKeys.browse({ category: "all", search: "" }), { pages: [page([destination()])], pageParams: [0] });
-    expect(placesFromDehydrated(dehydrate(client)).map((row) => row.id)).toEqual(["plaza"]);
+  describe("and the page carried a browse query", () => {
+    let client: QueryClient;
+
+    beforeEach(() => {
+      client = new QueryClient();
+      client.setQueryData(placesKeys.browse({ category: "all", search: "" }), { pages: [page([destination()])], pageParams: [0] });
+    });
+
+    it("should return the first browse page", () => {
+      expect(placesFromDehydrated(dehydrate(client)).map((row) => row.id)).toEqual(["plaza"]);
+    });
   });
 
-  it("should return nothing when the page carried no browse query", () => {
-    expect(placesFromDehydrated(undefined)).toEqual([]);
+  describe("and the page carried no browse query", () => {
+    it("should return nothing", () => {
+      expect(placesFromDehydrated(undefined)).toEqual([]);
+    });
   });
 });

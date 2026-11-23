@@ -4,16 +4,16 @@ import {
   publishData,
   consumeMessages,
 } from '~system/CommsApi';
-import { getDomain, wrapSignedFetch } from '../fetch-utils';
+import { serviceUrl, wrapSignedFetch } from '../fetch-utils';
 import type { Result } from '../fetch-utils';
 import type { PresentationState } from '../types';
 
 const URLS = () => ({
-  STREAM_KEY: `https://comms-gatekeeper.decentraland.${getDomain()}/scene-stream-access`,
-  GET_DCL_CAST_INFO: `https://comms-gatekeeper.decentraland.${getDomain()}/cast/generate-stream-link`,
-  PRESENTERS: `https://comms-gatekeeper.decentraland.${getDomain()}/cast/presenters`,
-  PRESENTATION_BOT_TOKEN: `https://comms-gatekeeper.decentraland.${getDomain()}/cast/presentation-bot-token`,
-  PRESENTATION_SERVER: `https://cast-presenter-service.decentraland.${getDomain()}/presentations`,
+  STREAM_KEY: serviceUrl('comms-gatekeeper', '/scene-stream-access'),
+  GET_DCL_CAST_INFO: serviceUrl('comms-gatekeeper', '/cast/generate-stream-link'),
+  PRESENTERS: serviceUrl('comms-gatekeeper', '/cast/presenters'),
+  PRESENTATION_BOT_TOKEN: serviceUrl('comms-gatekeeper', '/cast/presentation-bot-token'),
+  PRESENTATION_SERVER: serviceUrl('cast-presenter-service', '/presentations'),
 });
 
 type StreamKeyResponse = {

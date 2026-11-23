@@ -3,7 +3,7 @@ import type { XYCoord } from 'react-dnd';
 import { useDrag, useDrop } from 'react-dnd';
 import { IoIosArrowDown, IoIosArrowForward } from 'react-icons/io';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 
 import { withContextMenu } from '../../hoc/withContextMenu';
@@ -18,6 +18,7 @@ import { ActionArea } from './ActionArea';
 import { Edit as EditInput } from './Edit';
 import type { DropType } from './utils';
 import { calculateDropType } from './utils';
+import { duplicateInTree, removeFromTree } from './entity-actions';
 
 import './Tree.css';
 
@@ -289,47 +290,9 @@ export function Tree<T>() {
         [value, getSelectedItems, getId, getDragItem],
       );
 
-      const handleRemove = () => {
-        if (isEntity && sdk) {
-          const selectedEntities = sdk.operations.getSelectedEntities();
-          if (selectedEntities.length > 1) {
-            selectedEntities.forEach(entity => {
-              if (typeof entity === typeof value) {
-                onRemove(entity as T);
-              }
-            });
-          } else {
-            onRemove(value);
-          }
-        } else {
-          onRemove(value);
-        }
-      };
+      const handleRemove = () => removeFromTree(sdk, value, onRemove);
 
-      const handleDuplicate = () => {
-        if (isEntity && sdk) {
-          const selectedEntities = sdk.operations.getSelectedEntities();
-          const preferredGizmo =
-            selectedEntities.length > 0
-              ? sdk.components.Selection.getOrNull(selectedEntities[0])?.gizmo
-              : undefined;
-          sdk.operations.removeSelectedEntities();
-          if (selectedEntities.length > 1) {
-            let insertAfter = selectedEntities[selectedEntities.length - 1];
-            selectedEntities.forEach(entity => {
-              if (typeof entity === typeof value) {
-                const cloned = sdk.operations.duplicateEntity(entity, preferredGizmo, insertAfter);
-                insertAfter = cloned;
-              }
-            });
-            void sdk.operations.dispatch();
-          } else {
-            onDuplicate(value, preferredGizmo);
-          }
-        } else {
-          onDuplicate(value);
-        }
-      };
+      const handleDuplicate = () => duplicateInTree(sdk, value, onDuplicate);
 
       const isEntity = useMemo(() => {
         return typeof value !== 'string';

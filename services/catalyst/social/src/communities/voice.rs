@@ -25,21 +25,21 @@ pub(crate) async fn started_enrichment(
     state: &SharedState,
     id: CommunityId,
 ) -> (Vec<String>, Vec<String>, Option<String>) {
-    let row: Result<(Vec<String>, bool), _> = sqlx::query_as(
+    let row: Result<(Vec<String>, Option<String>), _> = sqlx::query_as(
         "SELECT ARRAY(SELECT place_id FROM social.community_places WHERE community_id = $1 ORDER BY place_id), \
-                EXISTS (SELECT 1 FROM social.community_thumbnails WHERE community_id = $1)",
+                (SELECT thumbnail_hash FROM social.community_thumbnails WHERE community_id = $1)",
     )
     .bind(id)
     .fetch_one(&state.pool)
     .await;
-    let (place_ids, has_thumbnail) = match row {
+    let (place_ids, hash) = match row {
         Ok(row) => row,
         Err(e) => {
             tracing::warn!(error = %e, community_id = %id, "voice chat started: places lookup failed");
             return (Vec::new(), Vec::new(), None);
         }
     };
-    let image = has_thumbnail.then(|| state.thumbnail_url(id));
+    let image = hash.map(|hash| state.versioned_thumbnail_url(id, Some(&hash)));
     let (positions, worlds) = match destinations_of(state, place_ids.iter().map(String::as_str))
         .await
     {
@@ -131,7 +131,12 @@ pub async fn get_active_voice_chats(
         }
         let community_image = if let Some(hash) = thumbnails.get(&r.community_id) {
             match state.storage.exist(hash).await {
-                Ok(true) => Some(state.thumbnail_url(CommunityId::from_uuid(r.community_id))),
+                Ok(true) => {
+                    Some(state.versioned_thumbnail_url(
+                        CommunityId::from_uuid(r.community_id),
+                        Some(hash),
+                    ))
+                }
                 Ok(false) => None,
                 Err(error) => {
                     tracing::warn!(%error,community_id=%r.community_id,"active voice thumbnail existence lookup failed");

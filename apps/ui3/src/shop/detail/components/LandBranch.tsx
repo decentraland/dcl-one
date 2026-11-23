@@ -10,7 +10,7 @@
 // components/Table/{TableContainer,TableContent}/*.tsx; icons vendored from webapp/src/images into landbranch-assets/.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
-import { useContext, useMemo, useState, type ReactNode } from "react";
+import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { QueryClientContext } from "@tanstack/react-query";
 
@@ -352,6 +352,18 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
   const maxPrice = rental ? maxPriceOfPeriods(rental) : null;
   const [view, setView] = useState<"sale" | "rent">(!!order || !rentalOpen ? "sale" : "rent");
   const [buying, setBuying] = useState(false);
+  // A sale still confirming has this LAND and its order read again once its dialog closes, not while it shows: a
+  // read empties the page until it answers (refetch drops the token), and would take the dialog and its notice with it.
+  const salePending = useRef(false);
+  const markSalePending = () => {
+    salePending.current = true;
+  };
+  const closeBuy = () => {
+    setBuying(false);
+    if (!salePending.current) return;
+    salePending.current = false;
+    onChanged();
+  };
   const [period, setPeriod] = useState<number | null>(null);
   const partOfEstate = land.kind === "parcel" && !!land.estate;
   const executed = isRentalExecuted(rental);
@@ -435,8 +447,8 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
             {!isOwner ? (
               <>
                 {isTenant && !ended ? (
-                  <a className="shop-landtoken__primary shop-landtoken__primary--builder" href="/create/land">
-                    Manage in Builder
+                  <a className="shop-landtoken__primary shop-landtoken__primary--builder" href="/download/creator-hub">
+                    Manage in Creator Hub
                   </a>
                 ) : null}
                 <div className="shop-landtoken__sale-buttons">
@@ -474,7 +486,15 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
         </div>
       ) : null}
       {buying && order && priceWei && order.tradeId ? (
-        <LandTradeBuy name={nft.name} tradeId={order.tradeId} quoted={priceWei as ManaWei} onClose={() => setBuying(false)} onDone={() => onChanged()} />
+        <LandTradeBuy
+          name={nft.name}
+          tradeId={order.tradeId}
+          quoted={priceWei as ManaWei}
+          land={{ contractAddress: nft.contractAddress, tokenId: nft.tokenId }}
+          onClose={closeBuy}
+          onDone={() => onChanged()}
+          onPending={markSalePending}
+        />
       ) : null}
       {buying && order && priceWei && !order.tradeId ? (
         <LegacyOrderBuy
@@ -483,8 +503,9 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
           tokenId={nft.tokenId}
           order={{ id: order.id, marketplaceAddress: order.marketplaceAddress, price: order.price, chainId: order.chainId }}
           quoted={priceWei as ManaWei}
-          onClose={() => setBuying(false)}
+          onClose={closeBuy}
           onDone={() => onChanged()}
+          onPending={markSalePending}
         />
       ) : null}
     </div>

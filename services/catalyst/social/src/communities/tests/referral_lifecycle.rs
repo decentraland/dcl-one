@@ -288,6 +288,10 @@ async fn referral_http_response_and_committed_rejection_survive_a_stalled_slack_
     .await
     .unwrap();
     assert_eq!(state, ("rejected_ip_match".into(), "192.0.2.1".into()));
+    // The Slack body stays stalled; only controlled time moves to the effect bound.
+    tokio::time::pause();
+    tokio::time::advance(super::super::referral_slack::EFFECT_TIMEOUT).await;
+    tokio::time::resume();
     let (status, body) = tokio::time::timeout(std::time::Duration::from_secs(15), pending)
         .await
         .unwrap()
@@ -334,7 +338,7 @@ async fn login_metadata_case(wallet: &Wallet, metadata: Value) -> Case {
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: wallet.address.to_string(),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,

@@ -26,6 +26,8 @@ impl Plugin for WebRequestsDebugPanelPlugin {
                         "Content files answered as missing for the session",
                         "missingForSession",
                     ),
+                    ("Cache entries checked after a failed load", "cacheChecks"),
+                    ("Cached entries dropped for bad bytes", "cacheDrops"),
                     #[cfg(not(target_arch = "wasm32"))]
                     ("IPFS connection failures (native)", "connectFailed"),
                     ("Available request slots", "available"),
@@ -242,6 +244,8 @@ mod request_tests {
         let state: serde_json::Value =
             serde_json::from_str(&rx.try_recv().unwrap().unwrap()).unwrap();
         assert_eq!(state["missingForSession"], 1);
+        assert_eq!(state["cacheChecks"], 0);
+        assert_eq!(state["cacheDrops"], 0);
         assert_eq!(state["bytes"], 1_058_816);
         assert_eq!(state["firstByteMs"], 100.0);
         assert_eq!(state["smallMs"], 750.0);
@@ -264,6 +268,7 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
         let connect_failed = Some(stats.connect_failed);
         #[cfg(target_arch = "wasm32")]
         let connect_failed: Option<u64> = None;
+        let (cache_checks, cache_drops) = ipfs.cache_heals.counts();
         input.reply_ok(
             json!({
                 "inFlight": IPFS_IN_FLIGHT.load(Ordering::Relaxed),
@@ -276,6 +281,8 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .session_len(),
+                "cacheChecks": cache_checks,
+                "cacheDrops": cache_drops,
                 "connectFailed": connect_failed,
                 "available": ipfs.request_slots.available_permits(),
                 "slots": config.max_concurrent_remotes,

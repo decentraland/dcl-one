@@ -1,12 +1,12 @@
 import { createSlice } from '@reduxjs/toolkit';
 import { createPublicClient, getContract, http, zeroAddress, type Address } from 'viem';
 import { namehash } from 'viem/ens';
-import pLimit from 'p-limit';
 import { captureException } from '@sentry/electron/renderer';
 import { ChainId } from '@dcl/schemas/dist/dapps/chain-id';
 import type { Async } from '/shared/types/async';
 import { config } from '/@/config';
 import { fetch } from '/shared/fetch';
+import { createLimit } from '/shared/limit';
 import { DCLNames, ENS as ENSApi } from '/@/lib/ens';
 import { Worlds } from '/@/lib/worlds';
 import { createAsyncThunk } from '/@/modules/store/thunk';
@@ -21,7 +21,7 @@ import { USER_PERMISSIONS, type ContributableDomain, type ENS } from './types';
 
 const DEFAULT_CHAIN_ID: ChainId = Number(config.get('CHAIN_ID')) || ChainId.ETHEREUM_MAINNET;
 const REQUESTS_BATCH_SIZE = 25;
-const limit = pLimit(REQUESTS_BATCH_SIZE);
+const limit = createLimit(REQUESTS_BATCH_SIZE);
 
 // actions
 const fetchContributableDomains = async (address: string) => {

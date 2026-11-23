@@ -40,9 +40,9 @@ impl Rc for DisplayHandlerBuilder {
 impl Clone for DisplayHandlerBuilder {
     fn clone(&self) -> Self {
         let object = unsafe {
-            let rc_impl = &mut *self.object;
+            let rc_impl = &*self.object;
             rc_impl.interface.add_ref();
-            rc_impl
+            self.object
         };
         Self {
             object,

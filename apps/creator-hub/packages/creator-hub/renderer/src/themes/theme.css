@@ -39,6 +39,7 @@
   --palette-neutral-softWhite: #fcfcfc;
   --gray: #cfcdd4;
   --onyx: #35333b;
+  --surface-brand: #4c147c;
   --pearl: #ecebed;
   --palette-info-light: #63b4f6;
 
@@ -261,33 +262,55 @@
   --shadow-tooltip: 0 2px 3px rgba(0, 0, 0, 0.25);
   --shadow-toast: 0 4px 4px rgba(0, 0, 0, 0.1);
 
-  /* Buttons */
-  /* TODO: Fix styles in the ui2 library */
-  --mui-shape-borderRadius: 6px;
-  /* --mui-palette-primary-main: #ff2d55; */
-  --mui-palette-action-disabled: #231113;
-  --mui-palette-secondary-contrast: #ffffff;
-
-  /* Global Scrollbar Styles */
-  ::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  ::-webkit-scrollbar-track {
-    background: var(--black);
-    border-radius: 4px;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background-color: var(--dcl-silver);
-    border-radius: 4px;
-  }
+  --shape-borderRadius: 6px;
 }
 
+/* Global Scrollbar Styles */
+:root ::-webkit-scrollbar {
+  width: 8px;
+  height: 10px;
+}
+
+:root ::-webkit-scrollbar-track {
+  background: var(--black);
+  border-radius: 4px;
+}
+
+:root ::-webkit-scrollbar-thumb {
+  background-color: var(--dcl-silver);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+/* The base of the page. Every size in the renderer counts the border and the padding. */
 html {
   color: var(--white);
   font-family: var(--font-family);
   height: 100%;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+strong,
+b {
+  font-weight: 700;
+}
+
+body {
+  color: rgba(240, 240, 240, 1);
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 body,
@@ -296,8 +319,6 @@ body,
   padding: 0px;
   margin: 0px;
   height: 100%;
-  /* The lib decentraland-ui2 adds a default background-color to the body */
-  background-color: unset !important;
   position: absolute;
   top: 0px;
   bottom: 0px;
@@ -356,14 +377,4 @@ footer {
 
 a {
   color: var(--white);
-}
-
-/* Temp: override the default position so the Modal component is visible */
-.MuiDialog-paper {
-  position: inherit !important;
-}
-
-/* Temp: make disabled buttons look disabled */
-.Button.MuiButton-root.Mui-disabled {
-  opacity: 0.2;
 }

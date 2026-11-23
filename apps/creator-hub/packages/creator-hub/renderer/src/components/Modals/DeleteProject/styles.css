@@ -1,4 +1,4 @@
-.DeleteProjectModal .MuiPaper-root .MuiBox-root:first-child h5:first-child {
+.DeleteProjectModal [role="dialog"] h5 {
   text-align: center;
   line-height: 1.5;
 }
@@ -8,6 +8,11 @@
   align-items: center;
   cursor: pointer;
   width: max-content;
+  gap: 12px;
+  padding: 9px 12px;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .DeleteProjectModal .delete-files-warning {

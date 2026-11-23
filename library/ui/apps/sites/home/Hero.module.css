@@ -135,8 +135,24 @@
   }
 }
 
+.stores {
+  display: grid;
+  justify-items: center;
+  gap: var(--dcl-space-12);
+  width: 100%;
+}
+
 /* Below it the narrow layout replaces the wide one. */
 @media not all and (min-width: 991px) {
+  .root {
+    min-height: 100svh;
+  }
+
+  .content {
+    padding-block-start: calc(var(--site-header-h, 64px) + var(--dcl-space-16));
+    padding-block-end: clamp(var(--dcl-space-24), 8svh, var(--dcl-space-64));
+  }
+
   .wideOnly {
     display: none;
   }

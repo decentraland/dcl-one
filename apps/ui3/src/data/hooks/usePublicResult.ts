@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
-import type { PublicFreshness } from "../screens/section";
+import type { PublicFreshness } from "@web-core/freshness/section";
 
 export const publicFreshnessKey = (key: QueryKey) => ["public-freshness", ...key];
 const MAX_AGE = 5 * 60_000;

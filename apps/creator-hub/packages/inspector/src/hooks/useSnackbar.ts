@@ -1,8 +1,7 @@
 import React from 'react';
-import type { AlertColor } from 'decentraland-ui2';
 import { getSceneClient } from '../lib/rpc/scene';
 
-export type NotificationType = AlertColor | 'loading';
+export type NotificationType = 'success' | 'info' | 'warning' | 'error' | 'loading';
 
 export type NotificationRequest = {
   severity: NotificationType;

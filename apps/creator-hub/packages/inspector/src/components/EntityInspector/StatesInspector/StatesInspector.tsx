@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { ComponentName } from '@dcl/asset-packs';
 
 import { withSdk } from '../../../hoc/withSdk';
@@ -139,8 +139,16 @@ export default withSdk<Props>(({ sdk, entities, initialOpen = true }) => {
                 {...inputProps}
               />
               <MoreOptionsMenu>
-                <Button onClick={handleRemove(value)}>Remove State</Button>
                 <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRemove(value)}
+                >
+                  Remove State
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={handleDefault(value)}
                   disabled={isPartial}
                 >

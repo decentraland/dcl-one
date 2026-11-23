@@ -230,6 +230,8 @@ pub async fn op_open_nft_dialog(
 pub async fn op_open_explorer_ui(
     op_state: Rc<RefCell<impl State>>,
     ui: i32,
+    request_id: u32,
+    item_urn: Option<String>,
 ) -> Result<i32, anyhow::Error> {
     debug!("op_open_explorer_ui");
     let (sx, rx) = RpcResultSender::<OpenExplorerUiResult>::channel();
@@ -239,7 +241,12 @@ pub async fn op_open_explorer_ui(
 
         state
             .borrow_mut::<RpcCalls>()
-            .push(RpcCall::OpenExplorerUi { ui, response: sx })?;
+            .push(RpcCall::OpenExplorerUi {
+                ui,
+                request_id,
+                item_urn,
+                response: sx,
+            })?;
     }
 
     Ok(rx.await.map_err(|e| anyhow!(e))? as i32)

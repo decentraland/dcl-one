@@ -12,10 +12,11 @@ row is deleted (communities step), and actively banned wallets lose their member
 Rows this source wrote are recorded in dcl_migration (social_*_loaded); a row
 the node changed or removed since stays the node's. community_members and the
 *_reconcile steps delete imported rows upstream no longer holds.
-Not migrated: private_voice_chats (live call state, LiveKit rooms do not move),
-community_ranking_metrics and communities.ranking_score (upstream ranking job output, no
-writer on the node), community thumbnails (S3 objects, not in this database;
-blobs are out of scope). No chat tables live in this database.
+community_ranking_metrics carries upstream's lifetime ranking counters and score onto
+the imported communities (see MAPPING.md for re-runs). Community thumbnails are CDN
+objects, not in this database: `blobs social-service-ea` copies them after the run.
+Not migrated: private_voice_chats (live call state, LiveKit rooms do not move). No chat
+tables live in this database.
 """
 
 [[step]]
@@ -135,6 +136,23 @@ columns = [
   { name = "editors_choice", type = "boolean" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_ranking_metrics"
+targets = ["social.communities"]
+extract = "community_ranking_metrics.extract.sql"
+load = "community_ranking_metrics.load.sql"
+key = ["community_id"]
+columns = [
+  { name = "community_id", type = "uuid" },
+  { name = "events_count", type = "integer" },
+  { name = "photos_count", type = "integer" },
+  { name = "streams_count", type = "integer" },
+  { name = "events_total_attendees", type = "integer" },
+  { name = "streams_total_participants", type = "integer" },
+  { name = "ranking_score", type = "real" },
+  { name = "snapshot_at", type = "timestamptz" },
 ]
 
 [[step]]

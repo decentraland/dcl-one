@@ -23,24 +23,47 @@ import { prepareResume, resumePlan, type GroupEvent } from "@shop/cart/machine";
 import type { CartGroup } from "@shop/cart/partition";
 import type { CartStore } from "../../cart/store";
 import type { GroupFailure, GroupProgress, PurchaseState } from "@shop/model/purchase";
-import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases } from "@shop/credits/credits";
+import { authorizeUsdCreditGroup, cancelUsdIntents, fetchUserPurchases, type SignedSession } from "@shop/credits/credits";
 import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../chain/wallet";
 import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, ensureAuthorization, type ShopAuthorization } from "../lib/authorizations";
-import { friendlyError, isRejection } from "../lib/errors";
+import { friendlyError, isRejection, relayLimitText } from "../lib/errors";
 import { isWrongNetworkError } from "../lib/network";
 import { canPayGasItself } from "../lib/wallet-kind";
 import { requireContracts } from "../chain/contracts";
-import { checkoutLineFor, purchaseTargetFor, toUnits, type ResolvedLine } from "./cart";
+import { checkoutLineFor, purchaseTargetFor, toUnits, tradeManaPrice, type ResolvedLine } from "./cart";
 import { buyManyWithCredits, groupPurchases, type AnyPurchase } from "./credits";
 import { buyManyGasless, isSettlementPending, waitForSettlement } from "./gasless";
-import { acceptPayingMana, manaSpenderFor, mintPayingMana, purchaseFor, type MintToBuy } from "./mana";
+import { acceptPayingMana, manaSpenderFor, mintPayingMana, purchaseFor, splitTerms, type MintToBuy } from "./mana";
 import type { RailContext } from "./rail";
 import { createSpendGuard, type SpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending, isMetaTxReverted } from "./tx-confirm";
 
 export type ApprovalRequest = { auth: ShopAuthorization; index: number; total: number; requiredWei: bigint; keyId: string };
+
+/**
+ * Paying ONE unit with Credits and MANA together: a credit for the Credits part (`creditsCents` of the line's whole quote),
+ * and the rest pulled from the buyer's MANA in the same useCredits. `confirmedWei`: the most MANA the buyer agreed to pay;
+ * `session`: the signed session the node authorizes a part for. The credit must be exactly the node's share of the sale's
+ * MANA (`splitTerms`), and both caps are encoded from it. It goes only through the fee-free relay, never from the wallet
+ * instead. The MANA allowance for the gap is the caller's to have in place before the group runs.
+ */
+export type SplitPlan = {
+  creditsCents: number;
+  confirmedWei: bigint;
+  session: SignedSession;
+  /**
+   * The credit the node issued, once checked to be the share it must be: before anything is signed for it. False: the
+   * caller couldn't keep the purchase's record, so nothing is signed or sent and the credit is released.
+   */
+  onCredit?: (credit: { id: string; expiresAt: number }) => boolean | void;
+  /**
+   * The exact bytes the sale is about to send (the relayed execution as signed), before they go: false when the caller
+   * couldn't keep their identity, and then nothing is sent and the credit is released.
+   */
+  onEnvelope?: (bytes: Hex) => boolean | void;
+};
 
 export type CheckoutDeps = {
   ctx: RailContext;
@@ -48,7 +71,15 @@ export type CheckoutDeps = {
   /** A self-custody wallet approves MANA spending explicitly; resolves true once the approval is granted. */
   requestApproval?: (request: ApprovalRequest) => Promise<boolean>;
   guard?: SpendGuard;
+  /** A credits group of one unit paid with Credits and MANA together (see SplitPlan); absent, credits pay it all. */
+  split?: SplitPlan;
 };
+
+/** The MANA a unit's sale moves: a mint's price, or a MANA listing's after its coupon; null for a USD-pegged one. */
+export function splitPriceOf(unit: ResolvedLine): bigint | null {
+  if (unit.acquisition === "trade") return tradeManaPrice(unit.trade, unit.coupon);
+  return BigInt(unit.priceWei);
+}
 
 export type TopUpNeeded = { requiredCents: number; balanceCents: number };
 
@@ -103,9 +134,22 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
   const guard = (deps.guard ??= createSpendGuard());
   const keyId = group.keyId;
   const units = toUnits(lines);
+  const split = deps.split;
+  // A split is one unit, at a fixed MANA price, through the relay: anything else stops before a credit is asked for.
+  const splitPrice = split && units.length === 1 ? splitPriceOf(units[0]!) : null;
+  if (split && (units.length !== 1 || splitPrice === null || !(ctx.gasless ?? gaslessEnabled()))) {
+    const failure: GroupFailure = {
+      kind: "refused",
+      message: units.length !== 1 ? "Credits and MANA together pay for one item at a time." : splitPrice === null ? "This item can't be paid with Credits and MANA together." : "Credits and MANA together need the fee-free relay, which isn't available right now.",
+    };
+    dispatchSafe(store, keyId, { type: "failed", failure });
+    return { status: "failed", failure, released: [] };
+  }
   let auth: CreditBatchAuthorization;
   try {
-    auth = await authorizeUsdCreditGroup(units.map(checkoutLineFor), "website", ctx.client);
+    auth = split
+      ? await authorizeUsdCreditGroup([{ ...checkoutLineFor(units[0]!), creditsCents: split.creditsCents }], "website", ctx.client, split.session)
+      : await authorizeUsdCreditGroup(units.map(checkoutLineFor), "website", ctx.client);
   } catch (e) {
     const short = insufficientCredits(e);
     const message = short
@@ -122,7 +166,27 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
   const creditId = auth.credit.id;
   dispatchSafe(store, keyId, { type: "authorized", creditIds: [creditId] });
   const credit = { ...auth.credit };
-  const purchases: AnyPurchase[] = units.map((u) => purchaseFor(purchaseTargetFor(u), [credit], auth.maxCreditedValue));
+  let purchases: AnyPurchase[];
+  if (split) {
+    // The credit is checked against the share it must be before anything is signed; the gap is what the buyer confirmed at most.
+    let terms: { creditWei: bigint; gapWei: bigint };
+    try {
+      const unit = units[0]!;
+      terms = splitTerms({ priceWei: splitPrice!, quotedCents: unit.quote.method === "credits" ? unit.quote.quoted : 0, partCents: split.creditsCents, credit, confirmedWei: split.confirmedWei });
+    } catch (e) {
+      const failure: GroupFailure = { kind: "refused", message: `${e instanceof Error ? e.message : "The terms changed."} Nothing was charged; check the price again.` };
+      dispatchSafe(store, keyId, { type: "failed", failure });
+      return { status: "failed", failure, released: await release(deps, [creditId]) };
+    }
+    if (split.onCredit?.({ id: credit.id, expiresAt: Math.floor(Number(credit.expiresAt)) }) === false) {
+      const failure: GroupFailure = { kind: "refused", message: "This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged." };
+      dispatchSafe(store, keyId, { type: "failed", failure });
+      return { status: "failed", failure, released: await release(deps, [creditId]) };
+    }
+    purchases = [{ ...purchaseFor(purchaseTargetFor(units[0]!), [credit], terms.creditWei.toString()), maxUncreditedValue: terms.gapWei.toString() }];
+  } else {
+    purchases = units.map((u) => purchaseFor(purchaseTargetFor(u), [credit], auth.maxCreditedValue));
+  }
   if (groupPurchases(purchases).length !== 1) {
     const failure: GroupFailure = { kind: "error", message: "These items no longer settle together. Review your cart again." };
     dispatchSafe(store, keyId, { type: "failed", failure });
@@ -144,16 +208,34 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     dispatchSafe(store, keyId, { type: "observed" });
   };
   const chainId = group.key.chainId;
+  // The fee-free way was tried and couldn't run, so the wallet's own transaction is its fallback.
+  let fellBack = false;
+  // Why it couldn't run, when the relay said (its daily limits), for the buyer to read beside the fallback's failure.
+  let feeFreeNote: string | null = null;
   try {
     let settled = false;
     if (ctx.gasless ?? gaslessEnabled()) {
       try {
-        await buyManyGasless(ctx, { purchases, onSigned: handoff, onBroadcast: ({ txHash: h }) => broadcast(h) });
+        await buyManyGasless(ctx, {
+          purchases,
+          onSigned: handoff,
+          ...(split?.onEnvelope
+            ? {
+                onSignedCall: (call: { data: Hex }) => {
+                  if (split.onEnvelope!(call.data) === false) throw new Error("This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.");
+                },
+              }
+            : {}),
+          onBroadcast: ({ txHash: h }) => broadcast(h),
+        });
         await waitForSettlement(ctx.reader, chainId, txHash!, ctx.wait);
         settled = true;
       } catch (e) {
-        const canFallBack = isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
+        // A split never falls back to the wallet: it goes through the relay or not at all.
+        const canFallBack = !split && isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
         if (!canFallBack) throw e;
+        fellBack = true;
+        feeFreeNote = relayLimitText(e);
         if (handedOff) {
           // The relay parsed our request and refused it: provably not broadcast. The direct rail is a new hand-off.
           handedOff = false;
@@ -172,6 +254,9 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     return { status: "confirmed", txHash };
   } catch (e) {
     guard.submitFinished(creditId);
+    // A split's revert is its caller's to attribute first: a reverted receipt for the hash the relay answered may be some
+    // other transaction's, while this purchase's own can still land. Nothing is released here.
+    if (split && isRevertedTxError(e) && txHash) return { status: "pending", txHash };
     if (isRevertedTxError(e) && txHash) {
       guard.reverted(txHash);
       const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain and nothing was bought. The Credits held for it are released once the authorization expires and that is confirmed on chain." };
@@ -185,7 +270,14 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     }
     if (txHash) return { status: "pending", txHash };
     const failure = handedOff ? { ...failureFor(e), kind: "rejected" as const } : failureFor(e);
-    if (isWrongNetworkError(e)) failure.message = friendlyError(e, FALLBACK);
+    if (isWrongNetworkError(e)) {
+      failure.message = friendlyError(e, FALLBACK);
+      failure.switchTo = e.required;
+      if (fellBack) {
+        failure.feeFreeUnavailable = true;
+        if (feeFreeNote) failure.feeFreeNote = feeFreeNote;
+      }
+    }
     dispatchSafe(store, keyId, { type: "failed", failure });
     return { status: "failed", failure, released: await release(deps, [creditId]) };
   }
@@ -292,6 +384,37 @@ export async function runGroup(deps: CheckoutDeps, group: CartGroup, resolved: M
   return group.key.method === "credits" ? runCreditsGroup(deps, group, lines) : runManaGroup(deps, group, lines);
 }
 
+/** Why a group didn't run: another group of the checkout was handed off and isn't confirmed yet. */
+export const AFTER_PENDING = "another part of this checkout is still being confirmed";
+
+/** Whether a group of the checkout was handed off and isn't confirmed yet. */
+function inFlight(store: CartStore): boolean {
+  return (store.getSnapshot().checkout?.groups ?? []).some((g) => g.status === "submitted" || g.status === "pending");
+}
+
+/**
+ * The checkout's groups, one after another, none while another of its groups is in flight. A relayed group signs
+ * against the meta-transaction nonce the chain holds now, which a group handed off but not mined hasn't moved yet,
+ * so a group signed meanwhile could take the same nonce, and one of the two would revert. The groups that wait
+ * stay ready for another confirmation, once the one in flight is settled. `onResult` follows each group's result.
+ */
+export async function runGroups(
+  deps: CheckoutDeps,
+  groups: CartGroup[],
+  resolved: Map<string, ResolvedLine>,
+  onResult?: (group: CartGroup, result: GroupResult) => void,
+): Promise<Record<string, GroupResult>> {
+  const results: Record<string, GroupResult> = {};
+  for (const group of groups) {
+    const status = progressOf(deps.store, group.keyId)?.status;
+    const idle = status === "idle" || status === "failed" || status === "expired";
+    const result: GroupResult = idle && inFlight(deps.store) ? { status: "skipped", reason: AFTER_PENDING } : await runGroup(deps, group, resolved);
+    results[group.keyId] = result;
+    onResult?.(group, result);
+  }
+  return results;
+}
+
 /**
  * Follow a group that may have been broadcast. With a hash: its receipt (a late receipt confirms it).
  * Without one (the relay gave no usable answer): the credit's own record, since the server reconciles
@@ -327,7 +450,9 @@ export async function watchGroup(deps: CheckoutDeps, progress: GroupProgress): P
     }
     const expired = mine.length > 0 && mine.every((p) => p.status === "EXPIRED" && !p.submittedTxHash);
     if (expired && progress.status === "submitted") {
-      const failure: GroupFailure = { kind: "rejected", message: "This part of your purchase never went out. Its Credits were returned." };
+      // Expired with no consumption indexed past its expiry: the signed purchase can no longer land.
+      // That is not proof it was never sent, only that it was never spent.
+      const failure: GroupFailure = { kind: "rejected", message: "This part of your purchase expired before it was spent on chain. Nothing was bought, and its Credits were returned." };
       dispatchSafe(store, progress.keyId, { type: "failed", failure });
       return { status: "failed", failure, released: [] };
     }
@@ -365,10 +490,14 @@ export async function resumeCheckout(
   const results: Record<string, GroupResult> = {};
   await releaseAuthorizing(deps, state);
   for (const watching of plan.watch) results[watching.keyId] = await watchGroup(deps, watching);
+  // What still runs waits while a watched group is in flight (runGroups).
+  const runnable: CartGroup[] = [];
   for (const run of plan.run) {
     const group = groups.find((g) => g.keyId === run.keyId);
-    results[run.keyId] = group ? await runGroup(deps, group, resolved) : { status: "skipped", reason: "the cart changed; review it again" };
+    if (group) runnable.push(group);
+    else results[run.keyId] = { status: "skipped", reason: "the cart changed; review it again" };
   }
+  Object.assign(results, await runGroups(deps, runnable, resolved));
   for (const done of plan.done) results[done.keyId] = { status: "confirmed", txHash: done.txHash };
   return results;
 }

@@ -155,7 +155,13 @@ impl ChainIndex for ManaTransfersIndex {
             .await?;
         Ok(())
     }
-    async fn fold(&self, _: &PgPool, _: Option<i64>, _: i64) -> anyhow::Result<bool> {
+    async fn fold(
+        &self,
+        _: &PgPool,
+        _: Option<i64>,
+        _: i64,
+        _: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
         Ok(true)
     }
 }
@@ -168,7 +174,8 @@ pub async fn status(pool: &PgPool) -> Value {
             .ok()
             .flatten();
         rows.push(json!({ "network": net.db_name(), "ready": c.as_ref().is_some_and(|c| chain_walk::is_ready(c, chrono::Utc::now())),
-            "lastBlock": c.as_ref().map(|c| c.last_block), "lastBlockTime": c.as_ref().and_then(|c| c.last_block_time) }));
+            "lastBlock": c.as_ref().map(|c| c.last_block), "lastBlockTime": c.as_ref().and_then(|c| c.last_block_time),
+            "divergedAt": c.as_ref().and_then(|c| c.diverged_at) }));
     }
     json!(rows)
 }

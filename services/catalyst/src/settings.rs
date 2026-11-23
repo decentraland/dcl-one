@@ -70,6 +70,7 @@ pub(crate) fn market_settings(
             mana_transfers_enabled: config.marketplace.marketplace_mana_transfers_index_enabled,
             trade_events_enabled: config.marketplace.marketplace_trade_events_index_enabled,
             sales_enabled: config.marketplace.marketplace_sales_index_enabled,
+            committee_enabled: config.marketplace.marketplace_committee_index_enabled,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),
@@ -92,6 +93,16 @@ pub(crate) fn market_settings(
             chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
             chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
         })?)
+        .with_portal(shop::market::chain_jobs::PortalSettings::parse(
+            &config.marketplace.chain_logs_source,
+            config.marketplace.chain_logs_portal_url.as_deref(),
+            &config.marketplace.chain_logs_portal_dataset_ethereum,
+            &config.marketplace.chain_logs_portal_dataset_matic,
+            config.marketplace.chain_logs_portal_api_key.clone(),
+            config.marketplace.chain_logs_portal_max_rps,
+            config.marketplace.chain_logs_portal_assert_full_history,
+            config.marketplace.chain_logs_portal_deadline_secs,
+        )?)
         .with_tips(shop::market::tips::TipSettings::parse(
             &config.marketplace.marketplace_tip_min_amount_wei,
             config.marketplace.marketplace_tip_max_age_secs,

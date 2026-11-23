@@ -1,4 +1,5 @@
 import type { Project } from '/shared/types/projects';
+import { getProjectWorldName } from '/@/lib/project-world';
 import type { Deployment } from '/@/modules/store/deployment/slice';
 import { t } from '/@/modules/store/translation/utils';
 import type { PublishOption } from './MenuOptions';
@@ -48,7 +49,7 @@ export const getPublishOptions = ({
   actions,
 }: GetPublishOptionsParams): PublishOption[] => {
   const options: PublishOption[] = [];
-  const worldName = project?.worldConfiguration?.name;
+  const worldName = project ? getProjectWorldName(project) : undefined;
   const landBase = project?.scene?.base;
 
   if (isDeploying) {

@@ -6,11 +6,15 @@
 // browser and phone wallets directly; every session lasts a month, as upstream's. Upstream's Fortmatic option goes
 // through decentraland-connect, which this site does not carry, so it is not wired yet.
 
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
+import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
+import { DesktopLogin } from "@dcl/one-ui/apps/sites/auth/DesktopLogin";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+
+import { Button } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
+import { beginShellBrowserSignIn, isDesktopShell } from "@/data/lib/auth/native-shell";
 import { getIdentity, setIdentity } from "@/data/lib/auth/session";
 import { recordSignIn } from "@/data/lib/auth/signin-kind";
 
@@ -193,10 +197,9 @@ function EmailInput({ busy, error, onSubmit, onChange }: { busy: boolean; error:
           disabled={busy}
           autoComplete="email"
         />
-        <button type="submit" className={styles.next} data-busy={busy} disabled={busy || !valid} data-testid="email-submit-button">
-          <span>{t("email_input.next")}</span>
-          {busy ? <span className={styles.nextSpinner} aria-hidden="true" /> : null}
-        </button>
+        <Button type="submit" size="lg" loading={busy} disabled={busy || !valid} data-testid="email-submit-button">
+          {t("email_input.next")}
+        </Button>
       </div>
       {showInvalid ? <p className={styles.emailError}>{t("email_input.validation_error")}</p> : null}
       {error && !showInvalid ? (
@@ -209,6 +212,7 @@ function EmailInput({ busy, error, onSubmit, onChange }: { busy: boolean; error:
 }
 
 type Modal = { state: ConnectionState; detail: string | null; pairing: PairingCode | null };
+type Client = { userAgent: string; touch: number; injected: boolean; metamask: boolean; desktopShell: boolean };
 
 export type LoginPageProps = {
   /** The query's `redirectTo`, as given; it is checked before any use. */
@@ -223,7 +227,7 @@ export type LoginPageProps = {
 
 export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, loginMethod = null }: LoginPageProps) {
   const auth = useAuth();
-  const [client, setClient] = useState<{ userAgent: string; touch: number; injected: boolean; metamask: boolean } | null>(null);
+  const [client, setClient] = useState<Client | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
   const [pending, setPending] = useState<ConnectionOption | null>(null);
   const [showMore, setShowMore] = useState(false);
@@ -242,6 +246,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       touch: navigator.maxTouchPoints ?? 0,
       injected: !!window.ethereum,
       metamask: hasMetaMask(),
+      desktopShell: isDesktopShell(),
     });
   }, []);
   useEffect(() => () => walletConnect.current?.abort(), []);
@@ -266,11 +271,12 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   );
 
   const target = useCallback(() => safeRedirectTarget(redirectTo, new URL(window.location.href)), [redirectTo]);
+  const returnToSite = useCallback(() => window.location.assign(target()), [target]);
   const metamask = client?.metamask ?? false;
   const finish = useCallback(() => {
     setModal({ state: "redirecting", detail: null, pairing: null });
-    window.location.assign(target());
-  }, [target]);
+    returnToSite();
+  }, [returnToSite]);
 
   const connect = useCallback(
     async (option: ConnectionOption) => {
@@ -352,7 +358,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   // one that fails or is closed, leaves the page's own options.
   const requested = useRef(false);
   useEffect(() => {
-    if (requested.current || client == null || loginMethod == null || loginMethod === "email") return;
+    if (requested.current || client == null || client.desktopShell || loginMethod == null || loginMethod === "email") return;
     requested.current = true;
     if (layoutOffers(layout, loginMethod)) void connect(loginMethod);
   }, [client, layout, loginMethod, connect]);
@@ -411,30 +417,36 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
               </div>
               <div className={styles.content}>
                 <h1 className={styles.title}>{t("connection.title")}</h1>
-                <EmailInput busy={emailBusy} error={emailError} onSubmit={(email) => void sendCode(email)} onChange={() => setEmailError(null)} />
-                {layout.first || layout.second ? <div className={styles.divider}>{t("connection.or_continue_with")}</div> : null}
-                <div className={styles.primaryList}>
-                  {layout.first ? <PrimaryOption option={layout.first} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
-                  {layout.second ? <PrimaryOption option={layout.second} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
-                </div>
+                {client?.desktopShell ? (
+                  <DesktopLogin beginSignIn={beginShellBrowserSignIn} onSignedIn={returnToSite} />
+                ) : (
+                  <>
+                    <EmailInput busy={emailBusy} error={emailError} onSubmit={(email) => void sendCode(email)} onChange={() => setEmailError(null)} />
+                    {layout.first || layout.second ? <div className={styles.divider}>{t("connection.or_continue_with")}</div> : null}
+                    <div className={styles.primaryList}>
+                      {layout.first ? <PrimaryOption option={layout.first} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
+                      {layout.second ? <PrimaryOption option={layout.second} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
+                    </div>
+                  </>
+                )}
               </div>
-              <div className={styles.more}>
-                {layout.more.length > 0 ? (
+              {!client?.desktopShell && layout.more.length > 0 ? (
+                <div className={styles.more}>
                   <button type="button" className={styles.moreButton} aria-expanded={showMore} onClick={() => setShowMore((v) => !v)} data-testid="show-more-button">
                     {t("connection.more_options")}
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                       <path d={showMore ? "m12 8-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" : "M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"} />
                     </svg>
                   </button>
-                ) : null}
-                {showMore && layout.more.length > 0 ? (
-                  <div className={styles.grid} data-testid="more-options">
-                    {layout.more.map((option) => (
-                      <GridOption key={option} option={option} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+                  {showMore ? (
+                    <div className={styles.grid} data-testid="more-options">
+                      {layout.more.map((option) => (
+                        <GridOption key={option} option={option} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

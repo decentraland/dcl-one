@@ -16,6 +16,8 @@ import { hexToColor3 } from '@explorer-core/lib/color'
 import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { startCallWith } from '../voiceChat/callGate'
+import { openGiftPicker } from '../gifting/GiftPicker'
+import { useGiftingAvailable } from '../gifting/useGifting'
 import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
 
 export function Passport({
@@ -43,6 +45,7 @@ export function Passport({
   const a = userId.toLowerCase()
   const isSelf = !!session.profile.data && session.profile.data.address.toLowerCase() === a
   const known = useProfile(userId)
+  const canGift = useGiftingAvailable() && !isSelf
   const stored: Profile =
     known ??
     (isSelf && session.profile.data
@@ -121,6 +124,15 @@ export function Passport({
       onJump={
         !isSelf && canJumpToFriend(session.friends, userId)
           ? (a) => void jumpToFriend(session.map, a).then((to) => to != null && onClose())
+          : undefined
+      }
+      onGift={
+        canGift
+          ? (a) => {
+              // the picker replaces the passport
+              onClose()
+              openGiftPicker({ address: a, name: friendUser.name })
+            }
           : undefined
       }
       inviteItems={inviteItems}

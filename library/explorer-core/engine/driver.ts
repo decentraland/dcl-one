@@ -79,6 +79,9 @@ export interface LoginDriver {
   engineReady?(): boolean
   /** Tell the transport the bridge scene is now expected, so its absence can be reported. */
   expectBridge?(): void
+  /** Whether the bridge scene has answered the page's handshake. Optional — the mock has no
+   *  bridge to wait for. */
+  bridgeReady?(): boolean
   /** Real weighted boot progress (0–100) + active step id, surfaced from the engine loader for
    *  the login footer bar. Optional — the mock has no engine to download. */
   loadProgress?(): number
@@ -96,7 +99,7 @@ export interface LoginDriver {
   launch?(realm?: string, position?: string, host?: LaunchHostOptions): void
   /** The engine's persisted home scene — the Skip target. Available pre-launch; null until the
    *  engine module is up. Native and mock clients request it through the scene bridge instead. */
-  homeScene?(): { realm: string | null; parcel: string } | null
+  homeScene?(): { realm: string | null; parcel: string; pinned: boolean } | null
   /** Whether this install has accepted the terms, pre-launch (null = unknown), so a link can launch
    *  holding the world for the welcome page. Native decides that hold itself (src/lib.rs). */
   termsAccepted?(): boolean | null

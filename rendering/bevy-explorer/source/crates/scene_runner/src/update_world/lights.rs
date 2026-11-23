@@ -12,6 +12,10 @@ use bevy::{
 use common::{
     dynamics::PLAYER_COLLIDER_RADIUS,
     sets::SceneSets,
+    sky_preset::{
+        day_fraction, sample_keys, sample_ramp, time_to_phase, DIRECTIONAL_COLOR_RAMP,
+        LIGHT_INTENSITY_BY_TIME, LIGHT_UNIT_LUX,
+    },
     structs::{
         AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
         SPOT_SHADOW_MAX_DISTANCE,
@@ -179,10 +183,14 @@ fn light_command(
         "unavailable": {"nearestCaster": "no light casts a shadow"}}).to_string());
 }
 
-#[derive(Component, Debug, Default)]
+#[derive(Component, Debug)]
 pub struct LightSource {
     pub enabled: bool,
+    /// The scene's own intensity, unset when it gives none.
     pub intensity: Option<f32>,
+    /// What a colour above 1 multiplies the intensity by, the colour itself being scaled back
+    /// to 1.
+    pub intensity_gain: f32,
     pub shadow: Option<bool>,
     pub color: Option<Color>,
     pub range: Option<f32>,
@@ -190,10 +198,35 @@ pub struct LightSource {
     pub light_texture: Option<TextureUnion>,
 }
 
+impl Default for LightSource {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            intensity: None,
+            intensity_gain: 1.0,
+            shadow: None,
+            color: None,
+            range: None,
+            spotlight_angles: None,
+            light_texture: None,
+        }
+    }
+}
+
+/// A point or spot light's intensity when the scene gives none.
+const DEFAULT_LAMP_INTENSITY: f32 = 16000.0;
+
+impl LightSource {
+    /// A point or spot light's intensity: the scene's or the default, times the colour's gain.
+    fn lamp_intensity(&self) -> f32 {
+        self.intensity.unwrap_or(DEFAULT_LAMP_INTENSITY) * self.intensity_gain
+    }
+}
+
 impl From<PbLightSource> for LightSource {
     fn from(value: PbLightSource) -> Self {
-        // rescale colors > 1 to 1, and multiply intensity by pow(max^2.2)
-        // to match unity
+        // the colour is sRGB. a colour above 1 is rescaled to 1 and multiplies the intensity by
+        // max^2.2, the gain decoding it as sRGB would give
         let color_scale = value
             .color
             .map(|c| c.r.max(c.g).max(c.b).max(1.0))
@@ -201,11 +234,12 @@ impl From<PbLightSource> for LightSource {
 
         Self {
             enabled: value.active.unwrap_or(true),
-            intensity: Some(value.intensity.unwrap_or(16000.0) * color_scale.powf(2.2)),
+            intensity: value.intensity,
+            intensity_gain: color_scale.powf(2.2),
             shadow: value.shadow,
-            color: value.color.map(|c| {
-                Color::linear_rgb(c.r / color_scale, c.g / color_scale, c.b / color_scale)
-            }),
+            color: value
+                .color
+                .map(|c| Color::srgb(c.r / color_scale, c.g / color_scale, c.b / color_scale)),
             range: value.range,
             spotlight_angles: if let Some(pb_light_source::Type::Spot(spot)) = value.r#type {
                 Some((
@@ -235,6 +269,20 @@ impl From<PbGlobalLight> for GlobalLight {
             ambient_brightness: value.ambient_brightness,
         }
     }
+}
+
+/// The sun at noon, lux: the light intensity curve (`common::sky_preset`) peaks at 1.2 there.
+pub const NOON_ILLUMINANCE: f32 = 1.2 * LIGHT_UNIT_LUX;
+/// The sky's own sun at noon, in the atmosphere's units (`dir_light_intensity`).
+const SKY_SUN_ILLUMINANCE: f32 = 7000.0;
+
+/// A scene point or spot light's intensity times this is its intensity in light units: the
+/// default 16000 is 8 units.
+const LIGHT_SOURCE_INTENSITY_SCALE: f32 = 0.0005;
+
+/// A scene point or spot light's bevy intensity (lumens) from its `PbLightSource` intensity.
+pub fn light_source_lumens(intensity: f32) -> f32 {
+    intensity * LIGHT_SOURCE_INTENSITY_SCALE * LIGHT_UNIT_LUX * 4.0 * PI
 }
 
 /// The largest scene colour or light multiplier: the largest finite half float, as the sky is
@@ -373,40 +421,76 @@ pub fn moon_direction(hours: f32) -> Vec3 {
     celestial_direction(hours, MOONRISE, MOONSET, MOON_TILT_DEGREES)
 }
 
-/// The sunlight's colour (sRGB) at `elevation`, the sine of the sun's elevation: a cubic per
-/// channel from a red horizon through a warm 12 degrees to white at noon, flat there.
-fn sun_color(elevation: f32) -> Vec3 {
-    const HORIZON: Vec3 = Vec3::new(1.0, 0.38, 0.40);
-    const E1: Vec3 = Vec3::new(0.0, 0.8804, 1.0065);
-    const E2: Vec3 = Vec3::new(0.0, -0.1079, -0.5370);
-    const E3: Vec3 = Vec3::new(0.0, -0.2216, 0.0225);
-    let e = elevation.max(0.0);
-    HORIZON + E1 * e + E2 * e * e + E3 * e * e * e
-}
+/// The directional light's colour at phase 0.5, the ramp's noon key (sRGB).
+pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.98, 0.94);
 
-/// The sunlight's colour at noon, where [`sun_color`] peaks (sRGB).
-pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.931, 0.892);
+/// The fraction of a day over which the light swings from the sun's arc to the moon's before
+/// moonrise, and back after moonset.
+const MOON_SWAP_DURATION: f32 = 0.042;
+/// How far the light dims mid-swing to hide the move.
+const SWAP_INTENSITY_DIP: f32 = 0.99;
 
-/// The moonlight's colour (sRGB): a violet tint, so the scene stays directional after dark.
-const MOON_COLOR: Vec3 = Vec3::new(0.514, 0.388, 1.0);
-
-/// Sines of the sun and moon discs' angular radii, as the sky draws them (`nishita_cloud.wgsl`:
-/// the sun disc out to a cosine of 0.997, the moon's to 0.99914).
-const SUN_DISC_SIN: f32 = 0.0774;
-const MOON_DISC_SIN: f32 = 0.0415;
-
-/// How much of the directional light is left while both discs are below the horizon.
-const SET_ILLUMINANCE: f32 = 0.01;
-
-/// 0 while a body's disc is entirely below the horizon, 1 once entirely above, ramping across
-/// the crossing. `elevation` is the sine of the body's elevation, `disc_sin` of its radius.
-fn disc_above_horizon(elevation: f32, disc_sin: f32) -> f32 {
-    ((elevation + disc_sin) / (2.0 * disc_sin)).clamp(0.0, 1.0)
+/// At `day_fraction`: how far the light has swung onto the moon's arc (0 sun, 1 moon) and the
+/// dip hiding the swing (1 at its middle).
+pub fn celestial_swap(day_fraction: f32) -> (f32, f32) {
+    let (moonrise, moonset) = (MOONRISE / 24.0, MOONSET / 24.0);
+    let evening = (day_fraction - (moonrise - MOON_SWAP_DURATION).rem_euclid(1.0)).rem_euclid(1.0)
+        / MOON_SWAP_DURATION;
+    let morning = (day_fraction - moonset).rem_euclid(1.0) / MOON_SWAP_DURATION;
+    let swing = |progress: f32| smoothstep(0.3, 0.7, progress);
+    let dip =
+        |progress: f32| smoothstep(0.0, 0.25, progress) * (1.0 - smoothstep(0.75, 1.0, progress));
+    if evening < 1.0 {
+        (swing(evening), dip(evening))
+    } else if morning < 1.0 {
+        (1.0 - swing(morning), dip(morning))
+    } else {
+        let moon_up =
+            (day_fraction - moonrise).rem_euclid(1.0) < (moonset - moonrise).rem_euclid(1.0);
+        (if moon_up { 1.0 } else { 0.0 }, 0.0)
+    }
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// The directional light at `hours` past midnight: the direction it travels and its illuminance
+/// (lux). The intensity is the curve's at the time; the light rides the sun's arc by day and the
+/// moon's by night, swung between them under a dip. From sunset until the swing, and from the
+/// swing until sunrise, it stays on the sun's arc below the horizon: it grazes walls from under
+/// them and leaves floors unlit while the curve fades it.
+fn directional_light(hours: f32) -> (Vec3, f32) {
+    let day_fraction = day_fraction(hours);
+    let sun_direction = sun_direction(hours);
+    let (moon_weight, dip) = celestial_swap(day_fraction);
+    let direction = Quat::IDENTITY.slerp(
+        Quat::from_rotation_arc(sun_direction, moon_direction(hours)),
+        moon_weight,
+    ) * sun_direction;
+    let illuminance = sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction)
+        * LIGHT_UNIT_LUX
+        * (1.0 - dip * SWAP_INTENSITY_DIP);
+    (direction, illuminance)
+}
+
+/// A root-entity light replaces what it sets on the preset's light: its colour, and its intensity
+/// as lux, which the sky's sun takes as the same number in its own scale. Without an intensity
+/// the preset's stays, times the gain of a colour above 1. A disabled light turns both off.
+fn apply_root_light(global_light: &mut SceneGlobalLight, light: &LightSource) {
+    if let Some(color) = light.color {
+        global_light.dir_color = color;
+    }
+    if !light.enabled {
+        global_light.dir_illuminance = 0.0;
+        global_light.sun_illuminance = 0.0;
+        return;
+    }
+    global_light.dir_illuminance =
+        light.intensity.unwrap_or(global_light.dir_illuminance) * light.intensity_gain;
+    global_light.sun_illuminance =
+        light.intensity.unwrap_or(global_light.sun_illuminance) * light.intensity_gain;
 }
 
 pub fn update_directional_light(
@@ -421,33 +505,22 @@ pub fn update_directional_light(
     player: Query<Entity, With<PrimaryUser>>,
     time: Res<TimeOfDay>,
 ) {
-    // colour and energy driven by the sun's elevation
+    // the colour from the ramp at the phase, the direction and intensity from the time
     let hours = time.elapsed_secs() / 3600.0;
     let sun_direction = sun_direction(hours);
+    let (dir_direction, dir_illuminance) = directional_light(hours);
+    let dir = sample_ramp(&DIRECTIONAL_COLOR_RAMP, time_to_phase(day_fraction(hours)));
+
+    // the sky's own sun: its energy follows the elevation, a floor keeping the night sky lit
     let elevation = -sun_direction.y;
     let energy = smoothstep(-0.05, 0.3, elevation);
-    let dir = MOON_COLOR.lerp(sun_color(elevation), smoothstep(-0.05, 0.05, elevation));
-
-    // the sun lights while it is up and the moon once it has set; the moon's 1500 lux dims to
-    // 1% while both discs are below the horizon, ramping as either disc crosses it
-    let moon_direction = moon_direction(hours);
-    let disc_above = disc_above_horizon(elevation, SUN_DISC_SIN)
-        .max(disc_above_horizon(-moon_direction.y, MOON_DISC_SIN));
-    let dir_illuminance =
-        (1500.0 + smoothstep(0.0, 0.3, elevation) * 5500.0) * SET_ILLUMINANCE.lerp(1.0, disc_above);
-    let dir_direction = if elevation > 0.0 {
-        sun_direction
-    } else {
-        moon_direction
-    };
 
     *global_light = SceneGlobalLight {
         source: None,
         dir_color: Color::srgb(dir.x, dir.y, dir.z),
         dir_illuminance,
         dir_direction,
-        // sun energy peaks at ~0.7 * full scale; the floor keeps the night sky lit
-        sun_illuminance: (energy * 0.7 * 10_000.0).max(1500.0),
+        sun_illuminance: (energy * SKY_SUN_ILLUMINANCE).max(1500.0),
         sun_direction,
         ambient_color: Color::WHITE,
         ambient_brightness: 1.0,
@@ -459,24 +532,14 @@ pub fn update_directional_light(
         return;
     };
 
-    let day_fraction = time.elapsed_secs().rem_euclid(86400.0) / 86400.0;
+    let day_fraction = day_fraction(hours);
     let mut apply = |parcel: Entity,
                      maybe_light: Option<&LightSource>,
                      maybe_global: Option<&GlobalLight>,
                      maybe_sun: Option<&Sun>| {
         global_light.source = Some(parcel);
         if let Some(light) = maybe_light {
-            if let Some(color) = light.color {
-                global_light.dir_color = color;
-            }
-            if let Some(ill) = if light.enabled {
-                light.intensity
-            } else {
-                Some(0.0)
-            } {
-                global_light.dir_illuminance = ill;
-                global_light.sun_illuminance = ill;
-            }
+            apply_root_light(&mut global_light, light);
         }
 
         if let Some(global) = maybe_global {
@@ -494,13 +557,13 @@ pub fn update_directional_light(
 
         if let Some(sun) = maybe_sun {
             if let Some(color) = &sun.color {
-                // as for LightSource: colours > 1 are rescaled to 1, and the light is
-                // multiplied by pow(max, 2.2), so the sky gets the hue only
+                // the ramp is linear: colours > 1 are rescaled to 1, and the light is
+                // multiplied by the max, so the sky gets the hue only
                 let color = color.sample(day_fraction);
                 let color_scale = color.max_element().max(1.0);
                 let color = color / color_scale;
                 global_light.dir_color = Color::linear_rgb(color.x, color.y, color.z);
-                global_light.dir_illuminance *= color_scale.powf(2.2);
+                global_light.dir_illuminance *= color_scale;
             }
             // the light only: the sky keeps its time-of-day brightness
             if let Some(intensity) = sun.intensity {
@@ -527,7 +590,6 @@ pub fn update_directional_light(
     }
 
     // if the primary parcel doesn't specify anything, check any portables
-    #[allow(clippy::type_complexity)]
     let mut portable_settings: Option<(
         &str,
         Entity,
@@ -594,9 +656,9 @@ fn update_point_lights(
 
         let range = light.range.unwrap_or(-1.0);
         let range = if range < 0.0 {
-            light.intensity.unwrap_or(16000.0).powf(0.25)
+            light.lamp_intensity().powf(0.25)
         } else {
-            range.min(light.intensity.unwrap_or(16000.0).powf(0.25))
+            range.min(light.lamp_intensity().powf(0.25))
         };
 
         let mut light_cmds = match previous_light_entity {
@@ -655,7 +717,7 @@ fn update_point_lights(
             None
         };
 
-        let lumens = light.intensity.unwrap_or(16000.0) * 4.0 * PI;
+        let lumens = light_source_lumens(light.lamp_intensity());
         match light.spotlight_angles {
             Some(angles) => {
                 light_cmds.try_insert(SpotLight {
@@ -856,7 +918,7 @@ fn manage_shadow_casters(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dcl_component::proto_components::common::{Color4, ColorKey};
+    use dcl_component::proto_components::common::{Color3, Color4, ColorKey};
 
     fn gradient(keys: &[(f32, f32)]) -> ColorGradient {
         ColorGradient {
@@ -1010,5 +1072,175 @@ mod tests {
             let hours = step as f32 / 100.0;
             assert!(angle(moon_direction(hours), moon_direction(hours + 0.01)) < 0.3);
         }
+    }
+
+    #[test]
+    fn scene_lamps_use_the_intensity_scale() {
+        // the default 16000 lamp is 8 light units
+        let units = light_source_lumens(16000.0) / (4.0 * PI) / LIGHT_UNIT_LUX;
+        assert!((units - 8.0).abs() < 1e-3, "{units}");
+    }
+
+    #[test]
+    fn lamps_default_to_16000_and_take_the_colour_gain() {
+        let lamp = LightSource::from(PbLightSource::default());
+        assert_eq!(lamp.intensity, None);
+        assert_eq!(lamp.lamp_intensity(), 16000.0);
+        // a colour above 1 comes back to 1 and brightens the lamp instead
+        let lamp = LightSource::from(PbLightSource {
+            color: Some(Color3 {
+                r: 2.0,
+                g: 1.0,
+                b: 0.5,
+            }),
+            intensity: Some(100.0),
+            ..Default::default()
+        });
+        assert!((lamp.lamp_intensity() - 100.0 * 2f32.powf(2.2)).abs() < 1e-3);
+        assert_eq!(lamp.color, Some(Color::srgb(1.0, 0.5, 0.25)));
+        // the colour is sRGB: a warm lamp stays saturated rather than washing out
+        let linear = lamp.color.unwrap().to_linear();
+        assert!(linear.green < 0.22 && linear.blue < 0.06, "{linear:?}");
+    }
+
+    #[test]
+    fn a_light_written_back_keeps_its_colour() {
+        use dcl_component::proto_components::Color3BevyToDcl;
+        // a glTF light is mirrored to the scene's component as sRGB; a scene writing that
+        // component back must light it with the same linear colour
+        let gltf = Color::linear_rgb(1.0, 0.5, 0.25);
+        let lamp = LightSource::from(PbLightSource {
+            color: Some(gltf.convert_srgb()),
+            ..Default::default()
+        });
+        let (a, b) = (gltf.to_linear(), lamp.color.unwrap().to_linear());
+        for (x, y) in [(a.red, b.red), (a.green, b.green), (a.blue, b.blue)] {
+            assert!((x - y).abs() < 1e-4, "{a:?} {b:?}");
+        }
+        assert_eq!(lamp.intensity_gain, 1.0);
+    }
+
+    #[test]
+    fn root_light_replaces_only_what_it_sets() {
+        let preset = SceneGlobalLight {
+            dir_color: Color::WHITE,
+            dir_illuminance: NOON_ILLUMINANCE,
+            sun_illuminance: SKY_SUN_ILLUMINANCE,
+            ..Default::default()
+        };
+        let apply = |light: PbLightSource| {
+            let mut global_light = preset.clone();
+            apply_root_light(&mut global_light, &light.into());
+            global_light
+        };
+        // no intensity: the preset's light and sky stay, a colour alone tints the sun
+        let tinted = apply(PbLightSource {
+            color: Some(Color3 {
+                r: 1.0,
+                g: 0.5,
+                b: 0.5,
+            }),
+            ..Default::default()
+        });
+        assert_eq!(tinted.dir_illuminance, NOON_ILLUMINANCE);
+        assert_eq!(tinted.sun_illuminance, SKY_SUN_ILLUMINANCE);
+        assert_eq!(tinted.dir_color, Color::srgb(1.0, 0.5, 0.5));
+        // an intensity is lux as given, for the light and the sky's sun
+        let set = apply(PbLightSource {
+            intensity: Some(5000.0),
+            ..Default::default()
+        });
+        assert_eq!(set.dir_illuminance, 5000.0);
+        assert_eq!(set.sun_illuminance, 5000.0);
+        assert_eq!(set.dir_color, preset.dir_color);
+        // a disabled light turns both off
+        let off = apply(PbLightSource {
+            active: Some(false),
+            intensity: Some(5000.0),
+            ..Default::default()
+        });
+        assert_eq!((off.dir_illuminance, off.sun_illuminance), (0.0, 0.0));
+    }
+
+    #[test]
+    fn light_unit_lands_at_one_under_the_default_exposure() {
+        let exposure = bevy::render::camera::Exposure::default().exposure();
+        assert!((LIGHT_UNIT_LUX / PI * exposure - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn light_follows_the_intensity_curve() {
+        let lux = |hours: f32| {
+            sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction(hours)) * LIGHT_UNIT_LUX
+        };
+        assert!((lux(12.0) - NOON_ILLUMINANCE).abs() < 1e-2);
+        // (0.91667, 1): the moon at full from 22:00
+        assert!((lux(22.0) - LIGHT_UNIT_LUX).abs() < 1.0);
+        // (0.85417, 0.01) .. (0.875, 0.01): dark between 20:30 and 21:00
+        assert!((lux(20.75) - 0.01 * LIGHT_UNIT_LUX).abs() < 1e-1);
+        // 19:47 is seven tenths of the way down from (0.75, 1) to (0.85417, 0.01)
+        let late = lux(19.78) / LIGHT_UNIT_LUX;
+        assert!(late > 0.28 && late < 0.32, "{late}");
+    }
+
+    #[test]
+    fn light_swings_to_the_moon_under_a_dip() {
+        // moonrise 0.896 with the swap before it, moonset 0.167 with the swap after it
+        assert_eq!(celestial_swap(day_fraction(20.0)), (0.0, 0.0));
+        assert_eq!(celestial_swap(day_fraction(22.0)), (1.0, 0.0));
+        assert_eq!(celestial_swap(day_fraction(3.0)), (1.0, 0.0));
+        assert_eq!(celestial_swap(day_fraction(6.0)), (0.0, 0.0));
+        let half_swap_hours = MOON_SWAP_DURATION * 12.0;
+        let (weight, dip) = celestial_swap((MOONRISE - half_swap_hours) / 24.0);
+        assert!((weight - 0.5).abs() < 1e-3 && dip == 1.0, "{weight} {dip}");
+        let (weight, dip) = celestial_swap((MOONSET + half_swap_hours) / 24.0);
+        assert!((weight - 0.5).abs() < 1e-3 && dip == 1.0, "{weight} {dip}");
+        let (weight, dip) = celestial_swap((MOONRISE - 2.0 * half_swap_hours + 0.001) / 24.0);
+        assert!(weight < 1e-3 && dip < 0.01, "{weight} {dip}");
+    }
+
+    #[test]
+    fn light_turns_fast_only_under_the_dip() {
+        let angle = |a: Vec3, b: Vec3| a.angle_between(b).to_degrees();
+        // what the light throws upward while it is below the horizon, in light units
+        let mut upward = 0.0f32;
+        for step in 0..2400 {
+            let hours = step as f32 / 100.0;
+            let (direction, lux) = directional_light(hours);
+            let (next, _) = directional_light(hours + 0.01);
+            assert!((direction.length() - 1.0).abs() < 1e-4);
+            // it follows a body's arc, or swings between the two while dimmed to a hundredth
+            if angle(direction, next) > 0.3 {
+                assert!(lux < 0.02 * LIGHT_UNIT_LUX, "{hours}: {lux}");
+            }
+            upward = upward.max(direction.y.max(0.0) * lux / LIGHT_UNIT_LUX);
+        }
+        // by day it is the sun's arc, after sunset too until the swing; by night the moon's
+        // within 0.1 degrees: an f32 acos near 1 resolves only about 0.02 degrees, and the
+        // slerp moves the vector by a few ulps
+        for hours in [7.0, 12.0, 18.0, 19.5, 5.5] {
+            assert!(
+                angle(directional_light(hours).0, sun_direction(hours)) < 0.1,
+                "{hours}"
+            );
+        }
+        for hours in [22.0, 0.0, 3.0] {
+            assert!(
+                angle(directional_light(hours).0, moon_direction(hours)) < 0.1,
+                "{hours}"
+            );
+        }
+        // below the horizon the light grazes: at most a tenth of a unit goes upward
+        assert!(upward > 0.05 && upward < 0.11, "{upward}");
+    }
+
+    #[test]
+    fn light_colour_follows_the_ramp() {
+        let colour =
+            |hours: f32| sample_ramp(&DIRECTIONAL_COLOR_RAMP, time_to_phase(day_fraction(hours)));
+        assert_eq!(colour(12.0), SUN_COLOR_NOON);
+        // night: a blue-violet moon
+        let night = colour(0.0);
+        assert!(night.z > night.x && night.x < 0.5);
     }
 }

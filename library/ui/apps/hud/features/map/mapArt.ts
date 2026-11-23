@@ -68,6 +68,7 @@ import panelSearch from '../../assets/map/panel/search.png'
 import panelShare from '../../assets/map/panel/share.png'
 import panelTwitter from '../../assets/map/panel/twitter.png'
 import panelWarning from '../../assets/map/panel/warning.png'
+import questPin from '../../assets/map/quest/quest-pin.png'
 
 export const CAT_ICONS: Record<string, string> = {
   all: catAll, art: catArt, business: catBusiness, education: catEducation, fashion: catFashion,
@@ -79,17 +80,6 @@ export const CAT_PINS: Record<string, string> = {
   art: pinArt, business: pinBusiness, education: pinEducation, fashion: pinFashion,
   favorites: pinFavorites, game: pinGame, music: pinMusic, shop: pinShop, social: pinSocial,
   sports: pinSports
-}
-
-/** Pin sprite for a place, from the first of its categories we have art for. Places with only
- *  categories that have no pin (`poi`, `featured`, …) fall back to the generic "all" icon,
- *  matching how MapPage resolves an unknown category. */
-export function pinForCategories(categories: string[]): string {
-  for (const c of categories) {
-    const pin = CAT_PINS[c]
-    if (pin != null) return pin
-  }
-  return CAT_ICONS.all
 }
 
 /** The sea and shores around Genesis City, rendered once; it covers SEA_SIZE map units square, centred on the origin. */
@@ -105,7 +95,8 @@ export const MARKER_ART = {
   home: markersHome,
   live: markersLive,
   parcelSelector: markersParcelSelector,
-  poi: markersPoi
+  poi: markersPoi,
+  quest: questPin
 } as const
 
 export const MAP_ICONS = {
@@ -113,6 +104,7 @@ export const MAP_ICONS = {
   centerPlayer: iconsCenterPlayer,
   layerLive: iconsLayerLive,
   layerPoi: iconsLayerPoi,
+  layerQuest: questPin,
   layers: iconsLayers,
   parcelsView: iconsParcelsView,
   plus: iconsPlus,

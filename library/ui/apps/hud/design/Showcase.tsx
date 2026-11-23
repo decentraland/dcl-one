@@ -1,65 +1,110 @@
 // Design-system storybook — the living reference for tokens + primitives, matching
-// the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
+// the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here: a section in
+// ShowcaseIndex.ts naming it, rendered below by that name. The UI gallery (library/ui/gallery) shows
+// each section on a page of its own, and its coverage test fails when a component index.ts exports
+// is not mounted by a section that names it. The primitives come from the design entry ('.'), as the
+// features import them: that test watches the entry. Sections use local data only: no network,
+// wallet or engine call.
 
-import { Button } from './Button'
-import { LogoPattern } from './LogoPattern'
-import { SubmitField } from './SubmitField'
-import { CodeInput } from './CodeInput'
-import { Spinner } from './Spinner'
-import { Checkbox } from './Checkbox'
-import { Skeleton } from './Skeleton'
-import { IconButton } from './IconButton'
-import { VoiceBars } from './VoiceBars'
-import { ColorPicker } from './ColorPicker'
-import { Chip } from './Chip'
-import { Pager } from './Pager'
-import { Rail } from './Rail'
-import { HeaderButton } from './HeaderButton'
-import { OptionMenu } from './OptionMenu'
-import { ContextMenu } from './ContextMenu'
-import { AnchoredMenu } from './AnchoredMenu'
-import { MaskIcon } from './MaskIcon'
+import { useId, useRef, useState, useSyncExternalStore } from 'react'
+import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
+import {
+  AnchoredMenu,
+  ARM_MS,
+  ArmedButton,
+  Avatar,
+  Bag,
+  BrowseControl,
+  BrowseLoading,
+  BrowsePanel,
+  BrowseToolbar,
+  Button,
+  CharCounter,
+  Checkbox,
+  Chip,
+  Close,
+  CodeInput,
+  ColorPicker,
+  ContextMenu,
+  ControlButton,
+  CountBadge,
+  DateField,
+  DclLogo,
+  DiscoverCard,
+  DiscoverGrid,
+  Dropdown,
+  EmptyState,
+  EquippedItemCard,
+  FieldLabel,
+  HeaderButton,
+  HintsButton,
+  Icon,
+  IconButton,
+  KebabMenu,
+  KeyCap,
+  LogoPattern,
+  MaskIcon,
+  MenuDivider,
+  MenuList,
+  MenuPanel,
+  MenuRow,
+  Modal,
+  ModalActions,
+  ModalShell,
+  ModalTitle,
+  OptionMenu,
+  PageHeader,
+  Pager,
+  Panel,
+  People,
+  Pin,
+  PopupHost,
+  Rail,
+  ScrollThumb,
+  Search,
+  SearchField,
+  Select,
+  showConfirm,
+  showDialog,
+  showToast,
+  Skeleton,
+  Slider,
+  Spinner,
+  Submenu,
+  SubmitField,
+  SwapLabel,
+  Tabs,
+  TextArea,
+  TextInput,
+  ToastHost,
+  Toggle,
+  Tooltip,
+  VerifiedBadge,
+  VoiceBars,
+  WearableCard,
+  type IconName,
+  type Rarity
+} from '.'
+import { SHOWCASE_INDEX, type ShowcaseName } from './ShowcaseIndex'
 import reelShareIcon from '../assets/camera-reel/share-x.png'
 import reelLinkIcon from '../assets/camera-reel/copy-link.png'
 import reelDownloadIcon from '../assets/camera-reel/download.png'
 import reelDeleteIcon from '../assets/camera-reel/delete.png'
-import { CountBadge } from './CountBadge'
-import { SwapLabel } from './SwapLabel'
-import { KebabMenu } from './KebabMenu'
-import { HintsButton, KeyCap } from './HintsButton'
-import { useRef, useState } from 'react'
-import { ControlButton } from './ControlButton'
-import { showToast, ToastHost } from './Toast'
-import { Tooltip } from './Tooltip'
-import { Toggle } from './Toggle'
-import { Slider } from './Slider'
-import { Select } from './Select'
-import { TextInput } from './TextInput'
-import { Tabs } from './Tabs'
-import { Bag, Close, People, Pin, VerifiedBadge } from './Glyphs'
-import { TextArea } from './TextArea'
-import { DateField } from './DateField'
-import { Panel } from './Panel'
-import { MenuPanel, MenuList, MenuRow, MenuDivider } from './MenuPanel'
-import { DclLogo } from './DclLogo'
-import { Avatar } from './Avatar'
-import { WearableCard, type Rarity } from './WearableCard'
-import { EquippedItemCard } from './EquippedItemCard'
-import { ScrollThumb } from './ScrollThumb'
-import { showConfirm, showDialog, PopupHost } from './popups'
-import { Icon, type IconName } from './icons'
+// Local stand-ins for the pictures a profile and an emote load from servers.
+import samplePicture from '../assets/lobby/default-profile-thumbnail.png'
+import sampleEmote from '../assets/backpack/silhouette-1.webp'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
 import { seedProfiles } from '../features/session/profileStore'
 import { EmoteSlot } from '../features/emotes/EmoteSlot'
-import { catalystThumbUrl } from '@explorer-core/lib/identity'
 import streamBadge from '../assets/voice/stream-badge.png'
 
 // A chat bubble resolves its sender through the profile store, so the demo line's author is seeded.
 const MOJITO = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
 seedProfiles([{ address: MOJITO, name: 'Mojito' }])
+// The chat lines' time: today at a fixed hour, so they read the same on every load.
+const CHAT_TS = new Date().setHours(9, 41, 0, 0)
 
 const EMOTE_RARITIES = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
-const SLOT_THUMB = catalystThumbUrl('urn:decentraland:off-chain:base-emotes:raisehand')
 
 const NAV: { icon: IconName; label: string }[] = [
   { icon: 'profile', label: 'Profile' },
@@ -121,6 +166,12 @@ const RADII: { name: string; token: string }[] = [
   { name: 'pill', token: '--r-pill' }
 ]
 
+const RESOLUTIONS = [
+  { value: '720', label: '1280 × 720' },
+  { value: '1080', label: '1920 × 1080' },
+  { value: '1440', label: '2560 × 1440' }
+]
+
 const wrap: React.CSSProperties = {
   // #root is overflow:hidden (HUD app shouldn't scroll), so the Showcase is its own
   // scroll container — full height with internal overflow.
@@ -136,6 +187,7 @@ const wrap: React.CSSProperties = {
 }
 const row: React.CSSProperties = { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }
 const grid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))', gap: 12 }
+const column: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 16 }
 const h: React.CSSProperties = {
   fontSize: 'var(--fs-xs)',
   textTransform: 'uppercase',
@@ -143,6 +195,7 @@ const h: React.CSSProperties = {
   color: 'var(--ink-45)',
   margin: '0 0 14px'
 }
+const chipLabel: React.CSSProperties = { padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -163,6 +216,586 @@ function Swatch({ name, hex, token, dark }: { name: string; hex: string; token?:
         <div style={{ fontSize: 13, fontWeight: 600 }}>{name}</div>
         {token && <div style={{ fontSize: 11, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>{token}</div>}
       </div>
+    </div>
+  )
+}
+
+/** Every section, by its name in ShowcaseIndex.ts. A section that keeps state renders a component. */
+const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
+  Palette: () => (
+    <div style={grid}>
+      {PALETTE.map((c) => (
+        <Swatch key={c.name} {...c} />
+      ))}
+    </div>
+  ),
+
+  RarityColors: () => (
+    <div style={grid}>
+      {RARITY.map((c) => (
+        <Swatch key={c.name} {...c} dark />
+      ))}
+    </div>
+  ),
+
+  Typography: () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {TYPE.map((t) => (
+        <div key={t.name} style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
+          <span style={{ width: 96, fontSize: 11, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>{t.token}</span>
+          <span style={{ fontSize: `var(${t.token})`, fontWeight: t.weight }}>{t.name} — Decentraland</span>
+        </div>
+      ))}
+    </div>
+  ),
+
+  Radii: () => (
+    <div style={row}>
+      {RADII.map((r) => (
+        <div key={r.name} style={{ textAlign: 'center' }}>
+          <div style={{ width: 72, height: 72, background: 'var(--fill-4)', borderRadius: `var(${r.token})`, border: '1px solid var(--white-10)' }} />
+          <div style={{ fontSize: 11, marginTop: 6 }}>{r.name}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>{r.token}</div>
+        </div>
+      ))}
+    </div>
+  ),
+
+  Button: () => (
+    <>
+      <div style={row}>
+        <Button>Primary</Button>
+        <Button variant="secondary">Secondary</Button>
+        <Button variant="ghost">Ghost</Button>
+        <Button disabled>Disabled</Button>
+      </div>
+      <div style={{ ...row, marginTop: 12 }}>
+        <Button size="sm">Small</Button>
+        <Button size="row">Row</Button>
+        <Button size="row" variant="secondary">Row</Button>
+        <Button size="md">Medium</Button>
+        <Button size="lg">Large</Button>
+      </div>
+    </>
+  ),
+
+  ArmedButton: () => <ArmedShowcase />,
+
+  StartButton: () => (
+    <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
+      <Button size="start" style={{ width: 300 }}>Play as guest</Button>
+      <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
+    </div>
+  ),
+
+  SignIn: () => <SignInShowcase />,
+
+  LogoPattern: () => (
+    <div style={{ position: 'relative', height: 160, background: 'var(--loading-vignette)', overflow: 'hidden' }}>
+      <LogoPattern />
+    </div>
+  ),
+
+  BareButton: () => (
+    <div style={row}>
+      {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear', 'navigate', 'navigateExit'] as const).map((variant) => (
+        <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
+          {variant}
+        </Button>
+      ))}
+    </div>
+  ),
+
+  Skeleton: () => (
+    <div style={row}>
+      <Skeleton style={{ width: 126, height: 126 }} />
+      <Skeleton tone="band" style={{ width: 200, height: 22 }} />
+    </div>
+  ),
+
+  Dialogs: () => (
+    <div style={row}>
+      {/* Showcase renders instead of Hud, so this section hosts the popup layer its dialogs open into. */}
+      <PopupHost />
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void showConfirm({
+            title: 'Block Pablo?',
+            body: "Blocked users won't be able to message you, join your community events, or see when you're online.",
+            confirmLabel: 'Block'
+          })
+        }}
+      >
+        Confirm
+      </Button>
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void showDialog({
+            title: 'Report submitted',
+            body: 'Thanks — our moderators will review this report.',
+            actions: [{ id: 'ok', label: 'OK', variant: 'primary' }]
+          })
+        }}
+      >
+        Alert
+      </Button>
+      <Button
+        variant="secondary"
+        onClick={() => {
+          void showDialog({
+            title: 'Unsaved changes',
+            body: 'You have unsaved changes to your avatar.',
+            width: 520,
+            actions: [
+              { id: 'cancel', label: 'Cancel', variant: 'ghost' },
+              { id: 'discard', label: 'Discard', variant: 'secondary' },
+              { id: 'save', label: 'Save', variant: 'primary' }
+            ]
+          })
+        }}
+      >
+        Custom actions
+      </Button>
+    </div>
+  ),
+
+  Modal: () => (
+    // The cards the popup layer centres, drawn in place (not modal here).
+    <div style={{ ...row, alignItems: 'flex-start', gap: 24 }}>
+      <ModalShell
+        modal={false}
+        title="Leave this community?"
+        subtitle="You can join it again later."
+        onClose={() => undefined}
+        actionsEqual
+        actions={
+          <>
+            <Button variant="secondary">Cancel</Button>
+            <Button>Leave</Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0 }}>You stop getting its notifications and leave its chat.</p>
+      </ModalShell>
+      <Modal width={360} modal={false} ariaLabel="Report submitted">
+        <ModalTitle title="Report submitted" onClose={() => undefined} />
+        <p>Thanks — our moderators will review this report.</p>
+        <ModalActions align="end">
+          <Button>OK</Button>
+        </ModalActions>
+      </Modal>
+    </div>
+  ),
+
+  Tooltip: () => (
+    <div style={{ ...row, gap: 16 }}>
+      <Tooltip label="Friends" shortcut="L">
+        <span style={chipLabel}>right</span>
+      </Tooltip>
+      <Tooltip label="Settings" shortcut="P" side="top">
+        <span style={chipLabel}>top</span>
+      </Tooltip>
+      <Tooltip label={'A longer hint that wraps.\n\nParagraph breaks are kept, and it hangs from the left edge.'} side="bottom" multiline>
+        <span style={chipLabel}>multiline</span>
+      </Tooltip>
+      <Tooltip label="End stream for everyone" side="bottom" align="end">
+        <span style={chipLabel}>bottom, end</span>
+      </Tooltip>
+    </div>
+  ),
+
+  ControlButton: () => (
+    <div style={row}>
+      <ControlButton aria-label="ghost square">✕</ControlButton>
+      <ControlButton variant="solid" aria-label="solid square">✕</ControlButton>
+      <ControlButton variant="dark" aria-label="dark square">✕</ControlButton>
+      <ControlButton variant="faint" aria-label="faint square">✕</ControlButton>
+      <ControlButton shape="circle" aria-label="circle">＋</ControlButton>
+      <ControlButton shape="pill">＋ Pill</ControlButton>
+      <ControlButton active aria-label="active">✓</ControlButton>
+      <ControlButton size="sm" aria-label="small">✕</ControlButton>
+      <ControlButton size="lg" aria-label="large">✕</ControlButton>
+    </div>
+  ),
+
+  Tabs: () => <TabsShowcase />,
+
+  FormControls: () => <FormControlsShowcase />,
+
+  FieldLabel: () => <FieldLabelShowcase />,
+
+  SearchField: () => <SearchFieldShowcase />,
+
+  Dropdown: () => (
+    <div style={{ width: 220, paddingBottom: 140 }}>
+      <Dropdown options={['Recently listed', 'Cheapest', 'Newest']} defaultValue="Recently listed" />
+    </div>
+  ),
+
+  EmoteSlot: () => (
+    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap', padding: 16, background: '#3a3550', borderRadius: 12 }}>
+      <EmoteSlot thumbnail={sampleEmote} rarity="legendary" width={220} />
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        {EMOTE_RARITIES.map((r) => (
+          <div key={r} style={{ textAlign: 'center' }}>
+            <EmoteSlot thumbnail={sampleEmote} rarity={r} width={96} />
+            <div style={{ fontSize: 11, color: 'var(--ink-7)', marginTop: 4, textTransform: 'capitalize' }}>{r}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  ),
+
+  HudScale: () => <HudScaleShowcase />,
+
+  MenuPanel: () => (
+    <MenuPanel label="Discover" title="DISCOVER">
+      <MenuList>
+        <MenuRow icon={<Icon name="events" size={24} />} label="Events" hint="X" trailing={<CountBadge count={3} />} />
+        <MenuRow icon={<Icon name="places" size={24} />} label="Places" hint="Z" />
+      </MenuList>
+      <MenuDivider />
+      <MenuList>
+        <MenuRow icon={<Icon name="communities" size={24} />} label="Communities" hint="O" disabled />
+      </MenuList>
+    </MenuPanel>
+  ),
+
+  IconButton: () => (
+    <Panel style={{ width: 60, padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {NAV.map((n, i) => (
+        <IconButton key={n.icon} icon={n.icon} label={n.label} active={i === 8} badge={i === 1 ? 3 : undefined} />
+      ))}
+      <IconButton icon="profile" label="Profile (avatar)" avatar={{ name: 'Mojito', color: 'var(--lavender)' }} />
+      <IconButton icon="voice-hearing" label="Voice (connected)" indicator />
+      <IconButton icon="communities" label="Communities (live stream)" cornerArt={{ src: streamBadge, label: 'A community stream is live' }} />
+    </Panel>
+  ),
+
+  VoiceBars: () => <VoiceBars />,
+
+  Chip: () => (
+    <>
+      <div style={{ ...row, gap: 20 }}>
+        <Chip label="All" selected onClick={() => undefined} />
+        <Chip label="All" onClick={() => undefined} />
+        <Chip label="Hair" selected onClick={() => undefined} onClear={() => undefined} />
+      </div>
+      <div style={{ ...row, gap: 6, marginTop: 12 }}>
+        <Chip variant="dark" label="All" selected onClick={() => undefined} />
+        <Chip variant="dark" label="Head" onClick={() => undefined} />
+      </div>
+    </>
+  ),
+
+  OptionMenu: () => (
+    <OptionMenu
+      onClose={() => undefined}
+      sections={[
+        { label: 'Sort by', options: [{ id: 'newest', label: 'Newest' }, { id: 'oldest', label: 'Oldest' }], value: 'newest', onChange: () => undefined },
+        { label: 'View', options: [{ id: 'all', label: 'All Items' }, { id: 'col', label: 'Collectibles only' }], value: 'all', onChange: () => undefined }
+      ]}
+    />
+  ),
+
+  ContextMenu: () => (
+    <ContextMenu
+      items={[
+        { label: 'View Community' },
+        { kind: 'submenu', label: 'Notification Ping' },
+        { kind: 'submenu', label: 'Invite to Community', items: [{ label: 'Pixel Builders' }, { label: 'Neon Club' }] },
+        { kind: 'separator' },
+        { kind: 'title', label: 'Notification Ping' },
+        { kind: 'option', label: 'All Messages', checked: true },
+        { kind: 'option', label: 'Mentions Only', checked: false },
+        { kind: 'option', label: 'None', checked: false },
+        { kind: 'separator' },
+        { label: 'Delete chat history', danger: true }
+      ]}
+    />
+  ),
+
+  Submenu: () => (
+    <div role="menu" aria-label="Community options" style={{ width: 240, padding: 6, paddingBottom: 96, borderRadius: 'var(--r-card)', background: 'var(--fill-2)' }}>
+      <Submenu label="Invite to Community" icon={<People size={16} />}>
+        <ContextMenu items={[{ label: 'Pixel Builders' }, { label: 'Neon Club' }, { label: 'Genesis Runners' }]} scroll />
+      </Submenu>
+    </div>
+  ),
+
+  AnchoredMenu: () => <AnchoredMenuDemo />,
+
+  MaskIcon: () => (
+    <div style={{ ...row, gap: 16 }}>
+      {[reelShareIcon, reelLinkIcon, reelDownloadIcon, reelDeleteIcon].map((src) => (
+        <MaskIcon key={src} src={src} size={24} />
+      ))}
+      <span style={{ ...row, color: 'var(--brand)' }}>
+        <MaskIcon src={reelDeleteIcon} size={24} /> in the text colour
+      </span>
+    </div>
+  ),
+
+  SwapLabel: () => (
+    <Button size="sm" variant="ghost" aria-label="Cancel join request">
+      <SwapLabel idle="Request Sent" hover="Cancel Request" />
+    </Button>
+  ),
+
+  CountBadge: () => (
+    <>
+      <CountBadge count={5} /> <CountBadge count={140} max={99} />
+    </>
+  ),
+
+  KebabMenu: () => (
+    <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
+      <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
+      <KebabMenu size="sm" label="Participant options" items={(close) => [{ label: 'View profile', onClick: close }]} />
+    </div>
+  ),
+
+  HintsButton: () => (
+    <div style={{ ...row, gap: 24, paddingTop: 120 }}>
+      <HintsButton hints={[{ icon: <KeyCap label="1" />, text: 'Press a number key to pick a slot.' }, { icon: <KeyCap label="E" />, text: 'Press E to open emotes.' }]} />
+      <span style={{ ...row, gap: 6 }}>
+        <KeyCap label="E" /> <KeyCap label="Esc" /> the key caps its hints show
+      </span>
+    </div>
+  ),
+
+  Rail: () => (
+    <div style={{ width: 600 }}>
+      <Rail perPage={3} gap={8}>
+        {Array.from({ length: 8 }, (_, i) => (
+          <div key={i} style={{ width: 194, height: 120, borderRadius: 'var(--lobby-card-radius)', background: 'var(--lobby-card)', display: 'grid', placeItems: 'center' }}>
+            Card {i + 1}
+          </div>
+        ))}
+      </Rail>
+    </div>
+  ),
+
+  HeaderButton: () => (
+    <>
+      <HeaderButton aria-label="Close">
+        <Close size={12} />
+      </HeaderButton>
+      <HeaderButton shape="pill" style={{ width: 163 }}>
+        Profile
+      </HeaderButton>
+    </>
+  ),
+
+  CardButton: () => (
+    <>
+      <Button size="card">Jump in</Button>
+      <Button size="cta">Claim name</Button>
+      <Button size="cta" disabled>
+        Claim name
+      </Button>
+      <div style={{ width: 264 }}>
+        <Button size="cardSm">Jump in</Button>
+      </div>
+    </>
+  ),
+
+  VerifiedBadge: () => <VerifiedBadge />,
+
+  Pager: () => (
+    <>
+      <Pager page={2} count={9} onChange={() => undefined} />
+      <Pager variant="shop" page={0} count={9} onChange={() => undefined} />
+    </>
+  ),
+
+  BrowsePage: () => <BrowsePageShowcase />,
+
+  DiscoverCard: () => (
+    // No cover image: each card falls back to the gradient its id seeds.
+    <DiscoverGrid columns={3}>
+      <DiscoverCard id="genesis-plaza" title="Genesis Plaza" live count={128} featured creator={{ name: 'Decentraland Foundation', initial: 'D', hueSeed: 'foundation' }} location={{ text: '0,0', world: false }} onClick={() => undefined} />
+      <DiscoverCard id="music-festival" title="Music Festival" count={42} byline="Today, 21:00" location={{ text: 'festival.dcl.eth', world: true }} onClick={() => undefined} />
+      <DiscoverCard id="art-week" title="Art Week Gallery" creator={{ name: 'Ada', initial: 'A', hueSeed: 'ada' }} location={{ text: '-12,40', world: false }} onClick={() => undefined} />
+    </DiscoverGrid>
+  ),
+
+  EmptyState: () => (
+    <div style={{ ...column, maxWidth: 560 }}>
+      <EmptyState variant="inline" icon={<Search size={32} />} title="Nothing matched your search" subtitle="Try another name or clear the filters." />
+      <EmptyState variant="inline" tone="error" title="Couldn't load the shop" subtitle="The request timed out." actions={[{ label: 'Retry', onClick: () => undefined }]} />
+      <EmptyState
+        variant="card"
+        iconWash
+        icon={<People size={32} />}
+        title="No friends yet"
+        subtitle="Add the people you meet in-world."
+        actions={[
+          { label: 'Find people', onClick: () => undefined },
+          { label: 'Later', variant: 'ghost', onClick: () => undefined }
+        ]}
+      />
+    </div>
+  ),
+
+  PageHeader: () => (
+    <div style={{ ...column, gap: 20, maxWidth: 720 }}>
+      <PageHeader as="h3" title="Places" subtitle="Where people are right now" actions={<Button size="sm" variant="secondary">Filters</Button>} />
+      <PageHeader as="h3" size="hero" title="Explore Decentraland" subtitle="Events, games and places built by the community." />
+      <PageHeader as="h3" size="section" title="Live now" leading={<Pin size={16} />} />
+    </div>
+  ),
+
+  ColorPicker: () => (
+    <div style={{ maxWidth: 320 }}>
+      <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
+    </div>
+  ),
+
+  NameColorPicker: () => (
+    <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
+  ),
+
+  Panel: () => (
+    <Panel style={{ padding: 18, maxWidth: 360 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>Genesis Plaza</div>
+      <div style={{ color: 'var(--ink-7)', fontSize: 'var(--fs-sm)' }}>A surface for HUD widgets and menus.</div>
+    </Panel>
+  ),
+
+  Brand: () => (
+    <div style={{ ...row, gap: 16 }}>
+      <DclLogo size={24} />
+      <DclLogo size={32} />
+      <DclLogo size={48} />
+    </div>
+  ),
+
+  Avatar: () => (
+    <div style={{ ...row, gap: 16 }}>
+      <Avatar name="Mojito" color="#73d3d3" size={28} />
+      <Avatar name="Pravus" color="#ff4bed" size={40} status="online" />
+      <Avatar name="Mojito" size={40} status="online" src={samplePicture} />
+      <Avatar name="Away" color="#a0abff" size={40} status="away" />
+    </div>
+  ),
+
+  WearableCard: () => (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 84px)', gap: 10 }}>
+      {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (
+        <div key={r} style={{ width: 84 }}>
+          <WearableCard rarity={r} equipped={i === 4} isNew={i === 1} />
+        </div>
+      ))}
+    </div>
+  ),
+
+  WearableCardPick: () => (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 136px)', gap: 10 }}>
+      <WearableCard pick rarity="epic" count={3} />
+      <WearableCard pick rarity="rare" selected />
+      <WearableCard pick rarity="common" coverNote="Equipped" />
+    </div>
+  ),
+
+  EquippedItemCard: () => (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12 }}>
+        {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (
+          <EquippedItemCard
+            key={r}
+            name={`${r[0].toUpperCase()}${r.slice(1)} Item`}
+            rarity={r}
+            shopUrl={i % 2 === 0 ? 'https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0' : undefined}
+            categoryIcon={<Icon name="emotes" size={15} />}
+          />
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12, marginTop: 12 }}>
+        {(['epic', 'legendary', 'rare'] as Rarity[]).map((r, i) => (
+          <EquippedItemCard
+            key={r}
+            name={`Pinned ${r}`}
+            rarity={r}
+            shopUrl="https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0"
+            shopLabel={i === 0 ? 'Buy' : 'View'}
+            price={i === 0 ? '25 Credits' : undefined}
+            pinShop
+            categoryIcon={<Icon name="emotes" size={15} />}
+          />
+        ))}
+      </div>
+    </>
+  ),
+
+  ScrollThumb: () => (
+    <>
+      <ShowcaseScroller />
+      <ShowcaseRowScroller />
+    </>
+  ),
+
+  Toast: () => (
+    <>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
+          Plain
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
+          Error
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            let done = 0
+            const tick = (): void => {
+              done += 1
+              showToast(`Optimizing textures… ${done} / 5`, { key: 'showcase-progress', duration: null, busy: true })
+              if (done < 5) setTimeout(tick, 500)
+              else showToast('Textures optimized · 4.2 MB → 1.1 MB — Reload to see them', { key: 'showcase-progress', duration: null, dismissible: true, action: { label: 'Reload', ariaLabel: 'Reload the scene', onClick: () => undefined } })
+            }
+            tick()
+          }}
+        >
+          Keyed progress → action
+        </Button>
+      </div>
+      <ToastHost />
+    </>
+  ),
+
+  Chat: () => (
+    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 8, padding: 12, background: 'rgba(19,19,19,0.6)', borderRadius: 14 }}>
+        <DaySeparator ts={CHAT_TS} />
+        <ChatBubble line={{ id: 1, sender: MOJITO, message: 'gm everyone 👋 welcome to the plaza', channel: 'Nearby', messageId: '', ts: CHAT_TS }} />
+        <ChatBubble line={{ id: 2, sender: 'system', message: 'Type /help for available commands.', channel: 'System', messageId: '', ts: CHAT_TS }} />
+      </div>
+      <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 2, padding: 8, background: 'rgba(12,11,14,0.97)', borderRadius: 14 }}>
+        <MemberRow member={{ address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', picture: samplePicture }} />
+        <MemberRow member={{ address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado#a1b2' }} />
+        <MemberRow member={{ address: '0x1e105bb213754519903788022b962fe2b9c4b263', name: 'Pravus' }} />
+      </div>
+    </div>
+  )
+}
+
+/** Every section with its render, in page order. */
+export const SHOWCASE_SECTIONS = SHOWCASE_INDEX.map((section) => ({ ...section, render: RENDER[section.name] }))
+
+export function Showcase(): React.JSX.Element {
+  return (
+    <div style={wrap}>
+      <h1 style={{ margin: 0, fontSize: 'var(--fs-title)' }}>Design system · Explorer 2.0</h1>
+      {/* Each render as an element, so its hooks and its failure belong to the section, not to the page. */}
+      {SHOWCASE_SECTIONS.map(({ name, title, render: Render }) => (
+        <Section key={name} title={title}>
+          <Render />
+        </Section>
+      ))}
     </div>
   )
 }
@@ -201,596 +834,242 @@ function AnchoredMenuDemo(): React.JSX.Element {
   )
 }
 
-export function Showcase(): React.JSX.Element {
+function TabsShowcase(): React.JSX.Element {
+  const [pillTab, setPillTab] = useState('wearables')
+  const [lineTab, setLineTab] = useState('friends')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 420 }}>
+      <Tabs
+        aria-label="Pill example"
+        value={pillTab}
+        onChange={setPillTab}
+        items={[
+          { id: 'wearables', label: 'Wearables', icon: <Bag size={14} /> },
+          { id: 'emotes', label: 'Emotes' },
+          { id: 'outfits', label: 'Outfits', iconAfter: <Pin size={14} /> }
+        ]}
+      />
+      <Tabs
+        variant="underline"
+        aria-label="Underline example"
+        value={lineTab}
+        onChange={setLineTab}
+        items={[
+          { id: 'friends', label: 'Friends', icon: <People size={14} /> },
+          { id: 'requests', label: 'Requests', badge: 3 },
+          { id: 'blocked', label: 'Blocked', disabled: true }
+        ]}
+      />
+      <Tabs
+        variant="shop"
+        aria-label="Shop example"
+        value={pillTab}
+        onChange={setPillTab}
+        items={[
+          { id: 'wearables', label: 'Wearables', icon: <Bag size={18} /> },
+          { id: 'emotes', label: 'Emotes' },
+          { id: 'outfits', label: 'Outfits' }
+        ]}
+      />
+    </div>
+  )
+}
+
+function FormControlsShowcase(): React.JSX.Element {
   const [on, setOn] = useState(true)
   const [vol, setVol] = useState(60)
   const [res, setRes] = useState('1080')
   const [name, setName] = useState('robtfm')
   const [bio, setBio] = useState('')
   const [dob, setDob] = useState('2003-02-01')
-  const [pillTab, setPillTab] = useState('wearables')
-  const [lineTab, setLineTab] = useState('friends')
   return (
-    <div style={wrap}>
-      {/* Showcase renders instead of Hud, so it hosts its own popup layer for the dialog demos below. */}
-      <PopupHost />
-      <h1 style={{ margin: 0, fontSize: 'var(--fs-title)' }}>Design system · Explorer 2.0</h1>
-
-      <Section title="Palette (tokens)">
-        <div style={grid}>
-          {PALETTE.map((c) => (
-            <Swatch key={c.name} {...c} />
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Rarity name colors">
-        <div style={grid}>
-          {RARITY.map((c) => (
-            <Swatch key={c.name} {...c} dark />
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Typography (Inter)">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {TYPE.map((t) => (
-            <div key={t.name} style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
-              <span style={{ width: 96, fontSize: 11, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>{t.token}</span>
-              <span style={{ fontSize: `var(${t.token})`, fontWeight: t.weight }}>{t.name} — Decentraland</span>
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Radii">
-        <div style={row}>
-          {RADII.map((r) => (
-            <div key={r.name} style={{ textAlign: 'center' }}>
-              <div style={{ width: 72, height: 72, background: 'var(--fill-4)', borderRadius: `var(${r.token})`, border: '1px solid var(--white-10)' }} />
-              <div style={{ fontSize: 11, marginTop: 6 }}>{r.name}</div>
-              <div style={{ fontSize: 11, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>{r.token}</div>
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Button">
-        <div style={row}>
-          <Button>Primary</Button>
-          <Button variant="secondary">Secondary</Button>
-          <Button variant="ghost">Ghost</Button>
-          <Button disabled>Disabled</Button>
-        </div>
-        <div style={{ ...row, marginTop: 12 }}>
-          <Button size="sm">Small</Button>
-          <Button size="row">Row</Button>
-          <Button size="row" variant="secondary">Row</Button>
-          <Button size="md">Medium</Button>
-          <Button size="lg">Large</Button>
-        </div>
-      </Section>
-
-      <Section title="Button (start: the sign-in screens' CTA)">
-        <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
-          <Button size="start" style={{ width: 300 }}>Play as guest</Button>
-          <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
-        </div>
-      </Section>
-
-      <Section title="Sign-in: SubmitField, method buttons, CodeInput, chase spinner">
-        <SignInShowcase />
-      </Section>
-
-      <Section title="Logo pattern (the loading and sign-in backdrop)">
-        <div style={{ position: 'relative', height: 160, background: 'var(--loading-vignette)', overflow: 'hidden' }}>
-          <LogoPattern />
-        </div>
-      </Section>
-
-      <Section title="Button (bare: a translucent fill, sized by the caller)">
-        <div style={row}>
-          {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear'] as const).map((variant) => (
-            <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
-              {variant}
-            </Button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Skeleton">
-        <div style={row}>
-          <Skeleton style={{ width: 126, height: 126 }} />
-          <Skeleton tone="band" style={{ width: 200, height: 22 }} />
-        </div>
-      </Section>
-
-      <Section title="Dialogs (imperative popup layer — showDialog / showConfirm)">
-        <div style={row}>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              void showConfirm({
-                title: 'Block Pablo?',
-                body: "Blocked users won't be able to message you, join your community events, or see when you're online.",
-                confirmLabel: 'Block'
-              })
-            }}
-          >
-            Confirm
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              void showDialog({
-                title: 'Report submitted',
-                body: 'Thanks — our moderators will review this report.',
-                actions: [{ id: 'ok', label: 'OK', variant: 'primary' }]
-              })
-            }}
-          >
-            Alert
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              void showDialog({
-                title: 'Unsaved changes',
-                body: 'You have unsaved changes to your avatar.',
-                width: 520,
-                actions: [
-                  { id: 'cancel', label: 'Cancel', variant: 'ghost' },
-                  { id: 'discard', label: 'Discard', variant: 'secondary' },
-                  { id: 'save', label: 'Save', variant: 'primary' }
-                ]
-              })
-            }}
-          >
-            Custom actions
-          </Button>
-        </div>
-      </Section>
-
-      <Section title="Tooltip (hover the chips)">
-        <div style={{ ...row, gap: 16 }}>
-          <Tooltip label="Friends" shortcut="L">
-            <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>right</span>
-          </Tooltip>
-          <Tooltip label="Settings" shortcut="P" side="top">
-            <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>top</span>
-          </Tooltip>
-          <Tooltip label={'A longer hint that wraps.\n\nParagraph breaks are kept, and it hangs from the left edge.'} side="bottom" multiline>
-            <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>multiline</span>
-          </Tooltip>
-        </div>
-      </Section>
-
-      <Section title="ControlButton">
-        <div style={row}>
-          <ControlButton aria-label="ghost square">✕</ControlButton>
-          <ControlButton variant="solid" aria-label="solid square">✕</ControlButton>
-          <ControlButton variant="dark" aria-label="dark square">✕</ControlButton>
-          <ControlButton variant="faint" aria-label="faint square">✕</ControlButton>
-          <ControlButton shape="circle" aria-label="circle">＋</ControlButton>
-          <ControlButton shape="pill">＋ Pill</ControlButton>
-          <ControlButton active aria-label="active">✓</ControlButton>
-          <ControlButton size="sm" aria-label="small">✕</ControlButton>
-          <ControlButton size="lg" aria-label="large">✕</ControlButton>
-        </div>
-      </Section>
-
-      <Section title="Tabs (pill · underline — arrows/Home/End move the selection)">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 420 }}>
-          <Tabs
-            aria-label="Pill example"
-            value={pillTab}
-            onChange={setPillTab}
-            items={[
-              { id: 'wearables', label: 'Wearables', icon: <Bag size={14} /> },
-              { id: 'emotes', label: 'Emotes' },
-              { id: 'outfits', label: 'Outfits', iconAfter: <Pin size={14} /> }
-            ]}
-          />
-          <Tabs
-            variant="underline"
-            aria-label="Underline example"
-            value={lineTab}
-            onChange={setLineTab}
-            items={[
-              { id: 'friends', label: 'Friends', icon: <People size={14} /> },
-              { id: 'requests', label: 'Requests', badge: 3 },
-              { id: 'blocked', label: 'Blocked', disabled: true }
-            ]}
-          />
-          <Tabs
-            variant="shop"
-            aria-label="Shop example"
-            value={pillTab}
-            onChange={setPillTab}
-            items={[
-              { id: 'wearables', label: 'Wearables', icon: <Bag size={18} /> },
-              { id: 'emotes', label: 'Emotes' },
-              { id: 'outfits', label: 'Outfits' }
-            ]}
-          />
-        </div>
-      </Section>
-
-      <Section title="Form controls">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 320 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 14 }}>Fullscreen</span>
-            <Toggle checked={on} onChange={setOn} aria-label="Fullscreen" />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 8, borderRadius: 8, background: 'var(--text)', color: 'var(--panel)' }}>
-            <span style={{ fontSize: 14 }}>On a light panel</span>
-            <Toggle size="sm" surface="light" checked={on} onChange={setOn} aria-label="On a light panel" />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 14, width: 60 }}>Volume</span>
-            <Slider value={vol} onChange={setVol} aria-label="Volume" />
-            <span style={{ fontSize: 13, color: 'var(--ink-45)', width: 32 }}>{vol}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 28 }}>
-            <span style={{ fontSize: 14, width: 60 }}>Rail</span>
-            <Slider variant="rail" value={vol} onChange={setVol} aria-label="Volume (navigation popover)" />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 14 }}>Display name</span>
-            <TextInput value={name} onChange={setName} placeholder="Your name" maxLength={15} />
-            <TextInput value={name} onChange={setName} variant="light" placeholder="light variant" maxLength={15} />
-            <TextInput value="not-a-url" onChange={() => {}} invalid aria-label="Invalid example" />
-            <TextInput value={name} onChange={setName} maxLength={15} aria-label="With an action" action={{ icon: 'dice', label: 'Random name', onClick: () => setName('RuneStarfall') }} />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 14 }}>About me</span>
-            <TextArea value={bio} onChange={setBio} placeholder="Tell people about yourself" maxLength={400} counter />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 14 }}>Birth date (no native picker — see DateField)</span>
-            <DateField label="Birth date" value={dob} onChange={setDob} />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 14 }}>Resolution</span>
-            <Select
-              value={res}
-              onChange={setRes}
-              aria-label="Resolution"
-              options={[
-                { value: '720', label: '1280 × 720' },
-                { value: '1080', label: '1920 × 1080' },
-                { value: '1440', label: '2560 × 1440' }
-              ]}
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 14 }}>Picker (placeholder)</span>
-            <Select
-              value=""
-              onChange={() => undefined}
-              aria-label="Add a place"
-              placeholder="Select LAND or World"
-              options={[
-                { value: 'a', label: 'Genesis Plaza (0,0)' },
-                { value: 'b', label: 'My World (example.dcl.eth)' }
-              ]}
-            />
-          </div>
-        </div>
-      </Section>
-
-      <Section title="Emote Wheel Slot (Figma 10386-4701)">
-        <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap', padding: 16, background: '#3a3550', borderRadius: 12 }}>
-          <EmoteSlot thumbnail={SLOT_THUMB} rarity="legendary" width={220} />
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {EMOTE_RARITIES.map((r) => (
-              <div key={r} style={{ textAlign: 'center' }}>
-                <EmoteSlot thumbnail={SLOT_THUMB} rarity={r} width={96} />
-                <div style={{ fontSize: 11, color: 'var(--ink-7)', marginTop: 4, textTransform: 'capitalize' }}>{r}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Section>
-
-      <Section title="DPI · HUD scale (Unity CanvasScaler)">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
-          <p style={{ fontSize: 13, color: 'var(--ink-7)', margin: 0, lineHeight: 1.5 }}>
-            The HUD scales by the smaller of width ÷ 1920 and height ÷ 1080, with no clamp — the same
-            curve as Unity&apos;s “Scale With Screen Size”. <code>innerHeight</code> is logical px
-            (device px ÷ DPR), so a Retina panel scales identically to Unity on the same display.
-          </p>
-          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {['720', '900', '1080', '1440'].map((h) => {
-              const s = Number(h) / 1080
-              const sel = h === res
-              return (
-                <div key={h} style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 12, color: sel ? 'var(--text)' : 'var(--ink-45)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>
-                    {h}p → ×{s.toFixed(3)}
-                  </div>
-                  <div style={{ width: 132, height: 84, display: 'flex', alignItems: 'flex-start' }}>
-                    <div
-                      style={{
-                        width: 100,
-                        padding: '8px 10px',
-                        borderRadius: 10,
-                        background: 'var(--fill-4)',
-                        border: sel ? '1px solid var(--brand)' : '1px solid var(--white-10)',
-                        transform: `scale(${s})`,
-                        transformOrigin: 'top left',
-                        fontSize: 13,
-                        fontWeight: 600
-                      }}
-                    >
-                      HUD card
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>
-            Live viewport: {window.innerWidth}×{window.innerHeight}px → ×{Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(3)}
-          </div>
-        </div>
-      </Section>
-
-      <Section title="MenuPanel (a navigation button's panel)">
-        <MenuPanel label="Discover" title="DISCOVER">
-          <MenuList>
-            <MenuRow icon={<Icon name="events" size={24} />} label="Events" hint="X" trailing={<CountBadge count={3} />} />
-            <MenuRow icon={<Icon name="places" size={24} />} label="Places" hint="Z" />
-          </MenuList>
-          <MenuDivider />
-          <MenuList>
-            <MenuRow icon={<Icon name="communities" size={24} />} label="Communities" hint="O" disabled />
-          </MenuList>
-        </MenuPanel>
-      </Section>
-
-      <Section title="IconButton (navigation bar)">
-        <Panel style={{ width: 60, padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {NAV.map((n, i) => (
-            <IconButton key={n.icon} icon={n.icon} label={n.label} active={i === 8} badge={i === 1 ? 3 : undefined} />
-          ))}
-          <IconButton icon="profile" label="Profile (avatar)" avatar={{ name: 'Mojito', color: 'var(--lavender)' }} />
-          <IconButton icon="voice-hearing" label="Voice (connected)" indicator />
-          <IconButton icon="communities" label="Communities (live stream)" cornerArt={{ src: streamBadge, label: 'A community stream is live' }} />
-        </Panel>
-      </Section>
-
-      <Section title="VoiceBars (speaking)">
-        <VoiceBars />
-      </Section>
-
-      <Section title="Chip (breadcrumb filter)">
-        <div style={{ ...row, gap: 20 }}>
-          <Chip label="All" selected onClick={() => undefined} />
-          <Chip label="All" onClick={() => undefined} />
-          <Chip label="Hair" selected onClick={() => undefined} onClear={() => undefined} />
-        </div>
-        <div style={{ ...row, gap: 6, marginTop: 12 }}>
-          <Chip variant="dark" label="All" selected onClick={() => undefined} />
-          <Chip variant="dark" label="Head" onClick={() => undefined} />
-        </div>
-      </Section>
-
-      <Section title="OptionMenu">
-        <OptionMenu
-          onClose={() => undefined}
-          sections={[
-            { label: 'Sort by', options: [{ id: 'newest', label: 'Newest' }, { id: 'oldest', label: 'Oldest' }], value: 'newest', onChange: () => undefined },
-            { label: 'View', options: [{ id: 'all', label: 'All Items' }, { id: 'col', label: 'Collectibles only' }], value: 'all', onChange: () => undefined }
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 320 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 14 }}>Fullscreen</span>
+        <Toggle checked={on} onChange={setOn} aria-label="Fullscreen" />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 8, borderRadius: 8, background: 'var(--text)', color: 'var(--panel)' }}>
+        <span style={{ fontSize: 14 }}>On a light panel</span>
+        <Toggle size="sm" surface="light" checked={on} onChange={setOn} aria-label="On a light panel" />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 14, width: 60 }}>Volume</span>
+        <Slider value={vol} onChange={setVol} aria-label="Volume" />
+        <span style={{ fontSize: 13, color: 'var(--ink-45)', width: 32 }}>{vol}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 28 }}>
+        <span style={{ fontSize: 14, width: 60 }}>Rail</span>
+        <Slider variant="rail" value={vol} onChange={setVol} aria-label="Volume (navigation popover)" />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ fontSize: 14 }}>Display name</span>
+        <TextInput value={name} onChange={setName} placeholder="Your name" maxLength={15} />
+        <TextInput value={name} onChange={setName} variant="light" placeholder="light variant" maxLength={15} />
+        <TextInput value="not-a-url" onChange={() => {}} invalid aria-label="Invalid example" />
+        <TextInput value={name} onChange={setName} maxLength={15} aria-label="With an action" action={{ icon: 'dice', label: 'Random name', onClick: () => setName('RuneStarfall') }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ fontSize: 14 }}>About me</span>
+        <TextArea value={bio} onChange={setBio} placeholder="Tell people about yourself" maxLength={400} counter />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span style={{ fontSize: 14 }}>Birth date (no native picker — see DateField)</span>
+        <DateField label="Birth date" value={dob} onChange={setDob} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 14 }}>Resolution</span>
+        <Select value={res} onChange={setRes} aria-label="Resolution" options={RESOLUTIONS} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 14 }}>Picker (placeholder)</span>
+        <Select
+          value=""
+          onChange={() => undefined}
+          aria-label="Add a place"
+          placeholder="Select LAND or World"
+          options={[
+            { value: 'a', label: 'Genesis Plaza (0,0)' },
+            { value: 'b', label: 'My World (example.dcl.eth)' }
           ]}
         />
-      </Section>
-
-      <Section title="ContextMenu (items · submenu · exclusive options)">
-        <ContextMenu
-          items={[
-            { label: 'View Community' },
-            { kind: 'submenu', label: 'Notification Ping' },
-            { kind: 'submenu', label: 'Invite to Community', items: [{ label: 'Pixel Builders' }, { label: 'Neon Club' }] },
-            { kind: 'separator' },
-            { kind: 'title', label: 'Notification Ping' },
-            { kind: 'option', label: 'All Messages', checked: true },
-            { kind: 'option', label: 'Mentions Only', checked: false },
-            { kind: 'option', label: 'None', checked: false },
-            { kind: 'separator' },
-            { label: 'Delete chat history', danger: true }
-          ]}
-        />
-      </Section>
-
-      <Section title="AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)">
-        <AnchoredMenuDemo />
-      </Section>
-
-      <Section title="SwapLabel (hover the button)">
-        <Button size="sm" variant="ghost" aria-label="Cancel join request"><SwapLabel idle="Request Sent" hover="Cancel Request" /></Button>
-      </Section>
-
-      <Section title="CountBadge (count · capped)">
-        <CountBadge count={5} /> <CountBadge count={140} max={99} />
-      </Section>
-
-      <Section title="KebabMenu (md · sm)">
-        <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
-          <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
-          <KebabMenu size="sm" label="Participant options" items={(close) => [{ label: 'View profile', onClick: close }]} />
-        </div>
-      </Section>
-
-      <Section title="HintsButton (opens upward)">
-        <div style={{ paddingTop: 120 }}>
-          <HintsButton hints={[{ icon: <KeyCap label="1" />, text: 'Press a number key to pick a slot.' }, { icon: <KeyCap label="E" />, text: 'Press E to open emotes.' }]} />
-        </div>
-      </Section>
-
-      <Section title="Rail">
-        <div style={{ width: 600 }}>
-          <Rail perPage={3} gap={8}>
-            {Array.from({ length: 8 }, (_, i) => (
-              <div key={i} style={{ width: 194, height: 120, borderRadius: 'var(--lobby-card-radius)', background: 'var(--lobby-card)', display: 'grid', placeItems: 'center' }}>
-                Card {i + 1}
-              </div>
-            ))}
-          </Rail>
-        </div>
-      </Section>
-      <Section title="HeaderButton">
-        <HeaderButton aria-label="Close">
-          <Close size={12} />
-        </HeaderButton>
-        <HeaderButton shape="pill" style={{ width: 163 }}>
-          Profile
-        </HeaderButton>
-      </Section>
-      <Section title="Button (card sizes)">
-        <Button size="card">Jump in</Button>
-        <Button size="cta">Claim name</Button>
-        <Button size="cta" disabled>
-          Claim name
-        </Button>
-        <div style={{ width: 264 }}>
-          <Button size="cardSm">Jump in</Button>
-        </div>
-      </Section>
-      <Section title="VerifiedBadge">
-        <VerifiedBadge />
-      </Section>
-      <Section title="Pager">
-        <Pager page={2} count={9} onChange={() => undefined} />
-        <Pager variant="shop" page={0} count={9} onChange={() => undefined} />
-      </Section>
-
-      <Section title="ColorPicker (avatar colors)">
-        <div style={{ maxWidth: 320 }}>
-          <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
-        </div>
-      </Section>
-
-      <Section title="ColorPicker (swatch, hue only: name colour)">
-        <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
-      </Section>
-
-      <Section title="Panel">
-        <Panel style={{ padding: 18, maxWidth: 360 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Genesis Plaza</div>
-          <div style={{ color: 'var(--ink-7)', fontSize: 'var(--fs-sm)' }}>A surface for HUD widgets and menus.</div>
-        </Panel>
-      </Section>
-
-      <Section title="Brand">
-        <div style={{ ...row, gap: 16 }}>
-          <DclLogo size={24} />
-          <DclLogo size={32} />
-          <DclLogo size={48} />
-        </div>
-      </Section>
-
-      <Section title="Avatar">
-        <div style={{ ...row, gap: 16 }}>
-          <Avatar name="Mojito" color="#73d3d3" size={28} />
-          <Avatar name="Pravus" color="#ff4bed" size={40} status="online" />
-          <Avatar
-            name="Mojito"
-            size={40}
-            status="online"
-            src="https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png"
-          />
-          <Avatar name="Away" color="#a0abff" size={40} status="away" />
-        </div>
-      </Section>
-
-      <Section title="WearableCard (backpack)">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 84px)', gap: 10 }}>
-          {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (
-            <div key={r} style={{ width: 84 }}>
-              <WearableCard rarity={r} equipped={i === 4} isNew={i === 1} />
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="EquippedItemCard (passport)">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12 }}>
-          {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (
-            <EquippedItemCard
-              key={r}
-              name={`${r[0].toUpperCase()}${r.slice(1)} Item`}
-              rarity={r}
-              shopUrl={i % 2 === 0 ? 'https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0' : undefined}
-              categoryIcon={<Icon name="emotes" size={15} />}
-            />
-          ))}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12, marginTop: 12 }}>
-          {(['epic', 'legendary', 'rare'] as Rarity[]).map((r, i) => (
-            <EquippedItemCard
-              key={r}
-              name={`Pinned ${r}`}
-              rarity={r}
-              shopUrl="https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0"
-              shopLabel={i === 0 ? 'Buy' : 'View'}
-              price={i === 0 ? '25 Credits' : undefined}
-              pinShop
-              categoryIcon={<Icon name="emotes" size={15} />}
-            />
-          ))}
-        </div>
-      </Section>
-
-      <Section title="ScrollThumb (fixed length, as the Shop draws it)">
-        <ShowcaseScroller />
-        <ShowcaseRowScroller />
-      </Section>
-
-      <Section title="Toast (plain · error · keyed progress · action + dismiss)">
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Button variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
-            Plain
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
-            Error
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              let done = 0
-              const tick = (): void => {
-                done += 1
-                showToast(`Optimizing textures… ${done} / 5`, { key: 'showcase-progress', duration: null, busy: true })
-                if (done < 5) setTimeout(tick, 500)
-                else showToast('Textures optimized · 4.2 MB → 1.1 MB — Reload to see them', { key: 'showcase-progress', duration: null, dismissible: true, action: { label: 'Reload', ariaLabel: 'Reload the scene', onClick: () => undefined } })
-              }
-              tick()
-            }}
-          >
-            Keyed progress → action
-          </Button>
-        </div>
-        <ToastHost />
-      </Section>
-      <Section title="Chat components">
-        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 8, padding: 12, background: 'rgba(19,19,19,0.6)', borderRadius: 14 }}>
-            <DaySeparator ts={Date.now()} />
-            <ChatBubble line={{ id: 1, sender: MOJITO, message: 'gm everyone 👋 welcome to the plaza', channel: 'Nearby', messageId: '', ts: Date.now() }} />
-            <ChatBubble line={{ id: 2, sender: 'system', message: 'Type /help for available commands.', channel: 'System', messageId: '', ts: Date.now() }} />
-          </div>
-          <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 2, padding: 8, background: 'rgba(12,11,14,0.97)', borderRadius: 14 }}>
-            <MemberRow member={{ address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', picture: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' }} />
-            <MemberRow member={{ address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado#a1b2' }} />
-            <MemberRow member={{ address: '0x1e105bb213754519903788022b962fe2b9c4b263', name: 'Pravus' }} />
-          </div>
-        </div>
-      </Section>
+      </div>
     </div>
   )
 }
+
+/** A labelled field with its sublabel and notice, and the counts CharCounter draws. */
+function FieldLabelShowcase(): React.JSX.Element {
+  const id = useId()
+  const [status, setStatus] = useState('Building a museum')
+  return (
+    <div style={{ ...column, gap: 8, maxWidth: 320 }}>
+      <FieldLabel htmlFor={id} sublabel="Shown on your passport" notice="Optional">
+        Status
+      </FieldLabel>
+      <TextInput id={id} value={status} onChange={setStatus} maxLength={30} />
+      <CharCounter current={status.length} max={30} />
+      <div style={{ ...row, gap: 16 }}>
+        <CharCounter current={12} max={40} format="spaced" />
+        <CharCounter current={12} max={40} format="words" />
+        <CharCounter current={52} max={40} />
+      </div>
+    </div>
+  )
+}
+
+function SearchFieldShowcase(): React.JSX.Element {
+  const [query, setQuery] = useState('plaza')
+  return (
+    <div style={{ ...column, gap: 12, maxWidth: 320 }}>
+      <SearchField value={query} onChange={setQuery} placeholder="Search places" clearable />
+      <SearchField variant="light" defaultValue="Genesis" placeholder="Search friends" />
+      <SearchField size="sm" placeholder="Search emotes" />
+    </div>
+  )
+}
+
+/** The frame of the menu's browse pages (Places, Events, Shop): toolbar, controls, results panel. */
+function BrowsePageShowcase(): React.JSX.Element {
+  const [tab, setTab] = useState('wearables')
+  const [query, setQuery] = useState('')
+  return (
+    <div style={{ maxWidth: 880, paddingBottom: 120 }}>
+      <BrowseToolbar
+        tabs={
+          <Tabs
+            aria-label="Shop sections"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { id: 'wearables', label: 'Wearables' },
+              { id: 'emotes', label: 'Emotes' },
+              { id: 'names', label: 'Names' }
+            ]}
+          />
+        }
+      >
+        <BrowseControl size="search">
+          <SearchField value={query} onChange={setQuery} placeholder="Search the shop" />
+        </BrowseControl>
+        <BrowseControl size="select">
+          <Dropdown options={['Recently listed', 'Cheapest', 'Newest']} defaultValue="Recently listed" />
+        </BrowseControl>
+      </BrowseToolbar>
+      <div style={column}>
+        <BrowsePanel label="Results, loading" busy>
+          <BrowseLoading />
+        </BrowsePanel>
+        <BrowsePanel label="Results">
+          <EmptyState variant="inline" title="Nothing on sale here" subtitle="Check back soon." />
+        </BrowsePanel>
+      </div>
+    </div>
+  )
+}
+
+/** The HUD scale against a few reference heights; the chosen one is outlined. */
+function HudScaleShowcase(): React.JSX.Element {
+  const [res, setRes] = useState('1080')
+  const live = useSyncExternalStore(subscribeLiveScale, liveScale)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
+      <p style={{ fontSize: 13, color: 'var(--ink-7)', margin: 0, lineHeight: 1.5 }}>
+        The HUD scales by the smaller of width ÷ 1920 and height ÷ 1080. <code>innerHeight</code> is
+        logical px (device px ÷ DPR), so a Retina panel scales as any display of the same logical size.
+      </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 14 }}>Reference resolution</span>
+        <Select value={res} onChange={setRes} aria-label="Reference resolution" options={RESOLUTIONS} />
+      </div>
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+        {['720', '900', '1080', '1440'].map((h) => {
+          const s = Number(h) / 1080
+          const sel = h === res
+          return (
+            <div key={h} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 12, color: sel ? 'var(--text)' : 'var(--ink-45)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>
+                {h}p → ×{s.toFixed(3)}
+              </div>
+              <div style={{ width: 132, height: 84, display: 'flex', alignItems: 'flex-start' }}>
+                <div
+                  style={{
+                    width: 100,
+                    padding: '8px 10px',
+                    borderRadius: 10,
+                    background: 'var(--fill-4)',
+                    border: sel ? '1px solid var(--brand)' : '1px solid var(--white-10)',
+                    transform: `scale(${s})`,
+                    transformOrigin: 'top left',
+                    fontSize: 13,
+                    fontWeight: 600
+                  }}
+                >
+                  HUD card
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <output aria-label="Live HUD scale" style={{ fontSize: 12, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>
+        {live}
+      </output>
+    </div>
+  )
+}
+
+// The viewport and the `--ui-scale` the host installed for it (hudScale.ts, with its bounds), read again on every
+// resize and every scale change, so the line shows what the HUD is drawn at.
+function subscribeLiveScale(onChange: () => void): () => void {
+  window.addEventListener('resize', onChange)
+  const unsubscribe = subscribeHudScale(onChange)
+  return () => {
+    window.removeEventListener('resize', onChange)
+    unsubscribe()
+  }
+}
+const liveScale = (): string =>
+  `Live viewport: ${window.innerWidth}×${window.innerHeight}px → ×${getHudScale().toFixed(3)}`
 
 // A short scroller with a fixed-length thumb beside it.
 function ShowcaseScroller(): React.JSX.Element {
@@ -818,6 +1097,25 @@ function ShowcaseRowScroller(): React.JSX.Element {
         ))}
       </div>
       <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
+    </div>
+  )
+}
+
+/** ArmedButton mounted again by SHOW AGAIN, so its wait can be tried: a press before ARM_MS counts nothing. */
+function ArmedShowcase(): React.JSX.Element {
+  const [shown, setShown] = useState(0)
+  const [sent, setSent] = useState(0)
+  return (
+    <div style={row}>
+      <Button variant="secondary" onClick={() => setShown((n) => n + 1)}>
+        SHOW AGAIN
+      </Button>
+      <ArmedButton key={shown} onClick={() => setSent((n) => n + 1)}>
+        SEND GIFT
+      </ArmedButton>
+      <span>
+        Sent {sent} · answers {ARM_MS} ms after it appears
+      </span>
     </div>
   )
 }

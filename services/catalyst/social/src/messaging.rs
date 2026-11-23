@@ -16,7 +16,7 @@
 //! token and this catalyst's federation identity (the epoch author). From
 //! the gatekeeper it takes the route contract only: `ApiError` and its
 //! `forbidden`, `service_unavailable` and `unauthorized` constructors; the
-//! caller is the wallet signer the shared verifier accepts, never a scene
+//! caller is the wallet signer the social verifier accepts, never a scene
 //! signer.
 //! [`router`] keeps the body limit, NUL guard and CORS. `serve` merges
 //! it into the `/comms-gatekeeper` nest, so the routes answer exactly as
@@ -25,11 +25,12 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post};
+use crate::storage::gc;
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use chrono::NaiveDateTime;
@@ -39,11 +40,12 @@ use sqlx::PgPool;
 
 use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
+use crate::auth::request::{RequestAuthError, RequestParts};
 use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable, unauthorized};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
-use crate::shared::signed_fetch::{PayloadPolicy, SignedFetchError, SignedPath, require_signer_at};
+use crate::shared::signed_fetch::SignedPath;
 
 /// The settings `serve` resolves from `Config`.
 #[derive(Clone, Default)]
@@ -102,10 +104,6 @@ impl MessagingState {
         }
     }
 
-    pub fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
-        self.eip1654.as_deref()
-    }
-
     /// This catalyst's federation identity (the MLS epoch author).
     pub async fn peer_id(&self) -> Result<String, sqlx::Error> {
         self.peer_id
@@ -134,11 +132,11 @@ pub fn router(state: SharedState) -> Router {
         .route("/mls/groups", post(create_group))
         .route(
             "/mls/groups/{group_id}/commits",
-            get(fetch_commits).post(submit_commit),
+            get(fetch_commits).post(erase(submit_commit)),
         )
         .route(
             "/mls/groups/{group_id}/messages",
-            get(fetch_history).post(send_message),
+            get(fetch_history).post(erase(send_message)),
         )
         .route("/mls/blobs/{hash}", get(fetch_blob))
         .layer(axum::extract::DefaultBodyLimit::max(512 * 1024))
@@ -219,11 +217,31 @@ macro_rules! member_exists {
 const MEMBER_EXISTS: &str = member_exists!("$1", "$2");
 
 /// Key-package claims per claimer (sized for opening a large channel) and,
-/// spent only by a package actually handed out, per owner.
+/// spent only by a package actually handed out, per owner and per
+/// (claimer, owner) pair, so one claimer cannot spend an owner's whole budget.
 static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
+// Pair keys grow as claimers x owners: a larger map keeps an overflow from resetting them.
+static CLAIMS_OF_PAIR: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)).with_max_buckets(200_000));
+
+fn claim_pair(claimer: &str, owner: &str) -> String {
+    format!("{claimer}:{owner}")
+}
+
+/// Whether the owner's or this pair's handed-out budget is spent.
+fn claim_budget_spent(claimer: &str, owner: &str) -> bool {
+    CLAIMS_OF_OWNER.is_rate_limited(owner)
+        || CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(claimer, owner))
+}
+
+/// Charges one handed-out package to the owner and the pair.
+fn spend_claim(claimer: &str, owner: &str) {
+    CLAIMS_OF_OWNER.check(owner);
+    CLAIMS_OF_PAIR.check(&claim_pair(claimer, owner));
+}
 
 /// Owners with a claim in flight on this node. One claim per owner runs at a
 /// time, so the owner's budget is read and spent atomically; a concurrent
@@ -283,42 +301,38 @@ fn b64_field(v: &Value, key: &str) -> Result<Vec<u8>, ApiError> {
     Ok(bytes)
 }
 
-/// The wallet that signed the request. A scene-signed request, or one whose
-/// `signer` key is re-spelled (under either payload shape), answers 400 as
-/// the gatekeeper's other wallet routes do; see [`auth_refusal`] for the rest.
+/// The wallet that signed the request, under the social verifier (current
+/// payload only; a scene-signed request is refused); see [`auth_refusal`].
 async fn auth(
     state: &MessagingState,
     headers: &HeaderMap,
     method: &str,
     path: &SignedPath,
 ) -> Result<String, ApiError> {
-    require_signer_at(
-        headers,
-        method,
-        path,
-        PayloadPolicy::V6ThenLegacy,
-        state.eip1654(),
+    let parts = RequestParts::from_headers(method, path.clone(), headers);
+    crate::request_auth::require(
+        &parts,
+        &crate::request_auth::options(state.eip1654.as_ref()),
     )
     .await
-    .map(|signer| Address::from_signer(&signer).into_string())
+    .map(|verified| Address::from_verified(&verified).into_string())
     .map_err(auth_refusal)
 }
 
-/// The answer to a refused signed fetch. A contract-wallet check that could
-/// not run (no validator, or its RPC failed) is 503 with a fixed message, its
-/// detail kept in the log; every other refusal, an unsigned request
-/// included, is the caller's 401 or 400 and is logged at debug only.
-fn auth_refusal(e: SignedFetchError) -> ApiError {
-    if e.is_metadata_refusal() {
-        tracing::debug!(error = %e, "signed-fetch rejected");
-        return ApiError::bad_request("Invalid metadata content");
-    }
-    match e {
-        SignedFetchError::EipNotImplemented | SignedFetchError::CatalystUnavailable(_) => {
+/// The answer to a refused signed request: the verifier's 400 or 401 with
+/// its message, logged at debug; a contract-wallet check that could not run is
+/// 503 with a fixed message, its detail kept in the log.
+fn auth_refusal(e: RequestAuthError) -> ApiError {
+    match e.status() {
+        400 => {
+            tracing::debug!(error = %e, "signed-fetch rejected");
+            ApiError::bad_request(e.to_string())
+        }
+        503 => {
             tracing::warn!(error = %e, "signed-fetch validation unavailable");
             service_unavailable("Signature validation unavailable")
         }
-        e => {
+        _ => {
             tracing::debug!(error = %e, "signed-fetch rejected");
             unauthorized(format!("invalid identity: {e}"))
         }
@@ -347,9 +361,42 @@ fn authorized_community_binding(
         .map_err(|_| ApiError::bad_request("community_id must be a uuid"))
 }
 
-/// Stores the bytes under their CID; `wrote` is set when this call created
-/// the blob, so a write that then loses its race keeps its budget spent.
+/// The blob budget a request spent, and whether any of its blobs was created.
+struct BlobSpend<'a> {
+    signer: &'a str,
+    kib: u32,
+    wrote: bool,
+}
+
+impl BlobSpend<'_> {
+    /// Gives the budget back unless a blob was created: a write that loses
+    /// its race after creating one keeps its budget spent.
+    fn refund_unwritten(&self) {
+        if !self.wrote {
+            BLOB_BUDGET.refund(self.signer, self.kib);
+        }
+    }
+}
+
+/// Stores the bytes under their CID for a row the caller writes and commits
+/// on `tx` (under the store lock's shared side, [`gc::store_for_row`]),
+/// marking `spend` when this call created the blob. A failed store refunds
+/// `spend` (unless an earlier blob was created), so a retry is not charged twice.
 async fn store_blob(
+    tx: &mut sqlx::PgConnection,
+    state: &MessagingState,
+    bytes: Vec<u8>,
+    spend: &mut BlobSpend<'_>,
+) -> Result<String, ApiError> {
+    let stored = store_blob_bytes(tx, state, bytes, &mut spend.wrote).await;
+    if stored.is_err() {
+        spend.refund_unwritten();
+    }
+    stored
+}
+
+async fn store_blob_bytes(
+    tx: &mut sqlx::PgConnection,
     state: &MessagingState,
     bytes: Vec<u8>,
     wrote: &mut bool,
@@ -362,17 +409,17 @@ async fn store_blob(
             .await
             .map_err(|e| ApiError::internal(format!("mls blob hash task: {e}")))?
     };
-    let stored = async {
-        if !storage.exist(&cid).await? {
-            storage.store(&cid, bytes).await?;
-            *wrote = true;
+    match gc::store_for_row(tx, storage, &cid, bytes).await {
+        Ok(created) => *wrote |= created,
+        Err(gc::GcError::LockTimeout) => {
+            return Err(service_unavailable(
+                "The message store is being collected; retry shortly",
+            ));
         }
-        Ok::<_, crate::storage::StorageError>(())
-    }
-    .await;
-    if let Err(e) = stored {
-        tracing::error!(error = %e, "mls blob store failed");
-        return Err(service_unavailable("The message store is unavailable"));
+        Err(e) => {
+            tracing::error!(error = %e, "mls blob store failed");
+            return Err(service_unavailable("The message store is unavailable"));
+        }
     }
     Ok(cid)
 }
@@ -486,7 +533,7 @@ pub async fn claim_key_package(
     let Some(_slot) = ClaimSlot::take(&owner) else {
         return Err(claim_rate_limited());
     };
-    if CLAIMS_OF_OWNER.is_rate_limited(&owner) {
+    if claim_budget_spent(&claimer, &owner) {
         return Err(claim_rate_limited());
     }
     // A block either way answers as an empty stock.
@@ -507,7 +554,7 @@ pub async fn claim_key_package(
     .fetch_optional(&state.pool)
     .await?;
     if row.is_some() {
-        CLAIMS_OF_OWNER.check(&owner);
+        spend_claim(&claimer, &owner);
     }
     match row {
         Some((ref_hash, kp, cs)) => Ok(Json(
@@ -613,7 +660,12 @@ pub async fn create_group(
     if exists {
         return Err(ApiError::http(409, "group already exists"));
     }
-    let (mut spent, mut wrote) = (0, false);
+    let mut spend = BlobSpend {
+        signer: &creator,
+        kib: 0,
+        wrote: false,
+    };
+    let mut tx = state.pool.begin().await?;
     let initial = match &b.initial_commit {
         Some(c) => {
             let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
@@ -625,14 +677,14 @@ pub async fn create_group(
                 .as_deref()
                 .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
                 .transpose()?;
-            spent = spend_blob_budget(
+            spend.kib = spend_blob_budget(
                 &creator,
                 commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
             )?;
             let commit_hash = mls::content_hash(&commit_bytes);
-            let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
+            let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut spend).await?;
             let welcome_cid = match welcome_bytes {
-                Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
+                Some(w) => Some(store_blob(&mut tx, &state, w, &mut spend).await?),
                 None => None,
             };
             Some((commit_cid, welcome_cid, commit_hash))
@@ -674,12 +726,11 @@ pub async fn create_group(
     .bind(&commit_hash)
     .bind(chrono::Utc::now().timestamp())
     .bind(now)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     if !created {
-        if !wrote {
-            BLOB_BUDGET.refund(&creator, spent);
-        }
+        spend.refund_unwritten();
         return Err(ApiError::http(409, "group already exists"));
     }
     // An initial commit moves the group from epoch 0 to 1.
@@ -793,15 +844,19 @@ pub async fn submit_commit(
         creator: &creator,
     };
     check_roster_change(&state.pool, &group, &signer, &added, &removed).await?;
-    let spent = spend_blob_budget(
-        &signer,
-        commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
-    )?;
+    let mut spend = BlobSpend {
+        signer: &signer,
+        kib: spend_blob_budget(
+            &signer,
+            commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
+        )?,
+        wrote: false,
+    };
     let commit_hash = mls::content_hash(&commit_bytes);
-    let mut wrote = false;
-    let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
+    let mut tx = state.pool.begin().await?;
+    let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut spend).await?;
     let welcome_cid = match welcome_bytes {
-        Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
+        Some(w) => Some(store_blob(&mut tx, &state, w, &mut spend).await?),
         None => None,
     };
     let now = now_utc();
@@ -837,12 +892,11 @@ pub async fn submit_commit(
     .bind(&added)
     .bind(&removed)
     .bind(now)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     if b.epoch != locked + 1 {
-        if !wrote {
-            BLOB_BUDGET.refund(&signer, spent);
-        }
+        spend.refund_unwritten();
         return Err(ApiError::http(409, "epoch advanced concurrently; retry"));
     }
     Ok(Json(
@@ -1070,9 +1124,13 @@ pub async fn send_message(
     let signature_hash = mls::content_hash(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
-    let spent = spend_blob_budget(&signer, ciphertext.len())?;
-    let mut wrote = false;
-    let ciphertext_cid = store_blob(&state, ciphertext, &mut wrote).await?;
+    let mut spend = BlobSpend {
+        signer: &signer,
+        kib: spend_blob_budget(&signer, ciphertext.len())?,
+        wrote: false,
+    };
+    let mut tx = state.pool.begin().await?;
+    let ciphertext_cid = store_blob(&mut tx, &state, ciphertext, &mut spend).await?;
     let inserted = sqlx::query(
         "INSERT INTO social.mls_message_refs \
             (signature_hash, group_id, author, epoch, ciphertext_hash, ciphertext_cid, signed_at, received_at) \
@@ -1086,11 +1144,12 @@ pub async fn send_message(
     .bind(&ciphertext_cid)
     .bind(now)
     .bind(now_utc())
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
-    if inserted == 0 && !wrote {
-        BLOB_BUDGET.refund(&signer, spent);
+    tx.commit().await?;
+    if inserted == 0 {
+        spend.refund_unwritten();
     }
     Ok(Json(json!({
         "group_id": group_id,
@@ -1405,6 +1464,51 @@ mod tests {
         spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
     }
 
+    /// A store refused on the store lock (the collector holds it) answers
+    /// 503 and gives the budget back, so the retry is not charged twice.
+    #[tokio::test]
+    async fn a_blob_store_refused_on_the_store_lock_refunds_its_budget() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mls-refund-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = MessagingState::new(pool.clone(), storage, None, Settings::default());
+        let signer = address_of(&random_key());
+        for _ in 0..63 {
+            spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap();
+        }
+        let mut spend = BlobSpend {
+            signer: &signer,
+            kib: spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap(),
+            wrote: false,
+        };
+        let collector = gc::lock_store_exclusive(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let refused = store_blob(&mut tx, &state, vec![7; MAX_OPAQUE_BYTES], &mut spend)
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code, 503);
+        drop(tx);
+        collector.rollback().await.unwrap();
+        spend_blob_budget(&signer, MAX_OPAQUE_BYTES)
+            .expect("the refused store gave its budget back");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_claimer_cannot_spend_an_owners_whole_claim_budget() {
+        let owner = address_of(&random_key());
+        let (heavy, other) = (address_of(&random_key()), address_of(&random_key()));
+        for _ in 0..10 {
+            assert!(!claim_budget_spent(&heavy, &owner));
+            spend_claim(&heavy, &owner);
+        }
+        assert!(claim_budget_spent(&heavy, &owner));
+        assert!(!claim_budget_spent(&other, &owner));
+    }
+
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old
     /// 0009 migration's fix: never the literal "local" every instance shared).
     #[tokio::test]
@@ -1468,7 +1572,8 @@ mod tests {
                 .oneshot(Request::get(path).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            // An unsigned request has no chain: the verifier's 400.
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
         let response = app
             .clone()
@@ -1480,7 +1585,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let off = app_with("fixture", pool, &dir, false).await;
         let (status, _) = call(
             &off,
@@ -1538,10 +1643,10 @@ mod tests {
 
     /// The MLS caller is the wallet itself: scene metadata and a re-spelled
     /// `signer` key are refused under either payload shape; wallet metadata
-    /// is served as the wallet.
+    /// is served as the wallet, signed over the current payload only.
     #[tokio::test]
     async fn auth_serves_the_wallet_and_refuses_scene_metadata() {
-        use crate::shared::test_keys::{KEY, SHAPES, signed_as};
+        use crate::shared::test_keys::{KEY, SHAPES, Shape, signed_as};
 
         let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
         let dir = std::env::temp_dir().join(format!("mls-auth-{}", uuid::Uuid::new_v4()));
@@ -1557,7 +1662,7 @@ mod tests {
                 let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
                 let err = auth(&state, &headers, "post", &path).await.unwrap_err();
                 assert_eq!(err.code, 400, "{shape:?} {metadata}: {err}");
-                assert_eq!(err.message, "Invalid metadata content");
+                assert!(err.message.starts_with("Invalid metadata content"), "{err}");
             }
             for metadata in ["{}", r#"{"signer":"dcl:explorer"}"#] {
                 let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
@@ -1568,6 +1673,16 @@ mod tests {
                 );
             }
         }
+        // Mixed-case metadata: the legacy payload lowercases it, so only the current one verifies.
+        let metadata = r#"{"signer":"dcl:explorer","Intent":"Join"}"#;
+        let legacy = signed_as(KEY, Shape::Legacy, "post", PATH, metadata, metadata).await;
+        let err = auth(&state, &legacy, "post", &path).await.unwrap_err();
+        assert_eq!(err.code, 401, "{err}");
+        let current = signed_as(KEY, Shape::V6, "post", PATH, metadata, metadata).await;
+        assert_eq!(
+            auth(&state, &current, "post", &path).await.unwrap(),
+            address_of(KEY)
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1575,18 +1690,20 @@ mod tests {
     /// invalid identity, and its detail never reaches the client.
     #[test]
     fn auth_refusal_reports_an_unrun_contract_wallet_check_as_503() {
-        for e in [
-            SignedFetchError::CatalystUnavailable("rpc detail".into()),
-            SignedFetchError::EipNotImplemented,
-        ] {
-            let err = auth_refusal(e);
-            assert_eq!(err.code, 503);
-            assert_eq!(err.message, "Signature validation unavailable");
-        }
-        let err = auth_refusal(SignedFetchError::InvalidSignature("detail".into()));
+        let err = auth_refusal(RequestAuthError::Unavailable);
+        assert_eq!(err.code, 503);
+        assert_eq!(err.message, "Signature validation unavailable");
+        let err = auth_refusal(RequestAuthError::Unauthorized(
+            "Invalid signature: x".into(),
+        ));
         assert_eq!(
             (err.code, err.message.as_str()),
-            (401, "invalid identity: Invalid signature")
+            (401, "invalid identity: Invalid signature: x")
+        );
+        let err = auth_refusal(RequestAuthError::Malformed("Invalid Auth Chain".into()));
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (400, "Invalid Auth Chain")
         );
     }
 
@@ -1652,11 +1769,25 @@ mod tests {
         let count_path = format!("{claim_path}/count");
         let (_, count) = call(&here, &blocked.key, "GET", &count_path, None, None).await;
         assert_eq!(count["available"], 0, "a blocked wallet sees no stock");
-        // Refused claims never spend the owner's budget (60 an hour).
+        // Refused claims never spend the owner's budget (60 an hour) or the pair's (10).
         for _ in 0..61 {
             let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
         }
+        sqlx::query(
+            "DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2",
+        )
+        .bind(&owner.address)
+        .bind(&blocked.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the pair budget is untouched once unblocked"
+        );
         let held = ClaimSlot::take(&owner.address).unwrap();
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(
@@ -1667,6 +1798,23 @@ mod tests {
         drop(held);
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(status, StatusCode::OK);
+        // An empty stock answers 404 and spends nothing either.
+        for _ in 0..10 {
+            let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "the stock is empty");
+        }
+        let (status, body) = call(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/key-packages",
+            Some(json!({ "key_packages": [b64(&key_package(&owner))] })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::OK, "only handed-out packages count");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
