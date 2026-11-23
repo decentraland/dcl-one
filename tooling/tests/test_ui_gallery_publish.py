@@ -121,6 +121,10 @@ class FakeGitHub:
         return self._answer('GET', path, query)
 
     def pages(self, path, key=None, **query):
+        # The key each list endpoint nests its items under; a bare list has none.
+        expected = next((name for name in ('jobs', 'artifacts') if path.endswith(f'/{name}')), None)
+        if key != expected:
+            raise AssertionError(f'{path} lists its items under {expected!r}, not {key!r}')
         return self._answer('GET', path, query)
 
     def text(self, path):
@@ -541,7 +545,63 @@ class CommentTest(unittest.TestCase):
                 self.comment(pull=pull)
 
 
+class Process:
+    """A gh api download: the bytes it streams, then its exit, or no exit within the wait."""
+
+    def __init__(self, chunks, status=0, hangs=False):
+        self.stdout, self.stderr = io.BytesIO(b''.join(chunks)), io.BytesIO(b'boom')
+        self.status, self.hangs, self.killed = status, hangs, False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        if self.hangs and not self.killed:
+            raise publish.subprocess.TimeoutExpired('gh', timeout)
+        return self.status
+
+
 class GitHubTest(unittest.TestCase):
+    def test_flattens_every_page_or_each_page_key(self):
+        github = publish.GitHub()
+        slurped = b'[{"jobs": [{"id": 1}], "total_count": 2}, {"jobs": [{"id": 2}]}]'
+        with patch.object(github, '_call', return_value=slurped) as call:
+            self.assertEqual(github.pages('runs/1/jobs', 'jobs', per_page=100), [{'id': 1}, {'id': 2}])
+        self.assertEqual(call.call_args.args[0][:3], ['--paginate', '--slurp', '--method'])
+        with patch.object(github, '_call', return_value=b'[[{"id": 1}], [{"id": 2}]]'):
+            self.assertEqual(github.pages('pulls/1/files'), [{'id': 1}, {'id': 2}])
+
+    def download(self, process, limit=10):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        target = Path(temp.name) / 'artifact.zip'
+        with patch.object(publish.subprocess, 'Popen', return_value=process):
+            publish.GitHub().download('artifacts/1/zip', target, limit)
+        return target
+
+    def test_downloads_within_the_cap(self):
+        self.assertEqual(self.download(Process([b'12345', b'678'])).read_bytes(), b'12345678')
+
+    def test_kills_a_download_past_the_cap(self):
+        process = Process([b'x' * 11])
+        with self.assertRaisesRegex(publish.Reject, 'larger than 10 bytes'):
+            self.download(process)
+        self.assertTrue(process.killed)
+
+    def test_a_failed_or_hung_download_is_an_api_error(self):
+        with self.assertRaisesRegex(publish.ApiError, 'boom'):
+            self.download(Process([b'x'], status=1))
+        process = Process([b'x'], hangs=True)
+        with self.assertRaisesRegex(publish.ApiError, 'did not finish within 60 seconds'):
+            self.download(process)
+        self.assertTrue(process.killed)
+
     def test_an_answer_that_is_not_json_is_an_api_error(self):
         github = publish.GitHub()
         with patch.object(github, '_call', return_value=b'<html>rate limited</html>'):
