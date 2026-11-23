@@ -58,11 +58,15 @@ async fn flow_node_with(options: Options) -> Option<Node> {
     set_clock(
         chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
     );
-    let node = node_over(own_pool().await?, options).await;
+    let node = node_over(
+        own_pool().await?,
+        Options {
+            committee: FakeCommittee::with(&[&address(CURATOR_KEY)]),
+            ..options
+        },
+    )
+    .await;
     set_flags(&node.pool, json!(true)).await;
-    FakeCommittee::with(&[&address(CURATOR_KEY)])
-        .publish(&node.pool)
-        .await;
     Some(node)
 }
 

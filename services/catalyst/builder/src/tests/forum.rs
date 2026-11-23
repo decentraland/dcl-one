@@ -40,7 +40,6 @@ struct Env {
 
 async fn env_with(pool: PgPool, forum_on: bool) -> Env {
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
-    committee.publish(&pool).await;
     let forum = FakeForum::default();
     let origin = forum.start().await;
     let mut state = crate::State::new(

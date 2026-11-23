@@ -46,7 +46,6 @@ async fn node_with(own: bool) -> Option<Node> {
     .await
     .unwrap();
     let committee = FakeCommittee::with(&[]);
-    committee.publish(&pool).await;
     let registry = FakeRegistry::up();
     let provider = format!(
         "urn:decentraland:matic:collections-thirdparty:held{}",

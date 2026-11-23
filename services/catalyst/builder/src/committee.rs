@@ -1,49 +1,42 @@
-//! The curation committee's current members, as builder-server reads them for
-//! `isCommitteeMember` and `GET /v1/committee`, read by shared SQL from the
-//! Polygon committee index (`shop.committee_event`) up to the block its
-//! cursor (`shop.chain_cursor`, indexer `committee`) has published: a
-//! wallet's latest MemberSet across both Committee contracts decides, and
-//! rows the walk added past the published block wait for its next publish.
+//! The curation committee's current members, as builder-server reads them
+//! for `isCommitteeMember` and `GET /v1/committee`: the accounts the Polygon
+//! collections subgraph ([`crate::State::collections_subgraph`]) marks
+//! `isCommitteeMember`, paged as builder-server pages them ([`QUERY`], pages
+//! of `THE_GRAPH_PAGE_SIZE` while a page is full), through the shared
+//! subgraph client (`chain_index::graph::graph_query`: the SSRF guard, the
+//! body cap and the retry ladder) under `kept::FETCH_TIMEOUT`.
 //!
-//! Every question reads the index afresh, so a wallet removed from the
-//! committee loses the role once the index publishes the block that removed
-//! it. An unpublished index, one not bound to the node's Polygon chain
-//! ([`crate::network`]: 137 on mainnet, 80002 on Amoy) or in quarantine, one published more than 30 minutes ago, or a failed read
-//! can't tell who is on the committee: [`members`] and
-//! [`is_member`] answer 503 then, never an empty committee, and
-//! [`known_member`] answers false.
+//! A write's decision takes only a read that started after it began, a
+//! read-only one also a read that started up to `kept::READ_WINDOW` before
+//! it ([`crate::kept`]'s single-flight cache, [`Since`]): a wallet the
+//! subgraph stops listing loses its writes as soon as the subgraph has
+//! indexed the change, and its reads within the window. A node with no
+//! collections subgraph, a read that fails, or an answer with a malformed
+//! account or more than [`MAX_MEMBERS`] members can't tell:
+//! [`Committee::members`] and [`Committee::is_member`] answer 503, never an
+//! empty committee, and [`Committee::known_member`] answers false. The node
+//! can't tell which chain a subgraph indexes; the deployment pairs the
+//! subgraph with the node's network.
 
+use std::sync::Arc;
+use std::time::Duration;
+
+use dcl_auth::is_eth_address;
 use serde::Serialize;
-use sqlx::PgPool;
+use serde_json::{Value, json};
 
+use crate::State;
+use crate::chain_index::ChainIndex;
+use crate::chain_index::graph::{THE_GRAPH_PAGE_SIZE, graph_query};
 use crate::http::ApiError;
-use crate::network::Network;
+use crate::kept::{FETCH_TIMEOUT, Kept, Since};
 
-/// One statement, so the published block and the members are one snapshot.
-/// Unlike `chain_walk::is_ready` it does not require `folded_block =
-/// last_block`: a pass advances `last_block` before it republishes, and the
-/// rows are cut at `folded_block`, so the published membership stays
-/// readable during a pass. The window is `chain_walk::READY_WINDOW`.
-const MEMBERS_SQL: &str = "\
-WITH ready AS (
-  SELECT folded_block FROM shop.chain_cursor
-  WHERE indexer = 'committee' AND network = 'matic' AND full_history
-    AND chain_id = $1 AND quarantined_at IS NULL
-    AND folded_block IS NOT NULL
-    AND folded_at <= timezone('UTC', statement_timestamp())
-    AND folded_at >= timezone('UTC', statement_timestamp()) - interval '30 minutes'
-)
-SELECT (SELECT folded_block FROM ready) IS NOT NULL AS ready,
-  ARRAY(
-    SELECT member FROM (
-      SELECT DISTINCT ON (e.member) e.member, e.is_member
-      FROM shop.committee_event e, ready
-      WHERE e.network = 'matic' AND e.block_number <= ready.folded_block
-      ORDER BY e.member, e.block_number DESC, e.log_index DESC
-    ) latest
-    WHERE latest.is_member
-    ORDER BY member
-  ) AS members";
+/// The most members a read accepts: one page of The Graph.
+pub const MAX_MEMBERS: usize = THE_GRAPH_PAGE_SIZE as usize;
+
+const QUERY: &str = "query getCommitteeAccounts($first: Int!, $skip: Int!) {\
+  accounts(first: $first, skip: $skip, where: { isCommitteeMember: true }) { id address }\
+}";
 
 /// One member as `GET /v1/committee` answers it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -52,254 +45,256 @@ pub struct Member {
     pub address: String,
 }
 
-/// The current members on `network`, lowercase and sorted; `None` while the
-/// index is unpublished, bound to another chain, in quarantine or stale.
-pub async fn current_members<'e>(
-    pool: impl sqlx::PgExecutor<'e>,
-    network: &Network,
-) -> Result<Option<Vec<String>>, sqlx::Error> {
-    let (ready, members): (bool, Vec<String>) = sqlx::query_as(MEMBERS_SQL)
-        .bind(network.chain_id as i64)
-        .fetch_one(pool)
-        .await?;
-    Ok(ready.then_some(members))
+/// The current members, in the subgraph's order.
+pub type Members = Arc<Vec<Member>>;
+
+/// The committee read and its single-flight cache.
+pub struct Committee {
+    kept: Kept<Members>,
 }
 
-/// The current members; 503 when the index can't tell.
-pub async fn members(pool: &PgPool, network: &Network) -> Result<Vec<Member>, ApiError> {
-    let members = read(pool, network).await?;
-    Ok(members
-        .into_iter()
-        .map(|address| Member {
-            id: address.clone(),
-            address,
-        })
-        .collect())
-}
-
-/// Whether `address` is a current member; 503 when the index can't tell.
-pub async fn is_member<'e>(
-    pool: impl sqlx::PgExecutor<'e>,
-    network: &Network,
-    address: &str,
-) -> Result<bool, ApiError> {
-    Ok(contains(&read(pool, network).await?, address))
-}
-
-/// Whether the index shows `address` on the committee; false when it can't
-/// tell, for a view only the committee widens.
-pub async fn known_member(pool: &PgPool, network: &Network, address: &str) -> bool {
-    read(pool, network)
-        .await
-        .is_ok_and(|members| contains(&members, address))
-}
-
-async fn read<'e>(
-    pool: impl sqlx::PgExecutor<'e>,
-    network: &Network,
-) -> Result<Vec<String>, ApiError> {
-    match current_members(pool, network).await {
-        Ok(Some(members)) => Ok(members),
-        Ok(None) => {
-            tracing::warn!("committee index unpublished or stale; committee decisions answer 503");
-            Err(unavailable())
-        }
-        Err(error) => {
-            tracing::warn!(error = %error, "committee index read failed; committee decisions answer 503");
-            Err(unavailable())
+impl Default for Committee {
+    fn default() -> Self {
+        Self {
+            kept: Kept::new(Duration::ZERO),
         }
     }
 }
 
-fn contains(members: &[String], address: &str) -> bool {
-    members.iter().any(|m| m.eq_ignore_ascii_case(address))
+impl Committee {
+    /// The members as a read that started at or after `since` answered
+    /// them; 503 when the subgraph can't tell.
+    pub async fn members(&self, state: &State, since: Since) -> Result<Members, ApiError> {
+        self.kept
+            .get_since(since, || {
+                fetch(state.market.clone(), state.collections_subgraph())
+            })
+            .await
+            .ok_or_else(unavailable)
+    }
+
+    /// Whether `address` is a member; 503 when the subgraph can't tell.
+    pub async fn is_member(
+        &self,
+        state: &State,
+        since: Since,
+        address: &str,
+    ) -> Result<bool, ApiError> {
+        Ok(contains(&self.members(state, since).await?, address))
+    }
+
+    /// Whether the subgraph shows `address` on the committee; false when it
+    /// can't tell, for a view only the committee widens.
+    pub async fn known_member(&self, state: &State, since: Since, address: &str) -> bool {
+        self.members(state, since)
+            .await
+            .is_ok_and(|members| contains(&members, address))
+    }
+}
+
+#[cfg(test)]
+impl Committee {
+    /// Ages the kept read past every read-only decision's window.
+    pub(crate) fn outdate(&self) {
+        self.kept.backdate(crate::kept::READ_WINDOW);
+    }
+}
+
+fn contains(members: &[Member], address: &str) -> bool {
+    members
+        .iter()
+        .any(|m| m.address.eq_ignore_ascii_case(address))
 }
 
 fn unavailable() -> ApiError {
     ApiError::service_unavailable("The curation committee is not available. Try again later.")
 }
 
+async fn fetch(market: Option<Arc<ChainIndex>>, url: Option<String>) -> Option<Members> {
+    let error = match tokio::time::timeout(FETCH_TIMEOUT, read(market, url)).await {
+        Ok(Ok(members)) => return Some(Arc::new(members)),
+        Ok(Err(error)) => error,
+        Err(_) => "timed out".to_string(),
+    };
+    tracing::warn!(error = %error, "builder committee read failed; committee decisions answer 503");
+    None
+}
+
+async fn read(market: Option<Arc<ChainIndex>>, url: Option<String>) -> Result<Vec<Member>, String> {
+    let market = market.ok_or("no chain index")?;
+    let url = url.ok_or("no Polygon collections subgraph")?;
+    let mut members = Vec::new();
+    loop {
+        let data = graph_query(
+            &market,
+            &url,
+            QUERY,
+            json!({ "first": THE_GRAPH_PAGE_SIZE, "skip": members.len() }),
+        )
+        .await?;
+        let page = data
+            .get("accounts")
+            .and_then(Value::as_array)
+            .ok_or("subgraph answered no accounts")?;
+        for account in page {
+            let (Some(id), Some(address)) = (
+                account.get("id").and_then(Value::as_str),
+                account.get("address").and_then(Value::as_str),
+            ) else {
+                return Err("subgraph answered an account without id or address".into());
+            };
+            if !is_eth_address(id) || !is_eth_address(address) {
+                return Err("subgraph answered an account that is not an address".into());
+            }
+            members.push(Member {
+                id: id.to_ascii_lowercase(),
+                address: address.to_ascii_lowercase(),
+            });
+        }
+        if members.len() > MAX_MEMBERS {
+            return Err(format!("committee longer than {MAX_MEMBERS} members"));
+        }
+        if page.len() < THE_GRAPH_PAGE_SIZE as usize {
+            return Ok(members);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{AMOY, POLYGON};
-    use crate::tests::support::{publish_committee_at, record_committee_event};
 
-    const REMOVED: &str = "0x00000000000000000000000000000000000000c1";
     const MEMBER: &str = "0x00000000000000000000000000000000000000c2";
-    const PENDING: &str = "0x00000000000000000000000000000000000000c3";
-    const OLD: &str = "0x71d9350ef44e1e451f00e447c0dff2d1fb75510a";
-    const CURRENT: &str = "0xaeec95a8aa671a6d3fec56594827d7804964fa70";
+
+    async fn committee_route(
+        fake: Option<&crate::tests::support::FakeCommittee>,
+    ) -> (u16, serde_json::Value) {
+        let market = match fake {
+            Some(fake) => Some(crate::tests::support::committee_index(fake).await),
+            None => None,
+        };
+        answer(crate::tests::support::state_without_db(market).await).await
+    }
+
+    async fn answer(state: crate::SharedState) -> (u16, serde_json::Value) {
+        use tower::ServiceExt;
+        let response = crate::router(state)
+            .oneshot(
+                axum::http::Request::get("/v1/committee")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    fn many(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("0x{i:040x}")).collect()
+    }
 
     #[tokio::test]
-    async fn the_committee_is_the_published_index_membership() {
-        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
-            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
-            return;
-        };
-        for (block, contract, wallet, set) in [
-            (10, OLD, REMOVED, true),
-            (20, CURRENT, REMOVED, false),
-            (30, CURRENT, MEMBER, true),
-            (150, CURRENT, PENDING, true),
-        ] {
-            record_committee_event(&pool, block, contract, wallet, set).await;
-        }
+    async fn the_committee_is_the_collections_subgraph_s_committee_accounts() {
+        use crate::tests::support::FakeCommittee;
+        let upper = "0x00000000000000000000000000000000000000AB";
+        let fake = FakeCommittee::with(&[MEMBER, upper]);
         assert_eq!(
-            is_member(&pool, &POLYGON, MEMBER)
-                .await
-                .unwrap_err()
-                .status(),
-            503,
-            "an unpublished index can't tell"
-        );
-        assert!(!known_member(&pool, &POLYGON, MEMBER).await);
-
-        publish_committee_at(&pool, 100, "timezone('UTC', now())").await;
-        assert_eq!(
-            members(&pool, &POLYGON).await.unwrap(),
-            vec![Member {
-                id: MEMBER.into(),
-                address: MEMBER.into()
-            }]
-        );
-        assert!(
-            is_member(&pool, &POLYGON, &MEMBER.to_uppercase().replace("0X", "0x"))
-                .await
-                .unwrap()
-        );
-        assert!(
-            !is_member(&pool, &POLYGON, REMOVED).await.unwrap(),
-            "its latest event removed it"
-        );
-        assert!(
-            !is_member(&pool, &POLYGON, PENDING).await.unwrap(),
-            "past the published block"
-        );
-        assert!(known_member(&pool, &POLYGON, MEMBER).await);
-
-        for (cursor, why) in [
-            ("chain_id = NULL", "an unadopted cursor can't tell"),
-            ("chain_id = 1", "a cursor bound to another chain can't tell"),
+            committee_route(Some(&fake)).await,
             (
-                "quarantined_at = timezone('UTC', now()), quarantine_reason = 'hash differs'",
-                "a cursor in quarantine can't tell",
-            ),
-        ] {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "UPDATE shop.chain_cursor SET {cursor} WHERE indexer = 'committee'"
-            )))
-            .execute(&pool)
-            .await
-            .unwrap();
-            assert_eq!(
-                is_member(&pool, &POLYGON, MEMBER)
-                    .await
-                    .unwrap_err()
-                    .status(),
-                503,
-                "{why}"
-            );
-            assert_eq!(
-                members(&pool, &POLYGON).await.unwrap_err().status(),
-                503,
-                "{why}"
-            );
-            assert!(!known_member(&pool, &POLYGON, MEMBER).await, "{why}");
-            sqlx::query(
-                "UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = NULL, quarantine_reason = NULL \
-                 WHERE indexer = 'committee'",
+                200,
+                serde_json::json!({ "ok": true, "data": [
+                    { "id": upper.to_lowercase(), "address": upper.to_lowercase() },
+                    { "id": MEMBER, "address": MEMBER },
+                ] })
             )
-            .execute(&pool)
-            .await
-            .unwrap();
+        );
+        let unavailable = (
+            503,
+            serde_json::json!({ "ok": false, "data": {}, "error": "The curation committee is not available. Try again later." }),
+        );
+        assert_eq!(
+            committee_route(Some(&FakeCommittee::down())).await,
+            unavailable,
+            "a subgraph that fails can't tell"
+        );
+        assert_eq!(
+            committee_route(None).await,
+            unavailable,
+            "a node without the subgraph can't tell"
+        );
+        let malformed = FakeCommittee::with(&[MEMBER, "not-an-address"]);
+        assert_eq!(
+            committee_route(Some(&malformed)).await,
+            unavailable,
+            "a malformed account can't tell"
+        );
+
+        let full = many(MAX_MEMBERS);
+        let full = FakeCommittee::with(&full.iter().map(String::as_str).collect::<Vec<_>>());
+        let (status, body) = committee_route(Some(&full)).await;
+        assert_eq!(
+            (
+                status,
+                body["data"].as_array().map(Vec::len),
+                full.committee_hits()
+            ),
+            (200, Some(MAX_MEMBERS), 2),
+            "a full page asks for the next one, as builder-server pages"
+        );
+        let over = many(MAX_MEMBERS + 1);
+        let over = FakeCommittee::with(&over.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(
+            committee_route(Some(&over)).await,
+            unavailable,
+            "a committee past the bound can't tell"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_committee_comes_from_the_subgraph_set_else_from_the_network_s() {
+        use crate::tests::support::{FakeCommittee, committee_index, lazy_pool, state_over_with};
+        const OTHER: &str = "0x00000000000000000000000000000000000000c3";
+        let default = committee_index(&FakeCommittee::with(&[OTHER])).await;
+        let network_s = || crate::Settings {
+            default_collections_subgraph: default.settings.matic_collections_subgraph_url.clone(),
+            ..crate::Settings::default()
+        };
+        let set = committee_index(&FakeCommittee::with(&[MEMBER])).await;
+        let unset = crate::tests::support::market_without_db(
+            crate::chain_index::IndexSettings::for_tests(),
+        );
+        unset.allow_loopback_for_tests();
+        let only = |address: &str| serde_json::json!({ "ok": true, "data": [{ "id": address, "address": address }] });
+        assert_eq!(
+            answer(state_over_with(lazy_pool(), Some(set), network_s()).await).await,
+            (200, only(MEMBER)),
+            "a set subgraph wins"
+        );
+        assert_eq!(
+            answer(state_over_with(lazy_pool(), Some(unset), network_s()).await).await,
+            (200, only(OTHER)),
+            "an unset one reads the network's"
+        );
+        let registry = |set: Option<&str>| {
+            crate::tests::support::market_without_db(crate::chain_index::IndexSettings {
+                third_party_registry_subgraph_url: set.map(str::to_string),
+                ..crate::chain_index::IndexSettings::for_tests()
+            })
+        };
+        let network_registry = || crate::Settings {
+            default_registry_subgraph: Some("https://tpr.example/network".into()),
+            ..crate::Settings::default()
+        };
+        for (set, read) in [
+            (Some("https://tpr.example/set"), "https://tpr.example/set"),
+            (None, "https://tpr.example/network"),
+        ] {
+            let state = state_over_with(lazy_pool(), Some(registry(set)), network_registry()).await;
+            assert_eq!(state.registry_subgraph().as_deref(), Some(read));
         }
-        assert!(
-            is_member(&pool, &POLYGON, MEMBER).await.unwrap(),
-            "once bound and out of quarantine"
-        );
-        assert_eq!(
-            is_member(&pool, &AMOY, MEMBER).await.unwrap_err().status(),
-            503,
-            "a Polygon mainnet index can't tell an Amoy node"
-        );
-        assert!(!known_member(&pool, &AMOY, MEMBER).await);
-        sqlx::query("UPDATE shop.chain_cursor SET chain_id = 80002 WHERE indexer = 'committee'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(
-            is_member(&pool, &AMOY, MEMBER).await.unwrap(),
-            "an Amoy index tells an Amoy node"
-        );
-        assert_eq!(
-            members(&pool, &POLYGON).await.unwrap_err().status(),
-            503,
-            "an Amoy index can't tell a mainnet node"
-        );
-        sqlx::query("UPDATE shop.chain_cursor SET chain_id = 137 WHERE indexer = 'committee'")
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        sqlx::query("UPDATE shop.chain_cursor SET last_block = 200 WHERE indexer = 'committee'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(
-            !is_member(&pool, &POLYGON, PENDING).await.unwrap(),
-            "a walk ahead of its publish keeps the published membership"
-        );
-        publish_committee_at(&pool, 200, "timezone('UTC', now())").await;
-        assert!(
-            is_member(&pool, &POLYGON, PENDING).await.unwrap(),
-            "once published"
-        );
-
-        record_committee_event(&pool, 210, CURRENT, MEMBER, false).await;
-        publish_committee_at(&pool, 210, "timezone('UTC', now())").await;
-        assert!(
-            !is_member(&pool, &POLYGON, MEMBER).await.unwrap(),
-            "a removal counts from the publish that holds it"
-        );
-
-        publish_committee_at(&pool, 210, "timezone('UTC', now()) - interval '31 minutes'").await;
-        assert_eq!(
-            is_member(&pool, &POLYGON, PENDING)
-                .await
-                .unwrap_err()
-                .status(),
-            503,
-            "a stale index can't tell"
-        );
-        assert_eq!(members(&pool, &POLYGON).await.unwrap_err().status(), 503);
-        assert!(!known_member(&pool, &POLYGON, PENDING).await);
-
-        publish_committee_at(&pool, 210, "timezone('UTC', now()) + interval '1 hour'").await;
-        assert_eq!(
-            is_member(&pool, &POLYGON, PENDING)
-                .await
-                .unwrap_err()
-                .status(),
-            503,
-            "a publish stamped in the future can't tell"
-        );
-        assert!(!known_member(&pool, &POLYGON, PENDING).await);
-
-        publish_committee_at(&pool, 210, "timezone('UTC', now())").await;
-        sqlx::query("ALTER TABLE shop.committee_event RENAME TO committee_event_gone")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            is_member(&pool, &POLYGON, PENDING)
-                .await
-                .unwrap_err()
-                .status(),
-            503,
-            "a failed read can't tell"
-        );
-        assert!(!known_member(&pool, &POLYGON, PENDING).await);
-        pool.close().await;
     }
 }

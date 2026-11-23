@@ -179,7 +179,6 @@ async fn node_on(
     writes: bool,
 ) -> Option<Node> {
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
-    committee.publish(&pool).await;
     let storage = temp_storage().await;
     let mut state = crate::State::new(
         pool.clone(),

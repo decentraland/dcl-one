@@ -40,11 +40,25 @@ Every chain source the builder reads must serve that chain:
 - `BUILDER_POLYGON_RPC_URL`: the receipt check, the deployment check and the
   rarities read ask its `eth_chainId` and answer 503 when it names another
   chain.
-- The committee index: the builder reads it only while its cursor is bound
-  to that chain, and answers 503 otherwise.
-- `MATIC_COLLECTIONS_SUBGRAPH_URL` and `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`:
-  the node can't check which chain a subgraph indexes. Point them at that
-  chain's subgraphs.
+- The Polygon collections subgraph and the third-party registry subgraph:
+  the node can't check which chain a subgraph indexes, so the rarities, the
+  curation committee and the third-party registry follow whatever chain
+  those subgraphs index.
+
+The builder reads those two subgraphs from Decentraland's subgraph worker
+for its chain unless a setting names another:
+
+| Subgraph | Setting that overrides it | Mainnet (Polygon) | Sepolia (Amoy) |
+| --- | --- | --- | --- |
+| Collections (rarities, committee) | `MATIC_COLLECTIONS_SUBGRAPH_URL` | `https://subgraph.decentraland.org/collections-matic-mainnet` | `https://subgraph.decentraland.org/collections-matic-amoy` |
+| Third-party registry (providers, slot cheque receipts) | `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` | `https://subgraph.decentraland.org/tpr-matic-mainnet` | `https://subgraph.decentraland.org/tpr-matic-amoy` |
+
+A setting set to a URL wins; a setting set empty reads no subgraph, which
+is how the `island` and `journey` postures keep the builder off
+Decentraland's hosts. `NODE_POSTURE=mirror` sets both settings to the
+mainnet subgraphs, so a mirror on `sepolia` must set them to Amoy's. The
+shop's collections mirror reads `MATIC_COLLECTIONS_SUBGRAPH_URL` only and
+gets no default.
 
 Never change `ETH_NETWORK` on a database that holds builder rows. Saved
 collections keep the contract address computed for the old chain's factory,
@@ -53,25 +67,27 @@ and published items keep their URNs.
 ## Chain state and the committee
 
 The builder derives a collection's published and approved state and its
-roles from the shop's Polygon collections copy, and the curation committee
-from the shop's committee index, on the same node.
+roles from the shop's Polygon collections copy on the same node, and reads
+the curation committee from the Polygon collections subgraph.
 
 - `MARKETPLACE_MIRRORS_ENABLED` with `MATIC_COLLECTIONS_SUBGRAPH_URL`: the
   collections mirror. Until its first complete pass, listings and bodies
   answer 503; once a pass is more than 30 minutes old, saves and deletes
   answer 503 and a publish 401.
-- `MARKETPLACE_COMMITTEE_INDEX_ENABLED`, which walks the committee of the
-  chain `MARKETPLACE_INDEX_CHAIN_ID_MATIC` names (137, or 80002 on Amoy)
-  over that chain's `TRADE_RPC_URLS` entry, else for 137 on mainnet
-  `RPC_ENDPOINT_POLYGON`. While the index is unpublished, bound to another
-  chain than the builder's, or was published more than 30 minutes ago,
-  every decision that needs the committee answers 503.
+- The collections subgraph (see "Network"), read for the committee: the
+  accounts it marks `isCommitteeMember`, in pages of 1,000. A write's decision takes a
+  read that started after the decision began; a read-only decision also
+  takes one that started up to 5 seconds before it. While the subgraph is
+  set empty, unreadable, or answers a malformed account or more than 1,000
+  members, every decision that needs the committee answers 503. The builder
+  doesn't need the shop's committee index
+  (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`).
 - `BUILDER_POLYGON_RPC_URL`: an `https` JSON-RPC of the builder's Polygon
   chain on a public host, with the `finalized` block tag. It verifies publication receipts, reads the
   rarities' prices and checks a collection's contract before a save that
   changes its address, a delete and a publish. Unset, the publication and
   rarities routes answer 503 and the contract check is skipped.
-- `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: the third-party registry. Unset or
+- The third-party registry subgraph (see "Network"). Set empty or
   unreadable, every request about a third party answers 503.
 - The content sync's item history coverage: a new third-party item URN is
   taken only where the content history is covered or this node is its own
@@ -242,7 +258,8 @@ step, or a bound of the review, validator or outside-service areas).
 | Rows `GET /v1/items` answers | 1,000 | `items::listing::EVERY_ITEM_CAP` |
 | Rows the committee's collection listing or the public search answers | 1,000 | `collections::listing::COMMITTEE_CAP` |
 | Rows an address's collection listing answers | 5,000 | `collections::listing::ADDRESS_CAP` |
-| How long before a read-only decision a third-party registry read may have started and still answer it (a write's decision takes only a read that started after it began) | 5 seconds | `kept::READ_WINDOW` |
+| How long before a read-only decision a third-party registry or committee read may have started and still answer it (a write's decision takes only a read that started after it began) | 5 seconds | `kept::READ_WINDOW` |
+| Committee members a read of the collections subgraph accepts; past it, committee decisions answer 503 | 1,000 | `committee::MAX_MEMBERS` |
 | Characters of a collection search's `q` | 256 | `collections::listing::Q_MAX` |
 | Assignees a collection listing filters by | 20 | `collections::listing::MAX_ASSIGNEES` |
 | Tags a collection listing filters by | 5 | `collections::listing::MAX_TAGS` |

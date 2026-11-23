@@ -71,7 +71,6 @@ use serde_json::json;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use crate::SharedState;
 use crate::chain_index::third_parties::Provider;
 use crate::chain_state::{self, DecisionView};
 use crate::curation::ITEM_CURATED;
@@ -80,6 +79,7 @@ use crate::items::urn::ThirdPartyItemUrn;
 use crate::kept::Since;
 use crate::shared::signed_fetch::Signer;
 use crate::third_parties::{self, Registry, has_manager};
+use crate::{SharedState, State};
 
 /// A signer's own wallet: what the per-wallet listings filter by, with the
 /// providers it manages (each with whether it is programmatic) when the
@@ -637,10 +637,7 @@ fn providers(registry: &Option<Registry>) -> Option<&[Provider]> {
 }
 
 async fn registry(state: &SharedState, since: Since) -> Result<Registry, ApiError> {
-    state
-        .third_parties
-        .registry(state.market.as_ref(), since)
-        .await
+    state.third_parties.registry(state, since).await
 }
 
 async fn collection(
@@ -747,14 +744,14 @@ async fn decision(
     Ok((conn, view))
 }
 
-/// Whether the committee index shows `signer` on it, false when it can't
-/// tell: for a view only the committee widens.
-async fn known_committee(state: &SharedState, signer: &str) -> bool {
-    crate::committee::known_member(state.items.pool(), &state.settings.network, signer).await
+/// Whether the committee shows `signer` on it, false when it can't tell:
+/// for a view only the committee widens.
+async fn known_committee(state: &State, since: Since, signer: &str) -> bool {
+    state.committee.known_member(state, since, signer).await
 }
 
-async fn on_committee(state: &SharedState, signer: &str) -> Result<bool, ApiError> {
-    crate::committee::is_member(state.items.pool(), &state.settings.network, signer).await
+async fn on_committee(state: &State, since: Since, signer: &str) -> Result<bool, ApiError> {
+    state.committee.is_member(state, since, signer).await
 }
 
 /// The signer's own wallet, for a listing of the rows it owns itself.
@@ -887,7 +884,7 @@ pub async fn read_approval(
 
 /// The signer must be a current committee member.
 pub async fn committee(state: &SharedState, signer: &Signer) -> Result<OnCommittee, ApiError> {
-    if !on_committee(state, signer.as_str()).await? {
+    if !on_committee(state, Since::read(), signer.as_str()).await? {
         return Err(ApiError::unauthorized("Unauthorized")
             .with_data(json!({ "eth_address": signer.as_str() })));
     }
@@ -947,10 +944,10 @@ async fn own_draft_while_stale(
     })
 }
 
-/// The signer is on the committee by the index, None when it isn't or the
-/// index can't tell: for a view only the committee widens.
+/// The signer is on the committee, None when it isn't or the committee
+/// can't tell: for a view only the committee widens.
 pub async fn known_committee_member(state: &SharedState, signer: &Signer) -> Option<OnCommittee> {
-    known_committee(state, signer.as_str())
+    known_committee(state, Since::read(), signer.as_str())
         .await
         .then(|| OnCommittee {
             member: signer.as_str().to_string(),
@@ -958,8 +955,8 @@ pub async fn known_committee_member(state: &SharedState, signer: &Signer) -> Opt
 }
 
 /// `GET /v1/collections/:id`: any signer reads a published collection's
-/// public detail, and its minters and the committee (when the index can
-/// tell) its full body; the owner, an on-chain manager, the
+/// public detail, and its minters and the committee (when the committee
+/// can tell) its full body; the owner, an on-chain manager, the
 /// provider's manager and the committee read any collection in full.
 pub async fn read_collection(
     state: &SharedState,
@@ -995,14 +992,14 @@ pub async fn read_collection(
         });
     }
     if c.published {
-        let full = c.minter(s) || known_committee(state, s).await;
+        let full = c.minter(s) || known_committee(state, Since::read(), s).await;
         return Ok(CollectionRead {
             id,
             full,
             programmatic: c.programmatic,
         });
     }
-    if on_committee(state, s).await? {
+    if on_committee(state, Since::read(), s).await? {
         return Ok(CollectionRead {
             id,
             full: true,
@@ -1015,8 +1012,8 @@ pub async fn read_collection(
 /// `GET /v1/collections/:idOrContractAddress/items`: any signer lists a
 /// published collection's published items; a role holder and the committee
 /// list every item. For a published collection the committee only widens the
-/// view ([`crate::committee::known_member`]): a member gets what any signer
-/// gets while the index can't tell.
+/// view ([`crate::committee::Committee::known_member`]): a member gets what any signer
+/// gets while the committee can't tell.
 pub async fn collection_items(
     state: &SharedState,
     signer: &Signer,
@@ -1067,14 +1064,14 @@ pub async fn collection_items(
         });
     }
     if c.published {
-        let full = c.minter(s) || known_committee(state, s).await;
+        let full = c.minter(s) || known_committee(state, Since::read(), s).await;
         return Ok(CollectionRead {
             id,
             full,
             programmatic: c.programmatic,
         });
     }
-    if on_committee(state, s).await? {
+    if on_committee(state, Since::read(), s).await? {
         return Ok(CollectionRead {
             id,
             full: true,
@@ -1116,10 +1113,13 @@ pub async fn read_item(
         return Ok(ItemRead { id, full: true });
     }
     if let Some(c) = parent.filter(|c| c.published && (c.third_party || i.minted)) {
-        let full = c.owner(s) || c.manager(s) || c.minter(s) || known_committee(state, s).await;
+        let full = c.owner(s)
+            || c.manager(s)
+            || c.minter(s)
+            || known_committee(state, Since::read(), s).await;
         return Ok(ItemRead { id, full });
     }
-    if on_committee(state, s).await? {
+    if on_committee(state, Since::read(), s).await? {
         return Ok(ItemRead { id, full: true });
     }
     Err(ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "eth_address": s })))
@@ -1765,7 +1765,7 @@ pub async fn reply_on_forum(
     raw: &str,
 ) -> Result<ForumReply, ApiError> {
     let s = signer.as_str();
-    if !on_committee(state, s).await? {
+    if !on_committee(state, Since::write(), s).await? {
         return Err(
             ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "ethAddress": s }))
         );
@@ -1802,7 +1802,7 @@ pub async fn sync_collection(
     drop(conn);
     let s = signer.as_str();
     let committee = !c.role(s);
-    if committee && (c.third_party || !on_committee(state, s).await?) {
+    if committee && (c.third_party || !on_committee(state, Since::write(), s).await?) {
         return Err(unauthorized_user(s, COLLECTIONS, id));
     }
     Ok(CollectionSync {
@@ -1879,20 +1879,19 @@ pub(crate) async fn confirm_third_party_publish(
 }
 
 /// [`sync_collection`]'s decision again, inside the write's transaction: a
-/// role the rows decide, else the committee read again on the write's
-/// connection.
+/// role the rows decide, else a committee read that started after the
+/// decision.
 pub(crate) async fn confirm_collection_sync(
     conn: &mut PgConnection,
     view: &DecisionView,
-    network: &crate::network::Network,
+    state: &State,
     sync: &CollectionSync,
 ) -> Result<(), ApiError> {
     let c = collection(conn, view, sync.id, providers(&sync.registry))
         .await?
         .ok_or_else(|| not_found(sync.id, COLLECTIONS))?;
     if !c.role(&sync.signer)
-        && !(sync.committee
-            && crate::committee::is_member(&mut *conn, network, &sync.signer).await?)
+        && !(sync.committee && on_committee(state, Since::write(), &sync.signer).await?)
     {
         return Err(unauthorized_user(&sync.signer, COLLECTIONS, sync.id));
     }
@@ -1911,7 +1910,7 @@ pub async fn curation_scope(
     state: &SharedState,
     signer: &Signer,
 ) -> Result<CurationScope, ApiError> {
-    if on_committee(state, signer.as_str()).await? {
+    if on_committee(state, Since::read(), signer.as_str()).await? {
         return Ok(CurationScope::Every(OnCommittee {
             member: signer.as_str().to_string(),
         }));
@@ -1937,7 +1936,7 @@ pub async fn curate_collection(
         .ok_or_else(|| curation_not_found(signer.as_str()))?;
     drop(conn);
     let role = c.role(signer.as_str());
-    admit(state, signer, &c, id, None, role, registry).await
+    admit(state, signer, &c, id, None, role, registry, since).await
 }
 
 /// The curation routes of the item `raw`: its collection must exist (404)
@@ -1959,7 +1958,17 @@ pub async fn curate_item(
     let c = parent(&mut conn, &view, parent_id, providers(&registry)).await?;
     drop(conn);
     let role = c.role(signer.as_str());
-    admit(state, signer, &c, parent_id, Some(id), role, registry).await
+    admit(
+        state,
+        signer,
+        &c,
+        parent_id,
+        Some(id),
+        role,
+        registry,
+        since,
+    )
+    .await
 }
 
 /// `GET /v1/collections/:id/events`: the signer holds a role on the
@@ -1986,10 +1995,10 @@ pub async fn read_review(
     {
         return Ok(ReviewRead {
             id,
-            committee: known_committee(state, s).await,
+            committee: known_committee(state, Since::read(), s).await,
         });
     }
-    if on_committee(state, s).await? && c.is_some() {
+    if on_committee(state, Since::read(), s).await? && c.is_some() {
         return Ok(ReviewRead {
             id,
             committee: true,
@@ -2000,7 +2009,7 @@ pub async fn read_review(
 
 /// `POST /v1/collections/:id/comments`: the collection must exist (404),
 /// then the signer must hold a role on it or be on the committee (401). A
-/// role holder writes as the committee only when the index shows it on it.
+/// role holder writes as the committee only when the committee shows it on it.
 pub async fn review_member(
     state: &SharedState,
     signer: &Signer,
@@ -2010,9 +2019,9 @@ pub async fn review_member(
     let s = signer.as_str();
     let role = c.role(s);
     let committee = if role {
-        known_committee(state, s).await
+        known_committee(state, Since::write(), s).await
     } else {
-        on_committee(state, s).await?
+        on_committee(state, Since::write(), s).await?
     };
     if !role && !committee {
         return Err(
@@ -2073,13 +2082,14 @@ async fn admit(
     item: Option<Uuid>,
     role: bool,
     registry: Option<Registry>,
+    since: Since,
 ) -> Result<Curator, ApiError> {
     let s = signer.as_str();
     if !c.published {
         return Err(ApiError::conflict("Unpublished collection")
             .with_data(json!({ "id": collection, "ethAddress": s })));
     }
-    let committee = !role && on_committee(state, s).await?;
+    let committee = !role && on_committee(state, since, s).await?;
     if !role && !committee {
         return Err(ApiError::unauthorized("Unauthorized")
             .with_data(json!({ "id": item.unwrap_or(collection), "ethAddress": s })));
@@ -2099,15 +2109,15 @@ async fn admit(
 /// committee can't be read).
 pub async fn as_committee(state: &SharedState, mut curator: Curator) -> Result<Curator, ApiError> {
     if !curator.committee {
-        curator.committee = on_committee(state, &curator.signer).await?;
+        curator.committee = on_committee(state, Since::write(), &curator.signer).await?;
     }
     Ok(curator)
 }
 
 /// Whether `address` is on the current committee: who may be assigned a
 /// review (503 while the committee can't be read).
-pub async fn assignable(state: &SharedState, address: &str) -> Result<bool, ApiError> {
-    on_committee(state, &address.to_ascii_lowercase()).await
+pub async fn assignable(state: &State, address: &str) -> Result<bool, ApiError> {
+    on_committee(state, Since::write(), &address.to_ascii_lowercase()).await
 }
 
 /// May set the status of item curations of one published collection
@@ -2174,10 +2184,10 @@ async fn operated(
     Ok(())
 }
 
-/// Whether the signer is on the committee by the index, false when it
+/// Whether the committee shows the signer on it, false when it
 /// can't tell: for a notice, never for a grant.
 pub async fn known_curator(state: &SharedState, curator: &Curator) -> bool {
-    curator.committee || known_committee(state, &curator.signer).await
+    curator.committee || known_committee(state, Since::read(), &curator.signer).await
 }
 
 /// The facts of the curated collection a write reads, decided again inside
@@ -2199,7 +2209,7 @@ pub struct CuratedState {
 pub(crate) async fn confirm_curator(
     conn: &mut PgConnection,
     view: &DecisionView,
-    network: &crate::network::Network,
+    state: &State,
     curator: &Curator,
 ) -> Result<CuratedState, ApiError> {
     let (c, role) = curated(conn, view, curator).await?;
@@ -2209,38 +2219,23 @@ pub(crate) async fn confirm_curator(
             .with_data(json!({ "id": curator.collection, "ethAddress": s })));
     }
     keeps_role(curator, role)?;
-    keeps_committee(conn, network, curator, false).await?;
+    keeps_committee(state, curator, false).await?;
     curated_state(conn, curator, c).await
 }
 
 /// 401 when the committee admitted `curator`, no `role` on the collection
-/// still admits it, and the index no longer lists it, read again on the
-/// write's connection.
-async fn keeps_committee(
-    conn: &mut PgConnection,
-    network: &crate::network::Network,
-    curator: &Curator,
-    role: bool,
-) -> Result<(), ApiError> {
+/// still admits it, and a committee read that started after the decision no
+/// longer lists it.
+async fn keeps_committee(state: &State, curator: &Curator, role: bool) -> Result<(), ApiError> {
     if curator.committee
         && !role
-        && !crate::committee::is_member(&mut *conn, network, curator.signer.as_str()).await?
+        && !on_committee(state, Since::write(), curator.signer.as_str()).await?
     {
         return Err(ApiError::unauthorized("Unauthorized").with_data(
             json!({ "id": curator.item.unwrap_or(curator.collection), "ethAddress": curator.signer }),
         ));
     }
     Ok(())
-}
-
-/// Whether `address` is a current committee member, asked on the write's
-/// connection after the decision: [`assignable`] again.
-pub(crate) async fn still_assignable(
-    conn: &mut PgConnection,
-    network: &crate::network::Network,
-    address: &str,
-) -> Result<bool, ApiError> {
-    crate::committee::is_member(conn, network, &address.to_ascii_lowercase()).await
 }
 
 /// [`review_member`]'s and [`review_creator`]'s decision again, inside the
@@ -2250,12 +2245,12 @@ pub(crate) async fn still_assignable(
 pub(crate) async fn confirm_reviewer(
     conn: &mut PgConnection,
     view: &DecisionView,
-    network: &crate::network::Network,
+    state: &State,
     curator: &Curator,
 ) -> Result<CuratedState, ApiError> {
     let (c, role) = curated(conn, view, curator).await?;
     keeps_role(curator, role)?;
-    keeps_committee(conn, network, curator, role).await?;
+    keeps_committee(state, curator, role).await?;
     curated_state(conn, curator, c).await
 }
 

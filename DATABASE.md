@@ -1124,7 +1124,7 @@ The builder's own rows: a `builder.collections` row is a creator's draft.
 
 The curation console's under-review listing reads the collections subgraph
 through the marketplace's subgraph readers and adds no table; its committee
-list reads the committee index ("Curation committee" below). The collection body and the collection listings read the copy
+list reads the collections subgraph ("Curation committee" below). The collection body and the collection listings read the copy
 ("Builder collection listings workload" below), and so do the item bodies and
 listings ("Builder items workload" below).
 
@@ -3755,43 +3755,23 @@ stored hash clears it.
 
 Every builder decision only the committee could grant (`builder::access`:
 the committee's listings, another wallet's collections and items, draft
-reads, curation writes, forum replies) and `GET /v1/committee` read the
-current members of the curation committee on the builder's Polygon chain
-(137, or Amoy's 80002, as `ETH_NETWORK` pairs); `BUILDER_ADMIN_ADDRESSES`
-grants no committee role (its wallets' signed requests, like the curation
-console's bearer, open only the operator's item status routes and
-`GET /v1/collections/curation`). Shop's `committee` index
-(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the `MemberSet` logs of the
-Committee contracts of the chain `MARKETPLACE_INDEX_CHAIN_ID_MATIC` names
-(Polygon's two, from the first one's deployment, or Amoy's one) into
-`shop.committee_event` over that chain's `TRADE_RPC_URLS` entry, else for 137
-on mainnet `RPC_ENDPOINT_POLYGON`, once the endpoint answers that chain id,
-and binds its cursor to that chain (tens of rows, appended with the cursor advance in `shop.chain_cursor`,
-deleted past a reorg rewind). Builder reads, never writes, both tables by
-shared SQL in one statement: `shop.committee_event` (`network`,
-`block_number`, `log_index`, `member`, `is_member`) and `shop.chain_cursor`
-(`indexer`, `network`, `full_history`, `chain_id`, `quarantined_at`,
-`folded_block`, `folded_at`); the cursor must be bound to the builder's
-chain and out of quarantine (see "Market chain index cursors"). A
-wallet is a member when its latest event (block, log index) at or below the
-published block (`folded_block`) set it, so rows a pass adds before its
-publish wait for it. Unlike the shop routes' readiness rule, it does not
-require `folded_block = last_block`, so the published membership stays
-readable while a pass runs. Builder reads it afresh for every decision, so a
-removed member loses the role once the index publishes the block that
-removed it, and a curation write reads it again on its own transaction's
-connection, after its row locks: a curator the committee admitted and the
-assignee it names must still be members (401 otherwise). The
-statement compares `folded_at` with `statement_timestamp()`, so a read
-inside a transaction that began before the index's latest publish still
-sees it published. An index that is off, not yet published, bound to
-another chain than the builder's, in quarantine or published more than 30 minutes ago
-(`READY_WINDOW`), or a failed read, can't tell: a decision
-only the committee could grant and `GET /v1/committee` answer 503, a view
-the committee only widens answers as for any signer, and the console lists
-an empty committee until the index is published. Changing a column builder
-reads updates this section and the AGENTS.md "Ownership" entry in the same
-change.
+reads, curation writes, forum replies), `GET /v1/committee` and the curation
+console's committee list read the current members of the curation committee
+from the Polygon collections subgraph (`MATIC_COLLECTIONS_SUBGRAPH_URL`, the
+accounts it marks `isCommitteeMember`), not from a table.
+`BUILDER_ADMIN_ADDRESSES` grants no committee role (its wallets' signed
+requests, like the curation console's bearer, open only the operator's item
+status routes and `GET /v1/collections/curation`). A curation write reads the
+committee again inside its transaction, after its row locks: a curator the
+committee admitted and the assignee it names must still be members (401
+otherwise).
+
+Shop's `committee` index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) still walks
+the `MemberSet` logs of the Committee contracts of the chain
+`MARKETPLACE_INDEX_CHAIN_ID_MATIC` names into `shop.committee_event`, with its
+cursor in `shop.chain_cursor` (tens of rows, appended with the cursor
+advance, deleted past a reorg rewind). No other area reads those rows; the
+builder doesn't need the index.
 
 ## Auth API relay state workload
 

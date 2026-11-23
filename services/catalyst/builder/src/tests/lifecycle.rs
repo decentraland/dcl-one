@@ -93,10 +93,7 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
     .await
     .unwrap();
     let market = match &options.committee {
-        Some(committee) => {
-            committee.publish(&pool).await;
-            Some(committee_index(committee).await)
-        }
+        Some(committee) => Some(committee_index(committee).await),
         None => Some(super::support::registry_only_index().await),
     };
     let mut state = crate::State::new(
@@ -2055,7 +2052,7 @@ async fn a_delivery_that_predates_a_merge_leaves_the_merged_acceptance_waiting()
 async fn a_committee_member_dropped_before_the_publish_writes_nothing() {
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let Some(node) = node(Options {
-        committee: Some(committee),
+        committee: Some(committee.clone()),
         ..Options::default()
     })
     .await
@@ -2076,15 +2073,7 @@ async fn a_committee_member_dropped_before_the_publish_writes_nothing() {
         .await
         .unwrap();
         if dropped {
-            super::support::record_committee_event(
-                &node.pool,
-                10,
-                "0xaeec95a8aa671a6d3fec56594827d7804964fa70",
-                &address(COMMITTEE_KEY),
-                false,
-            )
-            .await;
-            super::support::publish_committee_at(&node.pool, 10, "timezone('UTC', now())").await;
+            committee.set(Some(&[]));
         }
         let headers = axum::http::HeaderMap::new();
         let listing = crate::limits::Listing {

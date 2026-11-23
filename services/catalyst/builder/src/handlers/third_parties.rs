@@ -34,10 +34,7 @@ pub async fn list(
     State(state): State<SharedState>,
     Signed(signer): Signed,
 ) -> Result<Json<ApiData<Vec<Value>>>, ApiError> {
-    let registry = state
-        .third_parties
-        .registry(state.market.as_ref(), Since::read())
-        .await?;
+    let registry = state.third_parties.registry(&state, Since::read()).await?;
     let mut conn = state.items.pool().acquire().await?;
     let listed = managed_by(&mut conn, &registry, signer.as_str()).await?;
     Ok(Json(ApiData::ok(
@@ -56,10 +53,7 @@ pub async fn get(
     if id.len() > ID_MAX {
         return Err(missing(&id));
     }
-    let registry = state
-        .third_parties
-        .registry(state.market.as_ref(), Since::read())
-        .await?;
+    let registry = state.third_parties.registry(&state, Since::read()).await?;
     if let Some(record) = provider(&registry, &id) {
         return Ok(Json(ApiData::ok(provider_view(record))));
     }
@@ -135,10 +129,7 @@ pub async fn delete(
             Some(_) => {}
         }
     }
-    let registry = state
-        .third_parties
-        .registry(state.market.as_ref(), since)
-        .await?;
+    let registry = state.third_parties.registry(&state, since).await?;
     let decide = |found: Option<crate::third_parties::Virtual>| match found {
         None => Err(missing(&id)),
         Some(v)
@@ -190,10 +181,7 @@ pub async fn update(
     if id.len() > ID_MAX {
         return Err(missing(&id));
     }
-    let registry = state
-        .third_parties
-        .registry(state.market.as_ref(), Since::write())
-        .await?;
+    let registry = state.third_parties.registry(&state, Since::write()).await?;
     let mut tx = state.items.pool().begin().await?;
     lock_provider(&mut tx, &id).await?;
     match virtual_by_id(&mut tx, &id).await? {

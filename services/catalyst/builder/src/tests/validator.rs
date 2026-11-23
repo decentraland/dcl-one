@@ -102,6 +102,7 @@ pub(super) struct Options {
     pub(super) storage: Option<Arc<crate::storage::Storage>>,
     pub(super) unbounded: bool,
     pub(super) registry: FakeRegistry,
+    pub(super) committee: FakeCommittee,
     pub(super) tune: fn(&mut crate::State),
 }
 
@@ -113,6 +114,7 @@ impl Default for Options {
             storage: None,
             unbounded: false,
             registry: FakeRegistry::up(),
+            committee: FakeCommittee::with(&[]),
             tune: |_| {},
         }
     }
@@ -173,14 +175,12 @@ pub(super) async fn own_pool() -> Option<PgPool> {
     .await
     .unwrap();
     set_flag(&pool, Some(json!(true))).await;
-    FakeCommittee::with(&[]).publish(&pool).await;
     Some(pool)
 }
 
 pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
     let oracle = FakeOracle::default();
     let slack = FakeSlack::default();
-    let committee = FakeCommittee::with(&[]);
     let storage = match options.storage {
         Some(storage) => storage,
         None => temp_storage().await,
@@ -190,7 +190,7 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
         storage.clone(),
         Arc::default(),
         dcl_http::Outbound::for_tests(),
-        Some(registry_index(&committee, &options.registry).await),
+        Some(registry_index(&options.committee, &options.registry).await),
         None,
         crate::Settings {
             writes_enabled: options.writes,

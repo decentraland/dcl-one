@@ -89,12 +89,12 @@
       "anchors": []
     },
     "committee-cache": {
-      "text": "GET /v1/committee and every committee decision: the node reads the Polygon committee index (the Committee contracts' MemberSet logs) up to its published block afresh for each request, so a member added or removed counts once the index publishes the block that holds the change. Upstream reads the Polygon collections subgraph's accounts on every GET /v1/committee and keeps its own read an hour for decisions.",
+      "text": "GET /v1/committee and every committee decision: the node reads the Polygon collections subgraph's accounts marked isCommitteeMember, as upstream does, one read at a time: a write's decision takes only a read that started after it began, and a read-only decision (GET /v1/committee included) also one that started up to 5 seconds before it, so a member added or removed counts for writes once the subgraph has indexed the change and for reads at most 5 seconds later. Upstream reads the accounts on every GET /v1/committee and keeps its own read an hour for decisions.",
       "captures": [],
       "anchors": []
     },
     "committee-unavailable": {
-      "text": "Every operation a committee member may perform: while the committee index is unpublished, published more than 30 minutes ago or unreadable, the node answers 503 to GET /v1/committee and to every decision only the committee could grant, and a committee member reads published content as any signer does. Upstream answers GET /v1/committee with an empty list and treats nobody as a member when its subgraph can't answer.",
+      "text": "Every operation a committee member may perform: while the collections subgraph is unset or unreadable, or answers an account that is not an address or more than 1,000 members, the node answers 503 to GET /v1/committee and to every decision only the committee could grant, and a committee member reads published content as any signer does. Upstream answers GET /v1/committee with an empty list and treats nobody as a member when its subgraph can't answer, and reads a committee of any length.",
       "captures": [],
       "anchors": []
     },
@@ -2730,7 +2730,7 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/22-collection-committee.json",
-          "scope": "Signed GET by a committee member with no other role on a draft; the node reads the same committee from its committee index, seeded from seed.json.",
+          "scope": "Signed GET by a committee member with no other role on a draft; the node reads the same committee from its fake collections subgraph, seeded from seed.json.",
           "replay": []
         },
         {
@@ -5148,7 +5148,7 @@
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/06-committee-unsigned.json",
-          "scope": "Unsigned GET; the fake Polygon collections subgraph lists seed.json's committee and the node's committee index holds the same wallets.",
+          "scope": "Unsigned GET; the fake Polygon collections subgraph lists seed.json's committee to upstream and to the node.",
           "replay": []
         },
         {
@@ -5174,6 +5174,16 @@
             "header access-control-expose-headers: fixture=\"ETag,Cache-Control,Content-Language,Content-Type,Expires,Last-Modified,Pragma\" candidate=\"etag,cache-control,content-language,content-type,expires,last-modified,pragma,retry-after\"": "deliberate:cors-allow-list",
             "header vary: fixture=\"Origin\" candidate=\"origin\"": "deliberate:cors-allow-list"
           }
+        },
+        {
+          "path": "services/catalyst/builder/src/committee.rs",
+          "test": "the_committee_is_the_collections_subgraph_s_committee_accounts",
+          "scope": "The subgraph's accounts lowercased in its order; a full page of 1,000 asks for the next; 503 for a failing subgraph, no subgraph, a malformed account and more than 1,000 members."
+        },
+        {
+          "path": "services/catalyst/builder/src/tests/curation_routes.rs",
+          "test": "a_member_the_subgraph_stops_listing_is_refused_its_next_write_and_its_reads_past_the_window",
+          "scope": "A member the subgraph stops listing is refused its next curation write at once and its reads past the 5-second window."
         }
       ],
       "gaps": [
@@ -5181,7 +5191,7 @@
         "deliberate:committee-unavailable",
         "deliberate:cors-allow-list"
       ],
-      "remaining_verification": "Compare a committee longer than one subgraph page."
+      "remaining_verification": "A committee longer than one subgraph page is covered by the node's tests, not by a capture."
     },
     {
       "id": "api_http:GET:/v1/thirdParties",

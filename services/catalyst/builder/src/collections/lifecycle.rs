@@ -287,7 +287,7 @@ pub async fn publish(
             .fetch_all(&mut *tx)
             .await?;
         let view = chain_state::for_decision(&mut tx).await?;
-        access::confirm_collection_sync(&mut tx, &view, &state.settings.network, sync).await?;
+        access::confirm_collection_sync(&mut tx, &view, state, sync).await?;
         let now = snapshot(&mut tx, id).await?;
         let same_items = now
             .items

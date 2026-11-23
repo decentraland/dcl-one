@@ -102,7 +102,7 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         .ok_or_else(|| ApiError::internal(format!("stored cheque of {id} unreadable")))?;
     let registry = state
         .third_parties
-        .registry(state.market.as_ref(), crate::kept::Since::write())
+        .registry(state, crate::kept::Since::write())
         .await?;
     let market = state
         .market
@@ -113,7 +113,10 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         (None, true) => json!(""),
         (None, false) => return Err(ApiError::http(200, "The Third Party doesn't exists.")),
     };
-    let consumed = chain_index::third_parties::receipt_exists(market, &receipt)
+    let url = state
+        .registry_subgraph()
+        .ok_or_else(|| ApiError::service_unavailable(UNAVAILABLE))?;
+    let consumed = chain_index::third_parties::receipt_exists(market, &url, &receipt)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "the third-party registry's receipts were not read");

@@ -61,7 +61,7 @@ enum Caller {
     Validator,
     /// A wallet `BUILDER_ADMIN_ADDRESSES` lists.
     Admin,
-    /// A wallet the committee index added and then removed.
+    /// A wallet the collections subgraph no longer lists on the committee.
     FormerCommittee,
     /// A minter the copy lists for an on-chain collection.
     Minter,
@@ -1679,6 +1679,7 @@ fn approval(method: &str) -> Payload {
 struct Matrix {
     pool: PgPool,
     app: Router,
+    state: crate::SharedState,
     forum: crate::curation::forum::fake::FakeForum,
     sibling: Uuid,
 }
@@ -1727,7 +1728,6 @@ async fn matrix_with(committee: &FakeCommittee, connections: u32, rpc: bool) -> 
     .execute(&pool)
     .await
     .unwrap();
-    committee.publish(&pool).await;
     committee.set_rarities(Some(&[("common", "10000000000000000000", "100000")]));
     let oracle = FakeOracle::with(&[("common", "4000000000000000000")]);
     let forum = crate::curation::forum::fake::FakeForum::default();
@@ -1750,26 +1750,14 @@ async fn matrix_with(committee: &FakeCommittee, connections: u32, rpc: bool) -> 
         },
     )
     .unwrap();
-    for (log_index, is_member) in [(1, true), (2, false)] {
-        sqlx::query(
-            "INSERT INTO shop.committee_event (network, block_number, log_index, block_time, contract_address, member, is_member) \
-             VALUES ('matic', 1, $1, 1, '0xaeec95a8aa671a6d3fec56594827d7804964fa70', $2, $3) ON CONFLICT DO NOTHING",
-        )
-        .bind(log_index)
-        .bind(FormerCommittee.address())
-        .bind(is_member)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
     state.guarded = dcl_http::Outbound::for_tests();
     state.validator_calls =
         crate::shared::limits::RateLimiter::new(1_000_000, std::time::Duration::from_secs(60));
     state.limits = crate::limits::Limits::unbounded();
-    let state = Arc::new(state);
+    let shared = Arc::new(state);
     let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state));
+        .merge(crate::root_router(shared.clone()))
+        .nest("/builder-api", crate::router(shared.clone()));
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Matrix:')",
     )
@@ -1788,6 +1776,7 @@ async fn matrix_with(committee: &FakeCommittee, connections: u32, rpc: bool) -> 
     Some(Matrix {
         pool,
         app,
+        state: shared,
         forum,
         sibling,
     })
@@ -2261,9 +2250,10 @@ async fn a_copy_without_a_complete_pass_grants_nothing_and_writes_nothing() {
 }
 
 /// With the committee source down, a decision the committee could change
-/// answers 503; one it can't change (an owner's, any write, and what any
-/// signer may see of published content) answers as before, a committee
-/// member seeing a published collection as any signer does.
+/// answers 503, and so does the curation console's committee list; one it
+/// can't change (an owner's, any write, and what any signer may see of
+/// published content) answers as before, a committee member seeing a
+/// published collection as any signer does.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_committee_source_that_is_down_refuses_only_what_the_committee_decides() {
     let committee_unavailable = Expect(
@@ -2308,6 +2298,7 @@ async fn a_committee_source_that_is_down_refuses_only_what_the_committee_decides
                             && !kind.manager(caller)
                     }
                     Op::ApprovalData => !matches!(kind, Missing | Malformed),
+                    Op::CurationQueue => matches!(caller, Admin),
                     Op::ListCollections
                     | Op::ListItems
                     | Op::Committee
@@ -2464,7 +2455,7 @@ async fn an_item_moves_into_or_out_of_a_third_party_collection_never() {
 }
 
 /// A read the committee decides releases its database connection before it
-/// reads the committee index, so with a pool of one every caller's read
+/// reads the committee, so with a pool of one every caller's read
 /// answers instead of waiting on a connection it holds itself.
 #[tokio::test]
 async fn a_committee_read_holds_no_database_connection() {
@@ -2553,12 +2544,12 @@ async fn the_loser_of_a_concurrent_creation_is_refused_as_a_stranger() {
 }
 
 /// What any signer sees of published content never depends on the
-/// committee index; a committee member gets the wide view of a published
-/// collection's items and of a minted item only while the published index
-/// lists it: not once a published removal holds, nor while the index is
-/// unpublished or stale.
+/// committee; a committee member gets the wide view of a published
+/// collection's items and of a minted item only while the collections
+/// subgraph lists it: not once it stops listing it (past the read window),
+/// nor while the subgraph can't tell.
 #[tokio::test]
-async fn the_committee_widens_published_content_only_while_the_index_lists_it() {
+async fn the_committee_widens_published_content_only_while_the_subgraph_lists_it() {
     let committee = FakeCommittee::with(&[&Committee.address()]);
     let Some(m) = matrix(&committee).await else {
         return;
@@ -2593,32 +2584,19 @@ async fn the_committee_widens_published_content_only_while_the_index_lists_it() 
     check(Committee, true, "listed").await;
     check(Stranger, false, "listed").await;
     check(Owner, true, "listed").await;
-    let publish = async |folded_at: &str| {
-        super::support::publish_committee_at(&m.pool, 2, folded_at).await;
-    };
-    publish("timezone('UTC', now()) - interval '31 minutes'").await;
-    check(Committee, false, "stale index").await;
-    check(Owner, true, "stale index").await;
-    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer = 'committee'")
-        .execute(&m.pool)
-        .await
-        .unwrap();
-    check(Committee, false, "unpublished index").await;
-    check(Stranger, false, "unpublished index").await;
-    publish("timezone('UTC', now())").await;
-    check(Committee, true, "published again").await;
-    super::support::record_committee_event(
-        &m.pool,
-        3,
-        "0xaeec95a8aa671a6d3fec56594827d7804964fa70",
-        &Committee.address(),
-        false,
-    )
-    .await;
-    check(Committee, true, "a removal past the published block").await;
-    super::support::publish_committee_at(&m.pool, 3, "timezone('UTC', now())").await;
-    check(Committee, false, "a published removal").await;
-    check(Owner, true, "a published removal").await;
+    committee.remove(&Committee.address());
+    check(Committee, true, "within the read window").await;
+    m.state.committee.outdate();
+    check(Committee, false, "no longer listed").await;
+    check(Owner, true, "no longer listed").await;
+    committee.set(Some(&[&Committee.address()]));
+    m.state.committee.outdate();
+    check(Committee, true, "listed again").await;
+    committee.set(None);
+    m.state.committee.outdate();
+    check(Committee, false, "subgraph down").await;
+    check(Owner, true, "subgraph down").await;
+    check(Stranger, false, "subgraph down").await;
 }
 
 #[tokio::test]

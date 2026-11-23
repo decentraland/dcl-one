@@ -478,12 +478,15 @@ async fn a_listing_charges_its_rows(
         let Some(pool) = super::validator::own_pool().await else {
             return;
         };
-        if committee {
-            super::support::FakeCommittee::with(&[&super::validator::address(OWNER_KEY)])
-                .publish(&pool)
-                .await;
-        }
-        let registry = super::support::registry_only_index().await;
+        let registry = match committee {
+            true => {
+                super::support::committee_index(&super::support::FakeCommittee::with(&[
+                    &super::validator::address(OWNER_KEY),
+                ]))
+                .await
+            }
+            false => super::support::registry_only_index().await,
+        };
         let (app, state) = node_over(pool, |state| {
             state.market = Some(registry);
             state.limits = crate::limits::Limits::unbounded();
@@ -783,9 +786,6 @@ async fn every_item_answers_the_committee_member_at_most_its_cap() {
         return;
     };
     let member = super::validator::address(OWNER_KEY);
-    super::support::FakeCommittee::with(&[&member])
-        .publish(&pool)
-        .await;
     sqlx::query(
         "INSERT INTO builder.items (id, name, eth_address, type) \
          SELECT gen_random_uuid(), 'Item ' || g, $1, 'wearable' \
@@ -796,7 +796,8 @@ async fn every_item_answers_the_committee_member_at_most_its_cap() {
     .execute(&pool)
     .await
     .unwrap();
-    let registry = super::support::registry_only_index().await;
+    let registry =
+        super::support::committee_index(&super::support::FakeCommittee::with(&[&member])).await;
     let app = app_over(pool, |state| {
         state.market = Some(registry);
         state.limits = crate::limits::Limits::unbounded();
@@ -1392,6 +1393,10 @@ fn the_builder_doc_states_each_bound_the_code_enforces() {
             count(cl::ADDRESS_CAP as u64),
         ),
         ("kept::READ_WINDOW", span(crate::kept::READ_WINDOW)),
+        (
+            "committee::MAX_MEMBERS",
+            count(crate::committee::MAX_MEMBERS as u64),
+        ),
         ("collections::listing::Q_MAX", count(cl::Q_MAX as u64)),
         (
             "collections::listing::MAX_ASSIGNEES",

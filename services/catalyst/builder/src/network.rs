@@ -22,6 +22,10 @@ pub struct Network {
     /// The slot cheques' verifying contract.
     pub third_party_registry: &'static str,
     pub base_uri: &'static str,
+    /// Its collections subgraph on Decentraland's subgraph worker.
+    pub collections_subgraph: &'static str,
+    /// Its third-party registry subgraph on Decentraland's subgraph worker.
+    pub registry_subgraph: &'static str,
 }
 
 /// Polygon mainnet.
@@ -35,6 +39,8 @@ pub const POLYGON: Network = Network {
     rarities_with_oracle: "0xa9158e22f89bb3f69c5600338895cb5fb81e5090",
     third_party_registry: "0x1c436c1efb4608dffdc8bace99d2b03c314f3348",
     base_uri: "https://peer.decentraland.org/lambdas/collections/standard/erc721/",
+    collections_subgraph: "https://subgraph.decentraland.org/collections-matic-mainnet",
+    registry_subgraph: "https://subgraph.decentraland.org/tpr-matic-mainnet",
 };
 
 /// Amoy, Polygon's test network.
@@ -48,6 +54,8 @@ pub const AMOY: Network = Network {
     rarities_with_oracle: "0x25b6b4bac4adb582a0abd475439da6730777fbf7",
     third_party_registry: "0x7d7c0b9d97385bada5fec6861e97d0df414af3c3",
     base_uri: "https://peer.decentraland.zone/lambdas/collections/standard/erc721/",
+    collections_subgraph: "https://subgraph.decentraland.org/collections-matic-amoy",
+    registry_subgraph: "https://subgraph.decentraland.org/tpr-matic-amoy",
 };
 
 impl Default for Network {

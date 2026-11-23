@@ -183,7 +183,7 @@ Event poster upgrade: run `catalyst schema migrate` before deploying the API. St
 
 Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API. Step `0051_explore_auth_identity_request_id` adds the nullable `auth_request_id` that binds a parked identity to its deep-link request; parked identities stay unbound. Sites binds only Creator Hub sign-ins, whose pickup must then send `x-identity-verifier`.
 
-Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee, every builder decision that needs the committee answers 503; [what the builder needs](../../services/catalyst/docs/builder.md) lists the rest.
+Curation committee index upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. The builder reads the committee from `MATIC_COLLECTIONS_SUBGRAPH_URL`, not from this index; [what the builder needs](../../services/catalyst/docs/builder.md) lists the rest.
 
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with

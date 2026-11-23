@@ -31,7 +31,7 @@
 //! item (owner, on-chain manager, current committee member, third-party
 //! manager, as builder-server defines them; 503 when a source it needs can't
 //! tell), and the store functions take the grant it returns. The committee is
-//! [`committee`]'s read of the Polygon committee index, by shared SQL.
+//! [`committee`]'s read of the Polygon collections subgraph.
 //! The curation routes need the admin bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`,
 //! constant-time, fails closed) or a `BUILDER_ADMIN_ADDRESSES` signer; chain
 //! writes are prepared here and signed and submitted by the client, the
@@ -157,6 +157,12 @@ pub struct RawSettings {
     /// `ETH_NETWORK`: the Polygon chain it pairs is the builder's
     /// ([`network`]); unset is `mainnet`, `ETH_NETWORK`'s default.
     pub eth_network: Option<String>,
+    /// `MATIC_COLLECTIONS_SUBGRAPH_URL` as set, empty included; unset reads
+    /// the network's collections subgraph.
+    pub matic_collections_subgraph_url: Option<String>,
+    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` as set, empty included; unset
+    /// reads the network's registry subgraph.
+    pub third_party_registry_subgraph_url: Option<String>,
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
     /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that verifies
@@ -216,6 +222,12 @@ pub struct RawSettings {
 pub struct Settings {
     /// The Polygon chain whose contracts, URNs and chain id the builder uses.
     pub network: network::Network,
+    /// The network's collections subgraph, read while
+    /// `MATIC_COLLECTIONS_SUBGRAPH_URL` is unset ([`State::collections_subgraph`]).
+    pub default_collections_subgraph: Option<String>,
+    /// The network's registry subgraph, read while
+    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` is unset ([`State::registry_subgraph`]).
+    pub default_registry_subgraph: Option<String>,
     pub writes_enabled: bool,
     pub polygon_rpc_url: Option<String>,
     pub admin_addresses: Vec<String>,
@@ -245,6 +257,11 @@ impl std::fmt::Debug for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Settings")
             .field("network", &self.network.chain_id)
+            .field(
+                "default_collections_subgraph",
+                &self.default_collections_subgraph,
+            )
+            .field("default_registry_subgraph", &self.default_registry_subgraph)
             .field("writes_enabled", &self.writes_enabled)
             .field("polygon_rpc_url", &self.polygon_rpc_url.is_some())
             .field("admin_addresses", &self.admin_addresses)
@@ -434,8 +451,17 @@ impl Settings {
         {
             bail!("BUILDER_VIDEO_UPLOADS_MAX must be 1 to {MAX_VIDEO_UPLOADS_SETTING}");
         }
+        let default_of = |set: &Option<String>, url: &str| set.is_none().then(|| url.to_string());
         Ok(Self {
             network,
+            default_collections_subgraph: default_of(
+                &raw.matic_collections_subgraph_url,
+                network.collections_subgraph,
+            ),
+            default_registry_subgraph: default_of(
+                &raw.third_party_registry_subgraph_url,
+                network.registry_subgraph,
+            ),
             cors,
             unpublished_max_bytes: raw.unpublished_max_bytes,
             unpublished_max_files: raw.unpublished_max_files,
@@ -474,6 +500,8 @@ pub struct State {
     pub rarities: rarities::Rarities,
     /// The third-party registry (`third_parties`), read per decision.
     pub third_parties: third_parties::ThirdParties,
+    /// The curation committee (`committee`), read per decision.
+    pub committee: committee::Committee,
     /// The node's clock, which a collection's lock is set and compared by.
     pub now: fn() -> chrono::DateTime<chrono::Utc>,
     /// What the Polygon RPC says of collection contracts, kept per contract.
@@ -548,6 +576,7 @@ impl State {
             denylist,
             rarities: rarities::Rarities::default(),
             third_parties: third_parties::ThirdParties::default(),
+            committee: committee::Committee::default(),
             now: chrono::Utc::now,
             deployments: collections::deployment::Deployments::default(),
             notices,
@@ -563,6 +592,24 @@ impl State {
             file_deadline: items::upload::DEADLINE,
             limits,
         })
+    }
+
+    /// The Polygon collections subgraph the builder reads:
+    /// `MATIC_COLLECTIONS_SUBGRAPH_URL` when set, else its network's.
+    pub fn collections_subgraph(&self) -> Option<String> {
+        self.market
+            .as_ref()
+            .and_then(|m| m.settings.matic_collections_subgraph_url.clone())
+            .or_else(|| self.settings.default_collections_subgraph.clone())
+    }
+
+    /// The third-party registry subgraph the builder reads:
+    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` when set, else its network's.
+    pub fn registry_subgraph(&self) -> Option<String> {
+        self.market
+            .as_ref()
+            .and_then(|m| m.settings.third_party_registry_subgraph_url.clone())
+            .or_else(|| self.settings.default_registry_subgraph.clone())
     }
 
     /// What `serve` logs at startup.

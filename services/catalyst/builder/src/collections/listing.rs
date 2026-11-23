@@ -35,7 +35,7 @@
 //! 64 characters.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use crate::kept::Since;
 use serde::Serialize;
@@ -44,11 +44,10 @@ use sqlx::{Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::access::{OnCommittee, Wallet};
-use crate::chain_index::ChainIndex;
 use crate::chain_state::{self, ReadView};
 use crate::http::ApiError;
 use crate::items::ItemsComponent;
-use crate::third_parties::{ThirdParties, provider};
+use crate::third_parties::provider;
 
 use super::{CollectionListingRowOut, CollectionRow, PUBLIC_LISTING, body_columns, project};
 
@@ -754,11 +753,10 @@ fn listing_row(
 async fn programmatic_rows(
     network: &crate::network::Network,
     rows: Vec<ListedRow>,
-    third_parties: &ThirdParties,
-    market: Option<&Arc<ChainIndex>>,
+    state: &crate::State,
 ) -> Result<Vec<CollectionListingRowOut>, ApiError> {
     let registry = match rows.iter().any(|r| r.collection.third_party()) {
-        true => Some(third_parties.registry(market, Since::read()).await?),
+        true => Some(state.third_parties.registry(state, Since::read()).await?),
         false => None,
     };
     Ok(rows
@@ -888,11 +886,10 @@ impl ItemsComponent {
     pub async fn committee_collections(
         &self,
         request: &CommitteeListing,
-        third_parties: &ThirdParties,
-        market: Option<&Arc<ChainIndex>>,
+        state: &crate::State,
     ) -> Result<Value, ApiError> {
         let (rows, total, _) = self.list(&request.listing, true).await?;
-        let results = programmatic_rows(&self.network, rows, third_parties, market).await?;
+        let results = programmatic_rows(&self.network, rows, state).await?;
         Self::envelope(&request.listing, results, total, None)
     }
 
@@ -902,11 +899,10 @@ impl ItemsComponent {
     pub async fn public_collections(
         &self,
         search: &PublicSearch,
-        third_parties: &ThirdParties,
-        market: Option<&Arc<ChainIndex>>,
+        state: &crate::State,
     ) -> Result<Value, ApiError> {
         let (rows, total, _) = self.list(&search.listing, true).await?;
-        let results: Vec<Value> = programmatic_rows(&self.network, rows, third_parties, market)
+        let results: Vec<Value> = programmatic_rows(&self.network, rows, state)
             .await?
             .into_iter()
             .map(|r| project(r, Some(PUBLIC_LISTING)))

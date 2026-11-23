@@ -44,13 +44,11 @@ impl Default for ThirdParties {
 impl ThirdParties {
     /// The registry as a read that started at or after `since` answered it;
     /// 503 when the node can't tell.
-    pub async fn registry(
-        &self,
-        market: Option<&Arc<ChainIndex>>,
-        since: Since,
-    ) -> Result<Registry, ApiError> {
+    pub async fn registry(&self, state: &crate::State, since: Since) -> Result<Registry, ApiError> {
         self.kept
-            .get_since(since, || fetch(market.cloned()))
+            .get_since(since, || {
+                fetch(state.market.clone(), state.registry_subgraph())
+            })
             .await
             .ok_or_else(unavailable)
     }
@@ -68,11 +66,11 @@ fn unavailable() -> ApiError {
     ApiError::service_unavailable("The third party registry is not available. Try again later.")
 }
 
-async fn fetch(market: Option<Arc<ChainIndex>>) -> Option<Registry> {
-    let market = market?;
+async fn fetch(market: Option<Arc<ChainIndex>>, url: Option<String>) -> Option<Registry> {
+    let (market, url) = (market?, url?);
     let error = match tokio::time::timeout(
         FETCH_TIMEOUT,
-        crate::chain_index::third_parties::registry(&market),
+        crate::chain_index::third_parties::registry(&market, &url),
     )
     .await
     {

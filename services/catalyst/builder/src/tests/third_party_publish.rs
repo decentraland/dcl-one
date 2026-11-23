@@ -32,6 +32,7 @@ struct World {
     pool: PgPool,
     app: Router,
     registry: FakeRegistry,
+    committee: FakeCommittee,
     state: crate::SharedState,
 }
 
@@ -49,7 +50,6 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
     .await
     .unwrap();
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
-    committee.publish(&pool).await;
     let registry = FakeRegistry::up();
     let mut state = crate::State::new(
         pool.clone(),
@@ -73,6 +73,7 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
         pool,
         app,
         registry,
+        committee,
         state,
     })
 }
@@ -1153,10 +1154,8 @@ async fn approval_data_is_the_committee_s_and_needs_its_sources() {
     w.registry.fail(true);
     assert_eq!(get(&w.app, Some(COMMITTEE_KEY), approval(id)).await.0, 503);
     w.registry.fail(false);
-    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer = 'committee'")
-        .execute(&w.pool)
-        .await
-        .unwrap();
+    w.committee.set(None);
+    w.state.committee.outdate();
     assert_eq!(get(&w.app, Some(COMMITTEE_KEY), approval(id)).await.0, 503);
 }
 

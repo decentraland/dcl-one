@@ -87,6 +87,7 @@ impl Rarities {
             .get(|| {
                 fetch(
                     state.market.clone(),
+                    state.collections_subgraph(),
                     state.http.clone(),
                     state.settings.network,
                     state.settings.polygon_rpc_url.clone(),
@@ -113,16 +114,17 @@ impl Rarities {
 
 async fn fetch(
     market: Option<Arc<ChainIndex>>,
+    url: Option<String>,
     http: Outbound,
     network: Network,
     rpc: Option<String>,
 ) -> Option<RarityList> {
-    let error = match tokio::time::timeout(FETCH_TIMEOUT, read(market, &http, &network, rpc)).await
-    {
-        Ok(Ok(rarities)) => return Some(Arc::new(rarities)),
-        Ok(Err(error)) => error,
-        Err(_) => "timed out".to_string(),
-    };
+    let error =
+        match tokio::time::timeout(FETCH_TIMEOUT, read(market, url, &http, &network, rpc)).await {
+            Ok(Ok(rarities)) => return Some(Arc::new(rarities)),
+            Ok(Err(error)) => error,
+            Err(_) => "timed out".to_string(),
+        };
     tracing::warn!(error = %error, "builder rarities read failed; the rarities routes answer 503");
     None
 }
@@ -136,18 +138,15 @@ fn amount(value: &Value) -> Option<String> {
 
 async fn read(
     market: Option<Arc<ChainIndex>>,
+    url: Option<String>,
     http: &Outbound,
     network: &Network,
     rpc: Option<String>,
 ) -> Result<Vec<Rarity>, String> {
     let market = market.ok_or("no chain index")?;
-    let url = market
-        .settings
-        .matic_collections_subgraph_url
-        .as_deref()
-        .ok_or("no Polygon collections subgraph")?;
+    let url = url.ok_or("no Polygon collections subgraph")?;
     let rpc = rpc.ok_or("no Polygon RPC")?;
-    let data = graph_query(&market, url, QUERY, json!({})).await?;
+    let data = graph_query(&market, &url, QUERY, json!({})).await?;
     let listed = data
         .get("rarities")
         .and_then(Value::as_array)

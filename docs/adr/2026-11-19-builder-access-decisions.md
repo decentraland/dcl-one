@@ -14,8 +14,8 @@ roles `github.com/decentraland/builder-server` at `98897af` defines:
 - a manager of a third-party collection's provider.
 
 Each role comes from a different source: the builder's own rows, the node's
-copy of the Polygon collections subgraph, the Polygon committee index, and
-the third-party registry. A route that checks its roles by
+copy of the Polygon collections subgraph, the committee accounts that
+subgraph marks, and the third-party registry. A route that checks its roles by
 itself can forget one, read one from the request, or grant access when a
 source is down.
 
@@ -38,13 +38,15 @@ source is down.
   answers yes. It refuses only when every source it needs answered no. When
   a source it needs can't tell, it answers 503 and grants nothing. A source
   is consulted only when the answer depends on it. For published content
-  the committee only widens a caller's view: while the committee index can't
-  tell, a committee member reads published content as any signer does.
+  the committee only widens a caller's view: while the committee can't tell,
+  a committee member reads published content as any signer does.
 - **No connection across another read.** A decision reads the builder's
   rows and the chain copy, returns its database connection, and only then
   reads the committee. It reads the registry before it takes a connection,
   and a write decides again inside its transaction from the same registry
-  read.
+  read. A write the committee admitted is the one exception: it reads the
+  committee again inside its transaction, holding its locked rows for at
+  most the read's 10-second bound.
 - **One owner.** A standard collection's owner is its chain creator once the
   copy holds it, and its stored `eth_address` before. The owner is derived on
   each request, so `POST /v1/collections/{id}/owner/sync` stores nothing and
@@ -61,15 +63,24 @@ source is down.
   admission stands when the publish decides again inside its transaction.
 - **Managers come from the chain.** Only a collection on chain has managers,
   read from the copy. A request body never sets them.
-- **Current committee, from the committee index.** The builder reads the
-  current committee from the shop's Polygon committee index by shared SQL
-  (`builder/src/committee.rs`): a wallet is a member when its latest
-  `MemberSet` event across both Committee contracts, at or below the block
-  the index has published, set it. Every committee question reads the index
-  afresh. An index that is off, not yet published or published more than 30
-  minutes ago, or a failed read, can't tell: every decision the committee
-  could change answers 503, and so does `GET /v1/committee`, which answers
-  from the same read.
+- **Current committee, from the collections subgraph.** The builder reads
+  the current committee as `github.com/decentraland/builder-server` reads
+  it: the accounts the Polygon collections subgraph marks
+  `isCommitteeMember` (`MATIC_COLLECTIONS_SUBGRAPH_URL`, else the builder's
+  network's subgraph on Decentraland's subgraph worker), in pages of
+  1,000 while a page is full (`builder/src/committee.rs`), through the
+  chain index's subgraph client under a 10-second bound. It reads them as
+  it reads the registry: a write's decision, and every committee check a
+  write repeats inside its transaction, accepts only a read that started
+  after the decision began; a read-only decision also accepts a read that
+  started up to 5 seconds before it; one read runs at a time and every
+  decision waiting when it started shares it. A setting set empty, a
+  read that fails, or an answer with an account that is not an address or
+  more than 1,000 members can't tell: that answer lasts 30 seconds, every
+  decision the committee could change answers 503, and so do
+  `GET /v1/committee` and the console's committee list, which answer from
+  the same read. The node can't check which chain the subgraph indexes; the
+  deployment points it at the builder's chain.
 - **Third-party managers.** A third-party collection's provider is the
   provider id of its URN. Its managers, in the order
   `github.com/decentraland/builder-server` reads its sources:
@@ -102,7 +113,8 @@ source is down.
   registry (`thirdParties`, every provider, approved or not, with its
   managers, merkle root, item allowance, approval, kind and metadata)
   through the chain index's subgraph client, under a 10-second bound, from
-  `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`. A write's decision, and every
+  `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`, else the builder's network's
+  registry subgraph on Decentraland's subgraph worker. A write's decision, and every
   check a write repeats inside its transaction, accepts only a read that
   started after the decision began, so a manager the registry stops
   listing loses its writes as soon as the subgraph indexes the change. A
@@ -117,7 +129,7 @@ source is down.
   It never counts as missing, so no wallet can claim its provider through a
   virtual third party. A record without an id is left out. A read that
   fails, an answer that breaks the walk (a provider twice, out of order or
-  past the page bound), or a node without the setting can't tell: that
+  past the page bound), or a setting set empty can't tell: that
   answer lasts 30 seconds, and every decision, listing and view that
   involves a third-party collection answers 503 until a read succeeds.
 - **Access checks never write.** A decision reads its sources and changes no
@@ -127,14 +139,13 @@ source is down.
   committee member. The collection must exist (404) and be published: a
   standard one on chain, a third-party one with an item curation (409);
   only then are the roles asked, so a stranger gets 401. The committee is
-  asked only when no role answers: while the committee index can't tell,
-  the committee's curation listing and every decision only the committee
+  asked only when no role answers: while the committee can't tell, the
+  committee's curation listing and every decision only the committee
   can make answer 503, never a narrower view. Which status change each caller may make is
   one table (`builder/src/curation/transitions.rs`); a write asks it again
   inside its transaction, with the collection row locked. There it also
-  reads the committee index again on its own connection: a curator the
-  committee admitted, and the assignee a write names, must still be members
-  (401 otherwise). A review comment, appeal or retry asks the committee
+  reads the committee again: a curator the committee admitted, and the
+  assignee a write names, must still be members (401 otherwise). A review comment, appeal or retry asks the committee
   again only when no role on the collection still admits its signer.
 - **Admins.** The operator's routes, the item status routes and the
   console's under-review listing (`GET /v1/collections/curation`), admit
@@ -161,13 +172,13 @@ source is down.
   list for the same unapproved provider manages nothing of it, so a wallet
   that claims a provider id before another wallet registers it on chain
   keeps no access once the registry has the record.
-- A wallet removed from the committee, or added to it, counts as such once
-  the committee index publishes the block that holds the change: the index's
-  walk and confirmation lag, and never more than the 30 minutes after which
-  an unpublished index answers 503.
-- While the committee index can't tell, a request that only the committee
-  could grant answers 503 rather than 401, and `GET /v1/committee` answers
-  503 rather than an empty list. Published content stays readable as any
+- A wallet removed from the committee, or added to it, counts as such for
+  writes once the collections subgraph has indexed the change, and for
+  reads at most 5 seconds later. A committee decision waits for a subgraph
+  read that starts after it arrives, or, for a read, up to 5 seconds before.
+- While the committee can't tell, a request that only the committee could
+  grant answers 503 rather than 401, and `GET /v1/committee` answers 503
+  rather than an empty list. Published content stays readable as any
   signer reads it, a committee member included.
 - Every by-id read is a decision, so it answers 503 when the chain copy is
   older than its decision bound, as writes do, with one exception: a
@@ -180,8 +191,8 @@ source is down.
   keeps the owner's access.
 - A wallet the committee no longer lists reads and changes no curation,
   even one it is assigned to or decided, and a write the committee admitted
-  commits nothing once the index drops the curator or the assignee before
-  the write's transaction reads it; a committee member who also holds a
+  commits nothing once the subgraph drops the curator or the assignee before
+  the write's transaction reads the committee; a committee member who also holds a
   role reads and writes as that role until the table asks for the
   committee.
 - A new role or source is one change to `access.rs`, which the authorization
@@ -193,13 +204,16 @@ source is down.
 - **A check in each route.** Nothing stops a route from skipping a role or
   admitting a caller by a value the request supplied.
 - **The committee from the collections subgraph, kept an hour.** A removed
-  member would keep the role for up to the hour, and every decision would
-  depend on an outbound read's latency and outages; the index is a local
-  table of tens of rows.
-- **An unpublished index admitting only the configured admin addresses.**
-  It would refuse every member with a 401 as if nobody were on the committee
-  while the index catches up, and give the admin addresses a role on the
-  upstream routes, which they don't have.
+  member would keep the role for up to the hour.
+- **The committee from the node's own index of the Committee contracts.**
+  A node with a new database would walk the contracts' whole history over a
+  public RPC, close to an hour on Amoy and longer on Polygon mainnet,
+  before it could answer any committee decision; the subgraph answers in
+  one request.
+- **A committee that can't be read admitting only the configured admin
+  addresses.** It would refuse every member with a 401 as if nobody were on
+  the committee while the source is down, and give the admin addresses a
+  role on the upstream routes, which they don't have.
 - **The committee as every wallet that ever curated.** Past curators would
   keep the role for good.
 - **A registry read kept for a time, or one read per provider.** A kept read

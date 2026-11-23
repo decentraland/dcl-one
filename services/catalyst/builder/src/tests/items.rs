@@ -61,7 +61,7 @@ async fn over(pool: PgPool) -> App {
             storage,
             Arc::default(),
             dcl_http::Outbound::for_tests(),
-            Some(super::support::registry_only_index().await),
+            Some(super::support::committee_index(&super::support::FakeCommittee::with(&[])).await),
             None,
             crate::Settings {
                 writes_enabled: true,
@@ -1596,9 +1596,6 @@ async fn an_on_chain_manager_reads_an_unminted_item_of_a_published_collection_in
     .execute(&app.pool)
     .await
     .unwrap();
-    super::support::FakeCommittee::with(&[])
-        .publish(&app.pool)
-        .await;
     let contract = super::support::on_chain(&app.pool, collection, false).await;
     sqlx::query("UPDATE shop.collections SET managers = ARRAY[$2] WHERE contract_address = $1")
         .bind(&contract)

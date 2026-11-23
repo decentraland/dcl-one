@@ -231,16 +231,15 @@ async fn newest_status(state: &SharedState, curator: &Curator) -> Result<Option<
     .and_then(Status::parse))
 }
 
-/// 401 when the committee index no longer lists `assignee`, asked again on
-/// the write's connection.
+/// 401 when a committee read that started after the decision no longer
+/// lists `assignee`.
 async fn unassignable(
-    conn: &mut PgConnection,
-    network: &crate::network::Network,
+    state: &crate::State,
     assignee: Option<&str>,
     id: Uuid,
 ) -> Result<(), ApiError> {
     if let Some(assignee) = assignee
-        && !access::still_assignable(conn, network, assignee).await?
+        && !access::assignable(state, assignee).await?
     {
         return Err(
             ApiError::unauthorized("The assignee must be a committee member")
@@ -403,9 +402,8 @@ pub async fn update_collection(
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
     let view = chain_state::for_decision(&mut tx).await?;
-    let curated =
-        access::confirm_curator(&mut tx, &view, &state.settings.network, &curator).await?;
-    unassignable(&mut tx, &state.settings.network, assignee_of, id).await?;
+    let curated = access::confirm_curator(&mut tx, &view, state, &curator).await?;
+    unassignable(state, assignee_of, id).await?;
     let previous = rows::newest_of_collection(&mut tx, id).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
     transitions::decide(Curation::Collection, from, request, actor(&curator))
@@ -562,9 +560,8 @@ pub async fn open_collection(
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
     let view = chain_state::for_decision(&mut tx).await?;
-    let curated =
-        access::confirm_curator(&mut tx, &view, &state.settings.network, &curator).await?;
-    unassignable(&mut tx, &state.settings.network, assignee_of, id).await?;
+    let curated = access::confirm_curator(&mut tx, &view, state, &curator).await?;
+    unassignable(state, assignee_of, id).await?;
     let previous = rows::newest_of_collection(&mut tx, id).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
     transitions::decide(Curation::Collection, from, request, actor(&curator))
@@ -710,7 +707,7 @@ pub async fn update_item(
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, curator.collection()).await?;
     let view = chain_state::for_decision(&mut tx).await?;
-    access::confirm_curator(&mut tx, &view, &state.settings.network, &curator).await?;
+    access::confirm_curator(&mut tx, &view, state, &curator).await?;
     let previous = rows::newest_of_item(&mut tx, item).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
     let Change::Update { status, .. } =
@@ -850,7 +847,7 @@ pub async fn open_item(
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, curator.collection()).await?;
     let view = chain_state::for_decision(&mut tx).await?;
-    access::confirm_curator(&mut tx, &view, &state.settings.network, &curator).await?;
+    access::confirm_curator(&mut tx, &view, state, &curator).await?;
     let previous = rows::newest_of_item(&mut tx, item).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
     transitions::decide(Curation::Item, from, request, actor(&curator))

@@ -138,7 +138,6 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
     .execute(&pool)
     .await
     .unwrap();
-    options.committee.publish(&pool).await;
     let mut state = crate::State::new(
         pool.clone(),
         temp_storage().await,
@@ -1432,9 +1431,9 @@ pub(super) async fn signer_of(key: &str, path: &str) -> crate::shared::signed_fe
     .unwrap()
 }
 
-/// A curator, or an assignee, the committee index drops after the decision
-/// writes nothing, even one that still holds a role on the collection: the
-/// write asks the index again inside its transaction.
+/// A curator, or an assignee, the collections subgraph drops after the
+/// decision writes nothing, even one that still holds a role on the
+/// collection: the write reads the committee again inside its transaction.
 #[tokio::test]
 async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
     let Some(pool) = own_pool().await else {
@@ -1449,22 +1448,12 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
     let n = node_over(
         pool,
         Options {
-            committee,
+            committee: committee.clone(),
             ..Options::default()
         },
     )
     .await;
-    let drop_member = async |key: &str, block: i64| {
-        super::support::record_committee_event(
-            &n.pool,
-            block,
-            "0xaeec95a8aa671a6d3fec56594827d7804964fa70",
-            &address(key),
-            false,
-        )
-        .await;
-        super::support::publish_committee_at(&n.pool, block, "timezone('UTC', now())").await;
-    };
+    let drop_member = |key: &str| committee.remove(&address(key));
     let id = standard(&n.pool, "Dropped").await;
     collection_curation(&n.pool, id, "pending").await;
     let path = format!("/v1/collections/{id}/curation");
@@ -1520,8 +1509,8 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
         status: Some(crate::curation::transitions::Status::Rejected),
         ..Default::default()
     };
-    drop_member(OWNER_KEY, 9).await;
-    drop_member(FORMER_KEY, 10).await;
+    drop_member(OWNER_KEY);
+    drop_member(FORMER_KEY);
     let rejected = crate::curation::writes::update_collection(&n.state, rejecting, reject()).await;
     let owner_rejected =
         crate::curation::writes::update_collection(&n.state, owner_rejecting, reject()).await;
@@ -1562,7 +1551,7 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    drop_member(ADMIN_KEY, 11).await;
+    drop_member(ADMIN_KEY);
     holder.commit().await.unwrap();
     let assigned = assigning.await.unwrap();
     let assignee: Option<String> = sqlx::query_scalar(
@@ -1586,6 +1575,57 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
         statuses(&n.pool, Curation::Collection, id).await,
         ["pending"]
     );
+}
+
+/// A member the collections subgraph stops listing is refused its next
+/// curation write at once, and its curation reads once the kept read is
+/// older than the read window.
+#[tokio::test]
+async fn a_member_the_subgraph_stops_listing_is_refused_its_next_write_and_its_reads_past_the_window()
+ {
+    let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
+    let Some(n) = node(Options {
+        committee: committee.clone(),
+        ..Options::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let id = standard(&n.pool, "Unlisted").await;
+    collection_curation(&n.pool, id, "pending").await;
+    let path = format!("/v1/collections/{id}/curation");
+    let reply = format!("/v1/collections/{id}/curation/post");
+    let reply_body = || Some(json!({ "forumPost": { "raw": "Looks good" } }));
+    let (listed, body) = call(&n.app, Some(COMMITTEE_KEY), "GET", &path, None).await;
+    assert_eq!(listed, 200, "{body}");
+    let (replied, body) = call(&n.app, Some(COMMITTEE_KEY), "POST", &reply, reply_body()).await;
+    assert_eq!(
+        replied, 409,
+        "a member gets past the decision to the topic check: {body}"
+    );
+    committee.set(Some(&[]));
+    let (kept, _) = call(&n.app, Some(COMMITTEE_KEY), "GET", &path, None).await;
+    let (late_reply, _) = call(&n.app, Some(COMMITTEE_KEY), "POST", &reply, reply_body()).await;
+    let (write, body) = call(
+        &n.app,
+        Some(COMMITTEE_KEY),
+        "PATCH",
+        &path,
+        Some(json!({ "curation": { "status": "approved" } })),
+    )
+    .await;
+    assert_eq!(
+        (kept, write, body["error"].as_str(), late_reply),
+        (200, 401, Some("Unauthorized"), 401)
+    );
+    assert_eq!(
+        statuses(&n.pool, Curation::Collection, id).await,
+        ["pending"]
+    );
+    n.state.committee.outdate();
+    let (late, _) = call(&n.app, Some(COMMITTEE_KEY), "GET", &path, None).await;
+    assert_eq!(late, 401);
 }
 
 /// A committee member who also creates the collection on chain decides its

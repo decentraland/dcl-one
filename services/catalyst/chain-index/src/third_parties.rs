@@ -85,14 +85,9 @@ pub fn is_provider_id(id: &str) -> bool {
             .any(|c| c == '|' || c.is_whitespace() || c == '\u{FEFF}')
 }
 
-/// Every provider of the registry, sorted by id; `Err` when the node has no
-/// registry subgraph, the subgraph fails, or an answer breaks the walk.
-pub async fn registry(index: &ChainIndex) -> Result<Vec<Provider>, String> {
-    let url = index
-        .settings
-        .third_party_registry_subgraph_url
-        .as_deref()
-        .ok_or("no third-party registry subgraph is configured")?;
+/// Every provider of the registry subgraph at `url`, sorted by id; `Err`
+/// when the subgraph fails or an answer breaks the walk.
+pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, String> {
     let mut providers: Vec<Provider> = Vec::new();
     for _ in 0..MAX_PAGES {
         let id_from = providers
@@ -146,14 +141,9 @@ pub async fn registry(index: &ChainIndex) -> Result<Vec<Provider>, String> {
 const RECEIPT: &str = "query receipt($id: ID!) { receipts(first: 1, where: { id: $id }) { id } }";
 
 /// Whether the registry holds the receipt `id`, the digest of a slot cheque
-/// it consumed (lowercase `0x` hex); `Err` when the node has no registry
-/// subgraph, the subgraph fails, or its answer names another receipt.
-pub async fn receipt_exists(index: &ChainIndex, id: &str) -> Result<bool, String> {
-    let url = index
-        .settings
-        .third_party_registry_subgraph_url
-        .as_deref()
-        .ok_or("no third-party registry subgraph is configured")?;
+/// it consumed (lowercase `0x` hex) at the registry subgraph `url`; `Err`
+/// when the subgraph fails or its answer names another receipt.
+pub async fn receipt_exists(index: &ChainIndex, url: &str, id: &str) -> Result<bool, String> {
     let data = graph_query(index, url, RECEIPT, json!({ "id": id })).await?;
     match data
         .get("receipts")
@@ -366,6 +356,19 @@ mod tests {
         index
     }
 
+    fn url(index: &ChainIndex) -> &str {
+        index
+            .settings
+            .third_party_registry_subgraph_url
+            .as_deref()
+            .unwrap()
+    }
+
+    async fn read(fake: &Fake) -> Result<Vec<Provider>, String> {
+        let index = index(fake).await;
+        registry(&index, url(&index)).await
+    }
+
     fn record(id: &str) -> Value {
         json!({
             "id": id,
@@ -391,7 +394,10 @@ mod tests {
         let fake = Fake::default();
         let index = index(&fake).await;
         *fake.receipts.lock().unwrap() = Some(vec![json!({ "id": consumed })]);
-        assert_eq!(receipt_exists(&index, &consumed).await, Ok(true));
+        assert_eq!(
+            receipt_exists(&index, url(&index), &consumed).await,
+            Ok(true)
+        );
         let body = fake.bodies.lock().unwrap().last().cloned().unwrap();
         assert_eq!(body["variables"], json!({ "id": consumed }));
         assert!(
@@ -401,7 +407,7 @@ mod tests {
                 .contains("receipts(first: 1, where: { id: $id })")
         );
         *fake.receipts.lock().unwrap() = Some(vec![]);
-        assert_eq!(receipt_exists(&index, &other).await, Ok(false));
+        assert_eq!(receipt_exists(&index, url(&index), &other).await, Ok(false));
         for answer in [
             None,
             Some(vec![json!({ "id": other })]),
@@ -410,12 +416,12 @@ mod tests {
         ] {
             *fake.receipts.lock().unwrap() = answer.clone();
             assert!(
-                receipt_exists(&index, &consumed).await.is_err(),
+                receipt_exists(&index, url(&index), &consumed)
+                    .await
+                    .is_err(),
                 "{answer:?}"
             );
         }
-        let unconfigured = ChainIndex::new(Outbound::for_tests(), IndexSettings::for_tests());
-        assert!(receipt_exists(&unconfigured, &consumed).await.is_err());
     }
 
     #[tokio::test]
@@ -428,7 +434,7 @@ mod tests {
         unapproved["metadata"] = Value::Null;
         set(&fake, Some(vec![record(P1), unapproved]));
         let index = index(&fake).await;
-        let providers = registry(&index).await.unwrap();
+        let providers = registry(&index, url(&index)).await.unwrap();
         assert_eq!(
             providers,
             vec![
@@ -481,7 +487,7 @@ mod tests {
             .collect();
         set(&fake, Some(records));
         let index = index(&fake).await;
-        let providers = registry(&index).await.unwrap();
+        let providers = registry(&index, url(&index)).await.unwrap();
         assert_eq!(providers.len(), 1500);
         assert_eq!(fake.hits.load(Ordering::SeqCst), 2);
         assert_eq!(
@@ -502,19 +508,22 @@ mod tests {
             .collect();
         set(&fake, Some(records));
         let index = index(&fake).await;
-        let err = registry(&index).await.unwrap_err();
+        let err = registry(&index, url(&index)).await.unwrap_err();
         assert!(err.contains("longer than"), "{err}");
         assert_eq!(fake.hits.load(Ordering::SeqCst), MAX_PAGES);
     }
 
     #[tokio::test]
-    async fn a_failing_or_missing_registry_fails_the_read() {
+    async fn a_failing_registry_fails_the_read() {
         let fake = Fake::default();
         set(&fake, None);
         let index = index(&fake).await;
-        assert!(registry(&index).await.unwrap_err().contains("errors"));
-        let unset = ChainIndex::new(Outbound::for_tests(), IndexSettings::for_tests());
-        assert!(registry(&unset).await.unwrap_err().contains("configured"));
+        assert!(
+            registry(&index, url(&index))
+                .await
+                .unwrap_err()
+                .contains("errors")
+        );
     }
 
     #[tokio::test]
@@ -526,7 +535,7 @@ mod tests {
         rootless["metadata"]["type"] = json!("third_party_v1");
         let polygon = record("urn:decentraland:polygon:collections-thirdparty:gamma");
         set(&fake, Some(vec![rootless, polygon, record(P2)]));
-        let providers = registry(&index(&fake).await).await.unwrap();
+        let providers = read(&fake).await.unwrap();
         let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -578,7 +587,7 @@ mod tests {
             let mut bad = record(P1);
             bad[field] = value.clone();
             set(&fake, Some(vec![record(P2), bad]));
-            let providers = registry(&index(&fake).await).await.unwrap();
+            let providers = read(&fake).await.unwrap();
             assert_eq!(providers.len(), 2, "{field} = {value}");
             assert_eq!(providers[0].id, P2, "{field} = {value}");
             assert_eq!(providers[0].managers, vec![M1.to_string()]);
@@ -592,7 +601,7 @@ mod tests {
         ] {
             let fake = Fake::default();
             set(&fake, Some(vec![record(P2), record(id)]));
-            let providers = registry(&index(&fake).await).await.unwrap();
+            let providers = read(&fake).await.unwrap();
             assert_eq!(providers.len(), 2, "{id:?}");
             assert!(providers.contains(&nobody_manages(id)), "{id:?}");
         }
@@ -605,7 +614,7 @@ mod tests {
             let mut bad = record(P1);
             bad["id"] = id.clone();
             set(&fake, Some(vec![record(P2), bad]));
-            let providers = registry(&index(&fake).await).await.unwrap();
+            let providers = read(&fake).await.unwrap();
             assert_eq!(providers.len(), 1, "{id}");
             assert_eq!(providers[0].id, P2);
         }
@@ -615,12 +624,7 @@ mod tests {
     async fn an_answer_that_breaks_the_walk_fails_the_whole_read() {
         let fake = Fake::default();
         set(&fake, Some(vec![record(P1), record(P1)]));
-        assert!(
-            registry(&index(&fake).await)
-                .await
-                .unwrap_err()
-                .contains("twice")
-        );
+        assert!(read(&fake).await.unwrap_err().contains("twice"));
     }
 
     #[test]

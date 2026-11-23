@@ -11,6 +11,7 @@ use crate::collections::listing::{CommitteeListing, ListQuery, OwnListing, Publi
 use crate::committee::Member;
 use crate::http::{ApiData, ApiError};
 use crate::items::listing::ItemsOut;
+use crate::kept::Since;
 use crate::shared::signed_fetch::AUTH_CHAIN_HEADER_PREFIX;
 
 /// `GET /v1/collections/:id`, for whoever `access::read_collection` admits.
@@ -124,19 +125,12 @@ async fn list_collections(
         Some(member) => {
             state
                 .items
-                .committee_collections(
-                    &CommitteeListing::new(&member, &q, review_flow)?,
-                    &state.third_parties,
-                    state.market.as_ref(),
-                )
+                .committee_collections(&CommitteeListing::new(&member, &q, review_flow)?, &state)
                 .await?
         }
         None => {
             let search = PublicSearch::new(&q, review_flow)?.ok_or_else(|| unauthorized_for(""))?;
-            let found = state
-                .items
-                .public_collections(&search, &state.third_parties, state.market.as_ref())
-                .await?;
+            let found = state.items.public_collections(&search, &state).await?;
             crate::limits::charge(
                 state,
                 headers,
@@ -213,13 +207,12 @@ pub async fn get_address_items(
 }
 
 /// `GET /v1/committee`: the current committee members, unauthenticated;
-/// 503 while the committee index can't tell.
+/// 503 while the committee can't tell.
 pub async fn get_committee(
     State(state): State<SharedState>,
 ) -> Result<Json<ApiData<Vec<Member>>>, ApiError> {
-    Ok(Json(ApiData::ok(
-        crate::committee::members(state.items.pool(), &state.settings.network).await?,
-    )))
+    let members = state.committee.members(&state, Since::read()).await?;
+    Ok(Json(ApiData::ok(members.to_vec())))
 }
 
 #[cfg(test)]
@@ -250,7 +243,6 @@ mod tests {
     async fn state(committee: &str) -> Option<SharedState> {
         let pool = crate::tests::support::scratch_pool(4).await?;
         let fake = FakeCommittee::with(&[committee]);
-        fake.publish(&pool).await;
         let market = committee_index(&fake).await;
         Some(Arc::new(
             crate::State::new(

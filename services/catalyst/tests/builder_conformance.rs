@@ -1952,7 +1952,8 @@ fn roles(seed: &Seed, roles: &[String]) -> Vec<String> {
 }
 
 /// A loopback Polygon collections subgraph that answers `seed.chain`'s
-/// `rarities`, and a third-party
+/// `rarities` and its `committee` as `accounts` (ordered by id, paged by
+/// `first` and `skip`), and a third-party
 /// registry subgraph beside it (`/graph/third-parties`) that answers the
 /// node's walk with `seed.registry`, each provider as the capture's fake
 /// serves it; returns both URLs.
@@ -1982,6 +1983,11 @@ async fn chain_subgraphs(seed: &Seed) -> (String, String) {
         .map(|r| serde_json::json!({ "id": r.name, "name": r.name, "price": r.price, "maxSupply": r.max_supply }))
         .collect();
     let listed = serde_json::json!({ "data": { "rarities": rarities } });
+    let mut committee: Vec<String> = roles(seed, &seed.chain.committee)
+        .iter()
+        .map(|m| m.to_ascii_lowercase())
+        .collect();
+    committee.sort();
     let receipts: Vec<Value> = seed
         .receipts
         .iter()
@@ -2001,7 +2007,26 @@ async fn chain_subgraphs(seed: &Seed) -> (String, String) {
     let app = Router::new()
         .route(
             "/graph/collections",
-            axum::routing::post(move || async move { axum::Json(listed) }),
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let (listed, committee) = (listed.clone(), committee.clone());
+                async move {
+                    if !body["query"]
+                        .as_str()
+                        .is_some_and(|q| q.contains("accounts"))
+                    {
+                        return axum::Json(listed);
+                    }
+                    let skip = body["variables"]["skip"].as_u64().unwrap_or(0) as usize;
+                    let first = body["variables"]["first"].as_u64().unwrap_or(100) as usize;
+                    let page: Vec<Value> = committee
+                        .into_iter()
+                        .skip(skip)
+                        .take(first)
+                        .map(|m| serde_json::json!({ "id": m, "address": m }))
+                        .collect();
+                    axum::Json(serde_json::json!({ "data": { "accounts": page } }))
+                }
+            }),
         )
         .route(
             "/graph/third-parties",
@@ -2346,24 +2371,6 @@ async fn seed(pool: &sqlx::PgPool, seed: &Seed) {
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
          VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now())), \
                 ('items', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-    for (log_index, member) in roles(seed, &seed.chain.committee).iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO shop.committee_event (network, block_number, log_index, block_time, contract_address, member, is_member) \
-             VALUES ('matic', 1, $1, 1, '0xaeec95a8aa671a6d3fec56594827d7804964fa70', $2, true)",
-        )
-        .bind(log_index as i32)
-        .bind(member.to_ascii_lowercase())
-        .execute(pool)
-        .await
-        .unwrap_or_else(|e| panic!("seed.json committee member {member}: {e}"));
-    }
-    sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
-         VALUES ('committee', 'matic', 0, 1, 1, 1, timezone('UTC', now()), true, 137)",
     )
     .execute(pool)
     .await
