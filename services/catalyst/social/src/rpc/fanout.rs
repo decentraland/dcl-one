@@ -244,12 +244,25 @@ impl Event {
         (bytes.len() <= MAX_STORED_BYTES).then_some(bytes)
     }
     fn decode(bytes: &[u8], local: Uuid) -> Option<Self> {
-        if bytes.len() > MAX_BYTES {
-            return None;
+        let envelope = (bytes.len() <= MAX_BYTES)
+            .then(|| serde_json::from_slice::<Envelope>(bytes).ok())
+            .flatten();
+        match envelope {
+            Some(envelope) if envelope.source == local => None,
+            Some(envelope) if envelope.version == 1 && envelope.event.validate() => {
+                Some(envelope.event)
+            }
+            _ => {
+                // An older replica rejects a newer kind; count it rather than drop silently.
+                let kind = serde_json::from_slice::<serde_json::Value>(bytes)
+                    .ok()
+                    .and_then(|value| value["event"]["kind"].as_str().map(str::to_owned));
+                tracing::debug!(?kind, len = bytes.len(), "undecodable social event dropped");
+                metrics::counter!("social_event_delivery_dropped", "reason" => "undecodable_inbound")
+                    .increment(1);
+                None
+            }
         }
-        let envelope: Envelope = serde_json::from_slice(bytes).ok()?;
-        (envelope.version == 1 && envelope.source != local && envelope.event.validate())
-            .then_some(envelope.event)
     }
     pub(crate) fn encode_stored(&self) -> Option<Vec<u8>> {
         let Self::CommunityVoice {

@@ -349,8 +349,11 @@ async fn accept_announces_online_friends_on_every_replica() {
             silent(receiver).await;
         }
         for receiver in [&mut requester_left, &mut requester_right] {
+            // Wait until the receiver goes quiet, independent of announcement order.
             let mut heard = Vec::new();
-            while let Ok(event) = receiver.try_recv() {
+            while let Ok(Ok(event)) =
+                tokio::time::timeout(Duration::from_millis(300), receiver.recv()).await
+            {
                 heard.extend(connectivity(&event));
             }
             if accepter_online {
