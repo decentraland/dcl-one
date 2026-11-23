@@ -6,6 +6,7 @@
 //! can be neither deployed nor recorded is counted lost, and the caller must not
 //! advance its cursor past it.
 
+use futures::FutureExt;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -171,14 +172,24 @@ impl SyncProgress {
     }
 }
 
-/// An entity's queue slot: released, then `on_idle` woken, even when its task panics.
+/// An entity's queue slot: released, then `on_idle` woken, even when its task panics. An
+/// entity whose outcome was never settled is counted lost, so the sync frontier holds.
 struct InFlight {
     permit: Option<tokio::sync::OwnedSemaphorePermit>,
     idle_notify: Arc<tokio::sync::Notify>,
+    lost: Arc<AtomicU64>,
+    report: Option<Arc<DeploymentReport>>,
+    settled: bool,
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
+        if !self.settled {
+            self.lost.fetch_add(1, Ordering::SeqCst);
+            if let Some(report) = &self.report {
+                report.record_lost();
+            }
+        }
         drop(self.permit.take());
         self.idle_notify.notify_waiters();
     }
@@ -345,11 +356,14 @@ impl BatchDeployer {
         }
 
         tokio::spawn(async move {
-            let slot = InFlight {
+            let mut slot = InFlight {
                 permit: Some(slot),
                 idle_notify,
+                lost: lost.clone(),
+                report: report.clone(),
+                settled: false,
             };
-            let result = super::deploy_remote_entity::deploy_entity_streaming(
+            let deploy = super::deploy_remote_entity::deploy_entity_streaming(
                 super::deploy_remote_entity::ContentSource {
                     client: &http_client,
                     storage,
@@ -365,8 +379,12 @@ impl BatchDeployer {
                     retry_state: None,
                     discard_overtaken: false,
                 },
-            )
-            .await;
+            );
+            // A panic is a failed deployment, recorded like any other.
+            let result = std::panic::AssertUnwindSafe(deploy)
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|_| Err(SyncError::Other("the deployment task panicked".into())));
 
             let acknowledged = match result {
                 Ok(()) => {
@@ -423,6 +441,7 @@ impl BatchDeployer {
                 report.record_acknowledged();
             }
 
+            slot.settled = true;
             drop(slot);
             progress.maybe_summarize(
                 queue_depth - queue.available_permits(),
@@ -928,6 +947,56 @@ mod tests {
             description.starts_with("Validation undecided:"),
             "{description}"
         );
+    }
+
+    /// A contract wallet whose every answer panics.
+    struct PanickingWallet;
+
+    #[async_trait::async_trait]
+    impl crate::auth::Eip1654Validator for PanickingWallet {
+        async fn validate_signature(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            panic!("contract wallet check panicked")
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+            _block: u64,
+        ) -> Result<bool, crate::auth::AuthError> {
+            panic!("contract wallet check panicked")
+        }
+    }
+
+    /// A deploy task that panics still lets `on_idle` return, and its entity is a recorded
+    /// failure, retried like any other.
+    #[tokio::test]
+    async fn a_deploy_task_that_panics_is_recorded_as_failed_and_on_idle_returns() {
+        let synced = tokio::time::timeout(
+            Duration::from_secs(60),
+            sync_outfits(
+                CONTRACT_SIGNER,
+                Chain::BehindContract,
+                Some(Arc::new(PanickingWallet)),
+            ),
+        )
+        .await
+        .expect("on_idle returned");
+        let Some(outcome) = synced else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        assert_eq!(outcome.active, None);
+        assert!(outcome.due, "retried");
+        let (retry_count, description) = outcome.failure.expect("recorded as failed");
+        assert_eq!(retry_count, 0);
+        assert!(description.contains("panicked"), "{description}");
     }
 
     /// Mainnet contracts over `chain` on both layers.
