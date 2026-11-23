@@ -802,19 +802,8 @@ async fn a_closed_udp_port_is_unreachable_and_reopens_with_the_flow_intact() {
 
     link.restore();
     // the flow continues from the same upstream port: the server sees the same client
-    let mut echoed = false;
-    for _ in 0..100 {
-        let _ = client.send(b"back").await;
-        if let Ok(Ok(length)) =
-            tokio::time::timeout(Duration::from_millis(50), client.recv(&mut buffer)).await
-            && &buffer[..length] == b"echo:back"
-        {
-            echoed = true;
-            break;
-        }
-    }
     assert!(
-        echoed,
+        echoes_again(&client).await,
         "nothing passed after the port reopened\n{}",
         link_timeline(&ctx)
     );
