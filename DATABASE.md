@@ -561,6 +561,26 @@ contention. Community opt-out UUIDs are canonicalized on write and lookup;
 event and community delivery recognize existing non-canonical UUID scopes too.
 Lookup binds optional UUID parameters parsed in Rust, preserving opaque legacy
 scope IDs without relying on guarded casts of SQL parameters.
+All six event notice kinds use one `(address, broadcast_key)` per event and
+type. A repeated notice refreshes only when `metadata.occurredAt` is strictly
+newer; equal source times keep the first payload. Visibility and read state stay
+as first stored, and only a new row creates a delivery. Notification rows remain
+the durable deduplication evidence after intent and terminal delivery cleanup.
+Runtime and the notification import hold the same transaction locks through
+historical identity adoption and upsert. Each wallet maps to one of 256 buckets:
+`(1163284052, (hashtextextended(address, 0) & 255)::integer)` in PostgreSQL's
+two-integer advisory namespace. Distinct buckets are locked in numeric order,
+bounding retained event locks at 256 even during whole-transaction dry runs. An existing keyed carrier
+wins; otherwise the earliest exact native event match retains its ID. Existing
+historical duplicates are not deleted. The import also recognizes exact source
+IDs, retains event keys and never creates email deliveries.
+
+History adoption performs up to 100 wallet/type/event probes per recipient page.
+`notifications_event_history_idx` indexes only unkeyed rows with an eventId, in
+wallet/type/event and creation order. New carriers leave the partial index;
+unrelated notices without that field do not enter it. The index is a new object
+installed by the schema object pass on existing databases, without a reset.
+
 Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
 [event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
@@ -578,6 +598,17 @@ The read projection materializes the normalized preview once per event row and
 excludes SQL-null preview entries. Local membership probes retain the
 `event_attendance_local` primary-key lookup; cancellation and going deltas share
 that preview instead of expanding its JSON separately for every local RSVP.
+
+The Events import records the exact timestamp and payload it wrote in
+`dcl_migration.event_attendance_loaded`, keyed by event and signer. Its whole-set
+attendance reconciliation deletes an upstream-missing row only while it still
+has that imported `going` state, timestamp and payload. Later local changes and
+unrecorded local rows are retained; an empty source requires explicit approval
+through the importer's `--allow-empty` option. Pre-ledger imported rows already
+missing upstream require an earlier authoritative export before activation;
+current rows alone do not establish their origin. The notification import needs
+a full restart from retained source history to repair older missing event keys.
+Missing source notice identities likewise require earlier export evidence.
 
 Event authoring distinguishes generated posters from explicit images and clears
 inside the existing event document. Generated images may follow location

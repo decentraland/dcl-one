@@ -4,7 +4,7 @@ Nginx public entry for APIs and Sites (routing source).
 
 The exact `/places/place?position=...` and `/places/world?name=...` endpoints, including their trailing-slash forms, stay backend social cards; `/places/place/<position>`, `/places/world/<name>` and their `.data` requests go to Sites, and the JSON catalogue stays under `/places/api`.
 
-The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
+The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the legacy website origin used by sitemaps, world-event default posters and Slack links. Notification page links use the independent `EVENTS_SITE_URL` Sites origin (default `https://decentraland.org`).
 
 Referral quotas, the `POST /entities` burst limit and daily quota, the
 `/auth-api` pending sign-in caps and the
