@@ -499,3 +499,32 @@ async fn retention_deletes_only_rows_past_it() {
         .unwrap();
     assert_eq!(left, [fresh.key().to_string()]);
 }
+
+/// Removing a mirrored copy is not a change of this node's: no scenes event.
+#[tokio::test]
+async fn removing_a_mirrored_scene_records_no_scenes_event() {
+    let Some(f) = isolated().await else { return };
+    let world = world_name();
+    sqlx::query(
+        "INSERT INTO worlds.worlds (name, mirror_source) VALUES ($1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source) \
+         VALUES ($1, 'mirrored', '[]', $2, '0xabc', ARRAY['0,0'], 1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .bind(scene_entity(&world, "Mirrored", "bafythumb", "0,0", &["0,0"]))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    let removed = store::undeploy_scene(&f.pool, &world, Parcel::parse("0,0").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(rows(&f).await, 0);
+}

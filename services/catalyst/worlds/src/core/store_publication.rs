@@ -3,10 +3,10 @@ use super::*;
 
 /// `$delete` (a `DELETE FROM worlds.world_scenes ...`) moving the rows it
 /// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL);
-/// with `RETURNED`, the statement returns their `entity_id, entity, parcels`.
+/// with `RETURNED`, the statement returns their `entity_id, entity, parcels, mirror_source`.
 macro_rules! retiring {
     ($delete:literal, RETURNED) => {
-        concat!(retiring!($delete), " RETURNING entity_id, entity, parcels")
+        concat!(retiring!($delete), " RETURNING entity_id, entity, parcels, mirror_source")
     };
     ($delete:literal) => {
         concat!(
@@ -533,7 +533,8 @@ enum Undeploy {
     Scenes,
 }
 
-/// `sql` is a [`retiring!`] delete returning `entity_id, entity, parcels`.
+/// `sql` is a [`retiring!`] delete returning `entity_id, entity, parcels, mirror_source`.
+/// A removed mirrored scene is not this node's change: the scenes event leaves it out.
 async fn delete_scenes_locked(
     pool: &PgPool,
     world: &WorldName,
@@ -550,10 +551,10 @@ async fn delete_scenes_locked(
         .execute(&mut *tx)
         .await?;
     let emitted_at = change_log::emission_clock(&mut tx).await?;
-    let removed: Vec<change_log::RemovedScene> = bind(sqlx::query(sql))
-        .fetch_all(&mut *tx)
-        .await?
+    let rows = bind(sqlx::query(sql)).fetch_all(&mut *tx).await?;
+    let removed: Vec<change_log::RemovedScene> = rows
         .iter()
+        .filter(|row| row.get::<Option<String>, _>("mirror_source").is_none())
         .map(|row| change_log::RemovedScene {
             entity_id: row.get("entity_id"),
             entity: row.get("entity"),
@@ -576,7 +577,7 @@ async fn delete_scenes_locked(
         }
     }
     tx.commit().await?;
-    Ok(removed.len() as u64)
+    Ok(rows.len() as u64)
 }
 
 /// The spawn after scenes left the world (WCS `undeployScene`/`undeployWorld`):

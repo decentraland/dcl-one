@@ -172,16 +172,13 @@ impl Settings {
         self
     }
 
-    /// Also derives the public worlds base from it, unless one was set.
     pub fn with_public_url(mut self, public_url: &str) -> Self {
         self.public_url = public_url.trim_end_matches('/').to_string();
-        if self.worlds_public_url.is_empty() {
-            self.worlds_public_url = worlds_base_of(&self.public_url);
-        }
         self
     }
 
-    /// `WORLDS_PUBLIC_URL`; `None` or blank keeps `<public_url>/worlds-content-server`.
+    /// `WORLDS_PUBLIC_URL`, after [`Self::with_public_url`]; `None` or blank is
+    /// `<public_url>/worlds-content-server`.
     pub fn with_worlds_public_url(mut self, url: Option<&str>) -> Self {
         match url.map(str::trim).filter(|u| !u.is_empty()) {
             Some(url) => self.worlds_public_url = url.trim_end_matches('/').to_string(),
@@ -819,6 +816,35 @@ async fn request_timeout(
 #[cfg(test)]
 mod redaction_tests {
     use super::*;
+
+    #[test]
+    fn the_public_worlds_base_derives_from_the_public_url_unless_set() {
+        let derived = Settings::for_tests(None)
+            .with_public_url("https://node.example/")
+            .with_worlds_public_url(None);
+        assert_eq!(
+            derived.worlds_public_url,
+            "https://node.example/worlds-content-server"
+        );
+        let nested = Settings::for_tests(None)
+            .with_public_url("https://node.example/worlds-content-server")
+            .with_worlds_public_url(None);
+        assert_eq!(
+            nested.worlds_public_url,
+            "https://node.example/worlds-content-server"
+        );
+        let set = Settings::for_tests(None)
+            .with_public_url("https://node.example")
+            .with_worlds_public_url(Some("https://worlds.node.example/"));
+        assert_eq!(set.worlds_public_url, "https://worlds.node.example");
+        let blank = Settings::for_tests(None)
+            .with_public_url("https://node.example")
+            .with_worlds_public_url(Some(" "));
+        assert_eq!(
+            blank.worlds_public_url,
+            "https://node.example/worlds-content-server"
+        );
+    }
 
     #[test]
     fn debug_output_never_carries_the_admin_token() {
