@@ -227,7 +227,7 @@ pub struct PulseServer {
     // driver actually releases the peer ID.
     admitted_connections: HashSet<u32>,
     pub(super) max_admitted_connections: usize,
-    pre_auth: PreAuthAdmission,
+    pub pre_auth: PreAuthAdmission,
 
     pub max_emote_duration_ms: u32,
 

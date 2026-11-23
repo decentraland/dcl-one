@@ -263,7 +263,7 @@ async fn handshake_swarm_passes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
     let mut server = PulseServer::new();
-    server.pre_auth_enet = PreAuthAdmission::new(0, 0);
+    server.pre_auth = PreAuthAdmission::new(0, 0);
     let failure = failure_of(&run(server, &HANDSHAKE_SWARM, 1).await);
     assert!(failure.contains("allowed"), "{failure}");
     assert!(failure.contains("accepted"), "{failure}");
@@ -272,7 +272,7 @@ async fn handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn handshake_swarm_fails_against_a_server_that_refuses_within_the_budget() {
     let mut server = PulseServer::new();
-    server.pre_auth_enet = PreAuthAdmission::new(4, 512);
+    server.pre_auth = PreAuthAdmission::new(4, 512);
     let failure = failure_of(&run(server, &HANDSHAKE_SWARM, 1).await);
     assert!(failure.contains("within the budget"), "{failure}");
     assert!(failure.contains("PreAuthIpLimitExhausted"), "{failure}");
@@ -534,7 +534,7 @@ async fn webtransport_handshake_swarm_passes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn webtransport_handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
     let mut server = PulseServer::new();
-    server.pre_auth_wt = PreAuthAdmission::new(0, 0);
+    server.pre_auth = PreAuthAdmission::new(0, 0);
     let failure =
         failure_of(&run_webtransport_on(server, |_| {}, &HANDSHAKE_SWARM, options(1)).await);
     assert!(failure.contains("allowed"), "{failure}");
@@ -544,7 +544,7 @@ async fn webtransport_handshake_swarm_fails_against_a_server_without_a_per_addre
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn webtransport_handshake_swarm_fails_against_a_server_that_refuses_within_the_budget() {
     let mut server = PulseServer::new();
-    server.pre_auth_wt = PreAuthAdmission::new(4, 512);
+    server.pre_auth = PreAuthAdmission::new(4, 512);
     let failure =
         failure_of(&run_webtransport_on(server, |_| {}, &HANDSHAKE_SWARM, options(1)).await);
     assert!(failure.contains("within the budget"), "{failure}");
