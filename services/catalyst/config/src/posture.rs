@@ -920,10 +920,6 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),
-    (
-        "ACCOUNT_DELETION_ALLOWED_ORIGINS",
-        "compared to incoming Origin headers; the node never dials these hosts",
-    ),
     ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
     ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),

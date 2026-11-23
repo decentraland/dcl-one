@@ -105,13 +105,8 @@ pub struct NodeConfig {
     #[arg(long, env = "MAGIC_SECRET_KEY", hide_env_values = true)]
     pub magic_secret_key: Option<String>,
 
-    /// Exact browser origins authorized to request Magic account deletion.
-    #[arg(
-        long,
-        env = "ACCOUNT_DELETION_ALLOWED_ORIGINS",
-        value_delimiter = ';',
-        default_value = "https://decentraland.org;https://account.decentraland.org;https://play.decentraland.org"
-    )]
+    /// Exact browser origins authorized to request Magic account deletion. Empty refuses all origins.
+    #[arg(long, env = "ACCOUNT_DELETION_ALLOWED_ORIGINS", value_delimiter = ';')]
     pub account_deletion_allowed_origins: Vec<String>,
 
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
