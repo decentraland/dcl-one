@@ -7,6 +7,7 @@ import { fakeSession, renderSettled } from '../harness'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { mapPins } from '@explorer-core/features/map/mapPins'
+import { MARKER_ART } from '../../features/map/mapArt'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
 // The layer data is one store for the page, read the first time a map asks: the live event is there
@@ -242,13 +243,13 @@ describe('minimap layers', () => {
     const container = await renderAt()
     act(() =>
       mapPins.receive([
-        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid', icon: null },
-        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' }
+        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid' },
+        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally' }
       ])
     )
     const pins = container.querySelectorAll('[data-marker="pins"]')
     expect(pins.length).toBe(2)
-    expect(pins[1].querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
+    expect(pins[1].querySelector('img')).toHaveAttribute('src', MARKER_ART.quest)
     act(() => mapLayers.set('pins', false))
     expect(container.querySelectorAll('[data-marker="pins"]').length).toBe(0)
   })

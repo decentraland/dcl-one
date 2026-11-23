@@ -2106,14 +2106,36 @@ storage order (a local deploy may be signed up to 15 minutes ahead, a synced
 one long before), and a cursor on it would skip every profile stored after
 one signed later and every tie past a page edge. Its first pass starts at the
 head. A batch seeds baselines and claims first wears (`social.worn_history`)
-in the transaction that advances the cursor, and notifies after it commits,
-so a restart never re-notifies a claim. Its batch is
+and stores their notification obligations in `social.first_wear_outbox`
+in the transaction that advances the cursor. The queue retains the wearer
+name and URN independently of deployment retention. Its batch is
 `BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
 (600 s), and it publishes the same lag and gap gauges under its source. A profile the
 node stored more than 24 hours after its entity timestamp is history a
 syncing node caught up on and is passed without effect; the lag is measured
 at storage, so a stalled producer still works through its backlog.
 `social.first_wear_cursor` is no longer read.
+
+First-wear intake pauses at 5,000 queued obligations. A final deployment batch
+can cross this threshold. The queue continues to drain when intake is paused or
+fails. The worker claims up to 16 due wears in one statement, ordered by
+`(retry_at, address, urn)`. A two-minute reservation makes interrupted work
+eligible again. It starts at most 50 pages and stops starting items after one
+minute per drain. Each item's marketplace lookup has a 20-second timeout.
+Losing the job lease cancels the pass.
+
+Failed transport or timed-out lookups retry after the notification delivery
+backoff (30 seconds, doubling per failure). The fifth failure ends the
+obligation. Each drain expires obligations 24 hours after the wear's signed timestamp
+or enqueue time, whichever came first. The worker logs expiry counts and pauses
+in intake. Two consecutive transient failures on one network pause lookups on
+that network for the rest of the drain, leaving the other network eligible. Invalid reader URLs,
+invalid subgraph responses, missing readers, unknown or unbuyable items,
+no active friends and suppressed recipients also complete without a notice.
+The wear stays in history after completion. External reads run outside the
+completion transaction. A transaction advisory lock serializes recipient rate
+checks with notice insertion, delivery intents and removal of the obligation.
+The foreign key cascades removal of a history row to its obligation.
 
 ### Presence badges flow
 

@@ -8,7 +8,7 @@
 //! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
-//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
+//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`, `first_wear_outbox`,
 //! `land_transfer_cursor`; the first-wear cursor is the `friend_first_wear`
 //! row of `badge_cursors`.
 //!
