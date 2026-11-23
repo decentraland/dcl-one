@@ -90,19 +90,6 @@ describe('lobby controls', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Jump In' })).toBeInTheDocument())
   })
 
-  it("keeps focus off Customize after a pointer's click and on it after a keyboard one", () => {
-    const session = fakeSession()
-    render(lobby(session))
-    const customize = screen.getByRole('button', { name: 'Customize' })
-    customize.focus()
-    fireEvent.click(customize, { detail: 1 })
-    expect(customize).not.toHaveFocus()
-    customize.focus()
-    fireEvent.click(customize, { detail: 0 })
-    expect(customize).toHaveFocus()
-    expect(session.backpack.toggle).toHaveBeenCalledTimes(2)
-  })
-
   it("jumps to a live world event only when its server is a world's name", () => {
     const session = fakeSession()
     const now = new Date()

@@ -9801,11 +9801,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "885866d44eac6ada7820031a41d1d9c2f8000148f44b1d45a4ea8014b2135e9a"
+      "sha256": "b91d6a38c82f27986737a2af6449526b285b942215a5afc869b709022bf32d09"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "7d607688bc34e7162eca8903e7e5a83d201331e91e069fddb20cd7c25bb36a99"
+      "sha256": "ff43e9fb816ca3894ee43971c389167e8fb9cc40762dae389dd2e11ad23898a0"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -10805,7 +10805,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "b295eb3c5f04f91b27acef83722d406fa0df6cbd74f55af28a6194bba0e90609"
+      "sha256": "4744a714e7a27d233cd53ac3d1f82c28e58434f20b0d893111c6a9c8d2fc9def"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",

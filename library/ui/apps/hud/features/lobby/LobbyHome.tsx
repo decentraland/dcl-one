@@ -523,13 +523,11 @@ export function LobbyHome({
     setRotating(false)
     if (p.dragging) showAvatarTip(toCanvas(e.clientX, e.clientY))
   }
-  const onAvatarClick = (e: React.MouseEvent<HTMLButtonElement>): void => {
+  const onAvatarClick = (): void => {
     if (dragged.current) {
       dragged.current = false
       return
     }
-    // a pointer's click leaves no focus behind: a key pressed over the Backpack would ring the avatar
-    if (e.detail > 0) e.currentTarget.blur()
     clickButton('CUSTOMIZE', 'LOBBY')
     setAvatarTip(false)
     moveOn()
