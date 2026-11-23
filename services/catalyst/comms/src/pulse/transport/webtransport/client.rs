@@ -7,7 +7,7 @@
 //! byte pipe driven by repeated [`Client::service`] calls; framing and sequencing are the
 //! caller's ([`super::framing`]).
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
@@ -116,8 +116,16 @@ impl Client {
 
         let url = url::Url::parse(&config.url).map_err(|e| ClientError::Config(e.to_string()))?;
         let cert_hash = config.server_cert_hash;
+        // Match the socket family of pinned IPv4 loopback servers.
+        let local = local.or_else(|| match url.host() {
+            Some(url::Host::Ipv4(ip)) if ip.is_loopback() && cert_hash.is_some() => {
+                Some(Ipv4Addr::LOCALHOST.into())
+            }
+            _ => None,
+        });
 
-        let connecting = async move {
+        let stage = std::cell::Cell::new("establishing the WebTransport session");
+        let connecting = async {
             let client = match (local, cert_hash) {
                 (Some(local), Some(hash)) => bound_client(local, hash)?,
                 (Some(_), None) => {
@@ -137,6 +145,7 @@ impl Client {
                 .connect(url)
                 .await
                 .map_err(|e| ClientError::Connect(e.to_string()))?;
+            stage.set("opening the reliable stream");
             // Client opens the reliable bidi stream; the server accepts it (server `accept_bi`).
             let (send, recv) = session.open_bi().await.map_err(|error| match error {
                 SessionError::WebTransportError(WebTransportError::Closed(code, reason)) => {
@@ -146,11 +155,15 @@ impl Client {
             })?;
             Ok::<_, ClientError>((session, send, recv))
         };
-        let (session, send, recv) = runtime.block_on(async move {
+        let (session, send, recv) = runtime.block_on(async {
             match timeout {
-                Some(limit) => tokio::time::timeout(limit, connecting)
-                    .await
-                    .map_err(|_| ClientError::Connect(format!("no session within {limit:?}")))?,
+                Some(limit) => match tokio::time::timeout(limit, connecting).await {
+                    Ok(result) => result,
+                    Err(_) => Err(ClientError::Connect(format!(
+                        "timed out after {limit:?} while {}",
+                        stage.get()
+                    ))),
+                },
                 None => connecting.await,
             }
         })?;
