@@ -11,7 +11,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from cache_sweep_fixture import FakeGh
+# Relative when run as a package module (python -m unittest tooling.tests.<module>), top-level under discovery.
+if __package__:
+    from .cache_sweep_fixture import FakeGh
+else:
+    from cache_sweep_fixture import FakeGh
 
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'

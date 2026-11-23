@@ -12,7 +12,11 @@ import textwrap
 import unittest
 from unittest.mock import patch
 
-from cache_sweep_fixture import CLEANUP, FakeGh, sweep_script
+# Relative when run as a package module (python -m unittest tooling.tests.<module>), top-level under discovery.
+if __package__:
+    from .cache_sweep_fixture import CLEANUP, FakeGh, sweep_script
+else:
+    from cache_sweep_fixture import CLEANUP, FakeGh, sweep_script
 
 
 SPEC = importlib.util.spec_from_file_location('image_cache', Path(__file__).parents[1] / 'image-cache.py')

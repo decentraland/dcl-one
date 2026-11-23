@@ -37,14 +37,18 @@ class FakeGh:
             return self._ok({'resources': {'core': {'remaining': self.remaining}}})
         if args[:2] == ['api', 'graphql']:
             query = next(arg for arg in args if arg.startswith('query='))
-            numbers = re.findall(r'p([0-9]+): pullRequest', query)
+            # GitHub answers under each alias the state of the PR its argument names, whatever the alias says.
+            pairs = re.findall(r'(p[0-9]+): pullRequest\(number: ([0-9]+)\)', query)
+            assert pairs, query
             return self._ok({'data': {'repository': {
-                f'p{number}': {'state': 'MERGED' if number in self.closed else 'OPEN'} for number in numbers}}})
+                alias: {'state': 'MERGED' if number in self.closed else 'OPEN'} for alias, number in pairs}}})
         if self._deletion(args):
             return subprocess.CompletedProcess(command, 0, stdout='', stderr='')
         if self._listing(args):
             if self.listing_error:
                 return subprocess.CompletedProcess(command, 1, stdout='', stderr=self.listing_error)
+            # Every page in one JSON array is what `--paginate --slurp` returns; without both, gh would not.
+            assert '--paginate' in args and '--slurp' in args, command
             return self._ok(self.pages)
         raise AssertionError(f'unexpected gh call: {command}')
 
