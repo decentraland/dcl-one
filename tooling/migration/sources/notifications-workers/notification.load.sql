@@ -1,5 +1,5 @@
--- No delivery rows: imported history is never e-mailed again. Read state
--- only moves forward, so a read on the node survives a re-import.
+-- No delivery rows: imported history is never emailed again. Event carriers
+-- retain their reads; other kinds merge reads forward across reimports.
 
 -- ── ingest id (identical in the notification, broadcast_read and broadcast loads) ──
 -- governance_/reward_ rows take ingest.rs `Ingested::id` (v5 in INGEST_NS over the compact
@@ -59,29 +59,77 @@ $f$;
 
 CREATE TEMP TABLE nw_notification ON COMMIT DROP AS
 SELECT s.id AS source_id, pg_temp.nw_ingest_id(s.type, s.address, s.event_key, s.id) AS id,
-       s.address, s.type, s.metadata, s.occurred_at, s.read_at, s.created_at, s.updated_at
+       s.address, s.type,
+       CASE WHEN s.event_key <> '' AND s.type IN
+            ('events_starts_soon','events_started','event_created','event_approved','event_rejected','event_deleted')
+            THEN s.metadata || jsonb_build_object('eventId',s.event_key,'occurredAt',s.occurred_at)
+            ELSE s.metadata END AS metadata,
+       CASE WHEN s.event_key <> '' AND s.type IN
+            ('events_starts_soon','events_started','event_created','event_approved','event_rejected','event_deleted')
+            THEN 'event-notice:' || s.type || ':' || s.event_key END AS broadcast_key,
+       s.occurred_at, s.read_at, s.created_at, s.updated_at
 FROM stage s;
+
+-- Runtime and import adopt the same carrier under the same ordered bucket locks.
+DO $locks$
+BEGIN
+    PERFORM pg_advisory_xact_lock(1163284052, bucket)
+    FROM (SELECT DISTINCT (hashtextextended(address, 0) & 255)::integer AS bucket
+          FROM nw_notification WHERE broadcast_key IS NOT NULL ORDER BY bucket) buckets;
+END $locks$;
+
+UPDATE social.notifications t SET broadcast_key=c.broadcast_key
+FROM (
+    SELECT DISTINCT ON (n.address,n.broadcast_key) n.address,n.broadcast_key,
+           (SELECT old.id FROM social.notifications old
+            WHERE old.address=n.address AND old.type=n.type AND old.broadcast_key IS NULL
+              AND (old.id=n.source_id OR old.metadata->>'eventId'=n.metadata->>'eventId')
+            ORDER BY old.created_at,old.id LIMIT 1) AS carrier
+    FROM nw_notification n
+    WHERE n.broadcast_key IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM social.notifications keyed
+                      WHERE keyed.address=n.address AND keyed.broadcast_key=n.broadcast_key)
+    ORDER BY n.address,n.broadcast_key,n.created_at,n.source_id
+) c WHERE t.id=c.carrier;
+
+UPDATE nw_notification n SET id=t.id
+FROM social.notifications t
+WHERE n.broadcast_key IS NOT NULL AND t.address=n.address AND t.broadcast_key=n.broadcast_key;
+
+-- Case-normalized source duplicates also share one ID when there is no carrier yet.
+UPDATE nw_notification n SET id=c.id
+FROM (
+    SELECT DISTINCT ON (address,broadcast_key) address,broadcast_key,id
+    FROM nw_notification WHERE broadcast_key IS NOT NULL
+    ORDER BY address,broadcast_key,created_at,id
+) c WHERE n.address=c.address AND n.broadcast_key=c.broadcast_key;
 
 -- An earlier import kept the upstream id: carry its read over, then drop it.
 UPDATE nw_notification n SET read_at = least(n.read_at, o.read_at)
 FROM social.notifications o
-WHERE o.id = n.source_id AND n.id <> n.source_id AND o.address = n.address AND o.type = n.type AND o.read;
+WHERE o.id = n.source_id AND n.id <> n.source_id AND o.address = n.address AND o.type = n.type AND o.read AND n.broadcast_key IS NULL;
 
 DELETE FROM social.notifications o USING nw_notification n
-WHERE o.id = n.source_id AND n.id <> n.source_id AND o.address = n.address AND o.type = n.type;
+WHERE o.id = n.source_id AND n.id <> n.source_id AND o.address = n.address AND o.type = n.type AND n.broadcast_key IS NULL;
 
 -- Upstream rows whose addresses differ only in case share an ingest id: the newest wins, the earliest read stays.
 INSERT INTO social.notifications
-    (id, address, type, metadata, occurred_at, read, read_at, created_at, in_app)
+    AS t
+    (id, address, type, metadata, occurred_at, read, read_at, created_at, in_app, broadcast_key)
 SELECT DISTINCT ON (id) id, address, type, metadata, occurred_at,
-       first_read IS NOT NULL, first_read, created_at, true
+       first_read IS NOT NULL, first_read, created_at, true, broadcast_key
 FROM (SELECT n.*, min(n.read_at) OVER (PARTITION BY n.id) AS first_read FROM nw_notification n) n
-ORDER BY id, updated_at DESC, source_id
+ORDER BY id, CASE WHEN broadcast_key IS NOT NULL THEN occurred_at END DESC, updated_at DESC, source_id
 ON CONFLICT (id) DO UPDATE
    SET type = EXCLUDED.type,
-       metadata = EXCLUDED.metadata,
-       occurred_at = EXCLUDED.occurred_at,
-       read = social.notifications.read OR EXCLUDED.read,
-       read_at = CASE WHEN social.notifications.read
-                      THEN social.notifications.read_at
-                      ELSE EXCLUDED.read_at END;
+       metadata = CASE WHEN EXCLUDED.broadcast_key IS NULL OR
+           EXCLUDED.occurred_at > COALESCE(CASE WHEN pg_input_is_valid(t.metadata->>'occurredAt','timestamp with time zone')
+               THEN (t.metadata->>'occurredAt')::timestamptz END, '-infinity'::timestamptz)
+           THEN EXCLUDED.metadata ELSE t.metadata END,
+       occurred_at = CASE WHEN EXCLUDED.broadcast_key IS NULL OR
+           EXCLUDED.occurred_at > COALESCE(CASE WHEN pg_input_is_valid(t.metadata->>'occurredAt','timestamp with time zone')
+               THEN (t.metadata->>'occurredAt')::timestamptz END, '-infinity'::timestamptz)
+           THEN EXCLUDED.occurred_at ELSE t.occurred_at END,
+       read = CASE WHEN EXCLUDED.broadcast_key IS NOT NULL THEN t.read ELSE t.read OR EXCLUDED.read END,
+       read_at = CASE WHEN EXCLUDED.broadcast_key IS NOT NULL OR t.read
+                      THEN t.read_at ELSE EXCLUDED.read_at END;

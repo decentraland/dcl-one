@@ -48,7 +48,7 @@ export function worldsBase(override?: string): string {
   return worldsUrl(override);
 }
 
-export type QueryValue = string | number | boolean | undefined | null;
+export type QueryValue = string | number | boolean | readonly string[] | undefined | null;
 export type Query = Record<string, QueryValue>;
 
 export function buildQuery(query?: Query): string {
@@ -56,7 +56,11 @@ export function buildQuery(query?: Query): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null || value === "") continue;
-    params.set(key, String(value));
+    if (Array.isArray(value)) {
+      for (const item of value) if (item) params.append(key, item);
+    } else {
+      params.set(key, String(value));
+    }
   }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
