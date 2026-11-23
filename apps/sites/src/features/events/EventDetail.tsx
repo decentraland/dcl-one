@@ -49,8 +49,9 @@ export function remindControl(reminder: Reminder): RemindControl {
 }
 
 /**
- * An event's detail dialog, as the events page and a community page open it in place. Without a
- * session id (`sid`) it records no telemetry.
+ * An event's detail dialog, as the events page and a community page open it in place. Both record
+ * its views and Jump Ins under the events page's story; without a session id (`sid`, which a client
+ * navigation has none of) it records none.
  */
 export function EventDetail({
   sid,
@@ -64,7 +65,7 @@ export function EventDetail({
   onClose,
 }: {
   profiles: CreatorProfiles;
-  sid: string;
+  sid?: string;
   event: Event;
   zone: Zone;
   origin: string;
