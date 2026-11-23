@@ -207,7 +207,7 @@ fn active_entity_projection(mode: MetadataProjection) -> String {
     };
     let files = match mode {
         MetadataProjection::TextThumbnail => {
-            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> '' AND cf.key NOT LIKE 'http%'"
+            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> ''"
         }
         _ => "",
     };

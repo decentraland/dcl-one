@@ -801,6 +801,16 @@ describe('lobby layout editor', () => {
     expect(vi.mocked(openCommunityModal)).toHaveBeenCalledTimes(2)
   })
 
+  it('lists ten communities at most', () => {
+    setPref(PREF.lobbyLayout, JSON.stringify({ Version: 1, Entries: [{ Corner: 'BottomLeft', Widget: 'Communities7By2', X: 0, Y: 0 }] }))
+    const session = fakeSession()
+    session.communities.list = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: `Club ${i}`, description: '', membersCount: 3, role: 'member' as const, ownerName: 'o' }))
+    render(lobby(session))
+    const rail = screen.getByRole('group', { name: 'My Communities' })
+    expect(within(rail).getAllByRole('button', { name: /^View Club / })).toHaveLength(10)
+    expect(within(rail).getAllByRole('button', { name: /^Page / })).toHaveLength(4)
+  })
+
   it('lists only the widgets off the grids and places one on a click', () => {
     render(lobby(fakeSession()))
     fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))

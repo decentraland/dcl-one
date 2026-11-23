@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Import our verified Bevy web build for Sites; never fall back to an npm engine."""
 import argparse
+from datetime import datetime
 import fcntl
 import hashlib
 import importlib.util
@@ -38,6 +39,8 @@ WORKFLOW = '.github/workflows/bevy-explorer-ci.yml'
 PRODUCER = 'Web engine, HUD and bridge scene'
 UPLOAD_STEP = 'Upload the complete web app'
 MAX_BYTES = 2 * 1024**3
+MAIN_PAGES = 10
+MAX_REJECTED = 5
 
 
 def server_error(stderr):
@@ -65,12 +68,19 @@ def rate_limited(stderr):
         re.search(r'\bHTTP 403\b', stderr) and re.search(r'rate limit', stderr, re.IGNORECASE))
 
 
+def unread_status(stderr):
+    # gh could not parse a JSON error body and printed no HTTP status; it may be a 4xx.
+    return 'unexpected end of JSON input' in stderr
+
+
 def read(request, deadline=None, limit=60, attempts=None, transient=transient_read):
     # Retry reads within the caller's existing wait budget. Non-waiting imports
     # and final publication checks get only four retries; `attempts` caps the
     # tries in either mode. No writes are repeated. A rate limit backs off from
     # one minute, a server error from two seconds; both double up to a cap.
-    attempt = 0
+    # A rate limit gets four retries of its own even inside a wait: the wait is for a Bevy build, and the
+    # repository's token budget can stay spent for the hour. So does an error whose status gh could not read.
+    attempt = throttled = unread_tries = 0
     while True:
         timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
         if timeout <= 0:
@@ -81,12 +91,25 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
             stderr = exc.stderr.decode(errors='replace') if isinstance(exc.stderr, bytes) else (exc.stderr or '')
             if isinstance(exc, subprocess.CalledProcessError) and stderr:
                 print(stderr, file=sys.stderr, end='')
-            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
-                attempt >= 4 if deadline is None else time.monotonic() >= deadline)
             limited = isinstance(exc, subprocess.CalledProcessError) and rate_limited(stderr)
-            if exhausted or not (isinstance(exc, subprocess.TimeoutExpired) or limited or transient(stderr)):
+            unread = isinstance(exc, subprocess.CalledProcessError) and unread_status(stderr)
+            if attempts is not None and attempt + 1 >= attempts:
+                exhausted = True
+            elif deadline is None:
+                exhausted = attempt >= 4
+            elif limited:
+                exhausted = throttled >= 4
+            elif unread:
+                exhausted = unread_tries >= 4
+            else:
+                exhausted = time.monotonic() >= deadline
+            if exhausted and limited:
+                print('GitHub kept rate limiting this repository token; rerun this job once its API budget resets.',
+                      file=sys.stderr, flush=True)
+            if exhausted or not (isinstance(exc, subprocess.TimeoutExpired) or limited or unread or transient(stderr)):
                 raise
-            delay = min(240, 60 * 2 ** min(attempt, 2)) if limited else min(30, 2 ** min(attempt + 1, 5))
+            step = attempt if deadline is None else throttled
+            delay = min(240, 60 * 2 ** min(step, 2)) if limited else min(30, 2 ** min(attempt + 1, 5))
             if deadline is not None:
                 delay = min(delay, max(0, deadline - time.monotonic()))
             cause = 'GitHub rate limit' if limited else 'Transient GitHub read failure'
@@ -95,6 +118,8 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
             if deadline is not None and time.monotonic() >= deadline:
                 raise
             attempt += 1
+            throttled += bool(limited)
+            unread_tries += bool(unread)
 
 
 def api(path, deadline=None):
@@ -118,16 +143,18 @@ def download(record, archive):
     read(request, limit=300, attempts=2, transient=lambda stderr: not re.search(r'\bHTTP 4\d\d\b', stderr))
 
 
-def workflow_runs(deadline=None):
-    # Paginate without search filters: branch/head_sha searches cap results at
-    # 1,000. Trust and PR identity are checked locally, on every returned run.
-    page = 1
-    while True:
-        rows = api(f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&page={page}', deadline)['workflow_runs']
-        yield from rows
+def workflow_runs(pr=None, deadline=None):
+    # Only main runs and the PR's own runs are trusted (checked locally on each run). A filtered
+    # query stops at 1,000 results: main's newest 1,000 runs.
+    path = 'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100'
+    own = api(f'{path}&head_sha={pr["head"]}', deadline)['workflow_runs'] if pr else []
+    yield from own
+    seen = {row['id'] for row in own}
+    for page in range(1, MAIN_PAGES + 1):
+        rows = api(f'{path}&branch=main&page={page}', deadline)['workflow_runs']
+        yield from (row for row in rows if row['id'] not in seen)
         if len(rows) < 100:
             return
-        page += 1
 
 
 def poll_runs(pending, deadline=None):
@@ -163,6 +190,15 @@ def inputs_at(revision):
         return artifact.inputs(ROOT, revision)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def commit_time(revision):
+    """The committer time of a fetched commit in epoch seconds; None when unreadable."""
+    try:
+        done = subprocess.run(['git', 'log', '-1', '--format=%ct', revision], cwd=ROOT, capture_output=True, text=True)
+    except OSError:
+        return None
+    return int(done.stdout) if done.returncode == 0 and str(done.stdout).strip().isdigit() else None
 
 
 def engine_changed(pr):
@@ -349,14 +385,16 @@ def fetch(wait=0, production=False, receipt=None):
     match_inputs = production or engine_changed(pr)
     deadline = time.monotonic() + wait
     read_deadline = deadline if wait > 0 else None
+    # Only a non-engine PR takes main builds of other inputs; inputs_at() fetched its base.
+    based = commit_time(pr['base']) if pr and pr.get('base') and not match_inputs else None
     poll_delay = 2
     checked = set()
     keys = {}
     # The newest Bevy run of this commit and why it cannot supply the build: named for a rerun.
     head = pr['head'] if pr else os.environ.get('GITHUB_SHA')
-    newest, hint = 0, None
+    newest, hint, rejected = 0, None, 0
     # History is read newest first, and only as far as the search needs it.
-    history = workflow_runs(read_deadline)
+    history = workflow_runs(pr, read_deadline)
     candidates, swept, pending = history, False, set()
     while True:
         seen, pending, paused, expired = pending, set(), False, False
@@ -423,6 +461,15 @@ def fetch(wait=0, production=False, receipt=None):
                     # still fits; a digest or archive error on a trusted artifact must be seen.
                     print(f'::warning::Skipping Bevy run {run["id"]} ({revision[:8]}): {exc}', flush=True)
                     checked.add(attempt)
+                    # A rejected build older than the PR's base predates a change the tree has, as older ones do.
+                    if (candidates is history and based is not None and not isinstance(exc, json.JSONDecodeError)
+                            and datetime.fromisoformat(run['created_at']).timestamp() < based):
+                        rejected += 1
+                        if rejected == MAX_REJECTED:
+                            hint = (f'None of the {MAX_REJECTED} newest main web builds older than this PR\'s base '
+                                    'verified against this tree (each error is above). Rebase on main, or rerun this '
+                                    'job once main has a newer successful Bevy CI build. ')
+                            break
         except TimeoutError:
             # The wait ended inside a read: name the runs last seen under way.
             pending |= seen
@@ -443,6 +490,8 @@ def fetch(wait=0, production=False, receipt=None):
             else:
                 recovery += ('Refresh main with: gh workflow run bevy-explorer-ci.yml --ref main. '
                              'Wait for its successful web build, then retry with matching inputs. ')
+                if hint is None:
+                    recovery += f'Only main\'s newest {MAIN_PAGES * 100:,} runs are searched. '
             if not production:
                 recovery += ('For local development, build with make bevy-web and use '
                              '--from-build apps/bevy-explorer/dist/web. ')
@@ -453,7 +502,7 @@ def fetch(wait=0, production=False, receipt=None):
         print(f'Waiting for a successful {gate} {wanted} '
               f'({"matching run in progress" if pending else "no matching uploaded producer"})', flush=True)
         time.sleep(min(poll_delay, max(0, deadline - time.monotonic())))
-        poll_delay = min(poll_delay * 2, 30)
+        poll_delay = min(poll_delay * 2, 120)
         candidates = poll_runs(pending, read_deadline)
 
 

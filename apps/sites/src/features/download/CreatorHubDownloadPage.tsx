@@ -18,6 +18,8 @@ const copy = { title: "Decentraland Creator Hub" };
 
 type Props = {
   sid: string;
+  /** The verified wallet, sent as the download Click's `userId`. */
+  userId?: string | null;
   version: string;
   /** The link named a system or a chip. */
   overridden: boolean;
@@ -33,6 +35,7 @@ type Props = {
 /** The Creator Hub download page: the installer for this system and the other builds under it. */
 export default function CreatorHubDownloadPage({
   sid,
+  userId,
   version,
   overridden,
   macChipUnknown,
@@ -42,7 +45,7 @@ export default function CreatorHubDownloadPage({
   secondary,
 }: Props) {
   const [offered, setOffered] = useState({ primary, others: secondary });
-  const onDownload = useCreatorHubDownloadClick(sid);
+  const onDownload = useCreatorHubDownloadClick({ sid, userId }, "download-page");
   const viewed = useRef<string | null>(null);
 
   useEffect(() => {

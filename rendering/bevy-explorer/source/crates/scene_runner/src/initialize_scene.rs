@@ -28,7 +28,10 @@ use common::{
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
 };
-use comms::global_crdt::{CrdtContexts, GlobalCrdtState};
+use comms::{
+    global_crdt::{CrdtContexts, GlobalCrdtState},
+    SceneBanGate,
+};
 use dcl_component::{
     proto_components::sdk::components::{PbMainCamera, PbRealmInfo, PbVisibilityComponent},
     DclReader, DclWriter, SceneComponentId, SceneEntityId,
@@ -1782,6 +1785,7 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
+    bans: SceneBanGate,
     time: Res<Time>,
     config: Res<AppConfig>,
 ) {
@@ -1885,6 +1889,12 @@ pub fn process_scene_lifecycle(
         }
     }));
     keep_scene_ids.extend(ring_scenes(rings.live_keep.into()));
+
+    let allowed = |scene: &(String, Option<String>)| {
+        portable_ids.contains(scene) || !bans.is_banned(&scene.0)
+    };
+    required_scene_ids.retain(|scene, _| allowed(scene));
+    keep_scene_ids.retain(allowed);
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

@@ -20,9 +20,9 @@ while IFS= read -r line; do
   line="${line%%#*}"
   [[ "$line" =~ ^[[:space:]]*$ ]] && continue
   if [[ "$line" =~ ^\[([a-z]+)\] ]]; then section="${BASH_REMATCH[1]}"; continue; fi
-  if [[ "$section" == layers && "$line" =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+  if [[ "$section" == layers && "$line" =~ ^[[:space:]]*([a-z0-9_]+)[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
     layer["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
-  elif [[ "$section" == allow && "$line" =~ ^[[:space:]]*\"([a-z_]+)\ -\>\ ([a-z_]+)\"[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+  elif [[ "$section" == allow && "$line" =~ ^[[:space:]]*\"([a-z0-9_]+)\ -\>\ ([a-z0-9_]+)\"[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
     allow["${BASH_REMATCH[1]} -> ${BASH_REMATCH[2]}"]="${BASH_REMATCH[3]}"
   fi
 done <"$LAYERS"
@@ -37,16 +37,16 @@ refs_of() {
   local m="$1" p dir="${m//_/-}/src"
   for p in "src/$m" "src/$m.rs"; do
     [[ -e "$p" ]] || continue
-    { rg --no-filename -o '\bcrate::[a-z_]+' "$p" || true; } | sed -E 's/^crate:://'
-    { rg --no-filename -o '\bcatalyst_[a-z_]+::' "$p" || true; } | sed -E 's/^catalyst_//; s/::$//'
+    { rg --no-filename -o '\bcrate::[a-z0-9_]+' "$p" || true; } | sed -E 's/^crate:://'
+    { rg --no-filename -o '\bcatalyst_[a-z0-9_]+::' "$p" || true; } | sed -E 's/^catalyst_//; s/::$//'
   done
   [[ -f "${m//_/-}/Cargo.toml" ]] || return 0
   {
-    rg --no-filename -o -r 'alias $2$3 $1' '\buse catalyst_([a-z_]+)(?: as ([a-z_]+)|::([a-z_]+));' "$dir/lib.rs" || true
-    rg --no-filename -o -r 'ref $1' '\bcrate::([a-z_]+)' "$dir" || true
+    rg --no-filename -o -r 'alias $2$3 $1' '\buse catalyst_([a-z0-9_]+)(?: as ([a-z0-9_]+)|::([a-z0-9_]+));' "$dir/lib.rs" || true
+    rg --no-filename -o -r 'ref $1' '\bcrate::([a-z0-9_]+)' "$dir" || true
     # (an alias line `use catalyst_<d>::<x>;` is already the alias above)
-    rg --no-filename '\bcatalyst_[a-z_]+::' "$dir" | rg -v '^\s*pub\(crate\) use catalyst_[a-z_]+::[a-z_]+;' |
-      rg -o -r 'dep $1' '\bcatalyst_([a-z_]+)::' || true
+    rg --no-filename '\bcatalyst_[a-z0-9_]+::' "$dir" | rg -v '^\s*pub\(crate\) use catalyst_[a-z0-9_]+::[a-z0-9_]+;' |
+      rg -o -r 'dep $1' '\bcatalyst_([a-z0-9_]+)::' || true
   } | awk '$1 == "alias" { a[$2] = $3; next } $1 == "ref" { if ($2 in a) print a[$2]; next } { print $2 }'
 }
 

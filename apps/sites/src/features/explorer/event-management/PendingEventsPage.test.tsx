@@ -26,6 +26,28 @@ const SETTINGS = "/events/api/profiles/me/settings";
 const EVENTS = "/events/api/events";
 const moderation = (id: string, body: unknown) => ["/events/api/events/" + id, body, expect.objectContaining({ method: "PATCH" })];
 
+// Records each dialog named `name` that React adds to the page from now on, including one that a
+// later commit removes again: a synchronous query after the action sees only the final page.
+function watchDialogMounts(name: string) {
+  const mounted: string[] = [];
+  const record = (records: MutationRecord[]) => {
+    for (const { addedNodes } of records) {
+      for (const node of addedNodes) {
+        if (!(node instanceof Element)) continue;
+        const dialogs = [node, ...node.querySelectorAll("*")].filter((el) => el.getAttribute("role") === "dialog" || el.tagName === "DIALOG");
+        if (dialogs.some((dialog) => dialog.textContent?.includes(name))) mounted.push(name);
+      }
+    }
+  };
+  const observer = new MutationObserver(record);
+  observer.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    record(observer.takeRecords());
+    observer.disconnect();
+    return mounted;
+  };
+}
+
 describe("when opening the Pending Events page", () => {
   let identity: AuthIdentity;
   let api: FakeEventsApi;
@@ -62,6 +84,25 @@ describe("when opening the Pending Events page", () => {
       expect(await screen.findByRole("button", { name: "Sign in" })).toBeTruthy();
       await waitFor(() => expect(openSignIn).toHaveBeenCalledWith({ redirectTo: PATH }));
       expect(signedGetJSON).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("and a pending event has a cover uploaded to the page's own http origin", () => {
+    const poster = "/events-assets-099ac00/poster/abc.png";
+
+    beforeEach(() => {
+      expect(window.location.protocol).toBe("http:");
+      api.events = [makeEvent({ image: `${window.location.origin}${poster}` })];
+    });
+
+    it("should show the cover on its card, and pass the review the same path", async () => {
+      renderAdminPage(<PendingEventsPage />, PATH);
+      const pending = await screen.findByRole("region", { name: "Pending Events" });
+      const card = (await within(pending).findByRole("link", { name: "Moon concert" })).closest("li")!;
+      expect(card.querySelector("img")?.getAttribute("src")).toBe(poster);
+      await user.click(within(pending).getByRole("link", { name: "Moon concert" }));
+      const review = await screen.findByRole("dialog", { name: "Moon concert" });
+      expect(review.querySelector("img")?.getAttribute("src")).toBe(poster);
     });
   });
 
@@ -242,6 +283,18 @@ describe("when opening the Pending Events page", () => {
     await waitFor(() => expect(readsOf(EVENTS)).toBe(2));
   });
 
+  it("should open the same review again after a moderation closed it", async () => {
+    renderAdminPage(<PendingEventsPage />, PATH);
+    await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(currentPath()).toBe(PATH));
+    // The fake queue still lists the event, as the API does until its next read settles.
+    await user.click(screen.getByRole("link", { name: "Moon concert" }));
+    expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+    expect(screen.getByRole("dialog", { name: "Moon concert" })).toBeTruthy();
+  });
+
   it("should open the review a deep link names", async () => {
     renderAdminPage(<PendingEventsPage />, `${PATH}?id=pending-one`);
     expect(await screen.findByRole("dialog", { name: "Moon concert" })).toBeTruthy();
@@ -305,10 +358,13 @@ describe("when opening the Pending Events page", () => {
     await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
     await user.click(within(reject).getByRole("checkbox", { name: /Invalid location/ }));
     await user.type(within(reject).getByRole("textbox", { name: "Other (optional)" }), "Wrong parcel");
+    const reviewMounts = watchDialogMounts("Moon concert");
     await user.click(within(reject).getByRole("button", { name: "Submit" }));
     expect(await screen.findByText("Event/Experience rejected successfully")).toBeTruthy();
     expect(postJSON).toHaveBeenCalledWith(...moderation("pending-one", { rejected: true, rejection_reason: "Invalid image, Invalid location. Wrong parcel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+    // The review the rejection replaced does not come back while the closed review leaves the URL.
+    expect(reviewMounts()).toEqual([]);
   });
 
   it("should return to the review when the rejection is cancelled", async () => {
@@ -356,7 +412,7 @@ describe("when opening the Pending Events page", () => {
       await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
       expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(currentPath()).toBe(PATH);
+      await waitFor(() => expect(currentPath()).toBe(PATH));
     });
 
     it("should close the reason dialog and report a rejection", async () => {
@@ -365,9 +421,11 @@ describe("when opening the Pending Events page", () => {
       await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reject" }));
       const reject = screen.getByRole("dialog", { name: "Reject Reason*" });
       await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
+      const reviewMounts = watchDialogMounts("Moon concert");
       await user.click(within(reject).getByRole("button", { name: "Submit" }));
       expect(await screen.findByText("Event/Experience rejected successfully")).toBeTruthy();
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(reviewMounts()).toEqual([]);
     });
 
     it("should report a failed approval and let it be tried again", async () => {

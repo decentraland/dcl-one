@@ -130,8 +130,14 @@
   color: var(--dcl-text-link);
 }
 
+/* The export names wrap between names on a narrow window instead of widening the page. */
+.exports {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--dcl-space-8);
+}
+
 .exports code {
-  margin-inline-end: var(--dcl-space-8);
   color: var(--dcl-text-primary);
 }
 
@@ -152,6 +158,7 @@
 
 .control {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--dcl-space-8);
   font-size: 14px;
@@ -175,9 +182,21 @@
   background: var(--dcl-bg-page);
 }
 
+.fit {
+  margin-inline: auto;
+}
+
 .canvas {
   max-inline-size: none;
   margin-inline: auto;
+  /* A canvas drawn scaled down to fit keeps its layout size; the frame around it takes the scaled size. */
+  transform-origin: 0 0;
+}
+
+.scaled {
+  margin: 0 0 var(--dcl-space-8);
+  color: var(--dcl-text-secondary);
+  font-size: 13px;
 }
 
 /* A HUD canvas is a window: the HUD scales to its width and height, fixes dialogs to it and scrolls inside. Narrow
