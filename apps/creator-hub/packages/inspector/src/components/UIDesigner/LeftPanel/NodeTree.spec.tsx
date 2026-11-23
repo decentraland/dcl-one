@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import { setNodeHidden, setNodeLocked } from '../../../redux/ui-designer';
 import type { UINode } from '../shared/tree-model';
+import { Container } from '../../Icons/figma';
 import { NodeTree } from './NodeTree';
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ vi.mock('../../Tree', () => {
     value: UINode;
     doubleClick?: string;
     renderActionArea: (n: UINode, tabIndex: 0 | -1) => React.ReactNode;
+    getIcon?: (n: UINode) => React.ReactNode;
     renderRenameField?: (
       n: UINode,
       p: { label: string; onSubmit: (v: string) => void; onCancel: () => void },
@@ -26,11 +28,13 @@ vi.mock('../../Tree', () => {
   };
   const Row = ({
     value,
+    getIcon,
     doubleClick,
     renderActionArea,
     renderRenameField,
   }: RowProps): JSX.Element => (
     <div data-double-click={doubleClick}>
+      <span className="row-icon">{getIcon?.(value)}</span>
       {renderRenameField?.(value, { label: value.name, onSubmit: () => {}, onCancel: () => {} })}
       {renderActionArea(value, 0)}
       {value.children.map(child => (
@@ -103,6 +107,13 @@ describe('NodeTree row actions', () => {
     it('should offer no delete button, since delete lives in the menu and on the key', () => {
       render(<NodeTree />);
       expect(screen.queryByRole('button', { name: 'Delete Panel' })).toBeNull();
+    });
+
+    it('should draw the node with its library icon at 16', () => {
+      const { container } = render(<Container fontSize="small" />);
+      const expected = container.querySelector('svg')!.outerHTML;
+      render(<NodeTree />);
+      expect(document.querySelectorAll('.row-icon svg')[0].outerHTML).toBe(expected);
     });
 
     it('should rename in the rail field, named after the node', () => {

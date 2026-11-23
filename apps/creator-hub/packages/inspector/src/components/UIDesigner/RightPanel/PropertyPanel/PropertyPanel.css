@@ -74,6 +74,11 @@
   align-items: center;
   gap: var(--uid-space-2);
   padding: var(--uid-space-2) var(--uid-space-3) 0;
+  color: var(--title);
+}
+
+.ui-designer-component-ref-glyph {
+  font-size: 18px;
 }
 
 .ui-designer-panel-header-checks {
@@ -94,13 +99,11 @@
 .ui-designer-panel-header-icon {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--sub-text);
+  font-size: 18px;
 }
 
 .ui-designer-panel-header-icon svg {
   display: block;
-  width: 14px;
-  height: 14px;
 }
 
 .ui-designer-panel-header-name {
@@ -109,7 +112,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--title);
   font-size: 13px;
   font-weight: 600;
 }
