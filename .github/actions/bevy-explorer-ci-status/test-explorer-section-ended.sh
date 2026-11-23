@@ -239,6 +239,12 @@ export GH_FAIL_RUN_EXIT=42
 expect "a failed read of the run is a hard error, not an answer" "" 42
 unset GH_FAIL_RUN_EXIT
 
+new_scenario run-read-failed-incomplete-list
+jobs_json 'Changes:completed:success' > "$SCENARIO/jobs.1.json"
+export GH_FAIL_RUN_EXIT=42
+expect "a failed read of the run for an incomplete list is a hard error" "" 42
+unset GH_FAIL_RUN_EXIT
+
 echo
 if [ "$FAILURES" -gt 0 ]; then
   echo "$FAILURES failed, $PASSES passed"
