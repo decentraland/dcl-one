@@ -107,8 +107,8 @@ pub struct LeftDragCamera<'w, 's> {
     pan: Option<ResMut<'w, LeftDragPan>>,
     ui_target: Option<Res<'w, UiPointerTarget>>,
     action_target: Option<Res<'w, PointerActionTarget>>,
-    camera: Query<'w, 's, (&'static PrimaryCamera, Has<PhotoMode>)>,
     focus: Option<Res<'w, ClientWindowFocus>>,
+    _p: PhantomData<&'s ()>,
 }
 
 impl LeftDragCamera<'_, '_> {
@@ -122,14 +122,15 @@ impl LeftDragCamera<'_, '_> {
         }
     }
 
-    /// Advances the pan one frame; returns whether it holds the camera lock.
+    /// Advances the pan one frame; returns whether it holds the camera lock. `camera_blocked` is
+    /// what the caller knows already stops the pan this frame (a dialog, the camera held by the
+    /// right button or a scene, a scene camera, photo mode).
     fn tick(
         &mut self,
         input: &InputManager,
         window: &Window,
         enabled: bool,
-        dialog_open: bool,
-        camera_held_elsewhere: bool,
+        camera_blocked: Option<Reason>,
     ) -> bool {
         if self.pan.is_none() {
             return false;
@@ -137,21 +138,9 @@ impl LeftDragCamera<'_, '_> {
         let pointer = Action::Scene(CommonInputAction::IaPointer);
         let press = input.just_down(pointer, InputPriority::Scene);
         let panning = self.is_panning();
-        let (primary, photo) = self
-            .camera
-            .single()
-            .map_or((None, false), |(c, p)| (Some(c), p));
 
-        let blocked = if dialog_open {
-            Some(Reason::Dialog)
-        } else if camera_held_elsewhere {
-            Some(Reason::CameraLocked)
-        } else if primary
-            .is_some_and(|c| matches!(c.scene_override, Some(CameraOverride::Cinematic(_))))
-        {
-            Some(Reason::Cinematic)
-        } else if photo {
-            Some(Reason::PhotoMode)
+        let blocked = if camera_blocked.is_some() {
+            camera_blocked
         } else if self
             .action_target
             .as_ref()
@@ -214,7 +203,7 @@ pub fn update_pointer_lock(
     )>,
     changed_pointer_locks: Query<&PointerLock, Changed<PointerLock>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
+    camera: Query<(&Camera, &GlobalTransform, &PrimaryCamera, Has<PhotoMode>)>,
     mut prev_coords: Local<(Option<Vec2>, Option<Vec2>)>,
     mut locks: ResMut<CursorLocks>,
     config: Res<AppConfig>,
@@ -229,7 +218,7 @@ pub fn update_pointer_lock(
     let Ok(window) = window.single() else {
         return;
     };
-    let Ok((camera, camera_position)) = camera.single() else {
+    let Ok((camera, camera_position, primary, photo_mode)) = camera.single() else {
         return;
     };
 
@@ -292,13 +281,25 @@ pub fn update_pointer_lock(
     }
     *dialog_was_open = dialog_open;
 
+    // the right button held or toggled already holds the camera: a left press then is a click
+    // on the entity under the reticle, never a pan
+    let camera_blocked = if dialog_open {
+        Some(Reason::Dialog)
+    } else if state == ClickState::Held || *toggle {
+        Some(Reason::CameraLocked)
+    } else if matches!(primary.scene_override, Some(CameraOverride::Cinematic(_))) {
+        Some(Reason::Cinematic)
+    } else if photo_mode {
+        Some(Reason::PhotoMode)
+    } else {
+        None
+    };
     let was_panning = left_drag.is_panning();
     let panning = left_drag.tick(
         input_manager,
         window,
         config.left_drag_camera,
-        dialog_open,
-        *toggle,
+        camera_blocked,
     );
     if panning && !was_panning {
         platform_pointer_lock_requested();
@@ -392,7 +393,7 @@ mod tests {
         structs::PointerTargetType,
     };
     use dcl_types::SceneId;
-    use input_manager::{CumulativeAxisData, InputPriorities};
+    use input_manager::{CumulativeAxisData, InputPriorities, InputType};
     use prost::Message;
     use scene_material::SceneBounds;
 
@@ -646,10 +647,19 @@ mod tests {
     fn a_dialog_mid_drag_ends_the_pan_for_good() {
         let mut rig = Rig::new(true);
         rig.drag();
+        // as `SetUiFocus` does: the HUD surface takes all input at the UI level
         rig.app.world_mut().resource_mut::<HudFocus>().0 = true;
+        rig.app
+            .world_mut()
+            .resource_mut::<InputPriorities>()
+            .reserve(InputType::All, InputPriority::Ui);
         rig.frame();
         assert!(!rig.camera_locked());
         rig.app.world_mut().resource_mut::<HudFocus>().0 = false;
+        rig.app
+            .world_mut()
+            .resource_mut::<InputPriorities>()
+            .release(InputType::All, InputPriority::Ui);
         rig.frame();
         rig.frame();
         assert!(
@@ -758,19 +768,20 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_camera_leaves_the_pan_idle() {
+    fn a_left_drag_while_the_right_button_is_held_is_not_a_pan() {
         let mut rig = Rig::new(true);
-        let cameras: Vec<Entity> = rig
-            .app
-            .world_mut()
-            .query_filtered::<Entity, With<PrimaryCamera>>()
-            .iter(rig.app.world())
-            .collect();
-        for camera in cameras {
-            rig.app.world_mut().despawn(camera);
-        }
+        rig.press(MouseButton::Right);
+        rig.frame();
+        assert!(rig.camera_locked(), "the right button holds the camera");
         rig.drag();
+        assert_eq!(rig.phase(), Phase::Spent);
+        assert_eq!(
+            rig.app.world().resource::<LeftDragPan>().last_reason(),
+            Some(Reason::CameraLocked)
+        );
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(rig.camera_locked(), "the right button still holds it");
         assert_eq!(rig.phase(), Phase::Idle);
-        assert!(!rig.camera_locked());
     }
 }

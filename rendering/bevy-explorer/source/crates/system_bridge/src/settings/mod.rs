@@ -73,7 +73,7 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
-pub mod left_drag_camera;
+mod left_drag_camera;
 pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;

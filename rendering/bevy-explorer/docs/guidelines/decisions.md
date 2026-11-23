@@ -516,6 +516,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   camera nothing is hovered, up to and including the release, so `PetUp` after a drag goes to
   no entity. The cursor is still locked at the screen centre on that frame, and an entity under
   the reticle did not get the press.
+- **Left-drag camera follows the pointer binding, gamepad included.** The pan starts from the
+  `IaPointer` action, not the left mouse button itself, so with the setting on, holding the
+  pad's pointer button (LT) and moving the right stick turns the camera instead of moving the
+  virtual cursor. unity-explorer's drag is fixed to the left mouse button.
+- **Left-drag camera: no pan under any scene camera.** While a scene's camera is active the
+  left drag never turns the camera, even when the scene allows manual rotation
+  (`allow_manual_rotation`) and the right button still turns it there.
 - **Left-drag camera: a scene's drag capture wins.** When the press is captured by an entity that
   listens for `PetDrag` or `PetDragLocked`, the press never turns the camera: the scene asked
   for the drag. unity-explorer has no such capture. Drags that do not use `PetDrag` are taken

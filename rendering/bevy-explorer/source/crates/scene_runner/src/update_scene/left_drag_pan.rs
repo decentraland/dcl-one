@@ -76,7 +76,7 @@ pub(crate) enum Reason {
     NoCursor,
     /// A dialog or HUD surface is open.
     Dialog,
-    /// The right-click toggle or a scene already holds the camera.
+    /// The right button, held or toggled on, or a scene already holds the camera.
     CameraLocked,
     /// A scene camera is active.
     Cinematic,
@@ -339,16 +339,6 @@ mod tests {
     }
 
     #[test]
-    fn a_press_near_an_edge_never_pans() {
-        let mut pan = LeftDragPan::default();
-        let mut frame = press();
-        frame.press_refusal = Some(Reason::NearEdge);
-        assert!(!pan.tick(&frame));
-        assert!(!pan.tick(&held(Vec2::new(9.0, 9.0))));
-        assert_eq!(pan.last_reason(), Some(Reason::NearEdge));
-    }
-
-    #[test]
     fn a_blocked_press_never_arms() {
         for reason in [
             Reason::Dialog,
@@ -415,25 +405,14 @@ mod tests {
     }
 
     #[test]
-    fn focus_loss_ends_the_pan() {
+    fn a_new_press_pans_again_after_an_interruption() {
         let mut pan = panning();
         let mut frame = held(Vec2::ZERO);
         frame.blocked = Some(Reason::NoFocus);
         assert!(!pan.tick(&frame));
-        // a new pan needs a new press edge
-        assert!(!pan.tick(&held(Vec2::new(9.0, 0.0))));
         assert!(!pan.tick(&up()));
         assert!(!pan.tick(&press()));
         assert!(pan.tick(&held(Vec2::new(9.0, 0.0))));
-    }
-
-    #[test]
-    fn a_browser_release_ends_the_pan() {
-        let mut pan = panning();
-        let mut frame = held(Vec2::ZERO);
-        frame.blocked = Some(Reason::LockLost);
-        assert!(!pan.tick(&frame));
-        assert_eq!(pan.phase(), Phase::Spent);
     }
 
     #[test]

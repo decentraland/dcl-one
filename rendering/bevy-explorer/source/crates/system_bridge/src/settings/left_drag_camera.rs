@@ -31,7 +31,7 @@ impl AppSetting for LeftDragCameraSetting {
 
     fn description(&self) -> String {
         format!(
-            "Whether holding the left mouse button and dragging turns the camera.\n\nA click without moving is still a click, and the right button works as before.\n\n{}",
+            "Whether holding the left mouse button and dragging turns the camera. On a gamepad, holding the pointer button (LT) and moving the right stick does the same.\n\nA click without moving is still a click, and the right button works as before.\n\n{}",
             match self {
                 LeftDragCameraSetting::Off => "Off: only the right button turns the camera.",
                 LeftDragCameraSetting::On => {
