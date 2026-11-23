@@ -414,7 +414,9 @@ Follow the [implementation pipeline](implementation-pipeline.md). The stages bel
 | 7. Complete operational mapping | Verify flags, bans, health/about/metrics ownership, limits, task supervision and shutdown. Document translated environment/config keys. | Linux/Windows start/stop and effective configuration checks pass; output shapes/auth follow the chosen contract. |
 | 8. Measure and release | Run equivalent workload and client/broker tests; follow the repository's separate rollout gates. | Protocol parity/accepted exceptions, concurrency correctness, performance budget and operator readiness are evidenced at the final revision. |
 
-Do not combine stage 2's file decomposition with an overload-policy change, a quantization change, a new batching format or a new transport. When comparing traces, control the clock, event order, peer allocation and cluster boot seed. Compare per-peer behavior and defined subjects; neither protobuf map ordering nor cross-peer thread scheduling is a global deterministic wire order.
+Do not combine stage 2's file decomposition with an overload-policy change, a quantization change, a new batching format or a new transport.
+
+When comparing traces, control the clock, event order and peer allocation. Replace each boot UUID with a consistent placeholder throughout the trace and use distinct placeholders for different UUIDs. Align placeholders for corresponding boots across traces and preserve the cluster counters. Compare per-peer behavior and defined subjects. Protobuf map ordering and cross-peer thread scheduling can vary.
 
 ### Behavior coverage
 

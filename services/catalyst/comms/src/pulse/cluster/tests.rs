@@ -432,10 +432,13 @@ fn restarting_pulse_does_not_reuse_an_island_room_name() {
     after.pass();
     let new_assignment = after.feed.current("0xb", "0xb").unwrap();
 
-    assert_ne!(
-        crate::rooms::island_room_name(&old_assignment.cluster_id),
-        crate::rooms::island_room_name(&new_assignment.cluster_id)
-    );
+    let old_room = crate::rooms::island_room_name(&old_assignment.cluster_id);
+    let new_room = crate::rooms::island_room_name(&new_assignment.cluster_id);
+    assert_ne!(old_room, new_room);
+    assert!(matches!(
+        crate::rooms::room_scope(&new_room),
+        Some(crate::rooms::RoomScope::Island(_))
+    ));
 }
 
 #[test]
