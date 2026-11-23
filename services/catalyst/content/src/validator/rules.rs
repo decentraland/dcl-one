@@ -167,27 +167,15 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             return result;
         }
 
-        let result = self.validate_profile_content(deployment);
-        if !result.is_ok() {
-            debug!("Validation failed at profile content");
-            return result;
-        }
-
         let result = self.validate_item_thumbnail(deployment).await;
         if !result.is_ok() {
             debug!("Validation failed at item thumbnail");
             return result;
         }
 
-        let result = self.validate_face_thumbnail(deployment).await;
+        let result = self.validate_profile(deployment).await;
         if !result.is_ok() {
-            debug!("Validation failed at face thumbnail");
-            return result;
-        }
-
-        let result = self.validate_profile_images(deployment);
-        if !result.is_ok() {
-            debug!("Validation failed at profile images");
+            debug!("Validation failed at profile");
             return result;
         }
 
@@ -548,6 +536,48 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
     }
 
+    /// Upstream `createProfileValidateFn`: its rules in upstream order, the
+    /// first failing one answering.
+    async fn validate_profile(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        if deployment.entity.entity_type != EntityType::Profile {
+            return ValidationResponse::Ok;
+        }
+        let result = self.validate_profile_snapshots_rejected(deployment);
+        if !result.is_ok() {
+            return result;
+        }
+        let result = self.validate_face_thumbnail(deployment).await;
+        if !result.is_ok() {
+            return result;
+        }
+        let result = self.validate_profile_images(deployment);
+        if !result.is_ok() {
+            return result;
+        }
+        self.validate_profile_content(deployment)
+    }
+
+    /// Upstream `profileMustNotHaveSnapshotsValidateFn`.
+    fn validate_profile_snapshots_rejected(
+        &self,
+        deployment: &Deployment<'_>,
+    ) -> ValidationResponse {
+        let entity = &deployment.entity;
+        if entity.timestamp < adr_timestamps::ADR_290_REJECTED {
+            return ValidationResponse::Ok;
+        }
+        let avatars = entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("avatars"))
+            .and_then(|a| a.as_array())
+            .map_or(&[][..], Vec::as_slice);
+        if avatars.iter().any(avatar_has_snapshots) {
+            return ValidationResponse::fail("Avatars must not have snapshots.".to_string());
+        }
+        ValidationResponse::Ok
+    }
+
     async fn validate_face_thumbnail(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
         if entity.entity_type != EntityType::Profile {
@@ -642,48 +672,11 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         ValidationResponse::Ok
     }
 
+    /// The profile rules after the images one, in upstream order.
     fn validate_profile_content(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
         if entity.entity_type != EntityType::Profile {
             return ValidationResponse::Ok;
-        }
-
-        if entity.timestamp >= adr_timestamps::ADR_290_REJECTED {
-            if let Some(metadata) = &entity.metadata
-                && let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array())
-            {
-                for avatar in avatars {
-                    if avatar_has_snapshots(avatar) {
-                        return ValidationResponse::fail(
-                            "Avatars must not have snapshots.".to_string(),
-                        );
-                    }
-                }
-            }
-
-            if !entity.content.is_empty() {
-                return ValidationResponse::fail(format!(
-                    "Entity has content files when it should not: {}",
-                    entity
-                        .content
-                        .iter()
-                        .map(|c| c.file.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-
-            if deployment.files.len() > 1 {
-                return ValidationResponse::fail(format!(
-                    "Entity has uploaded files when it should not: {}",
-                    deployment
-                        .files
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
         }
 
         if entity.timestamp >= adr_timestamps::ADR_75
@@ -704,27 +697,6 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 return ValidationResponse::fail(
                     "Profile must have emotes after ADR 74.".to_string(),
                 );
-            }
-        }
-
-        if entity.timestamp >= adr_timestamps::ADR_232
-            && let Some(metadata) = &entity.metadata
-            && let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array())
-        {
-            for avatar in avatars {
-                if let Some(wearables) = avatar
-                    .get("avatar")
-                    .and_then(|a| a.get("wearables"))
-                    .and_then(|w| w.as_array())
-                {
-                    let unique: HashSet<&str> =
-                        wearables.iter().filter_map(|v| v.as_str()).collect();
-                    if unique.len() != wearables.len() {
-                        return ValidationResponse::fail(
-                            "Wearables should not be repeated.".to_string(),
-                        );
-                    }
-                }
             }
         }
 
@@ -752,6 +724,27 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                                 "Emote slot {slot} should not be repeated."
                             ));
                         }
+                    }
+                }
+            }
+        }
+
+        if entity.timestamp >= adr_timestamps::ADR_232
+            && let Some(metadata) = &entity.metadata
+            && let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array())
+        {
+            for avatar in avatars {
+                if let Some(wearables) = avatar
+                    .get("avatar")
+                    .and_then(|a| a.get("wearables"))
+                    .and_then(|w| w.as_array())
+                {
+                    let unique: HashSet<&str> =
+                        wearables.iter().filter_map(|v| v.as_str()).collect();
+                    if unique.len() != wearables.len() {
+                        return ValidationResponse::fail(
+                            "Wearables should not be repeated.".to_string(),
+                        );
                     }
                 }
             }
@@ -792,6 +785,36 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 .filter(|name| !has(name))
                 .map(|name| format!("Profile entity is missing file '{name}'"))
                 .collect();
+            if !errors.is_empty() {
+                return ValidationResponse::from_errors(errors);
+            }
+        }
+
+        // Upstream `entityShouldNotHaveContentFilesValidateFn` reports both.
+        if entity.timestamp >= adr_timestamps::ADR_290_REJECTED {
+            let mut errors = Vec::new();
+            if !entity.content.is_empty() {
+                errors.push(format!(
+                    "Entity has content files when it should not: {}",
+                    entity
+                        .content
+                        .iter()
+                        .map(|c| c.file.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if deployment.files.len() > 1 {
+                errors.push(format!(
+                    "Entity has uploaded files when it should not: {}",
+                    deployment
+                        .files
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             if !errors.is_empty() {
                 return ValidationResponse::from_errors(errors);
             }
@@ -1963,6 +1986,132 @@ mod tests {
                 )),
                 missing
             );
+        }
+
+        /// The whole profile step's verdict on `d`.
+        async fn profile_verdict(d: &OwnedDeployment) -> ValidationResponse {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            }
+            .validate_profile(&d.view())
+            .await
+        }
+
+        /// A PNG header of the given size, as the image check reads it.
+        fn png(width: u32, height: u32) -> Vec<u8> {
+            let mut buf = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+            buf.extend_from_slice(&13u32.to_be_bytes());
+            buf.extend_from_slice(b"IHDR");
+            buf.extend_from_slice(&width.to_be_bytes());
+            buf.extend_from_slice(&height.to_be_bytes());
+            buf.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+            buf.extend_from_slice(&0u32.to_be_bytes());
+            buf.extend_from_slice(b"IEND");
+            buf.extend_from_slice(&[0, 0, 0, 0]);
+            buf
+        }
+
+        const WEARABLE: &str =
+            "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:1";
+
+        fn avatar_mut(d: &mut OwnedDeployment) -> &mut serde_json::Value {
+            &mut d.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]
+        }
+
+        #[tokio::test]
+        async fn pre_adr_290_profile_rules_answer_in_upstream_order() {
+            use serde_json::json;
+            let mut d = profile_with_emote_slots("1,1");
+            d.entity.timestamp = adr_timestamps::ADR_290_OPTIONAL - 1;
+            avatar_mut(&mut d)["wearables"] = json!([WEARABLE, WEARABLE]);
+            avatar_mut(&mut d)["snapshots"] = json!({ "face256": "QmF" });
+            d.entity.content = vec![ContentMapping {
+                file: "other.png".into(),
+                hash: "QmO".into(),
+            }];
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec!["Couldn't find thumbnail file with hash: QmF".to_string()]
+            );
+            d.files.insert("QmF".into(), png(256, 256).into());
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec![
+                    "Couldn't find hash for face or body thumbnails on profile metadata"
+                        .to_string()
+                ]
+            );
+            avatar_mut(&mut d)["snapshots"]["body"] = json!("QmB");
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec!["Emote slot 1 should not be repeated.".to_string()]
+            );
+            avatar_mut(&mut d)["emotes"][1]["slot"] = json!(2);
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec!["Wearables should not be repeated.".to_string()]
+            );
+            avatar_mut(&mut d)["wearables"] = json!([WEARABLE]);
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec![
+                    "This file is not expected: 'other.png' or its hash is invalid: 'QmO'. \
+                     Please, include only valid snapshot files."
+                        .to_string()
+                ]
+            );
+        }
+
+        #[tokio::test]
+        async fn rejected_profile_reports_content_and_uploads_last_and_together() {
+            use serde_json::json;
+            let mut d = profile_with_emote_slots("1,2");
+            d.entity.timestamp = adr_timestamps::ADR_290_REJECTED;
+            avatar_mut(&mut d)["wearables"] = json!([WEARABLE, WEARABLE]);
+            avatar_mut(&mut d)["snapshots"] = json!({ "face256": "QmF", "body": "QmB" });
+            d.entity.content = vec![ContentMapping {
+                file: "face256.png".into(),
+                hash: "QmF".into(),
+            }];
+            d.files.insert(d.entity.id.clone(), Vec::new().into());
+            d.files.insert("QmF".into(), png(256, 256).into());
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec!["Avatars must not have snapshots.".to_string()]
+            );
+            avatar_mut(&mut d)
+                .as_object_mut()
+                .unwrap()
+                .remove("snapshots");
+            assert_eq!(
+                errors(profile_verdict(&d).await),
+                vec!["Wearables should not be repeated.".to_string()]
+            );
+            avatar_mut(&mut d)["wearables"] = json!([WEARABLE]);
+            let both = errors(profile_verdict(&d).await);
+            assert_eq!(both.len(), 2, "{both:?}");
+            assert_eq!(
+                both[0],
+                "Entity has content files when it should not: face256.png"
+            );
+            assert!(
+                both[1].starts_with("Entity has uploaded files when it should not: "),
+                "{both:?}"
+            );
+            d.entity.content.clear();
+            assert_eq!(
+                errors(profile_verdict(&d).await).len(),
+                1,
+                "uploads alone are still refused"
+            );
+            d.files.remove("QmF");
+            assert!(profile_verdict(&d).await.is_ok());
         }
 
         #[test]
