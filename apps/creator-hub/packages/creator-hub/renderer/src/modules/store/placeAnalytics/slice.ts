@@ -1,6 +1,7 @@
 import { createSelector, createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { settings as settingsPreload } from '#preload';
 
-import type { Async } from '/shared/types/async';
+import type { Async, Status } from '/shared/types/async';
 import { MetricsWindow, SortBy } from '/shared/types/place-analytics';
 
 import { AuthServerProvider } from '/@/lib/auth';
@@ -10,7 +11,7 @@ import { toSummary } from '/@/lib/placeAnalytics.adapter';
 import { fetchAnalytics as fetchAnalyticsSnapshot } from '/@/lib/placeAnalytics';
 import { Worlds } from '/@/lib/worlds';
 import type { AppState } from '/@/modules/store';
-import { accountChanged } from '/@/modules/store/account';
+import { accountChanged, isSignedInAccount } from '/@/modules/store/account';
 import { fetchLandList } from '/@/modules/store/land';
 import { fetchAllDeployedWorlds } from '/@/modules/store/management/utils';
 import { createAsyncThunk } from '/@/modules/store/thunk';
@@ -51,6 +52,24 @@ export const fetchAnalytics = createAsyncThunk(
   },
 );
 
+/**
+ * Reads the account's watchlist from the app settings (`AppSettings.analyticsWatchlist`).
+ * Skipped unless `address` is the signed-in account, so a wallet that is being replaced never
+ * loads its pins into the next one's list.
+ */
+export const loadPinnedPlaces = createAsyncThunk(
+  'placeAnalytics/loadPinnedPlaces',
+  async ({ address }: { address: string }) => settingsPreload.getAnalyticsWatchlist(address),
+  { condition: isSignedInAccount },
+);
+
+export const savePinnedPlaces = createAsyncThunk(
+  'placeAnalytics/savePinnedPlaces',
+  async ({ address, placeIds }: { address: string; placeIds: string[] }) =>
+    settingsPreload.setAnalyticsWatchlist(address, placeIds),
+  { condition: isSignedInAccount },
+);
+
 // state
 export type PlaceAnalyticsState = {
   /** The warehouse's export stamp, shown as an "as of" date. */
@@ -62,10 +81,12 @@ export type PlaceAnalyticsState = {
   sortBy: SortBy;
   searchQuery: string;
   /**
-   * Places pinned to the watchlist, shown first in the list. Kept in memory
-   * until we know where a watchlist should be persisted.
+   * Places pinned to the watchlist, shown first in the list. Saved per wallet in the app
+   * settings; may name places the current snapshot lacks, which the list simply leaves out.
    */
   pinnedPlaceIds: string[];
+  /** Loading of the stored watchlist: for which wallet (lowercase), and how far it got. */
+  watchlist: { address: string | null; status: Status; requestId: string | null };
   requestId: string | null;
 };
 
@@ -77,6 +98,7 @@ export const initialState: Async<PlaceAnalyticsState> = {
   sortBy: SortBy.NAME_ASC,
   searchQuery: '',
   pinnedPlaceIds: [],
+  watchlist: { address: null, status: 'idle', requestId: null },
   requestId: null,
   status: 'idle',
   error: null,
@@ -102,10 +124,31 @@ const slice = createSlice({
         ? state.pinnedPlaceIds.filter($ => $ !== placeId)
         : [...state.pinnedPlaceIds, placeId];
     },
+    setPinnedPlace: (state, action: PayloadAction<{ placeId: string; pinned: boolean }>) => {
+      const { placeId, pinned } = action.payload;
+      const others = state.pinnedPlaceIds.filter($ => $ !== placeId);
+      state.pinnedPlaceIds = pinned ? [...others, placeId] : others;
+    },
   },
   extraReducers: builder => {
     builder
       .addCase(accountChanged, () => initialState)
+      .addCase(loadPinnedPlaces.pending, (state, action) => {
+        state.watchlist = {
+          address: action.meta.arg.address.toLowerCase(),
+          status: 'loading',
+          requestId: action.meta.requestId,
+        };
+      })
+      .addCase(loadPinnedPlaces.fulfilled, (state, action) => {
+        if (action.meta.requestId !== state.watchlist.requestId) return;
+        state.pinnedPlaceIds = action.payload;
+        state.watchlist.status = 'succeeded';
+      })
+      .addCase(loadPinnedPlaces.rejected, (state, action) => {
+        if (action.meta.requestId !== state.watchlist.requestId) return;
+        state.watchlist.status = 'failed';
+      })
       .addCase(fetchAnalytics.pending, (state, action) => {
         state.status = 'loading';
         state.error = null;
@@ -126,6 +169,35 @@ const slice = createSlice({
       });
   },
 });
+
+/**
+ * Pins or unpins a place, then saves the account's whole list. The list in the store is the one
+ * saved, pins of places the last fetch did not return included, so a failed or empty fetch never
+ * removes them. Nothing is saved before the stored list has loaded: that save would replace it.
+ * A stored list that could not be read is read again first. What the click asks for is taken
+ * from the list on screen before that read (Pin on a row that showed unpinned pins it, even
+ * when the reread list already has it), so a reread never turns the click into its opposite.
+ * The thunk rejects when the pin is
+ * not on disk (the list still unread, or the save failed), which the snackbar slice reports.
+ * Writes run one after another (`setConfig`), so the last toggle's list is the one on disk.
+ */
+export const togglePin = createAsyncThunk(
+  'placeAnalytics/togglePin',
+  async (placeId: string, { dispatch, getState }) => {
+    const pinned = !getState().placeAnalytics.pinnedPlaceIds.includes(placeId);
+    const unread = getState().placeAnalytics.watchlist;
+    if (unread.status === 'failed' && unread.address) {
+      await dispatch(loadPinnedPlaces({ address: unread.address }));
+    }
+    dispatch(slice.actions.setPinnedPlace({ placeId, pinned }));
+    const { pinnedPlaceIds, watchlist } = getState().placeAnalytics;
+    if (watchlist.status === 'failed') throw new Error('The stored watchlist could not be read');
+    if (watchlist.status !== 'succeeded' || !watchlist.address) return;
+    await dispatch(
+      savePinnedPlaces({ address: watchlist.address, placeIds: pinnedPlaceIds }),
+    ).unwrap();
+  },
+);
 
 const getPlaceAnalyticsState = (state: AppState) => state.placeAnalytics;
 
@@ -154,5 +226,11 @@ export const getPlace = (state: AppState, placeId: string): AnalyticsPlace | und
   state.placeAnalytics.places.find(place => place.placeId === placeId);
 
 export const selectors = { getVisiblePlaces, getPlaceMetrics, getPlace };
-export const actions = { ...slice.actions, fetchAnalytics };
+export const actions = {
+  ...slice.actions,
+  fetchAnalytics,
+  loadPinnedPlaces,
+  savePinnedPlaces,
+  togglePin,
+};
 export const reducer = slice.reducer;

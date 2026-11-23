@@ -5,7 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const run = promisify(execFile)
 const projectRoot = path.resolve(import.meta.dirname, '..')
@@ -49,13 +49,13 @@ async function startServer(cwd: string, args: string[], env: Record<string, stri
 describe('figma from a consuming project', () => {
   let consumer: string
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     consumer = await mkdtemp(path.join(tmpdir(), 'dcl-figma-consumer-'))
     await mkdir(path.join(consumer, 'node_modules/@dcl'), { recursive: true })
     await symlink(libraryRoot, path.join(consumer, 'node_modules/@dcl/one-ui'), 'dir')
   })
 
-  afterAll(async () => {
+  afterEach(async () => {
     await rm(consumer, { recursive: true, force: true })
   })
 
@@ -211,14 +211,16 @@ describe('figma from a consuming project', () => {
       })
     }, 30_000)
 
-    it('should fail without a mapping source instead of passing an empty check', async () => {
-      await expect(
-        cli(['check-mappings', '--mapping-only', '--mapping-root', tmpdir()])
-      ).rejects.toMatchObject({
-        code: 1,
-        stdout: expect.stringContaining('mapping-root-not-configured')
-      })
-    }, 30_000)
+    describe('and the mapping root holds no mappings', () => {
+      it('should fail with mapping-root-not-configured instead of passing an empty check', async () => {
+        await expect(
+          cli(['check-mappings', '--mapping-only', '--mapping-root', tmpdir()])
+        ).rejects.toMatchObject({
+          code: 1,
+          stdout: expect.stringContaining('mapping-root-not-configured')
+        })
+      }, 30_000)
+    })
   })
 
   describe('when a malformed flag meets a configuration that cannot load', () => {
@@ -235,43 +237,60 @@ describe('figma from a consuming project', () => {
   describe('when the CLI resolves a batch', () => {
     const root = path.join(libraryRoot, 'components')
     const args = ['resolve', '--mapping-only', '--mapping-root', root, '--batch']
-    const entries = [
-      { name: 'Button', variantProperties: { 'Property 1': 'Terciary' }, texts: { Label: 'Go' } },
-      { name: 'Nothing' }
-    ]
+    let entries: Record<string, unknown>[]
 
-    it('should read standard input and print every entry with the summary', async () => {
-      const child = execFile(
-        process.execPath,
-        ['--import', import.meta.resolve('tsx'), 'src/cli.ts', ...args, '-'],
-        { cwd: projectRoot, env: { PATH: process.env.PATH ?? '' } }
-      )
-      child.stdin!.end(JSON.stringify(entries))
-      const [code, stdout] = await new Promise<[number | null, string]>((resolve) => {
-        let out = ''
-        child.stdout!.on('data', (chunk) => (out += chunk))
-        child.on('close', (exit) => resolve([exit, out]))
+    beforeEach(() => {
+      entries = [
+        { name: 'Button', variantProperties: { 'Property 1': 'Terciary' }, texts: { Label: 'Go' } },
+        { name: 'Nothing' }
+      ]
+    })
+
+    describe('and the batch comes from standard input', () => {
+      it('should read standard input and print every entry with the summary', async () => {
+        const child = execFile(
+          process.execPath,
+          ['--import', import.meta.resolve('tsx'), 'src/cli.ts', ...args, '-'],
+          { cwd: projectRoot, env: { PATH: process.env.PATH ?? '' } }
+        )
+        child.stdin!.end(JSON.stringify(entries))
+        const [code, stdout] = await new Promise<[number | null, string]>((resolve) => {
+          let out = ''
+          child.stdout!.on('data', (chunk) => (out += chunk))
+          child.on('close', (exit) => resolve([exit, out]))
+        })
+        const batch = JSON.parse(stdout)
+
+        expect(code).toBe(1)
+        expect(batch.results[0].result.resolved.usage).toBe(
+          '<Button variant="tertiary">Go</Button>'
+        )
+        expect(batch.summary).toEqual({
+          requested: 2,
+          resolved: 1,
+          unmapped: [],
+          failed: [{ index: 1, code: 'identity-uncertain' }]
+        })
+      }, 30_000)
+    })
+
+    describe('and every entry of a batch file resolves', () => {
+      let file: string
+
+      beforeEach(async () => {
+        file = path.join(consumer, 'instances.json')
+        await writeFile(file, JSON.stringify(entries.slice(0, 1)))
       })
-      const batch = JSON.parse(stdout)
 
-      expect(code).toBe(1)
-      expect(batch.results[0].result.resolved.usage).toBe('<Button variant="tertiary">Go</Button>')
-      expect(batch.summary).toEqual({
-        requested: 2,
-        resolved: 1,
-        unmapped: [],
-        failed: [{ index: 1, code: 'identity-uncertain' }]
-      })
-    }, 30_000)
+      it('should read the file and exit 0', async () => {
+        const { stdout } = await cli([...args, file])
 
-    it('should read a file and exit 0 when every entry resolves', async () => {
-      const file = path.join(consumer, 'instances.json')
-      await writeFile(file, JSON.stringify(entries.slice(0, 1)))
-
-      const { stdout } = await cli([...args, file])
-
-      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
-    }, 30_000)
+        expect(JSON.parse(stdout)).toMatchObject({
+          ok: true,
+          summary: { requested: 1, resolved: 1 }
+        })
+      }, 30_000)
+    })
 
     // `pnpm figma` changes into library/ui/figma and sets INIT_CWD to the directory pnpm was run in, with
     // npm_lifecycle_event and npm_package_name naming this package's figma script.
@@ -289,67 +308,93 @@ describe('figma from a consuming project', () => {
         { cwd, env: { PATH: process.env.PATH ?? '', ...env } }
       )
 
-    it('should read a relative batch path from the directory pnpm figma was run in', async () => {
-      await writeFile(path.join(consumer, 'relative.json'), JSON.stringify(entries.slice(0, 1)))
+    describe('and a relative batch path exists in the directory pnpm figma was run in', () => {
+      beforeEach(async () => {
+        await writeFile(path.join(consumer, 'relative.json'), JSON.stringify(entries.slice(0, 1)))
+      })
 
-      const { stdout } = await runFrom(
-        projectRoot,
-        { INIT_CWD: consumer, ...figmaScript },
-        'relative.json'
-      )
+      it('should read the relative batch path from that directory', async () => {
+        const { stdout } = await runFrom(
+          projectRoot,
+          { INIT_CWD: consumer, ...figmaScript },
+          'relative.json'
+        )
 
-      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
-    }, 30_000)
+        expect(JSON.parse(stdout)).toMatchObject({
+          ok: true,
+          summary: { requested: 1, resolved: 1 }
+        })
+      }, 30_000)
+    })
 
-    it('should exit 2 when the relative batch exists only in the working directory, not where pnpm figma was run', async () => {
-      const elsewhere = path.join(consumer, 'elsewhere')
-      await mkdir(elsewhere, { recursive: true })
-      await writeFile(path.join(elsewhere, 'only-here.json'), JSON.stringify(entries.slice(0, 1)))
+    describe('and the relative batch exists only in the working directory, not where pnpm figma was run', () => {
+      let elsewhere: string
 
-      await expect(
-        runFrom(elsewhere, { INIT_CWD: consumer, ...figmaScript }, 'only-here.json')
-      ).rejects.toMatchObject({ code: 2, stderr: expect.stringContaining('ENOENT') })
-    }, 30_000)
+      beforeEach(async () => {
+        elsewhere = path.join(consumer, 'elsewhere')
+        await mkdir(elsewhere, { recursive: true })
+        await writeFile(path.join(elsewhere, 'only-here.json'), JSON.stringify(entries.slice(0, 1)))
+      })
+
+      it('should exit 2 with ENOENT', async () => {
+        await expect(
+          runFrom(elsewhere, { INIT_CWD: consumer, ...figmaScript }, 'only-here.json')
+        ).rejects.toMatchObject({ code: 2, stderr: expect.stringContaining('ENOENT') })
+      }, 30_000)
+    })
 
     // The dcl-figma bin run from another package's script inherits that script's INIT_CWD.
-    it('should read from its working directory when INIT_CWD comes from another script', async () => {
-      const tools = path.join(consumer, 'tools')
-      await mkdir(tools, { recursive: true })
-      await writeFile(path.join(tools, 'b.json'), JSON.stringify(entries.slice(0, 1)))
+    describe('and INIT_CWD comes from another script', () => {
+      let tools: string
 
-      const { stdout } = await runFrom(
-        tools,
-        { INIT_CWD: consumer, npm_lifecycle_event: 'resolve', npm_package_name: 'consumer' },
-        'b.json'
-      )
+      beforeEach(async () => {
+        tools = path.join(consumer, 'tools')
+        await mkdir(tools, { recursive: true })
+        await writeFile(path.join(tools, 'b.json'), JSON.stringify(entries.slice(0, 1)))
+      })
 
-      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
-    }, 30_000)
+      it('should read the batch from its working directory', async () => {
+        const { stdout } = await runFrom(
+          tools,
+          { INIT_CWD: consumer, npm_lifecycle_event: 'resolve', npm_package_name: 'consumer' },
+          'b.json'
+        )
 
-    it.each([
+        expect(JSON.parse(stdout)).toMatchObject({
+          ok: true,
+          summary: { requested: 1, resolved: 1 }
+        })
+      }, 30_000)
+    })
+
+    describe.each([
       ['malformed JSON', '{not json'],
       ['an empty array', '[]'],
       ['an object', '{"name":"Button"}']
-    ])(
-      'should exit 2 on %s, apart from a failed entry',
-      async (_label, text) => {
-        const file = path.join(consumer, 'bad.json')
-        await writeFile(file, text)
+    ])('and the batch file holds %s', (_label, text) => {
+      let file: string
 
+      beforeEach(async () => {
+        file = path.join(consumer, 'bad.json')
+        await writeFile(file, text)
+      })
+
+      it('should exit 2, apart from a failed entry', async () => {
         await expect(cli([...args, file])).rejects.toMatchObject({
           code: 2,
           stderr: expect.stringContaining('--batch needs a non-empty JSON array of instances')
         })
-      },
-      30_000
-    )
+      }, 30_000)
+    })
 
-    it('should exit 2 when the batch file is missing', async () => {
-      await expect(cli([...args, path.join(consumer, 'missing.json')])).rejects.toMatchObject({
-        code: 2,
-        stderr: expect.stringContaining('ENOENT')
-      })
-    }, 30_000)
+    describe('and the batch file is missing', () => {
+      it('should exit 2 with ENOENT', async () => {
+        await expect(cli([...args, path.join(consumer, 'missing.json')])).rejects.toMatchObject({
+          code: 2,
+          stderr: expect.stringContaining('ENOENT')
+        })
+      }, 30_000)
+    })
   })
 
   describe('when the CLI resolves an instance with a boolean property', () => {
@@ -405,44 +450,52 @@ describe('figma from a consuming project', () => {
       30_000
     )
 
-    it('should exit 2 when the configuration of a batch cannot be read', async () => {
-      const file = path.join(consumer, 'one.json')
-      await writeFile(file, JSON.stringify([{ name: 'Button' }]))
+    describe('and the configuration of a batch cannot be read', () => {
+      let file: string
 
-      await expect(
-        cli(['resolve', '--batch', file, '--config', 'missing.json'])
-      ).rejects.toMatchObject({
-        code: 2,
-        stderr: expect.stringContaining('Figma config not found')
-      })
-    }, 30_000)
-
-    it('should exit 2 with mapping-root-not-configured when the mapping root does not exist', async () => {
-      const child = execFile(
-        process.execPath,
-        [
-          '--import',
-          import.meta.resolve('tsx'),
-          'src/cli.ts',
-          'resolve',
-          '--mapping-only',
-          '--mapping-root',
-          path.join(consumer, 'no-such-root'),
-          '--batch',
-          '-'
-        ],
-        { cwd: projectRoot, env: { PATH: process.env.PATH ?? '' } }
-      )
-      child.stdin!.end(JSON.stringify([{ name: 'Button' }]))
-      const [code, stdout] = await new Promise<[number | null, string]>((resolve) => {
-        let out = ''
-        child.stdout!.on('data', (chunk) => (out += chunk))
-        child.on('close', (exit) => resolve([exit, out]))
+      beforeEach(async () => {
+        file = path.join(consumer, 'one.json')
+        await writeFile(file, JSON.stringify([{ name: 'Button' }]))
       })
 
-      expect(code).toBe(2)
-      expect(JSON.parse(stdout).errors[0].code).toBe('mapping-root-not-configured')
-    }, 30_000)
+      it('should exit 2 and report the missing config', async () => {
+        await expect(
+          cli(['resolve', '--batch', file, '--config', 'missing.json'])
+        ).rejects.toMatchObject({
+          code: 2,
+          stderr: expect.stringContaining('Figma config not found')
+        })
+      }, 30_000)
+    })
+
+    describe('and the mapping root does not exist', () => {
+      it('should exit 2 with mapping-root-not-configured', async () => {
+        const child = execFile(
+          process.execPath,
+          [
+            '--import',
+            import.meta.resolve('tsx'),
+            'src/cli.ts',
+            'resolve',
+            '--mapping-only',
+            '--mapping-root',
+            path.join(consumer, 'no-such-root'),
+            '--batch',
+            '-'
+          ],
+          { cwd: projectRoot, env: { PATH: process.env.PATH ?? '' } }
+        )
+        child.stdin!.end(JSON.stringify([{ name: 'Button' }]))
+        const [code, stdout] = await new Promise<[number | null, string]>((resolve) => {
+          let out = ''
+          child.stdout!.on('data', (chunk) => (out += chunk))
+          child.on('close', (exit) => resolve([exit, out]))
+        })
+
+        expect(code).toBe(2)
+        expect(JSON.parse(stdout).errors[0].code).toBe('mapping-root-not-configured')
+      }, 30_000)
+    })
   })
 
   describe('when the CLI receives malformed resolve flags', () => {

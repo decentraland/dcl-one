@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 import { Button, Skeleton, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
 import { GeneralCheck, GeneralLock, GeneralPlayers, GeneralPrivate, GeneralPublic } from "@dcl/one-ui/foundations/icons";
@@ -40,13 +40,13 @@ export function CommunityPage({ id, now }: { id: string; now: number }) {
     throwOnError: (error, query) => query.state.data === undefined && isRouteFatal(error),
   });
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesLayout active="play" overlayNav>
       <div className={styles.root}>
         <div className={styles.content}>
           {community ? <CommunityBody community={community} now={now} /> : <CommunityLoading />}
         </div>
       </div>
-    </SitesChrome>
+    </SitesLayout>
   );
 }
 

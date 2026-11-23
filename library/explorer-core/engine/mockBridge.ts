@@ -26,7 +26,7 @@ import {
   type PageToScene,
   type PhotoModeSnapshot,
   type Profile,
-  type ProfileEdit,
+  type SaveProfileRequest,
   type SceneToPage,
   type Setting,
   type TextureOptimizationMessage,
@@ -508,7 +508,7 @@ const defaultBindings = (): BindingEntry[] => [
 // Saved profile edits, in order. Applied over the mock's stock passport so an edit made in ?mock=1
 // sticks for the rest of the session — the real bridge gets the same effect by folding the save
 // into its catalyst cache.
-const ownEdits: ProfileEdit[] = []
+const ownEdits: SaveProfileRequest[] = []
 /** The returning mock user holds two NAMEs; a guest holds none. */
 const ownedNamesOf = (o: MockOptions): string[] => (o.hasPreviousLogin ? ['Mojito', 'MojitoDCL'] : [])
 const ownProfile = (o: MockOptions): Profile =>
@@ -1154,6 +1154,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     // no catalyst looks or browser to open in the mock
     if (msg.kind === 'showLook' || msg.kind === 'openLegal') return
+    // the mock has no engine to decode detail tiles: the map keeps its base imagery
+    if (msg.kind === 'getSatelliteTile') {
+      reply({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
     if (msg.kind === 'openExternalUrl') {
       reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
       return
@@ -1759,9 +1764,25 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
           })
           .filter((m) => m != null),
-        // the mock user owns this one, so an owner or moderator can delete it from the card
+        // the mock user owns the first, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+          {
+            id: 'pl1',
+            title: 'Music Festival Main Stage',
+            thumbnail: 'https://picsum.photos/seed/mfest/420/260',
+            positions: '-66,56',
+            likeRate: 1,
+            isMine: true,
+            detail: { id: 'pl1', title: 'Music Festival Main Stage', description: '', image: 'https://picsum.photos/seed/mfest/420/260', positions: ['-66,56'], base_position: '-66,56', owner: null, like_rate: 1, user_like: true }
+          },
+          {
+            id: 'pl2',
+            title: 'Art Week World',
+            thumbnail: 'https://picsum.photos/seed/artweek/420/260',
+            positions: 'artweek.dcl.eth',
+            likeRate: 0.5,
+            detail: { id: 'pl2', title: 'Art Week World', description: '', image: 'https://picsum.photos/seed/artweek/420/260', positions: ['0,0'], owner: null, world: true, world_name: 'artweek.dcl.eth', like_rate: 0.5 }
+          }
         ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
@@ -1867,16 +1888,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveProfile') {
-      const { kind: _kind, ...edit } = msg
-      // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
-      // engine rejects a deploy the same way) without needing a broken catalyst.
-      if (edit.name === 'robtfmfail') {
-        reply({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+      const { requestId, address } = msg
+      if (address !== undefined && address.toLowerCase() !== o.userId.toLowerCase()) {
+        reply({ kind: 'profileSaved', requestId, ok: false, accountChanged: true, error: 'The active account changed.' })
         return
       }
-      ownEdits.push(edit)
-      reply({ kind: 'profileSaved', ok: true })
-      reply({ kind: 'profile', profile: ownProfile(o) })
+      // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
+      // engine rejects a deploy the same way) without needing a broken catalyst.
+      if (msg.name === 'robtfmfail') {
+        reply({ kind: 'profileSaved', requestId, ok: false, error: 'failed to deploy to server.', profile: ownProfile(o) })
+        return
+      }
+      ownEdits.push(msg)
+      reply({ kind: 'profileSaved', requestId, ok: true, profile: ownProfile(o) })
       return
     }
     if (msg.kind === 'getUserProfile') {

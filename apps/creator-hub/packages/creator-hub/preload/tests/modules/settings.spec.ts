@@ -10,7 +10,12 @@ vi.mock('../../src/services/ipc', () => ({
   }),
 }));
 
-import { updateAiSharingSettings, updateAppSettings } from '../../src/modules/settings';
+import {
+  getAnalyticsWatchlist,
+  setAnalyticsWatchlist,
+  updateAiSharingSettings,
+  updateAppSettings,
+} from '../../src/modules/settings';
 
 const WALLET = '0x1234567890abcdef1234567890abcdef12345678';
 const denied = { consent: 'denied', version: 1, decidedAt: '2026-11-18T00:00:00Z' };
@@ -42,5 +47,41 @@ describe('when the sharing keys and other settings are saved at once', () => {
       aiAssistant: false,
       aiDataSharing: { [WALLET]: granted },
     });
+  });
+});
+
+describe('when a wallet saves its Analytics watchlist', () => {
+  const OTHER_WALLET = '0x0000000000000000000000000000000000000001';
+  const PLACE = 'world:example.dcl.eth@0,0';
+
+  beforeEach(async () => {
+    disk.config.settings.analyticsWatchlist = {
+      [OTHER_WALLET]: { version: 1, placeIds: ['land:1,1'] },
+    };
+    await setAnalyticsWatchlist(WALLET.toUpperCase().replace('0X', '0x'), [PLACE]);
+  });
+
+  it('should read it back under any case of the address', async () => {
+    expect(await getAnalyticsWatchlist(WALLET)).toEqual([PLACE]);
+  });
+
+  it("should keep the other wallets' lists and the other settings", async () => {
+    expect(await getAnalyticsWatchlist(OTHER_WALLET)).toEqual(['land:1,1']);
+    expect(disk.config.settings.aiDataSharing).toEqual({ [WALLET]: denied });
+  });
+
+  it('should survive a screen saving an older copy of the settings', async () => {
+    await updateAppSettings({ aiAssistant: true, analyticsWatchlist: {} } as never);
+
+    expect(await getAnalyticsWatchlist(WALLET)).toEqual([PLACE]);
+  });
+});
+
+describe('when nothing usable is stored for the Analytics watchlist', () => {
+  it('should read an empty list', async () => {
+    expect(await getAnalyticsWatchlist(WALLET)).toEqual([]);
+
+    disk.config.settings.analyticsWatchlist = 'corrupt';
+    expect(await getAnalyticsWatchlist(WALLET)).toEqual([]);
   });
 });

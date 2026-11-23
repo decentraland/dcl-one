@@ -1,70 +1,163 @@
-/* Text blocks are positioned so they paint over the badges' floor glow, as they do in the design. Their
-   line height is the design's "normal" for Inter (its ascent plus descent, 1.21): the browser's own rounds to
-   whole pixels, a pixel more per line. */
+/* The steps' parts, in the design system's type: heading/3 titles, body/md text in text/secondary-on-brand. */
 .title {
-  position: relative;
   width: 100%;
   margin: 0;
-  font-size: var(--type-20);
+  font-size: var(--type-22);
   font-weight: var(--fw-semibold);
-  line-height: 1.21;
+  line-height: 1.25;
   text-align: center;
 }
 
+/* "Your Balance: ©700 ◇3,400": the label in body/md, each amount in body/md-strong after its 16px mark, 4px apart. */
 .balance {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  width: 100%;
   margin: 0;
+  color: var(--shop-gray);
   font-size: var(--type-16);
-  line-height: 1.21;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.balance > img,
+.balance > svg {
+  flex: none;
+}
+/* The MANA mark is Snow wherever it stands, beside grey text too. */
+.balance > svg,
+.optionBalance > svg {
+  color: var(--text);
 }
 .balanceAmount {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: var(--type-14);
+  color: var(--text);
   font-weight: var(--fw-semibold);
 }
-.balanceAmount img {
-  width: 13.291px;
-  height: 14.033px;
-}
 
-.note {
-  position: relative;
-  width: 100%;
+/* "Payment 1 of 2", under the title. */
+.count {
   margin: 0;
-  color: var(--pearl);
-  font-size: var(--type-14);
-  line-height: 1.334;
+  color: var(--shop-gray);
+  font-size: var(--type-16);
+  line-height: 1.5;
   text-align: center;
 }
-.note strong {
+
+.text {
+  width: 100%;
+  margin: 0;
+  color: var(--shop-gray);
+  font-size: var(--type-16);
+  line-height: 1.5;
+  text-align: center;
+}
+.text strong {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+/* Two paragraphs of one section, 16px apart. */
+.texts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+/* The Error modal's text: what went wrong in bold, then what it means. */
+.message {
+  width: 100%;
+  margin: 0;
+  color: var(--shop-gray);
+  font-size: var(--type-16);
+  line-height: 1.5;
+  text-align: center;
+}
+.message strong {
+  color: var(--text);
   font-weight: var(--fw-bold);
 }
 /* A simulated NAME purchase's note, in gold under what the step shows. */
 .simulation {
-  position: relative;
   width: 100%;
   margin: 0;
   color: var(--gold);
   font-size: var(--type-14);
   font-weight: var(--fw-semibold);
-  line-height: 1.334;
+  line-height: 1.5;
   text-align: center;
 }
 
-/* The design's CreditsItem: the tile, then 16px on, the name, creator and rarity over the price. */
+/* The modal-illustration: a 60px slot, each image placed in it as the design system's sheet places it. */
+.illustration {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 60px;
+  height: 60px;
+}
+.illustration > img {
+  position: absolute;
+  max-width: none;
+  pointer-events: none;
+}
+.success {
+  inset: 0;
+  width: 60px;
+  height: 60px;
+  border-radius: 100px;
+}
+.credits,
+.error {
+  left: 0;
+  top: 1px;
+  width: 60px;
+  height: 59px;
+}
+.sign {
+  left: 2px;
+  top: 0;
+  width: 57px;
+  height: 60px;
+}
+
+/* The items, 8px apart; past two rows they scroll in their height, the scrollbar hidden for the Shop's thumb 24px
+   beyond the column's edge. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.listScrolls {
+  max-height: 286px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.listScrolls::-webkit-scrollbar {
+  display: none;
+}
+.listWrap {
+  position: relative;
+  width: 100%;
+}
+.listThumb {
+  right: -24px;
+}
+
+/* The design's cart-item: 139px, Transparencies/Black 40, 16px corners, the card then the info 12px on. */
 .item {
   display: flex;
-  gap: 16px;
+  flex: none;
+  gap: 12px;
   width: 100%;
-  border-radius: var(--r-slot);
-  background: var(--black-50);
+  height: 139px;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--black-40);
+}
+.rowCard {
+  --flap-scale: calc(137 / 120);
+  width: 137px;
+  height: 100%;
 }
 .info {
   display: flex;
@@ -72,13 +165,7 @@
   flex-direction: column;
   justify-content: space-between;
   min-width: 0;
-  padding: 20px 11px;
-  overflow: hidden;
-}
-/* A NAME's: its two lines centred, 32px above the price (the design's Buy Name). */
-.infoName {
-  justify-content: center;
-  gap: 32px;
+  padding: 16px 16px 16px 0;
 }
 .about {
   display: flex;
@@ -92,288 +179,138 @@
   overflow: hidden;
   font-size: var(--type-16);
   font-weight: var(--fw-semibold);
-  line-height: 1.21;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .creator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   max-width: 100%;
-  overflow: hidden;
   font-size: var(--type-12);
-  line-height: 1.21;
+  line-height: 1.5;
+}
+/* The creator's profile-pic at 20px: their picture in a circle, ringed in Transparencies/White 60. */
+.face {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  border: 1.429px solid var(--shop-face-rim);
+  border-radius: 50%;
+  background: var(--shop-option);
+}
+.face > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.creatorName {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.rarity {
-  padding: 3px 6px;
-  border-radius: var(--r-xs);
-  background: color-mix(in srgb, var(--rm) 20%, transparent);
-  color: var(--rm);
-  font-size: var(--type-12);
-  font-weight: var(--fw-semibold);
-  line-height: 1.21;
-  text-transform: uppercase;
 }
 .price {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   font-size: var(--type-20);
   font-weight: var(--fw-semibold);
-  line-height: 1.21;
+  line-height: 1.25;
 }
 
-/* The price's mark takes the design's 22.7×24 slot: the icon's 28.8px box, less its margins. */
-.mark {
-  position: relative;
-  flex: none;
-  width: 22.732px;
-  height: 24.002px;
-}
-.mark .markIcon {
-  position: absolute;
-  left: -3.116px;
-  top: -2.4px;
-}
-
+/* Where the items would be: the spinner, while the price is read or the purchase confirms. */
 .working {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 150px;
+  height: 139px;
 }
-
-/* The badges (Insufficient Funds' credit mark, the success check): 62px over a floor glow, in a 54px
-   (80px) slot that the badge overflows. */
-.badgeImg {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 54px;
-}
-.successImg {
-  height: 80px;
-}
-.floor {
-  position: absolute;
-  left: 23.587px;
-  top: 40.579px;
-  width: 349.847px;
-  height: 105.847px;
-  max-width: none;
-  pointer-events: none;
-}
-.successImg .floor {
-  top: 50.579px;
-}
-.badge {
-  position: absolute;
-  left: calc(50% - 31px);
-  top: -4px;
-  width: 62px;
-  height: 62px;
-}
-.successImg .badge {
-  top: 0;
-}
-/* The Error modal: its 62px mark 1px down an 80px slot, over the floor glow. */
-.errorImg {
-  height: 80px;
-}
-.errorMark {
-  position: absolute;
-  left: calc(50% - 31px);
-  top: 1px;
-  max-width: none;
-}
-/* The Error modal's text: what went wrong in bold, then what it means, at 16px. */
-.message {
-  position: relative;
-  width: 100%;
-  margin: 0;
-  font-size: var(--type-16);
-  line-height: 19px;
-  text-align: center;
-}
-.message strong {
-  font-weight: var(--fw-bold);
-}
-.badge img {
-  position: absolute;
-  max-width: none;
-}
-.cb0 { left: 4.997px; top: 3.999px; width: 52px; height: 54.4px; }
-.cb1 { left: 10.955px; top: 9.684px; width: 40.413px; height: 42.67px; }
-.cb2 { left: 7.754px; top: 6.484px; width: 46.813px; height: 49.07px; }
-.cb3 { left: 11.315px; top: 10px; width: 39.609px; height: 41.821px; }
-.cb4 { left: 11.212px; top: 9.896px; width: 39.817px; height: 42.029px; }
-.cb5 { left: 13.526px; top: 12.213px; width: 35.116px; height: 37.397px; }
-.cb6 { left: 15.497px; top: 14.114px; width: 31.176px; height: 33.457px; }
-.cb7 { left: 16.399px; top: 14.943px; width: 29.379px; height: 31.66px; }
-.cbC { left: 19.591px; top: 17.655px; width: 22.024px; height: 26.783px; }
-.checkRingOuter { left: 0.903px; top: 0.903px; width: 60.194px; height: 60.194px; }
-.checkFill { left: 9px; top: 9px; width: 47px; height: 48px; }
-.checkRing { left: 3.903px; top: 3.903px; width: 54.194px; height: 54.194px; }
-.check {
-  position: absolute;
-  left: 16px;
-  top: 16px;
-  width: 30px;
-  height: 30px;
-  overflow: hidden;
-}
-.check img {
-  left: 1.797px;
-  top: 5.137px;
-  width: 26.383px;
-  height: 24.629px;
-}
-
-/* Purchase successful's item: the tile in a 204px slot with its two glows behind it, both turned. */
-.bought {
-  position: relative;
-  display: block;
-  width: 204px;
-  height: 150px;
-}
-.boughtGlow,
-.boughtSpark {
-  position: absolute;
-  max-width: none;
-  transform: rotate(180deg);
-  pointer-events: none;
-}
-.boughtGlow {
-  left: -81.498px;
-  top: -106.485px;
-  width: 366.977px;
-  height: 363.977px;
-}
-.boughtSpark {
-  left: 17.13px;
-  top: -8.76px;
-  width: 168.739px;
-  height: 167.042px;
-  mix-blend-mode: plus-lighter;
-}
-.boughtRow {
-  position: absolute;
-  left: 27px;
-  top: 0;
-  display: flex;
-  gap: 16px;
-}
-/* More than one: the column's width, the tiles centred on it (three overflow it by 43px a side, as drawn),
-   the glow and the spark where the one tile's would be. */
-.boughtMany {
-  width: 100%;
-}
-.boughtMany > .boughtRow {
-  left: 50%;
-  transform: translateX(-50%);
-}
-/* Past three: the three tiles' width (482px) scrolls sideways, its scrollbar hidden for the Shop's thumb
-   10px below the tiles. */
-.boughtScrolls {
-  height: 174px;
-}
-.boughtScrolls > .boughtRow {
-  width: 482px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.boughtScrolls > .boughtRow::-webkit-scrollbar {
-  display: none;
-}
-.boughtScrolls > .boughtRow > * {
-  flex: none;
-}
-.boughtItem {
-  display: block;
-}
-.boughtScrolls > .boughtRow:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 4px;
-  border-radius: var(--r-slot);
-}
-.boughtScrolls > .boughtThumb {
-  left: calc(50% - 241px);
-  right: auto;
-  width: 482px;
-}
-.boughtMany > .boughtGlow {
-  left: 14.502px;
-}
-.boughtMany > .boughtSpark {
-  left: 113.13px;
-}
-
-/* Past two rows the list scrolls in their height, its own scrollbar hidden for the design's thumb 10px
-   beyond the column's edge. */
-.listWrap {
-  position: relative;
-  width: 100%;
-}
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-height: 316px;
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-.list::-webkit-scrollbar {
-  display: none;
-}
-.listThumb {
-  right: -24px;
-}
-
-/* The spinner under a step's text (Authorize MANA confirming), in less height than where an item would be. */
+/* The spinner under a step's text (Authorize MANA confirming), in less height. */
 .working.workingSmall {
   height: 48px;
 }
 
-/* Choose your payment method: a row per way to pay, as the web Shop's step lists them, in the dialog's own parts:
-   the pick (the HUD checkbox's box), the mark, the name over the buyer's balance, and what it pays on the right. */
-.methods {
+/* Purchase successful: the cards, 148px, 12px apart, three to a row and centred; past two rows they scroll. */
+.bought {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+}
+.boughtItem {
+  display: block;
+}
+.boughtCard {
+  --flap-scale: calc(148 / 120);
+  width: 148px;
+  height: 148px;
+}
+.boughtScrolls {
+  max-height: 308px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.boughtScrolls::-webkit-scrollbar {
+  display: none;
+}
+.boughtScrolls:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 4px;
+  border-radius: var(--r-lg);
+}
+
+/* The design system's payment-option, desktop: 66px, 12px padding and gaps, 12px corners, Transparencies/White 10
+   (White 20 picked or hovered), a picked one ringed by a 2px Gradients/Button Primary that doesn't move its content. */
+.options {
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 100%;
 }
-.method {
+.option {
   position: relative;
   box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 14px 16px;
-  border: 1.5px solid transparent;
-  border-radius: var(--r-slot);
-  background: var(--black-50);
+  height: 66px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--shop-option);
   cursor: pointer;
-  transition: border-color var(--dur-fast) ease;
+  transition: background-color var(--dur-fast) ease;
 }
-.method:has(.methodInput:checked) {
-  border-color: var(--white-50);
+.option[data-checked],
+.option:hover:not([data-disabled]) {
+  background: var(--shop-option-on);
 }
-.method:has(.methodInput:focus-visible) {
-  outline: 2px solid var(--white-50);
-  outline-offset: 2px;
+.option[data-checked]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  background: var(--shop-option-ring);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
 }
-.method[data-disabled] {
+.option[data-disabled] {
   cursor: default;
 }
-.method[data-disabled] .methodMark,
-.method[data-disabled] .methodLabel,
-.method[data-disabled] .methodPrice {
-  opacity: 0.5;
-}
-/* The native radio, out of sight but focusable: the box draws it. */
-.methodInput {
+/* The native checkbox, out of sight but focusable: the box draws it. */
+.optionInput {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -384,30 +321,9 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
-.methodBox {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--ink-45);
-  border-radius: 5px;
-  transition:
-    background var(--dur-fast) ease,
-    border-color var(--dur-fast) ease;
-}
-.methodBox svg {
-  visibility: hidden;
-}
-.methodInput:checked + .methodBox {
-  border-color: var(--white);
-  background: var(--white);
-}
-.methodInput:checked + .methodBox svg {
-  visibility: visible;
-}
-.methodMark {
+/* The checkbox, filled style, md: a 20px Snow box in its 32px hit area, the check in action/secondary once ticked;
+   off, the box's border alone. */
+.check {
   display: flex;
   flex: none;
   align-items: center;
@@ -415,46 +331,129 @@
   width: 32px;
   height: 32px;
 }
-.methodText {
+.checkBox {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--shop-gray);
+  border-radius: var(--r-xs);
+  background: var(--text);
+}
+.option[data-disabled] .checkBox {
+  background: none;
+}
+.optionInput:focus-visible + .check .checkBox {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.optionMark {
+  display: flex;
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+.optionInfo {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
   min-width: 0;
 }
-.methodLabel {
+.optionLabel {
   font-size: var(--type-16);
   font-weight: var(--fw-semibold);
-  line-height: 1.21;
+  line-height: 1.5;
+  white-space: nowrap;
 }
-.methodBalance {
+.optionBalance {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--silver);
+  font-size: var(--type-12);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.optionPrice {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.optionAmount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.optionFigure {
+  font-size: var(--type-20);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.optionRate {
+  color: var(--silver);
+  font-size: var(--type-12);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+/* Off (its balance can't pay): the texts in text/disabled, the marks and the amount dimmed. */
+.option[data-disabled] .optionLabel,
+.option[data-disabled] .optionBalance,
+.option[data-disabled] .optionRate {
+  color: var(--ink-muted);
+}
+.option[data-disabled] .optionMark,
+.option[data-disabled] .optionAmount,
+.option[data-disabled] .optionBalance > img,
+.option[data-disabled] .optionBalance > svg {
+  opacity: 0.4;
+}
+
+/* A cart's total: a white rule, then "Total: N Items" and the amount, in heading/4, 8px under it. */
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.summaryRule {
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: var(--text);
+}
+.summaryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--type-20);
+  font-weight: var(--fw-semibold);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.summaryPrices {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.summaryPrice {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--pearl);
-  font-size: var(--type-12);
-  line-height: 1.21;
 }
-.methodBalance img {
-  width: 11.392px;
-  height: 12.028px;
-}
-.methodReason {
-  color: var(--pearl);
-  font-size: var(--type-12);
-  font-weight: var(--fw-semibold);
-  line-height: 1.21;
-}
-.methodPrice {
-  display: inline-flex;
-  flex: none;
+
+/* Confirm in your wallet's one button, loading: the primary button's face with the spinner in its middle. */
+.waiting {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: var(--type-16);
-  font-weight: var(--fw-semibold);
-  line-height: 1.21;
-}
-.methodPrice img {
-  width: 13.291px;
-  height: 14.033px;
+  justify-content: center;
+  height: 48px;
+  border-radius: var(--r-md);
+  background: var(--brand);
 }

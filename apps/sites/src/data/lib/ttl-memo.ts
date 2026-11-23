@@ -1,5 +1,7 @@
 type TtlMemo<A extends unknown[], T> = ((...args: A) => Promise<T>) & {
   reset: () => void;
+  /** Returns a value the next call can serve without awaiting a reload. */
+  peek: (...args: A) => T | undefined;
   /** Drops the entry for these arguments, so the next call loads again. */
   forget: (...args: A) => void;
 };
@@ -61,6 +63,11 @@ export function ttlMemo<A extends unknown[], T>(opts: {
     if (hit) entries.delete(key);
     return reload(key, args);
   }) as TtlMemo<A, T>;
+  memo.peek = (...args: A) => {
+    const key = keyFor(args);
+    const hit = key === null ? undefined : entries.get(key);
+    return hit && Date.now() < hit.expiresAt + (opts.staleMs ?? 0) ? hit.value : undefined;
+  };
   memo.reset = () => {
     entries.clear();
     inflight.clear();

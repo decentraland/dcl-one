@@ -1,6 +1,6 @@
 // The browser host's wiring: what it reads from the page and passes to the client, which reads nothing itself.
 import { afterEach, describe, expect, it } from "vitest";
-import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
+import { generateEphemeralKey, type AuthIdentity } from "@web-core/auth/identity";
 import { createShopApi } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
 import { hostApiOptions, identitySigner, shopApiMode, shopPeers } from "./host";

@@ -9,14 +9,16 @@
 // marketplace, then `executeOrder` at the order's exact price. A price that moved since the page's
 // quote is shown and must be accepted; a broadcast that has not confirmed is pending, never re-sent.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { Hex } from "viem";
 
+import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
-import { declined, isTxPending, isTxReverted, type WaitOptions } from "../../market/lib/tx";
+import { APPROVAL_STILL_PENDING, purchaseFailure, type PurchaseFailure, type WaitOptions } from "../../market/lib/tx";
 import { executeLegacyOrder, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";
 import { landCategoryOf } from "@shop/land/contracts";
@@ -34,13 +36,15 @@ export type LegacyOrderBuyProps = {
   quoted: ManaWei | null;
   onClose(): void;
   onDone?(txHash: string): void;
+  /** The sale was sent and is still confirming: the dialog stays on its notice, and the page may read the token again. */
+  onPending?(txHash: string): void;
   wait?: WaitOptions;
   portal?: boolean;
   /** Reads the Estate registry (defaults to the node's read relay for the order's chain). */
   reader?: ChainReader;
 };
 
-type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | { kind: "pending"; txHash: string } | { kind: "error"; message: string };
+type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | PurchaseFailure;
 
 const STEP_TEXT: Record<OrderPhase, string> = {
   approving: "Allow the marketplace to use your MANA in your wallet…",
@@ -48,8 +52,9 @@ const STEP_TEXT: Record<OrderPhase, string> = {
   pending: "Waiting for the transaction to confirm…",
 };
 
-export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, wait, portal, reader }: LegacyOrderBuyProps) {
+export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, onPending, wait, portal, reader }: LegacyOrderBuyProps) {
   const wallet = useShopWallet();
+  const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
   const [accepted, setAccepted] = useState(false);
   // An Estate is bought bound to the composition reviewed now: its registry fingerprint, read on open.
@@ -106,13 +111,17 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
         wait,
       });
       setPhase({ kind: "success", txHash: hash });
+      // The order spent MANA: the balances, the token and the buyer's lists are read again.
+      invalidateAfterPurchase(qc, { contractAddress, tokenId });
       onDone?.(hash);
     } catch (e) {
-      if (isTxPending(e)) setPhase({ kind: "pending", txHash: (e as { txHash: string }).txHash });
-      else if (declined(e)) setPhase({ kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." });
-      else if (isTxReverted(e)) setPhase({ kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." });
-      else if (sent) setPhase({ kind: "pending", txHash: sent });
-      else setPhase({ kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." });
+      const failure = purchaseFailure(e, sent);
+      setPhase(failure);
+      if (failure.kind === "pending") {
+        // The sale sent but not confirmed: the MANA is probably spent, so the balances are read again here too.
+        invalidateAfterPurchase(qc, { contractAddress, tokenId });
+        onPending?.(failure.txHash);
+      }
     }
   }
 
@@ -128,6 +137,11 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
         ) : phase.kind === "pending" ? (
           <>
             <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your activity in a moment.</p>
+            <Button onClick={onClose}>Close</Button>
+          </>
+        ) : phase.kind === "approval-pending" ? (
+          <>
+            <p role="status">{APPROVAL_STILL_PENDING}</p>
             <Button onClick={onClose}>Close</Button>
           </>
         ) : (

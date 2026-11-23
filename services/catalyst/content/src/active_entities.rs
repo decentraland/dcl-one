@@ -17,6 +17,7 @@ use super::validation::{
     BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, active_entities_body,
     ordered_refusal_json, too_many_ids_or_pointers,
 };
+use super::validator::urn::{self, UrnType};
 
 pub(crate) fn json_docs_response(docs: &[EntityDoc]) -> Response {
     (
@@ -228,10 +229,6 @@ pub async fn get_active_entities_by_hash(
     Ok(Json(entity_ids))
 }
 
-const KNOWN_NETWORKS: [&str; 7] = [
-    "ethereum", "goerli", "sepolia", "matic", "mumbai", "amoy", "arbitrum",
-];
-
 fn invalid_urn_format_message(urn: &str) -> String {
     format!("Invalid URN format: {urn}")
 }
@@ -242,57 +239,24 @@ fn invalid_collection_urn_param_message(urn: &str) -> String {
     )
 }
 
-fn has_url_scheme(urn: &str) -> bool {
-    let Some(colon) = urn.find(':') else {
-        return false;
-    };
-    let mut scheme = urn[..colon].chars();
-    match scheme.next() {
-        Some(c) if c.is_ascii_alphabetic() => {}
-        _ => return false,
-    }
-    scheme.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
-}
-
-/// lamb2 answers two different sentences: a string that does not even parse
-/// as a URN, and a URN that parses but is not a collection.
-fn collection_urn_rejection_message(urn: &str) -> String {
-    if has_url_scheme(urn) {
-        invalid_collection_urn_param_message(urn)
+/// Upstream's check of a collection URN: `parseUrn` throwing answers one
+/// sentence, and a URN it reads but that is not a listable collection (v1,
+/// v2, a third party by name, or the base avatars or emotes) the other.
+fn check_collection_urn(input: &str) -> Result<(), String> {
+    let parsed = urn::parse_urn(input).map_err(|urn::Throws| invalid_urn_format_message(input))?;
+    let listable = parsed.is_some_and(|parsed| {
+        matches!(
+            parsed.kind,
+            UrnType::CollectionV1 | UrnType::CollectionV2 | UrnType::ThirdPartyName
+        ) || matches!(
+            parsed.off_chain_registry(),
+            Some("base-avatars" | "base-emotes")
+        )
+    });
+    if listable {
+        Ok(())
     } else {
-        invalid_urn_format_message(urn)
-    }
-}
-
-fn is_hex_contract(value: &str) -> bool {
-    value.len() > 2 && value.starts_with("0x") && value[2..].chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn is_known_network(network: &str) -> bool {
-    KNOWN_NETWORKS
-        .iter()
-        .any(|n| network.eq_ignore_ascii_case(n))
-}
-
-fn is_valid_collection_urn(urn: &str) -> bool {
-    let p: Vec<&str> = urn.split(':').collect();
-    if p.len() != 5 || !p[0].eq_ignore_ascii_case("urn") || p[1] != "decentraland" {
-        return false;
-    }
-
-    if p[2] == "off-chain" {
-        return matches!(p[3], "base-avatars" | "base-emotes") && !p[4].is_empty();
-    }
-
-    if !is_known_network(p[2]) {
-        return false;
-    }
-
-    match p[3] {
-        "collections-v1" => is_hex_contract(p[4]) || (p[2] == "ethereum" && !p[4].is_empty()),
-        "collections-v2" => is_hex_contract(p[4]),
-        "collections-thirdparty" => !p[4].is_empty(),
-        _ => false,
+        Err(invalid_collection_urn_param_message(input))
     }
 }
 
@@ -302,19 +266,14 @@ pub async fn get_entities_by_collection(
     Path(collection_urn): Path<String>,
     request: Request,
 ) -> AppResult<impl IntoResponse> {
-    let urn = collection_urn.to_lowercase();
-    if !is_valid_collection_urn(&urn) {
-        return Err(AppError::invalid(collection_urn_rejection_message(
-            &collection_urn,
-        )));
-    }
+    check_collection_urn(&collection_urn).map_err(AppError::invalid)?;
 
     let params = parse_query_string(request.uri().query().unwrap_or(""));
     let pagination = parse_content_pagination(&params, 1000).map_err(AppError::invalid)?;
 
     let result = queries::active_entity_docs_by_prefix(
         &state.pool,
-        &urn,
+        &collection_urn,
         pagination.offset,
         pagination.limit,
     )
@@ -401,127 +360,87 @@ mod tests {
     }
 
     fn rejection_message(urn: &str) -> String {
-        assert!(!is_valid_collection_urn(urn));
-        collection_urn_rejection_message(urn)
+        check_collection_urn(urn).unwrap_err()
+    }
+
+    const C: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
+    const CHECKSUMMED: &str = "0xF87E31492Faf9A91B02Ee0dEAAd50d51d56D5d4D";
+
+    #[test]
+    fn the_collections_upstream_lists_are_accepted_as_spelled() {
+        for urn in [
+            format!("urn:decentraland:ethereum:collections-v1:{C}"),
+            format!("urn:decentraland:ethereum:collections-v1:{CHECKSUMMED}"),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019".into(),
+            "urn:decentraland:ethereum:collections-v1:halloween%5F2019".into(),
+            format!("urn:decentraland:matic:collections-v2:{C}"),
+            format!("urn:decentraland:matic:collections-v2:{CHECKSUMMED}"),
+            format!("urn:decentraland:MATIC:collections-v2:{C}"),
+            format!("URN:decentraland:matic:collections-v2:{C}"),
+            format!("urn:decentraland:arbitrum:collections-v2:{C}"),
+            "urn:decentraland:matic:collections-thirdparty:crypto-motors".into(),
+            "urn:decentraland:amoy:collections-thirdparty:aThirdParty".into(),
+            "urn:decentraland:off-chain:base-avatars:eyes_00".into(),
+            "urn:decentraland:off-chain:base-emotes:wave".into(),
+            "urn:decentraland:off-chain:base%2Demotes:wave".into(),
+            "dcl://base-avatars/eyes_00".into(),
+        ] {
+            assert_eq!(check_collection_urn(&urn), Ok(()), "{urn}");
+        }
     }
 
     #[test]
-    fn invalid_collection_urn_message_matches_upstream_text() {
-        assert_eq!(
-            invalid_urn_format_message("not-a-real-urn"),
-            "Invalid URN format: not-a-real-urn"
-        );
-    }
-
-    #[test]
-    fn invalid_collection_urn_param_message_matches_upstream_text() {
-        assert_eq!(
-            invalid_collection_urn_param_message("urn:decentraland:ethereum:LAND:0,0"),
-            "Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: 'urn:decentraland:ethereum:LAND:0,0'"
-        );
-    }
-
-    #[test]
-    fn unparseable_urns_report_the_invalid_urn_format_message() {
-        for urn in ["not-a-real-urn", "0xdeadbeef"] {
-            assert!(!has_url_scheme(urn));
+    fn urns_upstream_refuses_are_refused_with_its_sentence() {
+        for urn in [
+            "urn:DECENTRALAND:off-chain:base-emotes:wave".to_string(),
+            "urn:decentraland:off-chain:Base-Emotes:wave".into(),
+            "urn:decentraland:off-chain:base-scene-emotes:sittingChair2".into(),
+            "urn:decentraland:off-chain:other-collection:wave".into(),
+            "urn:decentraland:off-chain:base-emotes:".into(),
+            "urn:decentraland:off-chain:base-emotes:wave:extra".into(),
+            format!("urn:decentraland:matic:Collections-V2:{C}"),
+            format!("urn:decentraland:matic:collections-v2:0X{}", &C[2..]),
+            "urn:decentraland:matic:collections-v2:not-an-address".into(),
+            format!("urn:decentraland:matic:collections-v2:{C}:0"),
+            format!("urn:decentraland:matic:collections-v2:{C}:0:1"),
+            format!("urn:decentraland:bogusnet:collections-v2:{C}"),
+            "urn:decentraland:ethereum:collections-v1:not_a_v1_collection".into(),
+            "urn:decentraland:ETHEREUM:collections-v1:halloween_2019".into(),
+            "urn:decentraland:matic:collections-v1:halloween_2019".into(),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019:hat".into(),
+            "urn:decentraland:ethereum:collections-thirdparty:crypto-motors".into(),
+            "urn:decentraland:amoy:collections-thirdparty:aThirdParty:winterCollection".into(),
+            "urn:decentraland:ethereum:LAND:0,0".into(),
+            "urn:decentraland:off-chain:base-emotes:%ZZ:extra".into(),
+            "https://example.com/x".into(),
+        ] {
+            assert_eq!(
+                rejection_message(&urn),
+                invalid_collection_urn_param_message(&urn)
+            );
+        }
+        for urn in [
+            "not-a-real-urn",
+            "0xdeadbeef",
+            "",
+            "1urn:decentraland",
+            "urn:decentraland:off-chain:base-emotes:%ZZ",
+            "urn:decentraland:%ZZ:collections-v2:0x1",
+        ] {
             assert_eq!(rejection_message(urn), invalid_urn_format_message(urn));
         }
     }
 
     #[test]
-    fn parseable_but_unsupported_urns_report_the_collection_urn_param_message() {
-        for urn in [
-            "urn:decentraland:off-chain:base-scene-emotes:sittingChair2",
-            "urn:decentraland:off-chain:other-collection:wave",
-            "urn:decentraland:ethereum:LAND:0,0",
-            "https://example.com/x",
-        ] {
-            assert!(has_url_scheme(urn));
-            assert_eq!(
-                rejection_message(urn),
-                invalid_collection_urn_param_message(urn)
-            );
-        }
-    }
-
-    #[test]
-    fn only_base_avatars_and_base_emotes_are_listable_off_chain_collections() {
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:off-chain:base-avatars:eyes_00"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:off-chain:base-emotes:wave"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:off-chain:base-emotes:"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:off-chain:base-emotes:wave:extra"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:off-chain:base-scene-emotes:sittingChair2"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:off-chain:other-collection:wave"
-        ));
-    }
-
-    #[test]
-    fn collection_urns_on_chain_are_validated_by_kind() {
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:ethereum:collections-v1:halloween_2019"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:ethereum:collections-v1:0x06012c8cf97bead5deae237070f9587f8e7a266d"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:matic:collections-v2:0x1c1b7a6ca21d3ab7a0a9f0c2f1a6ce9c9b9e0a1b"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:matic:collections-v2:0xabc"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:arbitrum:collections-v2:0x1c1b7a6ca21d3ab7a0a9f0c2f1a6ce9c9b9e0a1b"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:matic:collections-thirdparty:crypto-motors"
-        ));
-        assert!(is_valid_collection_urn(
-            "urn:decentraland:mumbai:collections-thirdparty:aThirdParty"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:mumbai:collections-thirdparty:aThirdParty:winterCollection"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:matic:collections-v2:not-an-address"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:matic:collections-v2:0x1c1b7a6ca21d3ab7a0a9f0c2f1a6ce9c9b9e0a1b:0"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:ethereum:collections-v1:halloween_2019:hat"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:matic:collections-v1:halloween_2019"
-        ));
-        assert!(is_valid_collection_urn(
-            "URN:decentraland:off-chain:base-emotes:wave"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:DECENTRALAND:off-chain:base-emotes:wave"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:ETHEREUM:collections-v1:halloween_2019"
-        ));
-        assert!(!is_valid_collection_urn(
-            "urn:decentraland:bogusnet:collections-v2:0x1c1b7a6ca21d3ab7a0a9f0c2f1a6ce9c9b9e0a1b"
-        ));
-    }
-
-    #[test]
-    fn not_a_real_urn_is_rejected() {
-        assert!(!is_valid_collection_urn("not-a-real-urn"));
+    fn the_rejection_sentences_match_upstream_text() {
+        assert_eq!(
+            invalid_urn_format_message("not-a-real-urn"),
+            "Invalid URN format: not-a-real-urn"
+        );
+        assert_eq!(
+            invalid_collection_urn_param_message("urn:decentraland:ethereum:LAND:0,0"),
+            "Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: 'urn:decentraland:ethereum:LAND:0,0'"
+        );
     }
 
     #[tokio::test]

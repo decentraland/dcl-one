@@ -25,7 +25,7 @@ pub(super) fn imposters_bake_settings(config: &Config) -> explore::imposters::Ra
 /// The six write switches as `GET /writes` reports them.
 pub(super) fn write_switches(config: &Config) -> shared::writes::Switches {
     shared::writes::Switches {
-        content: config.writes.content_writes_enabled,
+        content: config.writes.content_writes(),
         create: config.create.create_writes_enabled,
         data: config.writes.data_writes_enabled,
         social: config.writes.social_writes_enabled,
@@ -126,6 +126,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         cast2_url: config.social.cast2_url.clone(),
         commit_hash: config.node.commit_hash.clone(),
         allow_local_preview: config.social.allow_local_preview,
+        realm_name: non_empty(&config.node.realm_name),
     })
     .context("LIVEKIT_* / COMMS_* configuration")
 }

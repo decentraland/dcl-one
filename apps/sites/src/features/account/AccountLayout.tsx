@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "../components/chrome/SitesLayout";
 
 import { Button, Spinner } from "@dcl/one-ui";
 import { GeneralClose, GeneralLeftArrow } from "@dcl/one-ui/foundations/icons";
@@ -67,7 +67,7 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
   const { linkState, close } = useAccountEntry();
 
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesLayout active="play" overlayNav>
       <div className={styles.root} data-view={account.state === "signed-in" && !active ? "menu" : "section"}>
         {account.state === "signed-in" ? (
           <div className={styles.frame}>
@@ -113,6 +113,6 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
           </div>
         )}
       </div>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

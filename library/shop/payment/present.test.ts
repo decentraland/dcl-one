@@ -1,7 +1,7 @@
 // Ports the payment-rule tests of src/shop/policy.rs and tests/shop/policy.rs to the presentation
 // mirror, then checks that presentPayment renders the server's answer and reports an inconsistent one.
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ASSET_KINDS, SALE_KINDS, type AssetKind, type SaleKind } from "../model/asset";
 import { CHAIN } from "../model/chain";
@@ -27,7 +27,7 @@ import {
   web3,
   wearableResale,
 } from "./fixtures";
-import { presentPayment, type Inconsistency } from "./present";
+import { presentPayment, setSplitPaymentForTests, type Inconsistency } from "./present";
 import { present, restrictions } from "./rule";
 
 function quiet() {
@@ -42,6 +42,15 @@ function show(offer: PurchaseOffer, session: Session, ctx: Parameters<typeof pre
 }
 
 const methods = (offer: PurchaseOffer, session: Session) => show(offer, session).view.options.map((o) => o.method);
+
+
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPaymentForTests(true);
+});
+afterEach(() => undoSplit());
 
 describe("the rule mirror (src/shop/policy.rs tests)", () => {
   it("the_rule_table_is_exhaustive: every AssetKind x SaleKind x session, Polygon and Ethereum, single and bundled", () => {
@@ -257,17 +266,59 @@ describe("balances decide an option's state, never its method", () => {
     ]);
   });
 
-  it("credits+MANA lives inside the MANA option: 327c held on a 410c NAME is 32 credits and 9 MANA", () => {
-    const offer = nameRegistration(web3());
+  it("credits+MANA lives inside the MANA option: 327c held on a 410c mint is 32 credits and 9 MANA, of the whole 410c price", () => {
+    const offer = storeMint(web3());
     const priced: PurchaseOffer = {
       ...offer,
       quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
     };
     const { view } = show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) });
     const mana = view.options.find((o) => o.method === "mana")!;
-    expect(mana.mixed).toEqual({ creditsCents: 320, credits: 32, manaWei: manaFromWhole(9) });
+    expect(mana.mixed).toEqual({ priceCents: 410, creditsCents: 320, credits: 32, manaWei: manaFromWhole(9) });
     expect(view.options[0]!.state.kind).toBe("topUpRequired");
     expect(show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(8) }).view.options[1]!.mixed).toBeNull();
+  });
+
+  it("offers the credits+MANA split only when the render's rollout is on AND the node marks the offer splittable", () => {
+    const offer = storeMint(web3());
+    const priced: PurchaseOffer = {
+      ...offer,
+      quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
+    };
+    expect(priced.splittable).toBe(true);
+    const balances = { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) };
+    const mixed = (o: PurchaseOffer, ctx: Parameters<typeof presentPayment>[2]) => show(o, web3(), ctx).view.options.find((v) => v.method === "mana")!.mixed;
+    // As this file runs (its tests turn it on), the node's mark is enough.
+    expect(mixed(priced, balances)).not.toBeNull();
+    undoSplit();
+    // The rollout not said, or off for this render: the mark alone offers nothing, and credits stay a top-up.
+    expect(mixed(priced, balances)).toBeNull();
+    expect(mixed(priced, { ...balances, split: false })).toBeNull();
+    expect(show(priced, web3(), balances).view.options[0]!.state.kind).toBe("topUpRequired");
+    // On for this render: offered, and only for this render.
+    expect(mixed(priced, { ...balances, split: true })).not.toBeNull();
+    expect(mixed(priced, balances)).toBeNull();
+    // On, for an offer the node does not mark (an older node, or its rollout off): nothing.
+    expect(mixed({ ...priced, splittable: false }, { ...balances, split: true })).toBeNull();
+  });
+
+  it("a USD-pegged listing offers no credits+MANA split: its MANA is only fixed at settlement", () => {
+    const { view } = show(creatorOrder(web3()), web3(), { creditsBalance: usdCents(30), manaBalance: manaFromWhole(10) });
+    expect(view.options.map((o) => o.method)).toEqual(["credits", "mana"]);
+    expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
+    expect(view.options[0]!.state.kind).toBe("topUpRequired");
+  });
+
+  it("a NAME registration offers no credits+MANA split: the credits node authorizes no part of one", () => {
+    const offer = nameRegistration(web3());
+    const priced: PurchaseOffer = {
+      ...offer,
+      quotes: [{ method: "credits", quoted: usdCents(410) }, { method: "mana", amount: manaWei(41n * 10n ** 18n) }],
+    };
+    const { view } = show(priced, web3(), { creditsBalance: usdCents(327), manaBalance: manaFromWhole(10) });
+    expect(view.options.map((o) => o.method)).toEqual(["credits", "mana"]);
+    expect(view.options.find((o) => o.method === "mana")!.mixed).toBeNull();
+    expect(view.options[0]!.state.kind).toBe("topUpRequired");
   });
 
   it("not enough MANA is stated on the MANA option", () => {

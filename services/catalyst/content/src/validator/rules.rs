@@ -18,7 +18,8 @@ use super::checker::{
 use super::error::ValidationResponse;
 use super::helpers::{
     avatar_has_snapshots, navmap_thumbnail_error, profile_has_emotes,
-    should_validate_face_thumbnail, validate_profile_emote_urns, validate_profile_wearable_urns,
+    should_validate_face_thumbnail, slot_key, validate_profile_emote_urns,
+    validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
 use super::scene_parcels::validate_scene_parcels_match_pointers;
@@ -63,6 +64,56 @@ fn content_store_unavailable(cause: &str) -> ValidationResponse {
     )
 }
 
+/// An uploaded file this node spooled and could not read back: its own
+/// disk failing, answered as the spool's 503. The cause is logged.
+fn upload_unreadable(error: &std::io::Error) -> ValidationResponse {
+    tracing::error!(%error, "a spooled upload could not be read during deploy validation");
+    ValidationResponse::unavailable(crate::create_entity::SPOOL_UNAVAILABLE_MESSAGE)
+}
+
+/// A wearable's or emote's `metadata.thumbnail` file name and the content
+/// hash it maps to.
+fn item_thumbnail(entity: &Entity) -> (Option<&str>, Option<&str>) {
+    let thumbnail = entity
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("thumbnail"))
+        .and_then(|t| t.as_str());
+    let hash = entity
+        .content
+        .iter()
+        .find(|c| Some(c.file.as_str()) == thumbnail)
+        .map(|c| c.hash.as_str());
+    (thumbnail, hash)
+}
+
+/// An avatar's `snapshots.face256` content hash.
+fn face256_of(avatar: &serde_json::Value) -> Option<&str> {
+    avatar
+        .get("avatar")
+        .and_then(|a| a.get("snapshots"))
+        .and_then(|s| s.get("face256"))
+        .and_then(|h| h.as_str())
+}
+
+/// The uploaded files besides the entity file whose bytes validating
+/// `entity` may read: a wearable's or emote's thumbnail, a profile's face256
+/// snapshots. Each is read whole, one at a time, so the most a validation
+/// holds on top of the entity file is the largest of them.
+pub fn inspected_hashes(entity: &Entity) -> Vec<&str> {
+    match entity.entity_type {
+        EntityType::Wearable | EntityType::Emote => item_thumbnail(entity).1.into_iter().collect(),
+        EntityType::Profile => entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("avatars"))
+            .and_then(|a| a.as_array())
+            .map(|avatars| avatars.iter().filter_map(face256_of).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     pub external_calls: &'a E,
     pub blockchain_checker: &'a B,
@@ -71,6 +122,8 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     pub ignore_blockchain_access: bool,
     /// An entity a peer serves: the item thumbnail is not checked and an
     /// item's equivalent pointers count as one, as the reference does.
+    /// A new deploy also needs integer emote and outfit slots, stricter than
+    /// the reference's number; a synced entity keeps the numeric reading.
     pub synced: bool,
     /// The access step already passed for this entity and chain (the
     /// read-through's check before its content was in): not asked again.
@@ -346,7 +399,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 Err(response) => return response,
             }
         } else {
-            deployment.files.values().map(|f| f.len() as u64).sum()
+            deployment.files.values().map(UploadedFile::len).sum()
         };
 
         // Compares total / pointers > max without truncating the quotient.
@@ -373,7 +426,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
         for hash in unique_hashes {
             if let Some(uploaded) = deployment.files.get(hash) {
-                total += uploaded.len() as u64;
+                total += uploaded.len();
             } else {
                 match self.external_calls.fetch_content_file_size(hash).await {
                     Ok(Some(size)) => total += size as u64,
@@ -452,20 +505,9 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             return ValidationResponse::Ok;
         }
 
-        let thumbnail = entity
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("thumbnail"))
-            .and_then(|t| t.as_str());
-
-        let hash = entity
-            .content
-            .iter()
-            .find(|c| Some(c.file.as_str()) == thumbnail)
-            .map(|c| c.hash.clone());
-
+        let (thumbnail, hash) = item_thumbnail(entity);
         let hash = match hash {
-            Some(h) => h,
+            Some(h) => h.to_string(),
             None => {
                 return ValidationResponse::fail(format!(
                     "Couldn't find hash for thumbnail file with name: {}",
@@ -475,7 +517,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         };
 
         match deployment.files.get(&hash) {
-            Some(buffer) => ValidationResponse::from_errors(check_wearable_thumbnail_image(buffer)),
+            Some(file) => match file.read().await {
+                Ok(buffer) => {
+                    ValidationResponse::from_errors(check_wearable_thumbnail_image(&buffer))
+                }
+                Err(e) => upload_unreadable(&e),
+            },
             None => {
                 match self
                     .external_calls
@@ -515,12 +562,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
         let mut errors: Vec<String> = Vec::new();
         for avatar in avatars {
-            let hash = avatar
-                .get("avatar")
-                .and_then(|a| a.get("snapshots"))
-                .and_then(|s| s.get("face256"))
-                .and_then(|h| h.as_str());
-            let hash = match hash {
+            let hash = match face256_of(avatar) {
                 Some(h) => h.to_string(),
                 None => {
                     return ValidationResponse::fail(
@@ -554,7 +596,10 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             }
 
             match deployment.files.get(&hash) {
-                Some(buffer) => errors.extend(check_face256_thumbnail_image(buffer)),
+                Some(file) => match file.read().await {
+                    Ok(buffer) => errors.extend(check_face256_thumbnail_image(&buffer)),
+                    Err(e) => return upload_unreadable(&e),
+                },
                 None => {
                     return ValidationResponse::fail(format!(
                         "Couldn't find thumbnail file with hash: {hash}"
@@ -663,9 +708,15 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                     .and_then(|e| e.as_array())
                 {
                     for emote in emotes {
-                        if let Some(slot) = emote.get("slot").and_then(|s| s.as_i64())
-                            && !used_slots.insert(slot)
-                        {
+                        let Some(slot) = emote.get("slot").and_then(|s| s.as_f64()) else {
+                            continue;
+                        };
+                        if !self.synced && slot.fract() != 0.0 {
+                            return ValidationResponse::fail(format!(
+                                "The slot {slot} of the emote must be an integer."
+                            ));
+                        }
+                        if !used_slots.insert(slot_key(slot)) {
                             return ValidationResponse::fail(format!(
                                 "Emote slot {slot} should not be repeated."
                             ));
@@ -782,15 +833,20 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         if let Some(outfits) = metadata.get("outfits").and_then(|v| v.as_array()) {
             let mut used_slots = HashSet::new();
             for outfit in outfits {
-                if let Some(slot) = outfit.get("slot").and_then(|s| s.as_i64()) {
-                    if !(0..=9).contains(&slot) {
+                if let Some(slot) = outfit.get("slot").and_then(|s| s.as_f64()) {
+                    if !self.synced && slot.fract() != 0.0 {
+                        return ValidationResponse::fail(
+                            "Outfits slots are invalid, they must be integers".to_string(),
+                        );
+                    }
+                    if !(0.0..=9.0).contains(&slot) {
                         return ValidationResponse::fail(
                             "Outfits slots are invalid, they must be between 0 and 9 \
                              inclusive"
                                 .to_string(),
                         );
                     }
-                    if !used_slots.insert(slot) {
+                    if !used_slots.insert(slot_key(slot)) {
                         return ValidationResponse::fail("Outfits slots are repeated".to_string());
                     }
                 }
@@ -798,8 +854,8 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
             let has_extra = outfits.iter().any(|o| {
                 o.get("slot")
-                    .and_then(|s| s.as_i64())
-                    .map(|s| s > 4)
+                    .and_then(|s| s.as_f64())
+                    .map(|s| s > 4.0)
                     .unwrap_or(false)
             });
             if has_extra {
@@ -1480,6 +1536,112 @@ mod tests {
             assert!(validator.validate(&d.view()).await.is_ok());
             assert!(validator.validate_staging(&d.view(), false).await.is_ok());
             assert_eq!(calls.1.load(std::sync::atomic::Ordering::SeqCst), 2);
+        }
+
+        /// A profile whose first avatar has emotes in the given slots.
+        fn profile_with_emote_slots(slots: &str) -> OwnedDeployment {
+            let mut d = profile();
+            let emotes: Vec<serde_json::Value> = slots
+                .split(',')
+                .enumerate()
+                .map(|(i, slot)| {
+                    serde_json::from_str(&format!(
+                        r#"{{"slot": {slot}, "urn": "urn:decentraland:off-chain:base-emotes:e{i}"}}"#
+                    ))
+                    .unwrap()
+                })
+                .collect();
+            d.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["emotes"] =
+                serde_json::Value::Array(emotes);
+            d
+        }
+
+        /// An outfits entity with outfits in the given slots.
+        fn outfits_with_slots(slots: &str, names: &str) -> OwnedDeployment {
+            let outfits: Vec<String> = slots
+                .split(',')
+                .map(|slot| format!(r#"{{"slot": {slot}, "outfit": {{"wearables": []}}}}"#))
+                .collect();
+            let metadata = format!(
+                r#"{{"outfits": [{}], "namesForExtraSlots": [{names}]}}"#,
+                outfits.join(",")
+            );
+            let mut d = profile();
+            d.entity.entity_type = EntityType::Outfits;
+            d.entity.pointers = vec![format!("{OWNER}:outfits")];
+            d.entity.metadata = Some(serde_json::from_str(&metadata).unwrap());
+            d
+        }
+
+        /// Whether the profile or outfits content rules pass for `d`.
+        fn slots_pass(d: &OwnedDeployment, synced: bool) -> bool {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced,
+                access_passed: false,
+            };
+            match d.entity.entity_type {
+                EntityType::Outfits => validator.validate_outfits_content(&d.view()),
+                _ => validator.validate_profile_content(&d.view()),
+            }
+            .is_ok()
+        }
+
+        #[test]
+        fn emote_slots_are_judged_by_their_numeric_value_in_every_json_form() {
+            for synced in [false, true] {
+                assert!(slots_pass(&profile_with_emote_slots("0,1.0,9e0"), synced));
+                for slots in ["1e1", "-1.0", "1,1.0"] {
+                    assert!(
+                        !slots_pass(&profile_with_emote_slots(slots), synced),
+                        "emote slots {slots}"
+                    );
+                }
+            }
+            // Fractional slots are refused on a new deploy; a peer's entity keeps the old reading.
+            assert!(!slots_pass(&profile_with_emote_slots("1.5"), false));
+            assert!(slots_pass(&profile_with_emote_slots("1.5"), true));
+            // `-0.0` and `0` are one slot.
+            assert!(!slots_pass(&profile_with_emote_slots("0,-0.0"), false));
+            // Slots are unique across every avatar of the profile.
+            let two_avatars = |first: &str, second: &str| {
+                let mut d = profile_with_emote_slots(first);
+                let metadata = d.entity.metadata.as_mut().unwrap();
+                let mut avatar = metadata["avatars"][0].clone();
+                avatar["avatar"]["emotes"] = profile_with_emote_slots(second)
+                    .entity
+                    .metadata
+                    .unwrap()["avatars"][0]["avatar"]["emotes"]
+                    .clone();
+                metadata["avatars"].as_array_mut().unwrap().push(avatar);
+                d
+            };
+            assert!(slots_pass(&two_avatars("1", "2.0"), false));
+            assert!(!slots_pass(&two_avatars("1", "1.0"), false));
+        }
+
+        #[test]
+        fn outfit_slots_are_judged_by_their_numeric_value_in_every_json_form() {
+            for synced in [false, true] {
+                assert!(slots_pass(&outfits_with_slots("0,1.0,4e0", ""), synced));
+                assert!(slots_pass(&outfits_with_slots("5.0", r#""alice""#), synced));
+                for slots in ["10.0", "-1.0", "1,1e0", "5e0"] {
+                    assert!(
+                        !slots_pass(&outfits_with_slots(slots, ""), synced),
+                        "outfit slots {slots}"
+                    );
+                }
+            }
+            // Fractional slots are refused on a new deploy; a peer's entity keeps the old reading.
+            assert!(!slots_pass(&outfits_with_slots("1.5", ""), false));
+            assert!(slots_pass(&outfits_with_slots("1.5", ""), true));
+            assert!(!slots_pass(&outfits_with_slots("4.5", ""), true));
+            // `-0.0` and `0` are one slot.
+            assert!(!slots_pass(&outfits_with_slots("0,-0.0", ""), false));
         }
 
         #[test]

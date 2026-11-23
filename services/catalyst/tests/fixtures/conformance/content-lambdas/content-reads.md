@@ -15,7 +15,8 @@ All verdicts below are from reading code (static), except where a row cites a ca
 "verified". Library behaviour that is not in the pinned upstream tree (`@dcl/http-server`,
 `@dcl/schema-validator-component`, `@dcl/rate-limiter-component`, `@dcl/catalyst-storage`,
 `@dcl/schemas`, `@dcl/urn-resolver`, `file-type`) is stated only as far as the upstream code and
-its tests pin it; the rest is marked "needs a capture".
+its tests pin it; the rest is marked "needs a capture". The `file-type` answers in CR-7 were captured
+from the pinned package itself (`content-sniff.tsv`, `capture-sniff.cjs`).
 
 ## Files read
 
@@ -45,19 +46,19 @@ dcl-one (`services/catalyst/`):
 
 Upstream production serves every route below under `/content/*` (nginx strips the prefix). dcl-one
 serves the same router at the root and under `/content`
-(`services/catalyst/content/src/lib.rs:710-711`).
+(`services/catalyst/content/src/lib.rs:854-855`).
 
 | # | method | upstream path | prod prefix | dcl-one route(s) | status |
 |---|---|---|---|---|---|
-| 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:630` -> `active_entities.rs:123` | DIVERGENT |
-| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:631-634` -> `active_entities.rs:252` | DIVERGENT |
-| 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:635-638` -> `active_entities.rs:98` | DIVERGENT |
-| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | DIVERGENT |
-| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | DIVERGENT |
-| 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:643-646` -> `active_entities.rs:169` | MATCH |
-| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | MATCH |
-| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | MATCH |
-| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:623-625,712` | MATCH |
+| 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:759` -> `active_entities.rs:141` | DIVERGENT |
+| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:760-763` -> `active_entities.rs:264` | DIVERGENT: third-party freshness only (upstream lists from a materialized view refreshed on a schedule, dcl-one reads `active_pointers` live; section 2, data dependency) |
+| 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:764-772` -> `active_entities.rs:101` | DIVERGENT |
+| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:773-781` -> `get_content.rs:172` | DIVERGENT |
+| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:776` -> `get_content.rs:172` | DIVERGENT |
+| 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:782-785` -> `active_entities.rs:218` | MATCH |
+| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:786-789` -> `available_content.rs:14` | MATCH |
+| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:790` -> `audit.rs:13` | MATCH |
+| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:743-750,856` | MATCH |
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
@@ -153,15 +154,15 @@ that does not sync a type answers `[]` for it (upstream full nodes hold every ty
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:187-217` (scheme heuristic) | MATCH on the pinned test inputs (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`) |
-| parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:191-195,229-249` | MATCH on the pinned cases (`filter-by-urn-handler.spec.ts:33-77`); the hand-written grammar (`KNOWN_NETWORKS`, `collections-v1` only on `ethereum` unless hex) is not proven equal to `@dcl/urn-resolver` for other inputs |
+| `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:245-261` (`validator::urn::parse_urn` throws where the input is not a WHATWG URL, or where a group of a route the path matches holds a malformed percent escape, e.g. `urn:decentraland:off-chain:base-emotes:%ZZ`) | MATCH (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`, test `collection_listing_answers_a_malformed_escape_like_upstream`) |
+| parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:245-261`, on the client's spelling with `validator::urn` (the `@dcl/urn-resolver` port) | MATCH |
 | `pageSize`/`pageNum` not a positive integer | 400 | `{"error":"pageSize must be a positive integer"}` / `{"error":"pageNum must be a positive integer"}` | `utils.ts:11-17` | `shared/src/query_params.rs` `parse_content_pagination` | MATCH: a present value is read with `parseInt` (`10abc` is 10, `1.5` is 1); an unparseable or empty one is a 400 (CR-10) |
 | `pageSize` > 1000 | 400 | `{"error":"max allowed pageSize is 1000"}` | `utils.ts:19-21` | `query_params.rs` `parse_content_pagination` | MATCH |
-| success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:264-281`, `queries.rs:277-310` | MATCH (entity shape as section 1) |
-| no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:284-290` | MATCH |
+| success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:264-289`, `queries.rs:425-460` | MATCH (entity shape as section 1; `%` and `_` in the URN match literally, test `collection_listing_matches_percent_and_underscore_literally`) |
+| no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:425-460` | MATCH |
 
 Order: upstream pages the id list in `active_pointers` scan order and then re-orders by cache
-state (`component.ts:377-380`); dcl-one orders by pointer (`queries.rs:292-300`). Not a contract.
+state (`component.ts:377-380`); dcl-one orders by pointer (`queries.rs:441`). Not a contract.
 
 **Data dependency**: `content.active_pointers` and deployments for wearables/emotes. Upstream third-party
 lists come from a materialized view refreshed on a schedule (stale until refresh); dcl-one reads
@@ -244,11 +245,11 @@ pointer of the same entity answered from the DB can return that entity twice
 | `If-None-Match` matches `"<hash>"` or is `*` (checked before storage) | 304 | none | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `get-content-handler.ts:34-35`, `utils.ts:88-113` | `get_content.rs:101-105`, `formatters.rs:9-33` | MATCH |
 | not in storage | 404 | `{"error":"No content found with hash <hash>"}` | json | `get-content-handler.ts:40-43` | `get_content.rs:107-117` | MATCH (dcl-one first tries read-through when attached) |
 | Range unsatisfiable (`start >= size`, `start > end`, `bytes=-0`, empty file) | 416 | none | `Content-Range: bytes */<size>`, `Access-Control-Expose-Headers: Content-Range` | `utils.ts:184-195` | `get_content.rs:125-135`, `formatters.rs:41-83` | MATCH |
-| Range satisfiable | 206 | the slice (GET), none (HEAD) | base headers below + `Content-Range: bytes a-b/<size>`, `Content-Length: <b-a+1>` | `utils.ts:197-211`, `get-content-handler.ts:52-63` | `get_content.rs:136-159` | MATCH. Upstream `<size>` is the decompressed size of a gzip-stored file (`utils.ts:184`); dcl-one stores raw bytes, so the same number |
-| plain GET | 200 | the bytes | `Content-Type: application/octet-stream` (or sniffed), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length` | `utils.ts:115-135` | `formatters.rs:85-102`, `get_content.rs:193-198` | DIVERGENT: upstream serves a gzip-stored file as stored, with `Content-Encoding: gzip` and the compressed `Content-Length`, regardless of `Accept-Encoding` (`utils.ts:128-133`); dcl-one never sets `Content-Encoding` (`storage/src/content.rs:333-338`). Upstream omits `Content-Length` for a 0-byte file (`if (content.size)`); dcl-one sends `0` |
-| plain GET with `STORAGE_X_ACCEL_BASE` set | 200 | empty; nginx serves the file | `X-Accel-Redirect` | n/a | `get_content.rs:367-380`, `infra/gateway/gateway.py:265-272` | behind the gateway, the client gets the plain GET headers (one `Cache-Control`, the sniffed `Content-Type`, the expose list) and a range the app does not support gets the whole file (worlds WR-25). A passing request carries no `RateLimit-*`, and a 429 is answered by the app with them |
-| plain HEAD | 200 | none | as plain GET | `get-content-handler.ts:62` | `get_content.rs:163-167` | MATCH, except sniffing (next row) |
-| `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` on the stream head, else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs` `detect_content_type`, sniffed on GET, HEAD and the head of a range | DIVERGENT on rarer formats only: dcl-one detects png, glb, mp4 (any `ftyp`), jpeg, gif, mp3 (ID3 or a Layer III frame), wav, webp, zip, ogg, webm, and answers `application/octet-stream` for anything else (JSON and text included, as `file-type`); `file-type`'s other formats (ktx2, `ftyp` brands such as `qt`/`M4A`/`heic`, Ogg codec subtypes, zip-based documents) need its table, which is not vendored (CR-7) |
+| Range satisfiable | 206 | the slice (GET), none (HEAD) | base headers below + `Content-Range: bytes a-b/<size>`, `Content-Length: <b-a+1>` | `utils.ts:197-211`, `get-content-handler.ts:52-63` | `get_content.rs` `serve` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`): the base headers differ as on a plain GET (next row). Upstream `<size>` is the decompressed size of a gzip-stored file (`utils.ts:184`); dcl-one stores raw bytes, so the same number |
+| plain GET | 200 | the bytes | `Content-Type: application/octet-stream` (or sniffed), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length` | `utils.ts:115-135` | `formatters.rs` `content_file_headers`, `get_content.rs` `serve` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`): dcl-one also sends `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, so a file opened as a page runs sandboxed. Upstream serves a gzip-stored file as stored, with `Content-Encoding: gzip` and the compressed `Content-Length`, regardless of `Accept-Encoding` (`utils.ts:128-133`); dcl-one never sets `Content-Encoding` (`storage/src/content.rs:333-338`). Upstream omits `Content-Length` for a 0-byte file (`if (content.size)`); dcl-one sends `0` |
+| plain GET with `STORAGE_X_ACCEL_BASE` set | 200 | empty; nginx serves the file | `X-Accel-Redirect` | n/a | `get_content.rs` `serve`, `infra/gateway/gateway.py` (`/__protected_storage/`) | behind the gateway, the client gets the plain GET headers (one `Cache-Control`, the sniffed `Content-Type`, the expose list, the sandbox policy) and a range the app does not support gets the whole file (worlds WR-25). A passing request carries no `RateLimit-*`, and a 429 is answered by the app with them |
+| plain HEAD | 200 | none | as plain GET | `get-content-handler.ts:62` | `get_content.rs` `serve` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`): the headers differ as on a plain GET; sniffing as the next row |
+| `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` 21.1.1 on the stream served (the whole file, or the range), else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs` `content_type` (`file_type/catalyst.rs`), sniffed on GET, HEAD and the range | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`) for document types; otherwise MATCH, replayed by `content-sniff.tsv` (`capture-sniff.cjs`, 245 samples, whole and as bytes 0-4099). A `text/*`, `*/xml`, `*+xml` or HTML answer (`file-type`'s `application/xml`, `text/vtt`, `text/vcard`, `text/calendar` and `application/vnd.ms-htmlhelp`) is answered `application/octet-stream`, since these routes share the node's origin, where a browser would run an XHTML or SVG document's scripts (as on the worlds mount). The answer is kept per content key and window, so a repeated GET, HEAD or range does not sniff again. Where `file-type` throws (a stream that ends inside a check, a ZIP entry it cannot inflate) upstream answers a 500; dcl-one answers `application/octet-stream`. The walks that follow a file's structure (ID3 tags, PNG chunks, EBML and ASF elements, ZIP entries) stop after a bound where `file-type` reads on to the end of the file, and a ZIP walk stops once it has fetched 16 MiB |
 | storage fault | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `get_content.rs:107`, `errors.rs:95-99` | MATCH |
 
 **Data dependency**: the blob store (`storage/src/content.rs:202-224`), filled by sync for every
@@ -313,7 +314,7 @@ time this node stored the deployment, so it differs between any two nodes (upstr
   answer (`decentraland/catalyst:src/service.ts:63-65`). Captured: `404`, `Content-Type: text/plain;
   charset=utf-8`, body `Not found` (`Content-Length: 9`), no CORS headers without `Origin`
   (`captures/content-reads/CR-13-unknown-route.json`).
-- dcl-one: `404 text/plain "Not found"` (`services/catalyst/content/src/lib.rs:623-625,712`); axum gives a
+- dcl-one: `404 text/plain "Not found"` (`services/catalyst/content/src/lib.rs:743-750,856`); axum gives a
   `&str` body `text/plain; charset=utf-8`. It adds the CORS and `X-Content-Type-Options: nosniff` headers.
 - Verdict: MATCH on status, content type and body, by the capture (CR-13).
 
@@ -388,7 +389,7 @@ Verdict: MATCH under `/content/` (CR-11).
     `Unrecognized type: Active`, as upstream's `/entities/:type` would. Other methods take
     `/entities/active`.
 - Prefix: upstream production serves only `/content/*`; dcl-one answers the same routes at the root
-  and under `/content` (`services/catalyst/content/src/lib.rs:710-711`). A superset.
+  and under `/content` (`services/catalyst/content/src/lib.rs:854-855`). A superset.
 - NUL bytes: dcl-one answers any path or query containing a NUL (raw or `%00`) with
   `400 {"error":"request path or query contains a NUL byte"}` (`services/catalyst/shared/src/nul_guard.rs:12-22`);
   upstream lets it reach the handler (404 on `/contents`, a DB error elsewhere).
@@ -455,16 +456,28 @@ Verdict: MATCH under `/content/` (CR-11).
      `content/src/audit.rs`); pinned in `content/src/tests.rs` (a scene id under `/audit/wearable/` is 404).
    - Severity: none (closed).
 
-7. **CR-7** GET /contents/:hashId?includeMimeType: sniff like `file-type`.
-   - Gap: GET, HEAD and ranges sniff png, glb, jpeg, gif, mp3, wav, webp, zip, ogg, webm and any `ftyp` as
-     `video/mp4`, and answer `application/octet-stream` otherwise (JSON and text included). `file-type`'s
-     other formats and its `ftyp` brand and Ogg codec subtypes differ; its signature table is not in the
-     pinned tree, so match it from the `file-type` 21.1.1 source or a capture.
-   - Expected: the `file-type` result on the stream head (gif, mp3, wav, zip, png, jpeg, webp, glb, mp4,
-     ogg, webm, ...), `application/octet-stream` when it finds none (JSON and text included), on GET and
-     HEAD (`decentraland/catalyst:src/controllers/utils.ts:137-153`, `get-content-handler.ts:54`).
-   - Place: `services/catalyst/content/src/get_content.rs` (`detect_content_type`).
-   - Severity: P2.
+7. **CR-7** GET /contents/:hashId?includeMimeType, entity image and thumbnail: sniff like `file-type`. Status: DIVERGENT by decision: the differences below
+   are deliberate (`docs/adr/2026-11-21-stored-files-served-inert.md`); the rest matches.
+   - Upstream: `new FileTypeParser().fromStream(stream)` of `file-type` 21.1.1 over the `fs.ReadStream` it
+     serves (the whole file, or the range), `application/octet-stream` when it finds none, JSON and text
+     included; `strtok3` stats the stream's path, so the file's whole size bounds the walks
+     (`decentraland/catalyst:src/controllers/utils.ts:137-153`, `get-content-handler.ts:54`,
+     `get-entity-image-handler.ts:45`, `get-entity-thumbnail-handler.ts:45`).
+   - dcl-one: one port of its checks, in its order, shared by the three routes
+     (`services/catalyst/content/src/file_type/catalyst.rs`, `get_content.rs` `content_type`). The answer is kept
+     per content key for the whole file (an LRU of 16,384 answers) and per content key and window for a range
+     (a separate LRU of 4,096 answers, so ranges cannot evict whole-file answers), so a repeated GET, HEAD or
+     range reads nothing to sniff. The table test
+     `the_content_sniff_answers_as_file_type` replays `content-sniff.tsv`, captured from `file-type` itself.
+   - Deliberate differences, kept by the ADR: a document type (`text/*`, `*/xml`, `*+xml` or HTML: `file-type`'s `application/xml`,
+     `text/vtt`, `text/vcard`, `text/calendar` and `application/vnd.ms-htmlhelp`) is `application/octet-stream`,
+     since these routes share the node's origin, where a browser would run an XHTML or SVG document's scripts;
+     every answer also carries `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`; where `file-type` throws,
+     upstream answers a 500 and dcl-one `application/octet-stream`; the walks over ID3 tags, PNG chunks, EBML and
+     ASF elements and ZIP entries stop after a bound (a stopped ZIP walk answers `application/zip`, the others no
+     type). A ZIP walk also stops once it has fetched 16 MiB of the file, and at a `mimetype` entry over 1 KiB or a
+     `[Content_Types].xml` entry over 1 MiB.
+   - Severity: none (closed).
 
 8. **CR-8** POST /entities/active: no `Cache-Control`, no `fields`. Status: Kept by decision (the `fields` mask).
    - Decision: `?fields=` keeps masking, as a dcl-one superset. A client that sends it to upstream gets
@@ -523,7 +536,7 @@ Verdict: MATCH under `/content/` (CR-11).
     - Expected: the `@dcl/http-server` default answer.
     - Capture: `404 text/plain; charset=utf-8` `Not found` (`captures/content-reads/CR-13-unknown-route.json`),
       the same status, type and body dcl-one answers. No code change is needed.
-    - Place: `services/catalyst/content/src/lib.rs:623-625`.
+    - Place: `services/catalyst/content/src/lib.rs:743-750`.
     - Severity: none (closed).
 
 14. **CR-14** Entity JSON key order.
@@ -594,18 +607,17 @@ Verdict: MATCH under `/content/` (CR-11).
       The history routes' timestamps are CS-19.
     - Severity: none (closed).
 
-20. **CR-20** Differential tests for the hand-written validators.
-    - Gap: `is_valid_collection_urn` and `is_canonical_cid` replace `@dcl/urn-resolver` and `@dcl/schemas`
-      `IPFSv1/IPFSv2`; equality is shown only for the upstream test inputs.
-    - Expected: the same accept/reject and message for a corpus of URNs (networks, `collections-v1` names
-      on non-ethereum networks, upper case) and hashes (`bafy`/`bafk`/other `ba` prefixes, lengths).
-    - Place: `services/catalyst/content/src/active_entities.rs:183-249`, `library/dcl-auth/src/hash.rs:176-192`; fixtures
-      under `services/catalyst/tests/fixtures/content/` captured from a peer.
+20. **CR-20** Differential tests for the hand-written CID check.
+    - Gap: `is_canonical_cid` replaces `@dcl/schemas` `IPFSv1/IPFSv2`; equality is shown only for the
+      upstream test inputs.
+    - Expected: the same accept/reject for a corpus of hashes (`bafy`/`bafk`/other `ba` prefixes, lengths).
+    - Place: `library/dcl-auth/src/hash.rs:176-192`; fixtures under `services/catalyst/tests/fixtures/content/`
+      captured from a peer.
     - Severity: P2.
 
 ## dcl-one routes in this area that upstream does not serve
 
-- The whole content router at the root as well as under `/content` (`services/catalyst/content/src/lib.rs:710-711`).
+- The whole content router at the root as well as under `/content` (`services/catalyst/content/src/lib.rs:854-855`).
 - `POST /entities/active?fields=...` masking (`services/catalyst/content/src/active_entities.rs:112-116`).
 - Read-through fills on entity and content misses (`READ_THROUGH_ENABLED`, `services/catalyst/content/src/read_through.rs:466-521`).
 - `localProvenance` in `/audit` for entities published to this node (`services/catalyst/content/src/queries.rs:919-923`).
@@ -613,5 +625,5 @@ Verdict: MATCH under `/content/` (CR-11).
   `X-Content-Type-Options: nosniff` from `services/catalyst/shared/src/cors.rs:81-86` is not here because the
   public peer sends it too, see X3), the NUL-byte 400
   (`services/catalyst/shared/src/nul_guard.rs:12-22`), and a 408 when `request_timeout` is configured
-  (`services/catalyst/content/src/lib.rs:720-725`).
+  (`services/catalyst/content/src/lib.rs:864-881`).
 - `X-Accel-Redirect` delivery when `STORAGE_X_ACCEL_BASE` is set (`services/catalyst/content/src/get_content.rs:177-191`).

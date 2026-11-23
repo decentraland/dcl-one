@@ -139,7 +139,7 @@ pub fn nametag_state(
                     BubbleKind::Dm { .. } => "dm",
                 },
                 "mention": bubble.mention,
-                "length": bubble.message.chars().count(),
+                "length": bubble.message.text.chars().count(),
             })),
         }));
     }

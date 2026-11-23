@@ -49,7 +49,7 @@ use crate::types::ChainId;
 pub struct Settings {
     /// `DATA_WRITES_ENABLED`.
     pub writes_enabled: bool,
-    /// Between two tracker passes (the market indexes' cadence by default).
+    /// Between two tracker passes (`MARKETPLACE_EXECUTIONS_TRACK_INTERVAL_SECS`).
     pub track_interval: Duration,
     /// `COLLECTIONS_CHAIN_ID`: which book of venues the process settles on
     /// ([`settlement_book`]).

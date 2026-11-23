@@ -13,6 +13,7 @@ use super::types::*;
 #[serde(rename_all = "camelCase")]
 pub struct MerkleProof {
     pub proof: Vec<String>,
+    #[serde(deserialize_with = "safe_integer_index")]
     pub index: u64,
     pub entity_hash: String,
     pub hashing_keys: Vec<String>,
@@ -25,6 +26,21 @@ pub struct ThirdPartyProps {
     #[serde(default)]
     pub content: std::collections::HashMap<String, String>,
     pub id: String,
+}
+
+/// The largest integer a JSON number reader holds exactly (`Number.MAX_SAFE_INTEGER`).
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+/// A merkle index in any integral number form, up to `MAX_SAFE_INTEGER`: above
+/// it the value the signer committed to is not recoverable from the JSON.
+fn safe_integer_index<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    let index = catalyst_shared::json_number::integral_u64(d)?;
+    if index > MAX_SAFE_INTEGER {
+        return Err(serde::de::Error::custom(format!(
+            "merkle index {index} is above {MAX_SAFE_INTEGER}"
+        )));
+    }
+    Ok(index)
 }
 
 pub const WEARABLE_REQUIRED_HASHING_KEYS: &[&str] = &["id", "content", "data"];
@@ -99,7 +115,11 @@ pub fn validate_third_party_merkle_proof_content(
         );
     }
 
-    let entity_bytes = match deployment.files.get(&entity.id) {
+    let entity_bytes = match deployment
+        .files
+        .get(&entity.id)
+        .and_then(UploadedFile::bytes)
+    {
         Some(bytes) => bytes,
         None => {
             return ValidationResponse::unavailable(format!(
@@ -353,6 +373,38 @@ mod tests {
         );
         assert_eq!(hex_to_bytes("deadbeef"), Some(vec![0xde, 0xad, 0xbe, 0xef]));
         assert_eq!(hex_to_bytes("0x"), Some(vec![]));
+    }
+
+    #[test]
+    fn merkle_proof_index_accepts_every_integral_json_number_form() {
+        let parse = |index: &str| {
+            serde_json::from_str::<MerkleProof>(&format!(
+                r#"{{"proof": [], "index": {index}, "entityHash": "", "hashingKeys": []}}"#
+            ))
+            .map(|p| p.index)
+        };
+        for (index, expected) in [
+            ("1", 1),
+            ("1.0", 1),
+            ("1e0", 1),
+            ("0.0", 0),
+            ("2e1", 20),
+            ("9007199254740991", MAX_SAFE_INTEGER),
+            ("9007199254740991.0", MAX_SAFE_INTEGER),
+        ] {
+            assert_eq!(parse(index).unwrap(), expected, "{index}");
+        }
+        for index in [
+            "1.5",
+            "-1",
+            "-1.0",
+            "\"1\"",
+            "9007199254740992",
+            "9007199254740992.0",
+            "1e18",
+        ] {
+            assert!(parse(index).is_err(), "{index}");
+        }
     }
 
     #[test]

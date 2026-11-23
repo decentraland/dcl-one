@@ -98,14 +98,15 @@ function setupMainPackageWatcher({ resolvedUrls }) {
 }
 
 /**
- * Watches the optimizer worker bundle (main/vite.worker.config.js). It is copied into the tools
- * dir on each optimizer run, so a rebuild needs no Electron restart.
+ * Watches one worker bundle (the optimizer's or the transcription's). Each is copied into its
+ * tools dir on every run, so a rebuild needs no Electron restart.
+ * @param {string} configFile
  */
-function setupOptimizerWorkerWatcher() {
+function setupWorkerWatcher(configFile) {
   return build({
     mode,
     logLevel,
-    configFile: 'main/vite.worker.config.js',
+    configFile,
     build: {
       watch: {},
     },
@@ -160,4 +161,5 @@ setupTypeChecker();
 
 await setupPreloadPackageWatcher(rendererWatchServer);
 await setupMainPackageWatcher(rendererWatchServer);
-await setupOptimizerWorkerWatcher();
+await setupWorkerWatcher('main/vite.worker.config.js');
+await setupWorkerWatcher('main/vite.transcribe-worker.config.js');

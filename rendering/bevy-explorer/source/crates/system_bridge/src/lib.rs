@@ -16,6 +16,7 @@ use bevy::{
 use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder};
 use common::{
     inputs::{BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
+    profile::SerializedProfile,
     rpc::{RpcResultSender, RpcStreamSender},
     structs::{AppConfig, CurrentRealm, MicState, PermissionUsed},
 };
@@ -67,9 +68,23 @@ pub struct NewAccountPick {
     pub look: Option<u32>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetAvatarError {
+    pub message: String,
+    #[serde(default, rename = "accountChanged")]
+    pub account_changed: bool,
+    /// Last confirmed profile for the account that submitted the edit.
+    pub profile: Option<Box<SerializedProfile>>,
+}
+
+pub type SetAvatarResult = Result<u32, SetAvatarError>;
+
 #[derive(Event, Clone, Debug, Serialize, Deserialize)]
 pub enum SystemApi {
     ConsoleCommand(String, Vec<String>, RpcResultSender<Result<String, String>>),
+    /// A whole console line from outside the process (the page's console RPC, the loopback
+    /// server, the CEF HUD's page), split by `console::line::split`.
+    ConsoleLine(String, RpcResultSender<Result<String, String>>),
     CheckForUpdate(RpcResultSender<Option<(String, String)>>),
     MOTD(RpcResultSender<String>),
     GetPreviousLogin(RpcResultSender<Option<String>>),
@@ -116,7 +131,13 @@ pub enum SystemApi {
         meta: Option<String>,
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
-    SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Full system-scene view. The local player is read at the last confirmed version.
+    GetUserProfile {
+        address: String,
+        response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// The address belongs to the player the system scene observed when it submitted the edit.
+    SetAvatar(String, SetAvatarData, RpcResultSender<SetAvatarResult>),
     /// Signs and deploys the local player's `outfits` entity. The address is the account the
     /// caller expects; the engine refuses when another one is signed in.
     DeployOutfits(String, OutfitsData, RpcResultSender<Result<(), String>>),
@@ -154,6 +175,10 @@ pub enum SystemApi {
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
+    /// A satellite map tile as base64-encoded JPEG bytes. The path is relative to the abgen
+    /// CDN's `SatelliteMaps/` (`sections/<sx>%2C<sy>/<version>/<level>/<x>%2C<y>.ktx2`);
+    /// `image_processing` validates it, fetches the tile and converts it.
+    GetSatelliteTile(String, RpcResultSender<Result<String, String>>),
     GetSystemActionStream(RpcStreamSender<SystemActionEvent>),
     GetChatStream(RpcStreamSender<ChatMessage>),
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
@@ -281,10 +306,22 @@ pub fn post_events(
     console_config: Res<ConsoleConfiguration>,
 ) {
     while let Ok(ev) = bridge.receiver.try_recv() {
-        let SystemApi::ConsoleCommand(cmd, args, sender) = ev else {
-            debug!("system bridge: {ev:?}");
-            writer.write(ev);
-            continue;
+        let (cmd, args, sender) = match ev {
+            SystemApi::ConsoleCommand(cmd, args, sender) => (cmd, args, sender),
+            SystemApi::ConsoleLine(line, sender) => {
+                match console::line::split(&line, &console_config) {
+                    Ok((cmd, args)) => (cmd, args, sender),
+                    Err(e) => {
+                        sender.send(Err(e));
+                        continue;
+                    }
+                }
+            }
+            ev => {
+                debug!("system bridge: {ev:?}");
+                writer.write(ev);
+                continue;
+            }
         };
 
         debug!("system bridge (cc): {cmd} {args:?}");

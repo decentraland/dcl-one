@@ -1286,3 +1286,45 @@ async fn started_selected_retirement_waits_for_a_lease_and_preserves_a_real_fore
     harness.shutdown().await;
     fixture.finish().await;
 }
+
+#[tokio::test]
+async fn a_retired_wallet_replaces_its_own_fresh_row_and_never_a_changed_one() {
+    use catalyst::comms::archipelago::control_v4::{AssignmentAuthority, LaneKey, V4Owner};
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let mut harness = RetirementHarness::new(fixture.pool.clone(), 1);
+    // Each sign-in follows the retirement of the last one, inside the 90-second lease.
+    // Before the fourth, a control owner takes the row: it stays a conflict.
+    for (minted, native) in [(1, false), (2, false), (3, true), (3, false)] {
+        let selected = harness.select(WALLET, SESSION, native);
+        harness.hint(&selected).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            harness.subscriber.settle(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(harness.gateway.fences.lock().unwrap().len(), minted);
+        let row = periodic_native_owner_row(&fixture).await;
+        harness.depart(native).await;
+        harness.wait_retired().await;
+        assert_eq!(periodic_native_owner_row(&fixture).await, row);
+        if native {
+            let authority = AssignmentAuthority::pg_with_namespace(fixture.pool.clone(), AUDIENCE)
+                .await
+                .unwrap();
+            let successor = V4Owner {
+                address: WALLET.into(),
+                session: STALE_SESSION.into(),
+                epoch: authority.next_connection_epoch().await.unwrap(),
+            };
+            authority
+                .claim_lanes(&successor, &[LaneKey::parse("realm").unwrap()])
+                .await
+                .unwrap();
+        }
+    }
+    harness.shutdown().await;
+    fixture.finish().await;
+}

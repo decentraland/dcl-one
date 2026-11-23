@@ -1,7 +1,7 @@
 import { createMemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 
-import type { CreatorHubHost } from "@ui/creatorhub/explorer-host";
+import type { CreatorHubHost } from "@web-core/creator-hub-host";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { adoptExplorerHost, followExplorerIdentity, reloadingForAccount } from "@/features/components/chrome/explorer-host";
 

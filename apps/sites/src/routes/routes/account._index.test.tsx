@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider, useLocation } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
@@ -36,30 +36,58 @@ function at(url: string | { pathname: string; search?: string; state: unknown },
   return { router, query };
 }
 
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
-
 describe("/account index", () => {
-  it("opens notifications on a desktop, keeping the query and leaving no /account entry behind", async () => {
-    const { router } = at("/account?utm=mail", true);
+  let rendered: ReturnType<typeof at>;
 
-    expect(await screen.findByText("at /account/notifications?utm=mail")).toBeTruthy();
-    expect(router.state.historyAction).toBe("REPLACE");
+  afterEach(() => {
+    cleanup();
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("keeps where the settings were entered when it opens notifications", async () => {
-    const { router } = at({ pathname: "/account", state: { accountEntry: 2 } }, true);
+  describe("when it opens on a desktop", () => {
+    describe("and the URL carries a query", () => {
+      beforeEach(() => {
+        rendered = at("/account?utm=mail", true);
+      });
 
-    expect(await screen.findByText("at /account/notifications")).toBeTruthy();
-    expect(router.state.location.state).toEqual({ accountEntry: 2 });
+      it("should open notifications keeping the query", async () => {
+        expect(await screen.findByText("at /account/notifications?utm=mail")).toBeTruthy();
+      });
+
+      it("should leave no /account entry behind", async () => {
+        await screen.findByText("at /account/notifications?utm=mail");
+        expect(rendered.router.state.historyAction).toBe("REPLACE");
+      });
+    });
+
+    describe("and the location carries where the settings were entered", () => {
+      beforeEach(() => {
+        rendered = at({ pathname: "/account", state: { accountEntry: 2 } }, true);
+      });
+
+      it("should open notifications", async () => {
+        expect(await screen.findByText("at /account/notifications")).toBeTruthy();
+      });
+
+      it("should keep where the settings were entered", async () => {
+        await screen.findByText("at /account/notifications");
+        expect(rendered.router.state.location.state).toEqual({ accountEntry: 2 });
+      });
+    });
   });
 
-  it("stays on the section menu on a phone", () => {
-    const { query } = at("/account?utm=mail", false);
+  describe("when it opens on a phone", () => {
+    beforeEach(() => {
+      rendered = at("/account?utm=mail", false);
+    });
 
-    expect(query).toHaveBeenCalledWith("(min-width: 1024px)");
-    expect(screen.getByText("at /account?utm=mail")).toBeTruthy();
+    it("should query the desktop breakpoint", () => {
+      expect(rendered.query).toHaveBeenCalledWith("(min-width: 1024px)");
+    });
+
+    it("should stay on the section menu", () => {
+      expect(screen.getByText("at /account?utm=mail")).toBeTruthy();
+    });
   });
 });

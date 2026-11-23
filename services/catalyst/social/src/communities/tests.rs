@@ -86,7 +86,7 @@ async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Vec<(String, St
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", w.signer.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,
@@ -839,9 +839,11 @@ async fn every_route_answers_its_contract() {
 
     // thumbnail seeded through the store, as an upload would leave it
     let thumb = png(2048);
-    super::thumbnail::store_thumbnail(&rig.pool, &rig.state.storage, c1, &thumb)
+    let mut tx = rig.pool.begin().await.unwrap();
+    super::thumbnail::store_thumbnail(&mut tx, &rig.state.storage, c1, &thumb)
         .await
         .unwrap();
+    tx.commit().await.unwrap();
 
     // The list reads search this test's own rows: sibling tests seed the same
     // scratch database, and their communities would page c1 out.
@@ -2610,3 +2612,47 @@ mod friendship_parity;
 
 mod member_friendship_fields;
 mod member_request_pages;
+
+/// A community thumbnail found stored is not unlinked before its row
+/// commits: the write waits while an unlink batch holds the exclusive store
+/// lock, then stores again what the batch removed.
+#[tokio::test]
+async fn a_thumbnail_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let owner = wallet();
+    let community = rig.community(&owner, false).await;
+    let thumb = png(2049);
+    let hash = super::thumbnail::thumbnail_hash(&thumb);
+    rig.state
+        .storage
+        .store(&hash, thumb.clone().into())
+        .await
+        .unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&rig.pool)
+        .await
+        .unwrap();
+    let mut tx = rig.pool.begin().await.unwrap();
+    {
+        let write =
+            super::thumbnail::store_thumbnail(&mut tx, &rig.state.storage, community, &thumb);
+        tokio::pin!(write);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), &mut write)
+                .await
+                .is_err(),
+            "the write waits for the unlink batch"
+        );
+        rig.state.storage.delete_strict(&hash).await.unwrap();
+        batch.commit().await.unwrap();
+        assert_eq!(write.await.unwrap(), hash);
+    }
+    tx.commit().await.unwrap();
+    assert!(
+        rig.state.storage.exist(&hash).await.unwrap(),
+        "stored again"
+    );
+    rig.finish();
+}

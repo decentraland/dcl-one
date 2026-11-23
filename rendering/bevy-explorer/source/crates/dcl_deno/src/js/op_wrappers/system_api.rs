@@ -15,9 +15,9 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
     ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, TextureOptimizationStatus,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
-    WorldAccessVerdict,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -52,6 +52,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
+            op_get_satellite_tile(),
             op_get_world_access(),
             op_get_system_action_stream(),
             op_read_system_action_stream(),
@@ -246,11 +247,13 @@ pub async fn op_kernel_fetch_headers(
 }
 
 #[op2(async)]
+#[serde]
 pub async fn op_set_avatar(
     state: Rc<RefCell<OpState>>,
+    #[string] owner: String,
     #[serde] avatar: SetAvatarData,
-) -> Result<u32, anyhow::Error> {
-    dcl_js::system_api::op_set_avatar(state, avatar).await
+) -> Result<SetAvatarResult, anyhow::Error> {
+    dcl_js::system_api::op_set_avatar(state, owner, avatar).await
 }
 
 #[op2(async)]
@@ -336,6 +339,15 @@ pub async fn op_get_world_access(
     #[string] world: String,
 ) -> Result<WorldAccessVerdict, anyhow::Error> {
     dcl_js::system_api::op_get_world_access(state, world).await
+}
+
+#[op2(async)]
+#[string]
+pub async fn op_get_satellite_tile(
+    state: Rc<RefCell<OpState>>,
+    #[string] path: String,
+) -> Result<String, anyhow::Error> {
+    dcl_js::system_api::op_get_satellite_tile(state, path).await
 }
 
 #[op2(async)]

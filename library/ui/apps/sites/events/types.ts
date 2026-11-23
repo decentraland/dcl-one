@@ -70,6 +70,12 @@ type ExperienceCardProps = EventCardData & {
   jumpIn?: JumpIn
 }
 
+/** My Events: one of the member's own events, opening its editor, with its review status over the cover. */
+type MyEventCardProps = Omit<EventCardData, 'onOpen' | 'users' | 'usersLabel'> & {
+  time: EventCardTime
+  status: 'pending' | 'approved' | 'rejected'
+}
+
 export type {
   EventCardCreator,
   EventCardData,
@@ -78,6 +84,7 @@ export type {
   DayListCardProps,
   JumpIn,
   LiveEventCardProps,
+  MyEventCardProps,
   RemindControl,
   UpcomingEventCardProps
 }

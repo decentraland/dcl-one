@@ -2,7 +2,7 @@
 
 import { isShopApiError } from "@shop/api/client";
 import { ENDPOINTS } from "@shop/api/endpoints";
-import type { AuthIdentity } from "../../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { slotOf } from "@shop/discovery/lib/outfit";
 import { identitySigner, shopClient } from "../../api/host";

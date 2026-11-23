@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
 
 import { RecentPlacesSchema, StoredAuthIdentitySchema } from "../data/persisted-schemas";
-import { ThirdwebAuthResultSchema } from "../data/auth/thirdwebSchema";
-import { check } from "../validate";
+import { ThirdwebAuthResultSchema } from "@web-core/auth/thirdwebSchema";
+import { check } from "@web-core/validate";
 
 test("round-trip boundaries preserve keys written by a newer build or added upstream", () => {
   const stored = {

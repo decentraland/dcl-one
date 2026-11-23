@@ -13,17 +13,40 @@ type AuthResult =
 
 const DEFAULT_MAX_AGE_MS = 10 * 60_000;
 
+const LOGIN_PURPOSE = "Decentraland Login";
+const EPHEMERAL_ADDRESS_PREFIX = "Ephemeral address: ";
+const EXPIRATION_PREFIX = "Expiration: ";
+
+/**
+ * An ephemeral payload's expiration as `@dcl/crypto` reads it: `Date.parse` of the text after
+ * `Expiration: `, untrimmed. Null where that is NaN.
+ */
+export function parseExpiration(raw: string): number | null {
+  const millis = Date.parse(raw);
+  return Number.isNaN(millis) ? null : millis;
+}
+
+/**
+ * A login delegation, line by line as `dcl-auth`'s `verify_login_chain` reads it. `message`
+ * is the payload without carriage returns: the text the delegation's signature covers.
+ */
 function parseEphemeral(
-  message: string,
-): { address: string; expiration: number } | null {
-  const addr = /Ephemeral address:\s*(0x[0-9a-fA-F]{40})/i.exec(message);
-  const exp = /Expiration:\s*(.+)\s*$/im.exec(message);
-  if (!addr) return null;
-  const expiration = exp ? Date.parse(exp[1].trim()) : NaN;
-  return {
-    address: addr[1].toLowerCase(),
-    expiration: Number.isFinite(expiration) ? expiration : Infinity,
-  };
+  payload: string,
+): { message: string; address: string; expiration: number } | null {
+  const message = payload.replace(/\r/g, "");
+  const [purpose, addressLine, expirationLine] = message.split("\n");
+  if (
+    purpose !== LOGIN_PURPOSE ||
+    !addressLine?.startsWith(EPHEMERAL_ADDRESS_PREFIX) ||
+    !expirationLine?.startsWith(EXPIRATION_PREFIX)
+  ) {
+    return null;
+  }
+  const address = addressLine.slice(EPHEMERAL_ADDRESS_PREFIX.length);
+  if (!ETH_ADDRESS_RE.test(address)) return null;
+  const expiration = parseExpiration(expirationLine.slice(EXPIRATION_PREFIX.length));
+  if (expiration === null) return null;
+  return { message, address: address.toLowerCase(), expiration };
 }
 
 export async function verifyAuthChainRequest(
@@ -83,11 +106,27 @@ export async function verifyAuthChainRequest(
 
   for (let i = 1; i < chain.length; i++) {
     const link = chain[i];
+    const linkType: string = link.type;
+    const isEphemeral = linkType === "ECDSA_EPHEMERAL" || linkType === "ECDSA_PERSONAL_EPHEMERAL";
+    const isSignedEntity = linkType === "ECDSA_SIGNED_ENTITY" || linkType === "ECDSA_PERSONAL_SIGNED_ENTITY";
+    // As in `dcl-auth`: only delegations precede the signed entity, which ends the chain.
+    if (isSignedEntity && i !== chain.length - 1) {
+      return { ok: false, status: 401, error: `${linkType} at link ${i} must be the last link` };
+    }
+    const eph = isEphemeral ? parseEphemeral(link.payload) : null;
+    if (isEphemeral) {
+      if (!eph) {
+        return { ok: false, status: 401, error: "malformed ephemeral payload" };
+      }
+      if (eph.expiration <= now) {
+        return { ok: false, status: 401, error: "identity expired" };
+      }
+    }
     let recovered: string;
     try {
       recovered = (
         await recoverMessageAddress({
-          message: link.payload,
+          message: eph ? eph.message : link.payload,
           signature: link.signature as `0x${string}`,
         })
       ).toLowerCase();
@@ -102,23 +141,9 @@ export async function verifyAuthChainRequest(
       return { ok: false, status: 401, error: `broken auth chain at link ${i}` };
     }
 
-    const linkType: string = link.type;
-    if (
-      linkType === "ECDSA_EPHEMERAL" ||
-      linkType === "ECDSA_PERSONAL_EPHEMERAL"
-    ) {
-      const eph = parseEphemeral(link.payload);
-      if (!eph) {
-        return { ok: false, status: 401, error: "malformed ephemeral payload" };
-      }
-      if (eph.expiration <= now) {
-        return { ok: false, status: 401, error: "identity expired" };
-      }
+    if (eph) {
       authority = eph.address;
-    } else if (
-      linkType === "ECDSA_SIGNED_ENTITY" ||
-      linkType === "ECDSA_PERSONAL_SIGNED_ENTITY"
-    ) {
+    } else if (isSignedEntity) {
       finalPayload = link.payload;
     } else {
       return {
