@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
-import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
+import { fetchMemberProfiles } from "../catalyst/social/member-profiles";
 
 import type { AuthIdentity } from "../auth/types";
 import {
@@ -198,7 +198,7 @@ export const placeOwnersQuery = (addresses: readonly string[]) => {
   return queryOptions({
     queryKey,
     staleTime: PROFILE_STALE_MS,
-    queryFn: ({ signal }) => fetchCommunityProfiles([...queryKey[2]], { signal }),
+    queryFn: ({ signal }) => fetchMemberProfiles([...queryKey[2]], { signal }),
   });
 };
 
