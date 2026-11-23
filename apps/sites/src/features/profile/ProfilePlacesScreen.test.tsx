@@ -16,7 +16,7 @@ vi.hoisted(() => {
 const net = vi.hoisted(() => ({
   fetchProfilePlaces: vi.fn(),
   fetchFavoritePlaces: vi.fn(),
-  fetchCommunityProfiles: vi.fn(),
+  fetchMemberProfiles: vi.fn(),
   track: vi.fn(),
   openSignIn: vi.fn(),
 }));
@@ -26,7 +26,10 @@ vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   fetchProfilePlaces: net.fetchProfilePlaces,
   fetchFavoritePlaces: net.fetchFavoritePlaces,
 }));
-vi.mock("@ui/data/hooks/useCommunityProfiles", () => ({ fetchCommunityProfiles: net.fetchCommunityProfiles }));
+vi.mock("@/data/lib/catalyst/social/member-profiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/lib/catalyst/social/member-profiles")>()),
+  fetchMemberProfiles: net.fetchMemberProfiles,
+}));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 vi.mock("../components/auth/signin-store", async (original) => ({
@@ -121,7 +124,7 @@ describe("ProfilePlacesScreen", () => {
       });
 
       it("should not read the owners' profiles", () => {
-        expect(net.fetchCommunityProfiles).not.toHaveBeenCalled();
+        expect(net.fetchMemberProfiles).not.toHaveBeenCalled();
       });
     });
 
@@ -464,7 +467,7 @@ describe("ProfilePlacesScreen", () => {
       describe("and the favourites read fails once", () => {
         beforeEach(async () => {
           net.fetchFavoritePlaces.mockRejectedValueOnce(new Error("503")).mockResolvedValueOnce(page([scene]));
-          net.fetchCommunityProfiles.mockResolvedValue({});
+          net.fetchMemberProfiles.mockResolvedValue({});
           show(profile(), { own: true });
           await userEvent.click(chip("Favourites"));
         });
@@ -480,7 +483,7 @@ describe("ProfilePlacesScreen", () => {
       describe("and the saved places belong to another member", () => {
         beforeEach(async () => {
           net.fetchFavoritePlaces.mockResolvedValue(page([{ ...scene, owner: OTHER }, { ...world, owner: OTHER }]));
-          net.fetchCommunityProfiles.mockResolvedValue({ [OTHER]: { name: "Bob", picture: null, claimed: true } });
+          net.fetchMemberProfiles.mockResolvedValue({ [OTHER]: { name: "Bob", picture: null, claimed: true } });
           show(profile(), { own: true });
           await userEvent.click(chip("Favourites"));
         });
@@ -491,15 +494,15 @@ describe("ProfilePlacesScreen", () => {
 
         it("should read the owners in one batch", async () => {
           await screen.findAllByRole("link", { name: "Bob" });
-          expect(net.fetchCommunityProfiles).toHaveBeenCalledOnce();
-          expect(net.fetchCommunityProfiles).toHaveBeenCalledWith([OTHER], expect.anything());
+          expect(net.fetchMemberProfiles).toHaveBeenCalledOnce();
+          expect(net.fetchMemberProfiles).toHaveBeenCalledWith([OTHER], expect.anything());
         });
       });
 
       describe("and a saved place is the owner's own", () => {
         beforeEach(async () => {
           net.fetchFavoritePlaces.mockResolvedValue(page([scene]));
-          net.fetchCommunityProfiles.mockResolvedValue({});
+          net.fetchMemberProfiles.mockResolvedValue({});
           show(profile(), { own: true });
           await userEvent.click(chip("Favourites"));
         });
@@ -512,14 +515,14 @@ describe("ProfilePlacesScreen", () => {
       describe("and the saved places' owners cannot be read", () => {
         beforeEach(async () => {
           net.fetchFavoritePlaces.mockResolvedValue(page([{ ...scene, owner: OTHER }]));
-          net.fetchCommunityProfiles.mockRejectedValue(new Error("down"));
+          net.fetchMemberProfiles.mockRejectedValue(new Error("down"));
           show(profile(), { own: true });
           await userEvent.click(chip("Favourites"));
         });
 
         it("should still list the saved places, without an owner row", async () => {
           expect(await screen.findByRole("link", { name: "ABC Clubhouse" })).toBeTruthy();
-          await waitFor(() => expect(net.fetchCommunityProfiles).toHaveBeenCalled());
+          await waitFor(() => expect(net.fetchMemberProfiles).toHaveBeenCalled());
           expect(screen.queryByText(/^By\b/)).toBeNull();
         });
       });

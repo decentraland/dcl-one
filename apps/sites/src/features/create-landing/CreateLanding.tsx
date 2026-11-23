@@ -21,7 +21,7 @@ import {
   type ConnectCardData,
   type CreateCardData,
 } from "./content";
-import { useMediaQuery } from "@ui/data/hooks/useMediaQuery";
+import { useMediaQuery } from "../creators/hooks/useMediaQuery";
 import discordIcon from "./assets/discord.svg?url";
 import dclLogo from "./assets/dcl-logo.svg?url";
 import styles from "./CreateLanding.module.css";

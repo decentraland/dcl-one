@@ -12,6 +12,7 @@ import { BOOK, ITEM } from '@shop/payment/fixtures'
 import { ADDRESS, OPERATION_STATES, parseBuyNameRequest, parseBuyRequest, parseLines, parseOperationEvent, SHOP_EVENT, SHOP_PROTOCOL } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { AMOY_ADD_PARAMS } from '../../shop/wallet/chain'
 import { guardedProvider, type PurchaseIntent } from '../shell/shop/walletGuard'
+import { RefusedBeforeWallet } from '../../shop/checkout/chain/wallet'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const OTHER = '0x' + 'cc'.repeat(20)
@@ -437,6 +438,25 @@ describe('the purchase wallet', () => {
   it('refuses once the confirmed login is no longer current', async () => {
     const g = setup({ current: () => false })
     await expect(sign(g, typed())).rejects.toMatchObject({ code: 4100 })
+    expect(g.forwarded()).toBe(0)
+  })
+
+  it.each([
+    ['its network', 'eth_chainId'],
+    ['its account', 'eth_accounts']
+  ])('refuses a send before the wallet when the read of %s fails then, keeping why, and hands the wallet nothing', async (_, method) => {
+    const g = setup()
+    const original = g.wallet.request.bind(g.wallet)
+    const down = Object.assign(new Error('The wallet disconnected.'), { code: 4900 })
+    let sending = false
+    g.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+      if (sending && args.method === method) throw down
+      return original(args as never)
+    }) as typeof g.wallet.request
+    sending = true
+    const refused = g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANAGER, data: encodeUseCredits(storeArgs()) }] })
+    await expect(refused).rejects.toBeInstanceOf(RefusedBeforeWallet)
+    await expect(refused).rejects.toMatchObject({ code: 4100, cause: down })
     expect(g.forwarded()).toBe(0)
   })
 
