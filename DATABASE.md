@@ -2046,7 +2046,10 @@ Losing the job lease cancels the pass.
 
 Failed transport or timed-out lookups retry after the notification delivery
 backoff (30 seconds, doubling per failure). The fifth failure ends the
-obligation. Each drain removes obligations queued for at least 24 hours. Invalid reader URLs,
+obligation. Each drain expires obligations 24 hours after the wear's signed timestamp
+or enqueue time, whichever came first. The worker logs expiry counts and pauses
+in intake. Two consecutive transient failures on one network pause lookups on
+that network for the rest of the drain, leaving the other network eligible. Invalid reader URLs,
 invalid subgraph responses, missing readers, unknown or unbuyable items,
 no active friends and suppressed recipients also complete without a notice.
 The wear stays in history after completion. External reads run outside the
