@@ -76,18 +76,21 @@ export function useCommunityEvents(
     enabled: enabled && Boolean(eventId) && !listed && !query.isPending,
   });
   const hosted = detail.data && detail.data.community_id === communityId ? detail.data : null;
-  const open = listed ?? hosted ?? null;
+  // Cached reads (another page's, or before a sign-out) answer even while disabled, so they open nothing then.
+  const open = enabled ? (listed ?? hosted ?? null) : null;
 
   const groups = useMemo(() => [creatorWallets(events), creatorWallets(hosted ? [hosted] : [])], [events, hosted]);
   const profiles = useCreatorProfiles(groups);
 
   const show = useCallback(
     (id: string) => {
+      // A second click before the dialog covers the card would push a second entry for the same event.
+      if (id === eventId) return;
       const next = new URLSearchParams(location.search);
       next.set(EVENT_PARAM, id);
       void navigate({ search: `?${next}` }, { preventScrollReset: true, state: { [OPENED_HERE]: true } });
     },
-    [location.search, navigate],
+    [eventId, location.search, navigate],
   );
   const close = useCallback(() => {
     if (openedHere(location.state)) {
@@ -100,7 +103,8 @@ export function useCommunityEvents(
     void navigate({ search: search ? `?${search}` : "" }, { replace: true, preventScrollReset: true });
   }, [location.search, location.state, navigate]);
 
-  const missing = Boolean(eventId) && !listed && detail.isSuccess && !hosted;
+  // A community the visitor may not see never rewrites the URL.
+  const missing = enabled && Boolean(eventId) && !listed && detail.isSuccess && !hosted;
   useEffect(() => {
     if (missing) close();
   }, [missing, close]);

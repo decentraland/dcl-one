@@ -1,12 +1,22 @@
+// @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { SitesLocaleContext, type SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 
 import CommunityDetailRoute, { shouldRevalidate } from "./social_.communities.$id";
+
+vi.hoisted(() => {
+  Object.assign(window, {
+    __vite_plugin_react_preamble_installed__: true,
+    $RefreshSig$: () => (type: unknown) => type,
+    $RefreshReg$: () => {},
+  });
+});
 
 vi.mock("@/pages/social/CommunityPage", () => ({
   CommunityPage: ({ sid }: { sid: string }) => {
@@ -20,6 +30,8 @@ vi.mock("@/pages/social/CommunityPage", () => ({
 }));
 
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
+
+afterEach(cleanup);
 
 function renderRoute(locale: SitesLocale, loaderData: unknown) {
   const router = createMemoryRouter(
@@ -63,6 +75,25 @@ describe("when the community route renders", () => {
   });
 });
 
+describe("when the visitor moves in the app from one community to another", () => {
+  it("should hand the next community no session, as any client navigation", async () => {
+    const router = createMemoryRouter(
+      [{ id: "community", path: "/social/communities/:id", Component: CommunityDetailRoute as never }],
+      { initialEntries: [`/social/communities/${ID}`], hydrationData: { loaderData: { community: loaded } } },
+    );
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText(/session sid-123/)).toBeTruthy();
+
+    await act(() => router.navigate("/social/communities/another"));
+
+    expect(screen.getByText(/session none/)).toBeTruthy();
+  });
+});
+
 describe("when the community route decides whether to read again", () => {
   const args = (from: string, to: string) =>
     ({
@@ -74,6 +105,14 @@ describe("when the community route decides whether to read again", () => {
   describe("and only the query changes, as opening an event's detail does", () => {
     it("should not read again", () => {
       expect(shouldRevalidate(args(`/social/communities/${ID}`, `/social/communities/${ID}?event=ev-1`))).toBe(false);
+    });
+  });
+
+  describe("and a form is submitted to the same page", () => {
+    it("should read again", () => {
+      expect(
+        shouldRevalidate({ ...args(`/social/communities/${ID}`, `/social/communities/${ID}`), formMethod: "POST" }),
+      ).toBe(true);
     });
   });
 

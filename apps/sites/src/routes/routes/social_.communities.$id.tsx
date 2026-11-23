@@ -24,7 +24,14 @@ export async function clientLoader() {
  * Opening or closing an event's detail (`?event=`) changes only the query. Revalidating would swap the
  * first document's data for the client loader's nothing, and with it the page's title and card.
  */
-export function shouldRevalidate({ currentUrl, nextUrl, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
+export function shouldRevalidate({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}: ShouldRevalidateFunctionArgs) {
+  // A submission still revalidates, should the route ever take one.
+  if (formMethod) return defaultShouldRevalidate;
   return currentUrl.pathname === nextUrl.pathname ? false : defaultShouldRevalidate;
 }
 
@@ -59,14 +66,19 @@ export function ErrorBoundary() {
 
 export default function CommunityDetailRoute({ loaderData }: Route.ComponentProps) {
   const params = useParams();
-  // After a client navigation there is no loader clock, nor session; the browser's clock stands in.
-  const [first] = useState(() => ({ now: loaderData?.now ?? Date.now(), sid: loaderData?.sid ?? "" }));
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
       {/* An event's detail follows the visitor's language, as on the events page. */}
       <EventsLocaleProvider>
-        <CommunityPage key={params.id} id={params.id ?? ""} now={first.now} sid={first.sid} />
+        {/* Keyed by community, so moving to another one starts from that navigation's own data. */}
+        <CommunityRoutePage key={params.id} id={params.id ?? ""} loaderData={loaderData} />
       </EventsLocaleProvider>
     </HydrationBoundary>
   );
+}
+
+function CommunityRoutePage({ id, loaderData }: { id: string; loaderData: Route.ComponentProps["loaderData"] }) {
+  // After a client navigation there is no loader clock, nor session; the browser's clock stands in.
+  const [first] = useState(() => ({ now: loaderData?.now ?? Date.now(), sid: loaderData?.sid ?? "" }));
+  return <CommunityPage id={id} now={first.now} sid={first.sid} />;
 }

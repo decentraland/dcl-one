@@ -52,7 +52,9 @@ vi.mock("@/features/events/useEventReminders", () => ({
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import type { Event } from "@/data/lib/catalyst/places/events";
+import { eventsPageKeys } from "@/data/lib/catalyst/places/events-page";
 import type { CommunityInfo } from "@/data/lib/catalyst/social/community-detail";
+import { communityKeys } from "@/data/lib/community/queries";
 
 import { CommunityPage } from "./CommunityPage";
 import { PENDING_ACTION_TTL_MS, rememberAction } from "@/features/social/community/pendingAction";
@@ -103,8 +105,9 @@ const upcomingEvent = (): Event => ({
 
 let client: QueryClient;
 
-function show(path = `/social/communities/${ID}`, sid = SID) {
+function show(path = `/social/communities/${ID}`, sid = SID, seed?: (client: QueryClient) => void) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(client);
   const router = createMemoryRouter(
     [{ path: "/social/communities/:id", element: <CommunityPage id={ID} now={0} sid={sid} /> }],
     { initialEntries: [path] },
@@ -370,6 +373,26 @@ describe("CommunityPage", () => {
               expect(router.state.location.search).toBe("");
               expect(screen.getByRole("heading", { level: 1, name: "Decentraland Foundation" })).toBeTruthy();
             });
+          });
+        });
+
+        describe("and the visitor clicks its card twice before the detail covers it", () => {
+          beforeEach(async () => {
+            router = show();
+            const link = await screen.findByRole("link", { name: "Takeover Tuesday" });
+            const plain = () => new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+            await act(async () => {
+              link.dispatchEvent(plain());
+            });
+            await act(async () => {
+              link.dispatchEvent(plain());
+            });
+            await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /close/i }));
+          });
+
+          it("should close the detail with one Close", async () => {
+            await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+            expect(router.state.location.search).toBe("");
           });
         });
 
@@ -835,6 +858,28 @@ describe("CommunityPage", () => {
           await act(async () => {});
           expect(screen.queryByRole("dialog")).toBeNull();
           expect(events.fetchEvent).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("and the browser already read one of its events elsewhere", () => {
+        let router: Router;
+
+        beforeEach(() => {
+          const hosted = { ...upcomingEvent(), community_id: ID };
+          router = show(`/social/communities/${ID}?event=ev-1`, SID, (seeded) => {
+            seeded.setQueryData(eventsPageKeys.detail("ev-1"), hosted);
+            seeded.setQueryData(communityKeys.events(ID), {
+              pages: [{ events: [hosted], total: 1, received: 1 }],
+              pageParams: [0],
+            });
+          });
+        });
+
+        it("should open no detail and keep the link", async () => {
+          expect(await screen.findByRole("heading", { name: "This is a Private Community" })).toBeTruthy();
+          await act(async () => {});
+          expect(screen.queryByRole("dialog")).toBeNull();
+          expect(router.state.location.search).toBe("?event=ev-1");
         });
       });
 
