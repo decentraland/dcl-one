@@ -3,6 +3,7 @@ services/catalyst/src/metrics_matcher/path-to-regexp.cjs -text
 services/catalyst/src/metrics_matcher/path-to-regexp.LICENSE -text
 rendering/bevy-explorer/source/** text=auto eol=lf
 # Byte-exact test fixtures (CRLF csv, mixed and no-EOL cache files) keep their exact bytes.
+# Any other text file is converted to LF on commit, so a new byte-exact fixture directory needs its own -text line here.
 rendering/bevy-explorer/source/local-harness/**/fixtures/** -text
 rendering/bevy-explorer/source/crates/scene_runner/src/test/test_assets/** -text
 # The shared HUD input manifest hashes these source and asset bytes on every platform.
