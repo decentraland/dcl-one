@@ -24,14 +24,8 @@ export async function clientLoader() {
  * Opening or closing an event's detail (`?event=`) changes only the query. Revalidating would swap the
  * first document's data for the client loader's nothing, and with it the page's title and card.
  */
-export function shouldRevalidate({
-  currentUrl,
-  nextUrl,
-  formMethod,
-  defaultShouldRevalidate,
-}: ShouldRevalidateFunctionArgs) {
-  // A submission still revalidates, should the route ever take one.
-  if (formMethod) return defaultShouldRevalidate;
+export function shouldRevalidate({ currentUrl, nextUrl, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
+  // The route has no action, so a submission elsewhere (a fetcher) is no reason to read again either.
   return currentUrl.pathname === nextUrl.pathname ? false : defaultShouldRevalidate;
 }
 

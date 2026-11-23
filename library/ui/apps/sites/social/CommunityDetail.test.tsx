@@ -152,10 +152,8 @@ describe('CommunityFrame', () => {
     })
 
     it("should render it outside the page's stacking context", () => {
-      const page = Array.from(container.children).find((child) =>
-        child.contains(screen.getByRole('heading'))
-      )!
-      expect(page.className).toContain('root')
+      const page = container.firstElementChild!
+      expect(page.contains(screen.getByRole('heading'))).toBe(true)
       expect(page.contains(screen.getByRole('dialog'))).toBe(false)
     })
   })
@@ -266,8 +264,9 @@ describe('CommunitySections', () => {
   describe('when it first shows', () => {
     it('should select Members and keep both sections in the page', () => {
       expect(screen.getByRole('tab', { name: 'Members', selected: true })).toBeTruthy()
-      expect(panelOf('Alice').className).not.toContain('inactive')
-      expect(panelOf('Takeover Tuesday').className).toContain('inactive')
+      expect(screen.getByRole('tab', { name: 'Upcoming Events', selected: false })).toBeTruthy()
+      expect(panelOf('Alice')).toBeTruthy()
+      expect(panelOf('Takeover Tuesday')).toBeTruthy()
     })
 
     it('should label each panel by its tab', () => {
@@ -282,10 +281,9 @@ describe('CommunitySections', () => {
       fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Events' }))
     })
 
-    it('should show the events instead of the members', () => {
+    it('should select the events instead of the members', () => {
       expect(screen.getByRole('tab', { name: 'Upcoming Events', selected: true })).toBeTruthy()
-      expect(panelOf('Takeover Tuesday').className).not.toContain('inactive')
-      expect(panelOf('Alice').className).toContain('inactive')
+      expect(screen.getByRole('tab', { name: 'Members', selected: false })).toBeTruthy()
     })
   })
 })

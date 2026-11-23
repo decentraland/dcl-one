@@ -108,11 +108,15 @@ describe("when the community route decides whether to read again", () => {
     });
   });
 
-  describe("and a form is submitted to the same page", () => {
-    it("should read again", () => {
+  describe("and a fetcher elsewhere submits while the page shows", () => {
+    it("should not read again, keeping the page's title", () => {
       expect(
-        shouldRevalidate({ ...args(`/social/communities/${ID}`, `/social/communities/${ID}`), formMethod: "POST" }),
-      ).toBe(true);
+        shouldRevalidate({
+          ...args(`/social/communities/${ID}`, `/social/communities/${ID}`),
+          formMethod: "POST",
+          formAction: "/api/something",
+        }),
+      ).toBe(false);
     });
   });
 
