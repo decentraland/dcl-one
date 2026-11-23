@@ -609,10 +609,9 @@ A difference not listed here is a gap, not a decision.
 
 ## Scene Insights cutover
 
-Set the Scene Insights deployment stack's `sceneInsightsWorldsContentServerUrl`
-to the public dcl-one base with the `/worlds-content-server` prefix when Worlds
-becomes authoritative. The deployment passes this value as
-`WORLDS_CONTENT_SERVER_URL`. Verify that the base serves
+Set `WORLDS_CONTENT_SERVER_URL` in the Scene Insights deployment to the
+public dcl-one base with the `/worlds-content-server` prefix when Worlds
+becomes authoritative. Verify that the base serves
 `GET /world/{name}/permissions` and `GET /world/{name}/scenes` for a World
 published on dcl-one. Then use signed Scene Insights requests to check a
 wallet listed in the active scene's `metadata.logsPermissions` and a separate
