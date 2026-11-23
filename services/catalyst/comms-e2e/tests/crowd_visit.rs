@@ -240,6 +240,21 @@ async fn a_failed_deployment_still_counts_what_was_deployed_and_already_served()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn waiting_for_profiles_to_be_served_ends_at_its_deadline() {
+    let stand_in = content::start(None).await;
+    let client = profile::client().unwrap();
+    let endpoints = profile::endpoints(&client, &stand_in.api).await.unwrap();
+    stand_in.delay_reads(Duration::from_secs(5));
+    let identities = [Identity::visitor("slow-lambdas", 0)];
+    let started = std::time::Instant::now();
+    let served =
+        visit::wait_served(&client, &endpoints, &identities, Duration::from_millis(500)).await;
+    let waited = started.elapsed();
+    assert_eq!(served, 0);
+    assert!(waited < Duration::from_secs(2), "{waited:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn without_an_api_the_visit_is_skipped() {
     let pulse = support::in_process_pulse().await;
     let mut report = run_scenarios(

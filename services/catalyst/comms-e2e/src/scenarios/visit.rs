@@ -283,22 +283,25 @@ async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCo
         )));
     }
     if counts.deployed > 0 {
-        let served = wait_served(&client, &endpoints, identities).await;
+        let served = wait_served(&client, &endpoints, identities, SERVED_DEADLINE).await;
         ctx.note("profiles_served_before_entering", served);
     }
     Ok(counts)
 }
 
-/// Waits until the lambdas serve every player's profile, or [`SERVED_DEADLINE`]: a client asks
-/// them when it sees the player join. Returns how many they served.
-async fn wait_served(
+/// Waits until the lambdas serve every player's profile (player `i` is `identities[i]`), for at
+/// most `within`, a round of reads cut short at that deadline: a client asks them when it sees
+/// the player join. Returns how many they served in the last round that finished.
+pub async fn wait_served(
     client: &reqwest::Client,
     endpoints: &profile::Endpoints,
     identities: &[Identity],
+    within: Duration,
 ) -> usize {
-    let deadline = Instant::now() + SERVED_DEADLINE;
+    let deadline = tokio::time::Instant::now() + within;
+    let mut served = 0;
     loop {
-        let served = join_all(identities.iter().enumerate().map(|(index, identity)| {
+        let round = join_all(identities.iter().enumerate().map(|(index, identity)| {
             let address = identity.address();
             async move {
                 profile::served_profile(client, &endpoints.lambdas, &address)
@@ -309,15 +312,18 @@ async fn wait_served(
                         })
                     })
             }
-        }))
-        .await
-        .into_iter()
-        .filter(|served| *served)
-        .count();
-        if served == identities.len() || Instant::now() >= deadline {
+        }));
+        match tokio::time::timeout_at(deadline, round).await {
+            Ok(round) => served = round.into_iter().filter(|served| *served).count(),
+            Err(_) => return served,
+        }
+        if served == identities.len() || tokio::time::Instant::now() >= deadline {
             return served;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_millis(500)).min(deadline),
+        )
+        .await;
     }
 }
 
