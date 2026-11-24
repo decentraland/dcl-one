@@ -27,6 +27,7 @@ function renderChat(
     messages?: ChatLine[]
     members?: NearbyMember[]
     onTeleport?: (x: number, y: number) => void
+    onOpenUrl?: (url: string) => void
     me?: { address?: string; name?: string } | null
     chatOver?: Partial<ChatState>
   } = {}
@@ -41,7 +42,7 @@ function renderChat(
     ...opts.chatOver
   }
   seedProfiles(chat.members) // what the session does on every roster message
-  const { container } = render(<Chat chat={chat} me={opts.me} onTeleport={opts.onTeleport} />)
+  const { container } = render(<Chat chat={chat} me={opts.me} onTeleport={opts.onTeleport} onOpenUrl={opts.onOpenUrl} />)
   return { chat, container }
 }
 
@@ -51,6 +52,19 @@ describe('chat rich messages', () => {
     const link = screen.getByRole('link', { name: 'https://decentraland.org' })
     expect(link).toHaveAttribute('href', 'https://decentraland.org')
     expect(link).toHaveAttribute('target', '_blank')
+  })
+
+  it('with onOpenUrl, a URL opens only through it: click and middle-click call it; navigation, context menu and drag are blocked', () => {
+    const onOpenUrl = vi.fn()
+    renderChat({ messages: [line('visit https://decentraland.org now')], onOpenUrl })
+    const link = screen.getByRole('link', { name: 'https://decentraland.org' })
+    expect(fireEvent.click(link)).toBe(false) // default navigation prevented
+    expect(fireEvent.contextMenu(link)).toBe(false)
+    expect(fireEvent.dragStart(link)).toBe(false)
+    fireEvent(link, new MouseEvent('auxclick', { bubbles: true, button: 2 })) // right button: not an open
+    fireEvent(link, new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    expect(onOpenUrl).toHaveBeenCalledTimes(2)
+    expect(onOpenUrl).toHaveBeenCalledWith('https://decentraland.org')
   })
 
   it('a location coord link teleports', async () => {
