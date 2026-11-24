@@ -624,8 +624,6 @@ pub fn apply_movement(
     movement_control: Res<EngineMovementControl>,
     central: Res<CentralCollisions>,
 ) {
-    let _cpu_span =
-        scene_runner::cpu_probe::Span::new(scene_runner::cpu_probe::Bucket::ApplyMovement);
     let Ok((mut transform, mut dynamic_state, movement)) = player.single_mut() else {
         return;
     };

@@ -3,7 +3,6 @@ pub mod local_storage;
 pub mod op_wrappers;
 pub mod relay;
 pub mod relay_proto;
-pub mod tick_marks;
 
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
