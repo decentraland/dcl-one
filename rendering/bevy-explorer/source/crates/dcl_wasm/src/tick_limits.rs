@@ -3,7 +3,9 @@
 //! the wasm-only module so the host test suite covers it.
 
 use common::rpc::RpcCall;
-use dcl_js::comms::{MAX_COMMS_MESSAGE_BYTES, MAX_SEND_MESSAGES_PER_TICK};
+use dcl_js::comms::MAX_SEND_MESSAGES_PER_TICK;
+#[cfg(test)]
+use dcl_types::MAX_COMMS_MESSAGE_BYTES;
 use dcl_types::{MAX_RPC_CALLS_PER_TICK, MAX_TOPIC_MESSAGE_BYTES};
 
 /// The first limit a tick's calls break, if any.
@@ -17,8 +19,7 @@ pub fn tick_limit_broken(calls: &[RpcCall]) -> Option<&'static str> {
         match call {
             RpcCall::SendMessageBus { data, .. } => {
                 sends += 1;
-                // the message plus its one-byte type tag
-                if data.len() > MAX_COMMS_MESSAGE_BYTES + 1 {
+                if !dcl_types::scene_message_fits(data) {
                     return Some("message bus send too large");
                 }
             }
@@ -42,8 +43,12 @@ mod tests {
     use super::*;
 
     fn bus(len: usize) -> RpcCall {
+        let mut data = vec![0; len];
+        if let Some(tag) = data.first_mut() {
+            *tag = dcl_types::CommsMessageType::String as u8;
+        }
         RpcCall::SendMessageBus {
-            data: vec![0; len],
+            data,
             recipient: None,
         }
     }
@@ -77,6 +82,21 @@ mod tests {
             tick_limit_broken(&[bus(MAX_COMMS_MESSAGE_BYTES + 2)]),
             Some("message bus send too large")
         );
+    }
+
+    #[test]
+    fn binary_sends_reserve_receiver_sender_framing() {
+        for (extra, expected) in [(0, None), (1, Some("message bus send too large"))] {
+            let mut data = vec![0; dcl_types::MAX_BINARY_MESSAGE_BYTES + 1 + extra];
+            data[0] = dcl_types::CommsMessageType::Binary as u8;
+            assert_eq!(
+                tick_limit_broken(&[RpcCall::SendMessageBus {
+                    data,
+                    recipient: None,
+                }]),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -326,15 +326,8 @@ const ROWS: &[Row] = &[
     // with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`.
     same("lambdas", "EXPLORER_ESCROW_GRANTS_ENABLED", "false"),
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
-    // and `textSearch` only: a mirror answers the same; island and journey
-    // also take this node's extended filters.
-    row(
-        "lambdas",
-        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
-        Is("false"),
-        Is("true"),
-        Is("true"),
-    ),
+    // and `textSearch` by default; operators can opt in to extended filters.
+    same("lambdas", "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "false"),
     // lamb2's LAND subgraph: parcel operators and permissions until the
     // land-authz index is published.
     upstream(
@@ -926,6 +919,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
+    ("EVENTS_SITE_URL", LINK),
     ("JUMP_IN_SITE_URL", LINK),
     ("PLACES_BASE_URL", LINK),
     ("CREDITS_CHECKOUT_CANCEL_URL", LINK),

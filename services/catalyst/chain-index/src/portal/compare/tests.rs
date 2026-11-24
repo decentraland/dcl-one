@@ -112,6 +112,7 @@ fn only_the_prefix_up_to_the_highest_common_hash_is_compared() {
     assert_eq!(out.fetched, Some((101, 120)));
     assert_eq!(out.compared, Some((101, 110)));
     assert_eq!((out.compared_blocks, out.skipped_blocks), (10, 40));
+    assert_eq!((out.rpc_logs, out.portal_logs), (1, 1));
     assert_eq!(
         out.coverage.address_history,
         AddressHistory::Unknown,
@@ -186,6 +187,11 @@ fn empty_windows_agree_only_on_a_common_branch() {
     );
     assert_eq!(same.verdict, Verdict::Equal);
     assert_eq!((same.compared, same.skipped_blocks), (Some((101, 150)), 0));
+    assert_eq!(
+        (same.rpc_logs, same.portal_logs),
+        (0, 0),
+        "an equal verdict over no logs is visible as such"
+    );
     let fork = compare(
         &r,
         &fetched(101, 150, Some(150), &[(150, h(151))], vec![]),
@@ -265,6 +271,11 @@ fn differences_are_counted_by_kind() {
     assert_eq!((out.missing, out.extra, out.mismatch), (1, 1, 1));
     assert_eq!(out.timestamp, 1);
     assert_eq!((out.arity_filtered, out.drift_filtered), (1, 1));
+    assert_eq!(
+        (out.rpc_logs, out.portal_logs),
+        (3, 3),
+        "the portal's count is what the exact filter keeps"
+    );
     // Expected local filtering alone never makes a read different.
     let r = read(101, 150, h(150), vec![], json!([T0, null]));
     let f = fetched(

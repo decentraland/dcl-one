@@ -28,6 +28,17 @@ const tagged = png(
   chunk('eXIf', Buffer.alloc(4))
 )
 const clean = png(chunk('sRGB', Buffer.from([0])))
+const webpChunk = (type: string, data: Buffer) => {
+  const length = Buffer.alloc(4)
+  length.writeUInt32LE(data.length)
+  return Buffer.concat([Buffer.from(type, 'latin1'), length, data, Buffer.alloc(data.length % 2)])
+}
+const webp = (...chunks: Buffer[]) => {
+  const body = Buffer.concat([Buffer.from('WEBP', 'latin1'), ...chunks])
+  const size = Buffer.alloc(4)
+  size.writeUInt32LE(body.length)
+  return Buffer.concat([Buffer.from('RIFF', 'latin1'), size, body])
+}
 const uri = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`
 
 describe('fileMetadata', () => {
@@ -41,6 +52,41 @@ describe('fileMetadata', () => {
     describe('and it carries only rendering chunks', () => {
       it('should find nothing', () => {
         expect(fileMetadata('refs/b.png', clean)).toEqual({})
+      })
+    })
+  })
+
+  describe('when the file is a standalone WebP', () => {
+    describe('and it carries EXIF and XMP chunks after an odd-length chunk', () => {
+      it('should find the metadata', () => {
+        const file = webp(
+          webpChunk('VP8X', Buffer.alloc(10)),
+          webpChunk('VP8 ', Buffer.alloc(5)),
+          webpChunk('EXIF', Buffer.alloc(3)),
+          webpChunk('XMP ', Buffer.from('<x/>'))
+        )
+        expect(fileMetadata('assets/a.webp', file)).toEqual({ EXIF: 1, 'XMP ': 1 })
+      })
+    })
+
+    describe('and it carries only rendering chunks', () => {
+      it('should find nothing', () => {
+        expect(fileMetadata('assets/b.webp', webp(webpChunk('VP8 ', Buffer.alloc(6))))).toEqual({})
+      })
+    })
+
+    describe('and it is truncated inside a chunk header', () => {
+      it('should report the chunks before the cut and stop', () => {
+        const file = webp(webpChunk('EXIF', Buffer.alloc(2)), webpChunk('VP8 ', Buffer.alloc(4)))
+        expect(fileMetadata('assets/c.webp', file.subarray(0, file.length - 9))).toEqual({
+          EXIF: 1
+        })
+      })
+    })
+
+    describe('and its bytes are not a RIFF WebP container', () => {
+      it('should find nothing', () => {
+        expect(fileMetadata('assets/d.webp', Buffer.from('EXIF not a container'))).toEqual({})
       })
     })
   })

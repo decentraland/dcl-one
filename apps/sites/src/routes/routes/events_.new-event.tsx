@@ -1,10 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
+import { useEventsCopy, SubmitHangoutView as LdSubmitHangoutView, type SitesLocaleHandle } from "@dcl/one-ui";
 import { rejectedNotice } from "@/features/social/submit-hangout/review-notice";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
-import { SubmitHangoutView as LdSubmitHangoutView } from "@dcl/one-ui/apps/sites/events/SubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
 import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-page";
@@ -14,7 +13,6 @@ import { useAuth } from "@/data/lib/auth/context";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { getIdentity } from "@/data/lib/auth/session";
 import { SitesLayoutMaybe } from "@/features/components/chrome/SitesLayout";
-import type { SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { useSignInRequired } from "@/features/components/auth/useSignInRequired";
 import { parseUuidParam } from "@/data/lib/creators/ids";

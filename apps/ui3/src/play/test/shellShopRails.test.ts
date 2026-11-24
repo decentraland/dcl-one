@@ -79,9 +79,11 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
   const wallet = createFakeWallet({
     ...(opts.walletChain != null ? { chainId: opts.walletChain } : {}),
     account: BUYER,
-    onSend: () => {
+    onSend: (tx) => {
       const hash = `0x${'e'.repeat(63)}1` as Hex
       chain.receipts.set(hash, 'success')
+      // The chain holds the wallet's own transaction too, so a purchase can be found out by its call.
+      chain.transactions.set(hash.toLowerCase(), { from: BUYER, to: tx.to, input: tx.data })
       return hash
     }
   })
@@ -103,6 +105,8 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
       balance: async () => ({ balanceCents: 7000 as UsdCents, credits: 700 }),
       resolvers: () => ({ trade: async () => null, store: async () => ({ priceWei: '2300000000000000000', available: 10 }) }),
       reader: () => chain,
+      // What the chain says a hash's transaction is: the relay's and the wallet's, as the fake chain holds them.
+      manaEvidence: () => ({ transaction: async (c: number, h: string) => (await chain.transaction?.(c as never, h)) ?? null, receipt: (c: number, h: string) => chain.receipt(c as never, h), finalizedTime: async () => 0 }) as never,
       primeFlags: async () => {},
       // One tab: every operation's lock is this page's.
       claim: async () => () => {},
@@ -149,6 +153,17 @@ describe('the shell purchase on the real rails', () => {
     expect(r.wallet.sent).toHaveLength(1)
     expect(r.wallet.sent[0].to.toLowerCase()).toBe(DEDICATED)
     expect(r.relay.posts).toHaveLength(0)
+  })
+
+  it('holds a purchase the wallet sent and then dropped before its hash: nothing given back, nothing sent again', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'web3', gasless: false })
+    r.wallet.next = 'lost'
+    await r.buy()
+    await r.until('pending')
+    expect(r.wallet.sent).toHaveLength(1)
+    expect(r.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    expect(r.shown.some((s) => s.view.step === 'failed')).toBe(false)
+    expect(r.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
   })
 
   it('refuses a credit issued for a manager the deployment doesn’t trust, and gives the credit back', async () => {

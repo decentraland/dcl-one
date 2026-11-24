@@ -821,6 +821,274 @@ async fn create_refresh_and_list_over_the_stub_subgraph() {
         "signed over the route-local path behind the proxy's x-original-path: {out}"
     );
 
+    // Refresh after a transfer: a newer reader row with another owner
+    // cancels the listing, and the route answers the synced status.
+    *graph.answer.lock().unwrap() = nft_row(&format!("0x{}", "c3".repeat(20)), "parcel", None);
+    graph.answer.lock().unwrap()["data"]["nfts"][0]["updatedAt"] = json!("1700000100");
+    let state6 = state_over(
+        pool.clone(),
+        Some(market_with(Some(graph.url.clone()))),
+        true,
+    );
+    let (status, _, out) = send(
+        router(state6),
+        "PATCH",
+        &format!("/v1/rentals-listings/{id}"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["data"]["status"], "cancelled", "{out}");
+
+    cleanup(&pool, &[token]).await;
+}
+
+/// A reader that lags answers from older blocks: neither read replaces the
+/// newer stored asset row, so the stored time stays and the second, less
+/// stale read (the previous owner's) is still too old to close the listing.
+#[tokio::test]
+async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let db = Database::new(pool.clone());
+    let graph = stub_graph().await;
+    let token = random_token_id();
+    let listing = insert(&db, &token, LESSOR, &format!("0xsig-{token}"))
+        .await
+        .unwrap();
+    // The lessor received the asset at T5.
+    let (t3, t4, t5) = (1_700_000_300i64, 1_700_000_400i64, 1_700_000_500i64);
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .bind(t5 as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let previous_owner = format!("0x{}", "c3".repeat(20));
+    for (read_at, label) in [(t3, "a stale read"), (t4, "a later, less stale read")] {
+        *graph.answer.lock().unwrap() = nft_row(&previous_owner, "parcel", None);
+        graph.answer.lock().unwrap()["data"]["nfts"][0]["updatedAt"] = json!(read_at.to_string());
+        graph.answer.lock().unwrap()["data"]["nfts"][0]["searchText"] = json!("Older name");
+        // A state of its own: the reader caches an asset's row.
+        let state = state_over(
+            pool.clone(),
+            Some(market_with(Some(graph.url.clone()))),
+            true,
+        );
+        let (status, _, out) = send(
+            router(state),
+            "PATCH",
+            &format!("/v1/rentals-listings/{}", listing.id),
+            vec![],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{label}: {out}");
+        assert_eq!(out["data"]["status"], "open", "{label}: {out}");
+        assert_eq!(out["data"]["searchText"], "-10,20", "{label}: {out}");
+        let (stored_at, search_text): (i64, String) = sqlx::query_as(
+            "SELECT extract(epoch FROM nft_updated_at)::bigint, search_text FROM signatures.rental_assets \
+             WHERE contract_address = $1 AND token_id = $2::numeric",
+        )
+        .bind(LAND)
+        .bind(&token)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((stored_at, search_text.as_str()), (t5, "-10,20"), "{label}");
+    }
+    cleanup(&pool, &[token]).await;
+}
+
+/// A relisting whose reader row is older than the stored asset row keeps
+/// the stored time, which the refresh route's guard compares against, and
+/// the stored details; the listing is created all the same. A reader row
+/// that is not older replaces them.
+#[tokio::test]
+async fn a_relisting_never_lowers_the_stored_asset_time() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let db = Database::new(pool.clone());
+    let token = random_token_id();
+    let first = insert(&db, &token, LESSOR, &format!("0xsig-a-{token}"))
+        .await
+        .unwrap();
+    type Stored = (
+        i64,
+        String,
+        String,
+        Option<i16>,
+        Option<bool>,
+        Option<i16>,
+        i64,
+    );
+    let stored = || async {
+        sqlx::query_as::<_, Stored>(
+            "SELECT extract(epoch FROM nft_updated_at)::bigint, category, search_text, distance_to_plaza, \
+                    adjacent_to_road, estate_size, extract(epoch FROM fetched_at)::bigint \
+             FROM signatures.rental_assets WHERE contract_address = $1 AND token_id = $2::numeric",
+        )
+        .bind(LAND)
+        .bind(&token)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let cancel = |id: String| async {
+        sqlx::query("UPDATE signatures.rentals SET status = 'cancelled' WHERE id = $1::uuid")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    let ahead = chrono::Utc::now().timestamp() + 3_600;
+    let newer: Stored = (
+        ahead,
+        "estate".into(),
+        "A newer name".into(),
+        Some(7),
+        Some(false),
+        Some(4),
+        ahead + 60,
+    );
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC', \
+                category = $4, search_text = $5, distance_to_plaza = $6, adjacent_to_road = $7, estate_size = $8, \
+                fetched_at = to_timestamp($9) AT TIME ZONE 'UTC' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .bind(newer.0 as f64)
+    .bind(&newer.1)
+    .bind(&newer.2)
+    .bind(newer.3)
+    .bind(newer.4)
+    .bind(newer.5)
+    .bind(newer.6 as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    cancel(first.id.clone()).await;
+    let second = insert(&db, &token, LESSOR, &format!("0xsig-b-{token}"))
+        .await
+        .unwrap();
+    assert_eq!(stored().await, newer);
+    assert_eq!(
+        (
+            second.status.as_str(),
+            second.category.as_str(),
+            second.search_text.as_str()
+        ),
+        ("open", "estate", "A newer name")
+    );
+    assert_eq!(counts(&pool, &token).await.1, 2);
+
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp(1600000000) AT TIME ZONE 'UTC' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .execute(&pool)
+    .await
+    .unwrap();
+    cancel(second.id.clone()).await;
+    let before = chrono::Utc::now().timestamp();
+    let third = insert(&db, &token, LESSOR, &format!("0xsig-c-{token}"))
+        .await
+        .unwrap();
+    let (updated_at, category, search_text, distance, road, size, fetched_at) = stored().await;
+    assert!(updated_at >= before && fetched_at >= before && fetched_at < ahead);
+    assert_eq!(
+        (
+            category.as_str(),
+            search_text.as_str(),
+            distance,
+            road,
+            size
+        ),
+        ("parcel", "-10,20", Some(3), Some(true), None)
+    );
+    assert_eq!(
+        (third.category.as_str(), third.search_text.as_str()),
+        ("parcel", "-10,20")
+    );
+    cleanup(&pool, &[token]).await;
+}
+
+/// A relisting whose reader row has the stored time exactly replaces the
+/// stored details: only a strictly older row keeps them.
+#[tokio::test]
+async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let db = Database::new(pool.clone());
+    let token = random_token_id();
+    let first = insert(&db, &token, LESSOR, &format!("0xsig-a-{token}"))
+        .await
+        .unwrap();
+    let at = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp() + 3_600, 0)
+        .unwrap()
+        .naive_utc();
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = $3, category = 'estate', search_text = 'A stored name' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .bind(at)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE signatures.rentals SET status = 'cancelled' WHERE id = $1::uuid")
+        .bind(&first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let signature = format!("0xsig-b-{token}");
+    let second = db
+        .insert_listing(
+            &format!("{LAND}-{token}"),
+            &ListingMetadata {
+                category: "parcel",
+                search_text: "-10,20",
+                distance_to_plaza: Some(3),
+                adjacent_to_road: Some(true),
+                estate_size: None,
+                updated_at: at,
+            },
+            now,
+            &creation(&token, &signature),
+            LESSOR,
+            now,
+        )
+        .await
+        .unwrap();
+    let stored: (chrono::NaiveDateTime, String, String) = sqlx::query_as(
+        "SELECT nft_updated_at, category, search_text FROM signatures.rental_assets \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, (at, "parcel".to_string(), "-10,20".to_string()));
+    assert_eq!(
+        (second.category.as_str(), second.search_text.as_str()),
+        ("parcel", "-10,20")
+    );
     cleanup(&pool, &[token]).await;
 }
 
@@ -1000,4 +1268,115 @@ async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
         super::handlers::held_for_lessor(&pool, now, RENTALS, Some(&last_rent), LESSOR).await,
         None
     );
+}
+
+#[tokio::test]
+async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
+    use super::db::{ListingFilters, ListingQuery};
+    let Some(own) = crate::test_db::OwnDatabase::create("rental_page_totals").await else {
+        return;
+    };
+    let db = Database::new(own.pool.clone());
+    let mut ids = Vec::new();
+    for token in ["1", "2", "3"] {
+        let listing = insert(&db, token, LESSOR, &format!("signature-{token}"))
+            .await
+            .unwrap();
+        ids.push(listing.id);
+    }
+    // Each sort has its own order. Two listings share a maximum price across
+    // the page boundary, so the listing ID decides which one appears first.
+    sqlx::raw_sql("UPDATE signatures.rental_assets SET
+            search_text = CASE token_id WHEN 1 THEN 'B' WHEN 2 THEN 'A' ELSE 'C' END,
+            nft_created_at = timestamp '2020-01-01' - token_id::int * interval '1 day';
+        UPDATE signatures.rentals SET created_at = timestamp '2020-01-01' + token_id::int * interval '1 day';
+        UPDATE signatures.rental_periods p SET price_per_day = CASE
+            WHEN p.min_days = 30 AND r.token_id = 2 THEN 30
+            WHEN p.min_days = 30 THEN 20
+            WHEN r.token_id = 1 THEN 3 WHEN r.token_id = 2 THEN 1 ELSE 2 END
+        FROM signatures.rentals r WHERE r.id = p.rental_id;")
+        .execute(&own.pool).await.unwrap();
+    for history in [false, true] {
+        for (sort_by, ranks) in [
+            ("land_creation_date", [3, 2, 1]),
+            ("name", [2, 1, 3]),
+            ("max_rental_price", [20, 30, 20]),
+            ("min_rental_price", [3, 1, 2]),
+            ("created_at", [1, 2, 3]),
+        ] {
+            for direction in ["asc", "desc"] {
+                let mut expected = [0, 1, 2];
+                expected.sort_by(|&a, &b| {
+                    let order = if direction == "asc" {
+                        ranks[a].cmp(&ranks[b])
+                    } else {
+                        ranks[b].cmp(&ranks[a])
+                    };
+                    order.then_with(|| ids[a].cmp(&ids[b]))
+                });
+                for (offset, limit) in [(0, 2), (2, 2), (3, 2), (4, 2), (0, 0)] {
+                    let page = db
+                        .get_listings(&ListingQuery {
+                            sort_by: Some(sort_by.to_string()),
+                            sort_direction: Some(direction.to_string()),
+                            offset,
+                            limit,
+                            history,
+                            filter: ListingFilters {
+                                rental_days: vec![10],
+                                ..Default::default()
+                            },
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(page.total, 3);
+                    let actual: Vec<_> = page.results.iter().map(|r| &r.id).collect();
+                    let wanted: Vec<_> = expected
+                        .iter()
+                        .skip(offset as usize)
+                        .take(limit as usize)
+                        .map(|&i| &ids[i])
+                        .collect();
+                    assert_eq!(
+                        actual, wanted,
+                        "{sort_by} {direction}, history {history}, offset {offset}, limit {limit}"
+                    );
+                }
+            }
+        }
+    }
+    let matched = db
+        .get_listings(&ListingQuery {
+            sort_by: None,
+            sort_direction: None,
+            offset: 0,
+            limit: 10,
+            history: false,
+            filter: ListingFilters {
+                token_id: Some("2".to_string()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(matched.total, 1);
+    assert_eq!(matched.results.len(), 1);
+    assert_eq!(matched.results[0].id, ids[1]);
+    let empty = db
+        .get_listings(&ListingQuery {
+            sort_by: None,
+            sort_direction: None,
+            offset: 0,
+            limit: 10,
+            history: false,
+            filter: ListingFilters {
+                token_id: Some("4".to_string()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(empty.total, 0);
+    assert!(empty.results.is_empty());
+    own.drop().await;
 }

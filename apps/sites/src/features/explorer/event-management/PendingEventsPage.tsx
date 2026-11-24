@@ -1,11 +1,17 @@
-import { adminCopy, rejectionReason, relativeDateLabel, type RejectReasonId } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { AdminPage, adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
-import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { PendingEventCard } from "@dcl/one-ui/apps/sites/events/PendingEventCard";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { RejectEventModal } from "@dcl/one-ui/apps/sites/events/RejectEventModal";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import {
+  adminCopy,
+  rejectionReason,
+  relativeDateLabel,
+  type RejectReasonId,
+  AdminPage,
+  adminPageStyles,
+  Busy,
+  EventDetailModal,
+  PendingEventCard,
+  Notice,
+  RejectEventModal,
+  SitesButton as Button,
+} from "@dcl/one-ui";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -16,6 +22,7 @@ import {
   editEventHref, eventAdminKeys, eventOccurrence, eventReviewStatus, moderateEvent, moderationQueueQuery, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
 import { useEventsFooterCopy } from "../../events/locale";
+import { eventImage } from "../../events/view";
 import { openSignIn } from "../../components/auth/signin-store";
 import SitesLayout from "../../components/chrome/SitesLayout";
 import { AdminAccessGate } from "./AdminAccessGate";
@@ -45,11 +52,16 @@ export default function PendingEventsPage() {
 
 function PendingQueue({ access }: { access: EventAdminAccess }) {
   const identity = access.identity;
+  // The queue is a signed read, so its cards render in the browser only, where the page origin is the window's.
+  const pageOrigin = typeof window === "undefined" ? "" : window.location.origin;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const queue = useQuery(identity ? moderationQueueQuery(identity) : { queryKey: eventAdminKeys.queue("anonymous"), queryFn: skipToken });
   const [rejecting, setRejecting] = useState<ManagedEvent | null>(null);
+  // The review a moderation just closed. Its id leaves the URL in a later commit than the reason
+  // dialog leaves state, so without this the review would show again for that commit.
+  const [closing, setClosing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useToast();
@@ -75,11 +87,13 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
   const mayReject = (event: ManagedEvent) => mayEdit(event) && access.canApproveAny;
   const recentlyApproved = (queue.data?.recentlyApproved ?? []).filter(visible);
   const openId = params.get("id");
-  const review = openId ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
+  if (closing !== null && openId !== closing) setClosing(null);
+  const review = openId && openId !== closing ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
   const now = new Date();
 
   function select(id: string | null) {
     setError(null);
+    if (id && id === closing) setClosing(null);
     setParams((current) => {
       const next = new URLSearchParams(current);
       if (id) next.set("id", id);
@@ -105,6 +119,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       await moderateEvent(signer, event.id, action, reason);
       void invalidateEventsAfterWrite(client);
       if (!mounted.current) return;
+      setClosing(event.id);
       setRejecting(null);
       select(null);
       setToast({ message: action === "approve" ? adminCopy.pending.approveSuccess : adminCopy.pending.rejectSuccess, tone: "success" });
@@ -123,7 +138,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
           <li key={event.id}>
             <PendingEventCard
               title={event.name}
-              image={event.image}
+              image={eventImage(event.image, pageOrigin)}
               href={`${PENDING_PATH}?id=${encodeURIComponent(event.id)}`}
               onOpen={(click) => {
                 click.preventDefault();
@@ -169,7 +184,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       {review && !rejecting ? (
         <EventDetailModal
           title={review.name}
-          image={review.image}
+          image={eventImage(review.image, pageOrigin)}
           live={false}
           when={reviewStart ? { label: new Date(reviewStart).toLocaleString(DATE_LOCALE), dateTime: reviewStart } : undefined}
           location={{ world: review.world, label: review.world ? review.server || "World location not published" : `${review.x},${review.y}` }}

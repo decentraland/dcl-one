@@ -214,6 +214,16 @@ Cast upgrade:
 - The first start of the stream key listener (`comms-streaming-key-listener`) checks every active stream key and revokes each key whose scene was deployed again or removed since the key was made. Expect one burst of owner notices after the deploy.
 - After the deploy, watch the rate of 5xx answers of `POST /livekit-webhook`: a Cast join guard that fails now answers 5xx, and LiveKit sends the event again.
 
+Community place id upgrade: after the new binaries replace every old API replica, run
+`psql -v ON_ERROR_STOP=1 -f schemas/releases/community-place-ids-lowercase.sql`
+with the administrative role. It merges community place rows whose ids differ only in case
+and lowercases the rest, then adds and validates a check that keeps place ids lowercase
+(an old replica's mixed-case write fails afterwards). It is safe while the API serves,
+holds an exclusive lock on the table for its first run and is safe to run again.
+Keep the pre-run database backup: rollback must restore it.
+
+Rental listing status upgrade: run `catalyst schema migrate` before deploying the API. Step `0056_signatures_rental_cancel_reason` adds the nullable `signatures.rentals.cancel_reason`, which the `rentals` index fold, the `rental-listing-status` job and the listing refresh route read and write; existing cancellations keep no reason.
+
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
 scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.

@@ -208,6 +208,12 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   or removed stylesheet, a count that must change), run
   `python3 tooling/ui_standards.py --write-token-floor` and commit the file
   with the change.
+- `make check` and CI also run `tooling/ui_standards.py --shared-imports`. It
+  fails when a script under `apps/`, `library/` (outside `library/ui`) or
+  `tooling/` names a `@dcl/one-ui/<path>` module other than a stylesheet. It
+  still accepts the in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`,
+  `@dcl/one-ui/apps/hud/`), which resolve their host's aliases and are not in
+  the entry yet.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -258,7 +264,7 @@ dependency. "Bevy HUD" here means the Explorer's React DOM HUD: its source in
 Sharing components with it does not extend to Rust Bevy widgets or SDK scene
 UI.
 
-Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths.
+Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths. Shared UI is imported only from `@dcl/one-ui`, never from a subpath, for example `import { Button, NavBar } from "@dcl/one-ui"`; only stylesheets (`foundations.css`, `text-styles.module.css` and the token sheets), which a script entry cannot carry, keep their paths.
 
 The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. The owned root inventory contains every tracked file under `rendering/bevy-explorer/source/react-web/src` plus `app.html` and `index.html`. Any edit, addition, deletion or rename of those roots, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Other owned files, including bridge-scene and web-engine sources, become controls only when the actual compiler or Vite graph reaches them; changes to those recorded controls, shared imports or resolver configuration also require regeneration. Unreached owned files remain covered by the separate Explorer source fingerprint. From the repository root, run `pnpm --dir rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest. `pnpm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. The engine-generated bindings (`library/explorer-core/engine/generated`) are not in it: the engine build produces them and the Sites import compares the tracked copy with its own.
 

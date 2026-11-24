@@ -274,6 +274,14 @@ impl PulseServer {
         )
     }
 
+    /// Replaces the pre-auth admission limits. For a server that has admitted no connection yet:
+    /// the replacement starts with nothing in flight.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_pre_auth_limits(mut self, per_ip_cap: i64, global_budget: i64) -> Self {
+        self.pre_auth = PreAuthAdmission::new(per_ip_cap, global_budget);
+        self
+    }
+
     pub fn with_config(
         max_peers: usize,
         ring_capacity: usize,
