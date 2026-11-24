@@ -3,6 +3,13 @@
 <!-- Short: problem and behavior first. Tables for before/after or test
 results. -->
 
+## Evidence of the original problem (optional)
+
+<!-- Include or link to evidence that shows what was wrong or missing before
+this change. For example, share a test that fails on the base branch, a
+screenshot of the old behavior, or a baseline measurement. Explain what
+you expected, what the evidence shows, and why the difference mattered. -->
+
 ## What does this PR change?
 
 <!-- What and why; issue (#123); measured before/after; test scene for SDK

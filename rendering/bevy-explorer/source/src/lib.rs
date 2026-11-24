@@ -2,6 +2,7 @@
 // the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
+mod client_window_focus;
 mod commands;
 mod debug_panel;
 mod deep_link;
@@ -254,6 +255,10 @@ pub struct DecentralandArguments {
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
+    /// Show the lower-right debug panel button in the HUD
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, help_heading = DEBUG)]
+    pub debug_panel: bool,
     /// Echo scene logs to the console
     #[arg(long = "scene_log_to_console", help_heading = DEBUG)]
     pub scene_log_to_console: bool,
@@ -261,7 +266,7 @@ pub struct DecentralandArguments {
     /// `--features inspect`
     #[arg(long, value_name = "scene_hash", help_heading = DEBUG)]
     pub inspect: Option<String>,
-    /// Target fps (default 60; overridden by the refresh rate when vsync is on). Also `/fps`
+    /// Target fps (default 60; 999 is Max; with vsync on, capped at the refresh rate). Also `/fps`
     #[arg(long = "fps", value_name = "n", help_heading = SETTINGS)]
     pub fps_target: Option<usize>,
     /// Run the portable/startup scenes in preview mode
@@ -277,7 +282,7 @@ pub struct DecentralandArguments {
     /// `/allowed/failures`
     #[arg(long = "test_scenes", value_name = "x,y;x,y", help_heading = DEBUG)]
     pub test_scenes: Option<TestScenes>,
-    /// Vsync (default off)
+    /// VSync (default on): caps the frame rate at the monitor's refresh rate, `--fps` still applies
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub vsync: Option<bool>,
     /// Scene load distance in meters (default 100). Also `/scene_distance`
@@ -469,6 +474,7 @@ impl DecentralandApp {
                 server,
                 position: launch.position.clone(),
                 guest: decentraland_app_config.arguments.guest,
+                debug_panel: decentraland_app_config.arguments.debug_panel,
                 autopilot,
             });
         }
@@ -485,9 +491,11 @@ impl DecentralandApp {
         };
         // Show out-of-bounds geometry in preview, on a loopback realm (local dev) and in
         // the editor, never on a public realm; the same runs are a local scene to analytics.
-        let show_out_of_bounds = decentraland_app_config.arguments.client.editor
-            || decentraland_app_config.arguments.launch.preview
-            || common::util::is_loopback_url(&boot_server);
+        let ShowOutOfBounds(show_out_of_bounds) = ShowOutOfBounds::for_run(
+            decentraland_app_config.arguments.client.editor,
+            decentraland_app_config.arguments.launch.preview,
+            Some(&boot_server),
+        );
 
         // Resources
         app.insert_resource(Version(version))
@@ -782,6 +790,7 @@ impl DecentralandApp {
         // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
         // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
         // and its system information on Windows and Linux
+        app.add_plugins(client_window_focus::ClientWindowFocusPlugin);
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(all(
             feature = "performance-profiler",
@@ -807,8 +816,31 @@ impl DecentralandApp {
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
         app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
+        run_small_schedules_in_order(&mut app);
+
         app
     }
+}
+
+/// Runs the main schedules other than `PostUpdate` one system after another, on the thread that
+/// runs the schedule (the engine worker on the web). Most of their systems take microseconds, and
+/// handing each to a compute thread and waiting for it costs more than running it. `PostUpdate`
+/// stays multi-threaded: its systems (transform propagation, visibility) are large enough to gain
+/// from the compute threads.
+fn run_small_schedules_in_order(app: &mut App) {
+    use bevy::{
+        app::{RunFixedMainLoop, SpawnScene},
+        ecs::schedule::{ExecutorKind, Schedule},
+    };
+
+    let in_order = |schedule: &mut Schedule| {
+        schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+    };
+    app.edit_schedule(PreUpdate, in_order)
+        .edit_schedule(RunFixedMainLoop, in_order)
+        .edit_schedule(Update, in_order)
+        .edit_schedule(SpawnScene, in_order)
+        .edit_schedule(Last, in_order);
 }
 
 fn save_fresh_user_id(config: Res<AppConfig>) {
@@ -836,7 +868,7 @@ fn setup(
             )),
             Visibility::default(),
             config.player_settings.clone(),
-            OutOfWorld,
+            OutOfWorld::default(),
             AvatarDynamicState::default(),
             HeadSync::default(),
             PointAtSync::default(),
@@ -845,7 +877,10 @@ fn setup(
         ))
         .id();
     if boot_location.explicit {
-        commands.insert_resource(RealmInitialLocation::Parcel(boot_location.parcel));
+        commands.insert_resource(RealmInitialLocation::Parcel {
+            parcel: boot_location.parcel,
+            spawn_point: None,
+        });
     }
 
     // add a camera

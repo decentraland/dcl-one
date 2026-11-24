@@ -61,13 +61,8 @@ describe("validateEventAgainst", () => {
 
 describe("production nullable creator events", () => {
   it.each([
-    ["ch_manage_viewed", {
-      address: null, search: null, sort: "domain", filter: "published", count: 0,
-    }],
-    ["creator_dashboard_viewed", {
-      on_sale_items: null, published_collections: null, sales_7d: null,
-      scene_visits_30d: null, window_days: 7,
-    }],
+    ["ch_mp_replay_completed", { run: null, tier: "a" }],
+    ["ch_mp_replay_failed", { error: "timeout", run: null }],
   ] as [string, Record<string, unknown>][])(
     "accepts explicit nulls but still requires each property for %s",
     (event, props) => {

@@ -52,8 +52,13 @@ pub mod settings;
 pub mod settings_policy;
 pub mod store;
 pub mod upload_limits;
-pub mod upload_spool;
 pub mod wallet;
+
+/// Where every worlds upload request's spool directory lives: beside the blob
+/// store, so storing a part is a hard link.
+pub fn spool_root(storage: &catalyst_storage::Storage) -> std::path::PathBuf {
+    storage.scratch_dir().join("worlds-uploads")
+}
 
 #[cfg(test)]
 mod tests;
@@ -116,6 +121,8 @@ pub struct Settings {
     pub owner_reconcile_interval: std::time::Duration,
     /// `ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`: the access allow-list caps.
     pub access_caps: store::AccessCaps,
+    /// `REALM_NAME`: this node's Genesis City realm (default `main`).
+    pub realm_name: String,
 }
 
 impl std::fmt::Debug for Settings {
@@ -144,6 +151,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         })
     }
 
@@ -176,6 +184,11 @@ impl Settings {
         self
     }
 
+    pub fn with_realm_name(mut self, realm_name: String) -> Self {
+        self.realm_name = realm_name;
+        self
+    }
+
     pub fn with_max_file_count(mut self, max_file_count: u32) -> Self {
         self.max_file_count = max_file_count as usize;
         self
@@ -199,6 +212,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }
 }
@@ -577,14 +591,14 @@ impl CoreState {
         );
         let limits = &self.settings.upload_limits;
         metrics::upload_capacity(limits);
-        let spool_root = upload_spool::spool_root(&self.storage);
+        let spool_root = spool_root(&self.storage);
         // Older than any live upload: left by a process that died mid-request.
         let stale_after = catalyst_storage::gc::orphan_age_floor(
             limits.multipart_upload_timeout_ms,
             limits.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            upload_spool::sweep_stale(&spool_root, stale_after).await;
+            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
         });
         let Some(mut rx) = self.access_log_rx.lock().take() else {
             return;

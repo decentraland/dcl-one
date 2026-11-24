@@ -14,7 +14,7 @@ use common::{
     sets::SceneSets,
     sky_preset::{
         day_fraction, sample_keys, sample_ramp, time_to_phase, DIRECTIONAL_COLOR_RAMP,
-        LIGHT_INTENSITY_BY_TIME,
+        LIGHT_INTENSITY_BY_TIME, LIGHT_UNIT_LUX,
     },
     structs::{
         AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
@@ -225,8 +225,8 @@ impl LightSource {
 
 impl From<PbLightSource> for LightSource {
     fn from(value: PbLightSource) -> Self {
-        // rescale colors > 1 to 1, and multiply intensity by pow(max^2.2)
-        // to match unity
+        // the colour is sRGB. a colour above 1 is rescaled to 1 and multiplies the intensity by
+        // max^2.2, the gain decoding it as sRGB would give
         let color_scale = value
             .color
             .map(|c| c.r.max(c.g).max(c.b).max(1.0))
@@ -237,9 +237,9 @@ impl From<PbLightSource> for LightSource {
             intensity: value.intensity,
             intensity_gain: color_scale.powf(2.2),
             shadow: value.shadow,
-            color: value.color.map(|c| {
-                Color::linear_rgb(c.r / color_scale, c.g / color_scale, c.b / color_scale)
-            }),
+            color: value
+                .color
+                .map(|c| Color::srgb(c.r / color_scale, c.g / color_scale, c.b / color_scale)),
             range: value.range,
             spotlight_angles: if let Some(pb_light_source::Type::Spot(spot)) = value.r#type {
                 Some((
@@ -271,11 +271,6 @@ impl From<PbGlobalLight> for GlobalLight {
     }
 }
 
-/// One light unit of the sky preset and of scene light intensities: the directional light that
-/// lights a facing white surface to 1. bevy divides illuminance by pi and multiplies by the view
-/// exposure, so the lux that land at 1 are `pi / exposure`; the explorer leaves every camera on
-/// bevy's default exposure (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
-pub const LIGHT_UNIT_LUX: f32 = PI * 1.2 * 831.7465;
 /// The sun at noon, lux: the light intensity curve (`common::sky_preset`) peaks at 1.2 there.
 pub const NOON_ILLUMINANCE: f32 = 1.2 * LIGHT_UNIT_LUX;
 /// The sky's own sun at noon, in the atmosphere's units (`dir_light_intensity`).
@@ -562,13 +557,13 @@ pub fn update_directional_light(
 
         if let Some(sun) = maybe_sun {
             if let Some(color) = &sun.color {
-                // as for LightSource: colours > 1 are rescaled to 1, and the light is
-                // multiplied by pow(max, 2.2), so the sky gets the hue only
+                // the ramp is linear: colours > 1 are rescaled to 1, and the light is
+                // multiplied by the max, so the sky gets the hue only
                 let color = color.sample(day_fraction);
                 let color_scale = color.max_element().max(1.0);
                 let color = color / color_scale;
                 global_light.dir_color = Color::linear_rgb(color.x, color.y, color.z);
-                global_light.dir_illuminance *= color_scale.powf(2.2);
+                global_light.dir_illuminance *= color_scale;
             }
             // the light only: the sky keeps its time-of-day brightness
             if let Some(intensity) = sun.intensity {
@@ -595,7 +590,6 @@ pub fn update_directional_light(
     }
 
     // if the primary parcel doesn't specify anything, check any portables
-    #[allow(clippy::type_complexity)]
     let mut portable_settings: Option<(
         &str,
         Entity,
@@ -1103,7 +1097,27 @@ mod tests {
             ..Default::default()
         });
         assert!((lamp.lamp_intensity() - 100.0 * 2f32.powf(2.2)).abs() < 1e-3);
-        assert_eq!(lamp.color, Some(Color::linear_rgb(1.0, 0.5, 0.25)));
+        assert_eq!(lamp.color, Some(Color::srgb(1.0, 0.5, 0.25)));
+        // the colour is sRGB: a warm lamp stays saturated rather than washing out
+        let linear = lamp.color.unwrap().to_linear();
+        assert!(linear.green < 0.22 && linear.blue < 0.06, "{linear:?}");
+    }
+
+    #[test]
+    fn a_light_written_back_keeps_its_colour() {
+        use dcl_component::proto_components::Color3BevyToDcl;
+        // a glTF light is mirrored to the scene's component as sRGB; a scene writing that
+        // component back must light it with the same linear colour
+        let gltf = Color::linear_rgb(1.0, 0.5, 0.25);
+        let lamp = LightSource::from(PbLightSource {
+            color: Some(gltf.convert_srgb()),
+            ..Default::default()
+        });
+        let (a, b) = (gltf.to_linear(), lamp.color.unwrap().to_linear());
+        for (x, y) in [(a.red, b.red), (a.green, b.green), (a.blue, b.blue)] {
+            assert!((x - y).abs() < 1e-4, "{a:?} {b:?}");
+        }
+        assert_eq!(lamp.intensity_gain, 1.0);
     }
 
     #[test]
@@ -1130,7 +1144,7 @@ mod tests {
         });
         assert_eq!(tinted.dir_illuminance, NOON_ILLUMINANCE);
         assert_eq!(tinted.sun_illuminance, SKY_SUN_ILLUMINANCE);
-        assert_eq!(tinted.dir_color, Color::linear_rgb(1.0, 0.5, 0.5));
+        assert_eq!(tinted.dir_color, Color::srgb(1.0, 0.5, 0.5));
         // an intensity is lux as given, for the light and the sky's sun
         let set = apply(PbLightSource {
             intensity: Some(5000.0),

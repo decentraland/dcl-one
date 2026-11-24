@@ -11,10 +11,18 @@ pub struct PrimaryEntities<'w, 's> {
 }
 
 impl PrimaryEntities<'_, '_> {
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
     pub fn player(&self) -> Entity {
         self.player.single().unwrap()
     }
 
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryCamera is a mandatory singleton; a missing camera is an engine bug"
+    )]
     pub fn camera(&self) -> Entity {
         self.camera.single().unwrap()
     }

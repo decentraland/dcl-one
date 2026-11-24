@@ -79,7 +79,7 @@ impl<T: DclProtoComponent + Sync + Send + 'static> FromDclReader for T {
 
 impl<T: DclProtoComponent + Sync + Send + 'static> ToDclWriter for T {
     fn to_writer(&self, buf: &mut super::DclWriter) {
-        self.encode(buf).unwrap()
+        self.encode(buf.buffer_mut()).unwrap()
     }
 }
 
@@ -164,6 +164,7 @@ impl DclProtoComponent for sdk::components::PbAudioAnalysis {}
 impl DclProtoComponent for sdk::components::PbUiInputBinding {}
 impl DclProtoComponent for sdk::components::PbAvatarNametag {}
 impl DclProtoComponent for sdk::components::PbExplorerItemPurchaseResult {}
+impl DclProtoComponent for sdk::components::PbMapPin {}
 
 // PositionFree markers for types used with GlobalCrdtState::update_crdt
 // (these contain no embedded position data requiring localization)

@@ -15,6 +15,8 @@ import { clearAutoTranslate, setAutoTranslateDefault } from '@explorer-core/feat
 import { useTranslationPrefs } from '../chat/useTranslation'
 import { PING_MODES, clearPingMode, setPingDefault, usePingPrefs, type PingMode } from '../chat/ping'
 import { Mark } from '../../design/Glyphs'
+import { CAN_ASK_BEFORE_LEAVING } from '@hud-host'
+import { setAskBeforeLeaving, useAskBeforeLeaving } from './askBeforeLeaving'
 import styles from './SettingsPanel.module.css'
 
 // The Controls tab holds the engine's Controls rows and, in a card of its own under them, the key
@@ -220,7 +222,7 @@ function PingField(): React.JSX.Element {
   return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
-          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise." side="bottom" multiline className={styles.hint}>
+          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
             <span className={styles.label}>Notification Ping</span>
           </Tooltip>
         </div>
@@ -245,6 +247,22 @@ function AutoTranslateField(): React.JSX.Element {
         </div>
         <div className={styles.control}>
           <Toggle checked={prefs.autoDefault} onChange={setAutoTranslateDefault} aria-label="Auto-Translate New Conversations" />
+        </div>
+      </div>
+  )
+}
+
+/** The browser's question before Back or a closed tab ends a session, in the Gameplay tab where the
+ *  host can ask it. */
+function AskBeforeLeavingField(): React.JSX.Element {
+  const ask = useAskBeforeLeaving()
+  return (
+      <div className={styles.field}>
+        <div className={styles.fieldHead}>
+          <span className={styles.label}>Ask Before Leaving the Page</span>
+        </div>
+        <div className={styles.control}>
+          <Toggle checked={ask} onChange={setAskBeforeLeaving} aria-label="Ask Before Leaving the Page" />
         </div>
       </div>
   )
@@ -296,6 +314,7 @@ export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact
   const items = settings.list.filter((s) => s.category === activeTab)
   const isControls = activeTab.toLowerCase() === CONTROLS_TAB.toLowerCase()
   const isChat = activeTab.toLowerCase() === CHAT_TAB.toLowerCase()
+  const asksHere = CAN_ASK_BEFORE_LEAVING && activeTab.toLowerCase() === 'gameplay'
   const resetAll = (): void => {
     items.forEach((s) => settings.set(s.name, s.default))
     if (isControls) {
@@ -306,6 +325,7 @@ export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact
       }).then((ok) => ok && bindings.reset())
     }
     if (activeTab === LOBBY_TAB) lobbyStage.set({ preset: LOBBY_STAGE_PRESETS[0].id })
+    if (asksHere) setAskBeforeLeaving(false)
     if (isChat) {
       setAutoTranslateDefault(false)
       clearAutoTranslate()
@@ -351,6 +371,7 @@ export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact
                       <SettingField key={s.name} s={s} onSet={settings.set} />
                     ))}
                     {isChat && i === all.length - 1 && <AutoTranslateField />}
+                    {asksHere && i === all.length - 1 && <AskBeforeLeavingField />}
                   </div>
                 </section>
               ))

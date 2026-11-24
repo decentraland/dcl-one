@@ -108,6 +108,21 @@ impl Gate {
     }
 }
 async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiError> {
+    // A credits trial (`CREDITS_TRIAL_MODE`) issues credits only through the authorize lane, to
+    // the buyers it names. A goal credit is signed by the same key for the same manager, but for
+    // any wallet that completes a goal, and it is never an authorization: the usage fold does not
+    // settle its spends and the revoker never sees it. So the program is off while a trial is
+    // configured, for its buyers too, whatever the flags say and even when they can't be read. A
+    // photo processed meanwhile gets a terminal receipt (`disabled`, or `no-season` outside a
+    // season) and is never counted later, and claiming a grant is refused (`claim`). Goal credits
+    // claimed before the trial stay spendable until they expire, and the reminder job, which reads
+    // this gate, sends nothing about them.
+    if state.settings.trial.is_some() {
+        return Ok(Gate {
+            disabled: true,
+            allowlist: None,
+        });
+    }
     let [mut dapps, mut explorer] = state.goal_flags.documents();
     let overrides = sqlx::query("SELECT app,name,value FROM explore_api.feature_flags_local WHERE app IN ('dapps','explorer')")
         .fetch_all(&mut *conn).await?;
@@ -144,7 +159,7 @@ async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiE
     }
     let explorer = explorer
         .ok_or_else(|| ApiError::service_unavailable("credits explorer flags unavailable"))?;
-    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer);
+    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer, true);
     let allowlist = snapshot
         .variant_values("explorer", "alfa-marketplace-credits")
         .map(|list| {

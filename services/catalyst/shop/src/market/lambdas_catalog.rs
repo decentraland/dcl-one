@@ -25,7 +25,6 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 
-use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::cache::TtlMap;
 use crate::shared::http_util::lambdas_internal_error;
 use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
@@ -855,18 +854,12 @@ async fn definitions_for(
     state: &MarketplaceState,
     pointers: Vec<String>,
     extract: fn(&Value, &str) -> Option<Value>,
-) -> Vec<Value> {
-    if pointers.is_empty() {
-        return Vec::new();
-    }
-    let mut docs = active_entity_docs_by_pointers(&state.pool, &pointers)
-        .await
-        .unwrap_or_default();
-    retain_non_denylisted(&mut docs, &state.denylist);
-    docs.iter()
-        .filter_map(|d| d.to_value())
-        .filter_map(|e| extract(&e, &state.settings.content_public_url))
-        .collect()
+) -> Result<Vec<Value>, ()> {
+    let entities = super::profiles::active_entities(state, &pointers).await?;
+    Ok(entities
+        .iter()
+        .filter_map(|entity| extract(entity, &state.settings.content_public_url))
+        .collect())
 }
 
 /// `pagination` echoes the request's `lastId` (lowercased, left out when
@@ -966,7 +959,10 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
     if want_on_chain && remaining >= 0 {
         urns.truncate((remaining + 1) as usize);
         let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
-        on_chain_defs = definitions_for(state, pointers, extract_wearable_definition).await;
+        on_chain_defs = match definitions_for(state, pointers, extract_wearable_definition).await {
+            Ok(definitions) => definitions,
+            Err(()) => return lambdas_internal_error(),
+        };
     }
     let (items, next_last_id) = paginate_merged(off_chain, on_chain_defs, limit);
     catalog_response(
@@ -1012,7 +1008,9 @@ async fn catalog(
             )
             .await?;
             let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
-            let definitions = definitions_for(state, pointers, extract).await;
+            let definitions = definitions_for(state, pointers, extract)
+                .await
+                .map_err(|()| lambdas_internal_error())?;
             let (items, next_last_id) = paginate(definitions, query.limit);
             Ok::<Value, Response>(json!({ "items": items, "next": next_last_id }))
         })
@@ -1034,8 +1032,8 @@ async fn catalog(
     )
 }
 
-/// With `extensions` off (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED`, off under
-/// the mirror posture) the extended filters are ignored, and alone do not
+/// With `extensions` off (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED`, off by
+/// default) the extended filters are ignored, and alone do not
 /// count as a filter, as in lamb2 (decentraland/lamb2:src/logic/items-catalog.ts:14-43).
 fn wearables_query(qs: &str, extensions: bool) -> Result<CatalogQuery, Box<Response>> {
     let p = catalog_params_from_query(qs);
@@ -1334,6 +1332,10 @@ fn apply_names(entity: &mut Value, owned_names: &[String]) {
     if !owned_names.is_empty() {
         kept.extend(extra);
     }
+    let kept: Vec<Value> = kept
+        .into_iter()
+        .map(super::profiles::normalize_slot)
+        .collect();
     *metadata = json!({ "outfits": kept, "namesForExtraSlots": owned_names });
 }
 
@@ -1736,6 +1738,19 @@ mod tests {
         assert_eq!(
             e["metadata"],
             json!({ "outfits": [{ "slot": 0 }, { "slot": 7 }], "namesForExtraSlots": ["alice"] })
+        );
+    }
+
+    #[test]
+    fn integral_float_outfit_slots_are_served_as_integers() {
+        let mut e: Value = serde_json::from_str(
+            r#"{"metadata": {"outfits": [{"slot": 1.0}, {"slot": 5e0}, {"slot": 2.5}]}}"#,
+        )
+        .unwrap();
+        apply_names(&mut e, &["alice".to_string()]);
+        assert_eq!(
+            serde_json::to_string(&e["metadata"]["outfits"]).unwrap(),
+            r#"[{"slot":1},{"slot":2.5},{"slot":5}]"#
         );
     }
 

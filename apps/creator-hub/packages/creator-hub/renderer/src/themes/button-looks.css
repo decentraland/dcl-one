@@ -37,7 +37,7 @@
 }
 
 .hub-button.btn.hub-button--primary:hover:not(:disabled) {
-  background-color: var(--dcl-dark) !important;
+  background-color: var(--primary-hover) !important;
 }
 
 /* Color secondary */

@@ -130,6 +130,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual((program, argv), ('ingress', ['ingress']))
         self.assertEqual(env['INGRESS_CONFIG_BODY'], ingress, 'the secret travels in the environment, not argv')
         self.assertIn('PATH', env, 'the ingress starts its per-stream handlers from PATH')
+        self.assertEqual(env['GST_PLUGIN_FEATURE_RANK'], 'avdec_h264:MAX', 'a hardware decoder ends the stream')
 
     def test_behind_a_public_origin_streamers_get_the_origins_host(self):
         for origin, host in (('https://dev.example:8443', 'dev.example'), ('https://[2001:db8::1]', '[2001:db8::1]')):
@@ -246,7 +247,10 @@ class DevTest(unittest.TestCase):
                                      'FOUNDATION_DEV_STARTUP_TIMEOUT': '3600'},
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 42, result.stderr)
-        self.assertEqual(calls.read_text().splitlines(),
+        listed = calls.read_text().splitlines()
+        # The provisioned tests run beside the broad run, so either may log first.
+        listed[-3:-1] = sorted(listed[-3:-1], key=lambda call: call.startswith('make:'))
+        self.assertEqual(listed,
                          ['up --postgres-only', 'wait --postgres-only --timeout 3600', 'env',
                           'nats:--version',
                           "python:-m unittest discover -s tooling/tests -p test_catalyst_test_resources.py",
@@ -399,6 +403,17 @@ class DevTest(unittest.TestCase):
         self.assertEqual(dev.runtime_env({**self.config, 'scene_proxy_hosts': []})['SCENE_PROXY_HOSTS'], '')
         with self.assertRaises(SystemExit):
             dev.runtime_env({**self.config, 'scene_proxy_hosts': 'rooms.example.test'})
+
+    def test_a_stale_cast_bot_path_warns_and_stops_no_command(self):
+        bot = self.state / 'cast-bot'
+        with patch('sys.stderr', new_callable=io.StringIO) as warning:
+            env = dev.runtime_env({**self.config, 'cast_bot_bin': str(bot), 'personal_worlds': 2})
+        self.assertNotIn('CAST_BOT_BIN', env)
+        self.assertEqual(env['WORLDS_PERSONAL_WORLDS_MAX'], '2')
+        self.assertIn(f'cast_bot_bin {bot} is not executable', warning.getvalue())
+        bot.write_text('#!/bin/sh\n')
+        bot.chmod(0o755)
+        self.assertEqual(dev.runtime_env({**self.config, 'cast_bot_bin': str(bot)})['CAST_BOT_BIN'], str(bot))
 
     def test_profile_images_render_here_once_the_avatar_renderer_is_built(self):
         with patch.dict(os.environ, {}, clear=False), patch.object(dev, 'AVATAR_RENDER_BIN', self.state / 'missing'):
@@ -588,6 +603,26 @@ class DevTest(unittest.TestCase):
             sock.bind(('127.0.0.1', base + 2))
             self.assertFalse(dev.ports_free(base), 'Pulse needs UDP on the Sites port')
 
+    def test_a_public_origin_serves_enet_where_native_clients_dial(self):
+        # A native client dials ENet on UDP 7777 of pulse-server.<base domain>, never a port of the block.
+        base, files = self.config['port'], (Path('c'), Path('k'))
+        config = {**self.config, 'public_origin': 'https://dev.example.test'}
+        env = dev.pulse_env(config, *files)
+        self.assertEqual((env['PULSE_BIND'], env['PULSE_METRICS_BIND']), ('0.0.0.0:7777', f'127.0.0.1:{base + 7}'))
+        second = {**config, 'pulse_enet_port': 7778}
+        self.assertEqual(dev.pulse_env(second, *files)['PULSE_BIND'], '0.0.0.0:7778', 'a second stack on the machine')
+        self.assertEqual(dev.pulse_env({**self.config, 'pulse_enet_port': 7778}, *files)['PULSE_BIND'],
+                         f'127.0.0.1:{base + 7}', 'a loopback stack stays in its block')
+        # Startup checks both of Pulse's public UDP ports.
+        with patch.object(dev, 'settings', return_value=second), patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'ingress_ports_free', return_value=True), patch.object(dev, 'save_json'), \
+                patch.object(dev, 'ports_free', return_value=True) as free:
+            dev.prepare_supervisor()
+        free.assert_called_once_with(base, (dev.WEB_PULSE_PORT, 7778))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
+            busy.bind(('0.0.0.0', 0))
+            self.assertFalse(dev.ports_free(base, (busy.getsockname()[1],)), 'a taken public port stops startup')
+
     @unittest.skipUnless(shutil.which('openssl'), 'openssl is supplied by nix develop')
     def test_pulse_keeps_its_key_and_renews_a_short_lived_certificate(self):
         certificate, key = dev.pulse_certificate()
@@ -625,6 +660,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual(dev.runtime_env({**self.config, 'public_origin': 'http://10.0.0.5:5443'})['DEV_ALLOWED_HOSTS'],
                          '10.0.0.5')
         self.assertEqual(env['HTTP_TRUSTED_PROXY_CIDRS'], '127.0.0.1/32,::1/128', 'the front is the loopback peer')
+        self.assertEqual(env['CAST_PRESENTER_PUBLIC_URL'], 'https://cast-presenter-service.dev.example.test:5443')
         self.assertEqual((env['HTTP_SERVER_HOST'], env['HOST']), ('127.0.0.1', '127.0.0.1'), 'the front is the only listener')
         # The web Explorer dials Pulse at the page's host and port over UDP, which the front cannot carry.
         self.assertEqual(dev.pulse_ports(config)[0], 5443)
@@ -635,6 +671,7 @@ class DevTest(unittest.TestCase):
         portless = {**self.config, 'public_origin': 'http://dev.example.test'}
         self.assertEqual(dev.pulse_ports(portless)[0], dev.WEB_PULSE_PORT, "the engine's default when the page has no port")
         self.assertEqual(dev.runtime_env(portless)['COMMS_FIXED_ADAPTER'], 'archipelago:ws://dev.example.test/ws')
+        self.assertNotIn('CAST_PRESENTER_PUBLIC_URL', dev.runtime_env(portless), 'the API refuses a plain http URL')
         loopback = dev.runtime_env(self.config)
         self.assertEqual(loopback['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
         self.assertNotIn('LIVEKIT_WS_URL', loopback)
@@ -841,8 +878,12 @@ class DevTest(unittest.TestCase):
             self.assertEqual(env[key], 'false', key)
         # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
-                    'SHOP_RENTALS_INDEX_ENABLED'):
+                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
+        # The mirror posture's pause between index passes, and the tag naming dev stacks in the RPC's logs.
+        self.assertEqual(env['MARKETPLACE_INDEX_INTERVAL_SECS'], '30')
+        for key in ('ETH_RPC_URL', 'RPC_ENDPOINT_POLYGON'):
+            self.assertTrue(env[key].endswith('?project=dcl-one-dev'), key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
         self.assertNotIn('index', dev.project(self.config)['processes'])
@@ -873,16 +914,21 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
         self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
         self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
-        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # Without a relayer key, the published list (see the relayer key test for the other case).
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], 'https://contracts.decentraland.org/addresses.json')
         # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
         self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
+        # A trade signed into the stack closes within seconds: the testnet keeps the binary's pause, not the mirror's.
+        self.assertEqual((env['MARKETPLACE_INDEX_INTERVAL_SECS'], mirror['MARKETPLACE_INDEX_INTERVAL_SECS']), ('5', '30'))
         self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
         self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
         self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
         self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
+        self.assertEqual((env['MARKETPLACE_COMMITTEE_INDEX_ENABLED'], mirror['MARKETPLACE_COMMITTEE_INDEX_ENABLED']),
+                         ('false', 'true'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
@@ -946,6 +992,128 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
         # The file's path is passed, never its contents.
         self.assertNotIn('not a real key', '\n'.join(env.values()))
+
+    def test_the_testnet_relay_signs_its_own_transactions_only_with_a_relayer_key(self):
+        relayer = ('META_TX_BROADCAST_ENABLED', 'RELAYER_PRIVATE_KEY_FILE', 'RELAYER_MAX_FEE_PER_GAS_WEI',
+                   'MAX_RELAYED_TRANSACTIONS_PER_DAY', 'NAMES_SIGNER_ENABLED')
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key the relay forwards to the .zone transactions API over the published list, which lacks
+        # dcl-one's manager, so the relay refuses that manager itself (marked not sent) instead of forwarding it.
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key = self.state / 'relayer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so the signer stays off
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        for name in relayer:
+            self.assertNotIn(name, env, name)
+        self.assertEqual(env['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(warning.getvalue(), '', 'a private key on a loopback stack warns of nothing')
+        self.assertEqual(env['META_TX_BROADCAST_ENABLED'], 'true')
+        self.assertEqual(env['RELAYER_PRIVATE_KEY_FILE'], str(key))
+        # Capped: 200 gwei at most per gas, and 100 free calls (approvals, cancels) a day across every address.
+        self.assertEqual(env['RELAYER_MAX_FEE_PER_GAS_WEI'], '200000000000')
+        self.assertEqual(env['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
+        # The bundled `amoy` entry, which carries dcl-one's manager, so the relay admits it.
+        self.assertNotIn('CONTRACT_ADDRESSES_URL', env)
+        # The key signs on Amoy alone: never on the NAMEs chain, whose ETH_RPC_URL is Sepolia's here.
+        self.assertEqual(env['NAMES_SIGNER_ENABLED'], 'false')
+        self.assertTrue(env['ETH_RPC_URL'].endswith('/sepolia'))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+        # The mirror profile, which relays on Polygon mainnet, never reads it.
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        for name in relayer:
+            self.assertNotIn(name, mirror, name)
+
+    def test_a_testnet_stack_behind_a_public_origin_never_starts_with_a_relayer_key(self):
+        exposed = {**self.config, 'profile': 'testnet', 'public_origin': 'https://dev.example.test'}
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key, or with an empty one, a public testnet stack starts: the .zone transactions API pays.
+        key = self.state / 'relayer.key'
+        self.assertEqual(dev.runtime_env(exposed)['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('  \n')
+        self.assertEqual(dev.runtime_env(exposed)['CONTRACT_ADDRESSES_URL'], published)
+        # With one, anyone who reaches the origin could spend its POL: the stack's environment is refused,
+        # naming both ways out, and `up` refuses before it starts any process.
+        key.write_text('not a real key')
+        key.chmod(0o600)
+        with self.assertRaises(SystemExit) as refused:
+            dev.runtime_env(exposed)
+        why = str(refused.exception)
+        for part in ('https://dev.example.test', 'foundation-dev origin local', 'remove the key', '.zone'):
+            self.assertIn(part, why)
+        self.assertNotIn('not a real key', why)
+        with patch.object(dev, 'settings', return_value=exposed), \
+                patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'save_json') as written:
+            with self.assertRaises(SystemExit):
+                dev.prepare_supervisor()
+        written.assert_not_called()
+        # With an installed service, `up` refuses before it starts the service, whose supervisor would only
+        # restart in a loop on the same refusal.
+        (self.state / 'settings.json').write_text(json.dumps(exposed))
+        with patch.object(dev, 'service_file', return_value=key), \
+                patch.object(dev, 'service_start') as started, \
+                patch.object(dev, 'supervisor_running', return_value=False):
+            with self.assertRaises(SystemExit):
+                dev.up()
+        started.assert_not_called()
+        # `service install` refuses before it touches the installed unit or stops the running stack.
+        with patch.object(dev, 'DARWIN', False):
+            unit = dev.service_file()
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text('the unit installed before')
+        with patch.object(dev, 'DARWIN', False), \
+                patch.object(dev.shutil, 'which', return_value='/nix/bin/nix'), \
+                patch.object(dev, 'systemctl') as systemctl, patch.object(dev, 'down') as down, \
+                patch.object(dev, 'service_start') as started:
+            with self.assertRaises(SystemExit):
+                dev.service_install()
+        self.assertEqual(unit.read_text(), 'the unit installed before')
+        for untouched in (systemctl, down, started):
+            untouched.assert_not_called()
+        # The key file is read only for a testnet stack behind a public origin: an unreadable one never stops
+        # another profile, nor a testnet stack on loopback.
+        with patch.object(dev, 'relayer_key', side_effect=AssertionError('read the relayer key')):
+            for config in ({**exposed, 'profile': 'mirror'}, {**exposed, 'profile': 'offline'},
+                           {**exposed, 'public_origin': None}):
+                dev.refuse_an_exposed_relayer(config)
+            with patch.object(dev, 'settings', return_value={**exposed, 'profile': 'mirror'}), \
+                    patch.object(dev, 'supervisor_running', return_value=False), \
+                    patch.object(dev, 'ports_free', return_value=True), \
+                    patch.object(dev, 'ingress_ports_free', return_value=True), \
+                    patch.object(dev, 'save_json'):
+                self.assertIsNotNone(dev.prepare_supervisor())
+        # What only reads the environment, or runs PostgreSQL alone, signs nothing and still works.
+        self.assertEqual(dev.psql_env(exposed)['PGDATABASE'], 'catalyst')
+        with patch.object(dev, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='1\n')):
+            self.assertEqual(dev.sql(exposed, 'SELECT 1'), '1')
+        printed = io.StringIO()
+        with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(printed):
+            dev.main()
+        self.assertIn('FOUNDATION_DEV_PUBLIC_URL=', printed.getvalue())
+        with patch.object(dev, 'settings', return_value=exposed), \
+                patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'ports_free', return_value=True), \
+                patch.object(dev, 'ingress_ports_free', return_value=True), \
+                patch.object(dev, 'save_json'):
+            self.assertIsNotNone(dev.prepare_supervisor(postgres_only=True))
+        # The same key on loopback starts, capped; another profile never reads it.
+        self.assertEqual(dev.runtime_env({**exposed, 'public_origin': None})['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
+        self.assertNotIn('RELAYER_PRIVATE_KEY_FILE', dev.runtime_env({**exposed, 'profile': 'mirror'}))
 
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()
@@ -1122,6 +1290,56 @@ class DevTest(unittest.TestCase):
                 dev.wait_ready(10)
         sleep.assert_not_called()
 
+    def test_pulse_comes_back_with_a_fresh_generation_after_losing_its_lease(self):
+        processes = dev.project(self.config)['processes']
+        policy = processes['pulse']['availability']
+        self.assertEqual(policy['restart'], 'on_failure')
+        # Unlimited: the supervisor never resets the count, and a lease can be lost many times over a stack's life.
+        self.assertEqual(policy['max_restarts'], 0)
+        self.assertGreaterEqual(policy['backoff_seconds'], 1)
+        # The other tasks keep failing the wait on their first non-zero exit.
+        self.assertEqual([name for name, process in processes.items() if 'availability' in process], ['pulse'])
+
+    def test_wait_tolerates_pulse_between_restarts_and_fails_when_they_run_out(self):
+        api_url = f"http://127.0.0.1:{self.config['port']}"
+        restarting = json.dumps([{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}])
+        running = json.dumps([{'name': 'pulse', 'status': 'Running', 'exit_code': 1, 'is_running': True}])
+        about = []
+
+        def response(url, timeout):
+            # /about can still answer from the last heartbeat while Pulse waits for its restart.
+            if url == api_url + '/about':
+                about.append(url)
+            return contextlib.nullcontext(type('Response', (), {'status': 200})())
+
+        listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])
+        with patch.object(dev, 'pc', side_effect=lambda *a, **k: next(listings)), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
+                patch.object(dev.time, 'sleep'), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dev.wait_ready(10), 0)
+        # Ready only on the listing after the restart.
+        self.assertEqual(len(about), 1)
+        self.assertIsNone(next(listings, None))
+        exhausted = subprocess.CompletedProcess([], 0, json.dumps([
+            {'name': 'pulse', 'status': 'Completed', 'exit_code': 1, 'is_running': False, 'restarts': 10}]))
+        with patch.object(dev, 'pc', return_value=exhausted), patch.object(dev.time, 'sleep') as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
+                dev.wait_ready(10)
+        sleep.assert_not_called()
+
+    def test_a_wait_that_times_out_on_a_restarting_process_names_it(self):
+        restarting = subprocess.CompletedProcess([], 0, json.dumps(
+            [{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}]))
+        with patch.object(dev, 'pc', return_value=restarting), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'while pulse kept restarting. Inspect foundation-dev logs pulse'):
+                dev.wait_ready(10)
+
     def test_wait_narrates_progress_with_the_building_task_output(self):
         listing = subprocess.CompletedProcess([], 0, json.dumps([
             {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
@@ -1282,6 +1500,45 @@ class DevTest(unittest.TestCase):
             finally:
                 dev.down()
             self.assertFalse((state / 'pc.sock').exists())
+
+    @unittest.skipUnless(shutil.which('process-compose'), 'process-compose is supplied by nix develop')
+    def test_the_supervisor_lists_pulse_between_restarts_as_wait_expects(self):
+        policy = {**dev.project(self.config)['processes']['pulse']['availability'], 'max_restarts': 1}
+        project = self.state / 'test.json'
+        project.write_text(json.dumps({'version': '0.5', 'processes': {
+            'hold': {'command': 'sleep 60'},
+            'pulse': {'command': 'exit 1', 'availability': policy}}}))
+        seen = []
+
+        def pulse():
+            result = dev.pc('process', 'list', '--output', 'json', capture_output=True, text=True)
+            if result.returncode:
+                return None
+            state = next((p for p in json.loads(result.stdout) if p['name'] == 'pulse'), None)
+            if state:
+                seen.append((state['status'], state['is_running'], state['exit_code'], state['restarts']))
+            return state
+
+        def until(predicate, seconds):
+            deadline = time.monotonic() + seconds
+            for delay in dev.backoff_delays(deadline, first=.05, maximum=.2):
+                if (state := pulse()) and predicate(state):
+                    return state
+                time.sleep(delay)
+            self.fail(f'pulse listings: {seen}')
+
+        try:
+            dev.pc('up', '--config', str(project), '--disable-dotenv', '--detached', '--tui=false',
+                   check=True, capture_output=True, text=True)
+            backoff = until(lambda s: s['status'] == 'Restarting', 15)
+            self.assertEqual((backoff['is_running'], backoff['exit_code']), (False, 1))
+            final = until(lambda s: s['restarts'] == 1 and s['status'] != 'Restarting' and not s['is_running'], 15)
+            self.assertEqual(final['exit_code'], 1)
+            with patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
+                    dev.wait_ready(10)
+        finally:
+            dev.down()
 
     def install_service(self, system):
         with patch.object(dev, 'DARWIN', system == 'Darwin'), \

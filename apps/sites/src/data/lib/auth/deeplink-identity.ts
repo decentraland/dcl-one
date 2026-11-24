@@ -1,6 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 
-import { toStoredIdentity, type StoredAuthIdentity } from "@ui/data/auth/identity";
+import { toStoredIdentity, type StoredAuthIdentity } from "@web-core/auth/identity";
 
 import { signedFetch } from "./signer";
 import type { AuthIdentity } from "./types";
@@ -43,7 +43,7 @@ export type IdentityHandoffResponse = { identityId: string; expiration: string }
 export async function postIdentityHandoff(
   identity: AuthIdentity,
   authApiUrl: string,
-  opts: { isMobile?: boolean; signal?: AbortSignal } = {},
+  opts: { isMobile?: boolean; authRequestId?: string; signal?: AbortSignal } = {},
 ): Promise<IdentityHandoffResponse> {
   const res = await signedFetch(identity, `${authApiUrl}/identities`, {
     method: "POST",
@@ -51,6 +51,9 @@ export async function postIdentityHandoff(
     body: JSON.stringify({
       identity: toHandoffIdentity(identity),
       isMobile: opts.isMobile ?? false,
+      // Binds the identity to the deep-link request; its pickup then needs
+      // the verifier the client derived the id from.
+      ...(opts.authRequestId ? { authRequestId: opts.authRequestId } : {}),
     }),
     signal: opts.signal,
   });

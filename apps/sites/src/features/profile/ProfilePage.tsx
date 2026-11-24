@@ -1,12 +1,5 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-
-import { ProfileNavigationContext } from "@ui/web/frames/ProfileNavigation";
-import StProfileCommunitiesTab from "@ui/web/pages/StProfileCommunitiesTab";
-import StProfileCreationsTab from "@ui/web/pages/StProfileCreationsTab";
-import StProfileMyAssetsTab from "@ui/web/pages/StProfileMyAssetsTab";
-import StProfileOverviewTab from "@ui/web/pages/StProfileOverviewTab";
-import StProfilePhotosTab from "@ui/web/pages/StProfilePhotosTab";
 
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
@@ -15,21 +8,24 @@ import { emptyProfile, normalizeAddress, type ProfileVM } from "@/data/lib/catal
 import { canReadProfile } from "@/data/lib/profile/queries";
 
 import { ProfileRouteError } from "./errors";
+import { ProfileAssetsScreen } from "./ProfileAssetsScreen";
+import { ProfileCommunitiesScreen } from "./ProfileCommunitiesScreen";
+import { ProfileCreationsScreen } from "./ProfileCreationsScreen";
 import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
+import { ProfilePhotosScreen } from "./ProfilePhotosScreen";
 import { ProfilePlacesScreen } from "./ProfilePlacesScreen";
+import { ProfileReferralsScreen } from "./ProfileReferralsScreen";
+import { useProfileFlags, useRequiredProfile } from "./hooks";
 import {
-  useMyCommunities,
-  useProfileAssets,
-  useProfileCreations,
-  useProfilePhotos,
-  useRequiredProfile,
-} from "./hooks";
-import { isOwnProfile, profileHref, profileTabs, readProfileTab, type ProfileTab } from "./tabs";
+  isLegacyTabSegment,
+  isOwnProfile,
+  profileHref,
+  profileTabs,
+  readProfileTab,
+  type ProfileTab,
+} from "./tabs";
 
 const STORY: StoryId = "landings/profile";
-
-type TabList = { id: string; label: string }[];
-type TabProps = { address: string; profile: ProfileVM; own: boolean; tabs: TabList; sid: string };
 
 export type ProfilePageProps = {
   address: string;
@@ -54,29 +50,34 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   if (!canReadProfile(address)) throw new ProfileRouteError("not-found", rawAddress);
 
   const own = useOwnProfile(address, ownOnServer);
-  const tab = readProfileTab(tabSegment, own);
+  // Referral Rewards follows its rollout flag. Until the flags have been read, a client navigation
+  // straight to that tab keeps it, also while a failed read is made again or after every try failed:
+  // only a flag read as off sends the page to Overview.
+  const flags = useProfileFlags(own);
+  const flagsUnread =
+    own && !flags.isSuccess && readProfileTab(tabSegment, own, { referral: true }) === "referral-rewards";
+  const referral = flags.data?.referral === true || flagsUnread;
+  const tab = readProfileTab(tabSegment, own, { referral });
   const navigate = useNavigate();
+  const legacySegment = isLegacyTabSegment(tabSegment);
   useEffect(() => {
     if (tab === null) navigate(profileHref(address), { replace: true });
-  }, [tab, address, navigate]);
+    // An old tab id in the URL moves to the current one, as the server does on a document request.
+    else if (legacySegment) navigate(profileHref(address, tab), { replace: true });
+  }, [tab, legacySegment, address, navigate]);
 
   const query = useRequiredProfile(address);
   const profile = query.data ?? emptyProfile(address);
   useProfileViewed(sid, address, own, query.isSuccess ? (query.data ? "live" : "fallback") : null, profile);
 
   const activeTab: ProfileTab = tab ?? "overview";
-  const tabs = profileTabs(own).map((entry) => ({ id: entry.id, label: entry.label }));
+  const tabs = profileTabs(own, { referral }).map((entry) => ({ id: entry.id, label: entry.label }));
   const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
 
-  const navigation = {
-    tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
-    active: activeTab,
-    onTab,
-  };
+  const navigation = { tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })) };
 
-  // Overview and Places have the profile site's layout: its own tab bar (scrollable on narrow
-  // screens) and no section side panel, so they stay outside the context the Sites chrome turns
-  // into that panel.
+  // Every tab has the profile site's layout: its own tab bar (scrollable on narrow screens) and no
+  // section side panel.
   if (activeTab === "overview") {
     return (
       <ProfileOverviewScreen
@@ -87,6 +88,19 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
         onTab={onTab}
       />
     );
+  }
+
+  if (activeTab === "creations") {
+    // Keyed by address: another profile starts on its default category with no pending focus.
+    return <ProfileCreationsScreen key={profile.address} profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
+  }
+
+  if (activeTab === "assets") {
+    return <ProfileAssetsScreen key={profile.address} profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
+  }
+
+  if (activeTab === "photos") {
+    return <ProfilePhotosScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
   }
 
   if (activeTab === "places") {
@@ -103,88 +117,12 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     );
   }
 
-  return (
-    <div className="landings-profile">
-      <ProfileNavigationContext value={navigation}>
-        <ActiveTab tab={activeTab} address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
-      </ProfileNavigationContext>
-    </div>
-  );
-}
-
-/** Each tab reads only its own data, so opening one tab does not fetch the others. */
-function ActiveTab({ tab, ...props }: TabProps & { tab: ProfileTab }) {
-  switch (tab) {
-    case "creations":
-      return <CreationsTab {...props} />;
-    case "photos":
-      return <PhotosTab {...props} />;
-    case "communities":
-      return <CommunitiesTab {...props} />;
-    case "assets":
-      return <AssetsTab {...props} />;
-    case "referral-rewards":
-    default:
-      return <StProfileOverviewTab profile={props.profile as never} activeTab="overview" isOwnProfile={props.own} />;
+  if (activeTab === "referral-rewards") {
+    return <ProfileReferralsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
   }
-}
 
-function CreationsTab({ address, profile, own, tabs }: TabProps) {
-  const { data } = useProfileCreations(address, profile.name);
-  return (
-    <StProfileCreationsTab
-      profile={profile as never}
-      tabs={tabs}
-      isOwnProfile={own}
-      wearables={data?.wearables ?? []}
-      emotes={data?.emotes ?? []}
-    />
-  );
-}
-
-function PhotosTab({ address, profile, own }: TabProps) {
-  const { data } = useProfilePhotos(address);
-  return (
-    <StProfilePhotosTab
-      profile={profile as never}
-      isOwnProfile={own}
-      photos={(data ?? []) as ComponentProps<typeof StProfilePhotosTab>["photos"]}
-    />
-  );
-}
-
-function AssetsTab({ address, profile, tabs }: TabProps) {
-  const { data } = useProfileAssets(address);
-  return (
-    <StProfileMyAssetsTab
-      profile={profile as never}
-      tabs={tabs}
-      wearables={data.wearables as ComponentProps<typeof StProfileMyAssetsTab>["wearables"]}
-      names={data.names as ComponentProps<typeof StProfileMyAssetsTab>["names"]}
-    />
-  );
-}
-
-function CommunitiesTab({ address, profile, own, tabs, sid }: TabProps) {
-  const { identity } = useAuth();
-  const query = useMyCommunities(identity, own);
-  const failed = own && query.isError;
-  const reported = useRef(false);
-  useEffect(() => {
-    if (!failed || reported.current) return;
-    reported.current = true;
-    track("profile_communities_load_failed", { address }, { sid, story: STORY });
-  }, [failed, address, sid]);
-
-  return (
-    <StProfileCommunitiesTab
-      profile={profile as never}
-      tabs={tabs}
-      communities={(own ? (query.data ?? []) : []) as ComponentProps<typeof StProfileCommunitiesTab>["communities"]}
-      isOwnProfile={own}
-      loading={own && !!identity && query.isPending}
-    />
-  );
+  // Keyed by address: another profile reports its own failed read.
+  return <ProfileCommunitiesScreen key={profile.address} profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} sid={sid} />;
 }
 
 function useProfileViewed(

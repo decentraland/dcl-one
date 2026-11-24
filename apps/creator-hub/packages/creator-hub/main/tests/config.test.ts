@@ -1,9 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import type { Config, EditorConfig } from '/shared/types/config';
 
 vi.mock('electron-log/main', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock('../src/modules/electron', () => ({ getUserDataPath: vi.fn(() => '/user/data') }));
+const paths = vi.hoisted(() => ({ userData: '/user/data' }));
+vi.mock('../src/modules/electron', () => ({
+  getUserDataPath: vi.fn(() => paths.userData),
+  getHome: vi.fn(() => '/home/me'),
+}));
 vi.mock('../src/modules/migrations', () => ({ waitForMigrations: vi.fn(async () => undefined) }));
 
 let storedConfig: Partial<Config>;
@@ -35,6 +42,7 @@ describe('getConfig', () => {
       storedConfig = getDefaultConfig();
       storedConfig.settings!.aiAssistantPromoted = true;
       storedConfig.settings!.debugConsolePromoted = true;
+      storedConfig.settings!.scenesPathPromoted = true;
       Object.assign(storedConfig.settings!.previewOptions, { optimizedAssets: true });
       Object.assign(storedConfig.settings!, {
         optimizedAssetsByPath: { '/projects/alive': true },
@@ -64,6 +72,65 @@ describe('getConfig', () => {
 
       expect(storage.setAll).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('when an install from before the visible scenes folder starts', () => {
+  const VISIBLE_DEFAULT = path.join('/home/me', 'Decentraland', 'Scenes');
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    paths.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'ch-config-'));
+    fs.mkdirSync(path.join(paths.userData, 'Scenes'));
+    storedConfig = {
+      settings: {
+        scenesPath: path.join(paths.userData, 'Scenes'),
+        aiAssistantPromoted: true,
+        debugConsolePromoted: true,
+      } as Config['settings'],
+    };
+  });
+
+  afterEach(() => {
+    fs.rmSync(paths.userData, { recursive: true, force: true });
+    paths.userData = '/user/data';
+  });
+
+  describe('and its hidden scenes folder is empty', () => {
+    it('should move new scenes to the visible folder', async () => {
+      const { getConfig } = await import('../src/modules/config');
+
+      expect((await getConfig()).settings.scenesPath).toBe(VISIBLE_DEFAULT);
+    });
+  });
+
+  describe('and its hidden scenes folder holds a scene', () => {
+    beforeEach(() => {
+      fs.mkdirSync(path.join(paths.userData, 'Scenes', 'My Scene'));
+    });
+
+    it('should keep the folder', async () => {
+      const { getConfig } = await import('../src/modules/config');
+
+      expect((await getConfig()).settings.scenesPath).toBe(path.join(paths.userData, 'Scenes'));
+    });
+  });
+});
+
+describe('when a new install starts', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    storedConfig = {};
+  });
+
+  it('should save new scenes in the visible folder in the home folder', async () => {
+    const { getConfig } = await import('../src/modules/config');
+
+    expect((await getConfig()).settings.scenesPath).toBe(
+      path.join('/home/me', 'Decentraland', 'Scenes'),
+    );
   });
 });
 
@@ -197,6 +264,7 @@ describe('the one-time AI assistant promotion', () => {
       storedConfig.settings!.aiAssistant = false;
       storedConfig.settings!.aiAssistantPromoted = true;
       storedConfig.settings!.debugConsolePromoted = true;
+      storedConfig.settings!.scenesPathPromoted = true;
 
       const config = await getConfig();
 
@@ -234,11 +302,72 @@ describe('the one-time debug console promotion', () => {
       storedConfig.settings!.previewOptions.debugger = false;
       storedConfig.settings!.aiAssistantPromoted = true;
       storedConfig.settings!.debugConsolePromoted = true;
+      storedConfig.settings!.scenesPathPromoted = true;
 
       const config = await getConfig();
 
       expect(config.settings.previewOptions.debugger).toBe(false);
       expect(storage.setAll).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('the Analytics watchlist setting', () => {
+  const WALLET = '0x0000000000000000000000000000000000000001';
+  const WATCHLIST = { [WALLET]: { version: 1, placeIds: ['world:example.dcl.eth@0,0'] } };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  const storedWithPromotionsDone = async () => {
+    const { getDefaultConfig } = await import('../src/modules/config');
+    const config = getDefaultConfig();
+    config.settings.aiAssistantPromoted = true;
+    config.settings.debugConsolePromoted = true;
+    config.settings.scenesPathPromoted = true;
+    vi.resetModules();
+    return config;
+  };
+
+  describe('when the stored config has none', () => {
+    it('should start without one and write nothing', async () => {
+      storedConfig = await storedWithPromotionsDone();
+      const { getConfig } = await import('../src/modules/config');
+
+      const config = await getConfig();
+
+      expect('analyticsWatchlist' in config.settings).toBe(false);
+      expect(storage.setAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the stored config has one', () => {
+    it('should keep it as stored and write nothing', async () => {
+      storedConfig = await storedWithPromotionsDone();
+      storedConfig.settings!.analyticsWatchlist = structuredClone(WATCHLIST);
+      const { getConfig } = await import('../src/modules/config');
+
+      const config = await getConfig();
+
+      expect(config.settings.analyticsWatchlist).toEqual(WATCHLIST);
+      expect(storage.setAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the renderer writes the settings with one', () => {
+    it('should persist it', async () => {
+      storedConfig = await storedWithPromotionsDone();
+      const { getConfig, writeConfig } = await import('../src/modules/config');
+      const stored = await getConfig();
+
+      await writeConfig({
+        ...stored,
+        settings: { ...stored.settings, analyticsWatchlist: WATCHLIST },
+      });
+
+      expect((await getConfig()).settings.analyticsWatchlist).toEqual(WATCHLIST);
     });
   });
 });

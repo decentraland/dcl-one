@@ -186,7 +186,6 @@ fn check_foreign_audio_source_still_playing(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_foreign_audio_player_volume(
     mut streams: Query<
         (

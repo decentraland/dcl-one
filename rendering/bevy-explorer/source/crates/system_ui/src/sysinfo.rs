@@ -4,7 +4,7 @@ use bevy::{
     math::Vec3Swizzles,
     platform::{collections::HashSet, hash::FixedHasher},
     prelude::*,
-    render::mesh::Indices,
+    render::mesh::{Indices, MeshTag},
     text::JustifyText,
     ui::FocusPolicy,
 };
@@ -22,7 +22,7 @@ use common::{
 };
 use comms::{global_crdt::ForeignPlayer, Transport};
 use console::DoAddConsoleCommand;
-use scene_material::{highlight::Highlight, SceneMaterial};
+use scene_material::{highlight::Highlight, SceneMaterial, SCENE_MATERIAL_OUTLINE_MESH_TAG};
 use scene_runner::{
     initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
     parcel_to_vec3,
@@ -219,7 +219,6 @@ pub struct Minimap;
 #[derive(Component)]
 pub struct Tracker(bool);
 
-#[allow(clippy::too_many_arguments)]
 fn update_scene_load_state(
     q: Query<Entity, With<SysInfoMarker>>,
     q_children: Query<&Children>,
@@ -446,7 +445,6 @@ fn setup_minimap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_minimap(
     q: Query<&DuiEntities, With<Minimap>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
@@ -515,7 +513,6 @@ fn update_minimap(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_tracker(
     mut commands: Commands,
     mut q: Query<(Ref<Tracker>, &DuiEntities)>,
@@ -669,9 +666,13 @@ fn set_sysinfo(
 ) {
     if let Some(Ok(command)) = input.take() {
         let on = command.on.unwrap_or(true);
+        let Ok(container) = q.single() else {
+            input.reply_failed("sysinfo panel not found");
+            return;
+        };
 
         commands
-            .entity(q.single().unwrap())
+            .entity(container)
             .modify_component(move |style: &mut Node| {
                 style.display = if on { Display::Flex } else { Display::None };
             });
@@ -705,14 +706,13 @@ fn update_map_visibilty(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn entity_count(
     q: Query<Entity>,
     f: Res<FrameCount>,
     meshes: Res<Assets<Mesh>>,
     textures: Res<Assets<Image>>,
     ui_nodes: Query<(), With<ComputedNode>>,
-    scene_mats: Query<Has<Highlight>, With<MeshMaterial3d<SceneMaterial>>>,
+    scene_mats: Query<(Has<Highlight>, Option<&MeshTag>), With<MeshMaterial3d<SceneMaterial>>>,
     std_mats: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
     mask_mats: Query<(), With<MeshMaterial3d<MaskMaterial>>>,
     uv_mats: Query<(), With<MaterialNode<StretchUvMaterial>>>,
@@ -726,14 +726,18 @@ fn entity_count(
         let ui_nodes = ui_nodes.iter().count();
         debug!("{entities} ents, {meshes} meshes, {textures} textures, {ui_nodes} ui nodes");
 
-        let highlighted = scene_mats.iter().filter(|h| *h).count();
+        let highlighted = scene_mats.iter().filter(|(h, _)| *h).count();
+        let outlined = scene_mats
+            .iter()
+            .filter(|(_, tag)| tag.is_some_and(|tag| tag.0 & SCENE_MATERIAL_OUTLINE_MESH_TAG != 0))
+            .count();
         let scene_mats = scene_mats.iter().count();
         let std_mats = std_mats.iter().count();
         let mask_mats = mask_mats.iter().count();
         let uv_mats = uv_mats.iter().count();
         let bound_mats = bound_mats.iter().count();
         let textshape_mats = textshape_mats.iter().count();
-        debug!("scene {scene_mats} ({highlighted} highlighted), std {std_mats}, mask: {mask_mats}, uv: {uv_mats}, bound: {bound_mats}, text: {textshape_mats}");
+        debug!("scene {scene_mats} ({highlighted} highlighted, {outlined} outlined), std {std_mats}, mask: {mask_mats}, uv: {uv_mats}, bound: {bound_mats}, text: {textshape_mats}");
     }
 }
 
@@ -748,7 +752,7 @@ fn display_tracked_components(
         return;
     };
 
-    if !track.0 || f.0.is_multiple_of(100) {
+    if !track.0 || !f.0.is_multiple_of(100) {
         return;
     }
 

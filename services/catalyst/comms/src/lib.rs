@@ -24,6 +24,7 @@ pub(crate) use dcl_http as http;
 
 pub mod access;
 pub mod archipelago;
+pub mod cast_presenter;
 pub mod deny_list;
 pub mod gatekeeper;
 pub mod interfaces;
@@ -55,5 +56,17 @@ fn production_routes_use_shared_routing() {
     assert!(
         found.is_empty(),
         "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
+}
+
+/// Production spawns stay on `shared::task` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_spawns_use_shared_task() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_tokio_spawns(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::task instead of tokio::spawn at {found:?}"
     );
 }

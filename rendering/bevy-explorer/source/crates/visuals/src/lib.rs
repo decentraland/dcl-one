@@ -1,9 +1,12 @@
+#![forbid(unsafe_code)]
+
 mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
 mod environment;
 mod landscape_trees;
+mod lens_flare;
 mod nishita_cloud;
 pub mod shell_texturing;
 mod sky_envmap;
@@ -59,7 +62,9 @@ pub struct VisualsPlugin {
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(debug_panel::VisualsDebugPanelPlugin);
-        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
+        // texels per cascade, for every shadow setting (see decisions.md); never resized, since a
+        // resize reallocates every cascade's map
+        app.insert_resource(DirectionalLightShadowMap { size: 2048 })
             .init_resource::<SceneGlobalLight>()
             .init_resource::<FogDensity>()
             .insert_resource(CloudCover {
@@ -100,6 +105,7 @@ impl Plugin for VisualsPlugin {
         .add_plugins(environment::SceneEnvironmentPlugin)
         .add_plugins(SkyEnvmapPlugin)
         .add_plugins(stars::StarsPlugin)
+        .add_plugins(lens_flare::LensFlarePlugin)
         .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
@@ -180,7 +186,6 @@ fn setup(
 
 static TRANSITION_TIME: f32 = 1.0;
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn apply_global_light(
     mut commands: Commands,
     setting: Res<AppConfig>,

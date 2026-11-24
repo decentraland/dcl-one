@@ -5,13 +5,15 @@
 import {
   BLOG_HOME,
   BLOG_SEARCH,
+  BLOG_SEARCH_SUGGESTIONS_LIMIT,
   blogAuthorHref,
   blogCategoryHref,
   blogPostHref,
   type BlogCategory,
   type BlogImage,
   type BlogRelatedCard,
-} from "@dcl/one-ui/apps/sites/blog/blogModel";
+  type BlogSearchSuggestions,
+} from "@dcl/one-ui";
 
 import { publicPageUrl, type BaseEnv } from "../catalyst/bases";
 import { withDeadline } from "../request-deadline";
@@ -66,7 +68,7 @@ function nextHref(path: string, page: number, total: number, window: (n: number)
   return `${path}?${new URLSearchParams({ ...extra, page: String(page + 1) })}`;
 }
 
-type ListView = Pick<BlogListData, "kind" | "viewKey" | "title" | "subtitle" | "activeCategory" | "emptyText">;
+type ListView = Pick<BlogListData, "kind" | "viewKey" | "title" | "subtitle" | "activeCategory" | "authorSlug" | "emptyText">;
 
 async function scopedList(cms: BlogCms, url: URL, path: string, scope: { category?: string; author?: string }, view: ListView, categories: BlogCmsCategory[]): Promise<BlogOutcome<BlogListPayload>> {
   const page = parseBlogPage(url.searchParams.get("page"));
@@ -93,6 +95,7 @@ export function loadBlogHome(request: Request, env?: BaseEnv) {
       title: "The Decentraland Blog",
       subtitle: "Stories, guides and things to do in a world built by you.",
       activeCategory: "",
+      authorSlug: null,
       emptyText: "There are no articles yet.",
     }, await cms.categories()),
   );
@@ -113,6 +116,7 @@ export function loadBlogCategory(request: Request, slug: string, env?: BaseEnv) 
       title: category.title,
       subtitle: category.description,
       activeCategory: slug,
+      authorSlug: null,
       emptyText: "There are no articles in this category yet.",
     }, categories);
   });
@@ -129,6 +133,7 @@ export function loadBlogAuthor(request: Request, slug: string, env?: BaseEnv) {
       title: author.name,
       subtitle: author.description,
       activeCategory: null,
+      authorSlug: slug,
       emptyText: "This author has no articles yet.",
     }, categories);
   });
@@ -155,6 +160,7 @@ export function loadBlogSearch(request: Request, env?: BaseEnv) {
         title: "Search results",
         subtitle: "",
         activeCategory: null,
+        authorSlug: null,
         query: q,
         posts: found.posts.map(toCard),
         total: found.total,
@@ -163,6 +169,34 @@ export function loadBlogSearch(request: Request, env?: BaseEnv) {
           ? `Type at least ${SEARCH_MIN_LENGTH} characters to search.`
           : `Nothing matches “${q}”. Try another word or browse every article.`,
         categories: menu(categories),
+      },
+    };
+  });
+}
+
+/**
+ * `/api/blog/search?q=`: the search dropdown's first matches, read through the same memoized search
+ * as the results page, so typing and then opening "See more results" asks the CMS once. A query
+ * under SEARCH_MIN_LENGTH asks nothing.
+ */
+export function loadBlogSearchSuggestions(request: Request, env?: BaseEnv): Promise<BlogOutcome<BlogSearchSuggestions>> {
+  const query = parseBlogQuery(new URL(request.url).searchParams.get("q"));
+  if (query.length < SEARCH_MIN_LENGTH) return Promise.resolve({ status: 200, payload: { query, posts: [], total: 0 } });
+  return guarded<BlogSearchSuggestions>(request, env, async (cms) => {
+    const found = await cms.search(query, 1);
+    return {
+      status: 200,
+      payload: {
+        query,
+        total: found.total,
+        posts: found.posts.slice(0, BLOG_SEARCH_SUGGESTIONS_LIMIT).map(({ slug, title, description, image, hue, category }) => ({
+          slug,
+          title,
+          description,
+          image,
+          hue,
+          href: blogPostHref(category.slug, slug),
+        })),
       },
     };
   });
@@ -211,6 +245,7 @@ export function loadBlogPost(request: Request, categorySlug: string, postSlug: s
       payload: {
         state: "ok",
         post: { ...toCard(post), body: post.body, assets: images },
+        publishedDate: post.publishedDate,
         related: relatedCards,
         shareUrl: publicPageUrl(request, href, env),
         categories: menu(categories),

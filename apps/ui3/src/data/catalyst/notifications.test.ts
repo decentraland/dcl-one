@@ -12,7 +12,7 @@ import {
   notificationTitle,
   parseNotificationsLoose,
   type Notification,
-} from "./notificationsView";
+} from "@web-core/notifications/notificationsView";
 
 type SignedFetchSent = { id: string; url: string; method: string };
 

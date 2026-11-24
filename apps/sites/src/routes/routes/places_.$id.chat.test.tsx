@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { postJSON } from "@/data/lib/catalyst/client";
 import PlaceDetailRoute from "./places_.$id";
+import WorldDetailRoute from "./places_.world.$name";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -31,7 +32,7 @@ vi.mock("livekit-client", () => ({
     on() {}
   },
 }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/data/lib/auth/signer", () => ({ signedFetch: (...args: unknown[]) => signedFetch(...args) }));
@@ -56,11 +57,20 @@ const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200
 
 /** The signed-in desktop visitor's page of a place with three players in it, on a node that has a room for every scene. */
 function mount(place: typeof GENESIS) {
-  const scenes = place.world ? [{ entityId: "bafyworld", title: "Plaza", base: "0,0" }] : [];
+  const scenes = place.world ? [
+    { entityId: "bafyworld", title: "Plaza", base: "0,0" },
+    { entityId: "bafyarena", title: "Arena", base: "10,4" },
+  ] : [];
   const loaderData = { place, scenes, sid: "sid-1", unavailable: false, travel: { playBase: "/play/", jumpHref: "/play/" }, livePlayers: 3, mobile: false };
   const router = createMemoryRouter(
-    [{ id: "place", path: "/places/:id", Component: PlaceDetailRoute as never }],
-    { initialEntries: [`/places/${place.id}`], hydrationData: { loaderData: { place: loaderData } } },
+    [
+      { id: "place", path: "/places/:id", Component: PlaceDetailRoute as never },
+      { id: "world", path: "/places/world/:name", Component: WorldDetailRoute as never },
+    ],
+    {
+      initialEntries: [place.world ? `/places/world/${place.world_name}` : `/places/${place.id}`],
+      hydrationData: { loaderData: { [place.world ? "world" : "place"]: loaderData } },
+    },
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
   return render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
@@ -90,6 +100,8 @@ it("world place: no join, the pane is unavailable and a like stays the visitor's
   mount(WORLD);
   expect(screen.getByRole("heading", { name: "In-World Chat" })).toBeTruthy();
   expect(screen.getByText("Chat is unavailable right now.")).toBeTruthy();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Scene" }), "bafyarena");
+  expect(screen.getByRole("link", { name: "Jump in" }).getAttribute("href")).toBe("/play/?realm=cozy.dcl.eth&position=10%2C4");
   await user.click(screen.getByRole("button", { name: "Like" }));
   expect(postJSON).toHaveBeenLastCalledWith(`/places/api/places/${WORLD.id}/likes`, { like: true }, { identity: IDENTITY, method: "PATCH" });
   expect(signedFetch).not.toHaveBeenCalled();

@@ -22,7 +22,6 @@ use crate::{
     chat_marker_things,
     chat_reaction::chat_message_id,
     global_crdt::{process_transport_updates, ChatEvent, ForeignPlayer},
-    room_connection::RoomState,
 };
 #[cfg(feature = "livekit")]
 use crate::{
@@ -30,6 +29,7 @@ use crate::{
         participant::{ActiveSpeaker, LivekitParticipant},
         LivekitTransport,
     },
+    room_connection::RoomState,
     room_connection::RoomStatus,
     SceneRoom, Transport,
 };
@@ -226,7 +226,7 @@ fn chat_history_cmd(mut input: ConsoleCommand<ChatHistoryCommand>, log: Res<Chat
 
 // --- /voice_state ---
 
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 struct VoiceRoom {
     /// a scene's room rather than the realm's
     scene: bool,
@@ -234,14 +234,14 @@ struct VoiceRoom {
 }
 
 /// What the LiveKit rooms say about voice; known only in a `livekit` build.
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 struct LivekitVoice {
     rooms: Vec<VoiceRoom>,
     /// sorted, once each
     speakers: Vec<Address>,
 }
 
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 impl LivekitVoice {
     fn new(
         rooms: impl IntoIterator<Item = VoiceRoom>,
@@ -265,6 +265,7 @@ impl LivekitVoice {
 
 struct VoiceState {
     mic: MicState,
+    #[cfg(feature = "livekit")]
     livekit: Option<LivekitVoice>,
     /// The private call or community stream (`VoiceChatState`); null without `livekit`.
     call: Option<Value>,
@@ -280,20 +281,29 @@ const CALL_UNSET: [(&str, &str); 4] = [
 
 impl VoiceState {
     fn to_json(&self) -> Value {
-        let livekit = self.livekit.as_ref();
         let mut report = json!({
             "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked() },
             "call": self.call,
-            "livekit": livekit.is_some(),
-            "connected": livekit.map(|livekit| livekit.connected()),
-            "rooms": livekit.map(|livekit| livekit.rooms.iter().map(|room| json!({
-                "scene": room.scene,
-                "state": room.state.name(),
-            })).collect::<Vec<_>>()),
-            "speakers": livekit.map(|livekit| livekit.speakers.iter()
-                .map(|address| format!("{address:#x}"))
-                .collect::<Vec<_>>()),
+            "livekit": false,
+            "connected": null,
+            "rooms": null,
+            "speakers": null,
         });
+        #[cfg(feature = "livekit")]
+        if let Some(livekit) = &self.livekit {
+            report["livekit"] = true.into();
+            report["connected"] = livekit.connected().into();
+            report["rooms"] = livekit
+                .rooms
+                .iter()
+                .map(|room| json!({ "scene": room.scene, "state": room.state.name() }))
+                .collect();
+            report["speakers"] = livekit
+                .speakers
+                .iter()
+                .map(|address| format!("{address:#x}"))
+                .collect();
+        }
         if let Some(call) = self.call.as_ref().and_then(Value::as_object) {
             let unavailable: serde_json::Map<String, Value> = CALL_UNSET
                 .iter()
@@ -336,14 +346,18 @@ fn voice_state_cmd(
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
     #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
     #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
+    #[cfg(feature = "livekit")] focus: Option<Res<common::structs::ClientWindowFocus>>,
     #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
-        let call = call.zip(call_mic).map(|(call, call_mic)| {
-            serde_json::to_value(call.snapshot(&call_mic, &call_participants))
-                .unwrap_or(Value::Null)
-        });
+        let call = call
+            .zip(call_mic)
+            .zip(focus)
+            .map(|((call, call_mic), focus)| {
+                serde_json::to_value(call.snapshot(&call_mic, *focus, &call_participants))
+                    .unwrap_or(Value::Null)
+            });
         #[cfg(not(feature = "livekit"))]
         let call = None;
         #[cfg(feature = "livekit")]
@@ -356,11 +370,10 @@ fn voice_state_cmd(
                 .iter()
                 .filter_map(|participant| participant.identity().as_str().as_h160()),
         ));
-        #[cfg(not(feature = "livekit"))]
-        let livekit = None;
 
         let state = VoiceState {
             mic: mic.clone(),
+            #[cfg(feature = "livekit")]
             livekit,
             call,
         };
@@ -538,6 +551,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn voice_is_connected_when_a_voice_room_is() {
         let room = |scene, state| VoiceRoom { scene, state };
         let connected = |rooms| LivekitVoice::new(rooms, []).connected();
@@ -553,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn speakers_are_listed_once_in_order() {
         let voice = LivekitVoice::new([], [address(9), address(2), address(9)]);
         assert_eq!(voice.speakers, [address(2), address(9)]);
@@ -562,6 +577,7 @@ mod tests {
     fn voice_state_without_livekit_has_only_the_mic() {
         let state = VoiceState {
             mic: mic_state(true, false),
+            #[cfg(feature = "livekit")]
             livekit: None,
             call: None,
         };
@@ -579,6 +595,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn voice_state_with_livekit_reports_rooms_and_speakers() {
         let state = VoiceState {
             mic: mic_state(true, true),
@@ -623,6 +640,7 @@ mod tests {
     fn a_call_reading_that_is_set_needs_no_explanation() {
         let state = VoiceState {
             mic: mic_state(true, false),
+            #[cfg(feature = "livekit")]
             livekit: None,
             call: Some(json!({
                 "status": "connected", "callId": "c1", "communityId": null,

@@ -245,6 +245,15 @@
   transform-origin: 0 0;
 }
 
+/* As .poiPin, but centred on the anchor: the quest pin is round. */
+.questPin {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  transform: scale(calc(1 / var(--map-scale))) rotate(calc(var(--map-yaw) * -1deg)) translate(-50%, -50%);
+  transform-origin: 0 0;
+}
+
 /* Same inverse transform as the pin, offset below the anchor instead of above it. */
 .poiLabel {
   position: absolute;
@@ -364,10 +373,10 @@
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: center;
   gap: 10px;
   height: 40px;
-  padding: 0;
+  margin-inline: calc(4px - var(--minimap-pad));
+  padding: 0 12px 0 13px;
   border: 0;
   border-radius: var(--r-control);
   background: var(--fill-3);
@@ -375,10 +384,65 @@
   font: inherit;
   font-size: var(--type-14);
   font-weight: var(--fw-bold);
+  text-align: left;
   text-transform: uppercase;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.jumpBack > svg {
+  flex: none;
 }
 
 .jumpBack:hover {
   background: var(--fill-5);
+}
+
+/* Another player: the full map's dot, held at its screen size as the pins are. */
+.person {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--white);
+  border-radius: var(--r-pill);
+  background: var(--map-user);
+  transform: scale(calc(1 / var(--map-scale))) translate(-50%, -50%);
+  transform-origin: 0 0;
+}
+
+/* The route: the full map's dotted line from the destination back to the player. It lies in the
+   scaled layer, so the dots are sized against the scale to keep their screen size. */
+.route {
+  --dot: calc(6px / var(--map-scale));
+
+  position: absolute;
+  left: 0;
+  top: calc(var(--dot) / -2);
+  width: calc(var(--route-length, 0) * 1px);
+  height: var(--dot);
+  background: url('../../assets/map/markers/path-dot.png') 0 0 / var(--dot) var(--dot) repeat-x;
+  mask-image: repeating-linear-gradient(90deg, var(--black) 0 var(--dot), transparent var(--dot) calc(var(--dot) * 2));
+  transform: rotate(var(--route-angle, 0rad));
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+
+/* The destination's pin on the map's edge, in its direction, while it is off the map: centred
+   on its point as the compass badges are, so it stays inside the frame on every side. */
+.edgePin {
+  --reach: calc(var(--minimap-map) / 2 - 16px);
+
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 27px;
+  margin: -13.5px 0 0 -11px;
+  transform: translate(calc(var(--edge-x, 0) * var(--reach)), calc(var(--edge-y, 0) * var(--reach)));
+  pointer-events: none;
+}
+.edgePin img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }

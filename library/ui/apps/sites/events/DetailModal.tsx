@@ -11,11 +11,15 @@ import {
   GeneralPublic
 } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
+import { Button as SharedButton } from '../../../components/Button/Button'
 import { EventCardHost } from '../../../components/EventCard/EventCard'
 import { hostOf } from './cards'
 import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './types'
 import { Dialog } from './Dialog'
+import { useEventsCopy } from './locale'
 import styles from './DetailModal.module.css'
+
+const reminderActionSize = { size: 'md', viewport: 'responsive' } as const
 
 type Location = { label: string; world: boolean; jumpIn?: JumpIn }
 
@@ -32,7 +36,9 @@ type EventDetailModalProps = {
   jumpIn?: JumpIn
   remind?: RemindControl
   calendarHref?: string
-  shareUrl: string
+  shareUrl?: string
+  actions?: ReactNode
+  feedback?: ReactNode
   onClose: () => void
 }
 
@@ -49,40 +55,77 @@ type PlaceDetailModalProps = {
 }
 
 /** Copies the share link; says so for a moment, or shows the link when the clipboard refuses. */
-function CopyLink({ url }: { url: string }) {
+function CopyLink({ url, responsive = false }: { url: string; responsive?: boolean }) {
+  const { text } = useEventsCopy()
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   useEffect(() => {
     if (state !== 'copied') return
     const timer = setTimeout(() => setState('idle'), 2000)
     return () => clearTimeout(timer)
   }, [state])
+  function copy() {
+    if (!navigator.clipboard) {
+      setState('failed')
+      return
+    }
+    void navigator.clipboard.writeText(url).then(
+      () => setState('copied'),
+      () => setState('failed')
+    )
+  }
+  const label = text('Copy link')
   return (
     <>
-      <button
-        type="button"
-        className={styles.iconButton}
-        aria-label="Copy link"
-        onClick={() => {
-          if (!navigator.clipboard) {
-            setState('failed')
-            return
-          }
-          void navigator.clipboard.writeText(url).then(
-            () => setState('copied'),
-            () => setState('failed')
-          )
-        }}
-      >
-        <GeneralCopy size={20} aria-hidden="true" />
-      </button>
+      {responsive ? (
+        <SharedButton
+          {...reminderActionSize}
+          variant="secondaryLight"
+          iconOnly
+          aria-label={label}
+          startIcon={<GeneralCopy aria-hidden="true" />}
+          onClick={copy}
+        />
+      ) : (
+        <button type="button" className={styles.iconButton} aria-label={label} onClick={copy}>
+          <GeneralCopy size={20} aria-hidden="true" />
+        </button>
+      )}
       <span role="status" className={state === 'idle' ? styles.visuallyHidden : styles.copyNotice}>
-        {state === 'copied' ? 'Copied!' : state === 'failed' ? `Copy this link: ${url}` : ''}
+        {state === 'copied'
+          ? text('Copied!')
+          : state === 'failed'
+            ? text('Copy this link: {url}', { url })
+            : ''}
       </span>
     </>
   )
 }
 
+function CalendarLink({ href, responsive }: { href: string; responsive: boolean }) {
+  const { text } = useEventsCopy()
+  const link = {
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    'aria-label': text('Add to calendar')
+  }
+  return responsive ? (
+    <SharedButton
+      {...link}
+      {...reminderActionSize}
+      variant="secondaryLight"
+      iconOnly
+      startIcon={<GeneralAddToCalendar aria-hidden="true" />}
+    />
+  ) : (
+    <a {...link} className={styles.iconButton}>
+      <GeneralAddToCalendar size={20} aria-hidden="true" />
+    </a>
+  )
+}
+
 function LocationChip({ location }: { location: Location }) {
+  const { text } = useEventsCopy()
   const icon = location.world ? (
     <GeneralPublic size={18} aria-hidden="true" />
   ) : (
@@ -101,7 +144,7 @@ function LocationChip({ location }: { location: Location }) {
       className={styles.location}
       href={location.jumpIn.href}
       onClick={location.jumpIn.onJumpIn}
-      aria-label={`Jump In – ${location.label}`}
+      aria-label={text('Jump In – {location}', { location: location.label })}
     >
       {icon}
       {location.label}
@@ -110,9 +153,10 @@ function LocationChip({ location }: { location: Location }) {
 }
 
 function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
+  const { text } = useEventsCopy()
   return (
     <Button href={jumpIn.href} onClick={jumpIn.onJumpIn}>
-      Jump In
+      {text('Jump In')}
       <GeneralJumpIn size={20} aria-hidden="true" />
     </Button>
   )
@@ -134,11 +178,12 @@ function Hero({
   kicker?: ReactNode
   children: ReactNode
 }) {
+  const { text } = useEventsCopy()
   return (
     <div className={styles.hero}>
       {image ? <img className={styles.heroImage} src={image} alt="" /> : null}
       <div className={styles.heroShade} aria-hidden="true" />
-      <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>
+      <button type="button" className={styles.close} aria-label={text('Close')} onClick={onClose}>
         <GeneralClose size={24} aria-hidden="true" />
       </button>
       <div className={styles.heroContent}>
@@ -154,6 +199,7 @@ function Hero({
 
 /** An event's detail: hero with its actions, then what to expect and the schedule. */
 function EventDetailModal(props: EventDetailModalProps) {
+  const { text } = useEventsCopy()
   const titleId = useId()
   const {
     live,
@@ -167,6 +213,7 @@ function EventDetailModal(props: EventDetailModalProps) {
     calendarHref,
     shareUrl
   } = props
+  const reminder = live ? undefined : remind
   return (
     <Dialog labelledBy={titleId} onClose={props.onClose}>
       <Hero
@@ -178,7 +225,7 @@ function EventDetailModal(props: EventDetailModalProps) {
           live ? (
             <span className={styles.liveBadge}>
               <GeneralLive size={16} aria-hidden="true" />
-              LIVE
+              {text('LIVE')}
             </span>
           ) : when ? (
             <time className={styles.when} dateTime={when.dateTime}>
@@ -188,47 +235,42 @@ function EventDetailModal(props: EventDetailModalProps) {
         }
       >
         <div className={styles.meta}>
-          {creator ? <EventCardHost creator={hostOf(creator)} byLabel="By" /> : null}
+          {creator ? <EventCardHost creator={hostOf(creator)} byLabel={text('By')} /> : null}
           <LocationChip location={location} />
         </div>
         <div className={styles.actions}>
           {live && jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
-          {!live && remind ? (
-            <Button
-              variant={remind.active ? 'primary' : 'tertiary'}
-              aria-pressed={remind.active}
-              disabled={remind.pending}
-              onClick={remind.onToggle}
+          {reminder ? (
+            <SharedButton
+              {...reminderActionSize}
+              variant={reminder.active ? 'primary' : 'secondaryLight'}
+              startIcon={<GeneralBell aria-hidden="true" />}
+              aria-pressed={reminder.active}
+              aria-disabled={reminder.pending}
+              onClick={reminder.onToggle}
             >
-              <GeneralBell size={20} aria-hidden="true" />
-              Remind me
-            </Button>
+              {text('Remind me')}
+            </SharedButton>
           ) : null}
           {calendarHref ? (
-            <a
-              className={styles.iconButton}
-              href={calendarHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Add to calendar"
-            >
-              <GeneralAddToCalendar size={20} aria-hidden="true" />
-            </a>
+            <CalendarLink href={calendarHref} responsive={Boolean(reminder)} />
           ) : null}
-          <CopyLink url={shareUrl} />
+          {shareUrl ? <CopyLink url={shareUrl} responsive={Boolean(reminder)} /> : null}
+          {props.actions}
         </div>
       </Hero>
       <div className={styles.body}>
+        {props.feedback}
         {description ? (
           <>
-            <h3 className={styles.label}>What to expect</h3>
+            <h3 className={styles.label}>{text('What to expect')}</h3>
             <p className={styles.description}>{description}</p>
           </>
         ) : null}
         {description && schedule ? <hr className={styles.divider} /> : null}
         {schedule ? (
           <>
-            <h3 className={styles.label}>Schedule</h3>
+            <h3 className={styles.label}>{text('Schedule')}</h3>
             <p className={styles.schedule}>
               <time dateTime={schedule.dateTime}>{schedule.label}</time>
             </p>
@@ -249,6 +291,7 @@ function EventDetailModal(props: EventDetailModalProps) {
 
 /** A place's detail: hero with Jump In, then about, location and who is there now. */
 function PlaceDetailModal(props: PlaceDetailModalProps) {
+  const { text } = useEventsCopy()
   const titleId = useId()
   const { creator, location, description, users, jumpIn, shareUrl } = props
   return (
@@ -256,7 +299,7 @@ function PlaceDetailModal(props: PlaceDetailModalProps) {
       <Hero titleId={titleId} title={props.title} image={props.image} onClose={props.onClose}>
         {creator ? (
           <div className={styles.meta}>
-            <EventCardHost creator={hostOf(creator)} byLabel="By" />
+            <EventCardHost creator={hostOf(creator)} byLabel={text('By')} />
           </div>
         ) : null}
         <div className={styles.actions}>
@@ -267,12 +310,12 @@ function PlaceDetailModal(props: PlaceDetailModalProps) {
       <div className={styles.body}>
         {description ? (
           <>
-            <h3 className={styles.label}>About this place</h3>
+            <h3 className={styles.label}>{text('About this place')}</h3>
             <p className={styles.description}>{description}</p>
             <hr className={styles.divider} />
           </>
         ) : null}
-        <h3 className={styles.label}>{location.world ? 'World' : 'Location'}</h3>
+        <h3 className={styles.label}>{location.world ? text('World') : text('Location')}</h3>
         <p className={styles.metaText}>
           {location.world ? (
             <GeneralPublic size={18} aria-hidden="true" />
@@ -286,7 +329,9 @@ function PlaceDetailModal(props: PlaceDetailModalProps) {
             <hr className={styles.divider} />
             <p className={styles.metaText}>
               <GeneralPlayers size={18} aria-hidden="true" />
-              {users === 1 ? '1 person here now' : `${users} people here now`}
+              {text(users === 1 ? '{count} person here now' : '{count} people here now', {
+                count: users
+              })}
             </p>
           </>
         ) : null}

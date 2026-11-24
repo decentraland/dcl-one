@@ -26,7 +26,6 @@ const EMIT_CRATES = new Set([
   "notifications",
   "places",
   "presence",
-  "world-storage",
   "worlds",
 ]);
 const IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;

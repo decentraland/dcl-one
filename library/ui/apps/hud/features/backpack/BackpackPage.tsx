@@ -387,6 +387,7 @@ export function BackpackPage({
   onNavigate,
   modal = false,
   setEngineViewport,
+  previewReady = true,
   initialTab = 'wearables'
 }: {
   backpack: BackpackState
@@ -396,12 +397,17 @@ export function BackpackPage({
   /** Over the lobby: a modal with its own close and no menu bar. */
   modal?: boolean
   setEngineViewport: (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null) => void
+  /** The engine has drawn the avatar in the preview; until then the backdrop covers it. */
+  previewReady?: boolean
   /** Which tab to open on (e.g. the emote wheel's "Customise [E]" opens 'emotes'). */
   initialTab?: 'wearables' | 'emotes'
 }): React.JSX.Element | null {
   const [tab, setTab] = useState<BackpackTab>(initialTab)
   // The engine's camera view (the 960×960 preview), which the drag surface measures its zoom anchor on.
   const previewBox = useRef<HTMLDivElement>(null)
+  const previewFocus = useRef<HTMLDivElement>(null)
+  // Over the lobby the preview runs past the modal: the engine draws it only inside the page's box.
+  const pageBox = useRef<HTMLDivElement>(null)
   const [section, setSection] = useState<Section>('categories')
   const [cat, setCat] = useState('all')
   const [query, setQuery] = useState('')
@@ -531,6 +537,12 @@ export function BackpackPage({
     }
   }, [backpack.open, backpack.preview])
 
+  // A refused outfit save or delete is told in the Outfits tab until the player leaves it.
+  const showingOutfits = backpack.open && tab === 'wearables' && section === 'outfits'
+  useEffect(() => {
+    if (!showingOutfits) backpack.dismissOutfitError()
+  }, [showingOutfits, backpack.dismissOutfitError])
+
   if (!backpack.open) return null
 
   // The full equipped set = the decoupled equipped list (NOT the current page — the rest of the
@@ -595,8 +607,8 @@ export function BackpackPage({
       </MainMenuShell>
     )
   return shell(
-      <div className={`${styles.page} ${modal ? styles.inModal : ''}`.trim()}>
-        <div className={styles.backdrop} aria-hidden="true" />
+      <div ref={pageBox} className={`${styles.page} ${modal ? styles.inModal : ''}`.trim()}>
+        <div className={`${styles.backdrop} ${previewReady ? '' : styles.backdropShut}`.trim()} aria-hidden="true" />
         <header className={`${styles.head} ${styles.headIn}`}>
           <h1 className={styles.title}>Backpack</h1>
           <Tabs variant="section" className={styles.tabs} items={BACKPACK_TABS} value={tab} onChange={(t) => { setTab(t); setSelected(null) }} aria-label="Backpack sections" />
@@ -626,7 +638,8 @@ export function BackpackPage({
           <div className={`${styles.frame} ${styles.fadeIn}`}>
             {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
             <div ref={previewBox} className={styles.preview}>
-              <EngineViewport region="avatarPreview" report={setEngineViewport} />
+              <EngineViewport region="avatarPreview" report={setEngineViewport} focus={previewFocus} clip={modal ? pageBox : undefined} />
+              <div ref={previewFocus} className={styles.previewFocus} />
             </div>
             {/* Drag to turn the avatar, the wheel to zoom toward the pointer (HINTS); the zoom's anchor is
                 measured on the camera's whole view, wider than the column that takes the pointer. */}
@@ -661,6 +674,11 @@ export function BackpackPage({
                   aria-label="Saved outfits"
                   aria-busy={!backpack.outfitsLoaded}
                 >
+                  {backpack.warnAboutClearingExtraOutfits && (
+                    <p className={styles.outfitNotice}>
+                      Without a NAME, deleting any outfit in the second row clears the entire row.
+                    </p>
+                  )}
                   {[0, 1].map((row) => (
                     row === 1 && backpack.outfitSlots <= 5 ? <NameBanner key="banner" /> : (
                       <div key={row} className={styles.outfitRow}>
@@ -686,6 +704,9 @@ export function BackpackPage({
                       </div>
                     )
                   ))}
+                  {backpack.outfitError != null && (
+                    <p className={styles.outfitError} role="alert">{backpack.outfitError}</p>
+                  )}
                 </div>
               ) : (
               <div key="categories" className={`${styles.catalog} ${styles.slideFromLeft}`}>

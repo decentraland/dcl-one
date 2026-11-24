@@ -66,7 +66,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 | Trailing slash | `path-to-regexp` non-strict: accepted | `NormalizePath::trim_trailing_slash` (`services/catalyst/src/serve.rs:1304`) | MATCH |
 | Path case | The lamb2 router uses `path-to-regexp` defaults (case-insensitive), but the production gateway answers its nginx `404` HTML page for a path whose case differs (`/lambdas/Status`, `/lambdas/Profiles/0x…01`, `captures/lambdas-profiles/LP-31-path-case-*.json`), so a client of the peer never reaches lamb2 with one | axum is case-sensitive, so 404 | MATCH in status (LL-23); the 404 body is the gateway page once `fix/p2-lambdas-profiles` lands |
 | 405 | `router.allowedMethods()` (`decentraland/lamb2:src/service.ts:15`) | axum 405 with `Allow` | MATCH (status) |
-| CORS | `cors: {maxAge: 36000}` (`decentraland/lamb2:src/components.ts:65`) | `cors_middleware` on both routers (`services/catalyst/land-authz/src/routes.rs:60`, `services/catalyst/shop/src/market/mod.rs:985`) | See the CORS area |
+| CORS | `cors: {maxAge: 36000}` (`decentraland/lamb2:src/components.ts:65`) | LAND and Shop Lambdas use the shared Lambdas policy (`services/catalyst/shared/src/cors.rs`) | See the CORS area |
 | Rate limit | None in lamb2 for these routes. The marketplace bulkhead only sheds names (503). | None in the app. Behind this tree's gateway, `/lambdas/*` takes the server-wide `limit_req zone=read` (30 r/s per client IP, burst 60, `nodelay`), answering nginx's 429 page (`infra/gateway/gateway.py:257,260,292`). | DIVERGENT behind the gateway (P2) |
 | Auth | None (no signed fetch) | None | MATCH |
 
@@ -320,7 +320,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 14. **LL-14: `description` when the data record has a null description.** Endpoint: `/users/:a/lands`. Status: MATCH, no work, on the reader path.
    - Expected: `null` (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:67`).
    - dcl-one: the reader keeps a null description as `null` (`OwnedLand.description: Option<Option<String>>`, `services/catalyst/chain-index/src/graph.rs`, `parse_owned_lands`; pinned by `owned_lands_carry_the_old_row_columns`).
-   - Left open: the index path answers `""` for a data record without a description. `parse_land_data` (`services/catalyst/shop/src/market/nft_index.rs:320`) stores an empty field and a missing one alike (NULL), and which of the two the marketplace subgraph stores as `null` is not vendored. Telling them apart needs `shop.land_data` to keep the difference (a schema step and a re-fold of the `land_data` events) once a capture shows the subgraph's rule.
+   - Left open: the index path answers `""` for a data record without a description. `parse_land_data` (`services/catalyst/shop/src/market/nft_index.rs:318`) stores an empty field and a missing one alike (NULL), and which of the two the marketplace subgraph stores as `null` is not vendored. Telling them apart needs `shop.land_data` to keep the difference (a schema step and a re-fold of the `land_data` events) once a capture shows the subgraph's rule.
    - Severity: P2 (index path).
 15. **LL-15: The `/lands` index path reads the registries of `ETH_NETWORK`.** Status: MATCH, no work.
     - Expected: the registries of `ETH_NETWORK` (`decentraland/lamb2:src/ports/the-graph.ts:38`).

@@ -9,8 +9,10 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-dead-code-check.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
+      - tooling/bevy-workspace-lints.py
       - tooling/patched-sources.py
       - tooling/vendor-provenance.py
       - tooling/enet-provenance.py
@@ -42,6 +44,8 @@
       - library/**
       - apps/sites/**
       - apps/ui3/**
+      # the bridge scene's install copies it (react-web/bridge-scene/pnpm-workspace.yaml)
+      - apps/creator-hub/packages/zip-extract/**
       - tooling/image-*
       - tooling/ci-publication.py
       - tooling/tests/test_ci_publication.py
@@ -50,52 +54,9 @@
       - .github/workflows/apis-sites-compile.yml
   pull_request:
     # ready_for_review starts the jobs that a draft holds (tooling/bevy-ci.py).
+    # No path filter: every pull request gets the Explorer CI gate, so it can be required. The
+    # Changes job skips the build and test jobs when nothing they test changed.
     types: [opened, synchronize, reopened, ready_for_review, closed]
-    paths:
-      - .cargo/**
-      - rust-toolchain*
-      - apps/bevy-explorer/**
-      - tooling/dev-regressions*
-      - tooling/bevy-ci.py
-      - tooling/ci_paths.py
-      - tooling/bevy-mtimes.py
-      - tooling/patched-sources.py
-      - tooling/vendor-provenance.py
-      - tooling/enet-provenance.py
-      - tooling/upstream-drift*.py
-      - tooling/tests/test_upstream_*.py
-      - tooling/bevy-target-cache.py
-      - tooling/play-artifact.py
-      - tooling/check-local-hashing.mjs
-      - tooling/hud_shared_inputs.py
-      - tooling/tests/test_hud_shared_inputs.py
-      - tooling/tests/hud_manifest_fixture.py
-      - tooling/tests/hud_manifest_invalid_cases.json
-      - tooling/tests/check_hud_manifest_nix.py
-      - tooling/tests/test_play_*.py
-      - tooling/tests/test_bevy_*.py
-      - .github/workflows/bevy-explorer-*.yml
-      - .github/actions/bevy-explorer-ci-status/**
-      - .github/actions/bevy-explorer-tools/**
-      - flake.*
-      - rendering/bevy-explorer/**
-      - rendering/avatar-preview/**
-      - .github/workflows/bevy-explorer-ci.yml
-      - tooling/fetch-play.py
-      - infra/packages/**
-      - infra/containers/**
-      - infra/gateway/**
-      - services/catalyst/**
-      - schemas/**
-      - library/**
-      - apps/sites/**
-      - apps/ui3/**
-      - tooling/image-*
-      - tooling/ci-publication.py
-      - tooling/tests/test_ci_publication.py
-      - tooling/tests/test_image_publish.py
-      - .github/workflows/apis-sites-images.yml
-      - .github/workflows/apis-sites-compile.yml
   # Manual run of the full workflow on any ref. On a branch, setting `publish-tag`
   # also publishes the web package (as 0.1.0-<runId>.commit-<sha>, under that npm
   # dist-tag) and uploads it to the CDN, ready for a manual rollout. oddish ignores a
@@ -109,9 +70,7 @@
 concurrency:
   group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   # Main runs finish; runs started meanwhile wait as one pending run (the newest replaces it).
-  # A run that ready_for_review starts waits too: the development smoke job of the same commit
-  # reads the web build of the run in progress, and that workflow does not run again.
-  cancel-in-progress: ${{ github.event.action != 'ready_for_review' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
 name: Bevy Explorer / CI
 jobs:
   source:
@@ -134,6 +93,8 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_upstream_*.py' -v
+      - name: Reject suppressed dead code
+        run: python3 tooling/bevy-dead-code-check.py
       - name: Check the avatar preview boot contract
         run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs
       - name: Check the CI status comment scripts
@@ -195,6 +156,7 @@ jobs:
       web: ${{ steps.plan.outputs.web }}
       native-matrix: ${{ steps.plan.outputs.native-matrix == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:macos') }}
       images: ${{ steps.consumers.outputs.images }}
+      held: ${{ steps.plan.outputs.held }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Offline. Cargo takes each patched source from this repository by `rev`: every `rev` in Cargo.toml
@@ -764,6 +726,24 @@ jobs:
         with:
           toolchain: 1.99.1
       - run: rustup component add clippy
+      # `common`'s tests include a shader from the patched Bevy tree; restored and written as in the Test Suite.
+      # The tool needs the runner's python3 at 3.11 or later and exits with a message on an older one. No
+      # setup-python here: it rewrites PKG_CONFIG_PATH, which the native build cache key tracks.
+      - name: Identify the upstream commits
+        id: bases
+        working-directory: .
+        run: echo "key=$(grep -hE '^[[:space:]]*(upstream|commit|url)[[:space:]]*=' rendering/bevy-explorer/patches/*/source.toml | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+      - name: Restore the upstream commits
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/patched-sources
+          key: bevy-explorer-patch-bases-${{ steps.bases.outputs.key }}
+          restore-keys: |
+            bevy-explorer-patch-bases-
+      - name: Rebuild the patched Bevy tree
+        env:
+          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources
+        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
@@ -791,7 +771,7 @@ jobs:
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - run: cargo clippy --locked -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         shell: bash
       - name: Avatar crate without the explorer feature
         run: cargo check --locked -p avatar --no-default-features
@@ -845,6 +825,9 @@ jobs:
       - name: Taplo info
         if: failure()
         run: echo "Run taplo fmt to apply TOML formatting; taplo fmt --check --diff shows the changes."
+      - name: Check that every package inherits the workspace lints
+        if: ${{ !cancelled() }}
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-workspace-lints.py"
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -1419,6 +1402,35 @@ jobs:
             corepack pnpm@12.21.0 dist-tag rm "$pkg" "$TAG"
           fi
     timeout-minutes: 5
+  # Branch protection reads the newest gate on the commit until the next run's gate reports, so a held
+  # draft and an unmerged close must not leave a pass or a skip behind.
+  gate:
+    name: Explorer CI gate
+    needs: [source, changes, fmt, toml, clippy, test, headless-smoke, build-deploy-web, package-web, images-compile, images]
+    if: ${{ always() && !(github.event.action == 'closed' && github.event.pull_request.merged) }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 5
+    steps:
+      - name: Require the checks, builds and tests to pass or be skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          HELD: ${{ needs.changes.outputs.held }}
+          ACTION: ${{ github.event.action }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'
+          failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
+          if [ -n "$failed" ]; then
+            echo "::error::Required jobs did not pass: $(echo $failed)"
+            exit 1
+          fi
+          if [ "$HELD" = true ]; then
+            echo "::error::This draft held the test jobs. Mark it ready for review to run them."
+            exit 1
+          fi
+          if [ "$ACTION" = closed ]; then
+            echo "::error::Closed without merging. Reopening runs the checks again."
+            exit 1
+          fi
 permissions:
   contents: read
   pull-requests: read

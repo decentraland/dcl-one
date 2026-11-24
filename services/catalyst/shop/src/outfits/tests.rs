@@ -50,13 +50,23 @@ fn the_creator_allowlist_parses_like_the_flag_variant_and_fails_closed() {
         ]
     );
     let settings = Settings {
-        creators,
+        creators: Some(creators),
         writes_enabled: true,
     };
     assert!(settings.is_creator("0xABCDEF0000000000000000000000000000000001"));
     assert!(!settings.is_creator("0xabcdef0000000000000000000000000000000002"));
     assert!(Settings::parse_creators("garbage").is_empty());
     assert!(!Settings::default().is_creator("0xabcdef0000000000000000000000000000000001"));
+    assert_eq!(
+        Settings::creators_override(" \n "),
+        None,
+        "blank: the flag decides"
+    );
+    assert_eq!(
+        Settings::creators_override("none"),
+        Some(vec![]),
+        "set but unparsable: an empty override, not the flag"
+    );
 }
 
 #[test]
@@ -131,7 +141,7 @@ fn item_uniqueness_publish_bar_and_visibility_follow_logic_outfits_ts() {
     assert!(!is_publishable(&hash, "#000000", "#ffffff", 21));
 
     let settings = Settings {
-        creators: vec!["0x00000000000000000000000000000000000000aa".into()],
+        creators: Some(vec!["0x00000000000000000000000000000000000000aa".into()]),
         writes_enabled: true,
     };
     let draft = Outfit {
@@ -147,22 +157,23 @@ fn item_uniqueness_publish_bar_and_visibility_follow_logic_outfits_ts() {
         created_at: 1,
         updated_at: 1,
     };
-    assert!(!can_read(&draft, None, &settings));
+    let settings = |c: &str| settings.is_creator(c);
+    assert!(!can_read(&draft, None, settings));
     assert!(!can_read(
         &draft,
         Some("0x00000000000000000000000000000000000000bb"),
-        &settings
+        settings
     ));
     assert!(can_read(
         &draft,
         Some("0x00000000000000000000000000000000000000AA"),
-        &settings
+        settings
     ));
     let published = Outfit {
         published: true,
         ..draft
     };
-    assert!(can_read(&published, None, &settings));
+    assert!(can_read(&published, None, settings));
 }
 
 #[test]
@@ -221,7 +232,7 @@ async fn rig(writes_enabled: bool) -> Option<Rig> {
     let creator = scratch_wallet();
     let stranger = scratch_wallet();
     let settings = Settings {
-        creators: vec![creator.address.clone()],
+        creators: Some(vec![creator.address.clone()]),
         writes_enabled,
     };
     let state = Arc::new(State::new(pool, storage, settings, None));
@@ -619,4 +630,233 @@ async fn the_write_gate_holds_the_writes_and_leaves_the_reads_open() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(v["outfits"].is_array());
+}
+
+struct FlagRig {
+    app: Router,
+    market: Arc<crate::market::MarketplaceState>,
+    creator: super::testkit::Wallet,
+    stranger: super::testkit::Wallet,
+    dir: std::path::PathBuf,
+}
+
+impl Drop for FlagRig {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// The outfits routes reading the allowlist from a `MarketplaceState`'s held `dapps` flags, with the local
+/// override `creators` builds from the creator and stranger wallets.
+async fn flag_rig(
+    creators: impl FnOnce(&super::testkit::Wallet, &super::testkit::Wallet) -> Option<Vec<String>>,
+) -> Option<FlagRig> {
+    let pool = crate::db::scratch::pool(4).await?;
+    let dir = std::env::temp_dir().join(format!(
+        "catalyst-outfits-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
+    let market = Arc::new(crate::market::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        crate::market::Settings::for_tests(),
+    ));
+    let (creator, stranger) = (scratch_wallet(), scratch_wallet());
+    let settings = Settings {
+        creators: creators(&creator, &stranger),
+        writes_enabled: true,
+    };
+    let state = Arc::new(State::new(pool, storage, settings, None).with_flags(market.clone()));
+    Some(FlagRig {
+        app: Router::new().nest("/shop-api", shop_router(state)),
+        market,
+        creator,
+        stranger,
+        dir,
+    })
+}
+
+/// A `dapps` document holding the `dapps-shop-outfit-creators` flag (`on`) with `value` as its variant payload.
+fn creators_flag(on: bool, value: &str) -> Value {
+    json!({
+        "flags": { "dapps-shop-outfit-creators": on },
+        "variants": { "dapps-shop-outfit-creators": { "name": "creators", "enabled": true, "payload": { "type": "string", "value": value } } }
+    })
+}
+
+async fn get_as(app: &Router, wallet: &super::testkit::Wallet, path: &str) -> StatusCode {
+    let h = signed_headers(wallet, "get", path).await;
+    send(app, "GET", path, h, None).await.0
+}
+
+async fn get_all_as(app: &Router, wallet: &super::testkit::Wallet) -> StatusCode {
+    get_as(app, wallet, "/shop-api/v1/outfits/all").await
+}
+
+/// Without the local override the allowlist is the `dapps-shop-outfit-creators` variant as held now: a wallet
+/// added to it may author on its next request, and one removed (or the flag switched off) is refused on its next.
+#[tokio::test]
+async fn the_creator_allowlist_follows_the_flag_on_every_request() {
+    let Some(r) = flag_rig(|_, _| None).await else {
+        return;
+    };
+
+    assert_eq!(
+        get_all_as(&r.app, &r.creator).await,
+        StatusCode::FORBIDDEN,
+        "no flags held yet"
+    );
+    r.market.set_dapps_document(creators_flag(
+        true,
+        &format!(
+            "0x00000000000000000000000000000000000000aa,\n{}",
+            r.creator.address.to_uppercase().replace("0X", "0x")
+        ),
+    ));
+    assert_eq!(get_all_as(&r.app, &r.creator).await, StatusCode::OK);
+    r.market.set_dapps_document(creators_flag(
+        true,
+        "0x00000000000000000000000000000000000000aa",
+    ));
+    assert_eq!(
+        get_all_as(&r.app, &r.creator).await,
+        StatusCode::FORBIDDEN,
+        "removed from the variant"
+    );
+    r.market
+        .set_dapps_document(creators_flag(false, &r.creator.address));
+    assert_eq!(
+        get_all_as(&r.app, &r.creator).await,
+        StatusCode::FORBIDDEN,
+        "the flag is off"
+    );
+}
+
+/// A set `SHOP_OUTFIT_CREATORS` replaces the flag: its wallet authors while the variant lists another, and one
+/// that lists no valid wallet refuses everyone, the variant's wallets included.
+#[tokio::test]
+async fn a_set_override_replaces_the_flag_even_when_it_lists_no_valid_wallet() {
+    let Some(r) = flag_rig(|_, _| Some(vec![])).await else {
+        return;
+    };
+    r.market
+        .set_dapps_document(creators_flag(true, &r.creator.address));
+    assert_eq!(
+        get_all_as(&r.app, &r.creator).await,
+        StatusCode::FORBIDDEN,
+        "an empty override is not the flag"
+    );
+
+    let Some(r) = flag_rig(|_, stranger| Some(vec![stranger.address.clone()])).await else {
+        return;
+    };
+    r.market
+        .set_dapps_document(creators_flag(true, &r.creator.address));
+    assert_eq!(
+        get_all_as(&r.app, &r.stranger).await,
+        StatusCode::OK,
+        "the override's wallet"
+    );
+    assert_eq!(
+        get_all_as(&r.app, &r.creator).await,
+        StatusCode::FORBIDDEN,
+        "the variant's wallet, outside the override"
+    );
+}
+
+/// `GET /v1/outfits/{id}` shows a draft to a wallet the flag lists now and answers 404 once the flag drops it.
+#[tokio::test]
+async fn draft_visibility_follows_the_flag() {
+    let Some(r) = flag_rig(|_, _| None).await else {
+        return;
+    };
+    r.market
+        .set_dapps_document(creators_flag(true, &r.creator.address));
+    let id = new_id();
+    let h = signed_headers(&r.creator, "post", "/shop-api/v1/outfits").await;
+    let (status, _, v) = send(
+        &r.app,
+        "POST",
+        "/shop-api/v1/outfits",
+        h,
+        Some(body(&request(&id))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+
+    let path = format!("/shop-api/v1/outfits/{id}");
+    assert_eq!(
+        get_as(&r.app, &r.creator, &path).await,
+        StatusCode::OK,
+        "listed by the flag"
+    );
+    assert_eq!(
+        get_as(&r.app, &r.stranger, &path).await,
+        StatusCode::NOT_FOUND
+    );
+    r.market
+        .set_dapps_document(creators_flag(false, &r.creator.address));
+    assert_eq!(
+        get_as(&r.app, &r.creator, &path).await,
+        StatusCode::NOT_FOUND,
+        "the flag is off"
+    );
+}
+
+/// A thumbnail found stored is not unlinked before its row commits: the write
+/// waits while an unlink batch holds the exclusive store lock, then stores
+/// again what the batch removed.
+#[tokio::test]
+async fn a_thumbnail_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(pool) = crate::db::scratch::pool(3).await else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "catalyst-outfit-race-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Storage::from_config(&dir).await.unwrap();
+    let mut png = PNG.to_vec();
+    png.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    let cid = crate::auth::hash_bytes_v1(&png);
+    storage.store(&cid, png.clone().into()).await.unwrap();
+    let thumbnail = store::OutfitThumbnail {
+        hash: hex::encode(Sha256::digest(&png)),
+        blob_cid: cid.clone(),
+        content_type: "image/png".into(),
+        size: png.len() as i32,
+    };
+
+    let outfits = store::Outfits::new(pool.clone());
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    {
+        let write = outfits.put_thumbnail(
+            &storage,
+            png.into(),
+            &thumbnail,
+            "0x00000000000000000000000000000000000000aa",
+        );
+        tokio::pin!(write);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), &mut write)
+                .await
+                .is_err(),
+            "the write waits for the unlink batch"
+        );
+        storage.delete_strict(&cid).await.unwrap();
+        batch.commit().await.unwrap();
+        write.await.unwrap();
+    }
+    assert!(storage.exist(&cid).await.unwrap(), "stored again");
+    let named: Option<String> =
+        sqlx::query_scalar("SELECT blob_cid FROM shop.outfit_thumbnails WHERE hash = $1")
+            .bind(&thumbnail.hash)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(named.as_deref(), Some(cid.as_str()));
+    let _ = std::fs::remove_dir_all(&dir);
 }

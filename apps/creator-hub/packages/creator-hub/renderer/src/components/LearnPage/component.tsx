@@ -4,7 +4,7 @@ import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
 import { t } from '/@/modules/store/translation/utils';
 import { tutorials } from '/@/modules/tutorials';
-import { misc } from '#preload';
+import { openLearnResource } from '/@/lib/openLearnResource';
 
 import { Container } from '../Container';
 import { Navbar, NavbarItem } from '../Navbar';
@@ -18,7 +18,7 @@ function Video(props: { id: string; list: string; title: string }) {
   return (
     <div
       className="link"
-      onClick={() => misc.openExternal(url)}
+      onClick={() => openLearnResource('learn', 'video', props.title, url)}
     >
       <div className="thumbnail-wrapper">
         <Image
@@ -35,7 +35,7 @@ function Link(props: { url: string; title: string }) {
   return (
     <div
       className="link"
-      onClick={() => misc.openExternal(props.url)}
+      onClick={() => openLearnResource('learn', 'doc', props.title, props.url)}
     >
       <i className="icon" />
       <span className="title">{props.title}</span>

@@ -1,4 +1,7 @@
 .shell {
+  --blog-header-height: var(--site-header-h, 0px);
+  --blog-glow-height: 506px;
+
   position: relative;
   isolation: isolate;
   min-height: 100%;
@@ -12,14 +15,19 @@
   content: '';
   position: absolute;
   z-index: -1;
-  inset: 0 0 auto;
-  height: 506px;
-  background: linear-gradient(180deg, var(--dcl-brand-purple) 0%, transparent 100%);
+  inset: calc(-1 * var(--blog-header-height)) 0 auto;
+  height: calc(var(--blog-header-height) + var(--blog-glow-height));
+  /* Extend the purple behind the header and keep the fade anchored to the page. */
+  background: linear-gradient(
+    180deg,
+    var(--dcl-brand-purple) var(--blog-header-height),
+    transparent
+  );
   pointer-events: none;
 }
 
 @media (max-width: 767px) {
-  .shell::before {
-    height: 404px;
+  .shell {
+    --blog-glow-height: 404px;
   }
 }

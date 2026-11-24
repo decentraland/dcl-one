@@ -80,11 +80,19 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'archipelago-ea-stats': '/archipelago-ea-stats',
   'builder-api': '/builder-api'
 }
-// Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
-// CDN (Bevy variants), whose `/ab-cdn` route serves the asset-bundle CDN and refuses `bevy/` paths
-// (decentraland/dcl-one#631). Behind the gateway they compose from decentraland.org, never from
-// the page's own host, as the engine does (`Gateway::segment` → its default base domain).
-const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])
+// Services reached on Decentraland's public host instead of the gateway. Behind the gateway they
+// compose from decentraland.org, never from the page's own host, as the engine does
+// (`Gateway::segment` → its default base domain).
+// - abgen's CDN (Bevy variants): the gateway's `/ab-cdn` route serves the asset-bundle CDN and
+//   refuses `bevy/` paths (decentraland/dcl-one#631).
+// - The feature-flags service: Unleash picks a player's A/B group and rollout from the id each
+//   request carries, so every player's engine asks it directly. The node's `/feature-flags` copy
+//   is one document for everyone. The service has to allow this page's origin (CORS); where it
+//   does not, every flag reads off.
+const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn', 'feature-flags'])
+// The imposter store (distant-scene tiles) is a launch option, not a service table row; the
+// node serves it under this prefix (services/catalyst/src/serve_routes.rs, explore::imposters).
+const IMPOSTER_PREFIX = '/bvimposters'
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */
 export const DEFAULT_BASE_DOMAIN =
@@ -92,10 +100,23 @@ export const DEFAULT_BASE_DOMAIN =
 
 /**
  * A page of the web site around the Explorer (shop, terms, help): the same origin on dcl-one,
- * the apex of the base domain upstream.
+ * the apex of the base domain upstream. It follows the Explorer's selected website (?baseDomain=);
+ * a domain that isn't Decentraland's own (isTrustedBaseDomain) stops the boot on the
+ * UntrustedLaunchGate first. Funding the in-world checkout takes checkoutSiteUrl instead.
  */
 export function siteUrl(path: string): string {
   return BASE_DOMAIN === ONE_GATEWAY_HOST ? `${window.location.origin}${path}` : `https://${BASE_DOMAIN}${path}`
+}
+
+/**
+ * A page that funds the in-world Shop's checkout (BUY CREDITS): the site whose node holds the balance the checkout
+ * reads. The checkout reads it from this page's own node (catalystBase: the build's VITE_CATALYST_URL, the
+ * __CATALYST_BASE__ Sites injects, or the origin), never from ?baseDomain=. On a page Sites serves, that is this
+ * site, whose own Shop tops up the same node, whatever deployment the Explorer selected; elsewhere, the Explorer's
+ * site, as before.
+ */
+export function checkoutSiteUrl(path: string): string {
+  return ON_SITES ? `${window.location.origin}${path}` : siteUrl(path)
 }
 
 export const BASE_DOMAIN =
@@ -213,6 +234,10 @@ export function engineServiceOptions(): Record<string, string> {
   const options: Record<string, string> = {}
   if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
     for (const s of SERVICES) options[s.name] = serviceUrl(s.name)
+    // the node's own imposter store, not the engine's built-in one; an entry ?imposterSource= wins
+    if (!new URLSearchParams(window.location.search).get('imposterSource')) {
+      options.imposterSource = `${window.location.origin}${IMPOSTER_PREFIX}`
+    }
   }
   Object.assign(options, SERVICE_OVERRIDES)
   const bare = normaliseBaseDomain(BASE_DOMAIN)

@@ -3,6 +3,9 @@ name = "system_ui"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [features]
@@ -50,8 +53,6 @@ chrono = { workspace = true }
 clap = { workspace = true }
 web-time = { workspace = true }
 copypwasmta = { workspace = true }
-
-shlex = "1"
 
 [dev-dependencies]
 # the embedded shaders, for the GPU shader test

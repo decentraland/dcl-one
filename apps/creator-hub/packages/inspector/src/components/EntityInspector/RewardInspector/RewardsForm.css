@@ -20,7 +20,7 @@
   flex: 1;
 }
 
-.RewardsForm .Button.text.link:hover:not(:disabled) {
+.RewardsForm .btn.link:hover:not(:disabled) {
   text-decoration: underline;
 }
 

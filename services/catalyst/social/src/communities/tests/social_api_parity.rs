@@ -548,8 +548,8 @@ struct Places {
 impl Places {
     /// A public community whose places are, newest first: a seeded place,
     /// one with no destination, a disabled one, a world name, a world
-    /// scene's UUID, a seeded place stored in uppercase and an id that is
-    /// neither a UUID nor a name.
+    /// scene's UUID, a seeded place sent in uppercase (stored lowercased) and
+    /// an id that is neither a UUID nor a name.
     async fn seed(rig: &Rig) -> Self {
         let owner = wallet();
         let community = rig.community(&owner, false).await;
@@ -619,7 +619,7 @@ impl Places {
             self.disabled.to_string(),
             self.world_name.clone(),
             self.world_scene.to_string(),
-            self.upper.to_string().to_uppercase(),
+            self.upper.to_string(),
             "not-a-place".to_string(),
         ]
     }
@@ -714,16 +714,18 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
     assert_eq!(world["base_position"], "0,0");
     assert_eq!(keys(world), expected);
 
-    // no destination, a disabled place, a world scene's UUID, an uppercase
-    // id, neither: bare
-    for row in rows[1..3].iter().chain(&rows[4..]) {
+    // the place sent in uppercase is stored lowercased, so it is its destination
+    assert_eq!(rows[5]["title"], "upper place", "{}", rows[5]);
+
+    // no destination, a disabled place, a world scene's UUID, neither: bare
+    for row in rows[1..3].iter().chain([&rows[4], &rows[6]]) {
         assert_eq!(keys(row), BARE, "{row}");
     }
 
     // the world scene and the uppercase place exist: the destinations union
     // reads `world is false` places and catalogue worlds (`Place/model.ts:149`,
     // `Destination/model.ts:282-304`), so the scene's UUID is no destination;
-    // the uppercase id is one, and only the exact-id merge leaves its row bare
+    // a lookup lowercases an uppercase id
     let explore = &rig.state.explore;
     let scene = crate::explore::places::destinations::destinations_by_ids(
         explore,

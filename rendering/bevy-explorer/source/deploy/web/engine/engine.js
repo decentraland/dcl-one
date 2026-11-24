@@ -281,50 +281,6 @@ export async function initEngine() {
     (e) => console.warn("[Main JS] persistent storage request failed", e),
   );
 
-  // Setup HLS video source callback
-  window.setVideoSource = (video, src) => {
-    async function isHlsStream(url) {
-      try {
-        const response = await fetch(url, {
-          method: "HEAD",
-          mode: "cors",
-        });
-
-        if (!response.ok) {
-          return false;
-        }
-
-        const contentType = response.headers.get("Content-Type");
-
-        if (contentType) {
-          return (
-            contentType.includes("application/vnd.apple.mpegurl") ||
-            contentType.includes("application/x-mpegURL")
-          );
-        }
-
-        return false;
-      } catch (error) {
-        return false;
-      }
-    }
-
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-    } else if (Hls.isSupported()) {
-      // check if we need hls
-      setTimeout(async () => {
-        if (await isHlsStream(src)) {
-          var hls = new Hls();
-          hls.loadSource(src);
-          hls.attachMedia(video);
-        } else {
-          video.src = src;
-        }
-      }, 0);
-    }
-  };
-
   // The scene sandbox workers (sandbox_host.js), behind the page functions the engine calls.
   const sandboxes = createSandboxHost({
     compiledModule,
@@ -418,6 +374,16 @@ export function start(options = {}) {
     return new Promise((resolve) => resolve(page.command.run(page.rest)));
   };
 
+  // A word the engine splits back into the same argument (crates/console/src/line.rs): quoted
+  // when it is empty or holds a double quote or whitespace as the engine counts it (Unicode's
+  // White_Space: `\s` lacks U+0085). A command that takes the rest of the line (`rest`) is split
+  // on whitespace alone, quotes kept, and a page command splits its own line, so their words go
+  // unquoted.
+  const quoteWord = (word) =>
+    word === "" || /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"]/.test(word)
+      ? `"${word.replace(/[\\"]/g, "\\$&")}"`
+      : word;
+
   // Callback invoked by Rust once console command metadata is available.
   window._buildEngineApi = (json) => {
     try {
@@ -425,6 +391,7 @@ export function start(options = {}) {
         cmd,
         args: command.args,
         help: command.help,
+        rest: true,
       }));
       const api = JSON.parse(json).concat(pageApi);
       window.engine = {};
@@ -436,14 +403,15 @@ export function start(options = {}) {
         const body = [
           `var parts = [${JSON.stringify(cmd.cmd)}];`,
           `var defs = ${JSON.stringify(cmd.args)};`,
+          `var word = ${cmd.rest ? 'String' : 'quoteWord'};`,
           `for (var i = 0; i < defs.length; i++) {`,
           `  var val = arguments[i];`,
           `  if (val === undefined) { if (!defs[i].optional) throw new Error(${JSON.stringify(jsName)} + ": missing arg '" + defs[i].name + "'"); break; }`,
-          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : String(val));`,
+          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : word(String(val)));`,
           `}`,
           `return window.engine_console_command(parts.join(' ')).then(function(r) { try { return JSON.parse(r); } catch(e) { return r; } });`,
         ].join('\n');
-        const fn = new Function(...paramNames, body);
+        const fn = new Function('quoteWord', `return function (${paramNames.join(', ')}) {\n${body}\n};`)(quoteWord);
         const sig = cmd.args.map(a => {
           const name = a.kind === 'json' ? `${a.name}: object` : a.name;
           return a.optional ? `[${name}]` : `<${name}>`;

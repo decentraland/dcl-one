@@ -107,6 +107,9 @@ export interface HudHost {
   /** A page of the Decentraland site (`/terms/`, `/marketplace`, ...) for the deployment this HUD
    *  runs against. */
   siteUrl(path: string): string
+  /** A page that funds the in-world Shop's checkout (BUY CREDITS): the site whose node holds the balance the
+   *  checkout reads, which may not be the deployment `siteUrl` follows. */
+  checkoutSiteUrl(path: string): string
   /** Where the untrusted-link gate's Exit sends the player: an address no entry url can change, never
    *  one built from `?baseDomain=`. */
   exitUrl(): string
@@ -141,6 +144,9 @@ export interface HudHost {
   ownShopItemUrl(contract: string, item: string): string | null
   /** Whether this host runs the in-world Shop page (otherwise the Shop opens the web Shop). */
   IN_WORLD_SHOP: boolean
+  /** Whether this host's page can ask before the browser leaves it during a session (Settings offers
+   *  the question only there). */
+  CAN_ASK_BEFORE_LEAVING: boolean
   /** Donate, where this host can sign a tip; null where it can't (the Explorer's own HUD). */
   donations: HostDonations | null
   /** Gifting, where this host can sign a transfer; null where it can't (the Explorer's own HUD). */

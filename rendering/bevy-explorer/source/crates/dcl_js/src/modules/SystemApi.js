@@ -116,9 +116,23 @@ module.exports.kernelFetch = async function (body) {
 //   profileExtras?: {field: value}
 //   nameColor: Color3
 // }
-// => deployed version
+// Resolves with the saved version. An engine rejection carries its last confirmed profile.
 module.exports.setAvatar = async function(avatar) {
-    return await Deno.core.ops.op_set_avatar(avatar)
+    const owner = op_get_current_login()
+    if (!owner) throw Object.assign(new Error("No player profile to edit"), { accountChanged: true })
+    const result = await Deno.core.ops.op_set_avatar(owner, avatar)
+    if ('Err' in result) {
+        const { message, profile, accountChanged } = result.Err
+        throw Object.assign(new Error(message), { profile, accountChanged })
+    }
+    return result.Ok
+}
+
+// signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
+// the signed-in account
+// outfits: { outfits: [{ slot, outfit: { bodyShape, eyes, hair, skin, wearables, forceRender } }], namesForExtraSlots }
+module.exports.deployOutfits = async function(address, outfits) {
+    return await Deno.core.ops.op_deploy_outfits(address, outfits)
 }
 
 // any user's full profile (own, nearby or remote), resolved through the engine's profile cache
@@ -240,6 +254,7 @@ module.exports.liveSceneInfo = async function() {
 // { 
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,
+//   pinned: bool, // false = the signed-in account has no home
 // }
 module.exports.getHomeScene = async function() {
     return await Deno.core.ops.op_get_home_scene()
@@ -251,6 +266,10 @@ module.exports.getHomeScene = async function() {
 // }
 module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
+}
+
+module.exports.clearHomeScene = async function() {
+    await Deno.core.ops.op_clear_home_scene()
 }
 
 // { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview
@@ -289,6 +308,14 @@ module.exports.acceptTerms = async function() {
 // }
 module.exports.getSatelliteView = async function() {
     return await Deno.core.ops.op_get_satellite_view()
+}
+
+// a satellite map tile as base64-encoded JPEG bytes (no `data:` prefix); rejects on any failure.
+// `path` is relative to the abgen CDN's `SatelliteMaps/`:
+// `sections/<sx>%2C<sy>/<version>/<level>/<x>%2C<y>.ktx2` (level 3..=8, sections below 8, tile
+// coordinates below 2^level); the engine rejects any other path without a request.
+module.exports.getSatelliteTile = async function(path) {
+    return await Deno.core.ops.op_get_satellite_tile(path)
 }
 
 // 'allowed' | 'invited' | 'denied' | 'password' | 'failed'
@@ -413,6 +440,22 @@ module.exports.getPortablesStream = async function() {
   return streamGenerator();
 }
 
+// stream of the map pins of portable-experience scenes, as a whole list on subscribe and on every
+// change: [{ id, x, y, title, icon? }]
+module.exports.getMapPinsStream = async function() {
+  const rid = await Deno.core.ops.op_get_map_pins_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_map_pins_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 module.exports.getPermissionUsedStream = async function() {
   const rid = await Deno.core.ops.op_get_permission_used_stream();
 
@@ -425,6 +468,27 @@ module.exports.getPermissionUsedStream = async function() {
   }
 
   return streamGenerator();
+}
+
+// stream of scene requests to open the item purchase confirmation:
+// { id, item: { contract, itemId } | null }
+module.exports.getItemPurchaseRequestStream = async function() {
+  const rid = await Deno.core.ops.op_get_item_purchase_request_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_item_purchase_request_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// state: 'accepted' | 'unavailable' | 'purchased' | 'dismissed' | 'failed'
+module.exports.setItemPurchaseState = function(body) {
+    Deno.core.ops.op_set_item_purchase_state(body.id, body.state);
 }
 
 module.exports.setSinglePermission = function(body) {
@@ -533,6 +597,22 @@ module.exports.getWorldAccessStream = async function() {
   async function* streamGenerator() {
     while (true) {
       const next = await Deno.core.ops.op_read_world_access_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the signed-in wallet's platform ban: now, then again on every change
+// type PlatformBanNotice = { banned: bool, reason: string, customMessage: string | null, expiresAt: string | null }
+module.exports.getPlatformBanStream = async function() {
+  const rid = await Deno.core.ops.op_get_platform_ban_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_platform_ban_stream(rid);
       if (next === null) break;
       yield next;
     }

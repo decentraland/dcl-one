@@ -232,7 +232,7 @@ jobs:
           # The renderer bundle also holds apps/ui3/src/atoms (the `@ui` alias in apps/creator-hub/packages/creator-hub/renderer/vite.config.js)
           # and the LAND map with its helpers (the include list of apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json),
           # built with the ui3 package (sideEffects) and compiler settings (jsx, paths).
-          change_path: "apps/creator-hub apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/shop"
+          change_path: "apps/creator-hub apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/shop library/web-core/shop-chain-env.ts library/web-core/site.ts"
 
       # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).
@@ -325,6 +325,26 @@ jobs:
           echo "::error::dist/latest-mac.yml has no minimumSystemVersion 22.0.0"
           cat dist/latest-mac.yml
           exit 1
+
+      # Assistant Insights reads which system prompt, tools and skills denylist each release's AI
+      # assistant had from this file, checking its hashes against the shared turns'. Built on
+      # every run so a broken script fails the PR; attached to the release once, by the macOS leg.
+      - name: Build the assistant manifest
+        if: ${{ matrix.os == 'macos-latest' }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          node scripts/assistant-manifest/run.mjs dist/assistant-manifest.json "$VERSION" "$GITHUB_SHA"
+
+      - name: Attach the assistant manifest to the release
+        if: ${{ matrix.os == 'macos-latest' && github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release upload "$VERSION" dist/assistant-manifest.json --repo decentraland/creator-hub --clobber
 
       # Installed Windows apps check each update's signature against `publisherName`
       # (electron-builder.cjs `win.signtoolOptions`). A certificate whose name differs would make

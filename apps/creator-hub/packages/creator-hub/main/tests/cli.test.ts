@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PREVIEW_CLIENT, type PreviewOptions } from '/shared/types/settings';
 import type { Child } from '../src/modules/bin';
@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   startMobileDebugServer: vi.fn(),
   dynamicImport: vi.fn(),
   runSdkCommand: vi.fn(),
+  realmProvidesServer: vi.fn(),
+  ensureEditorFilesNotDeployed: vi.fn(),
+  addDependencyOverrides: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -34,8 +37,15 @@ vi.mock('../src/modules/download-github-folder', () => ({ downloadGithubRepo: vi
 vi.mock('../src/modules/mobile-debug-server', () => ({
   startMobileDebugServer: mocks.startMobileDebugServer,
 }));
+vi.mock('../src/modules/bevy-realm', () => ({
+  realmProvidesServer: mocks.realmProvidesServer,
+}));
 vi.mock('../src/modules/network', () => ({ getLanIp: vi.fn(() => '192.168.0.10') }));
 vi.mock('/shared/dynamic-import', () => ({ dynamicImport: mocks.dynamicImport }));
+vi.mock('../src/modules/project-config-files', () => ({
+  ensureEditorFilesNotDeployed: mocks.ensureEditorFilesNotDeployed,
+  addDependencyOverrides: mocks.addDependencyOverrides,
+}));
 
 import {
   getMobilePreview,
@@ -46,7 +56,9 @@ import {
   getDeployCommandSupport,
   type DeployCommandSupport,
   deploy,
+  init,
 } from '../src/modules/cli';
+import { previewRunsServer } from '../src/modules/realm-server-logs';
 
 const BASE_OPTS: PreviewOptions = {
   debugger: false,
@@ -242,6 +254,192 @@ describe('cli preview start', () => {
 
         expect(spawnedArgs()).not.toContain('--');
         expect(spawnedArgs()).not.toContain('--lsd-raw-gltf');
+      });
+    });
+  });
+
+  describe('when the Bevy editor realm is already running for the scene', () => {
+    // what the scene's sdk-commands start command declares, read from its dist
+    function setStartCommand(source: string) {
+      mocks.readFile.mockImplementation(async (file: string) => {
+        if (file.includes('commands/start/index.js')) return source;
+        throw new Error('ENOENT');
+      });
+    }
+
+    beforeEach(() => {
+      mocks.realmProvidesServer.mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      mocks.realmProvidesServer.mockReset();
+    });
+
+    describe('and the scene sdk-commands declares --no-server', () => {
+      beforeEach(() => {
+        setStartCommand("'--no-client': Boolean,\n'--no-server': Boolean,");
+      });
+
+      it('should pass --no-server so the preview reuses the realm Multiplayer Server', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).toContain('--no-server');
+      });
+
+      it('should keep the explorer passthrough last', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, { ...BASE_OPTS, loadRawGltfs: true });
+        fake.printDeeplink('realm=http://127.0.0.1:8000&lsd-raw-gltf=true');
+        await promise;
+
+        expect(spawnedArgs()).toContain('--no-server');
+        expect(spawnedArgs().slice(-2)).toEqual(['--', '--lsd-raw-gltf']);
+      });
+
+      it('should pass it to a Bevy web preview too', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        await startBevyWeb(path, fake);
+
+        expect(spawnedArgs()).toEqual(['start', '--bevy-web', '--no-server']);
+      });
+
+      it('should pass it to a mobile-QR preview too', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, { ...BASE_OPTS, mobile: true });
+        fake.printDeeplink('open?preview=http://192.168.0.10:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).toEqual(['start', '--mobile', '--no-server']);
+      });
+    });
+
+    describe('and the scene sdk-commands only mentions --no-server outside its arg spec', () => {
+      it('should not pass the flag (arg would reject it)', async () => {
+        setStartCommand("'--no-client': Boolean,\n// TODO: add --no-server\n");
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).not.toContain('--no-server');
+      });
+    });
+
+    describe('and the scene sdk-commands does not declare --no-server', () => {
+      it('should not pass the flag (arg rejects unknown flags)', async () => {
+        setStartCommand("'--no-client': Boolean,");
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).not.toContain('--no-server');
+      });
+    });
+  });
+
+  describe('when no Bevy editor realm is running for the scene', () => {
+    it('should let the preview spawn its own Multiplayer Server', async () => {
+      mocks.readFile.mockResolvedValue("'--no-server': Boolean,");
+      const fake = createFakeChild();
+      mocks.run.mockReturnValue(fake.child);
+
+      const promise = start(path, BASE_OPTS);
+      fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+      await promise;
+
+      expect(spawnedArgs()).not.toContain('--no-server');
+    });
+  });
+
+  describe('when a preview that reuses the realm Multiplayer Server is running', () => {
+    let fake: ReturnType<typeof createFakeChild>;
+
+    beforeEach(async () => {
+      mocks.readFile.mockImplementation(async (file: string) => {
+        if (file.includes('commands/start/index.js')) return "'--no-server': Boolean,";
+        throw new Error('ENOENT');
+      });
+      mocks.realmProvidesServer.mockReturnValue(true);
+      fake = createFakeChild();
+      mocks.run.mockImplementation((_pkg, _bin, { args }) => {
+        (fake.child as { args: string[] }).args = args;
+        return fake.child;
+      });
+      const promise = start(path, BASE_OPTS);
+      fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+      await promise;
+      mocks.run.mockReset();
+    });
+
+    afterEach(() => {
+      mocks.realmProvidesServer.mockReset();
+    });
+
+    describe('and the realm still provides it, or is restarting', () => {
+      it('should re-focus the client instead of respawning', async () => {
+        await start(path, BASE_OPTS);
+
+        expect(mocks.run).not.toHaveBeenCalled();
+        expect(mocks.dclDeepLink).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('and the realm no longer provides it', () => {
+      let restarted: ReturnType<typeof createFakeChild>;
+
+      beforeEach(async () => {
+        mocks.realmProvidesServer.mockReturnValue(false);
+        restarted = createFakeChild();
+        mocks.run.mockReturnValue(restarted.child);
+        const promise = start(path, BASE_OPTS);
+        restarted.printDeeplink('realm=http://127.0.0.1:8001&position=0,0');
+        await promise;
+      });
+
+      it('should restart the preview with its own Multiplayer Server', () => {
+        expect(fake.child.kill).toHaveBeenCalled();
+        expect(mocks.run).toHaveBeenCalledTimes(1);
+        expect(spawnedArgs()).not.toContain('--no-server');
+      });
+
+      it('should record the preview as the server owner for the editor realm', () => {
+        expect(previewRunsServer(path)).toBe(true);
+      });
+
+      describe('and the preview is stopped', () => {
+        beforeEach(async () => {
+          await stopPreview(path);
+        });
+
+        it('should no longer count it as the server owner', () => {
+          expect(previewRunsServer(path)).toBe(false);
+        });
+      });
+    });
+
+    describe('and a mobile-QR start arrives after the realm lost it', () => {
+      it('should still reuse the running preview', async () => {
+        mocks.realmProvidesServer.mockReturnValue(false);
+
+        await start(path, { ...BASE_OPTS, mobile: true });
+
+        expect(mocks.run).not.toHaveBeenCalled();
       });
     });
   });
@@ -1023,6 +1221,12 @@ describe('deploy', () => {
     it('should read the deploy command once', () => {
       expect(mocks.readFile).toHaveBeenCalledTimes(1);
     });
+
+    it('should keep the editor files out of the scene before deploying it', () => {
+      expect(mocks.ensureEditorFilesNotDeployed).toHaveBeenCalledWith(
+        args[args.indexOf('--dir') + 1],
+      );
+    });
   });
 
   describe('when the CLI serves the deploy resource but takes no deploy token', () => {
@@ -1084,6 +1288,44 @@ describe('deploy', () => {
 
     it('should not pass a token to the CLI', () => {
       expect(args).not.toContain('--deploy-token');
+    });
+  });
+});
+
+describe('init', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.ensureEditorFilesNotDeployed.mockReset();
+    mocks.addDependencyOverrides.mockReset();
+  });
+
+  describe('when the template is downloaded', () => {
+    beforeEach(async () => {
+      await init('/scenes/new-scene', 'https://github.com/decentraland/sdk-empty-scene-template');
+    });
+
+    it('should keep the template’s editor files out of the scene’s deploys', () => {
+      expect(mocks.ensureEditorFilesNotDeployed).toHaveBeenCalledWith('/scenes/new-scene');
+    });
+
+    it('should add the dependency overrides before anything installs', () => {
+      expect(mocks.addDependencyOverrides).toHaveBeenCalledWith('/scenes/new-scene');
+    });
+  });
+
+  describe('when the .dclignore and package.json cannot be written', () => {
+    beforeEach(() => {
+      const denied = () => {
+        throw new Error('EACCES');
+      };
+      mocks.ensureEditorFilesNotDeployed.mockImplementation(denied);
+      mocks.addDependencyOverrides.mockImplementation(denied);
+    });
+
+    it('should still create the scene', async () => {
+      await expect(
+        init('/scenes/new-scene', 'https://github.com/decentraland/sdk-empty-scene-template'),
+      ).resolves.toBeUndefined();
     });
   });
 });

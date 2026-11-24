@@ -65,6 +65,8 @@ pub struct ReactHudCefPlugin {
     /// --guest: injected into the page URL as ?guest=1, the page's own auto guest-login boot flag
     /// (parity with ?guest=1 on web).
     pub guest: bool,
+    /// --debug-panel: shows the corner launcher through the HUD's debugPanel query switch.
+    pub debug_panel: bool,
     /// --autopilot: injected as ?autopilot, which takes the page through its sign-in and
     /// destination without a person (always as the local guest; a stored login is never used).
     pub autopilot: bool,
@@ -76,6 +78,7 @@ struct ReactHudOptions {
     server: Option<String>,
     position: Option<String>,
     guest: bool,
+    debug_panel: bool,
     autopilot: bool,
 }
 
@@ -85,6 +88,7 @@ impl Plugin for ReactHudCefPlugin {
             server: self.server.clone(),
             position: self.position.clone(),
             guest: self.guest,
+            debug_panel: self.debug_panel,
             autopilot: self.autopilot,
         });
         // Needed to read engine fps for the perf overlay; may already be added by --log-fps/preview.
@@ -229,6 +233,10 @@ fn spawn_hud(
     if options.guest {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("guest=1");
+    }
+    if options.debug_panel {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("debugPanel=1");
     }
     if options.autopilot {
         url.push_str(if url.contains('?') { "&" } else { "?" });
@@ -381,32 +389,6 @@ fn hud_alpha_at(image: &Image, window_uv: Vec2) -> u8 {
 
 // Click cadence for CEF's click_count (2 = word select, 3 = paragraph select): with no OS window
 // under the webview, multi-click detection is the host's job.
-#[cfg(test)]
-mod hit_tests {
-    use super::*;
-
-    #[test]
-    fn samples_the_painted_pixel_at_fractional_dpi() {
-        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
-        // bottom-right device pixel covers the world.
-        let mut pixels = vec![0; 3 * 3 * 4];
-        pixels[35] = 255;
-        let image = Image::new(
-            Extent3d {
-                width: 3,
-                height: 3,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            pixels,
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
-    }
-}
-
 #[derive(Default)]
 struct MultiClick {
     button: Option<MouseButton>,
@@ -422,7 +404,6 @@ struct MultiClick {
 // is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
 // (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
 // under the OS cursor, so button presses and releases are not forwarded (motion still is).
-#[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
     images: Res<Assets<Image>>,
@@ -650,27 +631,10 @@ fn on_page_envelope(
     {
         let id = env.get("id").and_then(|i| i.as_u64()).unwrap_or_default();
         let line = env.get("line").and_then(|l| l.as_str()).unwrap_or("");
-        let mut parts = line.split_whitespace();
-        let Some(cmd) = parts.next() else {
-            console_reply(
-                &mut commands,
-                state.hud,
-                id,
-                Err("empty command".to_owned()),
-            );
-            return;
-        };
-        let cmd = if cmd.starts_with('/') {
-            cmd.to_owned()
-        } else {
-            format!("/{cmd}")
-        };
         let (sx, rx) = RpcResultSender::channel();
-        let _ = bridge.sender.send(SystemApi::ConsoleCommand(
-            cmd,
-            parts.map(String::from).collect(),
-            sx,
-        ));
+        let _ = bridge
+            .sender
+            .send(SystemApi::ConsoleLine(line.to_owned(), sx));
         state.pending_console.push((id, rx));
         return;
     }
@@ -678,15 +642,18 @@ fn on_page_envelope(
     // through one at a time.
     if env.get("to").and_then(|t| t.as_str()) == Some("engine") {
         match env.get("kind").and_then(|k| k.as_str()) {
-            Some("prefsLoad") => {
-                commands.trigger_targets(
-                    HostEmitEvent {
-                        id: "prefs".to_string(),
-                        payload: serde_json::to_string(&state.prefs).unwrap(),
-                    },
-                    state.hud,
-                );
-            }
+            Some("prefsLoad") => match serde_json::to_string(&state.prefs) {
+                Ok(payload) => {
+                    commands.trigger_targets(
+                        HostEmitEvent {
+                            id: "prefs".to_string(),
+                            payload,
+                        },
+                        state.hud,
+                    );
+                }
+                Err(e) => error!("[react-hud-cef] failed to serialize prefs: {e}"),
+            },
             Some("prefSet") => {
                 if let (Some(key), Some(value)) = (
                     env.get("key").and_then(|k| k.as_str()),
@@ -815,10 +782,17 @@ fn read_prefs() -> BTreeMap<String, String> {
 
 fn write_prefs(prefs: &BTreeMap<String, String>) {
     let Some(file) = prefs_file() else { return };
+    let json = match serde_json::to_string(prefs) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("[react-hud-cef] failed to serialize prefs: {e}");
+            return;
+        }
+    };
     if let Some(folder) = file.parent() {
         let _ = std::fs::create_dir_all(folder);
     }
-    if let Err(e) = std::fs::write(&file, serde_json::to_string(prefs).unwrap()) {
+    if let Err(e) = std::fs::write(&file, json) {
         warn!("[react-hud-cef] failed to write {file:?}: {e}");
     }
 }
@@ -1011,5 +985,31 @@ fn push_text_focus(
             },
             state.hud,
         );
+    }
+}
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn samples_the_painted_pixel_at_fractional_dpi() {
+        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
+        // bottom-right device pixel covers the world.
+        let mut pixels = vec![0; 3 * 3 * 4];
+        pixels[35] = 255;
+        let image = Image::new(
+            Extent3d {
+                width: 3,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
     }
 }

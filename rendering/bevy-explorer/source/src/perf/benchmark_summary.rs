@@ -224,6 +224,8 @@ mod tests {
 // This test signs its fixture account with the native-only local guest wallet.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod log_order_tests {
+    #[cfg(feature = "performance-profiler")]
+    use common::sync::MutexExt;
     use std::{cell::RefCell, sync::Once, time::Duration};
 
     use bevy::{
@@ -300,9 +302,7 @@ mod log_order_tests {
     fn the_summary_lines_precede_the_exit_marker() {
         // this app records into the process-wide profiler state
         #[cfg(feature = "performance-profiler")]
-        let _shared = crate::perf::profiled_scopes::SHARED_PROFILER_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let _shared = crate::perf::profiled_scopes::SHARED_PROFILER_TEST_LOCK.lock_ignore_poison();
         let mut app = App::new();
         app.add_plugins((
             TimePlugin,
@@ -310,6 +310,7 @@ mod log_order_tests {
             DiagnosticsPlugin,
             crate::world_state::ArrivalsPlugin,
             RunControlPlugin,
+            crate::client_window_focus::ClientWindowFocusPlugin,
             PerformanceMeasurementPlugin,
         ))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)))
@@ -325,7 +326,7 @@ mod log_order_tests {
         }
         let player = app
             .world_mut()
-            .spawn((PrimaryUser::default(), OutOfWorld))
+            .spawn((PrimaryUser::default(), OutOfWorld::default()))
             .id();
         app.update();
         let root = wallet::local_guest::new_root_key();

@@ -49,7 +49,7 @@ vi.mock('electron', () => ({
 // link to the Electron executable, and the one holding the npm scripts that resolve `node`
 // through PATH. They are only injected in a packaged app, so they are stated here rather than
 // produced by running the real setup.
-const SHIM_DIR = '/app/../app.asar.unpacked';
+const SHIM_DIR = '/user-data/bin';
 const BUNDLED_NPM_DIR = '/app/node_modules/npm/bin';
 const BUNDLED_NODE_DIR = '/resources/node-bin/bin';
 

@@ -20,13 +20,22 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 (the livekit bridge in `comms`, the page-event dispatch), behind a `cfg` there, not in
 `platform`. Either way the platform-specific part is a leaf; the logic that uses it is shared.
 
+- **Window focus goes through `ClientWindowFocus`.** Read the client's focus from the
+  `ClientWindowFocus` resource (the OS's focus report natively, `document.hasFocus()` on the
+  web) and ask for focus with `commands.trigger(RequestClientWindowFocus)`. Nothing else reads
+  or writes `Window::focused`: it also holds focus requests the OS may refuse, and on the web it
+  is the canvas's focus, not the page's. `ClientWindowFocusPlugin` is the only code that touches
+  it.
+
 ## Web
 
 - **Chrome only.** Design against Chrome's feature set (multi-memory, JSPI, `Atomics.waitAsync`)
   and do not add cross-browser hedges.
 - **No threads as you know them.** `TaskPool::spawn` runs on the JS event loop: no `Send`,
   no blocking, no `std::thread`, no busy-waiting. Use `web_time` for clocks. The engine worker
-  runs the app world; the render world lives in its own worker.
+  runs the app world; the render world lives in its own worker. The scene loop may sleep for a
+  bounded wait between passes (`SCENE_REPLY_POLL`) because it runs on the engine worker; other
+  systems and tasks may not block.
 - **The log level is compiled in.** `RUST_LOG` does nothing at runtime on wasm. A debug log you
   want to see needs a rebuild with the filter changed.
 - **Engine switches are page params, not launch options.** A web-only knob is a `?param=` the

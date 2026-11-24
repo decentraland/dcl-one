@@ -557,7 +557,23 @@ no snapshot in either tree:
 ### Data dependency
 
 - `content.snapshots` and the blob store, both filled by dcl-one's generator (`snapshot_gen.rs`).
-- Generation waits until sync reaches `Syncing`.
+- Generation waits until sync reaches `Syncing` (`snapshot_gen.rs` `ready`), which a node reaches
+  once a bootstrap pass over every peer ended; a peer that did not finish it is retried in the
+  background and does not hold generation. A window can be written without that peer's entities.
+- An entity that lands after its window was written gets a new `local_timestamp`
+  (`sync_deployer.rs`, the insert's `now()`):
+  - peers streaming this node's `/pointer-changes` receive it there;
+  - the first pass after it landed regenerates the window while the entity is active
+    (`snapshot_is_outdated`), up to `SNAPSHOT_GENERATION_INTERVAL_HOURS` later, and lists the
+    earlier hash in `replacedSnapshotHashes`; a peer that never processed the earlier file deploys
+    the new one;
+  - a peer running dcl-one's sync client that marked the earlier file processed and bootstraps
+    again once the new file is listed skips the new file
+    (`sync/snapshots.rs` `decide_snapshot_deployment_from_processed_set`) and starts its pointer
+    changes 20 minutes before the later of its own cursor and the newest listed `endTimestamp`
+    (`sync/orchestrator.rs` `bootstrap_from_snapshots`, `bootstrap_from_pointer_changes`). An entity
+    that landed before that is not delivered to it by this node; it has it only from another peer
+    it syncs from.
 
 ---
 
@@ -595,6 +611,15 @@ no snapshot in either tree:
 Rollout: `/content/status` answers 200 whatever the sync state, as upstream does at this revision, so a
 monitor that alerted on a non-200 status loses the failed-sync signal; read `synchronizationState`
 (`"Failed"`) instead. Nothing in the repository probes it; the gateway checks `/_gateway/healthz`.
+
+`Failed` is set when the sync orchestrator cannot start or its bootstrap task dies
+(`sync/orchestrator.rs` `run_sync_job`), with an error log. In that state `/about` answers 503 with
+`healthy: false` and `content.synchronizationStatus: "Failed"` (`about.rs` `content_is_healthy`;
+only `"Syncing"` is healthy), and every deploy answers the bootstrapping 503 (content-writes, 2a).
+With job leases on (`JOB_LEASES_ENABLED`, the default) the failed sync job releases its lease, is
+retried after a backoff of at most 10 minutes and starts again from `Bootstrapping`
+(`jobs/src/lib.rs` `spawn_leased`, `sync/worker.rs` `Leader::run`). With leases off the job runs
+once, so the node stays `Failed` until the process restarts.
 
 ### Data dependency
 
@@ -651,8 +676,8 @@ Upstream: `decentraland/catalyst:src/controllers/handlers/get-entity-thumbnail-h
 | `If-None-Match` is `*` or matches `"<hash>"` (weak tags allowed) | 304 | empty | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `:28-29`, `utils.ts:88-113` | `:114-116`, `formatters.rs:9-33` | MATCH |
 | The blob is not in storage | 404 | upstream `{"error":"Entity has no thumbnail."}` / `"Entity has no image."` | | `:33-35` | `entity_thumbnail.rs` `serve_content_blob`: the same messages | MATCH (CS-18) |
 | Unsatisfiable `Range` | 416 | empty | `Content-Range: bytes */<total>`, `Access-Control-Expose-Headers: Content-Range` | `:37-42`, `utils.ts:187-195` | `:182-192` | MATCH |
-| Satisfiable `Range` | 206 | the byte range (empty for HEAD) | the content headers plus `Content-Range: bytes s-e/total` and `Content-Length` | `:44-54`, `utils.ts:197-211` | `:193-209` | MATCH |
-| Plain GET or HEAD | 200 | the bytes (empty for HEAD) | `Content-Type` (sniffed; `application/octet-stream` fallback), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length`. Upstream also sends `Content-Encoding` when the blob is stored compressed. | `utils.ts:115-154` | `:210-231`, `formatters.rs:85-102` | MATCH. Sniffing: upstream uses `file-type` on the stream; dcl-one sniffs the first 32 bytes (`get_content::detect_content_type`). These agree for PNG, JPEG and WebP. dcl-one never sends `Content-Encoding`. |
+| Satisfiable `Range` | 206 | the byte range (empty for HEAD) | the content headers plus `Content-Range: bytes s-e/total` and `Content-Length` | `:44-54`, `utils.ts:197-211` | `serve_content_blob` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`): the content headers differ as on a plain GET (next row) |
+| Plain GET or HEAD | 200 | the bytes (empty for HEAD) | `Content-Type` (sniffed; `application/octet-stream` fallback), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length`. Upstream also sends `Content-Encoding` when the blob is stored compressed. | `utils.ts:115-154` | `serve_content_blob`, `formatters.rs` `content_file_headers` | DIVERGENT (deliberate, `docs/adr/2026-11-21-stored-files-served-inert.md`). Sniffing: both run `file-type` 21.1.1's checks on the stream (`get_content::content_type`; see `content-reads.md` CR-7), except that a document type (`text/*`, `*/xml`, `*+xml` or HTML) is `application/octet-stream`, and the answer is kept per content key and window. dcl-one also sends `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, and never sends `Content-Encoding`. |
 | `?width=` on the thumbnail route, not 80/160/320/640/960 | — | upstream ignores it and serves 200 | | — | `entity_thumbnail.rs` `requested_width`: ignored, the stored file is served | MATCH (CS-18) |
 | `?width=` valid | — | upstream serves the original | | — | `:111-113,255-301`: a resized PNG, WebP or JPEG with `ETag: "thumbnail-v1-<w>-<hash>"` and `Cache-Control: public, max-age=300, stale-while-revalidate=86400` | dcl-one only |
 | Pointer or file not local, read-through on | — | upstream 404 | | — | dcl-one fills it from the sync sources first (`:47-52,150-163`) | dcl-one only (a superset) |
@@ -1025,9 +1050,12 @@ catalyst list and its `/about` is healthy.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
       applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
-      (which restarts from the persisted cursors), so a registry catalyst that never answers stops
-      holding the node in `Bootstrapping` once the registry drops it. While it is listed, it holds the
-      node there, as any `SYNC_SOURCE` peer does.
+      (which restarts from the persisted cursors). As upstream
+      (`decentraland/catalyst:src/logic/sync-orchestrator/component.ts:45-60`,
+      `decentraland/snapshots-fetcher@53e9c07a:src/synchronizer.ts:708-740`), a peer that never answers does not
+      hold the node in `Bootstrapping`: the node leaves it once a bootstrap pass over every listed
+      peer ended, whatever each peer's outcome, and the peers that did not finish are retried in
+      the background. A node whose peers all failed that pass therefore becomes `Syncing` too.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

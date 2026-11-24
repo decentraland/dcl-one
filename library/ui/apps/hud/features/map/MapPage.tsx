@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
-import { homeOf, isPlacePanelHome } from '@explorer-core/features/map/home'
+import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { EventData } from '@explorer-core/engine/protocol'
@@ -12,11 +12,12 @@ import { parseParcel, playerMarkerPosition, worldToGrid, type Vec2 } from '@expl
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
-import { destinationParcel, navigation } from '@explorer-core/features/map/navigation'
+import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
 import { PhotoDetail } from '../gallery/PhotoDetail'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryState, MapState, MinimapState, ProfileState, TravelOutcome } from '../session/useEngineSession'
 import { CategoryStrip } from './CategoryStrip'
 import { DestinationBanner } from './DestinationBanner'
@@ -58,6 +59,7 @@ export function MapPage({
 }): React.JSX.Element | null {
   const open = map.open || compact != null
   const camera = useMapCamera()
+  const fetchSatelliteTile = useOptionalSession()?.fetchSatelliteTile
   const layers = useSyncExternalStore(mapLayers.subscribe, mapLayers.getSnapshot)
   const nav = useMemo(() => new Navmap(), [])
   const snap = useSyncExternalStore(nav.subscribe, nav.getSnapshot)
@@ -94,14 +96,15 @@ export function MapPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // the route is followed whether or not the map is open
+  // the route is followed whether or not the map is open, and only in Genesis City: a World's
+  // parcels share the numbers but not the place
   useEffect(() => {
-    if (destination == null) return
+    if (destination == null || !genesis) return
     const timer = setInterval(() => {
       if (navigation.playerMoved(playerMarkerPosition(pose.current.x, pose.current.z))) showToast('You have arrived to your destination')
     }, ARRIVAL_CHECK_MS)
     return () => clearInterval(timer)
-  }, [destination, pose])
+  }, [destination, pose, genesis])
 
   // A refused pick leaves the page as it is; the startup lobby's pick closes the page itself, so a
   // toggle after it would reopen the map.
@@ -159,7 +162,7 @@ export function MapPage({
       go(() => map.changeRealm(realm), () => nav.clearInput())
     } else {
       if (target == null) return
-      const routeEnds = destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y
+      const routeEnds = isRouteTo(destination, place)
       go(
         () => map.teleportToPlace(target.x, target.y),
         () => {
@@ -174,22 +177,11 @@ export function MapPage({
     if (view == null) return
     go(() => map.teleportToPlace(view.event.x, view.event.y), () => nav.clearInput())
   }
-  // Home can be set, not cleared: the engine keeps one home, the default until one is set.
-  const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
-    if (isWorldPlace(place)) {
-      if (place.world_name != null) map.setHome(place.world_name, { x: 0, y: 0 })
-      return
-    }
-    const parcel = isRoad(place.title) && origin != null ? origin : parseParcel(place.base_position)
-    if (parcel != null) map.setHome(DEFAULT_REALM, parcel)
-  }
-
   const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
-
-  const navigatingTo = (place: DiscoverPlace): boolean => {
-    if (destination == null || isWorldPlace(place)) return false
-    const end = destinationParcel(place)
-    return destination.parcel.x === end.x && destination.parcel.y === end.y
+  const toggleHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+    if (placeIsHome(place, origin)) return map.clearHome()
+    const target = placeHomeTarget(place, origin)
+    if (target != null) map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
   }
 
   const p = profile.data
@@ -206,6 +198,7 @@ export function MapPage({
           liveEvents={data.liveEvents}
           pois={data.pois}
           people={data.people}
+          pins={data.pins}
           searchMarkers={snap.searchMarkers}
           categoryMarkers={snap.categoryMarkers}
           markerCategory={snap.markerCategory}
@@ -218,11 +211,13 @@ export function MapPage({
           onEvent={onEvent}
           onPlace={onPlace}
           onHome={showHome}
+          fetchSatelliteTile={fetchSatelliteTile}
+          satelliteDetail={open && genesis}
         >
           <RouteLayer destination={destination} pose={pose} active={open} />
         </MapCanvas>
 
-        <CategoryStrip selected={snap.chip} onSelect={(key) => nav.selectCategory(key)} />
+        <CategoryStrip selected={snap.chip} wrap={compact != null} onSelect={(key) => nav.selectCategory(key)} />
         {warning && (
           <WorldWarning
             onClose={() => {
@@ -274,9 +269,9 @@ export function MapPage({
               view={snap.place}
               referrer={address}
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
-              navigating={navigatingTo(snap.place.place)}
+              navigating={isRouteTo(destination, snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
-              onHome={() => snap.place != null && setHome(snap.place.place, snap.place.origin)}
+              onHome={map.canPinHome ? () => snap.place != null && toggleHome(snap.place.place, snap.place.origin) : undefined}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
               onStopNavigation={navigation.stop}
               onJumpIn={jumpInPlace}

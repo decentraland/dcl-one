@@ -116,13 +116,13 @@ def bindable(endpoints):
             sock.close()
 
 
-def ports_free(base, webtransport=None):
+def ports_free(base, public_udp=()):
     # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
-    # (the Sites port, or the public origin's port on every interface) and ENet ports, LiveKit's media.
+    # (the Sites port) and ENet ports, LiveKit's media; behind a public origin Pulse's two, on every interface.
     return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
                          base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
                      *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
-                     *([(socket.SOCK_DGRAM, webtransport, '0.0.0.0')] if webtransport else [])])
+                     *((socket.SOCK_DGRAM, port, '0.0.0.0') for port in public_udp)])
 
 
 def livekit_credentials():
@@ -247,6 +247,20 @@ def scene_proxy_hosts(config):
         raise SystemExit('settings.json: scene_proxy_hosts is a list of host names')
     return tuple(hosts)
 
+
+# Cast on this stack, from settings.json. `"cast_bot_bin"`: the built `cast-bot` (`nix build .#cast-bot`) the API
+# starts per presentation; unset, or a path that is not executable (a warning, never a stop: every command
+# reads this), presentations answer 503. `"personal_worlds": N`: the realm hosts N personal test worlds
+# (`<address>.dcl.eth`); unset, none.
+def cast_settings(config):
+    keys = {'cast_bot_bin': 'CAST_BOT_BIN', 'personal_worlds': 'WORLDS_PERSONAL_WORLDS_MAX'}
+    env = {env: str(config[key]) for key, env in keys.items() if config.get(key)}
+    if 'CAST_BOT_BIN' in env and not os.access(env['CAST_BOT_BIN'], os.X_OK):
+        print(f"settings.json: cast_bot_bin {env.pop('CAST_BOT_BIN')} is not executable; Cast presentations answer 503",
+              file=sys.stderr)
+    return env
+
+
 # The engine's headless avatar renderer, as `make bevy-avatar-render` leaves it (apps/bevy-explorer/build-avatar-render.py
 # writes the wrapper that carries its library path). Profile face and body images render here once it is built;
 # FOUNDATION_DEV_AVATAR_RENDER_BIN names one built elsewhere.
@@ -369,10 +383,12 @@ def pulse_ports(config):
     # WebTransport (UDP) on the Sites port, the host:port the /play HUD hands the engine as its Pulse
     # server (apps/ui3/src/play/lib/baseDomain.ts); ENet (UDP) and /metrics (TCP) share base+7.
     # Behind a public origin the page's port is the origin's (the TLS front holds it over TCP only, so
-    # UDP is free there), or the engine's default when the origin names none.
+    # UDP is free there), or the engine's default when the origin names none. ENet is then where native clients
+    # dial pulse-server.<base domain>: UDP 7777 (`pulse_enet_port`, for a second stack on the machine).
     origin = public(config)
     webtransport = config['port'] + 2 if origin is None else origin[3] or WEB_PULSE_PORT
-    return webtransport, config['port'] + 7, config['port'] + 7
+    enet = config['port'] + 7 if origin is None else config.get('pulse_enet_port', 7777)
+    return webtransport, enet, config['port'] + 7
 
 
 def nats_ports(config):
@@ -436,10 +452,10 @@ def pulse_about_env(config):
 def pulse_env(config, certificate, key):
     webtransport, enet, metrics = pulse_ports(config)
     env = {name: os.environ[name] for name in ('PATH', 'HOME', 'TMPDIR') if name in os.environ}
-    # WebTransport is UDP, which the TLS front cannot carry: behind a public origin the browser dials this
+    # Both transports are UDP, which the TLS front cannot carry: behind a public origin clients dial this
     # machine directly, on every interface.
     bind = '127.0.0.1' if public(config) is None else '0.0.0.0'
-    return {**env, 'PULSE_BIND': f'127.0.0.1:{enet}', 'PULSE_METRICS_BIND': f'127.0.0.1:{metrics}',
+    return {**env, 'PULSE_BIND': f'{bind}:{enet}', 'PULSE_METRICS_BIND': f'127.0.0.1:{metrics}',
             'PULSE_WT_ENABLED': 'true', 'PULSE_WT_BIND': f'{bind}:{webtransport}',
             'PULSE_WT_CERT_PATH': str(certificate), 'PULSE_WT_KEY_PATH': str(key),
             'PULSE_REPLAY_STATE_PATH': str(STATE / 'pulse/replay.tsv'), 'NO_COLOR': '1',
@@ -461,7 +477,9 @@ def pulse_env(config, certificate, key):
 PUBLIC_SIGN_IN_IDS = ('THIRDWEB_CLIENT_ID', 'MAGIC_API_KEY', 'WALLETCONNECT_PROJECT_ID')
 
 
-def runtime_env(config):
+def runtime_env(config, refuse_exposed_relayer=True):
+    """The stack's environment. `refuse_exposed_relayer=False` is for callers that only read it and start nothing
+    that signs (sql, psql, `foundation-dev env`, PostgreSQL): they work on a stack refuse_an_exposed_relayer stops."""
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
@@ -499,7 +517,7 @@ def runtime_env(config):
         'CONTENT_HISTORY_PRUNE_ENABLED': 'false', 'WORLDS_CONTENT_MIRROR_ENABLED': 'false',
         'MARKETPLACE_MIRRORS_ENABLED': 'false', 'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'false', 'MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED': 'false',
-        'MARKETPLACE_SALES_INDEX_ENABLED': 'false',
+        'MARKETPLACE_SALES_INDEX_ENABLED': 'false', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'LAND_AUTHZ_INDEX_ENABLED': 'false', 'CREDITS_USAGE_INDEX_ENABLED': 'false',
         'SHOP_RENTALS_INDEX_ENABLED': 'false', 'PRICE_POLL_ENABLED': 'false',
         'COMMUNITIES_MIRROR_UPSTREAM': 'false', 'SCENE_HOST_ENABLED': 'false',
@@ -539,6 +557,13 @@ def runtime_env(config):
             # `/contents` rate limit and the deploy and referral quotas each client's own address again.
             'HTTP_TRUSTED_PROXY_CIDRS': '127.0.0.1/32,::1/128',
         })
+        # Cast client composition: clients fetch the slide pictures at the presenter's host label, which the
+        # front sends to the API's /cast-presenter-service. The API takes only an https URL of a named host.
+        if scheme == 'https' and not ip_literal(host):
+            env['CAST_PRESENTER_PUBLIC_URL'] = f'https://cast-presenter-service.{netloc}'
+    # The stream links of /cast/generate-stream-link name this stack's Cast pages, not decentraland.org's.
+    env['CAST2_URL'] = env['PUBLIC_URL'] + '/cast'
+    env.update(cast_settings(config))
     # Explicit development settings, without a production posture/restore gate.
     # Authentication and mirrored-row ownership checks still apply.
     if config['profile'] == 'offline':
@@ -565,6 +590,9 @@ def runtime_env(config):
             'EXPLORER_FEATURE_FLAGS_SOURCE_URL': 'https://feature-flags.decentraland.org/explorer.json',
             'EXPLORER_REGISTRY_SOURCE_URL': 'https://asset-bundle-registry.decentraland.org',
             'ABGEN_UPSTREAM_AB_CDN': 'https://ab-cdn.decentraland.org',
+            # Temporary: imposter tiles read through from the community CDN until the node bakes
+            # its own (decentraland/dcl-one#1711).
+            'BVIMPOSTERS_UPSTREAM_URL': 'https://bevy-imposters.dclregenesislabs.xyz',
             # Mirrored place and event images come from the upstream peers' content URLs.
             'MEDIA_CONVERT_REMOTE_SOURCES': 'true',
             # Avatar faces of profiles this node holds no snapshot files of come from the upstream
@@ -586,7 +614,13 @@ def runtime_env(config):
             'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
-            'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
+            # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
+            'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
+            # The mirror posture's pause between index passes: a pass makes its eth_getLogs calls whether or not a
+            # block held an event.
+            'MARKETPLACE_INDEX_INTERVAL_SECS': '30',
+            # The tag names development stacks in rpc.decentraland.org's request logs.
+            'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet?project=dcl-one-dev',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
             # route redirects to; the builder pulls from it when the item bucket misses.
@@ -596,14 +630,14 @@ def runtime_env(config):
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
                                       'kraken=https://api.kraken.com',
             'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
-            'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon',
+            'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon?project=dcl-one-dev',
         })
     if config['profile'] == 'testnet':
-        env.update(testnet_env())
+        env.update(testnet_env(config, refuse_exposed_relayer))
     return env
 
 
-def testnet_env():
+def testnet_env(config, refuse_exposed_relayer=True):
     """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
 
     The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
@@ -625,18 +659,18 @@ def testnet_env():
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
-        # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
-        # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
-        # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
+        # Gasless approvals, cancels and Credits purchases: the local relay admits Amoy's Decentraland contracts
+        # (the contract-addresses list under `amoy`) and pays testnet gas through the .zone transactions API, or
+        # through a relayer key of the stack's own; relayer_env picks which, and the list with it.
+        # COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
         'COLLECTIONS_CHAIN_ID': '80002',
         'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
-        # The published list: the bundled copy predates MarketplaceV5, the off-chain V3 marketplace whose
-        # cancelSignature the Shop relays.
-        'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
         # Cancels and executions on chain close local trades: the trade-events index on the testnets,
         # through TRADE_RPC_URLS' 80002 and 11155111 entries (it checks each endpoint's eth_chainId).
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
+        # A trade signed into this stack closes within seconds of its cancel or execution on the testnet.
+        'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
         # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
@@ -644,6 +678,8 @@ def testnet_env():
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
+        # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
+        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.
@@ -660,10 +696,10 @@ def testnet_env():
         # it is refused at authorization). The usage index reads its CreditUsed events over RPC_ENDPOINT_POLYGON
         # on COLLECTIONS_CHAIN_ID; POST /credits/authorize signs only while that index is ready. Mock card
         # top-ups grant test credits with no charge.
-        # The relay doesn't admit this manager yet: it takes the contracts CONTRACT_ADDRESSES_URL lists (Amoy's
-        # entry is the shared one) and verified collections. So a self-custody wallet buys with Credits through
-        # its own transaction (the checkout falls back to it, paying its own gas); an in-app (managed) wallet,
-        # which can only relay, can't buy with Credits on this profile until the relay admits the manager.
+        # Without a relayer key the relay refuses this manager itself (the published list doesn't carry it, and the
+        # .zone transactions API wouldn't relay it either), marked as not sent: a self-custody wallet then buys
+        # with Credits through its own transaction, paying its own gas, and an in-app (managed) wallet, which can
+        # only relay, can't. With one (relayer_env) the relay admits it and the stack signs and pays the purchase.
         'CREDITS_MANAGER_CONTRACT': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
         'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
@@ -675,8 +711,88 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
+        **relayer_env(config, refuse_exposed_relayer),
         **name_simulation_env(),
     }
+
+
+# The highest fee per gas the stack's own relayer signs on Amoy: 200 gwei (Amoy's gas price read 30 gwei on
+# 2026-11-18). With the relay's 1.5M gas cap (MAX_GAS_LIMIT) one transaction costs it at most 0.3 test POL.
+TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI = '200000000000'
+
+
+# The free calls (approvals, cancels: no sale, no credits spend) the stack's own relayer pays for per day, across
+# every address (MAX_RELAYED_TRANSACTIONS_PER_DAY; the server's default is 20,000). Sales and credits purchases never
+# count against it: the per-address quota (MAX_TRANSACTIONS_PER_DAY, 10) is their only daily bound.
+TESTNET_RELAYER_FREE_CALLS_PER_DAY = '100'
+
+
+# The dApps' published contract map, whose `amoy` entry never carries dcl-one's own CreditsManager.
+PUBLISHED_CONTRACT_ADDRESSES_URL = 'https://contracts.decentraland.org/addresses.json'
+
+
+def relayer_env(config, refuse_exposed_relayer=True):
+    """Who pays the testnet relay's gas, and the contract list that goes with it (testnet only).
+
+    Without a relayer key the relay forwards to the .zone transactions API and admits the published list, which
+    lacks dcl-one's Amoy CreditsManager: the relay refuses that manager itself, marked as not sent, so a
+    self-custody wallet falls back to its own transaction instead of a forward .zone would reject unmarked.
+
+    With one (relayer.key in the gitignored stack state: a testnet-only key, funded with Amoy POL) the relay's
+    direct signer takes every meta-transaction it admits (purchases, approvals, cancels) instead of the forward,
+    capped at TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI, and admits the bundled `amoy` entry, which carries the manager
+    (CONTRACT_ADDRESSES_URL unset). The key signs on Amoy alone: NAMES_SIGNER_ENABLED=false keeps it off the NAMEs
+    chain, whose ETH_RPC_URL is Sepolia's here while NAMES_CHAIN_ID stays mainnet's.
+
+    The key is then the stack's direct signer elsewhere too, though little of it acts on Amoy, where the node knows
+    no Decentraland MANA or store contracts (DclContracts::for_chain is Polygon's alone): /v1/payments/config names
+    its address as `payTo` but answers disabled, with no MANA token; the broker buy refuses the chain before it
+    signs; the escrow release and reclaim also need the admin token and LANDILER_ESCROW_ADDRESS, which this profile
+    doesn't set. The broker reconciler starts, with no broker buys to reconcile.
+
+    Its spend is bounded per transaction by the fee cap, and per day by TESTNET_RELAYER_FREE_CALLS_PER_DAY for free
+    calls but only by the per-address quota for sales and credits purchases, and addresses cost nothing to make.
+    So the key belongs on a loopback stack: behind FOUNDATION_DEV_PUBLIC_ORIGIN the stack refuses to start with
+    it (refuse_an_exposed_relayer), unless the caller only reads the environment."""
+    key = relayer_key()
+    if key is None:
+        return {'CONTRACT_ADDRESSES_URL': PUBLISHED_CONTRACT_ADDRESSES_URL}
+    if refuse_exposed_relayer:
+        refuse_an_exposed_relayer(config, lambda: key)
+    if key.stat().st_mode & 0o077:
+        print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
+    return {
+        'META_TX_BROADCAST_ENABLED': 'true',
+        'RELAYER_PRIVATE_KEY_FILE': str(key),
+        'RELAYER_MAX_FEE_PER_GAS_WEI': TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI,
+        'MAX_RELAYED_TRANSACTIONS_PER_DAY': TESTNET_RELAYER_FREE_CALLS_PER_DAY,
+        'NAMES_SIGNER_ENABLED': 'false',
+    }
+
+
+def relayer_key():
+    """The testnet relay's own key file, or None. An empty file reads as no key on the server, so it is none here."""
+    key = STATE / 'relayer.key'
+    return key if key.is_file() and key.read_text().strip() else None
+
+
+def refuse_an_exposed_relayer(config, read_key=None):
+    """A testnet stack behind a public origin never starts with a relayer key.
+
+    The key would pay the gas of whatever its relay admits, and only free calls have a daily cap: anyone who reaches
+    the origin could spend its POL through sales and credits purchases from fresh addresses. `up` checks it before
+    starting anything (a PostgreSQL-only run signs nothing), `service install` before it touches the unit, the
+    supervisor again, and relayer_env wherever a process's environment is built (passing the key it already read).
+    The key file is read only for a testnet stack behind a public origin, so it never stops another profile."""
+    if config.get('profile') != 'testnet' or not config.get('public_origin'):
+        return
+    key = (read_key or relayer_key)()
+    if key is not None:
+        raise SystemExit(
+            f"{key} would pay the gas of every transaction this stack relays, and the stack is "
+            f"served at {config['public_origin']}, where anyone who reaches it could spend the key's POL. Either "
+            'return the stack to loopback (foundation-dev origin local) or remove the key, and the relay forwards '
+            'to the .zone transactions API.')
 
 
 def name_simulation_env():
@@ -775,6 +891,10 @@ def project(config, postgres_only=False):
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
+    # Pulse exits when it loses its generation lease (a PostgreSQL restart, a keepalive slower than its lease
+    # after sleep or under load); a new start takes a fresh generation. Restarts are unlimited (0) because the
+    # supervisor never resets the count; a Pulse that keeps failing still times out the wait, which names it.
+    pulse['availability'] = {'restart': 'on_failure', 'backoff_seconds': 2, 'max_restarts': 0}
     valkey = process('valkey')
     valkey['readiness_probe'] = {'exec': {'command': command('valkey-ready')},
                                  'period_seconds': 1, 'timeout_seconds': 15, 'failure_threshold': 60}
@@ -806,7 +926,7 @@ def project(config, postgres_only=False):
 
 
 def sql(config, query, database='catalyst'):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     env.update(PGHOST='127.0.0.1', PGPORT=str(config['port'] + 3), PGUSER='foundation',
                PGPASSWORD=config['password'], PGDATABASE=database)
     return run(['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-Atq'], input=query, text=True,
@@ -824,7 +944,7 @@ DISPOSABLE_MARKER = 'foundation-dev-disposable'
 
 
 def postgres(config):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     data = STATE / 'postgres'
     disposable = os.environ.get('FOUNDATION_DEV_DISPOSABLE_POSTGRES') == '1'
     if not (data / 'PG_VERSION').exists():
@@ -889,7 +1009,7 @@ TRADES_TABLES = ('shop.trades', 'shop.trade_assets', 'shop.trade_assets_erc20',
 
 
 def psql_env(config):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     env.update(PGHOST='127.0.0.1', PGPORT=str(config['port'] + 3), PGUSER='foundation',
                PGPASSWORD=config['password'], PGDATABASE='catalyst')
     return env
@@ -1032,9 +1152,11 @@ def task(name):
         if not valkey_ready(config):
             sys.exit(1)
     elif name == 'ingress':
-        # The ingress starts a handler per stream by running `ingress` again from PATH.
+        # The ingress starts a handler per stream by running `ingress` again from PATH. A hardware decoder
+        # changes caps once linked, and the handler fails adding the video track again: software ranks first.
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
-        os.execvpe('ingress', ['ingress'], {**env, 'INGRESS_CONFIG_BODY': ingress_yaml(config)})
+        os.execvpe('ingress', ['ingress'], {**env, 'INGRESS_CONFIG_BODY': ingress_yaml(config),
+                                            'GST_PLUGIN_FEATURE_RANK': 'avdec_h264:MAX'})
     elif name == 'nats':
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
         os.execvpe('nats-server', nats_argv(config), env)
@@ -1073,7 +1195,7 @@ def status():
           f"NATS: {nats_url(config)}   RTMP ingress: {rtmp_base_url(config)}")
     if origin := public(config):
         tls = tls_files(config)
-        print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}"
+        print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}, ENet {pulse_ports(config)[1]}"
               + (f'   TLS: {tls[0]}' if tls else ''))
     if (STATE / 'pulse/key.pem').exists() and not tls_files(config):
         # The generated certificate is self-signed: Chrome honours an SPKI exception for WebTransport only with
@@ -1095,6 +1217,9 @@ def stale_graph(config):
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
+    # Also here, for the installed service's supervisor, whose `up` already refused (see up).
+    if not postgres_only:
+        refuse_an_exposed_relayer(config)
     if supervisor_running():
         running = json.loads((STATE / 'process-compose.json').read_text())['processes']
         if not postgres_only and set(running) == {'postgres'}:
@@ -1103,9 +1228,8 @@ def prepare_supervisor(postgres_only=False):
             raise RuntimeError(f"The running stack predates {', '.join(sorted(missing))}. "
                                'Run foundation-dev down, then foundation-dev up.')
         return None
-    # Behind a public origin without a port Pulse's WebTransport sits outside the block; it must be free too.
-    webtransport = pulse_ports(config)[0]
-    if not ports_free(config['port'], webtransport if webtransport != config['port'] + 2 else None) \
+    # Behind a public origin Pulse's UDP ports sit outside the block; they must be free too.
+    if not ports_free(config['port'], pulse_ports(config)[:2] if public(config) else ()) \
             or not ingress_ports_free(config['ingress_port']):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
     temporary = STATE / 'tmp'
@@ -1172,7 +1296,8 @@ def service_stop():
 def service_install():
     # The service environment has no FOUNDATION_DEV_PORT or _PROFILE; apply them now.
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    settings(create=True)
+    # Before the unit is written and the running stack stopped: the service would only restart on the refusal.
+    refuse_an_exposed_relayer(settings(create=True))
     path = service_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     nix = shutil.which('nix')
@@ -1245,6 +1370,11 @@ def desktop():
 
 def up(postgres_only=False):
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Before either way of starting, so `up` fails with the reason: an installed service would otherwise
+    # restart its supervisor in a loop, and the API would fail only in its log. A first start has no settings
+    # yet; prepare_supervisor creates them and checks before it starts anything.
+    if not postgres_only and SETTINGS.exists():
+        refuse_an_exposed_relayer(settings())
     if service_file().exists():
         if postgres_only:
             raise RuntimeError('PostgreSQL-only runs require a checkout without an installed development service.')
@@ -1315,13 +1445,16 @@ def wait_ready(timeout, postgres_only=False):
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
     print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
     delays = backoff_delays(deadline)
+    restarting = []
     while True:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
         listing = json.loads(processes.stdout)
         for process in listing:
-            if process.get('exit_code', 0) != 0 and not process.get('is_running'):
+            # A process waiting for its restart has failed only once its restart budget runs out.
+            if process.get('exit_code', 0) != 0 and not process.get('is_running') \
+                    and process.get('status') != 'Restarting':
                 name = process['name']
                 raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
         if time.monotonic() - reported >= PROGRESS_SECONDS:
@@ -1337,6 +1470,9 @@ def wait_ready(timeout, postgres_only=False):
                     ensure_collation(config, 'template1')
                 print('PostgreSQL is ready for scratch test databases.')
                 return 0
+            restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
+            if restarting:
+                raise RuntimeError('A process is restarting')
             for url in urls:
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:
@@ -1348,6 +1484,9 @@ def wait_ready(timeout, postgres_only=False):
             if delay is None:
                 break
             time.sleep(min(delay, max(0, deadline - time.monotonic())))
+    if restarting:
+        names = ', '.join(restarting)
+        raise RuntimeError(f'Startup timed out while {names} kept restarting. Inspect foundation-dev logs {restarting[0]}.')
     raise RuntimeError('Startup timed out. Check foundation-dev status and foundation-dev logs api/sites.')
 
 
@@ -1526,7 +1665,7 @@ def main():
                            ('FOUNDATION_DEV_DATABASE_URL', database_url(config)),
                            ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres')),
                            ('FOUNDATION_DEV_STACK_PROFILE', config['profile']),
-                           ('FOUNDATION_DEV_PUBLIC_URL', runtime_env(config)['PUBLIC_URL'])):
+                           ('FOUNDATION_DEV_PUBLIC_URL', runtime_env(config, refuse_exposed_relayer=False)['PUBLIC_URL'])):
             print(f'{key}={shlex.quote(value)}')
     elif args.command == 'psql':
         os.execvpe('psql', ['psql', '-X'], psql_env(settings()))

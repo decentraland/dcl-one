@@ -8,21 +8,12 @@ pub struct FpsTargetSetting(usize);
 
 impl EnumAppSetting for FpsTargetSetting {
     fn variants() -> Vec<Self> {
-        vec![
-            Self(10),
-            Self(15),
-            Self(20),
-            Self(30),
-            Self(60),
-            Self(120),
-            Self(144),
-            Self(999),
-        ]
+        vec![Self(30), Self(60), Self(120), Self(144), Self(999)]
     }
 
     fn name(&self) -> String {
         if self.0 == 999 {
-            "Uncapped".to_owned()
+            "Max".to_owned()
         } else {
             format!("{} fps", self.0)
         }
@@ -36,7 +27,7 @@ impl AppSetting for FpsTargetSetting {
     }
 
     fn description(&self) -> String {
-        "The target frame rate. Lower values may be uncomfortable or jerky, while higher values will result in a smoother experience but increased CPU and GPU load.\n\n".to_owned()
+        "The target frame rate. Lower values may be uncomfortable or jerky, while higher values will result in a smoother experience but increased CPU and GPU load. With VSync on, the frame rate is also capped at the monitor's refresh rate.".to_owned()
     }
 
     fn save(&self, config: &mut AppConfig) {
