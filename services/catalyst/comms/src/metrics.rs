@@ -140,12 +140,15 @@ pub fn install_prometheus_exporter(bind: SocketAddr) -> anyhow::Result<Prometheu
 
 /// Serve's exporter is operator-local; exposing it requires an explicit proxy.
 pub fn serve_metrics_bind(raw: &str) -> anyhow::Result<SocketAddr> {
-    let bind: SocketAddr = raw
-        .parse()
-        .map_err(|e| anyhow::anyhow!("SERVE_METRICS_BIND `{raw}`: {e}"))?;
+    operator_metrics_bind("SERVE_METRICS_BIND", raw)
+}
+
+/// Parse a process's private scrape socket, naming the setting on startup errors.
+pub fn operator_metrics_bind(setting: &str, raw: &str) -> anyhow::Result<SocketAddr> {
+    let bind: SocketAddr = raw.parse().map_err(|e| anyhow::anyhow!("{setting}: {e}"))?;
     anyhow::ensure!(
         bind.ip().is_loopback(),
-        "SERVE_METRICS_BIND must use a loopback address"
+        "{setting} must use a loopback address"
     );
     Ok(bind)
 }

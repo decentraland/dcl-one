@@ -1,6 +1,8 @@
 //! `/v1/users/{address}/{wearables,emotes,names}` and their `grouped`,
-//! `urn-token` and `names-only` forms over the stage-4 graph readers
-//! (`graph::owned_copies`, `graph::owned_names`; 30 s) with the economy
+//! `urn-token` and `names-only` forms over the `nft` index
+//! (`owned_items::owned_copies`, the unavailable envelope until it is
+//! published and recent) and the names subgraph reader
+//! (`graph::owned_names`; 30 s each) with the economy
 //! usage-grant overlay: an active grant whose `unlock_at` lies ahead is one
 //! more element, `status: "leased"` with its `unlockAt`, never mistaken for
 //! an owned copy of the same URN. Pages are 1-based as the old
@@ -16,7 +18,8 @@ use chrono::Utc;
 use serde::Serialize;
 use sqlx::Row;
 
-use super::graph::{self, OwnedCopy};
+use super::graph;
+use super::owned_items::{self, OwnedCopy};
 use super::readers;
 use super::wire::{Params, fix_urn};
 use super::{MarketplaceState, SharedState};
@@ -320,11 +323,12 @@ async fn owned_or_unavailable(
     owner: &str,
     category: &str,
 ) -> Result<Vec<OwnedCopy>, Response> {
-    readers::require_both_collections(state)?;
-    graph::owned_copies(&state.index, owner, category)
+    let gate =
+        owned_items::require_inventory(state, category, super::internal_server_error).await?;
+    owned_items::owned_copies(state, gate, owner, category)
         .await
         .map(|c| (*c).clone())
-        .map_err(|e| readers::upstream_failed("/v1/users", &e))
+        .map_err(|e| e.into_response(|m| readers::upstream_failed("/v1/users", m)))
 }
 
 /// The flat list: owned copies newest first, then the leased grants.
