@@ -15,8 +15,8 @@ fn bc7_variant() -> (Vec<u8>, String) {
 // `i % 251` for 1000 bytes (no KTX2), and its raw-leaf CIDv1 (see `content_hash` tests)
 const VARIANT_CID: &str = "bafkreicojquuwmy7piqjti3zx3buxh47ya64i2vumxmzr5gwqpnfgsd6nu";
 const OTHER_CID: &str = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
-// the form of a raw-leaf CIDv1, which the read path takes as a content hash
-const ORIGINAL_CID: &str = "bafkreioriginaltextureaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+// a name with the form of a raw-leaf CIDv1
+const ORIGINAL_CID: &str = "bafkreioriginaltextureaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SCENE: &str = "bafkreiscene";
 
 fn variant_bytes() -> Vec<u8> {
