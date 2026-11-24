@@ -1,4 +1,5 @@
-"""The benchmark starts for this repository's PRs whose passed CI run built a web app, and finds its builds."""
+"""The benchmark starts for this repository's PRs whose passed CI run built a web app, and for main against
+the latest release, and finds its builds."""
 import importlib.util
 import io
 import json
@@ -21,6 +22,7 @@ REPO = 'example/project'
 HEAD = 'a' * 40
 MERGE = 'b' * 40
 MAIN = ('c' * 40, 'd' * 40, 'e' * 40)
+RELEASE = MAIN[2]
 RUNNERS = ('windows-amd64', 'macos-arm64', 'linux-amd64')
 
 
@@ -46,6 +48,12 @@ class GitHub:
         # A PR run's artifacts carry the merge commit it built; a main run's its own commit.
         self.artifacts = {100: artifacts(MERGE), **{run['id']: artifacts(run['head_sha']) for run in self.main_runs}}
         self.expired = set()
+        # GitHub deployments of the release environment, newest first.
+        self.deployments = [
+            {'sha': 'f' * 40, 'payload': {'packageName': 'another-package', 'version': '9.9.9'}},
+            {'sha': RELEASE, 'payload': {'packageName': inputs.RELEASE_PACKAGE, 'version': '0.1.0-88.commit-eeeeeee'}},
+            {'sha': MAIN[1], 'payload': {'packageName': inputs.RELEASE_PACKAGE, 'version': '0.1.0-89.commit-ddddddd'}},
+        ]
         # build-info.json per web app, an optimized engine unless given here; None leaves it out.
         self.build_info = {}
         self.ids = {}
@@ -62,6 +70,8 @@ class GitHub:
 
     def __call__(self, path, raw=False):
         self.calls.append(path)
+        if path == f'repos/{REPO}/deployments?environment={inputs.RELEASE_ENVIRONMENT}&per_page=100':
+            return self.deployments
         if path == f'repos/{REPO}/pulls/7':
             return self.pr
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)/artifacts\?per_page=100', path):
@@ -91,7 +101,7 @@ def completed(**changes):
     return {'workflow_run': ci_run(100, HEAD, **changes)}
 
 
-class ResolverTest(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.github = GitHub()
         api = patch.object(inputs, 'api', side_effect=self.github)
@@ -106,6 +116,8 @@ class ResolverTest(unittest.TestCase):
         self.assertEqual(result['notes'], '')
         self.assertFalse(result.get('legs'))
 
+
+class ResolverTest(Fixture):
     def test_a_pr_with_a_passed_ci_run_runs_every_laptop_against_the_newest_main_build(self):
         result = self.resolve()
         self.assertTrue(result['run'])
@@ -229,7 +241,7 @@ class ResolverTest(unittest.TestCase):
         for pr in ('7', f'https://github.com/{REPO}/pull/7', f'https://github.com/{REPO}/pull/7/files'):
             with self.subTest(pr=pr):
                 self.assertTrue(self.resolve('workflow_dispatch', {'inputs': {'pr': pr}})['run'])
-        for pr in ('', 'seven', 'https://github.com/other/project/pull/7', '7; echo'):
+        for pr in ('seven', 'https://github.com/other/project/pull/7', '7; echo'):
             with self.subTest(pr=pr), self.assertRaises(ValueError):
                 self.resolve('workflow_dispatch', {'inputs': {'pr': pr}})
 
@@ -252,6 +264,59 @@ class ResolverTest(unittest.TestCase):
                 self.resolve(runs=bad)
 
 
+class MainTest(Fixture):
+    """Main's newest web build against the latest release: on a schedule, or by hand without a pull request."""
+
+    def test_a_scheduled_run_measures_main_against_the_newest_release_rollout(self):
+        result = self.resolve('schedule', {})
+        self.assertTrue(result['run'])
+        self.assertEqual((result['pr'], result['change_sha'], result['base_sha'], result['runs']),
+                         ('', MAIN[0], RELEASE, '3'))
+        self.assertEqual((result['change_description'], result['base_description']),
+                         (f'main at {MAIN[0]}', f'release 0.1.0-88.commit-eeeeeee at {RELEASE}'))
+        self.assertEqual(result['retention_days'], '90')
+        self.assertEqual(result['legs'][0], {
+            'label': 'intel-i5-chrome', 'runs_on': 'intel-i5', 'os': 'windows',
+            'runner_artifact': f'bevy-explorer-benchmark-windows-amd64-{MAIN[0]}', 'runner_run_id': '90',
+            'change_artifact': f'bevy-explorer-web-{MAIN[0]}', 'change_run_id': '90',
+            'base_artifact': f'bevy-explorer-web-{RELEASE}', 'base_run_id': '88'})
+        self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ' '}})['base_sha'], RELEASE)
+
+    def test_main_without_a_newer_web_build_than_the_release_starts_nothing(self):
+        for run_id in (90, 89):
+            self.github.artifacts[run_id] = artifacts(self.github.main_runs[90 - run_id]['head_sha'], web=False)
+        result = self.resolve('schedule', {})
+        self.assert_skipped(result)
+        self.assertIn('no newer web build', result['reason'])
+
+    def test_no_release_rollout_or_an_expired_release_build_is_the_note(self):
+        self.github.deployments = self.github.deployments[:1]
+        self.assertIn('rollout', self.resolve('schedule', {})['notes'])
+        self.github.deployments = [{'sha': RELEASE, 'payload': {'packageName': inputs.RELEASE_PACKAGE}}]
+        self.github.expired = {f'bevy-explorer-web-{RELEASE}'}
+        result = self.resolve('schedule', {})
+        self.assertFalse(result['run'])
+        self.assertIn(f'CI run of {RELEASE} still has a web app', result['notes'])
+
+    def test_a_manual_run_measures_any_built_commit_against_a_given_base(self):
+        self.github.change_runs = [ci_run(100, HEAD)]
+        event = {'inputs': {'pr': '', 'change_sha': HEAD, 'base_sha': MAIN[1], 'runs': '1'}}
+        result = self.resolve('workflow_dispatch', event)
+        self.assertTrue(result['run'])
+        self.assertEqual((result['change_sha'], result['base_sha'], result['runs']), (HEAD, MAIN[1], '1'))
+        self.assertEqual((result['change_description'], result['base_description']), (HEAD, MAIN[1]))
+        self.assertEqual((result['legs'][0]['change_artifact'], result['legs'][0]['base_run_id']),
+                         (f'bevy-explorer-web-{MERGE}', '89'))
+        self.github.artifacts[100] = artifacts(MERGE, web=False)
+        self.assertIn('no successful Bevy Explorer / CI run', self.resolve('workflow_dispatch', event)['notes'])
+
+    def test_a_runner_main_lacks_comes_from_its_newest_run_that_has_it_not_from_the_release(self):
+        self.github.artifacts[90] = artifacts(MAIN[0], runners=('linux-amd64',))
+        result = self.resolve('schedule', {})
+        self.assertEqual({leg['runner_run_id'] for leg in result['legs']}, {'89'})
+        self.assertEqual(result['report_runner_run_id'], '90')
+
+
 class OutputTest(unittest.TestCase):
     def test_the_step_writes_every_output_the_workflow_reads_on_one_line_each(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -267,7 +332,8 @@ class OutputTest(unittest.TestCase):
             values = dict(line.split('=', 1) for line in (folder / 'output').read_text().splitlines())
             self.assertIn('Benchmark runs', (folder / 'summary').read_text())
         for name in ('run', 'pr', 'change_sha', 'base_sha', 'runs', 'legs', 'expected_labels',
-                     'report_runner_artifact', 'report_runner_run_id', 'notes'):
+                     'report_runner_artifact', 'report_runner_run_id', 'notes', 'change_description',
+                     'base_description', 'retention_days'):
             self.assertIn(name, values)
         self.assertEqual(values['run'], 'true')
         self.assertEqual([leg['runs_on'] for leg in json.loads(values['legs'])], ['apple-m1'])

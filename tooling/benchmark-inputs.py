@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Decide whether a pull request's benchmark runs, and find its builds and legs in Bevy Explorer CI runs.
+"""Decide whether a benchmark runs, and find its builds and legs in Bevy Explorer CI runs.
 
-Reads the triggering event (GITHUB_EVENT_NAME, GITHUB_EVENT_PATH) and writes the step outputs of
+A pull request's change is measured against main; main's newest web build, on a schedule or by a
+manual run without a pull request, against the latest release. Reads the triggering event
+(GITHUB_EVENT_NAME, GITHUB_EVENT_PATH) and writes the step outputs of
 .github/workflows/bevy-explorer-benchmark.yml. A trigger that does not apply (a fork, a failed CI
-run, a CI run that built no web app because the PR changes no web input) skips silently; an unfit
-build skips with notes, which the workflow writes into the PR's CI status comment.
+run, a CI run that built no web app because the PR changes no web input, main unchanged since the
+release) skips silently; an unfit build skips with notes, which the workflow writes into the PR's
+CI status comment or the run's summary.
 """
 import io
 import json
@@ -32,6 +35,13 @@ RUNNER = 'bevy-explorer-benchmark-'
 # to close Chrome and settle) must stay under 3600 (bevy-explorer-benchmark-leg.yml).
 MAX_RUNS = (3600 - 1) // (2 * (480 + 45))
 SHA = re.compile(r'[0-9a-f]{40}')
+# The latest release is the newest rollout of the web package to decentraland.org: the GitHub
+# deployment that bevy-explorer-rollout-manual.yml records for that environment.
+RELEASE_ENVIRONMENT = 'org'
+RELEASE_PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
+# Days a run keeps its leg results and report: a pull request's for its review, main's as history.
+RETENTION_DAYS = {'pr': '7', 'main': '90'}
+NO_LAPTOP = 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.'
 
 
 def api(path, raw=False):
@@ -113,8 +123,39 @@ def base_runs(repo, base_sha):
     return [run for run in runs if ci_run(run, repo, ('push',)) and run['head_branch'] == 'main']
 
 
+def release(repo):
+    """The newest rollout of the web package to the release environment: (commit, version), or None."""
+    rows = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100')
+    for row in rows:
+        payload = row.get('payload')
+        if isinstance(payload, dict) and payload.get('packageName') == RELEASE_PACKAGE and SHA.fullmatch(row['sha']):
+            return row['sha'], str(payload.get('version') or '')
+    return None
+
+
+def run_count(inputs, runs):
+    """The legs' RUNS and the report's EXPECTED_RUNS: a plain integer, which the report requires."""
+    runs = (inputs.get('runs') or '').strip() or (runs or '').strip() or '3'
+    if not re.fullmatch(r'[0-9]+', runs) or not 1 <= int(runs) <= MAX_RUNS:
+        raise ValueError(f'runs must be a whole number from 1 to {MAX_RUNS}; the leg is cut off after an hour')
+    return str(int(runs))
+
+
+def commits(inputs):
+    change_sha = (inputs.get('change_sha') or '').strip()
+    base_sha = (inputs.get('base_sha') or '').strip()
+    for name, value in (('change_sha', change_sha), ('base_sha', base_sha)):
+        if value and not SHA.fullmatch(value):
+            raise ValueError(f'{name} must be a full 40-character commit hash')
+    return change_sha, base_sha
+
+
 def resolve(event_name, event, repo, enabled='', runs=''):
     inputs = {}
+    if event_name == 'schedule':
+        return resolve_main({}, repo, enabled, runs)
+    if event_name == 'workflow_dispatch' and not ((event.get('inputs') or {}).get('pr') or '').strip():
+        return resolve_main(event.get('inputs') or {}, repo, enabled, runs)
     if event_name == 'workflow_run':
         trigger = event['workflow_run']
         if trigger['event'] != 'pull_request' or (trigger.get('head_repository') or {}).get('full_name') != repo:
@@ -137,22 +178,13 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     if pr['state'] != 'open':
         return skip(f'#{number} is not open')
 
-    change_sha = (inputs.get('change_sha') or '').strip() or pr['head']['sha']
-    base_sha = (inputs.get('base_sha') or '').strip()
-    for name, value in (('change_sha', change_sha), ('base_sha', base_sha)):
-        if value and not SHA.fullmatch(value):
-            raise ValueError(f'{name} must be a full 40-character commit hash')
+    change_sha, base_sha = commits(inputs)
+    change_sha = change_sha or pr['head']['sha']
     if event_name == 'workflow_run' and trigger['head_sha'] != change_sha:
         return skip(f'#{number} has moved on to {change_sha}; the CI run of that commit starts its benchmark')
-    # The legs' RUNS and the report's EXPECTED_RUNS: a plain integer, which the report requires.
-    runs = (inputs.get('runs') or '').strip() or (runs or '').strip() or '3'
-    if not re.fullmatch(r'[0-9]+', runs) or not 1 <= int(runs) <= MAX_RUNS:
-        raise ValueError(f'runs must be a whole number from 1 to {MAX_RUNS}; the leg is cut off after an hour')
-    runs = str(int(runs))
+    runs = run_count(inputs, runs)
 
-    result = {'run': False, 'pr': str(number), 'change_sha': change_sha, 'base_sha': '', 'runs': runs,
-              'legs': [], 'expected_labels': '', 'report_runner_artifact': '', 'report_runner_run_id': '',
-              'notes': ''}
+    result = outcome(str(number), change_sha, runs, 'pr')
     candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']
     changes = [run for run in candidates if ci_run(run, repo, ('pull_request', 'workflow_dispatch'))
                and run['head_sha'] == change_sha]
@@ -169,46 +201,119 @@ def resolve(event_name, event, repo, enabled='', runs=''):
             return skip(f"CI run {change['id']} built no web app: the PR changes no web input")
         return stop(result, f"CI run {change['id']} has no web app: it built none (the PR changes no web "
                             'input) or the artifact expired.')
-    fleet = [(label, system) for label, system in FLEET if not enabled or label in enabled]
-    if not fleet:
-        return stop(result, 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.')
+    if not fleet(enabled):
+        return stop(result, NO_LAPTOP)
     # While the fleet is on, CI builds every web app with wasm-opt, on PRs as on main: an
     # unoptimized build on either side would bias the comparison.
     if not optimized(repo, change_names[change_web]):
         return stop(result, f"The change web build (CI run {change['id']}) is not optimized; CI builds pull "
                             "requests' web apps with wasm-opt, so push again for a build it can compare.")
-
+    found = search(repo, base_runs(repo, base_sha), [WEB])
+    if WEB not in found:
+        where = f'No CI run of {base_sha}' if base_sha else 'No successful main push run'
+        return stop(result, f'{where} still has a web app to compare with.')
+    base_web, base, base_web_id = found[WEB]
+    result['base_sha'] = base['head_sha']
+    result['change_description'] = f'#{number} at {change_sha}'
+    result['base_description'] = f"main at {base['head_sha']}"
+    if not optimized(repo, base_web_id):
+        return stop(result, f"The base web build ({base['head_sha']}, CI run {base['id']}) is not optimized. "
+                            "Main's CI builds optimized, so a manual run can name a base_sha whose build is.")
     # The runner comes from the change run, so a PR that changes it is measured with its own;
     # otherwise from the base run that has it.
-    platforms = sorted({PLATFORMS[system] for _, system in fleet} | {PLATFORMS['linux']})
+    where = f'the CI run of {base_sha}' if base_sha else 'main'
+    return measure(repo, result, enabled, (change, change_names, change_web), (base, base_web),
+                   base_runs(repo, base_sha), where, f'#{number} at {change_sha}')
+
+
+def resolve_main(inputs, repo, enabled, runs):
+    """Main's newest web build, or a given commit's, against the latest release or a given base."""
+    change_sha, base_sha = commits(inputs)
+    runs = run_count(inputs, runs)
+    result = outcome('', change_sha, runs, 'main')
+    if change_sha:
+        candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']
+        changes = [run for run in candidates if run['head_sha'] == change_sha
+                   and ci_run(run, repo, ('push', 'pull_request', 'workflow_dispatch'))
+                   and named(artifacts(repo, run['id']), WEB)]
+        if not changes:
+            return stop(result, f'{change_sha} has no successful Bevy Explorer / CI run that still has a web app.')
+        change = changes[0]
+        change_description = change_sha
+    else:
+        found = search(repo, base_runs(repo, ''), [WEB])
+        if WEB not in found:
+            return stop(result, 'No successful main push run still has a web app to measure.')
+        change = found[WEB][1]
+        change_description = f"main at {change['head_sha']}"
+    change_names = artifacts(repo, change['id'])
+    change_web = named(change_names, WEB)
+    result['change_sha'] = change['head_sha']
+    result['change_description'] = change_description
+
+    if base_sha:
+        base_description = base_sha
+    else:
+        latest = release(repo)
+        if not latest:
+            return stop(result, f'No {RELEASE_PACKAGE} rollout to {RELEASE_ENVIRONMENT} is recorded as a deployment.')
+        base_sha, version = latest
+        base_description = f'release {version} at {base_sha}' if version else f'release at {base_sha}'
+    if base_sha == result['change_sha']:
+        return skip(f'{base_sha} is both the change and the base: main has no newer web build')
+    found = search(repo, base_runs(repo, base_sha), [WEB])
+    if WEB not in found:
+        return stop(result, f'No successful main CI run of {base_sha} still has a web app to compare with.')
+    base_web, base, base_web_id = found[WEB]
+    result['base_sha'] = base_sha
+    result['base_description'] = base_description
+
+    if not fleet(enabled):
+        return stop(result, NO_LAPTOP)
+    if not optimized(repo, change_names[change_web]):
+        return stop(result, f"The change web build (CI run {change['id']}) is not optimized.")
+    if not optimized(repo, base_web_id):
+        return stop(result, f'The base web build ({base_sha}, CI run {base["id"]}) is not optimized.')
+    # The runner comes from the change run, else from main's newest run that has it: it reads
+    # files of the newest format.
+    return measure(repo, result, enabled, (change, change_names, change_web), (base, base_web),
+                   base_runs(repo, ''), 'main', change_description)
+
+
+def outcome(pr, change_sha, runs, kind):
+    return {'run': False, 'pr': pr, 'change_sha': change_sha, 'base_sha': '', 'runs': runs, 'legs': [],
+            'expected_labels': '', 'report_runner_artifact': '', 'report_runner_run_id': '', 'notes': '',
+            'change_description': '', 'base_description': '', 'retention_days': RETENTION_DAYS[kind]}
+
+
+def fleet(enabled):
+    return [(label, system) for label, system in FLEET if not enabled or label in enabled]
+
+
+def measure(repo, result, enabled, change_build, base_build, runner_runs, runner_where, description):
+    """The legs of every enabled laptop that has a runner, or the note why none can run."""
+    change, change_names, change_web = change_build
+    base, base_web = base_build
+    laptops = fleet(enabled)
+    platforms = sorted({PLATFORMS[system] for _, system in laptops} | {PLATFORMS['linux']})
     runners = {}
     for platform in platforms:
         runner = named(change_names, RUNNER + platform)
         if runner:
             runners[platform] = (runner, change)
-    wanted = [WEB, *(RUNNER + platform for platform in platforms if platform not in runners)]
-    found = search(repo, base_runs(repo, base_sha), wanted)
-    base_where = f'the CI run of {base_sha}' if base_sha else 'main'
-    if WEB not in found:
-        where = f'No CI run of {base_sha}' if base_sha else 'No successful main push run'
-        return stop(result, f'{where} still has a web app to compare with.')
-    base_web, base, base_web_id = found[WEB]
-    for platform in platforms:
-        if platform not in runners and RUNNER + platform in found:
-            runners[platform] = found[RUNNER + platform][:2]
-    result['base_sha'] = base['head_sha']
-    if not optimized(repo, base_web_id):
-        return stop(result, f"The base web build ({base['head_sha']}, CI run {base['id']}) is not optimized. "
-                            "Main's CI builds optimized, so a manual run can name a base_sha whose build is.")
+    wanted = [RUNNER + platform for platform in platforms if platform not in runners]
+    if wanted:
+        for prefix, (name, run, _) in search(repo, runner_runs, wanted).items():
+            runners[prefix[len(RUNNER):]] = (name, run)
 
     if PLATFORMS['linux'] not in runners:
         return stop(result, 'No benchmark runner for linux-amd64 to write the report: neither the change run '
-                            f'nor {base_where} has one.')
+                            f'nor {runner_where} has one.')
     report_name, report_run = runners[PLATFORMS['linux']]
     notes = []
-    for label, system in fleet:
+    for label, system in laptops:
         if PLATFORMS[system] not in runners:
-            notes.append(f'{label}-chrome did not run: neither the change run nor {base_where} has a benchmark '
+            notes.append(f'{label}-chrome did not run: neither the change run nor {runner_where} has a benchmark '
                          f'runner for {PLATFORMS[system]}.')
             continue
         runner_name, runner_run = runners[PLATFORMS[system]]
@@ -223,7 +328,7 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     labels = [leg['label'] for leg in result['legs']]
     return {**result, 'run': True, 'expected_labels': ','.join(labels), 'notes': ' '.join(notes),
             'report_runner_artifact': report_name, 'report_runner_run_id': str(report_run['id']),
-            'reason': f"#{number} at {change_sha} against main at {base['head_sha']} on {', '.join(labels)}"}
+            'reason': f"{description} against {result['base_description']} on {', '.join(labels)}"}
 
 
 def write_outputs(values):
