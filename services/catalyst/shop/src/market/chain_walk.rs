@@ -47,6 +47,8 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
+pub const INDEXER_COLLECTIONS: &str = "collections";
+
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
@@ -142,6 +144,8 @@ pub struct IndexSettings {
     pub committee_enabled: bool,
     /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
     pub third_party_registry_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
+    pub collections_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -180,6 +184,7 @@ impl Default for IndexSettings {
             sales_enabled: false,
             committee_enabled: false,
             third_party_registry_enabled: false,
+            collections_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
