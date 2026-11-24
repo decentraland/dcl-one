@@ -44,6 +44,19 @@ publication, so the address matches what it deploys; while an earlier
 publication holds the collection's lock, it refuses a publication whose
 base URI would deploy elsewhere.
 
+The node keeps a save only when that base URI is one of two: its chain's
+default (`https://peer.decentraland.org/lambdas/collections/standard/erc721/`
+on mainnet, `https://peer.decentraland.zone/lambdas/collections/standard/erc721/`
+on sepolia), or the node's own address followed by
+`/lambdas/collections/standard/erc721/`. Any other base answers 400, "The
+collection's token metadata base is neither this node's nor the network's",
+because the collection's tokens would read their metadata from a host
+neither the node nor the network answers for. The node's own address is
+`PUBLIC_URL` without its trailing slash, so a node that serves `/create`
+off Decentraland's hosts must set `PUBLIC_URL` to the origin browsers reach
+it at. Without `PUBLIC_URL` the node's address is `http://<bind address>`,
+which matches no page origin but a local one.
+
 Every chain source the builder reads must serve that chain:
 
 - `BUILDER_POLYGON_RPC_URL`: the receipt check, the deployment check and the
