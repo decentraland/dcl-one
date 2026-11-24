@@ -50,7 +50,7 @@ rand.workspace = true
 rusty_enet.workspace = true
 web-transport-quinn.workspace = true
 rustls.workspace = true
-rustls-native-certs = { version = "0.8.5", optional = true }
+rustls-native-certs = { workspace = true, optional = true }
 rustls-pemfile.workspace = true
 rustls-pki-types.workspace = true
 async-nats.workspace = true
