@@ -354,7 +354,9 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
       # Scope RUSTC_WRAPPER to compilation so the dependency-cache key stays unchanged.
       - name: Restore the Windows compiler cache tool
         id: compiler-cache-tool
@@ -377,8 +379,12 @@ jobs:
         with:
           path: ${{ runner.tool_cache }}/sccache/0.19.0
           key: ${{ steps.compiler-cache-tool.outputs.cache-primary-key }}
+      # Every cargo call of a native job writes its messages to target/cargo-messages: the prune keeps only the units they name.
       - name: Test the texture decoder boundaries
-        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
+        run: |
+          cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/basisu.jsonl
+          cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
       # the patched Bevy crates are git dependencies, not workspace members, so `cargo test --all`
       # never compiles their tests, and cargo tests a non-member with dev-dependencies only from
       # its own workspace. Only this job rebuilds that workspace, at ../bevy. It has no lock file:
@@ -388,6 +394,9 @@ jobs:
       - name: Test the patched Bevy crates
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
+            --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests.jsonl
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
             --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
       - name: Run the native test suite
@@ -399,11 +408,11 @@ jobs:
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           # The dcl_deno_ipc integration test makes Cargo build the sidecar in this invocation.
-          if ! cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/native-test-artifacts.jsonl; then
+          if ! cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl; then
             export RUSTC_WRAPPER=
-            cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/native-test-artifacts.jsonl
+            cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl
           fi
-          python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/native-test-artifacts.jsonl
+          python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/cargo-messages/native-tests.jsonl
           cargo test --all --profile ci-test --locked -- --test-threads=1
       - name: Test environment and shadow shader pipelines
         if: runner.os == 'Linux'
@@ -411,6 +420,8 @@ jobs:
           WGPU_BACKEND: vulkan
         run: |
           set -o pipefail
+          cargo test -p visuals --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+            > target/cargo-messages/visuals.jsonl
           cargo test -p visuals --lib --profile ci-test --locked -- --ignored --test-threads=1 \
             | tee "$RUNNER_TEMP/explorer-shader-tests.log"
           grep -Fx 'test environment::tests::scene_environment_pipelines_compile ... ok' "$RUNNER_TEMP/explorer-shader-tests.log"
@@ -425,6 +436,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -o pipefail
+          cargo test --all --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+            > target/cargo-messages/gateway.jsonl
           cargo test --all --lib --profile ci-test --locked \
             gateway::gateway_tests::gateway_routes_match_deployment -- --ignored --exact \
             | tee "$RUNNER_TEMP/explorer-gateway-routes.log"
@@ -454,9 +467,9 @@ jobs:
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
         run: |
-          if ! cargo build --package benchmark --release --locked; then
+          if ! cargo build --package benchmark --release --locked --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl; then
             export RUSTC_WRAPPER=
-            cargo build --package benchmark --release --locked
+            cargo build --package benchmark --release --locked --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl
           fi
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -486,6 +499,43 @@ jobs:
             rendering/bevy-explorer/source/target/sccache-stats.json
           if-no-files-found: ignore
           retention-days: 7
+      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
+      - name: Check that the prune keeps every live unit
+        if: github.event_name == 'pull_request'
+        env:
+          WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+          mkdir -p target/cargo-messages
+          [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
+          cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/basisu.jsonl
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
+            --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests.jsonl
+          RUSTC_WRAPPER="$WRAPPER" cargo test --all --profile ci-test --locked \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl ||
+            cargo test --all --profile ci-test --locked \
+              --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo test -p visuals --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+              > target/cargo-messages/visuals.jsonl
+            cargo test --all --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+              > target/cargo-messages/gateway.jsonl
+          fi
+          RUSTC_WRAPPER="$WRAPPER" cargo build --package benchmark --release --locked \
+            --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl ||
+            cargo build --package benchmark --release --locked \
+              --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl
+          python3 - <<'EOF'
+          import glob, json
+          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
+                            for path in glob.glob('target/cargo-messages/*.jsonl')
+                            for line in open(path, encoding='utf-8') if line.startswith('{')
+                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
+          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
+          raise SystemExit(bool(rebuilt))
+          EOF
       # Main saves an entry for each change of the workspace. A pull request of this repository
       # saves one only when the restored entry was not built for its dependencies: its later
       # pushes restore that one. A pull request from a fork saves none.
@@ -563,8 +613,12 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
       - name: Build headless engine and sidecar
+        env:
+          CARGO_MESSAGES: ${{ github.workspace }}/rendering/bevy-explorer/source/target/cargo-messages/headless.jsonl
         run: python3 ../../../apps/bevy-explorer/build-headless.py
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -642,6 +696,23 @@ jobs:
           path: rendering/bevy-explorer/source/deploy/headless/dist/*.tgz
           if-no-files-found: error
           retention-days: 14
+      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
+      - name: Check that the prune keeps every live unit
+        if: github.event_name == 'pull_request'
+        env:
+          CARGO_MESSAGES: ${{ github.workspace }}/rendering/bevy-explorer/source/target/cargo-messages/headless.jsonl
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+          python3 ../../../apps/bevy-explorer/build-headless.py
+          python3 - <<'EOF'
+          import glob, json
+          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
+                            for path in glob.glob('target/cargo-messages/*.jsonl')
+                            for line in open(path, encoding='utf-8') if line.startswith('{')
+                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
+          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
+          raise SystemExit(bool(rebuilt))
+          EOF
       # Main saves an entry for each change of the workspace. A pull request of this repository
       # saves one only when the restored entry was not built for its dependencies: its later
       # pushes restore that one. A pull request from a fork saves none.
@@ -771,14 +842,36 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
+      - run: cargo clippy --locked --workspace --all-targets --message-format=json-render-diagnostics -- -D warnings > target/cargo-messages/clippy.jsonl
         shell: bash
       - name: Avatar crate without the explorer feature
-        run: cargo check --locked -p avatar --no-default-features
+        run: cargo check --locked -p avatar --no-default-features --message-format=json-render-diagnostics > target/cargo-messages/avatar.jsonl
         shell: bash
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
+      - name: Check that the prune keeps every live unit
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+          mkdir -p target/cargo-messages
+          cargo clippy --locked --workspace --all-targets --message-format=json-render-diagnostics -- -D warnings \
+            > target/cargo-messages/clippy.jsonl
+          cargo check --locked -p avatar --no-default-features --message-format=json-render-diagnostics \
+            > target/cargo-messages/avatar.jsonl
+          python3 - <<'EOF'
+          import glob, json
+          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
+                            for path in glob.glob('target/cargo-messages/*.jsonl')
+                            for line in open(path, encoding='utf-8') if line.startswith('{')
+                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
+          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
+          raise SystemExit(bool(rebuilt))
+          EOF
       # Main saves an entry for each change of the workspace. A pull request of this repository
       # saves one only when the restored entry was not built for its dependencies: its later
       # pushes restore that one. A pull request from a fork saves none.
@@ -864,16 +957,37 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
       # The runner image's Chrome and its matching driver; the test runner serves the page cross-origin
       # isolated, so the memory is shared.
       - name: Test the relay wake in headless Chrome
         run: |
           export CHROMEDRIVER="${CHROMEWEBDRIVER:?the runner image provides Chrome and its driver}/chromedriver"
           export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
+          cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/relay-wake.jsonl
           cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
+      - name: Check that the prune keeps every live unit
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+          mkdir -p target/cargo-messages
+          cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/relay-wake.jsonl
+          python3 - <<'EOF'
+          import glob, json
+          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
+                            for path in glob.glob('target/cargo-messages/*.jsonl')
+                            for line in open(path, encoding='utf-8') if line.startswith('{')
+                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
+          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
+          raise SystemExit(bool(rebuilt))
+          EOF
       # Saved as the Clippy job saves its cache.
       - name: Prune the wasm test build cache
         if: >-

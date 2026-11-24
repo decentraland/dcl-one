@@ -26,20 +26,26 @@ gives an unchanged file its recorded time, so Cargo compiles only what a change 
                       dependencies and saves an entry of its own only when the restored key does
                       not start with `dependencies`
   prune <target-dir>  before the save: what no later run reads (final binaries, incremental
-                      state, reports) goes; the artifacts, build script outputs and fingerprints
-                      of every crate stay, with the bevy-mtimes manifest. It removes nothing
-                      outside <target-dir>: the save step names the Cargo home paths it stores,
-                      and the rest of the Cargo home is not in the cache
+                      state, reports) goes, and so does every unit that no message in
+                      <target-dir>/cargo-messages names: the generations a dependency change left
+                      behind. The artifacts, build script outputs and fingerprints of the named
+                      units stay, with the bevy-mtimes manifest. Without messages every generation
+                      stays. It removes nothing outside <target-dir>: the save step names the
+                      Cargo home paths it stores, and the rest of the Cargo home is not in the cache
 
 Run `key` after the tool steps, so it sees their environment, and before the first Cargo
-invocation; run `prune` after the last upload that reads the target directory.
+invocation; run `prune` after the last upload that reads the target directory. Every Cargo call of
+the job writes its `--message-format=json-render-diagnostics` output into
+<target-dir>/cargo-messages/<name>.jsonl.
 """
 import argparse
+import filecmp
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +66,8 @@ TRACKED_ENV = ('CC', 'CXX', 'AR', 'CFLAGS', 'CXXFLAGS', 'CMAKE', 'PKG_CONFIG_PAT
                'CEF_PATH', 'RUSTFLAGS', 'CARGO_BUILD_RUSTFLAGS')
 KEEP_IN_PROFILE = ('build', 'deps', '.fingerprint')
 KEEP_IN_TARGET = ('CACHEDIR.TAG', '.rustc_info.json')
+MESSAGES = 'cargo-messages'
+UNIT_HASH = re.compile(r'-([0-9a-f]{16})(?=\.|$)')
 
 
 def digest(*parts):
@@ -138,6 +146,94 @@ def prune_target(target, removed):
             remove(entry, removed)
 
 
+def messages(target):
+    for path in sorted((target / MESSAGES).glob('*.jsonl')):
+        # Not splitlines(): serde_json leaves U+2028/U+2029 unescaped inside a message.
+        for line in path.read_text(encoding='utf-8', errors='replace').split('\n'):
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(message, dict):
+                yield message
+
+
+def unit_hashes(path):
+    return {found for name in (path.name, path.parent.name) for found in UNIT_HASH.findall(name)}
+
+
+def uplifted(path):
+    """The hash of deps/<crate>-<hash>, the unit Cargo copied or linked to a binary it reports only at the profile's top level.
+
+    Every candidate stays when the binary is gone or none matches it."""
+    stem, suffix = (path.name[:-4], '.exe') if path.name.endswith('.exe') else (path.name, '')
+    crate = stem.replace('-', '_')
+    # An MSVC executable keeps no hash: the hashed files beside it are its test harnesses, named by their own messages.
+    if (path.parent / 'deps' / (crate + suffix)).is_file():
+        return set()
+    pattern = re.compile(re.escape(crate) + r'-([0-9a-f]{16})' + re.escape(suffix))
+    candidates = {}
+    for entry in (path.parent / 'deps').glob(f'{crate}-*'):
+        match = pattern.fullmatch(entry.name)
+        if match and entry.is_file():
+            candidates[match.group(1)] = entry
+    if not path.is_file():
+        return set(candidates)
+    # The link first: a RUSTFLAGS change renames a unit without changing its bytes, so an older copy can be equal.
+    same = {unit for unit, entry in candidates.items() if os.path.samefile(entry, path)}
+    return same or {unit for unit, entry in candidates.items() if filecmp.cmp(entry, path, shallow=False)} or set(candidates)
+
+
+def live_units(target):
+    """The hashes of every unit the job's Cargo calls named, built or fresh, or None when they named none."""
+    live = set()
+    for message in messages(target):
+        if message.get('reason') == 'compiler-artifact':
+            for name in message.get('filenames') or ():
+                path = Path(name)
+                live |= unit_hashes(path) or uplifted(path)
+        elif message.get('reason') == 'build-script-executed' and message.get('out_dir'):
+            live |= unit_hashes(Path(message['out_dir']))
+    return live or None
+
+
+def profiles(target):
+    for entry in target.iterdir():
+        if is_profile(entry):
+            yield entry
+        elif entry.is_dir() and not entry.is_symlink():
+            yield from (child for child in entry.iterdir() if is_profile(child))
+
+
+def prune_generations(target, live, removed):
+    """Remove the deps and build entries of units outside `live`, and the fingerprints with their hashes; returns bytes freed and failures."""
+    stale, freed, failed = set(), 0, []
+
+    def drop(entry):
+        nonlocal freed
+        try:
+            bytes_ = size(entry) if entry.is_dir() and not entry.is_symlink() else entry.lstat().st_size
+            remove(entry, removed)
+            freed += bytes_
+        except OSError as error:
+            failed.append(f'{entry}: {error}')
+
+    def entries(name):
+        return [entry for profile in profiles(target) if (profile / name).is_dir() for entry in (profile / name).iterdir()]
+
+    for entry in entries('deps') + entries('build'):
+        found = UNIT_HASH.search(entry.name)
+        if found and found.group(1) not in live:
+            stale.add(found.group(1))
+            drop(entry)
+    # Only the hashes of removed entries: a path cdylib's and an MSVC executable's fingerprint carry one no message names.
+    for entry in entries('.fingerprint'):
+        found = re.fullmatch(r'.+-([0-9a-f]{16})', entry.name)
+        if found and found.group(1) in stale:
+            drop(entry)
+    return freed, failed
+
+
 def size(directory):
     """Bytes of the files below directory. A symbolic link is not followed; an entry that cannot be read counts as 0."""
     total = 0
@@ -166,9 +262,21 @@ def main():
         else:
             print('\n'.join(lines))
     else:
+        target = args.target.resolve()
+        # Before prune_target: it removes the messages and the binaries `uplifted` compares.
+        live = live_units(target)
         removed = []
-        prune_target(args.target.resolve(), removed)
-        print(f'{len(removed)} entries pruned; {size(args.target) / 2**20:.0f} MB left in {args.target}')
+        prune_target(target, removed)
+        if live is None:
+            print(f'::warning::no Cargo message in {target / MESSAGES} names a unit: every build generation stays in the cache')
+        else:
+            pruned = len(removed)
+            freed, failed = prune_generations(target, live, removed)
+            for failure in failed:
+                print(f'::warning::kept a stale build entry: {failure}')
+            print(f'{len(live)} live units; {len(removed) - pruned} entries of stale generations removed '
+                  f'({freed / 2**20:.0f} MB)')
+        print(f'{len(removed)} entries pruned; {size(target) / 2**20:.0f} MB left in {args.target}')
     return 0
 
 
