@@ -1156,9 +1156,34 @@ async fn indexed_orders_count_paid_transactions_and_resolve_only_the_two_payment
         .unwrap();
     }
     forward(&pool, block, 1, &c, 1, seller.as_str(), relay).await;
+    // The marketplace purchase is already published, but the late-discovered
+    // collection has not yet supplied the relay's last transfer.
+    chain_ready(&pool, "nft", block).await;
+    mirror_ready(&pool, "items").await;
+    mirror_ready(&pool, "collections").await;
+    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 0);
+    sqlx::query("INSERT INTO shop.nft_contract (network, contract_address, walked_from_block, backfill_from_block)
+                 VALUES ('matic', $1, $2, $2 - 2)")
+        .bind(&c)
+        .bind(block + 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 0);
+    assert_eq!(progress(&pool, relay, "fashionista").await, None);
     forward(&pool, block, 3, &c, 1, relay, user.as_str()).await;
     forward(&pool, block, 4, &c, 1, user.as_str(), friend.as_str()).await;
-    chain_ready(&pool, "nft", block).await;
+    sqlx::query("UPDATE shop.nft_contract SET backfilled_to_block = walked_from_block - 1, refold_owed = true WHERE contract_address = $1")
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 0);
+    sqlx::query("UPDATE shop.nft_contract SET refold_owed = false WHERE contract_address = $1")
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
     assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 1);
     assert_eq!(cursor(&pool, Log::Order.source()).await, Some((block, 2)));
     assert_eq!(
@@ -1189,17 +1214,6 @@ async fn accepted_bids_require_an_indexed_bid_for_an_existing_nft() {
     let c = contract();
     let buyer = fresh_address();
     let seller = fresh_address();
-    item(&pool, &c, 1, "emote_v1", seller.as_str()).await;
-    forward(
-        &pool,
-        block,
-        1,
-        &c,
-        1,
-        "0x0000000000000000000000000000000000000000",
-        seller.as_str(),
-    )
-    .await;
     for (log, kind, id, price) in [
         (0, "bid_created", "before-mint", 5_i64),
         (2, "bid_accepted", "before-mint", 5),
@@ -1230,8 +1244,45 @@ async fn accepted_bids_require_an_indexed_bid_for_an_existing_nft() {
         .await
         .unwrap();
     }
+    sqlx::query(
+        "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address,
+            token_id, bid_id, buyer, seller, price, tx_hash)
+         SELECT network, block_number, 8, block_time, kind, emitter, $1,
+            token_id, bid_id, buyer, seller, price, tx_hash
+         FROM shop.sale_event WHERE network = 'matic' AND block_number = $2 AND log_index = 5",
+    )
+    .bind(contract())
+    .bind(block)
+    .execute(&pool)
+    .await
+    .unwrap();
     chain_ready(&pool, "sales", block).await;
-    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 4);
+    // Neither an empty transfer history nor a missing item is conclusive
+    // until the collection has been discovered and its history is complete.
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    mirror_ready(&pool, "items").await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    item(&pool, &c, 1, "emote_v1", seller.as_str()).await;
+    forward(
+        &pool,
+        block,
+        1,
+        &c,
+        1,
+        "0x0000000000000000000000000000000000000000",
+        seller.as_str(),
+    )
+    .await;
+    mirror_ready(&pool, "collections").await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    sqlx::query("INSERT INTO shop.nft_contract (network, contract_address, walked_from_block) VALUES ('matic', $1, $2)")
+        .bind(&c)
+        .bind(block)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The fifth row names a foreign contract, absent from both completed passes.
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 5);
     let earned = progress(&pool, buyer.as_str(), "emotionista")
         .await
         .unwrap();

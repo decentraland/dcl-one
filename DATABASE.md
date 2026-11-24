@@ -2229,6 +2229,10 @@ default, and social writes are), each a reader of tables other areas own, with o
   read from the NFT transfer history. The sales cursor uses the lower
   published block of the sales and NFT indexes. The order cursor uses the NFT
   index. Each required index must be bound to chain 137 and out of quarantine.
+  Before interpreting NFT history, the job checks the collection walk in
+  `shop.nft_contract` and waits for any owed backfill and refold. It passes
+  an unknown contract only after both the collections and items mirrors have
+  completed a pass at least one hour after the sale.
   An eligible legacy order missing a transaction hash waits for a re-index. Step
   `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
   a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on

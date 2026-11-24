@@ -16,6 +16,8 @@ use super::{Pass, award, completed, init_cursor, lock_cursor};
 use crate::identity::Address;
 
 pub(crate) use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
+const RELAYS: &str =
+    "('0xed038688ecf1193f8d9717eb3930f0bf0d745cb4', '0xea749fd6ba492dbc14c24fe8a3d08769229b896c')";
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,18 +76,36 @@ impl Log {
                       AND {minted_before_creation})"),
             ),
         };
+        let needs_history = match self {
+            Log::Sale => format!(
+                "e.kind = 'bid_accepted' OR (coalesce(e.price, 0) > 0 AND e.buyer IN {RELAYS})"
+            ),
+            Log::Order => "coalesce(e.amount, 0) > 0".to_owned(),
+        };
         format!(
             "SELECT e.block_number, e.log_index, e.block_time, e.tx_hash, i.item_type,
-                    CASE WHEN {eligible} THEN CASE WHEN {buyer} IN (
-                        '0xed038688ecf1193f8d9717eb3930f0bf0d745cb4',
-                        '0xea749fd6ba492dbc14c24fe8a3d08769229b896c'
-                    ) THEN (SELECT nullif(t.to_address, '{ZERO_ADDRESS}') FROM shop.nft_event t
+                    discovery.items_checked,
+                    ({needs_history}) AND CASE WHEN k.contract_address IS NULL THEN
+                      i.item_type IS NOT NULL OR EXISTS (SELECT 1 FROM shop.collections c
+                          WHERE c.network = e.network AND c.contract_address = e.contract_address)
+                      OR NOT (discovery.collections_checked AND discovery.items_checked)
+                    ELSE k.refold_owed OR (k.backfill_from_block IS NOT NULL AND
+                         coalesce(k.backfilled_to_block, k.backfill_from_block - 1) < k.walked_from_block - 1)
+                    END AS history_pending,
+                    CASE WHEN {eligible} THEN CASE WHEN {buyer} IN {RELAYS} THEN (SELECT nullif(t.to_address, '{ZERO_ADDRESS}') FROM shop.nft_event t
                             WHERE t.network = e.network AND t.contract_address = e.contract_address
                               AND t.token_id = e.token_id AND t.block_number <= e.block_number AND t.kind = 'transfer'
                             ORDER BY t.block_number DESC, t.log_index DESC LIMIT 1)
                       ELSE {buyer} END END AS buyer
              FROM {table} e LEFT JOIN shop.items i ON i.network = e.network
                AND i.contract_address = e.contract_address AND i.item_id = {item_id}
+             LEFT JOIN shop.nft_contract k ON k.network = e.network AND k.contract_address = e.contract_address
+             LEFT JOIN shop.mirror_state items_pass ON items_pass.network = e.network AND items_pass.mirror = 'items'
+             LEFT JOIN shop.mirror_state collections_pass ON collections_pass.network = e.network AND collections_pass.mirror = 'collections'
+             CROSS JOIN LATERAL (SELECT
+                 coalesce(extract(epoch FROM items_pass.last_complete_pass_at) - {ITEM_WAIT_SECS} >= e.block_time, false) AS items_checked,
+                 coalesce(extract(epoch FROM collections_pass.last_complete_pass_at) - {ITEM_WAIT_SECS} >= e.block_time, false) AS collections_checked
+             ) discovery
              WHERE e.network = 'matic' AND {kinds}
                AND (e.block_number, e.log_index) > ($1, $2) AND e.block_number <= $3
              ORDER BY e.block_number, e.log_index LIMIT $4"
@@ -101,6 +121,8 @@ struct Row {
     buyer: Option<String>,
     tx_hash: Option<String>,
     item_type: Option<String>,
+    items_checked: bool,
+    history_pending: bool,
 }
 
 fn badge_of(item_type: &str) -> &'static str {
@@ -164,14 +186,6 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         tx.rollback().await?;
         return Ok((0, false));
     }
-    // The last complete items pass, unix seconds.
-    let items_pass: Option<i64> = sqlx::query_scalar(
-        "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-         WHERE mirror = 'items' AND network = 'matic'",
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .flatten();
     // (buyer, transaction hash, sale time in milliseconds, badge)
     let mut sales: Vec<(String, String, i64, &'static str)> = Vec::new();
     let now = crate::shared::now_utc();
@@ -180,7 +194,17 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         let at = chrono::DateTime::from_timestamp(row.block_time, 0)
             .map(|t| t.naive_utc())
             .unwrap_or(now);
-        let pending = row.buyer.is_some() && !pass.too_old(at, now);
+        let too_old = pass.too_old(at, now);
+        if row.history_pending && !too_old {
+            tracing::debug!(
+                source = log.source(),
+                block = row.block_number,
+                log = row.log_index,
+                "badge sale awaits collection discovery or NFT transfer history"
+            );
+            break;
+        }
+        let pending = row.buyer.is_some() && !too_old;
         if pending && row.item_type.is_some() && row.tx_hash.is_none() {
             tracing::warn!(
                 block = row.block_number,
@@ -190,9 +214,7 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
             break;
         }
         if pending && row.item_type.is_none() {
-            let waited = items_pass
-                .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS));
-            if !waited {
+            if !row.items_checked {
                 tracing::debug!(
                     source = log.source(),
                     block = row.block_number,
@@ -209,7 +231,7 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
             );
         }
         passed += 1;
-        if pass.too_old(at, now) {
+        if too_old {
             continue;
         }
         if let (Some(buyer), Some(tx_hash), Some(item_type)) =
