@@ -268,7 +268,7 @@ async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
 fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Client, ClientError> {
     use web_transport_quinn::quinn;
     let fail = |error: &dyn std::fmt::Display| ClientError::Connect(error.to_string());
-    let provider = web_transport_quinn::crypto::default_provider();
+    let provider = super::tls_provider();
     let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| fail(&e))?
@@ -276,8 +276,12 @@ fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Cli
         .with_custom_certificate_verifier(Arc::new(PinnedCertificate { provider, hash }))
         .with_no_client_auth();
     crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let quic = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
-    let endpoint = quinn::Endpoint::client(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
+    let quic =
+        web_transport_quinn::crypto::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
+    let socket = std::net::UdpSocket::bind(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
+    let runtime = quinn::default_runtime().ok_or_else(|| fail(&"no async runtime found"))?;
+    let endpoint = quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime)
+        .map_err(|e| fail(&e))?;
     Ok(web_transport_quinn::Client::new(
         endpoint,
         quinn::ClientConfig::new(Arc::new(quic)),
@@ -301,7 +305,7 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertificate {
         _ocsp_response: &[u8],
         _now: rustls_pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        let seen = web_transport_quinn::crypto::sha256(&self.provider, end_entity);
+        let seen = web_transport_quinn::crypto::sha256(&self.provider, end_entity)?;
         if seen.as_ref() == self.hash.as_slice() {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
