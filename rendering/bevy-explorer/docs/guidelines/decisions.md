@@ -906,6 +906,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest to the player takes no place: its bones stay at rest and the place goes to the next
   visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
   rank hidden avatars to match.
+- **A scene's colliders answer only where the scene is drawn.** The avatar, the pointer and
+  other scenes' world raycasts meet a scene's colliders only over the scene's own parcels, up to
+  the height limit of each connected group of them, and 0.05 m past both: the hard edge of the
+  scene materials. With the out-of-bounds effect on (`graphics.oob`) the materials dissolve what
+  lies past that edge over a wider band; colliders keep to the hard edge. Unity keeps every
+  scene's colliders in one physics world, so a collider that is on is solid wherever it reaches,
+  over a neighbour's parcels too. Each scene here has a collider set of its own, so a query is
+  cut to where the scene applies: the avatar asks a scene only while its capsule touches that
+  space, and a ray or a swept capsule is cast against a scene only over the stretches inside it.
+  Three consequences look like mistakes:
+  - A ray that comes into a scene inside a solid primitive passes through that primitive, as a
+    ray does not hit what its origin is inside. Mesh colliders are surfaces, hit as usual.
+  - An avatar that comes into a scene already overlapping one of its colliders, having walked
+    through the part that is not solid outside, is stopped at the scene's edge when its centre
+    line is inside the collider or the overlap would push it back out. Any other overlap lets it
+    in, and the push-out resolves it as usual: that is how it steps onto ground a little higher
+    than the ground it came from. The top of the drawn space is such an edge: an avatar that
+    falls onto a collider which rises past the height its region is drawn to lands at that
+    height and stands there, on the ground.
+  - A platform that carries the player over the scene's edge drops them once their capsule is
+    clear of the scene.
+
+  A scene's casts at its own colliders (in a world cast too), trigger areas, the proximity
+  lookup and the photo camera are not cut. Neither is collider data without bounds: portables,
+  the terrain, and scenes in a run that draws out-of-bounds geometry. The whole-collider test
+  (below) still turns off a collider that leaves the scene's rectangle.
 
 ## Deliberate choices that look like mistakes
 
@@ -925,8 +951,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
   same allowance at the edge. The height limit splits the same way: colliders take one limit from
   the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
-  parcels at its own, so over a scene in several pieces a collider can be solid above the height
-  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  parcels at its own, so over a scene in several pieces a collider can be on above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m), where only the
+  scene's own raycasts and trigger areas meet it. The box tested
   for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
   mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
   rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw

@@ -1039,6 +1039,11 @@ export interface SigninStageReadyMessage {
   kind: 'signinStageReady'
 }
 
+/** The Backpack's avatar preview has drawn the avatar (scene → page), so the page can open its hole onto it. */
+export interface AvatarPreviewReadyMessage {
+  kind: 'avatarPreviewReady'
+}
+
 export interface SceneInfoMessage {
   kind: 'sceneInfo'
   title: string
@@ -1314,6 +1319,9 @@ export interface EngineViewportRequest {
   /** Avatar preview region only: the part of `rect` (same units) the avatar is framed in, as it
    *  would be in a rect of that height centred there. The backdrop still fills `rect`. Absent: all of it. */
   focus?: { x: number; y: number; width: number; height: number }
+  /** Avatar preview region only: the box (same units) the page shows the preview in; the scene draws none
+   *  of the preview outside it. Absent: all of `rect`. */
+  clip?: { x: number; y: number; width: number; height: number }
   /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
   /** Lobby region only: the pages that borrow the stage leave the avatar still. */
@@ -2655,6 +2663,7 @@ export type SceneToPage =
   | SceneInfoMessage
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
+  | AvatarPreviewReadyMessage
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage

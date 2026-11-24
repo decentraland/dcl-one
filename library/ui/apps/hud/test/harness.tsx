@@ -208,6 +208,7 @@ export function fakeSession(): EngineSession {
     queryGifting: vi.fn(async (q) => ({ kind: 'giftingPage' as const, catalog: q.catalog, items: [], total: 0, equipped: [], failed: false, requestId: 0 })),
     homeScene: () => null,
     avatarPreviewRect: null,
+    avatarPreviewReady: false,
     pickDestination: vi.fn(() => true),
     welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, showLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn(), email: null },
     sceneLoading: null,
