@@ -38,8 +38,9 @@
   pointer-events: none;
 }
 
-/* The atlas's age, in the corner the zoom buttons, the legend and the land page's filters leave free. */
-.age {
+/* The status slot (the atlas's age), in the corner the zoom buttons, the legend and the land page's
+   filters leave free. */
+.status {
   position: absolute;
   top: 12px;
   left: 12px;

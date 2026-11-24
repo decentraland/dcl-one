@@ -14,8 +14,9 @@ import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMa
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
 import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
-import { Tag } from '../../../../components/Tag/Tag'
+import timeIcon from '../../assets/events/time-icn.png'
 import { showToast } from '../../design'
+import { MaskIcon } from '../../design/MaskIcon'
 import { usePhotoViewer } from '../gallery/usePhotoViewer'
 import { travelToPhoto } from '../gallery/reelActions'
 import { openPassport } from '../profile/Passport'
@@ -266,9 +267,10 @@ export function MapPage({
           onToggleLayers={() => setLayersOpen((v) => !v)}
         />
         {gridAge != null && (
-          <Tag variant="updated" className={noticeStyles.age}>
+          <div className={noticeStyles.age}>
+            <MaskIcon src={timeIcon} size={14} />
             {gridAge}
-          </Tag>
+          </div>
         )}
         {layersOpen && <LayersPanel />}
         <div className={noticeStyles.credits}>Powered by the Decentraland Foundation</div>

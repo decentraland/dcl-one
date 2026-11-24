@@ -33,6 +33,7 @@ import {
 import { landChainId } from "./chain";
 import LandCard from "./LandCard";
 import LandMap from "./LandMap";
+import MapGridAge from "./MapGridAge";
 import LandPriceChart from "./LandPriceChart";
 import { daysByPeriod, PERIOD_LABEL, PERIOD_OPTIONS } from "./rentals";
 import { fetchTiles, MapNotReadyError, nearestTile, type TilesResult } from "./tiles";
@@ -339,6 +340,7 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               onOpen={(href) => navigate(href)}
               withLegend
               label="LAND map: drag to move, use the zoom buttons, select a parcel to open it"
+              status={<MapGridAge />}
             />
           )}
           <div className="shop-lb-maptop">

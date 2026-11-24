@@ -5789,220 +5789,6 @@
       ]
     },
     {
-      "path": "library/ui/components",
-      "entries": [
-        {
-          "name": "AnimatedBackground",
-          "kind": "directory"
-        },
-        {
-          "name": "AppChrome",
-          "kind": "directory"
-        },
-        {
-          "name": "BlogBanner",
-          "kind": "directory"
-        },
-        {
-          "name": "BlogCard",
-          "kind": "directory"
-        },
-        {
-          "name": "Button",
-          "kind": "directory"
-        },
-        {
-          "name": "CardActionButton",
-          "kind": "directory"
-        },
-        {
-          "name": "CardImage",
-          "kind": "directory"
-        },
-        {
-          "name": "Checkbox",
-          "kind": "directory"
-        },
-        {
-          "name": "CheckboxLabel",
-          "kind": "directory"
-        },
-        {
-          "name": "CloseButton",
-          "kind": "directory"
-        },
-        {
-          "name": "CommunityCard",
-          "kind": "directory"
-        },
-        {
-          "name": "CopyFeedback",
-          "kind": "directory"
-        },
-        {
-          "name": "Dropdown",
-          "kind": "directory"
-        },
-        {
-          "name": "EventCard",
-          "kind": "directory"
-        },
-        {
-          "name": "FriendCTA",
-          "kind": "directory"
-        },
-        {
-          "name": "InputExplorerNames",
-          "kind": "directory"
-        },
-        {
-          "name": "InputField",
-          "kind": "directory"
-        },
-        {
-          "name": "InputWebCreatorTools",
-          "kind": "directory"
-        },
-        {
-          "name": "ItemLabel",
-          "kind": "directory"
-        },
-        {
-          "name": "JumpInCTA",
-          "kind": "directory"
-        },
-        {
-          "name": "Modal",
-          "kind": "directory"
-        },
-        {
-          "name": "NavBar",
-          "kind": "directory"
-        },
-        {
-          "name": "NavCreditsBalance",
-          "kind": "directory"
-        },
-        {
-          "name": "NavMenuItem",
-          "kind": "directory"
-        },
-        {
-          "name": "NavMenuTab",
-          "kind": "directory"
-        },
-        {
-          "name": "NavNotificationsButton",
-          "kind": "directory"
-        },
-        {
-          "name": "NavProfileButton",
-          "kind": "directory"
-        },
-        {
-          "name": "PlaceCard",
-          "kind": "directory"
-        },
-        {
-          "name": "ProfilePic",
-          "kind": "directory"
-        },
-        {
-          "name": "ProgressBar",
-          "kind": "directory"
-        },
-        {
-          "name": "SearchBar",
-          "kind": "directory"
-        },
-        {
-          "name": "ShopCard",
-          "kind": "directory"
-        },
-        {
-          "name": "Skeleton",
-          "kind": "directory"
-        },
-        {
-          "name": "Spinner",
-          "kind": "directory"
-        },
-        {
-          "name": "Switch",
-          "kind": "directory"
-        },
-        {
-          "name": "Tabs",
-          "kind": "directory"
-        },
-        {
-          "name": "TabsBar",
-          "kind": "directory"
-        },
-        {
-          "name": "Tag",
-          "kind": "directory"
-        },
-        {
-          "name": "TitleBar",
-          "kind": "directory"
-        },
-        {
-          "name": "Toast",
-          "kind": "directory"
-        },
-        {
-          "name": "generation.json",
-          "kind": "regular"
-        },
-        {
-          "name": "promotion.json",
-          "kind": "regular"
-        }
-      ]
-    },
-    {
-      "path": "library/ui/components/Tag",
-      "entries": [
-        {
-          "name": "AgeRatingAlpha.figma.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "CommunityType.figma.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Location.figma.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "ModeratonType.figma.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Realm.figma.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Status.figma.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Tag.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Tag.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "Tag.tsx",
-          "kind": "regular"
-        }
-      ]
-    },
-    {
       "path": "library/ui/foundations",
       "entries": [
         {
@@ -10210,7 +9996,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
-      "sha256": "f37eccb4c3c4b5c391c62d5ad49c727bf5b0d91aefb3bf11033bb641e1723fe8"
+      "sha256": "ff9060b4a5449c2825c86faab4740b53253ea38d6bbfeea6b32e4d430df262e7"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
@@ -10218,7 +10004,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "fd0e9c90e0160c9c98f275bade0314d63aa1fb0aef643edf28fad902574de611"
+      "sha256": "46c357e73dc5433235f1a1d20b07248c5a1d6458c3da4d5b5bc742cd3a034d92"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -11479,14 +11265,6 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
-    },
-    {
-      "path": "library/ui/components/Tag/Tag.module.css",
-      "sha256": "caf8382418bab1ed27d53289de2c7a1c426b9da1a930acadd1ceb3b7b8a4ab64"
-    },
-    {
-      "path": "library/ui/components/Tag/Tag.tsx",
-      "sha256": "ec090cfa64310a995876a476f1eea42e77e514b6d987fea34a6ba6b7528c243b"
     },
     {
       "path": "library/ui/foundations/colors/colors.css",
@@ -28130,6 +27908,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -28471,21 +28279,6 @@
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "to": "library/ui/components/Tag/Tag.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "to": "library/ui/components/Tag/Tag.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "test:runtime"
     },
     {
@@ -45931,36 +45724,6 @@
     {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/components/Tag/Tag.tsx",
-      "to": "library/ui/components/Tag/Tag.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/components/Tag/Tag.tsx",
-      "to": "library/ui/components/Tag/Tag.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/components/Tag/Tag.tsx",
-      "to": "library/ui/components/Tag/Tag.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/components/Tag/Tag.tsx",
-      "to": "library/ui/foundations/icons/general.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/components/Tag/Tag.tsx",
-      "to": "library/ui/foundations/icons/general.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/components/Tag/Tag.tsx",
-      "to": "library/ui/foundations/icons/general.tsx",
       "kind": "test:runtime"
     },
     {
@@ -50096,11 +49859,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "type"
     },
     {

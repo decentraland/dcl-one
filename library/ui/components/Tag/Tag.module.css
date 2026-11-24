@@ -8,22 +8,17 @@
  * colour at 15% under its letter. The greens, the yellow, the red, white at 5% and white at 70%
  * have no token. */
 @layer dcl.components {
-  /* The `body/sm-strong` text style, written out rather than composed: the Explorer HUD renders
-   * this tag, and its build (react-web's shared-inputs contract) refuses CSS Modules composition.
-   * The size, weight and line height are the tag's own. */
   .root {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
     display: inline-flex;
     flex: none;
     align-items: center;
     box-sizing: border-box;
     max-width: 100%;
     color: var(--dcl-text-primary);
-    font-family: 'Inter', sans-serif;
     font-size: var(--dcl-font-size-body-sm);
     font-weight: 600;
     line-height: 1.25;
-    letter-spacing: normal;
-    text-transform: none;
     white-space: nowrap;
     vertical-align: middle;
   }

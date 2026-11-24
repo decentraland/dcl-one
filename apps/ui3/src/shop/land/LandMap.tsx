@@ -7,12 +7,9 @@
 // the canvas (mapView.ts), LAND on sale or for rent with a mark in the same paint. On top of both, the
 // Shop's other layers as one SVG in parcel units: the account's own and rented LAND, and a selection.
 
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { Tag } from "@dcl/one-ui";
-import { useMapGridAge } from "@hud/features/map/useMapGridAge";
 import MapSurface, { GRID_PARCELS } from "../../explorer/components/MapSurface";
-import { serviceHref } from "../../data/catalyst/client";
 import { landTokenId } from "../../data/catalyst/landListing";
 import { shortAddress } from "@shop/model/address";
 import { landChainId } from "./chain";
@@ -79,6 +76,9 @@ export type LandMapProps = {
   wheelZoom?: "modifier" | "always";
   /** False: no zoom buttons. */
   withZoomControls?: boolean;
+  /** Shown over the map's top-left corner, where the buttons and the page's filters leave room: the
+      atlas's age (`MapGridAge`) on the Shop's pages. */
+  status?: ReactNode;
   /** The names and the texts of the zoom buttons; the default is "Zoom in" with + and "Zoom out" with the minus sign. */
   zoomButtons?: { inLabel?: string; outLabel?: string; inText?: string; outText?: string };
   /** The zoom after a press of a zoom button (1 in, -1 out); the default multiplies or divides by 1.5. */
@@ -146,6 +146,7 @@ export default function LandMap({
   dragWithAnyButton = false,
   wheelZoom = "modifier",
   withZoomControls = true,
+  status,
   zoomButtons = NO_ZOOM_BUTTONS,
   zoomStep = defaultZoomStep,
   paintInTask = false,
@@ -158,8 +159,6 @@ export default function LandMap({
 }: LandMapProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  // The atlas image is drawn from the map API's parcel grid; a "tiles" map paints the Shop's own data.
-  const gridAge = useMapGridAge(serviceHref("map"), surface !== "tiles");
   const [size, setSize] = useState<MapSize>({ w: 480, h: 480 });
   // The view as asked for: the parcel at the middle of the shell, and the zoom. It is kept through a
   // resize, and `view` is what the shell's size allows of it.
@@ -439,11 +438,7 @@ export default function LandMap({
         </div>
       </div>
 
-      {gridAge != null ? (
-        <Tag variant="updated" className={styles.age}>
-          {gridAge}
-        </Tag>
-      ) : null}
+      {status != null ? <div className={styles.status}>{status}</div> : null}
 
       {withZoomControls ? (
         <div className="shop-landmap__zoom">

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import LandMap from "./LandMap";
@@ -220,48 +220,22 @@ describe("LandMap over the atlas image", () => {
   });
 });
 
-describe("LandMap age of the atlas", () => {
-  const MINUTE = 60_000;
-
-  /** Answers the map API's tiles info with `answer`, and records the reads. */
-  function serveTilesInfo(answer: () => Promise<Response>) {
-    const reads: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      reads.push(url);
-      return answer();
-    }));
-    return reads;
-  }
-
-  it("says how long ago the map API last found its grid current, over the atlas image", async () => {
+describe("LandMap status", () => {
+  it("shows the status it is given over the map, outside the stage that moves", () => {
     stubBrowser();
-    const reads = serveTilesInfo(async () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE, checkedAt: Date.now() - 12 * MINUTE }));
-    render(<LandMap tiles={landGrid()} initialZoom={10} />);
-    expect(await screen.findByText("Updated 12 min ago")).toBeInTheDocument();
-    expect(reads).toEqual(["/v2/tiles/info"]);
+    const { container } = render(<LandMap tiles={landGrid()} initialZoom={10} status={<span>Updated 12 min ago</span>} />);
+    const status = screen.getByText("Updated 12 min ago");
+    expect(status.closest(".shop-landmap__stage")).toBeNull();
+    expect(container.querySelector('[role="region"]')!.contains(status)).toBe(true);
   });
 
-  it.each([
-    ["a grid found current in the last five minutes", () => Response.json({ checkedAt: Date.now() - 4 * MINUTE })],
-    ["an answer without checkedAt", () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE })],
-    ["a map API that cannot serve its grid", () => new Response(null, { status: 503 })],
-    ["a failed read", () => Promise.reject(new TypeError("Failed to fetch"))],
-  ])("shows no age for %s", async (_case, answer) => {
+  it("reads nothing itself and draws no status without one", () => {
     stubBrowser();
-    const reads = serveTilesInfo(async () => answer());
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
     render(<LandMap tiles={landGrid()} initialZoom={10} />);
-    await waitFor(() => expect(reads).toHaveLength(1));
-    await act(async () => {});
     expect(screen.queryByText(/^Updated /)).toBeNull();
-  });
-
-  it("reads no age for a map of tile data, which is not drawn from the grid", async () => {
-    stubBrowser();
-    const reads = serveTilesInfo(async () => Response.json({ checkedAt: Date.now() - 12 * MINUTE }));
-    renderMap();
-    await act(async () => {});
-    expect(reads).toEqual([]);
-    expect(screen.queryByText(/^Updated /)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
