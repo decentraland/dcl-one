@@ -472,6 +472,13 @@ impl FakeCommittee {
         *self.members.lock().unwrap() = members.map(|m| m.iter().map(|a| a.to_string()).collect());
     }
 
+    /// Drops `member` from the committee the subgraph answers.
+    pub fn remove(&self, member: &str) {
+        if let Some(members) = self.members.lock().unwrap().as_mut() {
+            members.retain(|m| m != member);
+        }
+    }
+
     /// The `rarities` the subgraph answers, each `(name, usd price, max
     /// supply)`; `None` answers a GraphQL error.
     pub fn set_rarities(&self, rarities: Option<&[(&str, &str, &str)]>) {
@@ -575,6 +582,13 @@ impl FakeRegistry {
             );
     }
 
+    /// Drops provider `id`.
+    pub fn remove(&self, id: &str) {
+        if let Some(providers) = self.providers.lock().unwrap().as_mut() {
+            providers.remove(id);
+        }
+    }
+
     /// Changes one field of provider `id`.
     pub fn set(&self, id: &str, field: &str, value: serde_json::Value) {
         if let Some(provider) = self
@@ -596,6 +610,10 @@ impl FakeRegistry {
             (false, false) => *providers = Some(BTreeMap::new()),
             _ => {}
         }
+    }
+
+    pub fn hits(&self) -> usize {
+        self.hits.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Holds the receipt `id`: the registry consumed that cheque.

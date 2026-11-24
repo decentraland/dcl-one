@@ -263,6 +263,7 @@ mod sealed {
     impl Sealed for super::CollectionManage {}
     impl Sealed for super::ThirdPartyPublish {}
     impl Sealed for super::Curator {}
+    impl Sealed for super::ValidatorVerdict {}
 }
 
 /// A grant to record a review of one collection: a curation of it or of its
@@ -287,6 +288,29 @@ impl CurationGrant for Curator {
     fn curated(&self) -> Uuid {
         self.collection
     }
+}
+
+impl CurationGrant for ValidatorVerdict {
+    fn curated(&self) -> Uuid {
+        self.collection
+    }
+}
+
+/// The wearable validator may decide, by its verdict on its current claim,
+/// the curation of the collection that claim's request names: made only
+/// from a call whose signature verified ([`validator_verdict`]).
+#[derive(Debug)]
+pub struct ValidatorVerdict {
+    collection: Uuid,
+}
+
+/// The validator's grant over `collection`, for a verdict whose signature
+/// `verified` proves.
+pub fn validator_verdict(
+    _verified: &crate::handlers::validator::Verified,
+    collection: Uuid,
+) -> ValidatorVerdict {
+    ValidatorVerdict { collection }
 }
 
 /// May read a collection's review timeline: a role on it, or the committee,
@@ -2130,6 +2154,15 @@ pub async fn operate(
     })
 }
 
+/// [`operate`]'s decision again, inside the write's transaction.
+pub(crate) async fn confirm_operator(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    operator: &Operator,
+) -> Result<(), ApiError> {
+    operated(conn, view, operator.collection).await
+}
+
 async fn operated(
     conn: &mut PgConnection,
     view: &DecisionView,
@@ -2168,6 +2201,103 @@ pub struct CuratedState {
     pub third_party: bool,
     pub contract: Option<String>,
     pub published: bool,
+}
+
+/// [`curate_collection`]'s and [`curate_item`]'s decision again, inside the
+/// write's transaction: the collection still published, the item still in
+/// it, a role still held unless the committee admitted the signer.
+pub(crate) async fn confirm_curator(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    state: &State,
+    curator: &Curator,
+) -> Result<CuratedState, ApiError> {
+    let (c, role) = curated(conn, view, curator).await?;
+    let s = curator.signer.as_str();
+    if !c.published {
+        return Err(ApiError::conflict("Unpublished collection")
+            .with_data(json!({ "id": curator.collection, "ethAddress": s })));
+    }
+    keeps_role(curator, role)?;
+    keeps_committee(state, curator, false).await?;
+    curated_state(conn, curator, c).await
+}
+
+/// 401 when the committee admitted `curator`, no `role` on the collection
+/// still admits it, and a committee read that started after the decision no
+/// longer lists it.
+async fn keeps_committee(state: &State, curator: &Curator, role: bool) -> Result<(), ApiError> {
+    if curator.committee
+        && !role
+        && !on_committee(state, Since::write(), curator.signer.as_str()).await?
+    {
+        return Err(ApiError::unauthorized("Unauthorized").with_data(
+            json!({ "id": curator.item.unwrap_or(curator.collection), "ethAddress": curator.signer }),
+        ));
+    }
+    Ok(())
+}
+
+/// [`review_member`]'s and [`review_creator`]'s decision again, inside the
+/// write's transaction: the collection still there, a role still held
+/// unless the committee admitted the signer, and a committee admission
+/// still on the committee.
+pub(crate) async fn confirm_reviewer(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    state: &State,
+    curator: &Curator,
+) -> Result<CuratedState, ApiError> {
+    let (c, role) = curated(conn, view, curator).await?;
+    keeps_role(curator, role)?;
+    keeps_committee(state, curator, role).await?;
+    curated_state(conn, curator, c).await
+}
+
+async fn curated(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    curator: &Curator,
+) -> Result<(Collection, bool), ApiError> {
+    let gone = || curation_not_found(&curator.signer);
+    let c = collection(conn, view, curator.collection, providers(&curator.registry))
+        .await?
+        .ok_or_else(gone)?;
+    if let Some(id) = curator.item {
+        let i = item(conn, id).await?.ok_or_else(gone)?;
+        if i.collection != Some(curator.collection) {
+            return Err(gone());
+        }
+    }
+    let role = c.role(&curator.signer);
+    Ok((c, role))
+}
+
+fn keeps_role(curator: &Curator, role: bool) -> Result<(), ApiError> {
+    if curator.role && !role && !curator.committee {
+        return Err(ApiError::unauthorized("Unauthorized").with_data(
+            json!({ "id": curator.item.unwrap_or(curator.collection), "ethAddress": curator.signer }),
+        ));
+    }
+    Ok(())
+}
+
+async fn curated_state(
+    conn: &mut PgConnection,
+    curator: &Curator,
+    c: Collection,
+) -> Result<CuratedState, ApiError> {
+    let name: String = sqlx::query_scalar("SELECT name FROM builder.collections WHERE id = $1")
+        .bind(curator.collection)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(CuratedState {
+        name,
+        creator: c.creator.as_deref().unwrap_or(&c.stored_owner) == curator.signer,
+        third_party: c.third_party,
+        contract: c.contract,
+        published: c.published,
+    })
 }
 
 /// The node's own standard publication routes: the stored owner of a

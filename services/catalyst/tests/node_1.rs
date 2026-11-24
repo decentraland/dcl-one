@@ -2,6 +2,8 @@
 //! build links few test executables. Each file stays a module named after it.
 #![recursion_limit = "256"]
 
+#[path = "builder_conformance.rs"]
+mod builder_conformance;
 #[path = "content_live.rs"]
 mod content_live;
 #[path = "explore_mirrors.rs"]
