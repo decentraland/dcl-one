@@ -2211,7 +2211,14 @@ mod tests {
 
     #[test]
     fn a_walkable_slope_is_ground_and_a_steeper_one_is_not() {
-        for (degrees, standing) in [(40.0, true), (46.0, true), (47.0, false), (50.0, false)] {
+        for (degrees, standing) in [
+            (40.0, true),
+            (46.0, true),
+            (47.0, false),
+            (50.0, false),
+            (55.0, false),
+            (60.0, false),
+        ] {
             let mut colliders = SceneColliderData::default();
             let feet = ramp(&mut colliders, degrees, 0.01);
             let h = height(&mut colliders, feet);
