@@ -130,14 +130,13 @@ export interface PhotoPlace {
   y: number
 }
 
-/** The photo's own realm when it is a world's; null for Genesis City. */
-export function photoWorldRealm(place: PhotoPlace): string | null {
-  return place.realm != null && worldOfRealm(place.realm) != null ? place.realm : null
+export function photoDestination(place: PhotoPlace): { kind: 'world'; realm: string } | { kind: 'parcel'; x: number; y: number } {
+  return place.realm != null && worldOfRealm(place.realm) != null ? { kind: 'world', realm: place.realm } : { kind: 'parcel', x: place.x, y: place.y }
 }
 
 /** A world's photo changes realm to the world; any other teleports to its Genesis City parcel,
  *  leaving a world first. */
 export function travelToPhoto(place: PhotoPlace, map: Pick<MapState, 'teleportToPlace' | 'changeRealm'>): TravelOutcome {
-  const world = photoWorldRealm(place)
-  return world != null ? map.changeRealm(world) : map.teleportToPlace(place.x, place.y)
+  const dest = photoDestination(place)
+  return dest.kind === 'world' ? map.changeRealm(dest.realm) : map.teleportToPlace(dest.x, dest.y)
 }

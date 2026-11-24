@@ -584,6 +584,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cover in the saved image, as unity-explorer computes it; the catalyst's camera-reel service parses
   the metadata into a struct without that field, so it is not stored. Kept for parity with the
   upstream service's clients.
+- **The photo viewer (#2073).** Its layout and numbers follow unity-explorer's, with four
+  differences. The info panel shows a loading view while a photo's details load; unity-explorer
+  never shows one. The owner's name opens their passport; unity-explorer's owner button cannot be
+  reached. A person's row is disabled for guests, because the
+  profile store cannot tell a profile that is missing from one still loading, which is the case
+  unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
+  accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
+  unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player

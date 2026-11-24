@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { pending } from '@explorer-core/lib/analytics'
 import type { GalleryPhoto, GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import { PhotoDetail } from '../features/gallery/PhotoDetail'
-import { photoDate, travelToPhoto } from '../features/gallery/reelActions'
+import { photoDate, photoDestination, travelToPhoto } from '../features/gallery/reelActions'
 import { receiveProfile, resetProfileStore } from '../features/session/profileStore'
 import { ToastHost, resetPopups } from '../design'
 
@@ -251,6 +251,11 @@ describe('Jump In travel', () => {
     for (const realm of others) travelToPhoto({ realm, x: 1, y: 2 }, map)
     expect(map.teleportToPlace.mock.calls).toEqual(others.map(() => [1, 2]))
     expect(map.changeRealm).toHaveBeenCalledTimes(worlds.length)
+  })
+
+  it("gives the lobby the same world-or-parcel destination", () => {
+    expect(photoDestination({ realm: 'my-world.eth', x: 1, y: 2 })).toEqual({ kind: 'world', realm: 'my-world.eth' })
+    expect(photoDestination({ realm: 'main', x: 1, y: 2 })).toEqual({ kind: 'parcel', x: 1, y: 2 })
   })
 
   it('writes the date as month, padded day and year', () => {

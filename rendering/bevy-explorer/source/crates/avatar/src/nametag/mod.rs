@@ -129,7 +129,6 @@ impl Plugin for NametagPlugin {
                 resolve_voice,
                 show_tags,
                 retext_from_bridge,
-                answer_official_wallets,
                 show_chat_bubbles,
                 follow_glyph_atlas,
                 build_tags,
@@ -139,6 +138,7 @@ impl Plugin for NametagPlugin {
                 // a rebuilt atlas has moved every glyph: bind and build from where they are now
                 .after(GlyphAtlasMaintenance),
         )
+        .add_systems(Update, answer_official_wallets.in_set(SceneSets::PostLoop))
         .add_systems(
             PostUpdate,
             place_tags

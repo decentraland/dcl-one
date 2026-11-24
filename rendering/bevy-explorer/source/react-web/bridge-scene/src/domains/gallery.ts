@@ -113,7 +113,7 @@ export function registerGallery(ctx: Ctx): void {
 
   // Anyone's urns (a photo's people), so resolveWearables, never the own-set indexing.
   ctx.on('getGalleryWearables', async (msg) => {
-    const wearables = await resolveWearables(msg.urns, { shopUrls: true }).catch((e: unknown) => {
+    const wearables = await resolveWearables(msg.urns, { shopUrls: true, dropFailed: true }).catch((e: unknown) => {
       console.error('[gallery] wearables resolve failed', e)
       return null
     })

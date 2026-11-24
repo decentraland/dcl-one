@@ -6018,7 +6018,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
-      "sha256": "d3728031ffad6b1dcfa5756f041027865cb5dfb5de655af1e067a614a869cf64"
+      "sha256": "04274a2baede2329a3020626623fca8a06624339fa3d63d672d8cf71f696b6c2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
@@ -6050,7 +6050,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gallery.ts",
-      "sha256": "2c9c8ddc51f4103f1526ee1f443bbb68373015a16e31b6cbb74281e6aa429de2"
+      "sha256": "7599f5a68b718a466a4e0dfacdc737c5a9ec4f918491fbb6994b7195baea1f75"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gifting.ts",
@@ -6090,7 +6090,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "c74cb0f41622d5be9a9367a13f2f75e21f466001ad951a3aaca76d165d49956a"
+      "sha256": "d1f5520ec7b78ec30bb91ea88bde52a70c4281cd1d4d2b6075100c1fdbf9a7fa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -6118,7 +6118,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
-      "sha256": "1173e8bb8edc527060ec7417283d8ba00ada7f9deffaf9cd0d3e86cb7239c0ae"
+      "sha256": "17499545bfb507b1b93394da8607e8fb0b252a8043dd2694cae36f46125d9697"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/welcome.ts",
@@ -6302,7 +6302,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
-      "sha256": "42fe38d9648f597a8b2d2482bc887d2b93244b11e2e5e1801fbaa33e60f794e0"
+      "sha256": "041f16e3f2cc33c28b014a7d2c85921217582a00f85d2e40570137182251e993"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeGifting.test.ts",
@@ -6342,7 +6342,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
-      "sha256": "bfb65259f5d683e0dde380cb43ca7257a487aa0dd439c964443858ecde2e3ef5"
+      "sha256": "286b2341add50a03e783664ea3fe35bf55021223d0830169c9b5e986314e20a7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -6355,6 +6355,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
       "sha256": "55177f95b90192c46d655391140a9f4678ddb9847e84163ff7da76bfd2acf980"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
+      "sha256": "5b5d5405163c10ffe4215a45e8e6f25846bffe6049e0c78629977ae276910be1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
@@ -6506,7 +6510,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "9c4f5d0869c78a357dcc1812a3deb8cac0da334fd7c994c225f919c3d8bf9dae"
+      "sha256": "ea5699c93130195ebfada2bd4b89ef6ec56277729e4a6a4f092c33f6ad55b863"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6570,6 +6574,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
@@ -9751,7 +9756,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/reelActions.ts",
-      "sha256": "660b3925167bd0216ca1abf745d8c42b2849dd0a38aa1d6c01fb15b20800645c"
+      "sha256": "aa29bdd4be43a6d2584dbb8b49af6110676f612ba546b207d19c267eacf3d96b"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
@@ -9875,7 +9880,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "0118f59553f1c89bcbb0d558637db7d9ad9f9d15c1c13e8866c5c499afa499eb"
+      "sha256": "2e7ced71be47565c0c51f44a5eec4eb332fee273f0f5848aaa0844f8866e9581"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -11119,7 +11124,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/photoDetail.test.tsx",
-      "sha256": "a8ed1c524fbcef147bf99745e0b1f4e74731b5d321c4a240da359cf1aa7948ef"
+      "sha256": "f2295aa4dd6499ecb66935fab105666beeb1f0ea6f542c94b1411f4813922b19"
     },
     {
       "path": "library/ui/apps/hud/test/placesBrowser.test.tsx",

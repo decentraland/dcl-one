@@ -127,7 +127,7 @@ describe('bridge gallery', () => {
     wearables.resolveWearables.mockResolvedValueOnce([tiara])
     const { sent, ask } = start()
     await ask({ kind: 'getGalleryWearables', requestId: 9, urns: ['urn:a'] })
-    expect(wearables.resolveWearables).toHaveBeenCalledWith(['urn:a'], { shopUrls: true })
+    expect(wearables.resolveWearables).toHaveBeenCalledWith(['urn:a'], { shopUrls: true, dropFailed: true })
     expect(sent).toEqual([{ kind: 'galleryWearables', requestId: 9, ok: true, wearables: [tiara] }])
 
     vi.spyOn(console, 'error').mockImplementation(() => {})
