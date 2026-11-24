@@ -28,17 +28,17 @@ def cache_cleanup_api(pages, states=None, remaining=(1000,), listing_error=None,
             if states_error:
                 return CompletedProcess(args, 1, stdout='', stderr=states_error)
             query = next(arg for arg in args if arg.startswith('query='))
-            numbers = re.findall(r'p([0-9]+): pullRequest\(number: \1\)', query)
-            if not numbers:
+            # GitHub answers under each alias the state of the PR its argument names, whatever the alias says.
+            fields = re.findall(r'(p[0-9]+): pullRequest\(number: ([0-9]+)\)', query)
+            if not fields:
                 raise AssertionError(f'Missing pull requests in query: {query}')
-            found = {number: states.get(number, 'OPEN') for number in numbers}
+            found = {alias: states.get(number, 'OPEN') for alias, number in fields}
             body = {'data': {'repository': {
-                f'p{number}': {'state': state} if state else None for number, state in found.items()
+                alias: {'state': state} if state else None for alias, state in found.items()
             }}}
-            missing = [number for number, state in found.items() if state is None]
+            missing = [alias for alias, state in found.items() if state is None]
             if missing:
-                body['errors'] = [{'type': 'NOT_FOUND', 'path': ['repository', f'p{number}']}
-                                  for number in missing]
+                body['errors'] = [{'type': 'NOT_FOUND', 'path': ['repository', alias]} for alias in missing]
                 return CompletedProcess(args, 1, stdout=json.dumps(body),
                                         stderr='GraphQL: Could not resolve to a PullRequest')
         elif args[2:4] == ['--method', 'DELETE']:
