@@ -793,11 +793,7 @@ pub struct ContainingScene<'w, 's> {
     portable_scenes: Res<'w, PortableScenes>,
 }
 
-pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
-    (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
-        .floor()
-        .as_ivec2()
-}
+pub use common::partition::vec3_to_parcel;
 
 /// The parcels within Chebyshev ring `ring` of `center`, `center` included: a square `2 * ring + 1`
 /// parcels a side. A negative ring gives none.

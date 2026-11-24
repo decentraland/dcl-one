@@ -720,6 +720,117 @@ fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
     }
 }
 
+/// What the player parcel report said: the parcel before, the parcel, the scene there and whether
+/// the player was in world.
+#[derive(Resource, Default)]
+struct ReportedParcels(Vec<(Option<IVec2>, IVec2, Option<Option<String>>, bool)>);
+
+/// An app running the player parcel report as the plugin does.
+fn parcel_report_app() -> App {
+    let mut app = App::new();
+    app.init_resource::<ScenePointers>()
+        .init_resource::<ReportedParcels>()
+        .add_event::<PlayerParcelChanged>()
+        .add_systems(
+            PostUpdate,
+            (
+                player_parcel_report(),
+                |mut changes: EventReader<PlayerParcelChanged>,
+                 mut reported: ResMut<ReportedParcels>| {
+                    for change in changes.read() {
+                        reported.0.push((
+                            change.old,
+                            change.parcel,
+                            change.scene.clone(),
+                            change.in_world,
+                        ));
+                    }
+                },
+            )
+                .chain(),
+        );
+    app
+}
+
+// A new parcel reports the one before; a change of the scene listed at the parcel the player
+// stands on (a new realm at the same parcel), or entering the world, reports the parcel again.
+// A player placed this frame is reported at the new parcel, with whether it is in world.
+#[test]
+fn the_player_parcel_reports_moves_scene_changes_and_entering_the_world() {
+    let mut app = parcel_report_app();
+    // behind the loading screen; its global transform is stale and never read
+    let player = app
+        .world_mut()
+        .spawn((
+            PrimaryUser::default(),
+            Transform::from_xyz(8.0, 0.0, -8.0),
+            GlobalTransform::from_xyz(-100.0, 0.0, 100.0),
+            OutOfWorld::default(),
+        ))
+        .id();
+    app.update();
+    app.update();
+    {
+        let mut pointers = app.world_mut().resource_mut::<ScenePointers>();
+        pointers.set_realm(IVec2::ZERO, IVec2::X);
+        pointers.set_all_scenes_known();
+    }
+    app.update();
+    // placed at the spawn point on the next parcel and let in
+    app.world_mut()
+        .get_mut::<Transform>(player)
+        .unwrap()
+        .translation = Vec3::new(24.0, 0.0, -8.0);
+    app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+    app.update();
+    app.world_mut()
+        .entity_mut(player)
+        .insert(OutOfWorld::default());
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<ReportedParcels>().0,
+        [
+            (None, IVec2::ZERO, None, false),
+            (Some(IVec2::ZERO), IVec2::ZERO, Some(None), false),
+            (Some(IVec2::ZERO), IVec2::X, Some(None), true),
+            (Some(IVec2::X), IVec2::X, Some(None), false),
+        ]
+    );
+}
+
+// A teleport moves the player at once and defers its `OutOfWorld`. The frame it is made, the
+// player is reported at the target out of world, never in world there.
+#[test]
+fn the_player_parcel_of_a_teleport_is_reported_out_of_world() {
+    #[derive(Resource)]
+    struct Teleport;
+    fn teleport(
+        mut commands: Commands,
+        mut player: Single<(Entity, &mut Transform), With<PrimaryUser>>,
+    ) {
+        player.1.translation = Vec3::new(24.0, 0.0, -8.0);
+        commands.entity(player.0).insert(OutOfWorld::default());
+        commands.remove_resource::<Teleport>();
+    }
+    let mut app = parcel_report_app();
+    app.add_systems(Update, teleport.run_if(resource_exists::<Teleport>));
+    app.world_mut()
+        .spawn((PrimaryUser::default(), Transform::from_xyz(8.0, 0.0, -8.0)));
+    app.update();
+    app.insert_resource(Teleport);
+    app.update();
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<ReportedParcels>().0,
+        [
+            (None, IVec2::ZERO, None, true),
+            (Some(IVec2::ZERO), IVec2::X, None, false),
+        ]
+    );
+}
+
 /// An app running the realm lifecycle as the plugin does. Its player stands in the world on
 /// parcel 0,0, and `target` is where the next realm change lands them.
 fn realm_app(target: RealmInitialLocation) -> (App, Entity) {

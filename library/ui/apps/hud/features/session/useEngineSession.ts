@@ -36,7 +36,8 @@ import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
-import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
+import { showHideUiToast, type UiHidden } from '../hideUi/hideUiToast'
+import { getBindingsSnapshot, isCancelKey, isEditableTarget, keyHintFor, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
@@ -101,6 +102,7 @@ import type {
   GalleryPhoto,
   GalleryPhotoMeta,
   GalleryWriteMessage,
+  GalleryWearablesMessage,
   ExternalUrlOpenedMessage,
   SatelliteTileMessage,
   PlaceMessage,
@@ -632,6 +634,8 @@ export interface GalleryState {
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
+  /** Resolve the wearables a person in a photo had on (urns from its metadata); null on failure. */
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
   setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
   remove: (id: string) => Promise<ReelWrite>
 }
@@ -1035,7 +1039,7 @@ export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | GalleryWearablesMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1273,6 +1277,8 @@ export interface EngineSession {
   logout: () => void
   /** A full scene menu page is open → the React HUD (sidebar + chat) hides. */
   menuOpen: boolean
+  /** The HideUi key (U) hid the Explorer HUD (its first press; the second hides the scene UI too). */
+  hudHidden: boolean
   closeAllPanels: () => void
 }
 
@@ -1546,6 +1552,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // requestFocusChat from a callback that would otherwise close over a stale value. Popups aren't in
   // here — they live in their own module store, so requestFocusChat asks it directly.
   const chatCoveredRef = useRef(false)
+  // Brings back the UI the HideUi key hid (assigned below, once setUiHidden exists).
+  const showUiRef = useRef<() => void>(() => {})
   // Open + (re)focus chat — the engine's "Chat" system action (Enter, relayed by the bridge as
   // focusChat) funnels here, wherever keyboard focus sat when it fired.
   const requestFocusChat = useCallback(() => {
@@ -1560,6 +1568,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // `!document.pointerLockElement`. No-op on native (no DOM pointer lock; the engine frees its own OS
     // cursor grab from the Chat action).
     document.exitPointerLock?.()
+    // the chat is part of the HUD: Enter brings back a UI the HideUi key hid
+    showUiRef.current()
     // Friends is the only panel Enter closes: it shares the chat's bottom-left dock, so Chat renders
     // null behind it (App's `hidden`) and focusing without closing it would do nothing on screen.
     // The rest (profile, notifications, emotes) sit clear of the chat, so leave them open.
@@ -1569,6 +1579,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
   const [pendingMention, setPendingMention] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The HideUi cycle: everything shown → Explorer HUD hidden → scene UI hidden too → shown.
+  const [uiHidden, setUiHiddenState] = useState<UiHidden>('none')
+  const uiHiddenRef = useRef<UiHidden>('none')
   const [friendsData, setFriendsData] = useState<{
     available: boolean
     friends: Friend[]
@@ -2762,6 +2775,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'gallery':
         case 'galleryWrite':
+        case 'galleryWearables':
         case 'externalUrlOpened':
         case 'satelliteTile':
         case 'place':
@@ -3575,6 +3589,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     },
     [bridgeCall]
   )
+  const loadGalleryWearables = useCallback(
+    async (urns: string[]): Promise<Wearable[] | null> => {
+      const msg = await bridgeCall('galleryWearables', (requestId) => ({ kind: 'getGalleryWearables', requestId, urns }))
+      return msg?.ok === true ? msg.wearables : null
+    },
+    [bridgeCall]
+  )
   const setGalleryPhotoPublic = useCallback(
     async (id: string, isPublic: boolean): Promise<ReelWrite> =>
       (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
@@ -3743,6 +3764,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     ownConsoleCommands.current.push([command, ...args].join(' '))
     driverRef.current?.send({ kind: 'consoleCommand', command, args })
   }, [])
+  // The scene UI is the engine's: its hiding goes through the engine's `show_ui all` command.
+  const setUiHidden = useCallback(
+    (next: UiHidden) => {
+      const prev = uiHiddenRef.current
+      if (prev === next) return
+      uiHiddenRef.current = next
+      setUiHiddenState(next)
+      if ((prev === 'all') !== (next === 'all')) ownConsoleCommand('show_ui', ['all', next === 'all' ? 'false' : 'true'])
+      showHideUiToast(next, keyHintFor(getBindingsSnapshot(), 'HideUi') ?? 'U')
+    },
+    [ownConsoleCommand]
+  )
+  showUiRef.current = () => setUiHidden('none')
   const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
   const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
@@ -4502,6 +4536,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     signOuts.current += 1
     // a /goto still waiting for its answer has no chat of this session to post it in
     gotoReplies.current.clear()
+    // the next sign-in starts with the whole UI shown; sent before the logout, while the engine listens
+    setUiHidden('none')
     driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
@@ -4604,7 +4640,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setBanRefusedTravel(false)
     travelSeq.current++
     setTravellingTo(null)
-  }, [closeAllPanels, resetEvents])
+  }, [closeAllPanels, resetEvents, setUiHidden])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
   // sign-in kept, and the error shown there.
@@ -5328,6 +5364,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       if (emote) playEmote(emote.urn)
       return
     }
+    if (action === 'HideUi') {
+      setUiHidden(uiHiddenRef.current === 'none' ? 'explorer' : uiHiddenRef.current === 'explorer' ? 'all' : 'none')
+      return
+    }
     switch (action) {
       case 'Map': toggleMap(); break
       case 'Places': togglePlaces(); break
@@ -5340,12 +5380,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       case 'Friends': toggleFriends(); break
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
+      default: return
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
       // itself opens the mic on press and closes it on release (the mic relay updates the
       // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }
+    // a panel shortcut brings the whole UI back with the panel it opens
+    setUiHidden('none')
   }
 
   // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
@@ -5538,6 +5581,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      loadWearables: loadGalleryWearables,
       setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },
@@ -5568,6 +5612,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setInteractableArea,
     logout,
     menuOpen,
+    hudHidden: uiHidden !== 'none',
     closeAllPanels,
     login: {
       status,

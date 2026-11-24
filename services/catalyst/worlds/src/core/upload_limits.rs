@@ -419,7 +419,7 @@ pub fn admit_source(
 ) -> Result<Option<SourceUploadLease>, SourceLimitReason> {
     let ip = crate::shared::client_ip::client_ip(headers);
     if ip.is_empty() {
-        metrics::counter!("multipart_upload_unattributed", "route" => route).increment(1);
+        dcl_metrics::counter!("multipart_upload_unattributed", "route" => route).increment(1);
         return Ok(None);
     }
     let declared = match declared_content_length(headers) {
@@ -435,7 +435,7 @@ pub fn admit_source(
     )
     .map(Some)
     .inspect_err(|reason| {
-        metrics::counter!("multipart_upload_rejections", "route" => route, "reason" => reason.as_str())
+        dcl_metrics::counter!("multipart_upload_rejections", "route" => route, "reason" => reason.as_str())
             .increment(1);
         tracing::warn!(route, source = %source, reason = reason.as_str(), "multipart upload shed: per-source limit");
     })

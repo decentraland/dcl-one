@@ -154,8 +154,7 @@ async fn a_peer_change_after_the_bootstrap_swaps_the_streams_and_the_retry_list(
         orchestrator.state() == SyncState::Syncing
     })
     .await;
-    // The bootstrap task has ended by now (every peer streams); the job must
-    // still apply a change.
+    // Wait for initial bootstrap before replacing the peer set.
     wait_until("the bootstrap callback", || {
         callbacks.load(Ordering::SeqCst) == 1
     })

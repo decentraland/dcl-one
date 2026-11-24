@@ -202,9 +202,18 @@ fn renderer_busy() -> Box<Response> {
     )
 }
 
+/// The render cache's key of `key` on `grid`: a body rendered from one grid
+/// is never served for another.
+fn png_cache_key(grid: &Grid, key: &str) -> String {
+    format!("{key}@{:016x}", grid.content_tag)
+}
+
+/// The PNG of `key` rendered from `grid`, the one grid the caller took for
+/// this answer: its validators, cache key and body all come from it.
 async fn cached_png_render<F>(
     state: &Shared,
     headers: &HeaderMap,
+    grid: Arc<Grid>,
     key: String,
     max_age: u32,
     swr: u32,
@@ -213,11 +222,12 @@ async fn cached_png_render<F>(
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
-    let last = state.map.last_updated_at();
+    let last = grid.last_updated_at;
     let etag = http_cache::etag_for(last, &key);
     if let Some(r) = http_cache::not_modified_etag(headers, last, &etag, max_age, swr) {
         return r;
     }
+    let key = png_cache_key(&grid, &key);
     let flight;
     let mut _rendering = None;
     if state.map.cached_png(&key).is_none() {
@@ -239,14 +249,6 @@ where
     let bytes = match state.map.cached_png(&key) {
         Some(b) => b,
         None => {
-            let Some(grid) = state.map.snapshot() else {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    [(header::CACHE_CONTROL, "no-store")],
-                    "Not ready",
-                )
-                    .into_response();
-            };
             match render_blocking(grid, render).await {
                 Ok(b) => {
                     let b = Arc::new(b);
@@ -280,11 +282,18 @@ pub async fn map_png(
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    // One grid for the validators, the cache key and the body, so a swap
+    // cannot pair one grid's body with another's validators. Without a grid,
+    // the envelope as it is: never a 304 for a stamp no grid carries.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     let p = extract_params(&q);
-    let key = format!("map:{}:{}", state.map.content_tag(), p.key_suffix());
+    let key = format!("map:{}", p.key_suffix());
     cached_png_render(
         &state,
         &headers,
+        grid,
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
@@ -299,22 +308,20 @@ pub async fn parcel_map_png(
     Path((x, y)): Path<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     let p = extract_params(&q);
     let center = clamp_center(Coord {
         x: x.parse().unwrap_or(0),
         y: y.parse().unwrap_or(0),
     });
     let selected = vec![center];
-    let key = format!(
-        "parcel:{},{}:{}:{}",
-        center.x,
-        center.y,
-        state.map.content_tag(),
-        p.key_suffix()
-    );
+    let key = format!("parcel:{},{}:{}", center.x, center.y, p.key_suffix());
     cached_png_render(
         &state,
         &headers,
+        grid,
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
@@ -332,24 +339,23 @@ pub async fn estate_map_png(
     // The estate's number as the grid spells it, as the metadata routes
     // read it; what is not a number matches no estate.
     let estate_id = super::meta::canonical_estate_id(&estate_id).unwrap_or(estate_id);
+    // One grid decides the redirect, the conditional answer and the render.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     // An estate the grid holds no parcel of (dissolved, or never minted)
     // redirects to the dissolved-estate image before any conditional check,
-    // as the atlas does; no grid falls through to the render path's 503.
-    if let Some(grid) = state.map.snapshot()
-        && select_estate_coords(&grid, &estate_id).is_empty()
-    {
+    // as the atlas does.
+    if select_estate_coords(&grid, &estate_id).is_empty() {
         return dissolved_estate_redirect(&state.settings.map_dissolved_estate_image_url);
     }
     let dissolved = state.settings.map_dissolved_estate_image_url.clone();
     let p = extract_params(&q);
-    let key = format!(
-        "estate:{estate_id}:{}:{}",
-        state.map.content_tag(),
-        p.key_suffix()
-    );
+    let key = format!("estate:{estate_id}:{}", p.key_suffix());
     cached_png_render(
         &state,
         &headers,
+        grid,
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
@@ -396,9 +402,13 @@ fn dissolved_estate_redirect(location: &str) -> Response {
 }
 
 pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     cached_png_render(
         &state,
         &headers,
+        grid,
         "minimap".to_string(),
         http_cache::MINIMAP_MAX_AGE,
         http_cache::MINIMAP_SWR,
@@ -408,9 +418,13 @@ pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Res
 }
 
 pub async fn estate_minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     cached_png_render(
         &state,
         &headers,
+        grid,
         // Versioned with the renderer so cached ETags of the old numbering lapse.
         "estatemap-v2".to_string(),
         http_cache::MINIMAP_MAX_AGE,
@@ -461,7 +475,7 @@ mod tests {
         tiles.insert(t.id.clone(), t);
         let t = tile(8, 9, Some("77"), false);
         tiles.insert(t.id.clone(), t);
-        let grid = Grid::from_tiles(tiles, 0, None, chrono::Utc::now().naive_utc());
+        let grid = Grid::from_tiles(tiles, 0, chrono::Utc::now().naive_utc());
 
         let mut got: Vec<(i32, i32)> = select_estate_coords(&grid, "99")
             .iter()
@@ -539,7 +553,6 @@ mod tests {
         let grid = Arc::new(Grid::from_tiles(
             HashMap::new(),
             0,
-            None,
             chrono::Utc::now().naive_utc(),
         ));
         let worker = std::thread::current().id();
@@ -556,7 +569,6 @@ mod tests {
         let grid = Arc::new(Grid::from_tiles(
             HashMap::new(),
             0,
-            None,
             chrono::Utc::now().naive_utc(),
         ));
         let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -595,7 +607,7 @@ mod tests {
     }
 
     fn small_grid() -> Grid {
-        Grid::from_tiles(HashMap::new(), 1, None, chrono::Utc::now().naive_utc())
+        Grid::from_tiles(HashMap::new(), 1, chrono::Utc::now().naive_utc())
     }
 
     #[tokio::test(start_paused = true)]
@@ -603,9 +615,13 @@ mod tests {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
         let key = "busy-test".to_string();
-        let flight = render_flight(&key);
+        let flight = render_flight(&png_cache_key(&state.map.snapshot().unwrap(), &key));
         let _held = flight.lock().await;
-        let resp = cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![1])).await;
+        let grid = state.map.snapshot().unwrap();
+        let resp = cached_png_render(&state, &HeaderMap::new(), grid, key, 60, 60, |_| {
+            Ok(vec![1])
+        })
+        .await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(resp.headers()[header::RETRY_AFTER], "5");
@@ -616,17 +632,22 @@ mod tests {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
         let key = "stored-meanwhile".to_string();
-        let flight = render_flight(&key);
+        let cache_key = png_cache_key(&state.map.snapshot().unwrap(), &key);
+        let flight = render_flight(&cache_key);
         let held = flight.lock().await;
         let waiter = {
             let state = state.clone();
             let key = key.clone();
             tokio::spawn(async move {
-                cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![9])).await
+                let grid = state.map.snapshot().unwrap();
+                cached_png_render(&state, &HeaderMap::new(), grid, key, 60, 60, |_| {
+                    Ok(vec![9])
+                })
+                .await
             })
         };
         tokio::task::yield_now().await;
-        state.map.store_png(key, Arc::new(vec![7]));
+        state.map.store_png(cache_key, Arc::new(vec![7]));
         let resp = waiter.await.unwrap();
         drop(held);
         assert_eq!(resp.status(), StatusCode::OK);
@@ -635,29 +656,44 @@ mod tests {
     #[tokio::test]
     async fn a_node_without_a_grid_answers_an_uncached_503() {
         let state = crate::api::tests_support::state_without_db().await;
-        let resp = cached_png_render(&state, &HeaderMap::new(), "no-grid".into(), 60, 60, |_| {
-            Ok(vec![1])
-        })
-        .await;
+        let resp = minimap_png(State(state.clone()), HeaderMap::new()).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["source"], "map-grid", "the unavailable envelope");
+        assert!(body.get("configure").is_none(), "no source is vouched for");
     }
 
     #[tokio::test]
     async fn a_failed_render_is_not_cached_but_a_missing_estate_is() {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
-        let failed = cached_png_render(&state, &HeaderMap::new(), "fail".into(), 60, 60, |_| {
-            Err(render_error("boom".into()))
-        })
+        let grid = state.map.snapshot().unwrap();
+        let failed = cached_png_render(
+            &state,
+            &HeaderMap::new(),
+            grid.clone(),
+            "fail".into(),
+            60,
+            60,
+            |_| Err(render_error("boom".into())),
+        )
         .await;
         assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(failed.headers()[header::CACHE_CONTROL], "no-store");
-        let missing =
-            cached_png_render(&state, &HeaderMap::new(), "missing".into(), 60, 60, |_| {
-                Err(Box::new(StatusCode::NOT_FOUND.into_response()))
-            })
-            .await;
+        let missing = cached_png_render(
+            &state,
+            &HeaderMap::new(),
+            grid,
+            "missing".into(),
+            60,
+            60,
+            |_| Err(Box::new(StatusCode::NOT_FOUND.into_response())),
+        )
+        .await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_ne!(missing.headers()[header::CACHE_CONTROL], "no-store");
     }
@@ -682,12 +718,9 @@ mod tests {
         let mut tiles = HashMap::new();
         let t = tile(1, 1, Some("500"), true);
         tiles.insert(t.id.clone(), t);
-        state.map.set(Grid::from_tiles(
-            tiles,
-            1,
-            None,
-            chrono::Utc::now().naive_utc(),
-        ));
+        state
+            .map
+            .set(Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc()));
         let mut conditional = HeaderMap::new();
         conditional.insert(header::IF_NONE_MATCH, "*".parse().unwrap());
         for (id, headers) in [
@@ -735,6 +768,7 @@ mod tests {
         let raced = cached_png_render(
             &state,
             &HeaderMap::new(),
+            state.map.snapshot().unwrap(),
             "estate:501:raced".into(),
             http_cache::DEFAULT_MAX_AGE,
             http_cache::DEFAULT_SWR,

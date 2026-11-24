@@ -6,7 +6,7 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::{
-    gpu_time::GPU_FRAME_TIME,
+    gpu_time::{GpuFrameTimeUnreliable, GPU_FRAME_TIME},
     memory::MemoryStatus,
     perf::{
         FrameTimeBreakdown, FrameTimeSampleSummary, PerformanceSnapshot, SamplingStatus,
@@ -22,6 +22,7 @@ use super::{frame_inputs::FrameInputs, populating_sample::PerformancePopulatingS
 
 const BYTES_PER_MIB: u64 = 1 << 20;
 const WAITING_FOR_FIRST_SNAPSHOT: &str = "Waiting for the first 15 s of sampled time.";
+const GPU_FRAME_TIME_UNRELIABLE: &str = "GPU frame time is unreliable on this platform.";
 
 /// Report the live engine readings, the latest performance snapshot, the frame-time breakdown
 /// and the effective session frame-rate target as JSON.
@@ -41,6 +42,7 @@ pub(super) fn performance_state(
     snapshot: Option<Res<PerformanceSnapshot>>,
     breakdown: Res<FrameTimeBreakdown>,
     scene_loop: Option<Res<SceneLoopTiming>>,
+    gpu_frame_time_unreliable: Option<Res<GpuFrameTimeUnreliable>>,
     #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
     system_info: Option<Res<bevy::diagnostic::SystemInfo>>,
 ) {
@@ -131,6 +133,7 @@ pub(super) fn performance_state(
                 &config,
                 scene_loop.and_then(|timing| timing.refresh_hz),
             ),
+            "vsync": config.graphics.vsync,
             "overrideFps": session.fps_target,
             "limit30": session.fps_target == Some(30),
             "gpuFrameMs": gpu_ms.map(tenths),
@@ -157,9 +160,9 @@ pub(super) fn performance_state(
                 "sampling.pausedReason": "Sampling.",
                 "snapshot": WAITING_FOR_FIRST_SNAPSHOT,
                 "cpuFrameTimes": WAITING_FOR_FIRST_SNAPSHOT,
-                "gpuFrameTimes": if gpu.is_some() { WAITING_FOR_FIRST_SNAPSHOT } else { "GPU timestamps are unavailable on this renderer." },
+                "gpuFrameTimes": if gpu_frame_time_unreliable.is_some() { GPU_FRAME_TIME_UNRELIABLE } else if gpu.is_some() { WAITING_FOR_FIRST_SNAPSHOT } else { "GPU timestamps are unavailable on this renderer." },
                 "gpuFrameMs": if gpu.is_some() { "Waiting for a GPU timestamp sample." } else { "GPU timestamps are unavailable on this renderer." },
-                "bottleneck": "Waiting for the GPU and present readings the classification needs.",
+                "bottleneck": if gpu_frame_time_unreliable.is_some() { GPU_FRAME_TIME_UNRELIABLE } else { "Waiting for the GPU and present readings the classification needs." },
                 "hudMainThreadCost": "-",
                 "entityCount": "Waiting for the first entity count.",
                 "system": if !cfg!(any(windows, target_os = "linux")) {
