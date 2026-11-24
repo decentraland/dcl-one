@@ -537,7 +537,7 @@ CREATE TABLE shop.nft_order (
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
 
 -- LAND and estate names and descriptions from Update and CreateEstate.
--- The latest valid version-zero data document supplies both fields.
+-- The latest parcel Update or the latest valid estate document supplies both fields.
 CREATE TABLE shop.land_data (
     token_address varchar(42) NOT NULL,
     token_id numeric(78,0) NOT NULL,

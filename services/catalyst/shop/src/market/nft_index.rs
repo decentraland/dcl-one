@@ -14,8 +14,8 @@
 //! the chain's position, appended with its cursor advance
 //! (`chain_walk::run_pass`), and folded into `shop.nft` (owner = the
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
-//! legacy order event per token) and `land_data` (the latest valid data
-//! document per token). The LAND fold applies valid documents in the window.
+//! legacy order event per token) and `land_data` (the latest parcel Update or latest
+//! valid estate document). The LAND fold reads the window.
 //! The other folds read each touched key's whole history. `since = None` rebuilds.
 //!
 //! The address set grows with the mirror. A collection enters the walk at
@@ -625,7 +625,7 @@ pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
 SELECT w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
 FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index DESC";
 
-/// The latest valid data document per touched LAND/estate token, parsed in Rust (the CSV
+/// The latest parcel Update or valid estate document per touched token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
     fold_registry_data(conn, since, None).await
@@ -658,17 +658,19 @@ async fn fold_registry_data(
     while let Some(r) = rows.try_next().await? {
         let contract: String = r.get("contract_address");
         let token: String = r.get("token_id");
-        // Newest first within each token. Invalid documents leave the last valid one in force.
+        // Newest first within each token. Rejected estate documents leave the last valid one in force.
         if cols.0.last() == Some(&contract) && cols.1.last() == Some(&token) {
             continue;
         }
-        let parse = if contract == ESTATE_REGISTRY_MAINNET {
-            parse_estate_data
+        let raw = r.get::<Option<&str>, _>("detail");
+        let (name, description) = if contract == ESTATE_REGISTRY_MAINNET {
+            let Some(fields) = raw.and_then(parse_estate_data) else {
+                continue;
+            };
+            fields
         } else {
-            parse_land_data
-        };
-        let Some((name, description)) = r.get::<Option<&str>, _>("detail").and_then(parse) else {
-            continue;
+            // A malformed parcel Update clears both fields at its own position.
+            raw.and_then(parse_land_data).unwrap_or_default()
         };
         cols.0.push(contract);
         cols.1.push(token);
@@ -904,9 +906,6 @@ impl ChainIndex for NftIndex {
         logs: &[RpcLog],
         times: &HashMap<i64, i64>,
     ) -> anyhow::Result<usize> {
-        if self.net == ChainNet::Ethereum {
-            estate_repair::initialize(conn).await?;
-        }
         let mut rows = Vec::with_capacity(logs.len());
         for log in logs {
             let block = chain_walk::log_position(log).0;
@@ -951,6 +950,18 @@ impl ChainIndex for NftIndex {
             }
         }
         Ok(written)
+    }
+
+    async fn record_coverage(
+        &self,
+        conn: &mut PgConnection,
+        previous: (i64, Option<&str>),
+        end: &crate::chain_index::rpc::BlockHeader,
+    ) -> anyhow::Result<()> {
+        if self.net == ChainNet::Ethereum {
+            estate_repair::record(conn, previous, (end.number as i64, Some(&end.hash))).await?;
+        }
+        Ok(())
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {

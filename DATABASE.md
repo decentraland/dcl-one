@@ -2450,18 +2450,25 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
-`shop.land_data` stores the latest valid parcel or estate document. The Ethereum
-NFT walk reads estate names at creation and on update. After an upgrade, a
+`shop.land_data` stores the latest parcel Update and the latest valid estate
+document. A malformed parcel Update clears the fields at its log position.
+The Ethereum NFT walk reads estate names at creation and on update. After an upgrade, a
 published cursor can already be past creations that the old walk skipped.
 Using spare log budget after publication, each pass reads one window of
 `CreateEstate` from the Estate registry, starting at deployment block 6,236,547.
 The `nft_estate_creations` row in `shop.worker_progress` records the last
 repaired block, its hash, and the original cursor height. Each archive window
 is checked against the published cursor and the hashes of its creation logs.
-Historical names keep their
-existing values until the final window refolds estate documents by block and
-log index. Ownership and profiles remain available during the repair. A rewind
-removes orphaned events and shortens the repair range before the walk resumes.
+The marker also records the forward NFT checkpoint in the cursor transaction.
+A pre-CreateEstate writer leaves that marker behind when it advances the cursor.
+On re-upgrade the walk detects the mismatch and automatically rechecks the
+registry prefix through the new cursor. Historical names keep their existing
+values until the final window rebuilds the estate rows by block and log index.
+Estates with only rejected documents then have no row. Ownership and profiles
+remain available during the repair. A rewind removes orphaned events and
+shortens the repair range before the walk resumes.
+The pass request count includes completed repair windows. Requests attempted
+by a repair that fails or times out are omitted from that count.
 
 **Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
 `chain-walk-matic`, in the process that runs the indexes. It walks each

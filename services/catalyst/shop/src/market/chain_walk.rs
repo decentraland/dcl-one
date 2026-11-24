@@ -1111,6 +1111,15 @@ pub trait ChainIndex: Send + Sync {
         logs: &[RpcLog],
         times: &HashMap<i64, i64>,
     ) -> anyhow::Result<usize>;
+    /// Record filter-specific coverage in the same transaction as the cursor advance.
+    async fn record_coverage(
+        &self,
+        _conn: &mut PgConnection,
+        _previous: (i64, Option<&str>),
+        _end: &BlockHeader,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
     /// Deletes the log past `to` and refolds what it touched, in the
     /// transaction that rewinds the cursor.
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()>;
@@ -1892,6 +1901,7 @@ pub(crate) async fn commit_window(
     advance(&mut tx, ix.indexer(), ix.net(), expected, header)
         .await
         .context("advancing the cursor")?;
+    ix.record_coverage(&mut tx, expected, header).await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)

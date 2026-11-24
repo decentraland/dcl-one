@@ -1523,6 +1523,183 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     db.drop().await;
 }
 
+#[tokio::test]
+async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interval() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let ix = NftIndex::new(net);
+    let first = 6_236_547;
+    let h = first + 4;
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET;
+    let mut parcel = estate_document(first, 1, 7, false, r#"0,"Parcel","Kept""#);
+    parcel.address = land.into();
+    let chain = FakeChain::new(
+        h + net.confirmations(),
+        vec![
+            parcel,
+            estate_document(first, 2, 1, true, "bad"),
+            estate_document(first + 1, 0, 1, false, r#"0 ,"Legacy","Desc""#),
+            estate_document(first + 1, 1, 2, true, r#"0,"","""#),
+        ],
+        2_000_000,
+        100,
+    );
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 2_000_000), false);
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    // State of a legacy writer that accepted the whitespace before the comma
+    // and never captured CreateEstate. Keep its parcel row through the repair.
+    sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_estate_creations'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.nft_event WHERE kind='land_data' AND to_address IS NOT NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.land_data WHERE token_address=$1")
+        .bind(estate)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.land_data VALUES ($1,1,'Legacy','Desc',$2,0)")
+        .bind(estate)
+        .bind((first + 1) as i64)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(pass(&st, &url, &ix).await.published);
+    let rows = || {
+        sqlx::query_as::<_,(String,String,Option<String>,Option<String>,i64,i32)>(
+        "SELECT token_address,token_id::text,name,description,updated_block,updated_log FROM shop.land_data ORDER BY token_id,token_address"
+    ).fetch_all(&db.pool)
+    };
+    let repaired = rows().await.unwrap();
+    assert_eq!(
+        repaired,
+        [
+            (
+                estate.into(),
+                "2".into(),
+                Some(String::new()),
+                Some(String::new()),
+                (first + 1) as i64,
+                1
+            ),
+            (
+                land.into(),
+                "7".into(),
+                Some("Parcel".into()),
+                Some("Kept".into()),
+                first as i64,
+                1
+            ),
+        ]
+    );
+    let owner = chain_walk::test_owner(&db.pool, &ix, &IndexSettings::default()).await;
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    nft_index::fold(&db.pool, net, None, &owner).await.unwrap();
+    assert_eq!(rows().await.unwrap(), repaired);
+
+    // Stop the new writer at H. The old writer commits the Updates and its
+    // cursor through J, without changing our existing, completed marker.
+    let j = h + 3;
+    let rename = estate_document(j, 0, 4, false, r#"0,"Later","Update""#);
+    chain.logs.lock().extend([
+        log_json(&estate_document(h + 1, 0, 3, true, "0,Recovered,")),
+        log_json(&estate_document(h + 2, 0, 4, true, "0,Earlier,")),
+        log_json(&rename),
+    ]);
+    *chain.head.lock() = j + net.confirmations();
+    let mut tx = db.pool.begin().await.unwrap();
+    ix.write(&mut tx, &[rename], &HashMap::from([(j as i64, time_of(j))]))
+        .await
+        .unwrap();
+    chain_walk::advance(
+        &mut tx,
+        ix.indexer(),
+        net,
+        (h as i64, Some(&chain.hash_of(h))),
+        &crate::chain_index::rpc::BlockHeader {
+            number: j,
+            hash: chain.hash_of(j),
+            timestamp: time_of(j),
+        },
+    )
+    .await
+    .unwrap();
+    owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    // Restart caught up at J: no marker reset or manual replay.
+    assert!(pass(&st, &url, &NftIndex::new(net)).await.published);
+    let names: Vec<(String,String)> = sqlx::query_as(
+        "SELECT token_id::text,name FROM shop.land_data WHERE token_address=$1 AND token_id IN (3,4) ORDER BY token_id"
+    ).bind(estate).fetch_all(&db.pool).await.unwrap();
+    assert_eq!(
+        names,
+        [
+            ("3".into(), "Recovered".into()),
+            ("4".into(), "Later".into())
+        ]
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_malformed_parcel_update_clears_the_fields_and_advances_the_position() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let ix = NftIndex::new(net);
+    let owner = chain_walk::test_owner(&db.pool, &ix, &IndexSettings::default()).await;
+    let fields = || {
+        sqlx::query_as::<_,(Option<String>,Option<String>,i64,i32)>(
+        "SELECT name,description,updated_block,updated_log FROM shop.land_data WHERE token_id=17"
+    ).fetch_one(&db.pool)
+    };
+    for (block, log, raw, since, name, desc) in [
+        (
+            10,
+            1,
+            r#"0,"Parcel","Desc""#,
+            None,
+            Some("Parcel".to_owned()),
+            Some("Desc".to_owned()),
+        ),
+        (11, 2, "bad", Some(10), None, None),
+    ] {
+        let mut update = estate_document(block, log, 17, false, raw);
+        update.address = crate::land_authz::LAND_REGISTRY_MAINNET.into();
+        ix.write(
+            &mut db.pool.acquire().await.unwrap(),
+            &[update],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        nft_index::fold(&db.pool, net, since, &owner).await.unwrap();
+        assert_eq!(
+            fields().await.unwrap(),
+            (name, desc, block as i64, log as i32)
+        );
+    }
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    nft_index::fold(&db.pool, net, None, &owner).await.unwrap();
+    assert_eq!(fields().await.unwrap(), (None, None, 11, 2));
+    db.drop().await;
+}
+
 /// After a reorg rewind and the refold it owes, `land_data` equals a
 /// rebuild of the remaining estate documents, including the creation data.
 #[tokio::test]
@@ -2415,14 +2592,17 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
     )
     .await
     .unwrap();
-    assert_eq!(counts.land_data, 3, "LAND 1, Estate 1 and the far token");
+    assert_eq!(
+        counts.land_data, 4,
+        "LAND 1 and 7, Estate 1 and the far token"
+    );
     let incremental = rows().await;
     assert_eq!(
         incremental,
         vec![
             (estate.into(), "1".into(), Some("E-new".into()), 151, 0),
             (land.into(), "1".into(), Some("A-last".into()), 200, 3),
-            (land.into(), "7".into(), Some("G-old".into()), 120, 0),
+            (land.into(), "7".into(), None, 202, 1),
             (land.into(), "9".into(), Some("Edge".into()), 150, 1),
             (land.into(), far.into(), Some("Far".into()), 202, 0),
         ]

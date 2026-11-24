@@ -10,29 +10,48 @@ const WORKER: &str = "nft_estate_creations";
 /// Ethereum deployment of the Estate proxy, transaction 0x0c784545242537b44d24029f9c843973cb7f37256ede544af373de5cb758a1b9.
 const DEPLOYMENT: i64 = 6_236_547;
 
-/// Capture the cursor before the first forward write of the upgraded walk,
-/// or at its first publication if it was already caught up. A fresh walk
-/// has no old prefix to repair. Its completed marker prevents a second scan.
-pub(super) async fn initialize(conn: &mut PgConnection) -> sqlx::Result<()> {
+/// The forward window and its marker commit together. A pre-CreateEstate
+/// writer advances only the cursor. When its checkpoint differs, reopen
+/// the registry prefix through that cursor, even after a completed repair.
+pub(super) async fn record(
+    conn: &mut PgConnection,
+    previous: (i64, Option<&str>),
+    next: (i64, Option<&str>),
+) -> sqlx::Result<()> {
+    let checkpoint = |(block, hash): (i64, Option<&str>)| {
+        [block.to_string(), hash.unwrap_or_default().to_owned()]
+    };
     sqlx::query(
-        "INSERT INTO shop.worker_progress (worker, scope, position, ceiling)
-        SELECT $1, 1, least($2::bigint - 1, greatest(last_block, 0)), greatest(last_block, 0)
-        FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum' AND chain_id = 1
-        ON CONFLICT DO NOTHING",
+        "INSERT INTO shop.worker_progress AS p (worker, scope, position, ceiling, key_ceiling)
+        VALUES ($1, 1, least($2::bigint - 1, $3), $3, $5)
+        ON CONFLICT (worker, scope) DO UPDATE SET
+          position = CASE WHEN p.key_ceiling = $4 THEN p.position ELSE EXCLUDED.position END,
+          ceiling = CASE WHEN p.key_ceiling = $4 THEN p.ceiling ELSE EXCLUDED.ceiling END,
+          key_position = CASE WHEN p.key_ceiling = $4 THEN p.key_position ELSE '{}'::text[] END,
+          key_ceiling = EXCLUDED.key_ceiling",
     )
     .bind(WORKER)
     .bind(DEPLOYMENT)
+    .bind(previous.0.max(0))
+    .bind(checkpoint(previous).as_slice())
+    .bind(checkpoint(next).as_slice())
     .execute(conn)
     .await?;
     Ok(())
 }
 
 pub(super) async fn rewind(conn: &mut PgConnection, to: i64) -> sqlx::Result<()> {
-    // Everything above the rewind will be read by the ordinary forward walk.
-    sqlx::query("UPDATE shop.worker_progress SET key_position = CASE WHEN position > $2 THEN '{}'::text[] ELSE key_position END,
-        position = least(position, $2), ceiling = least(ceiling, $2)
-        WHERE worker = $1 AND scope = 1 AND ceiling > $2")
-        .bind(WORKER).bind(to.max(0)).execute(conn).await?;
+    // Preserve proven coverage below the rewind. If the previous cursor
+    // was already unaccounted for, the next capture will reconcile it.
+    sqlx::query("UPDATE shop.worker_progress p SET
+        key_position = CASE WHEN position > $2 THEN '{}'::text[] ELSE key_position END,
+        position = least(position, greatest($2, 0)), ceiling = least(ceiling, greatest($2, 0)),
+        key_ceiling = CASE WHEN p.key_ceiling = ARRAY[c.last_block::text, coalesce(c.last_block_hash, '')]
+          THEN ARRAY[$2::bigint::text, coalesce((SELECT block_hash FROM shop.chain_checkpoint
+                    WHERE indexer=c.indexer AND network=c.network AND block_number=$2), '')]
+          ELSE p.key_ceiling END
+        FROM shop.chain_cursor c WHERE worker=$1 AND scope=1 AND c.indexer='nft' AND c.network='ethereum'")
+        .bind(WORKER).bind(to).execute(conn).await?;
     Ok(())
 }
 
@@ -136,7 +155,9 @@ pub(super) async fn step(
 ) -> anyhow::Result<usize> {
     let progress = || {
         sqlx::query_as::<_, (i64, i64, Option<String>)>(
-            "SELECT position, ceiling, key_position[1] FROM shop.worker_progress WHERE worker = $1 AND scope = 1",
+            "SELECT position, ceiling, key_position[1] FROM shop.worker_progress p JOIN shop.chain_cursor c
+             ON p.key_ceiling = ARRAY[c.last_block::text, coalesce(c.last_block_hash, '')]
+             WHERE worker = $1 AND scope = 1 AND c.indexer='nft' AND c.network='ethereum' AND c.chain_id=1",
         )
         .bind(WORKER)
     };
@@ -144,7 +165,12 @@ pub(super) async fn step(
         Some(row) => row,
         None => {
             let mut tx = pool.begin().await?;
-            initialize(&mut tx).await?;
+            let (block, hash): (i64, Option<String>) = sqlx::query_as(
+                "SELECT last_block, last_block_hash FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'
+                 AND chain_id=1 AND folded_block=last_block FOR UPDATE")
+                .fetch_one(&mut *tx).await?;
+            let tip = (block, hash.as_deref());
+            record(&mut tx, tip, tip).await?;
             let row = progress().fetch_one(&mut *tx).await?;
             owner.check(&mut tx).await?;
             tx.commit().await?;
@@ -208,6 +234,10 @@ pub(super) async fn step(
     if end.number as i64 == ceiling {
         // A newer valid Update still wins, including when an old fold had
         // previously overwritten it with a malformed document.
+        sqlx::query("DELETE FROM shop.land_data WHERE token_address=$1")
+            .bind(ESTATE_REGISTRY_MAINNET)
+            .execute(&mut *tx)
+            .await?;
         fold_registry_data(&mut tx, -1, Some(ESTATE_REGISTRY_MAINNET)).await?;
     }
     // A concurrent rewind can invalidate the prefix even when this worker
