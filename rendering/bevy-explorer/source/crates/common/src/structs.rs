@@ -1168,7 +1168,7 @@ impl Default for GraphicsSettings {
             // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
             msaa: AaSetting::FxaaHigh,
             fps_target: 60,
-            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
+            // one cascade on the 2048 map (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
             // one cascade
             shadow_settings: ShadowSetting::Low,
@@ -1352,6 +1352,9 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 /// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
+/// How far Low's one cascade reaches, in metres, whatever the shadow distance: past it the
+/// 2048 map's texels are too large to hold an avatar's shadow (see decisions.md).
+pub const SUN_LOW_MAX_DISTANCE: f32 = 40.0;
 
 /// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
 /// shadows on or off.
@@ -1368,7 +1371,8 @@ pub struct ShadowlessLight;
 #[derive(Component)]
 pub struct StageCamera;
 
-/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows. Low's
+/// one cascade stops at `SUN_LOW_MAX_DISTANCE`.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
         return None;
@@ -1376,7 +1380,7 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
     let far = distance.max(MIN_CASCADE + f32::EPSILON);
     let bounds = match setting {
         ShadowSetting::Off => return None,
-        ShadowSetting::Low => vec![far],
+        ShadowSetting::Low => vec![far.min(SUN_LOW_MAX_DISTANCE)],
         ShadowSetting::High => {
             let mut previous = MIN_CASCADE;
             SUN_CASCADE_4_SPLITS
@@ -2016,8 +2020,13 @@ pub struct PlayerTeleported {
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
 /// position — until the destination scene resolves and they're placed in-world. Lives here (rather
 /// than `scene_runner`) so lower-level crates like `comms` can read it; `scene_runner` re-exports it.
-#[derive(Component)]
-pub struct OutOfWorld;
+#[derive(Component, Default, Debug)]
+pub struct OutOfWorld {
+    /// The name of the spawn point of the destination scene to be placed on, compared in
+    /// lowercase. Without one, or when the scene has none of that name, the scene's default spawn
+    /// points are used.
+    pub spawn_point: Option<String>,
+}
 
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its
 /// transform and projection alone until it is removed.
@@ -2775,8 +2784,15 @@ mod tests {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
         assert_eq!(high.minimum_distance, MIN_CASCADE);
-        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
-        assert_eq!(medium.bounds, vec![60.0]);
+        let medium = sun_cascades(ShadowSetting::Low, 20.0).unwrap();
+        assert_eq!(medium.bounds, vec![20.0]);
+        // Low's one cascade stops at 40 m; High's four reach the whole distance
+        for distance in [40.0, 60.0, 300.0] {
+            let low = sun_cascades(ShadowSetting::Low, distance).unwrap();
+            assert_eq!(low.bounds, vec![SUN_LOW_MAX_DISTANCE]);
+        }
+        let far = sun_cascades(ShadowSetting::High, 300.0).unwrap();
+        assert_eq!(far.bounds.last(), Some(&300.0));
         assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
         assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
         // a distance under the minimum still yields a strictly increasing config

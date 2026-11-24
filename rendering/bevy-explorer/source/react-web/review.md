@@ -184,6 +184,22 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **`/goto` and `/goto-local`**: `/goto x,y` teleports inside the realm the player is in, Genesis City or a
+      world, within that realm's bounds; `/goto world` and `world/x,y` travel; `genesis` and `main` are Genesis City, at Genesis Plaza when no parcel is named;
+      `random` and `crowd` are Genesis City places from any realm; `/goto-local x,y` never changes realm. Each answers once in chat when the
+      engine does (`🟢 You teleported to x,y.`, `🟢 Welcome to the … world!`, `🟢 Welcome to Genesis
+      City!`), a failure in chat alone with no travel notice beside it, a parcel out of bounds or a
+      bad destination at once. In a scene preview `/goto x,y` moves inside the preview, and
+      `random` and `crowd` answer the engine's refusal to change realm. A `/goto` typed while a
+      travel is under way is read against the realm travelled to; a travel it replaces answers
+      `🔴 Error: The operation was canceled!`. A place inside the realm travelled to
+      (`/goto world/x,y` on the way to that world, `/goto-local x,y`) is that travel asked for
+      again, so a travel that fails moves nobody. A `/goto crowd` still reading the busiest scene
+      gives way to a `/goto` typed after it. A destination ending in `/name` lands on the scene's
+      spawn point of that name (the debug panel's Teleport section shows the name looked for and
+      whether the scene had it). Tests: `library/ui/apps/hud/test/hosted/chatGoto.test.tsx` (the
+      session), `library/explorer-core/features/chat/chatCommands.test.ts` (the destinations),
+      `src/test/bridgeTravel.test.ts` (the bridge).
 - [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
       message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
       ring. A message said in a **community** chat by a player standing nearby shows the community's

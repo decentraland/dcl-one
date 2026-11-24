@@ -385,6 +385,13 @@ async fn all_six_rpc_generators_and_json_mappers_match_executed_source_parsers()
     ctx.topology()
         .receive(&pulse_frame(vec![me.into(), actor.into()]))
         .unwrap();
+    let stream_cases = source["cases"].as_array().unwrap();
+    let member_case = stream_cases
+        .iter()
+        .find(|case| case["group"] == "stream" && case["id"] == "community-member")
+        .unwrap();
+    let community = Uuid::parse_str(member_case["json"]["communityId"].as_str().unwrap()).unwrap();
+    seed_community_with_id(&pool, community, true, me, "owner").await;
     macro_rules! check {
         ($case:expr,$ty:ty,$method:ident,$variant:ident) => {{
             let case = $case;
@@ -424,12 +431,7 @@ async fn all_six_rpc_generators_and_json_mappers_match_executed_source_parsers()
             token.cancel();
         }};
     }
-    for case in source["cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|case| case["group"] == "stream")
-    {
+    for case in stream_cases.iter().filter(|case| case["group"] == "stream") {
         match case["id"].as_str().unwrap() {
             "friendship" => check!(
                 case,
@@ -465,6 +467,7 @@ async fn all_six_rpc_generators_and_json_mappers_match_executed_source_parsers()
             other => panic!("unhandled stream {other}"),
         }
     }
+    drop_community(&pool, community).await;
     drop_profile(&pool, actor, &entity).await;
     cleanup_pair(ctx.db(), me, actor).await;
 }

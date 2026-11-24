@@ -313,11 +313,12 @@ pub fn validate_auth_requests(
 /// `catalyst pulse`: tracing, the Prometheus exporter, and the server assembled from the
 /// environment; returns when the loop ends.
 pub async fn run_from_env() -> anyhow::Result<()> {
-    run_from_env_with_generation(None).await
+    run_from_env_with_generation_until(None, std::future::pending()).await
 }
 
-pub async fn run_from_env_with_generation(
+pub async fn run_from_env_with_generation_until(
     generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+    shutdown: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<()> {
     validate_auth_requests(
         std::env::var("PULSE_LEGACY_HANDSHAKE"),
@@ -424,13 +425,15 @@ pub async fn run_from_env_with_generation(
         .clusters
         .as_ref()
         .map(|clusters| clusters.publisher());
+    let run = server.run_with_webtransport_until(bind, tick_ms, wt, shutdown);
     let result = if let Some(authority) = &generation {
         tokio::select! {
-            result = server.run_with_webtransport(bind, tick_ms, wt) => result,
+            biased;
             _ = authority.lost().cancelled() => Err(anyhow::anyhow!("Pulse deployment generation was revoked")),
+            result = run => result,
         }
     } else {
-        server.run_with_webtransport(bind, tick_ms, wt).await
+        run.await
     };
     if let Some(authority) = &generation {
         authority.lost().cancel();
