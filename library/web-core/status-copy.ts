@@ -1,6 +1,5 @@
-// Copy and art for the HTTP error screens, shared by StatusPage and by the static pages nginx serves when
-// the app itself cannot answer (apps/sites/scripts/gen-error-pages.mts). No JSX and no DOM, so the
-// generator can load it in Node.
+// Copy and art for the HTTP error screens, shared by the Sites StatusPage (library/ui/apps/sites/status) and by
+// the static pages nginx serves when the app itself cannot answer (apps/sites/scripts/gen-error-pages.mts).
 
 export type ErrorArt = 'lost' | 'locked' | 'wave' | 'crew'
 
@@ -12,7 +11,7 @@ export type StatusCopy = {
   art: ErrorArt
 }
 
-/** Each art's file in ../assets/errors and its intrinsic size. */
+/** Each art's file in library/ui/apps/sites/assets/errors and its intrinsic size. */
 export const ART_FILES: Record<ErrorArt, { file: string; width: number; height: number }> = {
   lost: { file: 'lost.webp', width: 240, height: 128 },
   locked: { file: 'locked.webp', width: 160, height: 154 },

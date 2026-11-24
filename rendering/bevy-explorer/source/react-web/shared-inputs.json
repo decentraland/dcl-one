@@ -5910,7 +5910,7 @@
     },
     {
       "path": "library/ui/package.json",
-      "sha256": "fe47d4b95a6c3ca134c3220fffa448966c7cb58b200b29115aab21e36651088b"
+      "sha256": "3aee31cb53bda68828bc5f4ed966a564c72893dec9e24b006ff26af84b261705"
     },
     {
       "path": "library/ui/tsconfig.json",

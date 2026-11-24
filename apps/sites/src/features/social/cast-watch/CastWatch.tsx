@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import StCastWatcher from "@dcl/one-ui/apps/sites/cast/StCastWatcher";
+import { StCastWatcher } from "@dcl/one-ui";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import type { WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";

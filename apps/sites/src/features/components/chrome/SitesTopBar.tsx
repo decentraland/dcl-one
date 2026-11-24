@@ -7,6 +7,11 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import {
+  SitesNotificationsDialog,
+  notificationMedia,
+  dclLogoUrl as logo,
+  dclNameUrl as wordmark,
+  SitesLocaleContext,
   type ChromeTopBarProps,
   useChromeAuth,
   ChromeLink,
@@ -39,10 +44,6 @@ import {
   relativeTime,
   unreadCount,
 } from "@web-core/notifications/notificationsView";
-import SitesNotificationsDialog, { notificationMedia } from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
-import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
-import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
-import { SitesLocaleContext } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";

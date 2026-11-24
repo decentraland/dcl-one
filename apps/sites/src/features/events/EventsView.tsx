@@ -2,18 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
-import { AllEvents, type AllEventsDay } from "@dcl/one-ui/apps/sites/events/AllEvents";
-import { PlaceDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { EventsPage } from "@dcl/one-ui/apps/sites/events/EventsPage";
-import { HostBanner } from "@dcl/one-ui/apps/sites/events/HostBanner";
-import { LiveNow } from "@dcl/one-ui/apps/sites/events/LiveNow";
-import { Upcoming } from "@dcl/one-ui/apps/sites/events/Upcoming";
-import type {
-  ExperienceCardProps,
-  JumpIn,
-  LiveEventCardProps,
-  UpcomingEventCardProps,
-} from "@dcl/one-ui/apps/sites/events/types";
+import {
+  AllEvents,
+  type AllEventsDay,
+  PlaceDetailModal,
+  EventsPage,
+  HostBanner,
+  EventsLiveNow as LiveNow,
+  Upcoming,
+  type ExperienceCardProps,
+  type JumpIn,
+  type LiveEventCardProps,
+  type UpcomingEventCardProps,
+  useEventsCopy,
+} from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";
@@ -35,7 +37,6 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
 import { useSignInRequired } from "../components/auth/useSignInRequired";
 import type { DetectedPlatform } from "../download/options";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { EventDetail, eventJumpIn, isPlainClick, remindControl } from "./EventDetail";
 import { useCreatorProfiles } from "./useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders } from "./useEventReminders";

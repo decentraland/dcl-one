@@ -1,4 +1,4 @@
-import { WalletBalance, WalletsPanel, type WalletNetworkDisplay } from "@dcl/one-ui/apps/sites/account/WalletsPanel";
+import { WalletBalance, WalletsPanel, type WalletNetworkDisplay } from "@dcl/one-ui";
 import { GeneralEthereum, GeneralMana, GeneralPolygonMana, GeneralPolygonMatic } from "@dcl/one-ui";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
