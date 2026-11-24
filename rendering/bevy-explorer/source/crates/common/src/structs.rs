@@ -720,7 +720,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 5;
+pub const SETTINGS_GENERATION: u32 = 6;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -871,6 +871,8 @@ impl AppConfig {
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
+    /// gen 6: default bloom went back to High, the setting that matches Unity's bloom; move
+    /// configs still on Low, the old default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -891,6 +893,9 @@ impl AppConfig {
         if self.settings_generation < 5 {
             self.graphics
                 .set_render_scale_steps(self.graphics.render_scale_steps());
+        }
+        if self.settings_generation < 6 && self.graphics.bloom == BloomSetting::Low {
+            self.graphics.bloom = default.graphics.bloom;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -1178,7 +1183,7 @@ impl Default for GraphicsSettings {
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Low,
+            bloom: BloomSetting::High,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
@@ -2946,7 +2951,7 @@ mod tests {
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
-        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::High, true));
         assert_eq!(
             (
                 g.shadow_settings,
@@ -3008,6 +3013,22 @@ mod tests {
         config.graphics.vsync = false;
         config.graphics.fps_target = 999;
         assert_eq!(shown(&config, Some(61)), 999);
+    }
+
+    #[test]
+    fn generation_6_moves_low_bloom_to_high_and_keeps_off() {
+        let migrated = |bloom| {
+            let mut config = AppConfig {
+                settings_generation: 5,
+                ..Default::default()
+            };
+            config.graphics.bloom = bloom;
+            config.reset_outdated_settings();
+            config.graphics.bloom
+        };
+        assert_eq!(migrated(BloomSetting::Low), BloomSetting::High);
+        assert_eq!(migrated(BloomSetting::Off), BloomSetting::Off);
+        assert_eq!(migrated(BloomSetting::High), BloomSetting::High);
     }
 
     #[test]
