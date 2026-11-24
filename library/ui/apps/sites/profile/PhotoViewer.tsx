@@ -11,15 +11,21 @@ import {
 import { Button, JumpInCTA, Modal, type PlaceCardLinkProps } from '../../../index'
 import {
   GeneralClose,
+  GeneralCopy,
   GeneralInfoButton,
+  GeneralImage,
   GeneralLeftArrow,
   GeneralMapPin,
   GeneralRightArrow,
-  MenusDownload
+  MenusDownload,
+  SocialX
 } from '../../../foundations/icons'
 
 import styles from './PhotoViewer.module.css'
+import { CardImage } from '../../../components/CardImage/CardImage'
 import { useBrokenImage } from '../useBrokenImage'
+
+type PhotoWearable = { id: string; label: string; image?: string; href?: string }
 
 export type PhotoViewerPerson = {
   name: string
@@ -27,21 +33,32 @@ export type PhotoViewerPerson = {
   href?: string
   faceUrl?: string
   isGuest: boolean
+  wearables?: PhotoWearable[]
 }
 
 export type PhotoViewerDetails = {
   /** Already formatted; left out when the service's date cannot be read. */
   date?: string
-  takenBy?: { name: string; href: string }
-  place: { label: string; jumpInHref?: string }
+  takenBy?: { name: string; href?: string }
+  place: { label: string; href?: string; jumpInHref?: string }
   people: PhotoViewerPerson[]
+}
+
+export type PhotoViewerActions = {
+  shareHref?: string
+  onCopy?: () => void
+  onDownload?: () => void
+  downloading?: boolean
+  announcement?: string
+  copyFallbackHref?: string
+  announcementVersion?: number
 }
 
 export type PhotoViewerProps = {
   imageUrl: string
   /** The image's alt text. */
   alt: string
-  /** The dialog's accessible name, e.g. "Photo at Genesis Plaza, November 08, 2026, 3 of 24". */
+  /** The page heading or dialog's accessible name. */
   label: string
   details: PhotoViewerDetails
   /**
@@ -52,17 +69,19 @@ export type PhotoViewerProps = {
   /** Without one, its button is marked unavailable and its arrow key does nothing. */
   onPrevious?: () => void
   onNext?: () => void
-  onClose: () => void
+  actions?: PhotoViewerActions
   linkComponent: ComponentType<PlaceCardLinkProps>
-}
+} & ({ variant: 'page'; onClose?: never } | { variant: 'dialog'; onClose: () => void })
 
 /** Profile photo and its information panel inside the shared gallery modal. */
 export function PhotoViewer({
+  variant,
   imageUrl,
   alt,
   label,
   details,
   download,
+  actions,
   onPrevious,
   onNext,
   onClose,
@@ -71,6 +90,8 @@ export function PhotoViewer({
   const closeRef = useRef<HTMLButtonElement>(null)
   const [detailsVisible, setDetailsVisible] = useState(true)
   const titleId = useId()
+  const detailsId = useId()
+  const { broken, ref, onError } = useBrokenImage(imageUrl)
 
   // Stepping to another photo or hiding details can remove the focused link.
   useLayoutEffect(() => {
@@ -89,6 +110,234 @@ export function PhotoViewer({
     }
   }
 
+  const content = (
+    <div className={[styles.body, detailsVisible && styles.withDetails].filter(Boolean).join(' ')}>
+      <div className={variant === 'page' ? `${styles.media} ${styles.pageMedia}` : styles.media}>
+        <div className={styles.toolbar}>
+          {actions?.shareHref ? (
+            <Button
+              iconOnly
+              variant="dark"
+              size="sm"
+              href={actions.shareHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Share to X"
+            >
+              <SocialX size={22} aria-hidden="true" />
+            </Button>
+          ) : null}
+          {actions?.onCopy ? (
+            <Button
+              iconOnly
+              variant="dark"
+              size="sm"
+              aria-label="Copy link"
+              onClick={actions.onCopy}
+            >
+              <GeneralCopy size={22} aria-hidden="true" />
+            </Button>
+          ) : null}
+          {actions?.onDownload ? (
+            <Button
+              iconOnly
+              variant="dark"
+              size="sm"
+              aria-label="Download photo"
+              aria-disabled={actions.downloading || broken}
+              onClick={actions.onDownload}
+            >
+              <MenusDownload size={22} aria-hidden="true" />
+            </Button>
+          ) : download ? (
+            <Button
+              iconOnly
+              variant="dark"
+              size="sm"
+              href={download.href}
+              download={download.fileName}
+              aria-label="Download photo"
+            >
+              <MenusDownload size={22} aria-hidden="true" />
+            </Button>
+          ) : null}
+          <Button
+            iconOnly
+            variant="dark"
+            size="sm"
+            aria-label="Information"
+            aria-pressed={detailsVisible}
+            aria-expanded={detailsVisible}
+            aria-controls={detailsId}
+            onClick={() => setDetailsVisible((visible) => !visible)}
+          >
+            <GeneralInfoButton size={22} aria-hidden="true" />
+          </Button>
+        </div>
+        {actions ? (
+          <div
+            className={
+              actions.announcement
+                ? `${styles.announcement} ${styles.announcementVisible}`
+                : styles.announcement
+            }
+          >
+            <span role="status">
+              {actions.announcement ? (
+                <span key={actions.announcementVersion}>{actions.announcement}</span>
+              ) : null}
+            </span>
+            {actions.copyFallbackHref ? (
+              <code className={styles.copyFallback}>{actions.copyFallbackHref}</code>
+            ) : null}
+          </div>
+        ) : null}
+        {broken ? (
+          <div className={styles.photoUnavailable} role="status">
+            <GeneralImage size={32} aria-hidden="true" />
+            Photo could not be loaded.
+          </div>
+        ) : (
+          <img
+            ref={ref}
+            onError={onError}
+            className={variant === 'page' ? `${styles.image} ${styles.pageImage}` : styles.image}
+            src={imageUrl}
+            alt={alt}
+          />
+        )}
+        {onPrevious || onNext ? (
+          <>
+            <StepButton
+              label="Previous photo"
+              className={styles.previous}
+              onStep={onPrevious}
+              icon={<GeneralLeftArrow size={24} aria-hidden="true" />}
+            />
+            <StepButton
+              label="Next photo"
+              className={styles.next}
+              onStep={onNext}
+              icon={<GeneralRightArrow size={24} aria-hidden="true" />}
+            />
+          </>
+        ) : null}
+      </div>
+      <div
+        id={detailsId}
+        hidden={!detailsVisible}
+        className={
+          detailsVisible
+            ? variant === 'page'
+              ? `${styles.details} ${styles.pageDetails}`
+              : styles.details
+            : undefined
+        }
+      >
+        {detailsVisible ? (
+          <section
+            className={
+              variant === 'page'
+                ? `${styles.detailsScroll} ${styles.pageDetailsScroll}`
+                : styles.detailsScroll
+            }
+            aria-labelledby={titleId}
+            tabIndex={0}
+          >
+            <div className={styles.header}>
+              <h2 id={titleId} className={styles.sectionTitle}>
+                information
+              </h2>
+              {details.date ? <p className={styles.date}>{details.date}</p> : null}
+              {details.takenBy ? (
+                <p className={styles.takenBy}>
+                  Photo taken by{' '}
+                  {details.takenBy.href ? (
+                    <Link to={details.takenBy.href} className={styles.link}>
+                      {details.takenBy.name}
+                    </Link>
+                  ) : (
+                    details.takenBy.name
+                  )}
+                </p>
+              ) : null}
+            </div>
+            <h3 className={`${styles.sectionTitle} ${styles.padded}`}>place</h3>
+            <div className={styles.place}>
+              <span className={styles.placeLabel}>
+                <GeneralMapPin size={20} aria-hidden="true" />
+                {details.place.href ? (
+                  <Link to={details.place.href} className={styles.link}>
+                    {details.place.label}
+                  </Link>
+                ) : (
+                  <span>{details.place.label}</span>
+                )}
+              </span>
+              {details.place.jumpInHref ? (
+                <JumpInCTA
+                  href={details.place.jumpInHref}
+                  size="sm"
+                  aria-label={`Jump in to ${details.place.label}`}
+                />
+              ) : null}
+            </div>
+            {details.people.length > 0 ? (
+              <>
+                <h3 className={`${styles.sectionTitle} ${styles.padded}`}>people</h3>
+                <ul className={styles.people}>
+                  {details.people.map((person, index) => (
+                    <li key={`${person.href ?? person.name}-${index}`} className={styles.person}>
+                      <div className={styles.personIdentity}>
+                        <PersonFace name={person.name} faceUrl={person.faceUrl} />
+                        {person.href ? (
+                          <Link to={person.href} className={styles.personName}>
+                            {person.name}
+                          </Link>
+                        ) : (
+                          <span className={styles.personName}>{person.name}</span>
+                        )}
+                        {person.isGuest ? <span className={styles.guest}>guest</span> : null}
+                      </div>
+                      {person.wearables ? (
+                        <details>
+                          <summary className={styles.wearableSummary}>
+                            Collectible wearables
+                          </summary>
+                          <ul className={styles.wearables}>
+                            {person.wearables.map((item) => (
+                              <li key={item.id} className={styles.wearable}>
+                                {item.image ? (
+                                  <CardImage
+                                    src={item.image}
+                                    alt=""
+                                    className={styles.wearableImage}
+                                  />
+                                ) : null}
+                                {item.href ? (
+                                  <Link to={item.href} className={styles.link}>
+                                    {item.label}
+                                  </Link>
+                                ) : (
+                                  item.label
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
+    </div>
+  )
+
+  if (variant === 'page') return content
   return (
     <Modal
       layout="gallery"
@@ -101,7 +350,7 @@ export function PhotoViewer({
         // Clicking blank gallery space keeps the current keyboard control focused.
         const control =
           event.target instanceof Element
-            ? event.target.closest('button, a[href], [tabindex]')
+            ? event.target.closest('button, a[href], [tabindex], code')
             : null
         if (!event.currentTarget.contains(control)) event.preventDefault()
       }}
@@ -117,106 +366,7 @@ export function PhotoViewer({
       >
         <GeneralClose size={24} aria-hidden="true" />
       </Button>
-      <div className={detailsVisible ? `${styles.body} ${styles.withDetails}` : styles.body}>
-        <div className={styles.media}>
-          <div className={styles.toolbar}>
-            {download ? (
-              <Button
-                iconOnly
-                variant="dark"
-                size="sm"
-                href={download.href}
-                download={download.fileName}
-                aria-label="Download photo"
-              >
-                <MenusDownload size={22} aria-hidden="true" />
-              </Button>
-            ) : null}
-            <Button
-              iconOnly
-              variant="dark"
-              size="sm"
-              aria-label="Information"
-              aria-pressed={detailsVisible}
-              onClick={() => setDetailsVisible((visible) => !visible)}
-            >
-              <GeneralInfoButton size={22} aria-hidden="true" />
-            </Button>
-          </div>
-          <img className={styles.image} src={imageUrl} alt={alt} />
-          {onPrevious || onNext ? (
-            <>
-              <StepButton
-                label="Previous photo"
-                className={styles.previous}
-                onStep={onPrevious}
-                icon={<GeneralLeftArrow size={24} aria-hidden="true" />}
-              />
-              <StepButton
-                label="Next photo"
-                className={styles.next}
-                onStep={onNext}
-                icon={<GeneralRightArrow size={24} aria-hidden="true" />}
-              />
-            </>
-          ) : null}
-        </div>
-        {detailsVisible ? (
-          <div className={styles.details}>
-            {/* A tab stop, so the keyboard can scroll a long panel that has no link in it. */}
-            <section className={styles.detailsScroll} aria-labelledby={titleId} tabIndex={0}>
-              <div className={styles.header}>
-                <h2 id={titleId} className={styles.sectionTitle}>
-                  information
-                </h2>
-                {details.date ? <p className={styles.date}>{details.date}</p> : null}
-                {details.takenBy ? (
-                  <p className={styles.takenBy}>
-                    Photo taken by{' '}
-                    <Link to={details.takenBy.href} className={styles.link}>
-                      {details.takenBy.name}
-                    </Link>
-                  </p>
-                ) : null}
-              </div>
-              <h3 className={`${styles.sectionTitle} ${styles.padded}`}>place</h3>
-              <div className={styles.place}>
-                <span className={styles.placeLabel}>
-                  <GeneralMapPin size={20} aria-hidden="true" />
-                  <span>{details.place.label}</span>
-                </span>
-                {details.place.jumpInHref ? (
-                  <JumpInCTA
-                    href={details.place.jumpInHref}
-                    size="sm"
-                    aria-label={`Jump in to ${details.place.label}`}
-                  />
-                ) : null}
-              </div>
-              {details.people.length > 0 ? (
-                <>
-                  <h3 className={`${styles.sectionTitle} ${styles.padded}`}>people</h3>
-                  <ul className={styles.people}>
-                    {details.people.map((person, index) => (
-                      <li key={`${person.href ?? person.name}-${index}`} className={styles.person}>
-                        <PersonFace name={person.name} faceUrl={person.faceUrl} />
-                        {person.href ? (
-                          <Link to={person.href} className={styles.personName}>
-                            {person.name}
-                          </Link>
-                        ) : (
-                          <span className={styles.personName}>{person.name}</span>
-                        )}
-                        {person.isGuest ? <span className={styles.guest}>guest</span> : null}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-            </section>
-          </div>
-        ) : null}
-      </div>
+      {content}
     </Modal>
   )
 }

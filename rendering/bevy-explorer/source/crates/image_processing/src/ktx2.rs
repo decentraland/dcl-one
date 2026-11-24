@@ -18,6 +18,7 @@
 //! with dds, so the next load reads dds. One it can't transcode fails to load: glTF content never
 //! reaches bevy's own KTX2 decode, which trusts the header's sizes and offsets.
 
+use common::sync::MutexExt;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, LazyLock, Mutex},
@@ -48,9 +49,9 @@ const RESULT_LIFETIME: Duration = Duration::from_secs(60);
 
 /// Drops the transcodes stashed longer than `RESULT_LIFETIME`.
 pub(crate) fn evict_stale_results() {
-    if let Ok(mut results) = KTX2_RESULTS.lock() {
-        results.retain(|_, (stashed, _)| stashed.elapsed() < RESULT_LIFETIME);
-    }
+    KTX2_RESULTS
+        .lock_ignore_poison()
+        .retain(|_, (stashed, _)| stashed.elapsed() < RESULT_LIFETIME);
 }
 
 /// Whether a transcode for `path` is stashed for a cache write: an unlabelled path, which has a
@@ -63,8 +64,8 @@ fn is_cacheable_path(path: &AssetPath<'_>) -> bool {
 /// how `check_assets` tells a freshly transcoded KTX2 from an image already compressed.
 pub(crate) fn has_waiting_transcode(path: &AssetPath<'_>) -> bool {
     KTX2_RESULTS
-        .lock()
-        .is_ok_and(|results| results.contains_key(&path.to_string()))
+        .lock_ignore_poison()
+        .contains_key(&path.to_string())
 }
 
 /// Whether the image loaded at the labelled `path` is an embedded KTX2 that was transcoded, and
@@ -72,8 +73,8 @@ pub(crate) fn has_waiting_transcode(path: &AssetPath<'_>) -> bool {
 pub(crate) fn take_embedded_transcode(path: &AssetPath<'_>) -> bool {
     path.label().is_some()
         && EMBEDDED_TRANSCODES
-            .lock()
-            .is_ok_and(|mut noted| noted.remove(&path.to_string()))
+            .lock_ignore_poison()
+            .remove(&path.to_string())
 }
 
 /// Sets [`transcode_ktx2_image`] as the process's `bevy_image` KTX2 transcoder. A second call
@@ -105,14 +106,14 @@ pub(crate) fn transcode_ktx2_image(
         Ok(dds) => {
             match path {
                 Some(path) if is_cacheable_path(path) => {
-                    if let Ok(mut results) = KTX2_RESULTS.lock() {
-                        results.insert(path.to_string(), (Instant::now(), dds.clone()));
-                    }
+                    KTX2_RESULTS
+                        .lock_ignore_poison()
+                        .insert(path.to_string(), (Instant::now(), dds.clone()));
                 }
                 Some(path) => {
-                    if let Ok(mut noted) = EMBEDDED_TRANSCODES.lock() {
-                        noted.insert(path.to_string());
-                    }
+                    EMBEDDED_TRANSCODES
+                        .lock_ignore_poison()
+                        .insert(path.to_string());
                 }
                 None => {}
             }
@@ -142,13 +143,12 @@ mod tests {
     const DDS_MAGIC: &[u8] = b"DDS ";
 
     fn stashed(path: &str) -> bool {
-        KTX2_RESULTS.lock().unwrap().contains_key(path)
+        KTX2_RESULTS.lock_ignore_poison().contains_key(path)
     }
 
     fn unstash(path: &str) -> Option<Vec<u8>> {
         KTX2_RESULTS
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .remove(path)
             .map(|(_, dds)| dds)
     }

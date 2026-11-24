@@ -7,6 +7,15 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import {
+  SitesNotificationsDialog,
+  notificationMedia,
+  dclLogoUrl as logo,
+  dclNameUrl as wordmark,
+  SitesLocaleContext,
+  type ChromeTopBarProps,
+  useChromeAuth,
+  ChromeLink,
+  useSiteLayout,
   decentralandPublicNavSections,
   NavBar,
   GeneralMarketplace,
@@ -26,10 +35,6 @@ import { useManaBalance } from "@ui/shop/credits/hooks";
 import { useWalletAccount } from "@dcl/one-ui/apps/shop/wallet-account";
 import { useWalletChain } from "@ui/shop/wallet/context";
 import type { Eip1193Provider } from "@web-core/auth/eip1193";
-import type { ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
-import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import {
   categoryForType,
   notificationBody,
@@ -39,10 +44,6 @@ import {
   relativeTime,
   unreadCount,
 } from "@web-core/notifications/notificationsView";
-import SitesNotificationsDialog, { notificationMedia } from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
-import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
-import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
-import { SitesLocaleContext } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";

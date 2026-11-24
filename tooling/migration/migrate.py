@@ -98,6 +98,14 @@ CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
     max_parcels integer,
     max_size_bytes bigint
 );
+-- Exact attendance rows written by the import; later local changes retain ownership.
+CREATE TABLE IF NOT EXISTS dcl_migration.event_attendance_loaded (
+    event_id text NOT NULL,
+    signer text NOT NULL,
+    signed_at timestamp NOT NULL,
+    signed_payload jsonb NOT NULL,
+    PRIMARY KEY (event_id, signer)
+);
 -- What the notifications-workers loads wrote, so its reconcile steps delete only imported rows that
 -- upstream no longer holds; a row whose values no longer match was changed on the node and is kept.
 CREATE TABLE IF NOT EXISTS dcl_migration.notification_opt_out_loaded (
@@ -1528,6 +1536,9 @@ SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(k, 'UTF8'), 'hex'
     UNION ALL
     SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
     WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
+    UNION ALL
+    SELECT legacy_sha256 || ' (legacy thumbnail)', blob_cid FROM worlds.thumbnail_aliases
+    WHERE mirror_expires_at IS NULL
 ) x ORDER BY o, k""",
         'steps': {'world', 'world_scene'},
     },

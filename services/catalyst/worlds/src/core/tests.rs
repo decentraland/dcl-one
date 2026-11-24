@@ -2534,6 +2534,18 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         assert_eq!(err.status(), 400, "{err:?}");
         err.public_message()
     };
+    let take_pending_refresh = |world: &WorldName| {
+        let pool = f.pool.clone();
+        let world = world.key().to_owned();
+        async move {
+            sqlx::query("DELETE FROM explore.world_place_updates WHERE world_name = $1")
+                .bind(world)
+                .execute(&pool)
+                .await
+                .unwrap()
+                .rows_affected()
+        }
+    };
 
     let spawnless = world_name();
     let err = store::update_world_settings(
@@ -2567,6 +2579,11 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "deploy queues refresh"
+    );
     let err = store::update_world_settings(
         &f.pool,
         &world,
@@ -2578,6 +2595,11 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     .await
     .expect_err("a spawn outside the world shape is refused");
     assert!(bad_request(err).contains("must be within the world shape rectangle"));
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        0,
+        "rejected spawn queues nothing"
+    );
     assert_eq!(
         store::get_world_settings(&f.pool, &world)
             .await
@@ -2599,6 +2621,25 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     .expect("in-shape spawn");
     assert_eq!(updated.spawn_coordinates.as_deref(), Some("0,1"));
     assert_eq!(old_spawn.as_deref(), Some("0,0"));
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "spawn edit queues refresh"
+    );
+    store::store_access_for_owner(&f.pool, &world, &owner, &AccessSetting::Unrestricted)
+        .await
+        .unwrap();
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "access edit queues refresh"
+    );
+    assert_eq!(store::undeploy_world(&f.pool, &world).await.unwrap(), 1);
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "undeploy queues refresh"
+    );
 }
 
 #[tokio::test]
@@ -8169,6 +8210,66 @@ async fn the_quota_pass_blocks_owners_over_their_allowance_and_lifts_stale_block
 }
 
 #[tokio::test]
+async fn permission_allow_lists_reject_malformed_wallets_and_clear_on_null() {
+    use super::notices::{PERMISSION_GRANTED, PERMISSION_REVOKED};
+
+    let Some(f) = fixture().await else { return };
+    let (world, owner, granted, other) = (
+        world_name(),
+        Wallet::random(),
+        Wallet::random(),
+        Wallet::random(),
+    );
+    f.names.set(&owner.address, world.label());
+    let permissions_path = format!("/world/{}/permissions", world.display());
+    for permission in ["deployment", "streaming"] {
+        let edit_path = format!("{permissions_path}/{permission}");
+        let valid = json!({ "type": "allow-list", "wallets": [granted.display()] }).to_string();
+        expect(
+            &f.app,
+            Case::new("post", &edit_path)
+                .signed_meta(&owner, &valid)
+                .await,
+            204,
+        )
+        .await;
+        for wallets in [json!(other.display()), json!([other.display(), 42])] {
+            let invalid = json!({ "type": "allow-list", "wallets": wallets }).to_string();
+            expect(
+                &f.app,
+                Case::new("post", &edit_path)
+                    .signed_meta(&owner, &invalid)
+                    .await,
+                400,
+            )
+            .await;
+            let permissions = expect(&f.app, Case::new("get", &permissions_path), 200).await;
+            assert_eq!(
+                permissions["permissions"][permission]["wallets"],
+                json!([granted.address.as_str()]),
+            );
+        }
+
+        let clear = json!({ "type": "allow-list", "wallets": null }).to_string();
+        expect(
+            &f.app,
+            Case::new("post", &edit_path)
+                .signed_meta(&owner, &clear)
+                .await,
+            204,
+        )
+        .await;
+        let permissions = expect(&f.app, Case::new("get", &permissions_path), 200).await;
+        assert_eq!(permissions["permissions"][permission]["wallets"], json!([]));
+    }
+    assert_eq!(
+        notices_of(&f, PERMISSION_REVOKED, &granted.address).len(),
+        2
+    );
+    assert!(notices_of(&f, PERMISSION_GRANTED, &other.address).is_empty());
+}
+
+#[tokio::test]
 async fn permission_edits_notify_each_address_actually_changed() {
     use super::notices::{PERMISSION_GRANTED, PERMISSION_REVOKED};
     let Some(f) = fixture().await else { return };
@@ -8421,6 +8522,11 @@ async fn the_owner_reconcile_follows_a_name_transfer() {
         200,
     )
     .await;
+    sqlx::query("DELETE FROM explore.world_place_updates WHERE world_name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
         .bind(world.key())
         .execute(&f.pool)
@@ -8460,6 +8566,14 @@ async fn the_owner_reconcile_follows_a_name_transfer() {
         stored_owner(&f.pool, &world).await.as_deref(),
         Some(new.address.as_str())
     );
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.world_place_updates WHERE world_name = $1)",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(queued, "the reconciled owner queues a place refresh");
     assert_eq!(
         stored_owner(&f.pool, &unresolved).await.as_deref(),
         Some(ens_owner.address.as_str()),

@@ -18,7 +18,7 @@ use crate::{
     },
     private_chat::PrivateChatRoom,
     room_connection::{RoomState, RoomStatus},
-    SceneRoom, Transport, TransportType,
+    SceneRoom, Transport,
 };
 use bevy::ecs::relationship::Relationship;
 
@@ -376,11 +376,7 @@ fn draw_room_indicators(
                 }
             }
         }
-        let pulse = player.transports.iter().any(|t| {
-            transports
-                .get(*t)
-                .is_ok_and(|t| t.transport_type == TransportType::Pulse)
-        });
+        let pulse = player.has_pulse_transport(&transports);
         let top = transform.translation() + Vec3::Y * 2.35;
         for (i, (present, color)) in [
             (pulse, Color::srgb(1.0, 0.75, 0.0)),
@@ -407,8 +403,10 @@ mod tests {
     use crate::{
         livekit::room::Connecting,
         room_connection::{FailureKind, RoomRecovery, RoomSuspended},
+        TransportType,
     };
     use bevy_console::ConsoleCommandEntered;
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     fn spawn_island(app: &mut App) -> Entity {
@@ -433,11 +431,11 @@ mod tests {
             command_name: name.into(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
-                *writer.lock().unwrap() = Some(result)
+                *writer.lock_ignore_poison() = Some(result)
             })),
         });
         app.update();
-        let result = reply.lock().unwrap().take().unwrap();
+        let result = reply.lock_ignore_poison().take().unwrap();
         result
     }
 

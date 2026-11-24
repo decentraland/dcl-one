@@ -3,7 +3,9 @@ import { redirect } from "react-router";
 import { loadDownloadCounts } from "@/data/lib/download/counts.server";
 import { downloadOptions } from "@/data/lib/download/installers";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import DownloadPage from "@/features/download/DownloadPage";
+import { googlePlayHref } from "@/features/download/google-play";
 
 import { publicBase } from "../lib/social-meta";
 import { staticPageMeta } from "../lib/static-page-meta";
@@ -25,10 +27,27 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   if (params.size > 0) throw redirect(`/play/?${params.toString()}`);
   const userAgent = request.headers.get("user-agent") ?? "";
   const { sid, wrap } = sidLoader(request, context);
-  return wrap({ sid, ...downloadOptions(userAgent), android: /android/i.test(userAgent), downloads: await loadDownloadCounts() });
+  return wrap({
+    sid,
+    ...downloadOptions(userAgent),
+    android: /android/i.test(userAgent),
+    downloads: await loadDownloadCounts(),
+    googlePlay: googlePlayHref(url.search),
+  });
 }
 
 export default function Download({ loaderData }: Route.ComponentProps) {
-  const { primary, secondary, android, downloads } = loaderData;
-  return <DownloadPage primary={primary} secondary={secondary} android={android} downloads={downloads} />;
+  const { sid, primary, secondary, android, downloads, googlePlay } = loaderData;
+  const userId = useAnalyticsUserId();
+  return (
+    <DownloadPage
+      primary={primary}
+      secondary={secondary}
+      android={android}
+      downloads={downloads}
+      sid={sid}
+      userId={userId}
+      googlePlay={googlePlay}
+    />
+  );
 }

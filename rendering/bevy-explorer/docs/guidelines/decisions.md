@@ -111,10 +111,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
   (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
   bias.
-- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
-  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
-  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
-  keeps it.
+- **Sun shadow map is 2048, and Low's one cascade stops at 40 m.** Unity's main shadow
+  resolution is 1024. High's four cascades each cover a slice of the shadow distance: at 100 m
+  and 200 m, 2048 per cascade looked the same as 4096 and the frame took about 10 ms less (web,
+  Apple M1, Genesis Plaza); 1024 saved 2 ms more and softened the contact shadows. Low's single
+  cascade spreads its map over the whole shadow distance, and the bias is in texels. From 20 m
+  to 60 m, 2048 looked the same as 4096 with the sun at 10:00 and at 15:00, and at 20 m took
+  about 6 ms less. At 100 m with the sun at 15:00, the shadows of a crowd 5 to 10 m from the
+  camera were mostly gone on 2048 and all gone on 1024. With a low sun, past about 75 m the
+  avatar's shadow was a smudge at the feet on 2048 and gone on 1024. 4096 kept them, but no
+  preset reaches that far on Low, and a size that follows the setting reallocates the map as
+  the distance crosses the line. So the map is 2048 for every setting and is never resized,
+  and Low's cascade stops at 40 m (`SUN_LOW_MAX_DISTANCE`) whatever the shadow distance; past
+  it the far shadow floor (next entry) applies, and High reaches further. Spot-light shadows
+  and the lobby stage light share the sun's shadow texture array, so they are drawn at the
+  same size.
 - **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
   the shadow distance. We fade over the same squared-distance curve, but towards a partial
   shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
@@ -493,6 +504,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
+  When a peer's Pulse membership ends, its avatar and nametag disappear. LiveKit can keep the peer
+  in the room for voice and room messages. The next Pulse join places the avatar at its new pose
+  immediately.
 - **Pulse refusals set a floor under the next wait.** Server full (disconnect code 6) waits at least
   60 s, the pre-auth limits (7, 8) and the per-IP connection cap (17) at least 10 s, the per-IP
   scene-listener cap (18) 10 s doubling to 5 minutes, and all five are retried, as the Pulse
@@ -853,12 +867,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
   spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
   preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
-  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
-  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
-  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
-  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
-  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
-  shows as Custom.
+  has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
+  40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
+  LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and
+  HDR (always on). The preset is not stored: the HUD reads it off the settings, and any
+  difference shows as Custom.
 - **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
   of the resolved main texture, so a multisampled transparent pass with depth of field fails
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
@@ -881,6 +895,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest to the player takes no place: its bones stay at rest and the place goes to the next
   visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
   rank hidden avatars to match.
+- **A scene's colliders answer only where the scene is drawn.** The avatar, the pointer and
+  other scenes' world raycasts meet a scene's colliders only over the scene's own parcels, up to
+  the height limit of each connected group of them, and 0.05 m past both: the hard edge of the
+  scene materials. With the out-of-bounds effect on (`graphics.oob`) the materials dissolve what
+  lies past that edge over a wider band; colliders keep to the hard edge. Unity keeps every
+  scene's colliders in one physics world, so a collider that is on is solid wherever it reaches,
+  over a neighbour's parcels too. Each scene here has a collider set of its own, so a query is
+  cut to where the scene applies: the avatar asks a scene only while its capsule touches that
+  space, and a ray or a swept capsule is cast against a scene only over the stretches inside it.
+  Three consequences look like mistakes:
+  - A ray that comes into a scene inside a solid primitive passes through that primitive, as a
+    ray does not hit what its origin is inside. Mesh colliders are surfaces, hit as usual.
+  - An avatar that comes into a scene already overlapping one of its colliders, having walked
+    through the part that is not solid outside, is stopped at the scene's edge when its centre
+    line is inside the collider or the overlap would push it back out. Any other overlap lets it
+    in, and the push-out resolves it as usual: that is how it steps onto ground a little higher
+    than the ground it came from. The top of the drawn space is such an edge: an avatar that
+    falls onto a collider which rises past the height its region is drawn to lands at that
+    height and stands there, on the ground.
+  - A platform that carries the player over the scene's edge drops them once their capsule is
+    clear of the scene.
+
+  A scene's casts at its own colliders (in a world cast too), trigger areas, the proximity
+  lookup and the photo camera are not cut. Neither is collider data without bounds: portables,
+  the terrain, and scenes in a run that draws out-of-bounds geometry. The whole-collider test
+  (below) still turns off a collider that leaves the scene's rectangle.
 
 ## Deliberate choices that look like mistakes
 
@@ -900,8 +940,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
   same allowance at the edge. The height limit splits the same way: colliders take one limit from
   the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
-  parcels at its own, so over a scene in several pieces a collider can be solid above the height
-  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  parcels at its own, so over a scene in several pieces a collider can be on above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m), where only the
+  scene's own raycasts and trigger areas meet it. The box tested
   for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
   mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
   rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw
