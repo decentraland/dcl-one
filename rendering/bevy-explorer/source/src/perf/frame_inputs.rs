@@ -12,7 +12,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    gpu_time::GPU_FRAME_TIME,
+    gpu_time::{GpuFrameTimeUnreliable, GPU_FRAME_TIME},
     memory::{MemoryReading, MemoryStatus},
     perf::{HudMainThreadCostDataPoint, JsHeapDataPoint, SamplingPausedReason},
     structs::{
@@ -99,6 +99,7 @@ pub(crate) fn collect_frame_inputs_system(
     time: Res<Time<Real>>,
     diagnostics: Res<DiagnosticsStore>,
     mut last_gpu_frame_time_measured_at: Local<Option<Instant>>,
+    gpu_frame_time_unreliable: Option<Res<GpuFrameTimeUnreliable>>,
     memory: Res<MemoryStatus>,
     scenes: Query<&RendererSceneContext>,
     config: Res<AppConfig>,
@@ -126,9 +127,11 @@ pub(crate) fn collect_frame_inputs_system(
 
     inputs.frame_delta_seconds = time.delta_secs_f64();
     inputs.elapsed_real_seconds = time.elapsed_secs_f64();
-    // taken every frame, so a reading from a pause is consumed before sampling resumes
+    // taken every frame, so a reading from a pause is consumed before sampling resumes; a
+    // platform whose readings are unreliable brings none
     inputs.new_gpu_frame_time_ms =
-        new_gpu_frame_time_ms(&diagnostics, &mut last_gpu_frame_time_measured_at);
+        new_gpu_frame_time_ms(&diagnostics, &mut last_gpu_frame_time_measured_at)
+            .filter(|_| gpu_frame_time_unreliable.is_none());
     inputs.memory_reading = memory.reading();
     inputs.js_heap = sum_scene_js_heaps(scenes.iter());
     inputs.entity_count = latest_entity_count(&diagnostics);

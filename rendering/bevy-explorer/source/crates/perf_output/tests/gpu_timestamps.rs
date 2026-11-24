@@ -121,12 +121,14 @@ fn read_u64s(device: &wgpu::Device, buffer: &Buffer) -> Vec<u64> {
 ///
 /// - DX12: passes (about 0.24 ms measured around the work, a period of 1 ns per tick).
 /// - Vulkan: passes (about 0.24 ms, 1 ns per tick).
-/// - Metal: not run here; the apple-m1 run of the fleet covers it.
+/// - Metal: passes on an Apple M4 Max with the dispatching bracket passes (about 1.18 ms measured
+///   around the work, 1 ns per tick).
 /// - WebGPU: not run here; the browser run of the explorer covers it.
 ///
 /// With the work pass cut to one workgroup of one loop step, the same two passes measure 0.004 ms
 /// on DX12 and 0.018 ms on Vulkan and the test fails, so the time above 0.05 ms is the work's and
-/// not the passes' own. This test has not been run with the dispatching bracket passes.
+/// not the passes' own. On DX12 and Vulkan this test has not been run with the dispatching bracket
+/// passes.
 #[test]
 #[ignore = "needs a GPU with TIMESTAMP_QUERY; run with --ignored"]
 fn bracket_ticks_increase_on_this_adapter() {

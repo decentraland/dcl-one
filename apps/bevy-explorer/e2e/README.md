@@ -189,7 +189,8 @@ compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
 within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
 a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
-`emote`, `nametags`, `layout`, `seed`, `wearables`: the file's name or `null`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+`emote`, `nametags`, `layout`, `seed`, `wearables`: the file's name or `null`), `samples` and `gpuSamples` (the
+window's samples, and how many of them carried a GPU frame time), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
 window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
 the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
