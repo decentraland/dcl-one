@@ -77,6 +77,7 @@ fn expected_pending_steps() -> Vec<&'static str> {
         .chain([
             "0060_shop_third_party_registry_index",
             "0061_content_processed_snapshot_types",
+            "0062_shop_collections_index",
         ])
         .collect()
 }
