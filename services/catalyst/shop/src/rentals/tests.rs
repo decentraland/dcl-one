@@ -595,6 +595,15 @@ async fn create_refresh_and_list_from_the_published_land_index() {
         .await
         .unwrap();
 
+    // The asset lookup returns the mint time. The public listing's createdAt
+    // dates the listing itself.
+    let repaired = state
+        .nft(body.chain_id, LAND, &token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repaired.created_at, 1_600_000_000);
+
     let (status, _, out) = send(
         app(),
         "POST",
