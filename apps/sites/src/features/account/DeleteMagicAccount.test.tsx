@@ -17,7 +17,7 @@ const auth = vi.hoisted(() => ({
   getIdToken: vi.fn(),
   hasMagicSession: vi.fn(),
   isLoggedIn: vi.fn(),
-  signedFetch: vi.fn(),
+  signRequest: vi.fn(),
 }));
 vi.mock("@/data/lib/auth/magic-config", () => ({ magicApiKey: () => "test-key" }));
 vi.mock("@/data/lib/auth/magic-session", () => ({
@@ -25,7 +25,7 @@ vi.mock("@/data/lib/auth/magic-session", () => ({
   magicClient: async () => ({ user: { getIdToken: auth.getIdToken, isLoggedIn: auth.isLoggedIn } }),
 }));
 vi.mock("@/data/lib/auth/session", () => ({ getIdentity: auth.getIdentity }));
-vi.mock("@/data/lib/auth/signer", () => ({ signedFetch: auth.signedFetch }));
+vi.mock("@/data/lib/auth/signer", () => ({ signRequest: auth.signRequest }));
 
 import { ACCOUNT_COPY } from "./copy";
 import { DeleteMagicAccount } from "./DeleteMagicAccount";
@@ -34,11 +34,14 @@ const ADDRESS = "0x1234567890123456789012345678901234567890";
 const copy = ACCOUNT_COPY.magicDeletion;
 
 describe("DeleteMagicAccount", () => {
+  let fetchMock: Mock<typeof fetch>;
   let client: QueryClient;
   let user: ReturnType<typeof userEvent.setup>;
   let onSignOut: Mock<() => void>;
 
   beforeEach(() => {
+    fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
     client = new QueryClient();
     user = userEvent.setup();
     onSignOut = vi.fn<() => void>();
@@ -48,6 +51,7 @@ describe("DeleteMagicAccount", () => {
   afterEach(() => {
     cleanup();
     client.clear();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.resetAllMocks();
   });
@@ -80,6 +84,7 @@ describe("DeleteMagicAccount", () => {
         auth.getIdentity.mockReturnValueOnce({ signer: ADDRESS });
         auth.isLoggedIn.mockResolvedValueOnce(true);
         auth.getIdToken.mockResolvedValueOnce("test-token");
+        auth.signRequest.mockResolvedValue({ headers: { "x-identity-metadata": "signed" } });
       });
 
       async function confirm() {
@@ -92,13 +97,39 @@ describe("DeleteMagicAccount", () => {
         beforeEach(() => {
           response = new Response("{}");
           vi.spyOn(response.body!, "cancel");
-          auth.signedFetch.mockResolvedValueOnce(response);
+          fetchMock.mockResolvedValueOnce(response);
         });
 
         it("should release the response body and sign the user out", async () => {
           await confirm();
           await waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+          expect(auth.signRequest).toHaveBeenCalledWith({ signer: ADDRESS }, "DELETE", "/auth-api/accounts", { didToken: "test-token" });
+          expect(fetchMock).toHaveBeenCalledWith("/auth-api/accounts", { method: "DELETE", headers: { "x-identity-metadata": "signed" } });
           expect(response.body!.cancel).toHaveBeenCalledOnce();
+        });
+      });
+
+      describe("and the connection drops during deletion", () => {
+        beforeEach(() => {
+          fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+        });
+
+        it("should explain the uncertain outcome and keep the user signed in", async () => {
+          await confirm();
+          expect((await within(dialog).findByRole("alert")).textContent).toContain(copy.unknown);
+          expect(onSignOut).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("and signing fails before dispatch", () => {
+        beforeEach(() => {
+          auth.signRequest.mockRejectedValueOnce(new Error("Auth identity has expired"));
+        });
+
+        it("should surface the signing error before sending the request", async () => {
+          await confirm();
+          expect((await within(dialog).findByRole("alert")).textContent).toContain("Auth identity has expired");
+          expect(fetchMock).not.toHaveBeenCalled();
         });
       });
 
@@ -110,6 +141,7 @@ describe("DeleteMagicAccount", () => {
         { status: 403, error: "Account deletion requires a valid signed request", message: copy.signInAgain, support: false },
         { status: 429, error: "Account deletion is busy", message: copy.rateLimited, support: true },
         { status: 502, error: "The outcome of the Magic deletion request is unknown", message: copy.unknown, support: false },
+        { status: 504, error: "Gateway Timeout", message: copy.unknown, support: false },
         { status: 503, error: "Account deletion is unavailable", message: copy.unavailable, support: true },
       ];
       for (const { status, error, message, support } of failures) {
@@ -118,7 +150,7 @@ describe("DeleteMagicAccount", () => {
 
           beforeEach(() => {
             response = new Response(JSON.stringify({ error }), { status });
-            auth.signedFetch.mockResolvedValueOnce(response);
+            fetchMock.mockResolvedValueOnce(response);
           });
 
           it(`should show its message${support ? " with a support link" : ""} and read the response body`, async () => {

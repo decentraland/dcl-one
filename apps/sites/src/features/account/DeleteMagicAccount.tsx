@@ -7,7 +7,7 @@ import { useMutation } from "@tanstack/react-query";
 import { magicApiKey } from "@/data/lib/auth/magic-config";
 import { hasMagicSession, magicClient } from "@/data/lib/auth/magic-session";
 import { getIdentity } from "@/data/lib/auth/session";
-import { signedFetch } from "@/data/lib/auth/signer";
+import { signRequest } from "@/data/lib/auth/signer";
 
 import styles from "./AccountSidebar.module.css";
 import { ACCOUNT_COPY } from "./copy";
@@ -33,7 +33,8 @@ function deletionError(status: number, error: unknown): DeletionError {
     case 401: return new DeletionError(copy.signInAgain);
     case 403: return new DeletionError(FORBIDDEN.get(error) ?? copy.signInAgain);
     case 429: return new DeletionError(copy.rateLimited, true);
-    case 502: return new DeletionError(copy.unknown);
+    case 502:
+    case 504: return new DeletionError(copy.unknown);
     case 503: return new DeletionError(copy.unavailable, true);
     default: return new DeletionError(copy.failed);
   }
@@ -66,9 +67,10 @@ function DeleteMagicAccountAction({ address, onSignOut }: { address: string; onS
         throw new Error(copy.magicSignIn);
       }
       const didToken = await magic.user.getIdToken({ lifespan: 120 });
-      const response = await signedFetch(identity, "/auth-api/accounts", {
-        method: "DELETE",
-        metadata: { didToken },
+      const url = "/auth-api/accounts";
+      const { headers } = await signRequest(identity, "DELETE", url, { didToken });
+      const response = await fetch(url, { method: "DELETE", headers }).catch(() => {
+        throw new DeletionError(copy.unknown);
       });
       if (!response.ok) throw deletionError(response.status, await errorField(response));
       await response.body?.cancel().catch(() => {});
