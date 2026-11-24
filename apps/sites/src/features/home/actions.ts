@@ -1,9 +1,6 @@
-import type {
-  DownloadActionsProps,
-  DownloadAlternative,
-  StoreBadgeProps,
-} from "@dcl/one-ui/apps/sites/download/DownloadActions";
+import type { DownloadActionsProps, DownloadAlternative, StoreBadgeProps } from "@dcl/one-ui";
 import { downloadActions, osName, STORES } from "../download/actions";
+import { googlePlayHref } from "../download/google-play";
 import type { DetectedPlatform } from "../download/options";
 import { homeCopy } from "./locale";
 
@@ -17,7 +14,7 @@ import { homeCopy } from "./locale";
 // beside the counter. The hero keeps each platform in a group of its own (the first one empty without
 // a second installer); Come Hang Out puts the alternatives in one group at the counter's own width.
 
-const STORE_LINKS: Record<"ios" | "android", DownloadAlternative> = {
+const storeLinks = (googlePlay: string): Record<"ios" | "android", DownloadAlternative> => ({
   ios: {
     icon: "ios",
     label: "Download on the App Store",
@@ -27,10 +24,10 @@ const STORE_LINKS: Record<"ios" | "android", DownloadAlternative> = {
   android: {
     icon: "android",
     label: "Get it on Google Play",
-    href: STORES.google_play,
+    href: googlePlay,
     external: true,
   },
-};
+});
 
 export type HomeDownloadActions = {
   hero: DownloadActionsProps;
@@ -45,8 +42,11 @@ export function homeDownloadActions(
   /** False when the deployment configures no installer host: then the download call leads to /download. */
   installers: boolean,
   copy = homeCopy.en.download,
+  /** The Google Play listing tagged with the visitor's campaign (`googlePlayHref`); the site's own tag by default. */
+  googlePlay: string = googlePlayHref(),
 ): HomeDownloadActions {
-  const { actions, store } = downloadActions(platform, downloads);
+  const { actions, store } = downloadActions(platform, downloads, googlePlay);
+  const STORE_LINKS = storeLinks(googlePlay);
   // A desktop (or unidentified) visitor with an installer host gets the installers; phones do not.
   const covered = installers && platform.kind !== "mobile";
   // Only 32-bit Windows has no primary installer; it still shows the Windows icon.
@@ -83,7 +83,7 @@ export function homeDownloadActions(
         : {
             badge: "google_play",
             label: STORE_LINKS.android.label,
-            href: STORES.google_play,
+            href: googlePlay,
           },
   };
 }

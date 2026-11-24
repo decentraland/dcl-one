@@ -15,6 +15,26 @@ describe('when a captured Tabs item navigates a route', () => {
     })
   })
 
+  describe.each([true, false])('and a category link is selected: %s', (selected) => {
+    beforeEach(() => {
+      render(
+        <Tabs
+          mode="navigation"
+          href="/blog/platform"
+          label="Platform"
+          selected={selected}
+          current="true"
+        />
+      )
+    })
+
+    it('should mark only the selected link as current', () => {
+      const link = screen.getByRole('link', { name: 'Platform' })
+      if (selected) expect(link).toHaveAttribute('aria-current', 'true')
+      else expect(link).not.toHaveAttribute('aria-current')
+    })
+  })
+
   describe('and the caller cancels a modifier click', () => {
     let click: Mock<(event: { preventDefault(): void }) => void>
 

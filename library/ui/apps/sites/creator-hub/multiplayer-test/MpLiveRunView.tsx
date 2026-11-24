@@ -1,5 +1,9 @@
-import { LANE_STARTING_NOTE, type MpLane } from '@web-core/multiplayer-test/rules'
-import type { MpBotRow, MpRunPhase, MpTimelineEntry } from '@web-core/multiplayer-test/types'
+import { LANE_STARTING_NOTE, type MpLane } from '../../../../../web-core/multiplayer-test/rules'
+import type {
+  MpBotRow,
+  MpRunPhase,
+  MpTimelineEntry
+} from '../../../../../web-core/multiplayer-test/types'
 
 import './mpliverunview.css'
 

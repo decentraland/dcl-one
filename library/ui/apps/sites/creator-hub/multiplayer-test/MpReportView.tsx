@@ -1,5 +1,9 @@
-import { LANE_CLAIMS, type MpLane } from '@web-core/multiplayer-test/rules'
-import type { MpReportData, MpTimelineEntry, MpVerdict } from '@web-core/multiplayer-test/types'
+import { LANE_CLAIMS, type MpLane } from '../../../../../web-core/multiplayer-test/rules'
+import type {
+  MpReportData,
+  MpTimelineEntry,
+  MpVerdict
+} from '../../../../../web-core/multiplayer-test/types'
 
 import './mpreportview.css'
 

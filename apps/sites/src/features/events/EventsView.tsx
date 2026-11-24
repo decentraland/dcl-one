@@ -2,18 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
-import { AllEvents, type AllEventsDay } from "@dcl/one-ui/apps/sites/events/AllEvents";
-import { PlaceDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { EventsPage } from "@dcl/one-ui/apps/sites/events/EventsPage";
-import { HostBanner } from "@dcl/one-ui/apps/sites/events/HostBanner";
-import { LiveNow } from "@dcl/one-ui/apps/sites/events/LiveNow";
-import { Upcoming } from "@dcl/one-ui/apps/sites/events/Upcoming";
-import type {
-  ExperienceCardProps,
-  JumpIn,
-  LiveEventCardProps,
-  UpcomingEventCardProps,
-} from "@dcl/one-ui/apps/sites/events/types";
+import {
+  AllEvents,
+  type AllEventsDay,
+  PlaceDetailModal,
+  EventsPage,
+  HostBanner,
+  EventsLiveNow as LiveNow,
+  Upcoming,
+  type ExperienceCardProps,
+  type JumpIn,
+  type LiveEventCardProps,
+  type UpcomingEventCardProps,
+  useEventsCopy,
+} from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";
@@ -35,7 +37,6 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
 import { useSignInRequired } from "../components/auth/useSignInRequired";
 import type { DetectedPlatform } from "../download/options";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { EventDetail, eventJumpIn, isPlainClick, remindControl } from "./EventDetail";
 import { useCreatorProfiles } from "./useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders } from "./useEventReminders";
@@ -54,6 +55,7 @@ import {
   dayLabel,
   eventCreator,
   eventHref,
+  eventImage,
   eventPageShareUrl,
   eventTarget,
   eventUsers,
@@ -83,6 +85,8 @@ export type EventsViewProps = {
   platform: DetectedPlatform;
   /** The public origin share links and calendar entries point at. */
   origin: string;
+  /** The origin the browser loaded the page from: the request's on the server, the window's in the browser. */
+  pageOrigin: string;
   /** The loader's clock and its required-data outcome; null after a client navigation. */
   initial: { now: number; unavailable: boolean } | null;
 };
@@ -115,7 +119,7 @@ function useViewer(initialNow: number, platform: DetectedPlatform) {
   return { zone, now, columns };
 }
 
-export function EventsView({ sid, platform, origin, initial }: EventsViewProps) {
+export function EventsView({ sid, platform, origin, pageOrigin, initial }: EventsViewProps) {
   const { locale, text } = useEventsCopy();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -210,7 +214,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: item.event.id,
         title: item.event.name ?? text("Untitled event"),
-        image: item.event.image,
+        image: eventImage(item.event.image, pageOrigin),
         href,
         onOpen: open(href, item.event.id),
         users: item.users,
@@ -239,7 +243,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   const upcomingCards: UpcomingEventCardProps[] = upcomingEvents.map((event) => {
     const href = eventHref(event.id, search);
     return {
-      ...upcomingCardProps(event, { href, now, zone, origin, profiles, locale }),
+      ...upcomingCardProps(event, { href, now, zone, origin, pageOrigin, profiles, locale }),
       onOpen: open(href, event.id),
       remind: remindControl(reminders.get(event.id)),
     };
@@ -257,7 +261,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: `${event.id}@${occurrence.start}`,
         title: event.name ?? text("Untitled event"),
-        image: event.image,
+        image: eventImage(event.image, pageOrigin),
         href,
         onOpen: open(href, event.id),
         users,
@@ -288,8 +292,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const myCards = useMemo(
     () =>
-      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, profiles, locale }) : [],
-    [identity, mine.events, now, zone, profiles, locale],
+      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, pageOrigin, profiles, locale }) : [],
+    [identity, mine.events, now, zone, pageOrigin, profiles, locale],
   );
 
   const calendarStatus = calendar.data ? "ready" : calendar.isError || initial?.unavailable ? "unavailable" : "loading";
@@ -306,6 +310,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
               event={detail.data}
               zone={zone}
               origin={origin}
+              pageOrigin={pageOrigin}
               jumpIn={jumpIn}
               reminder={detail.data.live ? undefined : reminders.get(detail.data.id)}
               profiles={profiles}
@@ -410,7 +415,9 @@ function useMyEventsTab(identity: AuthIdentity | null) {
   useSignInRequired(wanted && !hadIdentity, Boolean(identity));
   useEffect(() => {
     if (identity) setHadIdentity(true);
-    else if (wanted && hadIdentity)
+    // Once the tab is dropped after a sign-out, a later link to it asks to sign in again.
+    else if (!wanted) setHadIdentity(false);
+    else if (hadIdentity)
       setParams(
         (prev) => {
           const next = new URLSearchParams(prev);

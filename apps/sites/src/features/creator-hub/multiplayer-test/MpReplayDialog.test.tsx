@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FALLBACK_PROFILES } from "@web-core/multiplayer-test/rules";
 import type { MpReplayOutcome } from "@web-core/multiplayer-test/types";
-import MpReplayDialog from "@dcl/one-ui/apps/sites/creator-hub/multiplayer-test/MpReplayDialog";
+import { MpReplayDialog } from "@dcl/one-ui";
 
 // The library component is transformed with React Refresh outside a route module; its preamble is stubbed.
 vi.hoisted(() => {

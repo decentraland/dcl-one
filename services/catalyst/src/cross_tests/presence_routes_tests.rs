@@ -125,7 +125,7 @@ async fn mounted_worker_fixture() -> (
         response::IntoResponse,
         routing::post,
     };
-    let mode = Arc::new(AtomicUsize::new(0)); // occupied, source down, empty, ambiguous
+    let mode = Arc::new(AtomicUsize::new(0)); // occupied, source down, empty, simultaneous joins
     let app = Router::new()
         .route(
             "/twirp/livekit.RoomService/{method}",
@@ -221,18 +221,7 @@ async fn both_public_mounts_keep_real_worker_source_time_through_outage_expiry_r
     let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
     let app = live_presence_routes(state.presence.clone(), false);
     for prefix in ["", "/worlds-content-server"] {
-        let (status, _, body) = mounted_read(&app, &format!("{prefix}/live-data")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(
-            body,
-            json!({"data":{"totalUsers":0,"perWorld":[]},"lastUpdated":"1970-01-01T00:00:00.000Z"})
-        );
-        assert_eq!(
-            mounted_read(&app, &format!("{prefix}/wallet/0xabc/connected-world"))
-                .await
-                .0,
-            StatusCode::NOT_FOUND
-        );
+        assert_presence_unavailable(&app, prefix).await;
     }
     state.spawn_presence_recovery(&jobs);
     wait_recovery_pass(&jobs, 1).await;
@@ -270,18 +259,9 @@ async fn both_public_mounts_keep_real_worker_source_time_through_outage_expiry_r
     advance_worker_clock(Duration::from_secs(60)).await;
     wait_recovery_pass(&jobs, 3).await;
     for prefix in ["", "/worlds-content-server"] {
-        let (status, _, body) = mounted_read(&app, &format!("{prefix}/live-data")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["data"], json!({"totalUsers":0,"perWorld":[]}));
-        assert_eq!(body["lastUpdated"], initial["lastUpdated"]);
-        let (status, _, absent) =
-            mounted_read(&app, &format!("{prefix}/wallet/0xabc/connected-world")).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(
-            absent,
-            json!({"error":"Not Found","message":"Wallet 0xabc is not connected to any world"})
-        );
+        assert_presence_unavailable(&app, prefix).await;
     }
+    assert_eq!(state.presence.last_updated(), initial["lastUpdated"]);
     mode.store(0, Ordering::SeqCst);
     advance_worker_clock(Duration::from_secs(7)).await;
     wait_recovery_pass(&jobs, 4).await;
@@ -296,6 +276,13 @@ async fn both_public_mounts_keep_real_worker_source_time_through_outage_expiry_r
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["data"], json!({"totalUsers":0,"perWorld":[]}));
         assert_ne!(body["lastUpdated"], restored["lastUpdated"]);
+        let (status, _, absent) =
+            mounted_read(&app, &format!("{prefix}/wallet/0xabc/connected-world")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            absent,
+            json!({"error":"Not Found","message":"Wallet 0xabc is not connected to any world"})
+        );
     }
     assert_eq!(
         state
@@ -309,9 +296,20 @@ async fn both_public_mounts_keep_real_worker_source_time_through_outage_expiry_r
     server.abort();
 }
 
+async fn assert_presence_unavailable(app: &axum::Router, prefix: &str) {
+    for path in ["/live-data", "/wallet/0xabc/connected-world"] {
+        let (status, headers, body) = mounted_read(app, &format!("{prefix}{path}")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(headers[header::RETRY_AFTER], "1");
+        assert_eq!(
+            body,
+            json!({"error":"Service Unavailable","message":"World presence is unavailable. Retry shortly."})
+        );
+    }
+}
+
 #[tokio::test]
-async fn both_mounts_return_retryable_503_for_recovered_multiworld_wallet_without_changing_membership()
- {
+async fn both_mounts_break_join_ties_without_changing_membership() {
     let (state, mode, server) = mounted_worker_fixture().await;
     mode.store(3, Ordering::SeqCst);
     let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
@@ -319,14 +317,10 @@ async fn both_mounts_return_retryable_503_for_recovered_multiworld_wallet_withou
     state.spawn_presence_recovery(&jobs);
     wait_recovery_pass(&jobs, 1).await;
     for prefix in ["", "/worlds-content-server"] {
-        let (status, headers, body) =
+        let (status, _, body) =
             mounted_read(&app, &format!("{prefix}/wallet/0xabc/connected-world")).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(headers[header::RETRY_AFTER], "1");
-        assert_eq!(
-            body,
-            json!({"error":"Service Unavailable","message":"Connected world could not be decided; retry shortly."})
-        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"wallet":"0xabc","world":"bar.dcl.eth"}));
         assert_eq!(
             mounted_read(&app, &format!("{prefix}/live-data")).await.2["data"],
             json!({"totalUsers":2,"perWorld":[{"worldName":"bar.dcl.eth","users":1},{"worldName":"foo.dcl.eth","users":1}]})

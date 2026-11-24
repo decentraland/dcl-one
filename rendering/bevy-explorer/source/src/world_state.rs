@@ -173,6 +173,7 @@ fn world_state_cmd(
 
 #[cfg(test)]
 mod tests {
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
@@ -232,7 +233,7 @@ mod tests {
         app.world_mut().spawn((
             PrimaryUser::default(),
             Transform::from_xyz(8.0, 0.0, -24.0),
-            OutOfWorld,
+            OutOfWorld::default(),
         ));
         // Startup registers the command with the console
         app.update();
@@ -240,7 +241,7 @@ mod tests {
         let answer = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let answer = answer.clone();
-            Arc::new(move |result| *answer.lock().unwrap() = Some(result))
+            Arc::new(move |result| *answer.lock_ignore_poison() = Some(result))
         };
         app.world_mut().send_event(ConsoleCommandEntered {
             command_name: "/world_state".to_owned(),
@@ -249,7 +250,7 @@ mod tests {
         });
         app.update();
 
-        let reply = answer.lock().unwrap().take().expect("no reply");
+        let reply = answer.lock_ignore_poison().take().expect("no reply");
         let state: serde_json::Value = serde_json::from_str(&reply.unwrap()).unwrap();
         assert_eq!(state["inWorld"], false);
         assert_eq!(state["signedIn"], false);
@@ -281,7 +282,7 @@ mod tests {
             let answer = Arc::new(Mutex::new(None));
             let responder: ConsoleResponder = {
                 let answer = answer.clone();
-                Arc::new(move |result| *answer.lock().unwrap() = Some(result))
+                Arc::new(move |result| *answer.lock_ignore_poison() = Some(result))
             };
             app.world_mut().send_event(ConsoleCommandEntered {
                 command_name: "/world_state".to_owned(),
@@ -289,7 +290,7 @@ mod tests {
                 responder: Some(responder),
             });
             app.update();
-            let reply = answer.lock().unwrap().take().expect("no reply");
+            let reply = answer.lock_ignore_poison().take().expect("no reply");
             serde_json::from_str(&reply.unwrap()).unwrap()
         };
 
@@ -316,9 +317,9 @@ mod tests {
         app.add_plugins(ArrivalsPlugin);
         let player = app
             .world_mut()
-            .spawn((PrimaryUser::default(), OutOfWorld))
+            .spawn((PrimaryUser::default(), OutOfWorld::default()))
             .id();
-        let other = app.world_mut().spawn(OutOfWorld).id();
+        let other = app.world_mut().spawn(OutOfWorld::default()).id();
         app.update();
 
         app.world_mut().entity_mut(other).remove::<OutOfWorld>();
@@ -327,7 +328,9 @@ mod tests {
 
         // out of world and back between two frames: only the removal is left
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
         app.update();
         assert_eq!(app.world().resource::<Arrivals>().0, 2);

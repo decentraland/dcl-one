@@ -6,7 +6,7 @@
 
 import { createIdentityFor } from "@/data/lib/auth/identity";
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { connectWallet, detectWallets, getConnectedAddress, selectWallet } from "@/data/lib/auth/wallet";
+import { browserWalletProvider, connectWallet, detectWallets, getConnectedAddress, selectWallet } from "@/data/lib/auth/wallet";
 
 export type ConnectionState =
   | "connecting"
@@ -80,13 +80,18 @@ export function hasMetaMask(): boolean {
  * returned, not kept: the caller keeps it only if the reader is still waiting for this attempt.
  */
 export async function signInWithBrowserWallet(
-  rdns: string | null,
+  rdns: string,
   expirationMs: number,
   onPhase: (phase: "connecting" | "signing") => void,
 ): Promise<AuthIdentity> {
+  if (!browserWalletProvider(rdns)) throw new Error("The browser wallet is unavailable.");
   selectWallet(rdns);
   onPhase("connecting");
   const signer = (await getConnectedAddress()) ?? (await connectWallet());
   onPhase("signing");
-  return createIdentityFor(signer, { expirationMs });
+  const identity = await createIdentityFor(signer, { expirationMs });
+  if ((await getConnectedAddress()) !== signer) {
+    throw new Error("Your wallet changed accounts. Try again with the account you want to use.");
+  }
+  return identity;
 }

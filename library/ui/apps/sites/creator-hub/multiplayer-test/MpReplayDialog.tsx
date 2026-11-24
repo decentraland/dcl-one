@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
-import { FALLBACK_PROFILES } from '@web-core/multiplayer-test/rules'
-import type { MpReplayOutcome } from '@web-core/multiplayer-test/types'
+import { FALLBACK_PROFILES } from '../../../../../web-core/multiplayer-test/rules'
+import type { MpReplayOutcome } from '../../../../../web-core/multiplayer-test/types'
 
 import { Button } from '../../../../components/Button/Button'
 import { Modal } from '../../../../components/Modal/Modal'

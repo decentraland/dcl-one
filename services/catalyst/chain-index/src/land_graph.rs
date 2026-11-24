@@ -5,7 +5,7 @@
 //! land index was present; v2 answers both from the land-authz index once it
 //! is published and from this reader before that (`land_authz::routes`).
 //! Without the URL those routes keep the unavailable envelope. Answers are
-//! memoized for [`TTL`], the old cache's budget.
+//! memoized briefly; parcel permissions use a shorter TTL than reverse lookups.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,21 +17,26 @@ use crate::shared::cache::TtlMap;
 use super::ChainIndex;
 use super::graph::{FULL_WALK_PAGES, THE_GRAPH_PAGE_SIZE, graph_query};
 
+const PARCEL_TTL: Duration = Duration::from_secs(5);
 const TTL: Duration = Duration::from_secs(60);
 const MAX_ENTRIES: usize = 50_000;
 /// Pages walked per lookup (1000 rows each): lamb2 walks every page, so
 /// this is only the runaway guard.
 const MAX_PAGES: usize = FULL_WALK_PAGES;
 
+type AuthorizationLists = (Vec<String>, Vec<String>);
+
 pub struct Caches {
-    operators: TtlMap<(i64, i64), Arc<Option<ParcelOperators>>>,
+    subjects: TtlMap<(i64, i64), Arc<Option<ResolvedOperators>>>,
+    authorizations: TtlMap<(String, String), Arc<AuthorizationLists>>,
     by_update_operator: TtlMap<String, Arc<Vec<Value>>>,
 }
 
 impl Default for Caches {
     fn default() -> Self {
         Self {
-            operators: TtlMap::bounded(TTL, MAX_ENTRIES),
+            subjects: TtlMap::bounded(PARCEL_TTL, MAX_ENTRIES),
+            authorizations: TtlMap::bounded(PARCEL_TTL, MAX_ENTRIES),
             by_update_operator: TtlMap::bounded(TTL, MAX_ENTRIES),
         }
     }
@@ -181,7 +186,7 @@ fn fold_authorizations(
 async fn walk_authorizations<F, Fut>(
     max_pages: usize,
     mut page: F,
-) -> Result<(Vec<String>, Vec<String>), String>
+) -> Result<AuthorizationLists, String>
 where
     F: FnMut(String) -> Fut,
     Fut: std::future::Future<Output = Result<Value, String>>,
@@ -227,7 +232,7 @@ async fn update_managers_and_approved_for_all(
     url: &str,
     address: &str,
     token_address: &str,
-) -> Result<(Vec<String>, Vec<String>), String> {
+) -> Result<AuthorizationLists, String> {
     walk_authorizations(MAX_PAGES, |timestamp_from| async move {
         graph_query(
             state,
@@ -249,9 +254,9 @@ pub async fn parcel_operators(
     let Some(url) = state.settings.land_subgraph_url.as_deref() else {
         return Err("no LAND subgraph is configured (LAND_SUBGRAPH_URL)".to_string());
     };
-    state
+    let subject = state
         .land_graph
-        .operators
+        .subjects
         .get_or_fetch((x, y), || async move {
             let data = graph_query(
                 state,
@@ -268,28 +273,38 @@ pub async fn parcel_operators(
                 .get("parcels")
                 .and_then(Value::as_array)
                 .ok_or("subgraph response without parcels")?;
-            let Some(resolved) = resolve_operators(estates, parcels)? else {
-                return Ok::<_, String>(Arc::new(None));
-            };
-            let (land, estate) = registries(state);
-            let token_address = if resolved.belongs_to_estate {
-                estate
-            } else {
-                land
-            };
-            let (update_managers, approved_for_all) =
-                update_managers_and_approved_for_all(state, url, &resolved.owner, &token_address)
-                    .await?;
-            Ok(Arc::new(Some(ParcelOperators {
-                owner: resolved.owner,
-                operator: resolved.operator,
-                update_operator: resolved.update_operator,
-                update_managers,
-                approved_for_all,
-            })))
+            Ok::<_, String>(Arc::new(resolve_operators(estates, parcels)?))
         })
-        .await
-        .map(|a| (*a).clone())
+        .await?;
+    let Some(resolved) = subject.as_ref() else {
+        return Ok(None);
+    };
+
+    // Cache the parcels and the shared authorization scope independently so a
+    // parcel whose subject is refreshed cannot extend the lifetime of a grant.
+    let (land, estate) = registries(state);
+    let registry = if resolved.belongs_to_estate {
+        estate
+    } else {
+        land
+    };
+    let owner = resolved.owner.to_lowercase();
+    let authorizations = state
+        .land_graph
+        .authorizations
+        .get_or_fetch((owner.clone(), registry.clone()), || async {
+            update_managers_and_approved_for_all(state, url, &owner, &registry)
+                .await
+                .map(Arc::new)
+        })
+        .await?;
+    Ok(Some(ParcelOperators {
+        owner: resolved.owner.clone(),
+        operator: resolved.operator.clone(),
+        update_operator: resolved.update_operator.clone(),
+        update_managers: authorizations.0.clone(),
+        approved_for_all: authorizations.1.clone(),
+    }))
 }
 
 fn parcel_element(p: &Value) -> Value {
@@ -631,6 +646,97 @@ mod tests {
         assert!(query.contains("timestamp_gt: $timestampFrom"));
         assert!(query.contains("orderBy: timestamp"));
         assert!(!query.contains("id_gt"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn parcel_subjects_and_shared_authorizations_expire_independently() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let parcels = Arc::new(AtomicUsize::new(0));
+        let authorizations = Arc::new(AtomicUsize::new(0));
+        let parcel_queries = parcels.clone();
+        let auth_queries = authorizations.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
+                let query = request["query"].as_str().unwrap();
+                let data = if query.contains("fetchOperatorsOfParcel") {
+                    parcel_queries.fetch_add(1, Ordering::SeqCst);
+                    json!({"estates": [], "parcels": [row("owner", None, None)]})
+                } else {
+                    assert!(query.contains("fetchAuthorizations"));
+                    let count = auth_queries.fetch_add(1, Ordering::SeqCst);
+                    if count == 0 {
+                        json!({"authorizations": [{
+                            "operator": "manager", "type": "UpdateManager", "timestamp": "1", "isApproved": true
+                        }]})
+                    } else {
+                        json!({"authorizations": []})
+                    }
+                };
+                async move { axum::Json(json!({"data": data})) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::IndexSettings {
+                land_subgraph_url: Some(url),
+                ..Default::default()
+            },
+        );
+        state.allow_loopback_for_tests();
+        async fn advance_two_seconds() {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(2)).await;
+            tokio::time::resume();
+        }
+
+        assert_eq!(
+            parcel_operators(&state, 1, 2)
+                .await
+                .unwrap()
+                .unwrap()
+                .update_managers,
+            ["manager"]
+        );
+        advance_two_seconds().await;
+        advance_two_seconds().await;
+        assert_eq!(
+            parcel_operators(&state, 3, 4)
+                .await
+                .unwrap()
+                .unwrap()
+                .update_managers,
+            ["manager"]
+        );
+        assert_eq!(parcels.load(Ordering::SeqCst), 2);
+        assert_eq!(authorizations.load(Ordering::SeqCst), 1);
+
+        advance_two_seconds().await;
+        assert!(
+            parcel_operators(&state, 3, 4)
+                .await
+                .unwrap()
+                .unwrap()
+                .update_managers
+                .is_empty()
+        );
+        assert_eq!(parcels.load(Ordering::SeqCst), 2);
+        assert_eq!(authorizations.load(Ordering::SeqCst), 2);
+        assert!(
+            parcel_operators(&state, 1, 2)
+                .await
+                .unwrap()
+                .unwrap()
+                .update_managers
+                .is_empty()
+        );
+        assert_eq!(parcels.load(Ordering::SeqCst), 3);
+        assert_eq!(authorizations.load(Ordering::SeqCst), 2);
         server.abort();
     }
 

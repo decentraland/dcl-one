@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { SIDECAR_START_COMMAND } from '@web-core/multiplayer-test/rules'
+import { SIDECAR_START_COMMAND } from '../../../../../web-core/multiplayer-test/rules'
 
 import './mpunpaired.css'
 
