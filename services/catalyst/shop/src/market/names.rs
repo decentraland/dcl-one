@@ -653,6 +653,7 @@ mod tests {
             state.name_owner("alice.dcl.eth.dcl.eth").await.unwrap(),
             None
         );
+        walked(&db.pool, 101, DCL_REGISTRAR, 7).await;
         cursor_at(&db.pool, 101, 100).await;
         assert!(state.name_owner("nobody").await.is_err());
         assert!(state.name_owner("alice").await.is_err());
@@ -705,13 +706,31 @@ mod tests {
         mint(&db.pool, 7, A, "Alice").await;
         let warm = names.name_owner("alice", Purpose::Authorize).await.unwrap();
         let observed = warm.observation.unwrap();
-        walked(&db.pool, 101, "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d", 1).await;
+        walked(
+            &db.pool,
+            101,
+            "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d",
+            1,
+        )
+        .await;
         cursor_at(&db.pool, 101, 100).await;
         let gap = names.name_owner("alice", Purpose::Authorize).await.unwrap();
         assert_eq!(gap.value.as_deref(), Some(A));
         assert_eq!(gap.observation, Some(observed));
-        assert!(names.still_current(&observed, Purpose::Authorize).await.unwrap());
-        assert!(!names.owned_names(A, Purpose::Authorize).await.unwrap().value.is_empty());
+        assert!(
+            names
+                .still_current(&observed, Purpose::Authorize)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !names
+                .owned_names(A, Purpose::Authorize)
+                .await
+                .unwrap()
+                .value
+                .is_empty()
+        );
 
         walked(&db.pool, 102, DCL_REGISTRAR, 7).await;
         cursor_at(&db.pool, 102, 100).await;
@@ -719,7 +738,12 @@ mod tests {
             names.name_owner("alice", Purpose::Authorize).await,
             Err(NamesError::NotEstablished(_))
         ));
-        assert!(!names.still_current(&observed, Purpose::Authorize).await.unwrap());
+        assert!(
+            !names
+                .still_current(&observed, Purpose::Authorize)
+                .await
+                .unwrap()
+        );
         db.drop().await;
     }
 
@@ -747,12 +771,15 @@ mod tests {
                 sqlx::query(sql).execute(&pool).await.unwrap();
             }
         };
-        set("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()) WHERE indexer = 'nft' AND network = 'ethereum'").await;
+        set("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'nft' AND network = 'ethereum'").await;
         assert!(refused(Purpose::Authorize).await, "quarantined");
-        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, chain_id = 137 WHERE indexer = 'nft' AND network = 'ethereum'").await;
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, chain_id = 137 WHERE indexer = 'nft' AND network = 'ethereum'").await;
         assert!(refused(Purpose::Authorize).await, "another chain");
         set("UPDATE shop.chain_cursor SET chain_id = 1, folded_at = timezone('UTC', now()) - interval '31 minutes' WHERE indexer = 'nft' AND network = 'ethereum'").await;
-        assert!(refused(Purpose::Authorize).await, "stale for an authorization");
+        assert!(
+            refused(Purpose::Authorize).await,
+            "stale for an authorization"
+        );
         assert!(refused(Purpose::Display).await, "stale for a display read");
         set("DELETE FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum'").await;
         assert!(refused(Purpose::Authorize).await, "no cursor");
