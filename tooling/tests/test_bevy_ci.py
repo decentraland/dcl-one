@@ -118,7 +118,7 @@ class WorkflowTest(unittest.TestCase):
                      "if: steps.guards.outputs.provenance == 'true'\n        run: python3 tooling/vendor-provenance.py"):
             self.assertIn(step, source)
         # A change to only a pin, the upstream check, its tests or a provenance tool starts the run.
-        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+        for event, end in (('push', 'pull_request'),):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('rendering/bevy-explorer/patches/winit/source.toml', 'tooling/upstream-drift.py',
@@ -307,7 +307,7 @@ class WorkflowTest(unittest.TestCase):
 
     def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text()
-        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+        for event, end in (('push', 'pull_request'),):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
@@ -347,9 +347,8 @@ class WorkflowTest(unittest.TestCase):
         block = ''.join(lines[:next(i for i, line in enumerate(lines) if line[:1] not in (' ', '#'))])
         self.assertIn("  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', "
                       "github.event.pull_request.number) || github.ref }}\n", block)
-        # Marking a draft ready does not cancel the run whose web build the smoke job waits for.
-        self.assertIn("  cancel-in-progress: ${{ github.event.action != 'ready_for_review' && "
-                      "(github.event_name == 'pull_request' || github.ref != 'refs/heads/main') }}\n", block)
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' || "
+                      "github.ref != 'refs/heads/main' }}\n", block)
 
     def test_the_desktop_build_waits_for_the_proof_of_every_patched_source(self):
         workflow = (ci.ROOT / '.github/workflows/bevy-explorer-desktop.yml').read_text(encoding='utf-8')
@@ -403,6 +402,29 @@ class WorkflowTest(unittest.TestCase):
         # No other job may cancel a run.
         self.assertEqual(workflow.count('actions: write'), 1)
         self.assertEqual(workflow.count('gh run cancel'), 1)
+
+    def test_the_gate_requires_every_check_build_and_test(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
+        gate = jobs['gate']
+        # A path filter on pull requests would leave a required gate waiting for ever.
+        pull_request = workflow.split('\n  pull_request:\n', 1)[1].split('\n  workflow_dispatch:\n', 1)[0]
+        self.assertNotIn('paths:', pull_request)
+        self.assertIn('    name: Explorer CI gate\n', gate)
+        needs = set(re.search(r'(?m)^    needs: \[([^\]]*)\]', gate).group(1).replace(' ', '').split(','))
+        unchecked = {'gate', 'stop-builds', 'publish-web', 'rollout-web', 'headless-packages', 'web-pr-target',
+                     'preview-cleanup'}
+        self.assertEqual(needs, set(jobs) - unchecked)
+        self.assertIn('RESULTS: ${{ toJSON(needs) }}', gate)
+        # An earlier run's gate stands until the next one reports: a held draft or an unmerged close fails.
+        self.assertIn("    if: ${{ always() && !(github.event.action == 'closed' && github.event.pull_request.merged) }}\n",
+                      gate)
+        self.assertIn('      held: ${{ steps.plan.outputs.held }}\n', jobs['changes'])
+        self.assertIn('HELD: ${{ needs.changes.outputs.held }}', gate)
+        self.assertIn('if [ "$HELD" = true ]; then', gate)
+        self.assertIn('if [ "$ACTION" = closed ]; then', gate)
+        development = (ci.ROOT / '.github/workflows/development.yml').read_text(encoding='utf-8')
+        self.assertIn('    types: [opened, synchronize, reopened, ready_for_review]\n', development)
 
     def test_the_headless_smoke_runs_for_thirty_seconds(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -831,16 +853,19 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual([held[lane] for lane in ('clippy', 'test', 'headless', 'web', 'native-matrix')],
                          ['true', 'false', 'false', 'true', 'false'])
         self.assertIn('draft: test, headless wait until it is ready for review', held['reason'])
+        self.assertEqual(held['held'], 'true')
         for pull_request in ({'draft': False}, {'draft': True, 'labels': [{'name': 'ci:engine'}]}, {},
                              {'draft': 'true'}, {'draft': True, 'labels': 'ci:engine'}):
             values = self.run_main('plan', merge, self.base, pr, **pull_request)
             self.assertEqual([values[lane] for lane in ('clippy', 'test', 'headless', 'web')], ['true'] * 4, pull_request)
             self.assertNotIn('draft', values['reason'])
+            self.assertNotIn('held', values)
 
     def test_a_draft_with_no_held_job_selected_reports_nothing(self):
         _, pr, merge = self.pr_merge('apps/sites/main-only.ts', 'docs/only-docs.md')
         values = self.run_main('plan', merge, self.base, pr, draft=True)
         self.assertNotIn('draft', values['reason'])
+        self.assertNotIn('held', values)
 
     def test_the_draft_hold_names_jobs_on_larger_runners_and_never_the_web_job(self):
         workflow = (Path(__file__).parents[2] / ci.WORKFLOW).read_text(encoding='utf-8')

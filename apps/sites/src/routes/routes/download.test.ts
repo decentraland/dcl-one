@@ -35,6 +35,16 @@ describe("/download", () => {
     expect(response.headers.get("Location")).toBe("/play/?position=10%2C20&realm=main");
   });
 
+  it("tags the Google Play link with the visitor's campaign from the request URL", async () => {
+    const { data } = await downloadLoader(args("/download?utm_source=Partner&utm_medium=Email"));
+    expect(Object.fromEntries(new URL(data.googlePlay).searchParams)).toMatchObject({
+      utm_source: "partner",
+      utm_medium: "email",
+      utm_campaign: "dclpage",
+      referrer: "utm_org=dclrgl&utm_source=partner&utm_medium=email&utm_campaign=dclpage&utm_content=android",
+    });
+  });
+
   it("offers Windows first and macOS second to a Linux desktop", async () => {
     const { data } = await downloadLoader(args("/download"));
     expect(data.primary).toMatchObject({ os: "windows", arch: "amd64" });

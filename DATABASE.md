@@ -155,6 +155,22 @@ thumbnails. A worlds mirror pass re-checks the blobs its rows name under
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
+
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
 next read.
@@ -298,8 +314,27 @@ See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-loo
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
-remain external IDs, never storage authority. The old
-`worlds.world_scene_identity` table is a frozen upgrade source only: creating
+remain external IDs, never storage authority.
+
+World publication, undeployment, settings (including spawn), access and block
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
+This relation holds at most one pending row per changed world. Coalescing takes
+the pending row's lock without losing its original queue position, so a worker
+cannot consume a mark before its source update commits. The leased
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
+aggregate and the consumption of its mark commit together. The worker reads
+world and scene rows without taking row locks. A failed refresh rolls back
+both effects. Consecutive refresh failures back off to at most 30 seconds.
+A full reconciliation runs at its configured interval and can
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
+
+The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
 creation. This is once per creation, not once for the lifetime of a database:
 never drop/recreate the authoritative relation to recover it, because that
@@ -994,7 +1029,8 @@ they do not establish equal latency with the source's combined lookup.
 Community ranking reads current membership, posts, places and thumbnail facts in
 pages of 100 communities. Five lifetime counters on `social.communities` retain
 photos, ended events, event attendees, ended streams and ended voice chats. The
-ranking job updates local authoritative communities only. Mirrored ranking scores
+ranking job updates scores for local authoritative communities and preserves their
+`updated_at` timestamps for import conflict resolution. Mirrored ranking scores
 remain upstream facts. `ranking_tracking_since` bounds local event occurrences
 eligible for collection; zero counter defaults do not reconstruct history. The
 social-service-ea import copies the lifetime counters and moves
@@ -1795,6 +1831,103 @@ sorted, deduplicated ID list held under the configured cache capacity and TTL,
 so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
+
+## Rental listing status workload
+
+`signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
+The `rentals` index fold (`shop/src/rentals/index.rs`, run by `catalyst index`
+after each pass over `shop.rental_event`) moves listings to `executed`,
+`claimed`, `cancelled` with `cancel_reason = 'nonce'`, or back to `open` on a
+rebuild. The leased `rental-listing-status` job (`shop/src/rentals/status.rs`,
+every minute on the fleet-jobs process) cancels open listings for three
+reasons. It writes `expired` when `expiration` is past the bound clock. It
+writes `transferred` when the land-authz index shows that the owner has
+changed since the listing was created. It writes `dissolved` for an estate
+without parcels once the index head is newer than the listing. The index
+reads run only on a published land-authz snapshot. The refresh route
+(`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
+rules to one listing, using the asset row that the marketplace subgraph reader
+returned when that row is newer than `rental_assets.nft_updated_at`. The
+route then writes the row to `signatures.rental_assets` only when it is no
+older than the stored one, so a lagging reader replaces no metadata.
+
+Workload: mainnet holds thousands of listings, of which hundreds are open
+(an estimate, not a measurement). Each pass does the following:
+
+- One `UPDATE` over the open rows. The partial `rentals_open_asset_key`
+  enumerates them, so no new index is needed.
+- One snapshot select over the open rows of the LAND and Estate registries,
+  with one primary-key probe into `land_authz.token_right` per row, one
+  `authz_event_ownership_idx` probe for the latest transfer, one
+  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
+  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+- One batched `UPDATE` by id, guarded by `status = 'open'`.
+
+Invariants:
+
+- `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
+- The routes never move `rental_assets.nft_updated_at` backwards, and a
+  reader row older than the stored one replaces no asset detail. The refresh
+  route skips such a row. The create route still creates the listing, and
+  its upsert keeps the stored category, search text, distance to plaza, road
+  adjacency, estate size, `fetched_at` and time; a row that is not older
+  replaces them. A reader that answers from an older block
+  and then from a less old one therefore cannot pass the refresh route's
+  newer-row test. The signatures-server import writes the upstream time as
+  it is.
+- A cancellation with no recorded cause keeps NULL. Rows imported from
+  signatures-server, which records no cause, are of this kind.
+- A reopening never makes a second open listing of an asset
+  (`rentals_open_asset_key`). The fold writes reopenings after its other
+  verdicts, reopens only the newest listing of an asset, and only while no
+  other listing of that asset is open. A blocked listing keeps its stored
+  status and reason.
+- The fold reopens a cancelled listing only when its reason is `nonce` and
+  its `expiration` is not before the fold's clock, the job's expiry test. An
+  expired one keeps `cancelled` with `nonce`, and the asset's newest
+  unexpired nonce cancellation reopens in its place. Any
+  reason gives way to a rent of the listing: an incremental fold also
+  revisits a cancelled listing whose own `rented` log is past its block. The
+  fold reads the distinct signatures of the venue's `rented` rows past that
+  block once and joins the venue's listings to them. On the measured data
+  both custom and generic plans chose a hash join, so the leg cost one read
+  of the range's rents plus one pass over the venue's listings, which the
+  fold already scans, with no event lookup per cancelled listing. A set
+  larger than the session's hash memory spilled to disk in batches and
+  stayed linear. No test pins that plan; a statistics or planner change
+  can choose another join. A rebuild and the refresh route never read that set. The refresh
+  route, which folds one listing over every block, makes one
+  `rental_event_signature_idx` probe for that listing's signature instead.
+- The fold's `cancelled` verdict never rewrites a listing that is already
+  cancelled. The fold reads its verdicts before it writes them, so a listing
+  the job cancelled in between keeps the job's reason and stays closed on a
+  rebuild. An `executed` or `claimed` verdict still applies.
+- A cancellation that is not a nonce move is never undone, so an unknown never
+  cancels. No published index, no indexed token, or an indexed transfer older
+  than the listing all leave the listing open.
+- A token the Rentals contract owns keeps its listing unless an indexed rent
+  shows that the contract holds it for another lessor. The asset's latest
+  `rented` row in `shop.rental_event` counts only when it is no older than
+  the token's arrival in the contract, because an older rent means the
+  `rentals` index has not reached the rent the token arrived under (an
+  accepted offer, for example). The job requires the rent's `block_number` to
+  be at or after that of the latest folded `transfer` in
+  `land_authz.authz_event`: both indexes commit whole blocks of the same
+  chain, and a rent either moves the token in its own transaction or finds
+  it already in the contract. The refresh route has no chain position for the
+  subgraph's asset row, so it requires the rent's `block_time` to be at or
+  after the row's `updatedAt`. When that row was updated again after the
+  rent, the route decides nothing and the job's block comparison decides.
+  While the `rentals` index is not published, neither path reads custody.
+- The signatures-server import keeps a node reason only while upstream also
+  says `cancelled`, and clears it otherwise. It skips an upstream row older
+  than the stored one, except that an upstream `executed` or `claimed`
+  replaces a `cancelled` row of any age; the row then takes the upstream
+  `updated_at`, which can be older than the cancellation's. Its load SQL is
+  `tooling/migration/sources/signatures-server/rentals.load.sql`.
+
+Step `0056_signatures_rental_cancel_reason` adds the nullable column and its
+two checks without a rewrite.
 
 ## Camera reel photo events workload
 

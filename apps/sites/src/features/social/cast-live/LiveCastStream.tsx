@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getStreamInfo, getStreamerToken } from "@/data/lib/catalyst/cast";
 import type { TrackContext } from "@/core/lib/telemetry/track";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 
 import CastConsole, { type LiveBindings } from "../cast-stream/CastConsole";
 import type {
@@ -12,14 +13,11 @@ import type {
   ShareScreenFn,
 } from "../cast-stream/machine";
 import { StreamerStage, useCastTracks } from "./CastStage";
+import { CAST_STREAMER_TITLE, castPageView, type CastPageInfo } from "./page-view";
 import { joinCast, probeDevices, type CastSession, type Publish } from "./session";
 
 /** The name a streamer who typed none is shown with. */
 const DEFAULT_STREAMER_NAME = "Speaker";
-
-const resolveToken: ResolveTokenFn = async ({ token, signal }) => ({
-  info: await getStreamInfo(token, { signal }),
-});
 
 /** A session's change feed as a binding: `onChange(session)` on every room event. */
 function bindSession(session: CastSession | null, onChange: (s: CastSession) => void): () => void {
@@ -40,6 +38,14 @@ export default function LiveCastStream({
   const busy = useRef(false);
   const [toggling, setToggling] = useState(false);
   const tracks = useCastTracks(session);
+  const [info, setInfo] = useState<CastPageInfo | null>(null);
+  usePageView(castPageView(CAST_STREAMER_TITLE, info));
+
+  const resolveToken = useCallback<ResolveTokenFn>(async ({ token, signal }) => {
+    const streamInfo = await getStreamInfo(token, { signal });
+    setInfo(streamInfo);
+    return { info: streamInfo };
+  }, []);
 
   useEffect(
     () => () => {

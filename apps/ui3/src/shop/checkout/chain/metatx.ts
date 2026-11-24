@@ -14,6 +14,7 @@ import { NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/a
 import { relayerUrl as configuredRelayer } from "./config";
 import type { MetaTxStyle } from "./contracts";
 import type { ChainReader } from "./rpc";
+import { accountCodeKind } from "./wallet";
 
 export type MetaTxTarget = {
   address: string;
@@ -207,8 +208,10 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
   if (exactNonce !== undefined && minNonce !== undefined && minNonce > exactNonce) {
     throw new RangeError(`A signature can't be at nonce ${exactNonce} and at least ${minNonce}`);
   }
-  const code = await reader.code(target.chainId, from).catch(() => "0x" as Hex);
-  if (code && code !== "0x") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
+  // Only bytecode read as such makes the account a contract (accountCodeKind); a read that fails or answers something else
+  // says nothing, and the relay is tried as it always was.
+  const code = await reader.code(target.chainId, from).catch(() => null);
+  if (accountCodeKind(code) === "contract") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
 
   const read = await readMetaTxNonce(reader, target, from);
   if (exactNonce !== undefined && read !== exactNonce) throw new NonceMovedError(exactNonce, read);

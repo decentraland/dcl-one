@@ -6,8 +6,11 @@ import { BlogArticlePage, BlogNotFound, BlogRoutingProvider, BlogUnavailable } f
 import type { BlogPostPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 
 import { blogRouting, clickedPostSlug } from "@/features/blog/routing";
+
+import { blogPostPageView } from "./page-view";
 
 const STORY: StoryId = "misc/blog";
 
@@ -23,6 +26,8 @@ export function BlogPostView(data: BlogPostData) {
     viewedSlug.current = postSlug;
     track("lp_blog_post_viewed", { slug: postSlug }, { sid, story: STORY });
   }, [postSlug, sid]);
+
+  usePageView(blogPostPageView(data));
 
   function onPostClick(e: React.MouseEvent<HTMLDivElement>) {
     const clicked = clickedPostSlug(e);
