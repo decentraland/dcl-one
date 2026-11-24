@@ -36,9 +36,10 @@ source in this repository.
   `@dcl/protocol@next`, and `force_render`, which held 3 here and in `experimental-bevy`, is field
   4. `proto/buf.yaml` exempts that file from the three rules the renumbering trips; the exemption
   goes once `main` carries the change. With it, every definition in `@dcl/protocol@next` exists
-  here under the same number, name and type. The bridge scene builds against a published SDK that
-  reads `force_render` at 3, so its `@dcl/ecs` is patched to read 4. Field 4 is not reserved in
-  `decentraland/protocol`, so the same collision can recur until it is.
+  here under the same number, name and type. The `experimental-bevy`
+  protocol and SDK took the same numbering (decentraland/protocol#510,
+  decentraland/js-sdk-toolchain#1675), and the bridge scene pins that SDK. Field 4 is not
+  reserved on `decentraland/protocol`'s `main`, so the same collision can recur until it is.
 - `tooling/proto-source-check.py` (run by `structure.yml`) fails on a `decentraland.*`
   proto anywhere else. Every Rust consumer (`dcl_component`, `comms`, `social`,
   `dcl-scene-authoring`, `dcl-scene-cli`) compiles from `library/protocol/proto` at build
