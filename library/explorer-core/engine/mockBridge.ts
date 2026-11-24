@@ -1860,19 +1860,39 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
-      reply({
-        kind: 'galleryPhoto',
-        id: msg.id,
-        meta: {
-          userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
-          userAddress: o.userId,
-          sceneName: 'Genesis Plaza',
-          x: -9,
-          y: 14,
-          realm: 'main',
-          people: MOCK_NEARBY.slice(0, 3).map((m) => ({ address: m.address, name: m.name || 'Guest', isGuest: false }))
-        }
-      })
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      // Covers a person with collectibles, one with none, and an official wallet.
+      const wearablesOf = [MOCK_COLLECTIBLE_EQUIPPED.map((w) => w.urn), [], MOCK_OFF_CATALOG_EQUIPPED.map((w) => w.urn)]
+      setTimeout(
+        () =>
+          reply({
+            kind: 'galleryPhoto',
+            id: msg.id,
+            meta: {
+              dateTime: photo?.dateTime,
+              userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
+              userAddress: o.userId,
+              sceneName: 'Genesis Plaza',
+              x: -9,
+              y: 14,
+              realm: 'main',
+              people: MOCK_NEARBY.slice(0, 3).map((m, i) => ({
+                address: m.address,
+                name: m.name || 'Guest',
+                isGuest: false,
+                wearables: wearablesOf[i],
+                official: i === 2
+              }))
+            }
+          }),
+        o.latency
+      )
+      return
+    }
+    if (msg.kind === 'getGalleryWearables') {
+      const known = [...MOCK_COLLECTIBLE_EQUIPPED, ...MOCK_OFF_CATALOG_EQUIPPED]
+      const wearables = msg.urns.map((urn) => known.find((w) => w.urn === urn)).filter((w): w is Wearable => w != null)
+      setTimeout(() => reply({ kind: 'galleryWearables', requestId: msg.requestId, ok: true, wearables }), o.latency)
       return
     }
     if (msg.kind === 'quit') return

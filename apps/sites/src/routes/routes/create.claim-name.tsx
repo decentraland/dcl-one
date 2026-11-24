@@ -15,7 +15,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const target = `/shop/names${new URL(request.url).search}`;
 
-  track("creator_claim_name_redirect", { from: FROM, to: target }, { sid });
+  track("creator_claim_name_redirect", { from: FROM, to: target }, { sid, requestUserAgent: request.headers.get("user-agent") });
 
   return redirect(
     target,
