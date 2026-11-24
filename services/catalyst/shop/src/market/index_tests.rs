@@ -1954,21 +1954,46 @@ async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let land = crate::land_authz::LAND_REGISTRY_MAINNET;
-    let update = |block: i64, token: i64, name: &str| {
-        format!(
-            "('ethereum', {block}, 0, {block}, 'land_data', '{land}', '{land}', {token}, NULL, NULL, NULL, NULL, '0,\"{name}\",\"\"')"
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+    let index = NftIndex::new(ChainNet::Ethereum);
+    let document = |block, token, create, data: &str| {
+        let id = topic_word(U256::from(token as u64));
+        let topics = if create {
+            vec![
+                crate::land_authz::events::TOPIC_CREATE_ESTATE.into(),
+                topic_addr(ALICE),
+                id,
+            ]
+        } else {
+            vec![
+                nft_index::TOPIC_LAND_UPDATE.into(),
+                id,
+                topic_addr(ALICE),
+                topic_addr(ALICE),
+            ]
+        };
+        log_at(
+            estate,
+            topics,
+            (data.to_string(),).abi_encode_params(),
+            block,
+            0,
         )
     };
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) VALUES {}, {}, {}",
-        update(100, 1, "A-old"),
-        update(200, 1, "A-new"),
-        update(201, 2, "B-only-late"),
-    )))
-    .execute(&db.pool)
-    .await
-    .unwrap();
+    let logs = [
+        document(100, 1, true, "0,A-old"),
+        document(200, 1, false, "0,A-new"),
+        document(201, 2, true, "0,B-only-late"),
+        document(202, 1, false, "1,unreadable"),
+    ];
+    index
+        .write(
+            &mut db.pool.acquire().await.unwrap(),
+            &logs,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
     nft_index::fold(
         &db.pool,
         ChainNet::Ethereum,
@@ -2113,6 +2138,7 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
         update(200, 3, land, "1", "A-last"),
         update(151, 0, estate, "1", "E-new"),
         update(202, 0, land, far, "Far"),
+        format!("('ethereum', 202, 1, 202, 'land_data', '{land}', '{land}', 7, NULL, NULL, NULL, NULL, 'bad')"),
         format!(
             "('ethereum', 203, 0, 203, 'transfer', '{land}', '{land}', 7, '{ALICE}', '{BOB}', NULL, NULL, NULL)"
         ),
@@ -2353,10 +2379,9 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         log_at(
             estate,
             vec![
-                nft_index::TOPIC_LAND_UPDATE.into(),
+                crate::land_authz::events::TOPIC_CREATE_ESTATE.into(),
+                topic_addr(CARL),
                 topic_word(U256::from(500u32)),
-                topic_addr(CARL),
-                topic_addr(CARL),
             ],
             ("0,\"Fashion Street\",\"\"".to_string(),).abi_encode_params(),
             s + 301,

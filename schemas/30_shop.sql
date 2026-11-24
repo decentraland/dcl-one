@@ -443,11 +443,11 @@ CREATE TABLE shop.nft_contract (
 );
 
 -- The nft log. `contract_address`/`token_id` name the asset (the emitter for
--- a transfer, a v1 issue, a name and a LAND/Estate Update; the order's
+-- a transfer, a v1 issue, a name and a LAND/Estate data event; the order's
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- Update's data string; `tx_hash` the transaction of an `order_successful`
+-- registry's data string; `tx_hash` the transaction of an `order_successful`
 -- (NULL on other kinds and on rows indexed before it was recorded).
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
@@ -536,10 +536,8 @@ CREATE TABLE shop.nft_order (
 -- the estate stats): WHERE status = 'open' AND expires_at > $now.
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
 
--- LAND and estate names and descriptions, folded from the registries'
--- Update(assetId, holder, operator, data) logs: the latest one decides; the
--- data string is the registries' CSV (`0,"name","description"`), anything
--- else leaves both NULL.
+-- LAND and estate names and descriptions from Update and CreateEstate.
+-- The latest valid version-zero data document supplies both fields.
 CREATE TABLE shop.land_data (
     token_address varchar(42) NOT NULL,
     token_id numeric(78,0) NOT NULL,
