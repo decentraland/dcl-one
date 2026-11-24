@@ -2018,6 +2018,8 @@ dependencies = [
  "hex",
  "ipnet",
  "libc",
+ "metrics",
+ "metrics-exporter-prometheus",
  "parking_lot",
  "rand 0.10.3",
  "regex",

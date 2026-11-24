@@ -87,30 +87,48 @@ describe("DeleteMagicAccount", () => {
       }
 
       describe("and Magic accepts the deletion", () => {
+        let response: Response;
+
         beforeEach(() => {
-          auth.signedFetch.mockResolvedValueOnce(new Response("{}"));
+          response = new Response("{}");
+          vi.spyOn(response.body!, "cancel");
+          auth.signedFetch.mockResolvedValueOnce(response);
         });
 
-        it("should sign the user out", async () => {
+        it("should release the response body and sign the user out", async () => {
           await confirm();
           await waitFor(() => expect(onSignOut).toHaveBeenCalledOnce());
+          expect(response.body!.cancel).toHaveBeenCalledOnce();
         });
       });
 
-      for (const [status, message] of [[403, copy.forbidden], [429, copy.rateLimited], [502, copy.unknown]] as const) {
-        describe(`and the relay responds with ${status}`, () => {
-          let cancelBody: ReturnType<typeof vi.spyOn>;
+      const failures = [
+        { status: 403, error: "Origin not allowed", message: copy.originRefused, support: false },
+        { status: 403, error: "Magic DID token is too old", message: copy.forbidden, support: false },
+        { status: 403, error: "Magic DID token was already used", message: copy.reused, support: false },
+        { status: 403, error: "Magic wallet does not match the request signer", message: copy.walletMismatch, support: false },
+        { status: 403, error: "Account deletion requires a valid signed request", message: copy.signInAgain, support: false },
+        { status: 429, error: "Account deletion is busy", message: copy.rateLimited, support: true },
+        { status: 502, error: "The outcome of the Magic deletion request is unknown", message: copy.unknown, support: false },
+        { status: 503, error: "Account deletion is unavailable", message: copy.unavailable, support: true },
+      ];
+      for (const { status, error, message, support } of failures) {
+        describe(`and the relay responds with ${status} "${error}"`, () => {
+          let response: Response;
 
           beforeEach(() => {
-            const response = new Response("{}", { status });
-            cancelBody = vi.spyOn(response.body!, "cancel");
+            response = new Response(JSON.stringify({ error }), { status });
             auth.signedFetch.mockResolvedValueOnce(response);
           });
 
-          it("should report the error and release the response body", async () => {
+          it(`should show its message${support ? " with a support link" : ""} and read the response body`, async () => {
             await confirm();
-            expect((await within(dialog).findByRole("alert")).textContent).toBe(message);
-            expect(cancelBody).toHaveBeenCalledOnce();
+            const alert = await within(dialog).findByRole("alert");
+            expect(alert.textContent).toContain(message);
+            expect(within(alert).queryByRole("link", { name: copy.support })?.getAttribute("href") ?? null).toBe(
+              support ? copy.supportHref : null,
+            );
+            expect(response.bodyUsed).toBe(true);
           });
         });
       }

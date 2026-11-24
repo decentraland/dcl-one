@@ -21,6 +21,7 @@ const ADMISSION_LOCK: &str = "explore_api.magic_deletion_attempts:admission";
 const ADDRESS_LIMIT: i64 = 3;
 const NETWORK_LIMIT: i64 = 20;
 const GLOBAL_LIMIT: i64 = 120;
+const RATE_LIMITED: &str = "explore_magic_deletion_rate_limited_total";
 const API_URL: &str = "https://api.magic.link/v1/admin/user/deletion/request";
 
 #[derive(Clone)]
@@ -110,7 +111,24 @@ fn verify_token(token: &str, audience: &str, now: i64) -> Result<(String, [u8; 3
 enum Attempt {
     Claimed,
     Reused,
-    RateLimited,
+    RateLimited(Cap),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Cap {
+    Address,
+    Network,
+    Global,
+}
+
+impl Cap {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Address => "address",
+            Self::Network => "network",
+            Self::Global => "global",
+        }
+    }
 }
 
 async fn claim_attempt(
@@ -120,7 +138,8 @@ async fn claim_attempt(
     source: Option<&str>,
 ) -> sqlx::Result<Attempt> {
     let address_key = Sha256::digest(address.as_bytes());
-    let network_key = source.map(|key| Sha256::digest(key.as_bytes()));
+    // An IPv6 /48 is one network, so a single allocation cannot fill the global cap.
+    let network_key = source.map(|key| Sha256::digest(super::contract_checks::network_key(key)));
 
     let mut tx = pool.begin().await?;
     admission_lock(&mut tx, ADMISSION_LOCK).await?;
@@ -139,8 +158,17 @@ async fn claim_attempt(
     if reused {
         return Ok(Attempt::Reused);
     }
-    if address >= ADDRESS_LIMIT || network >= NETWORK_LIMIT || global >= GLOBAL_LIMIT {
-        return Ok(Attempt::RateLimited);
+    let cap = if address >= ADDRESS_LIMIT {
+        Some(Cap::Address)
+    } else if network >= NETWORK_LIMIT {
+        Some(Cap::Network)
+    } else if global >= GLOBAL_LIMIT {
+        Some(Cap::Global)
+    } else {
+        None
+    };
+    if let Some(cap) = cap {
+        return Ok(Attempt::RateLimited(cap));
     }
     sqlx::query(
         "INSERT INTO explore_api.magic_deletion_attempts
@@ -254,11 +282,13 @@ pub(super) async fn delete_account(
         Ok(Attempt::Reused) => {
             return json_error(StatusCode::FORBIDDEN, "Magic DID token was already used");
         }
-        Ok(Attempt::RateLimited) => {
-            return json_error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Too many account deletion requests",
-            );
+        Ok(Attempt::RateLimited(cap)) => {
+            metrics::counter!(RATE_LIMITED, "cap" => cap.label()).increment(1);
+            let message = match cap {
+                Cap::Global => "Account deletion is busy",
+                Cap::Address | Cap::Network => "Too many account deletion requests",
+            };
+            return json_error(StatusCode::TOO_MANY_REQUESTS, message);
         }
         Err(err) => return internal_error("Account deletion could not be recorded", err),
     }
@@ -437,7 +467,7 @@ mod tests {
             claim_attempt(&db.pool, &key(), "wallet", Some("another-network"))
                 .await
                 .unwrap(),
-            Attempt::RateLimited
+            Attempt::RateLimited(Cap::Address)
         );
         for wallet in ADDRESS_LIMIT..NETWORK_LIMIT {
             assert_eq!(
@@ -451,7 +481,7 @@ mod tests {
             claim_attempt(&db.pool, &key(), "different-wallet", Some("network"))
                 .await
                 .unwrap(),
-            Attempt::RateLimited
+            Attempt::RateLimited(Cap::Network)
         );
         for i in NETWORK_LIMIT..GLOBAL_LIMIT {
             assert_eq!(
@@ -465,7 +495,7 @@ mod tests {
             claim_attempt(&db.pool, &key(), "new-wallet", Some("new-network"))
                 .await
                 .unwrap(),
-            Attempt::RateLimited
+            Attempt::RateLimited(Cap::Global)
         );
         let rows: i64 =
             sqlx::query_scalar("SELECT count(*) FROM explore_api.magic_deletion_attempts")
@@ -473,6 +503,75 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(rows, GLOBAL_LIMIT);
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn deletion_claims_count_an_ipv6_48_as_one_network() {
+        let Some(db) = crate::api::tests_support::scratch_database().await else {
+            return;
+        };
+        for i in 0..NETWORK_LIMIT {
+            let mut key = [7u8; 32];
+            key[..8].copy_from_slice(&i.to_be_bytes());
+            assert_eq!(
+                claim_attempt(
+                    &db.pool,
+                    &key,
+                    &format!("wallet-{i}"),
+                    Some(&format!("2001:db8:1:{i:x}::/64")),
+                )
+                .await
+                .unwrap(),
+                Attempt::Claimed
+            );
+        }
+        assert_eq!(
+            claim_attempt(&db.pool, &[8u8; 32], "other", Some("2001:db8:1:ffff::/64"))
+                .await
+                .unwrap(),
+            Attempt::RateLimited(Cap::Network)
+        );
+        assert_eq!(
+            claim_attempt(&db.pool, &[9u8; 32], "other", Some("2001:db8:2::/64"))
+                .await
+                .unwrap(),
+            Attempt::Claimed
+        );
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_full_global_cap_is_reported_and_counted() {
+        let Some(db) = crate::api::tests_support::scratch_database().await else {
+            return;
+        };
+        sqlx::query(
+            "INSERT INTO explore_api.magic_deletion_attempts
+                 (token_key, address_key, network_key, requested_at)
+             SELECT sha256(i::text::bytea), sha256(('w' || i)::bytea),
+                    sha256(('n' || i)::bytea), statement_timestamp()
+             FROM generate_series(1, $1) AS i",
+        )
+        .bind(GLOBAL_LIMIT as i32)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let state = crate::api::tests::node_on_pool_state(with_magic(None), db.pool.clone()).await;
+        let app = crate::api::router(state);
+        let owner = crate::shared::signed_fetch::test_support::wallet();
+
+        let (status, body) = call(&app, ORIGIN, "one", &owner).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(body["error"], "Account deletion is busy");
+        assert!(
+            handle
+                .render()
+                .contains(&format!("{RATE_LIMITED}{{cap=\"global\"}} 1"))
+        );
         db.teardown().await;
     }
 
