@@ -1,4 +1,4 @@
-import { ProfileReferrals } from "@dcl/one-ui/apps/sites/profile/ProfileReferrals";
+import { ProfileReferrals } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/index";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";

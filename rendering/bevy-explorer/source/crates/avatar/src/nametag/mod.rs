@@ -138,6 +138,7 @@ impl Plugin for NametagPlugin {
                 // a rebuilt atlas has moved every glyph: bind and build from where they are now
                 .after(GlyphAtlasMaintenance),
         )
+        .add_systems(Update, answer_official_wallets.in_set(SceneSets::PostLoop))
         .add_systems(
             PostUpdate,
             place_tags
@@ -783,6 +784,15 @@ fn retext_from_bridge(
                 message_id: message_id.clone(),
                 message: message.clone(),
             });
+        }
+    }
+}
+
+/// The HUD marks the same wallets official as the nametags.
+fn answer_official_wallets(mut requests: EventReader<SystemApi>, wallets: Res<OfficialWallets>) {
+    for request in requests.read() {
+        if let SystemApi::GetOfficialWallets(sender) = request {
+            sender.send(wallets.0.iter().map(|a| format!("{a:#x}")).collect());
         }
     }
 }

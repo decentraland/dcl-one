@@ -62,6 +62,7 @@ members = [
     "camera-reel",
     "chain-index",
     "comms",
+    "comms-e2e",
     "config",
     "content",
     "db",
@@ -178,6 +179,8 @@ openmls_rust_crypto = "0.6.0"
 openmls_traits = "0.6.0"
 tls_codec = "0.5.0"
 ts-rs = "12"
+# The auth relay's Socket.IO server (explore).
+socketioxide = { version = "0.18.9", default-features = false }
 # The message router's LiveKit participant: the Explorer's patched client-sdk-rust, the same
 # commit of this repository that rendering/bevy-explorer/source/Cargo.toml names
 # (rendering/bevy-explorer/patches/client-sdk-rust/source.toml `rev`; a test of the router

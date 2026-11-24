@@ -36,13 +36,19 @@ fn host_config() -> HostConfig {
 struct Rig {
     server: Running,
     clients: Vec<Client>,
+    shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl Rig {
     async fn start(host: Host) -> Self {
         let address = host.local_addr().unwrap();
-        let server: Running =
-            Box::pin(PulseServer::new().serve(Transports::enet_only(host, 4), 50));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let server: Running = Box::pin(PulseServer::new().run_inspected(
+            Transports::enet_only(host, 4),
+            50,
+            None,
+            shutdown.clone().cancelled_owned(),
+        ));
         let clients = (0..2)
             .map(|_| {
                 let mut client = rusty_enet::Host::new(
@@ -58,7 +64,11 @@ impl Rig {
                 client
             })
             .collect();
-        let mut rig = Self { server, clients };
+        let mut rig = Self {
+            server,
+            clients,
+            shutdown,
+        };
         let mut connected = [false; 2];
         let deadline = Instant::now() + DEADLINE;
         while !connected.iter().all(|c| *c) {
@@ -145,6 +155,41 @@ impl Rig {
                     return;
                 }
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn shutdown_notifies_every_connected_enet_peer() {
+    let host = Host::bind(host_config()).await.unwrap();
+    let mut rig = Rig::start(host).await;
+    for index in 0..rig.clients.len() {
+        rig.handshake_is_answered(index).await;
+    }
+
+    rig.shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(2), rig.server.as_mut())
+        .await
+        .expect("Pulse did not finish shutting down")
+        .expect("Pulse failed to shut down");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    for (index, client) in rig.clients.iter_mut().enumerate() {
+        loop {
+            if let Some(rusty_enet::EventNoRef::Disconnect { data, .. }) =
+                client.service().unwrap().map(|event| event.no_ref())
+            {
+                assert_eq!(
+                    data, 1,
+                    "client {index} did not receive the GRACEFUL reason"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "client {index} did not disconnect"
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
         }
     }
 }

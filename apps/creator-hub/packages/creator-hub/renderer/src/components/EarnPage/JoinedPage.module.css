@@ -54,6 +54,10 @@
   outline-offset: -2px;
 }
 
+.tabLabel {
+  position: relative;
+}
+
 .tabPanel {
   margin-top: 30px;
 }

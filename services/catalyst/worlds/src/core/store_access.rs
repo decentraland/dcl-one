@@ -434,6 +434,7 @@ pub async fn store_access_for_owner(
             .await?;
     }
     queue_access_recheck(&mut tx, world).await?;
+    crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -661,6 +662,7 @@ pub async fn modify_allow_list_access(
         .execute(&mut *tx)
         .await?;
     queue_access_recheck(&mut tx, world).await?;
+    crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     tx.commit().await?;
     Ok(AllowListEditOutcome::Applied)
 }

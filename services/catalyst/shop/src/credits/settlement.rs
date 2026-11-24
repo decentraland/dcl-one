@@ -567,20 +567,11 @@ impl Revoker {
         })
     }
 
-    /// One pass: claim due rows one at a time (`FOR UPDATE SKIP LOCKED`),
-    /// broadcast a `pending` one, poll a `sent` one; every chain call runs
-    /// with no transaction open.
+    /// One durable bounded sweep page: broadcast a `pending` row, poll a
+    /// `sent` row; every chain call runs with no transaction open.
     pub async fn run_pass(&self, ctx: Option<&JobContext>) -> Result<RevocationOutcome, ApiError> {
         let mut outcome = RevocationOutcome::default();
-        let rows = sqlx::query(
-            "SELECT credit_hash, contract, status, tx_hash, attempts FROM credits.revocations \
-             WHERE status IN ('pending', 'sent') AND chain_id = $1 AND attempts < $2 ORDER BY created_at LIMIT $3",
-        )
-        .bind(self.chain_id)
-        .bind(REVOCATION_MAX_ATTEMPTS)
-        .bind(REVOCATIONS_PER_PASS)
-        .fetch_all(&self.credits.pool)
-        .await?;
+        let rows = revocation_batch(&self.credits.pool, self.chain_id).await?;
         for r in rows {
             if ctx.is_some_and(|c| c.is_cancelled()) {
                 break;
@@ -875,5 +866,65 @@ mod tests {
             redact("post https://rpc.example/v1/SECRET failed"),
             "post <url> failed"
         );
+    }
+}
+
+async fn revocation_batch(
+    pool: &sqlx::PgPool,
+    chain: i64,
+) -> sqlx::Result<Vec<sqlx::postgres::PgRow>> {
+    let mut sweep = crate::worker_progress::Sweep::begin(pool, "credit_revocations", chain).await?;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        if sweep.key_position == sweep.key_ceiling {
+            sweep.key_position = vec![String::new()];
+            sweep.started_at = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
+                .fetch_one(&mut *sweep.tx)
+                .await?;
+            let upper: Option<String> = sqlx::query_scalar("SELECT max(credit_hash) FROM credits.revocations WHERE status IN ('pending', 'sent') AND chain_id = $1 AND attempts < $2 AND created_at <= $3")
+                .bind(chain).bind(REVOCATION_MAX_ATTEMPTS).bind(sweep.started_at).fetch_one(&mut *sweep.tx).await?;
+            sweep.key_ceiling = vec![upper.unwrap_or_default()];
+        }
+        rows = sqlx::query("SELECT credit_hash, contract, status, tx_hash, attempts FROM credits.revocations WHERE status IN ('pending', 'sent') AND chain_id = $1 AND attempts < $2 AND credit_hash > $3 AND credit_hash <= $4 AND created_at <= $6 ORDER BY credit_hash LIMIT $5")
+            .bind(chain).bind(REVOCATION_MAX_ATTEMPTS).bind(&sweep.key_position[0]).bind(&sweep.key_ceiling[0]).bind(REVOCATIONS_PER_PASS).bind(sweep.started_at)
+            .fetch_all(&mut *sweep.tx).await?;
+        if let Some(last) = rows.last() {
+            sweep.key_position = vec![last.get("credit_hash")];
+            break;
+        }
+        sweep.key_position = sweep.key_ceiling.clone();
+    }
+    sweep.commit().await?;
+    Ok(rows)
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn revocation_sweep_reaches_ready_tail_and_resumes_after_restart() {
+        let Some(db) = crate::test_db::OwnDatabase::create("revocation_sweep").await else {
+            return;
+        };
+        sqlx::query("INSERT INTO credits.revocations (credit_hash, authorization_id, chain_id, contract, reason, status, tx_hash) SELECT '0x' || lpad(to_hex(n * 100), 64, '0'), n::text, 137, '0x0000000000000000000000000000000000000001', 'test', 'sent', CASE WHEN n = 21 THEN 'ready' ELSE 'pending' END FROM generate_series(1, 21) n").execute(&db.pool).await.unwrap();
+        let first = revocation_batch(&db.pool, 137).await.unwrap();
+        assert_eq!(first.len(), 20);
+        assert!(
+            first
+                .iter()
+                .all(|r| r.get::<String, _>("tx_hash") == "pending")
+        );
+        assert!(revocation_batch(&db.pool, 1).await.unwrap().is_empty());
+        sqlx::query("INSERT INTO credits.revocations (credit_hash, authorization_id, chain_id, contract, reason) VALUES ('0x' || lpad(to_hex(2050), 64, '0'), 'new', 137, '0x0000000000000000000000000000000000000001', 'new')").execute(&db.pool).await.unwrap();
+        let next = revocation_batch(&db.pool, 137).await.unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].get::<String, _>("tx_hash"), "ready");
+        let retry = revocation_batch(&db.pool, 137).await.unwrap();
+        assert_eq!(
+            retry[0].get::<String, _>("credit_hash"),
+            first[0].get::<String, _>("credit_hash")
+        );
+        db.drop().await;
     }
 }

@@ -77,8 +77,9 @@ reconciled.
 
 ## Cutover and duplicate events
 
-Upstream deduplicated on `(event_key, type, address)`; the node has no
-event key column, and its producers dedupe on their own deterministic ids.
+Event notices retain the exact source event identity in `metadata.eventId` and
+use `broadcast_key = event-notice:<type>:<eventId>` per address. Their source time
+is retained in `metadata.occurredAt`.
 
 ### External producers (ingest endpoint)
 
@@ -101,13 +102,36 @@ its event are two rows. Whichever
 system receives a post first, later passes merge onto one row; an event posted to both before
 the final pass is still emailed by each.
 
+### Event notice identity and upgrade
+
+The six event kinds (`events_starts_soon`, `events_started`, `event_created`,
+`event_approved`, `event_rejected`, `event_deleted`) use the source `event_key`,
+not the source timestamp, as event identity. The loader and runtime use the same
+numerically ordered wallet-bucket transaction locks and keyed carrier. Both
+writers use the two-integer advisory key
+`(1163284052, (hashtextextended(address, 0) & 255)::integer)`, so each transaction
+retains at most 256 event locks even in a whole-transaction dry run. Hash collisions
+only serialize additional wallets. Existing keyed rows win;
+otherwise an exact source ID or native event match retains its ID, visibility,
+read state and delivery evidence. The import creates no email delivery and never
+overwrites newer source metadata on the node; equal source times keep the first
+payload. Source duplicates for a normalized key merge within a batch. Existing
+historical duplicate rows are not consolidated.
+
+Before event jobs are enabled, freeze writers and perform a full
+`run notifications-workers --step notification --restart` import to repair keys
+on previously imported retained source rows. An incremental pass cannot repair
+rows outside its watermark. If a prior imported notice no longer exists in the
+source and its event identity was lost, use an earlier authoritative export;
+titles and optional links do not prove identity. Without that evidence, historical
+deduplication coverage remains unverified and activation is not ready.
+
 ### Node producers
 
-An event that upstream's processor and a node producer both turn into a
-notification is stored twice if both run. The import keeps upstream IDs for
-these types; it does not assign the node producer's identity. Community
+Other producer types can overlap when both systems run. Their import keeps
+upstream IDs rather than assigning the node producer's identity. Community
 events key on the producer's own `Date.now()` and upstream batches suffix
-`-batch-N`; event notices key on the node's intent ids, moderation notices on
+`-batch-N`; event notices share the event/type/recipient key, moderation notices on
 the node's ban ids, world permission notices on the node's change time, and
 quota notices on wallet, kind and the UTC date of block creation. LAND
 transfers are a type upstream did not emit.
@@ -128,15 +152,19 @@ So the rule is a cutover order:
 2. Stop upstream's processor (and its producers' SNS feed) so it writes
    nothing more.
 3. `run notifications-workers --since last` (the final pass, reconciles
-   included), then `run notifications-workers --step broadcast --restart`.
+   included), then `run notifications-workers --step notification --restart`
+   to repair retained event identities and
+   `run notifications-workers --step broadcast --restart`.
 4. Enable the node's producers. Seed the Shop chain notice producers from
    events-notifier's cursors first ([runbook](../../../../services/catalyst/docs/shop-notices.md#cutover-from-events-notifier)).
 
 Types that collide if 4 happens before 2 (step 4 does not cover the
 external producers above): the community, moderation
-(`banned`, `ban_lifted`, `ban_warning`, scene bans), event, worlds and
-streaming notices the node emits. Rows produced in both systems during an
-overlap stay duplicated; no pass removes them.
+(`banned`, `ban_lifted`, `ban_warning`, scene bans), worlds and streaming
+notices the node emits. Those overlapping rows stay duplicated; no pass removes
+them. The six keyed event kinds converge through the shared carrier, but email
+already sent independently by each system cannot be recalled. Keep event jobs
+disabled until the authoritative import and historical identity checks finish.
 
 ## Watermarks
 
@@ -150,7 +178,7 @@ until upstream writes stop, following the cutover order above.
 
 ## Caveats
 
-- Events notified by upstream's processor and a node producer during an
-  overlap are stored twice (Cutover and duplicate events); external
-  producers' re-posts are not.
+- Other producer types can retain duplicate rows from an overlap (Cutover
+  and duplicate events). Keyed event notices converge, but pre-existing
+  historical duplicates are not consolidated.
 - An earlier broadcast checkpoint with a shard key requires `--restart` (Global broadcasts).

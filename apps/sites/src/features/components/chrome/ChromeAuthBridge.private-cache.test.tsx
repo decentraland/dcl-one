@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -30,17 +31,17 @@ const B = "0x00000000000000000000000000000000000000bb";
 let client: QueryClient;
 let rerender: () => void;
 function mount() {
-  const view = render(
-    <QueryClientProvider client={client}>
-      <ChromeAuthBridge>{null}</ChromeAuthBridge>
-    </QueryClientProvider>,
-  );
-  return () =>
-    view.rerender(
+  function frame() {
+    return (
       <QueryClientProvider client={client}>
-        <ChromeAuthBridge>{null}</ChromeAuthBridge>
-      </QueryClientProvider>,
+        <MemoryRouter>
+          <ChromeAuthBridge>{null}</ChromeAuthBridge>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
+  }
+  const view = render(frame());
+  return () => view.rerender(frame());
 }
 
 beforeEach(() => {

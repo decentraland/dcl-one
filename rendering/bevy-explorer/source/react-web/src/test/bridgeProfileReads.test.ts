@@ -49,7 +49,7 @@ describe('bridge profile reads', () => {
       wearables: ['committed-shirt'], emotes: [{ urn: 'committed-emote', slot: 5 }]
     } })
     await read({ kind: 'getUserProfile', address: '0xabc', requestId: 19, extras: true })
-    expect(api.resolveEquippedSet).toHaveBeenLastCalledWith(['committed-shirt'], { shopUrls: true })
+    expect(api.resolveEquippedSet).toHaveBeenLastCalledWith(['committed-shirt'], { shopUrls: true, dropFailed: true })
     expect(api.resolveEquippedEmotes).toHaveBeenLastCalledWith([{ urn: 'committed-emote', slot: 5 }])
   })
 

@@ -27,12 +27,12 @@ const SELECTED_ART: Record<string, [string, number]> = {
   shop: [onShop, 36], map: [onMap, 46], settings: [onSettings, 46], gallery: [onGallery, 36]
 }
 
-// How many menu shells are currently mounted. Each full-screen page renders its own shell, so
-// SWITCHING pages unmounts one and mounts another. A shell that mounts while another is already open
-// is a page switch (skip the entrance fade so the shared chrome doesn't flash "close → reopen"); a
-// shell that mounts with none open is a fresh open (animate). The previous shell's unmount cleanup
-// runs AFTER the new shell renders, so reading this at render time correctly sees the outgoing shell.
+// Menu shells currently mounted. A shell that renders while another is mounted is a page switch and
+// plays no entrance; one that renders with none mounted is a fresh open.
 let openShells = 0
+// A shell that mounts within this many ms of the last one closing is a page switch, not a fresh open.
+const SWITCH_GAP_MS = 200
+let lastShellClosedAt = Number.NEGATIVE_INFINITY
 
 export interface MenuItem {
   label: string
@@ -86,7 +86,7 @@ export function MainMenuShell({
   children: React.ReactNode
 }): React.JSX.Element {
   // Animate the entrance only on a fresh open (no other shell mounted), not on page switches.
-  const [animate] = useState(() => openShells === 0)
+  const [animate] = useState(() => openShells === 0 && Date.now() - lastShellClosedAt > SWITCH_GAP_MS)
   const bindingsSnap = useBindingsSnapshot()
   const offered = useContext(EditorOffered)
   const presented = useContext(MenuPresentationContext)
@@ -96,6 +96,7 @@ export function MainMenuShell({
     openShells++
     return () => {
       openShells--
+      if (openShells === 0) lastShellClosedAt = Date.now()
     }
   }, [])
 
@@ -117,7 +118,7 @@ export function MainMenuShell({
     )
   }
   return (
-    <div className={`${styles.overlay} ${animate ? styles.animateIn : ''} ${transparentBody ? styles.overlayPass : ''}`.trim()}>
+    <div className={`${styles.overlay} ${animate ? styles.animateThroughDark : ''} ${transparentBody ? styles.overlayPass : ''}`.trim()}>
       <header className={styles.topbar}>
         <div className={styles.brand}>
           <DclLogo size={25} />
@@ -171,6 +172,7 @@ export function MainMenuShell({
       <div className={styles.accent} />
       {!transparentBody && <MenuBackdrop className={styles.backdropSlot} watermark={active === 'settings' ? 'settings' : undefined} />}
       <div className={`${styles.body} ${transparentBody ? styles.bodyTransparent : ''}`.trim()}>{children}</div>
+      {animate && <div className={styles.darkFrame} aria-hidden="true" />}
     </div>
   )
 }

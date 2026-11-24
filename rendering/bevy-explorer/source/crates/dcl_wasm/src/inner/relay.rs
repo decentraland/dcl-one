@@ -9,7 +9,12 @@
 // would leave its state (and any lock it held) behind. The worker catches anything thrown
 // by B before it reaches A, and calls `relay_fail` instead.
 
-use std::{cell::RefCell, collections::VecDeque};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    sync::{atomic::AtomicI32, Arc},
+    task::{Context, Waker},
+};
 
 use serde::Deserialize;
 
@@ -18,7 +23,7 @@ use common::{
     structs::GlobalCrdtStateUpdate,
 };
 use dcl_js::KillFlag;
-use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender};
+use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender, SceneWake};
 use system_bridge::SystemApi;
 use tokio::sync::{broadcast, mpsc};
 use wasm_bindgen::prelude::*;
@@ -27,7 +32,12 @@ use super::{
     relay_proto::{RelayInit, ToEngine, ToScene},
     SceneInitializationData, SCENE_QUEUE,
 };
-use crate::tick_limits::tick_limit_broken;
+use crate::{
+    relay_wake::{self, RelayWake},
+    scene_loop_mode,
+    scene_replies::REPLIES,
+    tick_limits::tick_limit_broken,
+};
 
 // swapped for the copy module's and B's exports in a relay worker (see relay_imports.js)
 #[wasm_bindgen(module = "/src/relay_imports.js")]
@@ -84,6 +94,12 @@ struct Relay {
     testing: bool,
     // set when the scene broke a relay limit; the worker then tears the scene down
     ended: bool,
+    // whether the engine wakes this scene, as it sets it each frame
+    scene_wake: SceneWake,
+    // registered on the engine channels when the scene loop mode wakes relays and the engine wakes
+    // this scene
+    wake: Arc<RelayWake>,
+    waker: Waker,
 }
 
 // what an engine message lets the scene send back
@@ -99,14 +115,16 @@ impl Relay {
         count(|s| s.rejected += 1.0);
         if !self.ended {
             self.ended = true;
-            let _ = self.renderer_sender.try_send(SceneResponse::Error(format!(
-                "scene ended by the relay: {reason}"
-            )));
+            REPLIES.send(
+                &self.renderer_sender,
+                SceneResponse::Error(format!("scene ended by the relay: {reason}")),
+            );
         }
     }
 
     fn forward(&mut self, response: SceneResponse) -> bool {
-        let sent = self.renderer_sender.try_send(response).is_ok();
+        // wakes the engine's scene loop if it waits for a reply
+        let sent = REPLIES.send(&self.renderer_sender, response);
         if !sent {
             count(|s| s.failures += 1.0);
         }
@@ -256,10 +274,15 @@ pub fn relay_init() -> u32 {
         scene_origin,
         super_user,
         kill_flag,
+        wake: scene_wake,
         ipc_close,
         ..
     } = data;
     let is_super = super_user.is_some();
+    if !relay_wake::mark_relay_thread() {
+        return 0;
+    }
+    let wake = RelayWake::new(Box::new(relay_wake::engine_notify));
 
     // per-relay (per-thread) registry: ids the scene picks can only collide with its own
     let (ipc_sx, ipc_rx) = mpsc::unbounded_channel();
@@ -294,6 +317,9 @@ pub fn relay_init() -> u32 {
         snapshot_requests: 0,
         allocation_requests: VecDeque::new(),
         ended: false,
+        scene_wake,
+        wake: wake.clone(),
+        waker: Waker::from(wake),
     };
     let sent = to_b(&ToScene::Init(Box::new(RelayInit {
         initial_crdt_store,
@@ -328,6 +354,26 @@ pub fn relay_killed() -> u32 {
     with_relay(|relay| relay.ended || relay.kill_flag.killed()).unwrap_or(true) as u32
 }
 
+/// The address of the word the worker waits on between pumps (`RelayWake`), 0 without a relay.
+/// The worker takes it once, before scene code runs.
+#[wasm_bindgen]
+pub fn relay_wake_ptr() -> u32 {
+    with_relay(|relay| relay.wake.word() as *const AtomicI32 as usize as u32).unwrap_or(0)
+}
+
+/// 1 when the worker should wait for the engine's send between pumps, 0 to keep its 1 ms poll: in
+/// a mode that wakes relays, for a scene the engine wakes. The worker asks before each pump, which
+/// registers the waker only then.
+#[wasm_bindgen]
+pub fn relay_wake_mode() -> u32 {
+    with_relay(|relay| {
+        relay
+            .wake
+            .update_waits(scene_loop_mode::get(), relay.scene_wake.get()) as u32
+    })
+    .unwrap_or(0)
+}
+
 /// The scene runtime threw under a relay call (the worker caught it before it reached A).
 #[wasm_bindgen]
 pub fn relay_fail() {
@@ -345,10 +391,15 @@ pub fn relay_pump() -> u32 {
         // run the close watchers of senders decoded so far
         relay.runtime.block_on(tokio::task::yield_now());
         let mut moved = 0;
+        // when the worker waits for the engine's send, an empty channel registers the waker
+        // before it waits: anything sent from then on bumps the word it waits on
+        let wake = relay.wake.waits();
+        let waker = relay.waker.clone();
+        let mut cx = Context::from_waker(&waker);
 
         // engine -> scene
         let mut sent = Ok(());
-        while let Ok(response) = relay.thread_rx.try_recv() {
+        while let Some(response) = relay_wake::next(&mut relay.thread_rx, wake, &mut cx) {
             moved += 1;
             let reply = match &response {
                 RendererResponse::Ok(..) => Reply::Tick,
@@ -381,7 +432,7 @@ pub fn relay_pump() -> u32 {
                 Err(_) => break,
             }
         }
-        while let Ok((id, message)) = relay.ipc_rx.try_recv() {
+        while let Some((id, message)) = relay_wake::next(&mut relay.ipc_rx, wake, &mut cx) {
             moved += 1;
             // the scene side doesn't echo our close back, so release the entry here
             if matches!(message, IpcMessage::Closed) {

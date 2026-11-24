@@ -161,6 +161,30 @@ impl SceneResponseSender {
     }
 }
 
+/// Whether the engine wakes a scene's runtime when it sends the scene something, rather than the
+/// runtime finding it on its next poll: the engine sets it each frame (scene_runner
+/// `update_scene_priority`) and, on the web, the scene's relay reads it before each pump
+/// (dcl_wasm `inner::relay`). Nothing reads it natively. Shared between the engine's handle to the
+/// scene and the runtime, like the kill flag.
+#[derive(Clone, Debug, Default)]
+pub struct SceneWake(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl SceneWake {
+    /// Engine: whether the engine wakes the scene; written only when that changes. A runtime
+    /// that reads a stale value keeps its poll, or waits at most its timeout, until the next
+    /// read, so no ordering with other memory is needed.
+    pub fn set(&self, wakes: bool) {
+        if self.get() != wakes {
+            self.0.store(wakes, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Runtime: whether the engine wakes the scene.
+    pub fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum CommsMessageType {
@@ -174,6 +198,46 @@ pub enum CommsMessageType {
 pub const MAX_TOPIC_BYTES: usize = 512;
 /// Longest `CommsApi` topic message, including the type byte and the topic length prefix.
 pub const MAX_TOPIC_MESSAGE_BYTES: usize = 13 * 1024;
+
+pub const MAX_COMMS_MESSAGE_BYTES: usize = 30_000;
+/// A binary receiver's 13 KiB buffer includes a length byte and a 42-byte wallet address.
+pub const MAX_BINARY_MESSAGE_BYTES: usize = 13 * 1024 - 1 - 42;
+
+/// Tagged frames reserve the Explorer routing byte; legacy strings use the whole frame.
+pub fn scene_message_fits(data: &[u8]) -> bool {
+    match data.split_first() {
+        Some((&kind, payload)) if kind == CommsMessageType::Binary as u8 => {
+            payload.len() <= MAX_BINARY_MESSAGE_BYTES
+        }
+        Some((&kind, _)) if kind == CommsMessageType::CommsData as u8 => {
+            data.len() <= MAX_TOPIC_MESSAGE_BYTES
+        }
+        Some((&kind, payload)) if kind == CommsMessageType::String as u8 => {
+            payload.len() <= MAX_COMMS_MESSAGE_BYTES
+        }
+        Some(_) => data.len() <= MAX_COMMS_MESSAGE_BYTES,
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod comms_message_tests {
+    use super::*;
+
+    #[test]
+    fn scene_string_limits_include_the_legacy_first_byte() {
+        for (size, accepted) in [
+            (MAX_COMMS_MESSAGE_BYTES, true),
+            (MAX_COMMS_MESSAGE_BYTES + 1, false),
+        ] {
+            let legacy = vec![b'x'; size];
+            assert_eq!(scene_message_fits(&legacy), accepted, "legacy {size}");
+            let mut framed = vec![CommsMessageType::String as u8];
+            framed.extend_from_slice(&legacy);
+            assert_eq!(scene_message_fits(&framed), accepted, "framed {size}");
+        }
+    }
+}
 
 #[allow(clippy::large_enum_variant)] // we don't care since the error case is very rare
 // data from scene to renderer

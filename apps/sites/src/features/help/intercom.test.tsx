@@ -14,7 +14,7 @@ vi.hoisted(() =>
 );
 
 const APP_ID = "app-example123";
-const BOOT_SETTINGS = { app_id: APP_ID, alignment: "right", hide_default_launcher: true };
+const BOOT_SETTINGS = { app_id: APP_ID, alignment: "right" };
 const READY_CALL = ["ready", expect.any(Function)];
 const WALLET = "0x" + "ab".repeat(20);
 const OTHER_WALLET = "0x" + "cd".repeat(20);
@@ -64,9 +64,9 @@ describe("useIntercom", () => {
       expect(scripts().map((s) => s.src)).toEqual([`${INTERCOM_WIDGET_URL}${APP_ID}`]);
     });
 
-    it("should set the widget settings", () => {
+    it("should leave launcher visibility to the workspace in the widget settings", () => {
       render(<Widget />);
-      expect(win.intercomSettings).toEqual({ alignment: "right", hide_default_launcher: true });
+      expect(win.intercomSettings).toEqual({ alignment: "right" });
     });
   });
 

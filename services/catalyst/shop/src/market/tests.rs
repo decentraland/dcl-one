@@ -116,7 +116,10 @@ pub(crate) mod support {
     /// rows: a configured reader that truly has nothing.
     pub async fn serve_empty_graph() -> String {
         use axum::routing::post;
-        let app = Router::new().route("/", post(|| async { axum::Json(json!({ "data": {} })) }));
+        let app = Router::new().route(
+            "/",
+            post(|| async { axum::Json(json!({ "data": { "nfts": [] } })) }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -2249,7 +2252,7 @@ async fn the_venues_read_eth_rpc_url_on_mainnet_only() {
 }
 
 #[tokio::test]
-async fn the_committee_walk_reads_polygon_on_mainnet_when_trade_rpc_urls_has_no_137_entry() {
+async fn polygon_mainnet_walks_use_the_polygon_endpoint_if_no_chain_137_override_exists() {
     use super::chain_walk::ChainNet;
     let settings = |network: &str, trade: Option<&str>| {
         let mut s = Settings::for_tests();
@@ -2261,20 +2264,45 @@ async fn the_committee_walk_reads_polygon_on_mainnet_when_trade_rpc_urls_has_no_
     };
     let fallback = settings("mainnet", None);
     assert_eq!(
-        fallback.committee_rpc_url(ChainNet::Matic).as_deref(),
+        fallback.polygon_mainnet_rpc_url().as_deref(),
         Some("https://polygon.example/")
     );
     assert_eq!(fallback.chain_rpc_url(ChainNet::Matic), None);
-    assert_eq!(fallback.committee_rpc_url(ChainNet::Ethereum), None);
     let listed = settings("mainnet", Some("137=https://matic.example/"));
     assert_eq!(
-        listed.committee_rpc_url(ChainNet::Matic).as_deref(),
+        listed.polygon_mainnet_rpc_url().as_deref(),
         Some("https://matic.example/")
     );
     let sepolia = settings("sepolia", None);
     assert_eq!(
-        sepolia.committee_rpc_url(ChainNet::Matic),
+        sepolia.polygon_mainnet_rpc_url(),
         None,
         "off mainnet RPC_ENDPOINT_POLYGON is another chain"
     );
+}
+
+#[tokio::test]
+async fn the_third_party_registry_projection_requires_its_switch_and_polygon_endpoint() {
+    use super::chain_walk::{ChainNet, INDEXER_THIRD_PARTY_REGISTRY};
+    let make_state = |enabled, endpoint| {
+        let mut settings = Settings::for_tests();
+        settings.market.indexes.third_party_registry_enabled = enabled;
+        settings.polygon_rpc_url = endpoint;
+        support::state_without_db_settings(settings)
+    };
+    let rpc = "https://polygon.example/";
+    for (enabled, endpoint) in [(false, Some(rpc.to_owned())), (true, None)] {
+        let state = make_state(enabled, endpoint);
+        assert!(super::chain_jobs::projections(&state, ChainNet::Matic, Some(false)).is_empty());
+    }
+    let state = make_state(true, Some(rpc.to_owned()));
+    assert!(super::chain_jobs::projections(&state, ChainNet::Ethereum, Some(false)).is_empty());
+    let projections = super::chain_jobs::projections(&state, ChainNet::Matic, Some(false));
+    let [projection] = projections.as_slice() else {
+        panic!("expected one Polygon registry projection");
+    };
+    assert_eq!(projection.lease, "third-party-registry-index-matic");
+    assert_eq!(projection.url, rpc);
+    assert_eq!((projection.make)().indexer(), INDEXER_THIRD_PARTY_REGISTRY);
+    assert_eq!((projection.make)().chain_id(), 137);
 }

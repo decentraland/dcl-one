@@ -991,6 +991,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn lookup_indexes_support_world_quota_exclusion() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let statement = size_info_sql("world_storage", &ns("foo.dcl.eth", "0,0"), "");
+        let plan: Vec<String> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {statement}")))
+                .bind("foo.dcl.eth")
+                .bind("world")
+                .bind("key")
+                .fetch_all(&mut *tx)
+                .await
+                .unwrap();
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("world_scene_place_retired_identity_idx")),
+            "{plan:?}"
+        );
+    }
+
     #[test]
     fn size_query_credits_the_exact_scene_and_scopes_shared_realms_per_scene() {
         let world = size_info_sql("world_storage", &ns("foo.dcl.eth", "0,0"), "");

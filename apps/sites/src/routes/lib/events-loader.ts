@@ -68,8 +68,9 @@ export async function loadEventsPage(
     shouldDehydrateQuery: (query) => query.state.status === "success",
   });
   client.clear();
+  // Covers are rewritten against the origin the browser loaded this page from, which PUBLIC_CATALYST_URL may not be.
   return wrap(
-    { tab, sid, platform, origin, now, unavailable, dehydratedState },
+    { tab, sid, platform, origin, pageOrigin: url.origin, now, unavailable, dehydratedState },
     { status: unavailable ? 503 : 200 },
   );
 }
