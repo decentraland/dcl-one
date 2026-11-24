@@ -2714,8 +2714,8 @@ identities (100 per network). No production rate is measured.
   WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
   clears `outcome`, `params` and `challenge`, so a concurrent poller on any
   replica waits on the row, finds it fulfilled and answers 410. A request
-  expires 5 minutes after its creation; the read that finds it expired
-  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+  expires 5 minutes after its creation. Reads answer 404 after expiry, and
+  the periodic sweep deletes expired rows.
 - `auth_identities`: one row per parked identity, keyed by its UUID, holding
   the identity document with its ephemeral private key for at most an hour.
   The key is stored in clear, as the upstream auth server keeps it in Redis:
@@ -2753,7 +2753,7 @@ per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
-requests past their grace, then the oldest delivered ones, just enough to admit
+expired requests, then the oldest delivered ones, just enough to admit
 one more. The count scans the table, bounded by the caps to about 10,000 rows;
 sign-in creates are rare enough that serializing them on the lock costs nothing
 measurable.
@@ -2776,13 +2776,12 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
-replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
-second. The periodic `auth-api-identity-sweep` job runs on every replica
-every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
-grace, identities past their hour, tombstones past 14 days), so replicas
-sweeping at once delete each row once. The expiry indexes
+replicas need synchronized clocks (NTP). The periodic
+`auth-api-identity-sweep` job runs on every replica every 30 seconds. It
+deletes expired requests, expired identities and tombstones older than 14
+days. Each row is deleted once across replicas. The expiry indexes
 (`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
-`auth_identity_tombstones_created_idx`) serve those deletes; every other read
+`auth_identity_tombstones_created_idx`) serve those deletes. Every other read
 and write is by primary key. Nothing references these rows and they
 reference nothing: no FK. The bootstrap defines the tables; an existing
 database gains them from the object pass, so no step exists. A restart of

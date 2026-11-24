@@ -5,7 +5,7 @@ use axum::extract::{ConnectInfo, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::{Extension, Json, Router};
+use axum::{Extension, Router};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::Deserialize;
@@ -15,8 +15,8 @@ use socketioxide::extract::{AckSender, SocketRef, TryData};
 
 use super::{
     AppState, CreateRequestBody, CreateRequestResponse, DEFAULT_BODY_SIZE_BYTES,
-    HttpOutcomeMessage, claim_outcome, create_request, get_request_v2, naive, now_micros,
-    post_request_validation, submit_outcome,
+    HttpOutcomeMessage, RelayJson, claim_outcome, create_request, get_request_v2, naive,
+    now_micros, post_request_validation, submit_outcome,
 };
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::cors::{decentraland_cors, is_decentraland_origin};
@@ -205,7 +205,7 @@ fn register(socket: SocketRef, state: AppState) {
                 };
                 let (peer, headers) = metadata(&socket);
                 let response =
-                    create_request(State(state.clone()), peer, headers, Json(body)).await;
+                    create_request(State(state.clone()), peer, headers, RelayJson(body)).await;
                 if response.status() != StatusCode::CREATED {
                     return ack_response(ack, response).await;
                 }
@@ -279,7 +279,7 @@ fn register(socket: SocketRef, state: AppState) {
                         peer,
                         headers,
                         Path(data.request_id.to_string()),
-                        Json(data.outcome),
+                        RelayJson(data.outcome),
                     )
                     .await,
                 )

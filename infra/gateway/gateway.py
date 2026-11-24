@@ -473,8 +473,10 @@ http {{
     }}
     geo $admin_gate {{ default ""; {admin_geo} }}
     map $http_upgrade $connection_keepalive {{ default upgrade; "" ""; }}
-    map $upstream_http_access_control_allow_origin $cors_fallback {{
-        "" "*";
+    # The sign-in relay controls CORS on both the auth-api host and path.
+    map "$uri:$upstream_http_access_control_allow_origin" $cors_fallback {{
+        "~^/auth-api(/|:)" "";
+        "~:$" "*";
         default "";
     }}
     map $upstream_http_cross_origin_opener_policy $coop_fallback {{

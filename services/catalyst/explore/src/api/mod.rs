@@ -790,8 +790,7 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
 /// the statics the main vhost served at the root: `/world-manifest.json`,
 /// `/satellite/{z}/{x}/{y}` (web.nix's `/satellite/` location) and the
 /// poster bucket's `/poster[-vertical]/{file}` (the vhost's own paths).
-/// Everything but the Registry answers permissive CORS; the Registry is
-/// nested after that layer so only its own CORS applies.
+/// The Registry and sign-in relay keep their own CORS policies.
 pub fn router(state: Shared) -> Router {
     let mut app = Router::new()
         .route("/mirrors", get(mirror::status))
@@ -800,14 +799,14 @@ pub fn router(state: Shared) -> Router {
         .merge(posters::routes())
         .with_state(state.clone());
     let socket_state = state.clone();
-    let (registry, services): (Vec<_>, Vec<_>) = service_routers(state)
+    let (own_cors, services): (Vec<_>, Vec<_>) = service_routers(state)
         .into_iter()
-        .partition(|(prefix, _)| *prefix == REGISTRY_PREFIX);
+        .partition(|(prefix, _)| matches!(*prefix, REGISTRY_PREFIX | "auth-api"));
     for (prefix, service) in services {
         app = app.nest(&format!("/{prefix}"), service);
     }
     let mut app = app.layer(CorsLayer::permissive());
-    for (prefix, service) in registry {
+    for (prefix, service) in own_cors {
         app = app.nest(&format!("/{prefix}"), service);
     }
     app.merge(auth_api::socket_router(socket_state))
