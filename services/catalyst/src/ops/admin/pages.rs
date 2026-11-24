@@ -1065,53 +1065,27 @@ fn create_cards(n: &mut usize) -> String {
     card(
         "Camera reel and builder",
         "Photo moderation and item curation (CREATE_WRITES_ENABLED).",
-        &[
-            Form {
-                confirm: "Review this photo?",
-                extras: &[Extra(
-                    "Delete photo",
-                    "/admin/api/camera-reel/image-delete",
-                    "image_id",
-                    "Delete this photo?",
-                )],
-                ..form(
-                    "/admin/api/camera-reel/image-review",
-                    "Set review",
-                    &[
-                        Field("image_id", "Image id", Input::Text("uuid")),
-                        Field(
-                            "reviewStatus",
-                            "Review",
-                            Input::Select(&["ok", "flagged", "rejected"]),
-                        ),
-                    ],
-                )
-            },
-            Form {
-                list: "item_ids",
-                confirm: "Set this curation status?",
-                extras: &[Extra(
-                    "Set for listed items",
-                    "/admin/api/builder/items-status",
-                    "collection_id,item_ids,status",
-                    "Set the status of every listed item?",
-                )],
-                ..form(
-                    "/admin/api/builder/item-status",
-                    "Set item status",
-                    &[
-                        Field("collection_id", "Collection", Input::Text("uuid")),
-                        Field("item_id", "Item", Input::Text("uuid")),
-                        Field("item_ids", "Items (bulk)", Input::Text("uuid, uuid")),
-                        Field(
-                            "status",
-                            "Status",
-                            Input::Select(&["approved", "rejected", "pending"]),
-                        ),
-                    ],
-                )
-            },
-        ],
+        &[Form {
+            confirm: "Review this photo?",
+            extras: &[Extra(
+                "Delete photo",
+                "/admin/api/camera-reel/image-delete",
+                "image_id",
+                "Delete this photo?",
+            )],
+            ..form(
+                "/admin/api/camera-reel/image-review",
+                "Set review",
+                &[
+                    Field("image_id", "Image id", Input::Text("uuid")),
+                    Field(
+                        "reviewStatus",
+                        "Review",
+                        Input::Select(&["ok", "flagged", "rejected"]),
+                    ),
+                ],
+            )
+        }],
         n,
     ) + &card(
         "Asset-bundle registry (abgen)",

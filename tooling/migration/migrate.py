@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS dcl_migration.blob_missing (
     reason text NOT NULL,
     PRIMARY KEY (source, object_key)
 );
+CREATE TABLE IF NOT EXISTS dcl_migration.builder_imported (
+    step text NOT NULL,
+    id text NOT NULL,
+    fingerprint text,
+    PRIMARY KEY (step, id)
+);
 -- The worlds.world_limit_overrides values `worlds-limits` last wrote; a row that no longer
 -- matches them was changed on the node and is left alone.
 CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
@@ -284,10 +290,11 @@ class Step:
     load: Path
     key: list
     watermark: str | None
-    columns: list  # [(name, type)]
+    columns: list
     notes: str = ''
-    whole: bool = False  # one batch holding the whole extract, so the load sees the full upstream set
-    allow_empty: bool = False  # --allow-empty: an empty upstream set may delete every imported row
+    whole: bool = False
+    allow_empty: bool = False
+    requires: str | None = None
 
     @property
     def cursor(self):
@@ -382,6 +389,10 @@ def load_source(directory):
             whole = False
         if whole and watermark:
             problems.append(f'{where}: a `whole` step reads the full set every run and takes no watermark')
+        requires = raw.get('requires')
+        if requires is not None and not (isinstance(requires, str) and IDENT.match(requires)):
+            problems.append(f'{where}: `requires` must name a source relation')
+            requires = None
         if watermark and dict(columns).get(watermark, '').lower() not in ('timestamptz', 'timestamp with time zone'):
             problems.append(f'{where}: watermark {watermark!r} must be typed timestamptz')
         files = {}
@@ -392,7 +403,7 @@ def load_source(directory):
                 problems.append(f'{where}: {field} file {rel!r} is missing or outside {directory.name}/')
             files[field] = file
         steps.append(Step(name, step_name, targets, files['extract'], files['load'], key, watermark,
-                          columns, raw.get('notes', ''), whole))
+                          columns, raw.get('notes', ''), whole, requires=requires))
     if problems:
         raise MigrationError('\n'.join(problems))
     source = Source(name, directory, data.get('repository', ''), data.get('revision', ''), database_env,
@@ -731,6 +742,21 @@ def plan_walk(step, checkpoint, *, since, since_last, overlap, restart):
 
 # ── a step's batches ────────────────────────────────────────────────────────
 
+def extract_text(step):
+    """The step's extract, or a typed empty set for a step whose source lacks the relation it requires."""
+    if step.extract is None:
+        return 'SELECT ' + ', '.join(f'NULL::{t} AS {ident(c)}' for c, t in step.columns) + ' WHERE false'
+    return strip_sql_comments(step.extract.read_text()).strip()
+
+
+def without_missing_source(step, source_url):
+    """`step`, reading nothing when the source lacks the relation the step requires."""
+    if step.requires is None:
+        return step
+    present = psql(source_url, f'SELECT to_regclass({literal(step.requires)}) IS NOT NULL;\n', read_only=True)
+    return step if present.strip() == 't' else dataclasses.replace(step, extract=None)
+
+
 def extract_sql(step, walk_since, cursor, flagged=True):
     """The walk's one COPY: every row from `cursor` on, in cursor order, in a single snapshot. Text
     format keeps one row per line (newlines in values are escaped), so batches split on lines.
@@ -739,7 +765,7 @@ def extract_sql(step, walk_since, cursor, flagged=True):
     the committed cursor row itself (skipped), `n` is any other row. Unflagged, it reads past
     `cursor` with no flag column.
     """
-    extract = strip_sql_comments(step.extract.read_text()).strip()
+    extract = extract_text(step)
     cols = ', '.join(f'e.{ident(c)}' for c, _ in step.columns)
     conditions = []
     order = ', '.join(f'e.{ident(c)}' for c in step.cursor)
@@ -861,6 +887,19 @@ def camera_api_url():
             or parsed.username or parsed.password or '?' in value or '#' in value
             or any(ord(c) < 33 for c in value)):
         raise MigrationError('set CAMERA_REEL_IMPORT_API_URL to the exact literal source and target API base')
+    return value
+
+
+def forum_url():
+    """The forum origin builder-server is deployed with (`FORUM_URL`): an imported forum link is kept only
+    under it."""
+    value = os.environ.get('FORUM_URL', '')
+    parsed = urllib.parse.urlsplit(value)
+    if (parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path or parsed.query
+            or parsed.fragment or parsed.username or parsed.password or any(c in value for c in "?#'\\")
+            or any(ord(c) < 33 for c in value)):
+        raise MigrationError('set FORUM_URL to the forum origin builder-server is deployed with, such as '
+                             'https://forum.example.test')
     return value
 
 
@@ -1051,15 +1090,25 @@ def camera_publication(store, inventory):
 def step_vars(step, dry_run):
     variables = [f'\\set source {literal(step.source)}', f'\\set step {literal(step.name)}',
                  f"\\set dry_run {'true' if dry_run else 'false'}",
-                 # Read by the empty-upstream guards; DO blocks cannot see psql variables.
                  f"SELECT set_config('dcl_migration.allow_empty', '{'on' if step.allow_empty else 'off'}', false)"
                  ' \\g /dev/null']
     if step.source == CAMERA:
         variables.append(f'\\set camera_api_url {literal(camera_api_url())}')
+    if step.source == 'builder-server' and step.name == 'collection':
+        variables.append(f'\\set forum_url {literal(forum_url())}')
     return variables
 
 
-def batch_script(step, walk, *, batch_size, expected, publication=(), dry=False):
+def builder_checks(step, first):
+    """The lines a builder-server load runs after: its shared fingerprints and, on a step's first batch,
+    the refusal of a node holding builder rows the import did not leave there."""
+    if step.source != 'builder-server':
+        return []
+    here = step.load.parent
+    return [f'\\i {psql_path(here / "fingerprint.sql")}'] + ([f'\\i {psql_path(here / "node_untouched.sql")}'] if first else [])
+
+
+def batch_script(step, walk, *, batch_size, expected, publication=(), dry=False, first=False):
     """The target-side script of one batch; the batch's CSV arrives on psql's stdin.
 
     `expected` is the checkpoint row this batch must find, (cursor, walk_started_at), or None
@@ -1097,6 +1146,7 @@ def batch_script(step, walk, *, batch_size, expected, publication=(), dry=False)
         "\\echo '@@cursor' :batch_cursor",
         'ALTER TABLE stage DROP COLUMN _ord;',
         *publication,
+        *builder_checks(step, first),
         "\\echo '@@load'",
         f'\\i {psql_path(step.load)}',
         "\\echo '@@loaded'",
@@ -1168,6 +1218,7 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log,
     """One source snapshot per walk, then bounded atomic target batches."""
     if step.whole:
         batch_size = None
+    step = without_missing_source(step, source_url)
     camera = step.source == CAMERA
     if camera:
         if store is None:
@@ -1180,8 +1231,6 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log,
     with tempfile.TemporaryDirectory(prefix='dcl-migration-', dir=work_dir) as tmp, contextlib.ExitStack() as stack:
         data, script = Path(tmp) / 'batch.data', Path(tmp) / 'batch.sql'
         if camera:
-            # Finish the source COPY before acquiring any target publication lock.
-            # CSV preserves raw filenames/metadata; the whole walk uses one snapshot.
             snapshot = Path(tmp) / 'source.csv'
             with snapshot.open('wb') as fh:
                 psql(source_url, camera_extract_sql(step, walk.since, walk.cursor), read_only=True,
@@ -1208,7 +1257,7 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log,
                 with data.open('wb') as fh:
                     stream.take(fh, batch_size)
             script.write_text(batch_script(step, batch_walk, batch_size=batch_size, expected=expected,
-                                           publication=publication, dry=dry))
+                                           publication=publication, dry=dry, first=batch_no == 1))
             with data.open('rb') as fh:
                 out = psql(target_url, None, stdin=fh, extra=['-f', str(script)], options=timeouts.target)
             rows, last, tags = parse_batch_output(out)
@@ -1231,6 +1280,7 @@ def dry_run(plans, target_url, log, work_dir=None, timeouts=Timeouts()):
     with tempfile.TemporaryDirectory(prefix='dcl-migration-dry-', dir=work_dir) as tmp:
         lines = ['\\set ON_ERROR_STOP 1', 'BEGIN;', CHECKPOINT_DDL.strip()]
         for index, (step, source_url, walk) in enumerate(plans):
+            step = without_missing_source(step, source_url)
             data = Path(tmp) / f'{index}.tsv'
             with data.open('wb') as fh, \
                     ExtractStream(step, source_url, extract_sql(step, walk.since, walk.cursor), timeouts.source) as stream:
@@ -1244,6 +1294,7 @@ def dry_run(plans, target_url, log, work_dir=None, timeouts=Timeouts()):
                 f'\\copy stage ({col_list}) FROM {psql_path(data)}',
                 null_check(step),
                 "SELECT '@@rows', count(*) FROM stage;",
+                *builder_checks(step, True),
                 "\\echo '@@load'",
                 f'\\i {psql_path(step.load)}',
                 "\\echo '@@loaded'",
@@ -1325,7 +1376,7 @@ def cmd_check(args, sources):
             where = f'{source.name}/{step.name}'
             if source_url:
                 try:
-                    extract = strip_sql_comments(step.extract.read_text()).strip()
+                    extract = extract_text(without_missing_source(step, source_url))
                     out = psql(source_url, f'{extract} \\gdesc\n', read_only=True)
                     got = [line.split('\t')[0] for line in out.splitlines() if line]
                     want = [c for c, _ in step.columns]
@@ -1341,7 +1392,9 @@ def cmd_check(args, sources):
                 try:
                     defs = ', '.join(f'{ident(c)} {t}' for c, t in step.columns)
                     psql(target_url, f'BEGIN;\n{CHECKPOINT_DDL}\n' + '\n'.join(step_vars(step, True))
-                         + f'\nCREATE TEMP TABLE stage ({defs});\n\\i {psql_path(step.load)}\nROLLBACK;\n')
+                         + f'\nCREATE TEMP TABLE stage ({defs});\n'
+                         + ''.join(line + '\n' for line in builder_checks(step, True))
+                         + f'\\i {psql_path(step.load)}\nROLLBACK;\n')
                     print(f'ok   {where}: load runs on an empty stage')
                 except MigrationError as e:
                     failures += 1

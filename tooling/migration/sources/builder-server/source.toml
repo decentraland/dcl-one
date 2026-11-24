@@ -1,27 +1,39 @@
 name = "builder-server"
 repository = "github.com/decentraland/builder-server"
-revision = "452af1e06cf103ffa4e5b115b002120e98d375c7"
+revision = "98897af692f26063a088aebb2ea5bb3f683168a2"
 database_env = "BUILDER_SERVER_DATABASE_URL"
 after = []
 notes = """
-Imports collection and item drafts (publication, approval and curation state
-derived from the upstream columns and item_curations) and item contents. See
-MAPPING.md.
+Imports collection and item drafts (a collection's published and approved
+state is not imported, the node derives it), item contents, the virtual
+third parties, collection and item curations, collection events and slot
+usage cheques. See MAPPING.md.
 
 Prerequisite, out of scope for a DB import: every item content hash must be
-in the ONE blob store and recorded, with its size, in
+in the blob store's item-files tree (<STORAGE_ROOT_FOLDER>/item-files) and
+recorded, with its size, in
 dcl_migration.blob_inventory (source 'builder-server', object_key = hash);
-item_content stops on a missing hash.
+item_content stops on a missing hash of an item it writes.
 
-Not migrated: projects, asset_packs, assets, collection_curations,
-collection_events, slot_usage_cheques, virtual_third_parties, deployments,
+Not migrated: projects, asset_packs, assets, deployments,
 pools, pool_groups, pool_likes (no target), the collections' managers,
-minters, reviewed_at, forum_link, forum_id, lock and linked_contract_* columns
-(no target column). collection_publications and
-linked_collection_publications stay the node's.
+minters and reviewed_at columns (no target column). collection_publications
+stays the node's.
 
 No step has a watermark: published/curation state is derived from other
-tables, so every run re-scans. Deletions upstream are not detected.
+tables, so every run re-scans. dcl_migration.builder_imported records every
+row the import wrote to the builder tables it loads, with a fingerprint of
+the node row; a re-run refreshes those rows from upstream. Deletions
+upstream are not detected: the final sync starts over (start_over.sql,
+MAPPING.md "Start over").
+
+The import writes only into a node whose builder rows are exactly what it
+left there: each step's first batch refuses, before writing, a node holding
+a builder row the import didn't record or a recorded row that was changed
+or deleted. Run it with creator writes closed (CREATE_WRITES_ENABLED=false),
+as often as needed, then open them; once writes are open, upstream is
+frozen for the node and the import refuses. See MAPPING.md "Before the
+first run".
 """
 
 [[step]]
@@ -38,10 +50,13 @@ columns = [
   { name = "contract_address", type = "text" },
   { name = "urn_suffix", type = "text" },
   { name = "third_party_id", type = "text" },
-  { name = "is_published", type = "boolean" },
-  { name = "is_approved", type = "boolean" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+  { name = "linked_contract_address", type = "text" },
+  { name = "linked_contract_network", type = "text" },
+  { name = "lock", type = "timestamp" },
+  { name = "forum_link", type = "text" },
+  { name = "forum_id", type = "integer" },
 ]
 
 [[step]]
@@ -62,14 +77,13 @@ columns = [
   { name = "rarity", type = "text" },
   { name = "price", type = "text" },
   { name = "beneficiary", type = "text" },
-  { name = "data", type = "jsonb" },
-  { name = "metrics", type = "jsonb" },
+  { name = "data", type = "json" },
+  { name = "metrics", type = "json" },
   { name = "utility", type = "text" },
   { name = "mappings", type = "jsonb" },
   { name = "urn_suffix", type = "text" },
   { name = "blockchain_item_id", type = "text" },
   { name = "is_published", type = "boolean" },
-  { name = "curation_status", type = "text" },
   { name = "total_supply", type = "bigint" },
   { name = "local_content_hash", type = "text" },
   { name = "content_hash", type = "text" },
@@ -88,4 +102,92 @@ columns = [
   { name = "file", type = "text" },
   { name = "hash", type = "text" },
   { name = "owner", type = "text" },
+  { name = "position", type = "integer" },
+  { name = "item_updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "virtual_third_party"
+targets = ["builder.virtual_third_parties"]
+extract = "virtual_third_party.extract.sql"
+load = "virtual_third_party.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "text" },
+  { name = "managers", type = "text[]" },
+  { name = "raw_metadata", type = "text" },
+  { name = "is_programmatic", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "collection_curation"
+targets = ["builder.collection_curations"]
+extract = "collection_curation.extract.sql"
+load = "collection_curation.load.sql"
+key = ["id"]
+whole = true
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "collection_id", type = "uuid" },
+  { name = "status", type = "text" },
+  { name = "assignee", type = "text" },
+  { name = "reviewed_by", type = "text" },
+  { name = "rejection_reasons", type = "text[]" },
+  { name = "rejection_message", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "item_curation"
+targets = ["builder.item_curations"]
+extract = "item_curation.extract.sql"
+load = "item_curation.load.sql"
+key = ["id"]
+whole = true
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "item_id", type = "uuid" },
+  { name = "status", type = "text" },
+  { name = "content_hash", type = "text" },
+  { name = "is_mapping_complete", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "collection_event"
+targets = ["builder.collection_events"]
+extract = "collection_event.extract.sql"
+load = "collection_event.load.sql"
+key = ["id"]
+requires = "collection_events"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "collection_id", type = "uuid" },
+  { name = "type", type = "text" },
+  { name = "actor", type = "text" },
+  { name = "actor_address", type = "text" },
+  { name = "payload", type = "jsonb" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "slot_usage_cheque"
+targets = ["builder.slot_usage_cheques"]
+extract = "slot_usage_cheque.extract.sql"
+load = "slot_usage_cheque.load.sql"
+key = ["id"]
+whole = true
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "collection_id", type = "uuid" },
+  { name = "third_party_id", type = "text" },
+  { name = "signature", type = "text" },
+  { name = "salt", type = "text" },
+  { name = "qty", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
 ]

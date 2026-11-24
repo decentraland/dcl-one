@@ -82,8 +82,8 @@ these rules, as the ledger test refuses such a capture.
 ## Parity ledger
 
 `parity.json` lists the operations of the pinned upstream that the builder
-port serves; the port's route ledger, pending until the port adds it
-(`services/catalyst/builder/src/tests/upstream_routes.rs`), names each one
+port serves; the port's route ledger
+(`services/catalyst/builder/src/tests/upstream_routes.rs`) names each one
 `Routed` or `Todo`. Its schema is the social family's (`../social/parity.json`): each operation has
 `id` (`api_http:<METHOD>:/v1<path>`), `owner`, `status`, `result`,
 `evidence`, `gaps` and `remaining_verification`.

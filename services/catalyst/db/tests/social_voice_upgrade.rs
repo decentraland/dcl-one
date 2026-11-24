@@ -258,6 +258,20 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0079_credits_seasonal_visit_goals",
             "0080_builder_scenes_retired",
             "0081_shop_items_content_hash",
+            "0082_builder_collection_flags_retired",
+            "0083_builder_collection_listings",
+            "0084_builder_item_contents_order",
+            "0085_builder_item_contents_named_by",
+            "0086_builder_item_video_named_by",
+            "0087_builder_collection_lock",
+            "0088_builder_collection_forum",
+            "0089_builder_collection_forum_claim",
+            "0090_builder_linked_publications_retired",
+            "0091_builder_uploaded_video_size",
+            "0092_builder_validation_retry",
+            "0093_builder_slot_cheques_outlive_collections",
+            "0094_builder_uploaded_video_checked",
+            "0095_builder_collection_contract_lowercase",
         ])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)

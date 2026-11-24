@@ -11,9 +11,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::access::Publisher;
+
+use super::chain_state;
 use super::http::ApiError;
 use super::items::ItemsComponent;
-use super::publication::{PublicationPreparation, SNAPSHOT_QUERY, prepare};
+use super::publication::{
+    PublicationPreparation, SNAPSHOT_QUERY, mark_missing_bytes, prepare, refuse_before_snapshot,
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
@@ -39,9 +44,9 @@ fn decode(value: Value) -> Result<PublicationState, ApiError> {
 impl ItemsComponent {
     pub async fn publication_state(
         &self,
-        signer: &str,
-        id: Uuid,
+        publisher: &Publisher,
     ) -> Result<Option<PublicationState>, ApiError> {
+        let (signer, id) = (publisher.signer(), publisher.id());
         let value: Option<Value> = sqlx::query_scalar(STATE_QUERY)
             .bind(id)
             .bind(signer)
@@ -52,11 +57,12 @@ impl ItemsComponent {
 
     pub async fn begin_publication(
         &self,
-        signer: &str,
-        id: Uuid,
+        publisher: &Publisher,
         revision: &str,
     ) -> Result<PublicationState, ApiError> {
+        let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
+        let view = chain_state::for_decision(&mut tx).await?;
         let owned: Option<Uuid> = sqlx::query_scalar(LOCK_OWNED)
             .bind(id)
             .bind(signer)
@@ -82,16 +88,18 @@ impl ItemsComponent {
                 return Ok(prior);
             }
         }
+        refuse_before_snapshot(&mut tx, &view, id, signer).await?;
         sqlx::query("SELECT id FROM builder.items WHERE collection_id=$1 ORDER BY id FOR UPDATE")
             .bind(id)
             .fetch_all(&mut *tx)
             .await?;
-        let snapshot: Value = sqlx::query_scalar(SNAPSHOT_QUERY)
+        let mut snapshot: Value = sqlx::query_scalar(SNAPSHOT_QUERY)
             .bind(id)
             .bind(signer)
             .fetch_one(&mut *tx)
             .await?;
-        let preparation = prepare(snapshot, signer)?;
+        mark_missing_bytes(&self.blobs, &mut snapshot).await?;
+        let preparation = prepare(snapshot, signer, &self.network)?;
         if preparation.revision != revision {
             return Err(ApiError::http(
                 409,
@@ -116,10 +124,10 @@ impl ItemsComponent {
 
     pub async fn claim_publication(
         &self,
-        signer: &str,
-        id: Uuid,
+        publisher: &Publisher,
         revision: &str,
     ) -> Result<(), ApiError> {
+        let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
         sqlx::query(LOCK_OWNED)
             .bind(id)
@@ -147,7 +155,8 @@ impl ItemsComponent {
         Ok(())
     }
 
-    pub async fn cancel_publication(&self, signer: &str, id: Uuid) -> Result<(), ApiError> {
+    pub async fn cancel_publication(&self, publisher: &Publisher) -> Result<(), ApiError> {
+        let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
         let owned: Option<Uuid> = sqlx::query_scalar(LOCK_OWNED)
             .bind(id)
@@ -186,11 +195,11 @@ impl ItemsComponent {
 
     pub(super) async fn record_publication_tx(
         &self,
-        signer: &str,
-        id: Uuid,
+        publisher: &Publisher,
         hash: &str,
         revision: &str,
     ) -> Result<(), ApiError> {
+        let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
         sqlx::query(LOCK_OWNED)
             .bind(id)
@@ -217,11 +226,11 @@ impl ItemsComponent {
     /// unfreezes the draft. Idempotent once terminal.
     pub(super) async fn finish_publication(
         &self,
-        signer: &str,
-        id: Uuid,
+        publisher: &Publisher,
         hash: &str,
         contract: Option<&str>,
     ) -> Result<PublicationState, ApiError> {
+        let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
         sqlx::query(LOCK_OWNED)
             .bind(id)
@@ -247,7 +256,7 @@ impl ItemsComponent {
                     .map_err(|_| ApiError::internal("Invalid saved item id"))?;
                 let changed = sqlx::query("UPDATE builder.items SET is_published=true, blockchain_item_id=$2, urn_suffix=$3, \
                     price=$4, beneficiary=$5, updated_at=timezone('UTC', now()) WHERE id=$1 AND collection_id=$6 AND eth_address=$7 AND NOT is_published")
-                    .bind(item_id).bind(token.to_string()).bind(format!("urn:decentraland:matic:collections-v2:{contract}:{token}"))
+                    .bind(item_id).bind(token.to_string()).bind(self.network.item_urn(contract, &token.to_string()))
                     .bind(&item.price).bind(&item.beneficiary).bind(id).bind(signer).execute(&mut *tx).await?.rows_affected();
                 if changed != 1 {
                     return Err(ApiError::http(
@@ -256,10 +265,16 @@ impl ItemsComponent {
                     ));
                 }
             }
-            sqlx::query("UPDATE builder.collections SET is_published=true, publication_pending=false, contract_address=$2, \
-                urn_suffix=$3, salt=$4, updated_at=timezone('UTC', now()) WHERE id=$1")
-                .bind(id).bind(contract).bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
-                .bind(&state.preparation.salt).execute(&mut *tx).await?;
+            sqlx::query(
+                "UPDATE builder.collections SET publication_pending=false, contract_address=$2, \
+                urn_suffix=$3, salt=$4, updated_at=timezone('UTC', now()) WHERE id=$1",
+            )
+            .bind(id)
+            .bind(contract)
+            .bind(self.network.collection_urn(contract))
+            .bind(&state.preparation.salt)
+            .execute(&mut *tx)
+            .await?;
             state.status = "published".into();
             state.contract_address = Some(contract.into());
         } else {

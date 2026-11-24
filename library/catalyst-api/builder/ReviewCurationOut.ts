@@ -4,4 +4,4 @@ import type { CurationStatus } from "./CurationStatus";
 /**
  * Latest curation attached to a collection under review.
  */
-export type ReviewCurationOut = { assignee: string, collection_id: string, created_at: number | null, id: string, status: CurationStatus, updated_at: number | null, };
+export type ReviewCurationOut = { assignee: string, collection_id: string, created_at: string | null, id: string, status: CurationStatus, updated_at: string | null, };

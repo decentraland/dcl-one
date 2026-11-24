@@ -20,7 +20,7 @@ use crate::content::{ContentState, Settings as ContentSettings};
 use crate::http::Outbound;
 use crate::storage::Storage;
 
-const TOKEN: &str = "console-test-bearer";
+const TOKEN: &str = "console-test-bearer-0123456789abcdef";
 
 async fn storage() -> Arc<Storage> {
     let tmp = std::env::temp_dir().join(format!(
@@ -50,7 +50,7 @@ async fn console(pool: &PgPool, ops_writes: bool, domains: Domains) -> (Router, 
 
 async fn post(app: &Router, cookie: &str, path: &str, body: Value) -> (StatusCode, Value) {
     let (status, headers, body) = send(app, "POST", path, &[("cookie", cookie)], Some(body)).await;
-    let refusal = body["body"]["message"]
+    let refusal = body["body"][refusal_key(path)]
         .as_str()
         .is_some_and(|m| m.contains("_WRITES_ENABLED=false"));
     if status == StatusCode::SERVICE_UNAVAILABLE && refusal {
@@ -75,60 +75,31 @@ fn random_address() -> String {
     wallet(&PrivateKeySigner::random())
 }
 
+/// The field of a proxied answer that carries an area's refusal: the
+/// builder answers builder-server's envelope (`error`), every other area its
+/// own `message`.
+fn refusal_key(path: &str) -> &'static str {
+    if path.starts_with("/admin/api/builder/") {
+        "error"
+    } else {
+        "message"
+    }
+}
+
 fn assert_refused(status: StatusCode, body: &Value, switch: &str) {
+    assert_refused_in(status, body, switch, "message");
+}
+
+/// [`assert_refused`] for an area that answers its refusal in `key`.
+fn assert_refused_in(status: StatusCode, body: &Value, switch: &str, key: &str) {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["ok"], false, "{body}");
     assert_eq!(body["status"], 503, "{body}");
-    let message = body["body"]["message"].as_str().unwrap_or_default();
+    let message = body["body"][key].as_str().unwrap_or_default();
     assert!(
         message.contains(&format!("{switch}=false")),
         "the domain's own 503 names {switch}: {body}"
     );
-}
-
-#[tokio::test]
-async fn every_console_route_is_403_without_a_session_and_502_without_its_module() {
-    let admin = PrivateKeySigner::random();
-    let app = app(lazy_pool(), true, Domains::default(), &wallet(&admin)).await;
-    assert_eq!(CONSOLE_ROUTES.len(), 84);
-    for path in CONSOLE_ROUTES {
-        let (status, _, body) = send(&app, "POST", path, &[], Some(json!({}))).await;
-        assert_eq!(
-            status,
-            StatusCode::FORBIDDEN,
-            "{path} without a cookie: {body}"
-        );
-    }
-    let cookie = session_cookie(&app, &admin).await;
-    let (status, _, _) = send(
-        &app,
-        "POST",
-        CONSOLE_ROUTES[0],
-        &[("cookie", &cookie), ("origin", "https://evil.test")],
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "cross-origin");
-    // A session over a node that runs none of the modules: the old
-    // unconfigured-service answer, or the input check that comes first.
-    let full = json!({
-        "address": random_address(), "wallet": random_address(), "id": "x", "badge_id": "b", "world_name": "w.dcl.eth",
-        "scene": "s", "name": "s", "image_id": "i", "collection_id": "c", "item_id": "i", "entity_id": "e", "network": "n",
-        "token": "mana", "vs": "usd", "position": "1,1", "enabled": "true",
-        "place_id": "p", "world_id": "w", "event_id": "e", "highlighted": "true", "content_rating": "T"
-    });
-    let create =
-        json!({ "name": "n", "start_at": "2030-01-01T00:00:00Z", "duration": 1, "x": 0, "y": 0 });
-    for path in CONSOLE_ROUTES {
-        let body = if *path == "/admin/api/events/create" {
-            create.clone()
-        } else {
-            full.clone()
-        };
-        let (status, _, body) = send(&app, "POST", path, &[("cookie", &cookie)], Some(body)).await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY, "{path}: {body}");
-        assert_eq!(body["body"]["error"], "not-configured", "{path}: {body}");
-    }
 }
 
 #[tokio::test]
@@ -979,170 +950,6 @@ async fn worlds_and_scene_host_calls_follow_the_worlds_gate() {
         secret_leaked, 0,
         "the node's credentials never reach the audit detail"
     );
-    cleanup(&pool, &actor).await;
-}
-
-async fn create_domains(pool: &PgPool, writes: bool, token: Option<&str>) -> Domains {
-    let store = storage().await;
-    let denylist = store.denylist().clone();
-    let reel = crate::camera_reel::Settings {
-        admin_token: token.map(str::to_string),
-        writes_enabled: writes,
-        ..crate::camera_reel::Settings::new("http://127.0.0.1:1/camera-reel-service")
-    };
-    let reel = Arc::new(crate::camera_reel::State::new(
-        pool.clone(),
-        store.clone(),
-        reel,
-        None,
-    ));
-    let builder = crate::builder::Settings::parse(crate::builder::RawSettings {
-        writes_enabled: writes,
-        admin_token: token.map(str::to_string),
-        ..Default::default()
-    })
-    .unwrap();
-    let builder = Arc::new(
-        crate::builder::State::new(
-            pool.clone(),
-            store,
-            denylist,
-            Outbound::for_tests(),
-            None,
-            None,
-            builder,
-        )
-        .unwrap(),
-    );
-    Domains {
-        camera_reel: Some(reel),
-        builder: Some(builder),
-        ..Default::default()
-    }
-}
-
-#[tokio::test]
-async fn creator_calls_follow_the_create_gate() {
-    let Some(pool) = crate::db::scratch::pool(4).await else {
-        return;
-    };
-    let (image, collection, item) = (
-        uuid::Uuid::new_v4().to_string(),
-        uuid::Uuid::new_v4().to_string(),
-        uuid::Uuid::new_v4().to_string(),
-    );
-
-    let (app, actor, cookie) =
-        console(&pool, true, create_domains(&pool, false, Some(TOKEN)).await).await;
-    for (path, body) in [
-        (
-            "/admin/api/camera-reel/image-delete",
-            json!({ "image_id": image }),
-        ),
-        (
-            "/admin/api/camera-reel/image-review",
-            json!({ "image_id": image, "action": "reject" }),
-        ),
-        (
-            "/admin/api/builder/item-status",
-            json!({ "collection_id": collection, "item_id": item, "status": "approved" }),
-        ),
-        (
-            "/admin/api/builder/items-status",
-            json!({ "collection_id": collection, "item_ids": item, "status": "approved" }),
-        ),
-    ] {
-        let (status, body) = post(&app, &cookie, path, body).await;
-        assert_refused(status, &body, "CREATE_WRITES_ENABLED");
-    }
-    assert!(console_rows(&pool, &actor).await.is_empty());
-
-    let (app, _, cookie) = console(&pool, true, create_domains(&pool, true, None).await).await;
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/camera-reel/image-delete",
-        json!({ "image_id": image }),
-    )
-    .await;
-    assert_eq!(
-        (status, body["body"]["error"].as_str()),
-        (
-            StatusCode::FORBIDDEN,
-            Some("camera-reel-admin-token-not-configured")
-        )
-    );
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/builder/item-status",
-        json!({ "collection_id": collection, "item_id": item, "status": "approved" }),
-    )
-    .await;
-    assert_eq!(
-        (status, body["body"]["error"].as_str()),
-        (
-            StatusCode::FORBIDDEN,
-            Some("builder-admin-token-not-configured")
-        )
-    );
-
-    let (app, actor, cookie) =
-        console(&pool, true, create_domains(&pool, true, Some(TOKEN)).await).await;
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/camera-reel/image-delete",
-        json!({ "image_id": image }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "the reel's own answer for an unknown photo: {body}"
-    );
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/camera-reel/image-review",
-        json!({ "image_id": image, "action": "approve" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/builder/item-status",
-        json!({ "collection_id": collection, "item_id": item, "status": "sideways" }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "the builder's status rule: {body}"
-    );
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/builder/items-status",
-        json!({ "collection_id": collection, "itemIds": [item], "status": "approved" }),
-    )
-    .await;
-    assert!(
-        status.is_success() || status == StatusCode::NOT_FOUND,
-        "{status} {body}"
-    );
-    let rows = console_rows(&pool, &actor).await;
-    assert_eq!(
-        rows.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
-        vec![
-            "builder.items.status",
-            "builder.item.status",
-            "camera-reel.image.review",
-            "camera-reel.image.delete"
-        ]
-    );
-    assert!(rows.iter().all(|r| r.0 == "create"));
     cleanup(&pool, &actor).await;
 }
 

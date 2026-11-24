@@ -854,32 +854,18 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         );
     }
 
-    // The creator plane (the old catalyrst-create bundle): the builder and the
-    // camera reel over the same pool, client, blob store and validator, both
-    // behind CREATE_WRITES_ENABLED (builder::writes).
-    let builder = Arc::new(
-        builder::State::new(
-            pool.clone(),
-            storage.clone(),
-            content.denylist.clone(),
-            http_client.clone(),
-            Some(market.index.clone()),
-            eip1654.clone(),
-            builder::Settings::parse(builder::RawSettings {
-                writes_enabled: config.create.create_writes_enabled,
-                content_bucket_url: config.create.builder_content_bucket_url.clone(),
-                polygon_rpc_url: config.create.builder_polygon_rpc_url.clone(),
-                admin_addresses: config.create.builder_admin_addresses.clone(),
-                admin_token: config.create.catalyrst_builder_admin_token.clone(),
-                newsletter_service_url: config.create.newsletter_service_url.clone(),
-                newsletter_publication_id: config.create.newsletter_publication_id.clone(),
-                newsletter_api_key: config.create.newsletter_service_api_key.clone(),
-                foundation_url: Some(config.create.builder_foundation_url.clone()),
-            })
-            .context("BUILDER_* / NEWSLETTER_* configuration")?,
-        )
-        .context("builder state")?,
-    );
+    let mut builder_state = builder::State::new(
+        pool.clone(),
+        storage.clone(),
+        content.denylist.clone(),
+        http_client.clone(),
+        Some(market.index.clone()),
+        eip1654.clone(),
+        builder_settings(&config)?,
+    )
+    .context("builder state")?;
+    builder_state.content_sync = sync_status.clone();
+    let builder = Arc::new(builder_state);
     let public_url = config
         .node
         .public_url

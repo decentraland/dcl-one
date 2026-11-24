@@ -481,14 +481,6 @@ pub(super) fn routes() -> axum::Router<SharedState> {
             post(super::create::reel_image_review),
         )
         .route(
-            "/admin/api/builder/item-status",
-            post(super::create::builder_item_status),
-        )
-        .route(
-            "/admin/api/builder/items-status",
-            post(super::create::builder_items_status),
-        )
-        .route(
             "/admin/api/create/registry-reingest",
             post(super::create::registry_reingest),
         )
@@ -709,8 +701,6 @@ pub const CONSOLE_ROUTES: &[&str] = &[
     "/admin/api/scene-state/reset",
     "/admin/api/camera-reel/image-delete",
     "/admin/api/camera-reel/image-review",
-    "/admin/api/builder/item-status",
-    "/admin/api/builder/items-status",
     "/admin/api/create/registry-reingest",
     "/admin/api/create/flush-ab-cache",
     "/admin/api/create/queues-retry",

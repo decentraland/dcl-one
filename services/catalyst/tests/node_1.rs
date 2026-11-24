@@ -1,10 +1,8 @@
 //! Node integration tests that need no socket budget, one binary for several files so a
 //! build links few test executables. Each file stays a module named after it.
 #![allow(clippy::unwrap_used, reason = "test support")]
-// explore_parity needs it.
 #![recursion_limit = "256"]
 
-// Support shared by several modules, loaded once; the modules `use crate::<name>`.
 #[path = "support/db.rs"]
 mod db;
 
@@ -24,6 +22,8 @@ mod index_process;
 mod node_readiness;
 #[path = "notifier_parity.rs"]
 mod notifier_parity;
+#[path = "serve_routes_startup.rs"]
+mod serve_routes_startup;
 #[path = "social_live.rs"]
 mod social_live;
 #[path = "worlds_mirror.rs"]
