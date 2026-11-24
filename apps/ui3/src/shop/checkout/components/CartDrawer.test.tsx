@@ -135,6 +135,7 @@ describe("the cart drawer, as upstream's CartPopover", () => {
       },
       close(this: HTMLDialogElement) {
         calls.push(this.isConnected ? "close" : "close outside the document");
+        expect(within(this).getByRole("button", { name: "Continue shopping" })).toBeTruthy();
         this.removeAttribute("open");
       },
     });

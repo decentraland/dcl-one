@@ -37,7 +37,7 @@ async function press(point: Point) {
 }
 
 async function escape() {
-  const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+  const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 };
   await session!.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key });
   await session!.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
 }
