@@ -90,6 +90,18 @@ describe('system-action menu shortcuts', () => {
     expect(h.session().places.open).toBe(true)
   })
 
+  it('HideUi toggles the Explorer HUD, and a panel shortcut brings it back', async () => {
+    const h = await world()
+    h.driver.emit(action('HideUi'))
+    expect(h.session().hudHidden).toBe(true)
+    h.driver.emit(action('HideUi'))
+    expect(h.session().hudHidden).toBe(false)
+    h.driver.emit(action('HideUi'))
+    h.driver.emit(action('Map'))
+    expect(h.session().hudHidden).toBe(false)
+    expect(h.session().map.open).toBe(true)
+  })
+
   it('ignores release edges', async () => {
     const h = await world()
     h.driver.emit(action('Places', false))

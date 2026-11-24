@@ -36,7 +36,7 @@ import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
-import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
+import { getBindingsSnapshot, isCancelKey, isEditableTarget, keyHintFor, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
@@ -1276,6 +1276,8 @@ export interface EngineSession {
   logout: () => void
   /** A full scene menu page is open → the React HUD (sidebar + chat) hides. */
   menuOpen: boolean
+  /** The HideUi key (U) hid the Explorer HUD; the world and the scene's own UI stay on screen. */
+  hudHidden: boolean
   closeAllPanels: () => void
 }
 
@@ -1572,6 +1574,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
   const [pendingMention, setPendingMention] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [hudHidden, setHudHidden] = useState(false)
   const [friendsData, setFriendsData] = useState<{
     available: boolean
     friends: Friend[]
@@ -5339,6 +5342,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       if (emote) playEmote(emote.urn)
       return
     }
+    // HideUi hides the Explorer HUD and leaves the scene's UI (drawn by the engine) on screen.
+    if (action === 'HideUi') {
+      const hide = !hudHidden
+      setHudHidden(hide)
+      if (hide) showToast(`Explorer UI hidden. Press ${keyHintFor(getBindingsSnapshot(), 'HideUi') ?? 'U'} to show it again.`)
+      return
+    }
     switch (action) {
       case 'Map': toggleMap(); break
       case 'Places': togglePlaces(); break
@@ -5351,12 +5361,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       case 'Friends': toggleFriends(); break
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
+      default: return
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
       // itself opens the mic on press and closes it on release (the mic relay updates the
       // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }
+    // a panel shortcut brings the HUD back with the panel it opens
+    setHudHidden(false)
   }
 
   // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
@@ -5580,6 +5593,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setInteractableArea,
     logout,
     menuOpen,
+    hudHidden,
     closeAllPanels,
     login: {
       status,
