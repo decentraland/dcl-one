@@ -246,16 +246,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
 - **The mic pauses while the Explorer lacks focus** (the primary window natively,
-  `document.hasFocus()` on the web), so it never captures while the player is in another app
-  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
-  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
-  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
-  at its next mic state poll (up to 1 s).
+  `document.hasFocus()` on the web) while the Mute Mic in Background setting (Sounds, on by
+  default) is on, so it never captures while the player is in another app or tab: it stops
+  capturing and publishing for nearby voice and calls alike, and resumes when focus returns.
+  The mic setting does not change, and neither pause nor resume plays the mic on/off sound.
+  The HUD shows the paused mic off: the call panel at once, the nearby mic toggle at its next
+  mic state poll (up to 1 s).
   - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
     other clients keep showing the paused speaker unmuted while no audio arrives; the mute
     entry above holds only for a mute the player chooses.
-  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
-    settings ("mute mic in background", on by default); the Explorer has no such setting.
+  - With the setting off, the mic stays live without focus, for nearby voice and calls alike.
+  - unity-explorer's setting of the same name pauses only the nearby mic.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
