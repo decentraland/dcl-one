@@ -20,6 +20,14 @@ describe("ShopCreditsChip", () => {
     });
   });
 
+  describe("when a web balance is loaded", () => {
+    it("should link the balance to the Shop credits page", () => {
+      balance.mockReturnValue({ data: { credits: 12 } });
+      render(<MemoryRouter><ShopCreditsChip /></MemoryRouter>);
+      expect(screen.getByRole("link", { name: "12 shop credits" })).toHaveAttribute("href", "/shop/credits");
+    });
+  });
+
   describe("when a zero balance is loaded in the in-app purchase view", () => {
     beforeEach(() => {
       window.history.replaceState({}, "", "/?view=mobile-iap");

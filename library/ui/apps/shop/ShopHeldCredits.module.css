@@ -21,6 +21,7 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
+  /* Shop overlays use layer 60 in the host (the --z-overlay primitive). */
   z-index: 60;
   display: grid;
   gap: 6px;

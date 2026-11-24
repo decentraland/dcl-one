@@ -24,14 +24,17 @@ export function ShopHeldCredits({
 }: ShopHeldCreditsProps) {
   const panelId = useId()
   const [open, setOpen] = useState(false)
-  const [now, setNow] = useState(() => Math.floor((fixedNow ?? Date.now()) / 1000))
+  const [liveNow, setLiveNow] = useState(() => Math.floor(Date.now() / 1000))
+  const now = fixedNow === undefined ? liveNow : Math.floor(fixedNow / 1000)
   const rootRef = useRef<HTMLDivElement>(null)
   const remaining = releasesAt === null ? 0 : releasesAt - now
   const unknown = releasesAt === null || remaining <= 0
 
   useEffect(() => {
     if (fixedNow !== undefined || releasesAt === null || credits <= 0) return
-    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
+    const update = () => setLiveNow(Math.floor(Date.now() / 1000))
+    update()
+    const id = setInterval(update, 1000)
     return () => clearInterval(id)
   }, [credits, releasesAt, fixedNow])
 
