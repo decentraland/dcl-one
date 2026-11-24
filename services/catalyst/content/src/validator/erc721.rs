@@ -1,7 +1,9 @@
 //! The ERC-721 metadata document of a standard wearable
 //! (`GET /queries/erc721/{chainId}/{contract}/{option}[/{emission}]` on the
-//! content server, root and `/content`): the active entity at the item's URN
-//! formatted as the token metadata marketplaces read.
+//! content server, root and `/content`, and at
+//! `/lambdas/collections/standard/erc721/`, a standard collection's on-chain
+//! base URI): the active entity at the item's URN formatted as the token
+//! metadata marketplaces read.
 
 use std::sync::Arc;
 

@@ -12,8 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
-use axum::Router;
-use axum::routing::get;
 use bytes::Bytes;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -1513,9 +1511,20 @@ fn a_refusal_keeps_its_kind_in_the_deploy_failure() {
     assert!(matches!(&unverifiable, DeployFailure::Unverifiable(e) if e == &["rpc".to_string()]));
 }
 
-/// `GET /queries/erc721/...` over the content database: the active entity
-/// at the built URN, 400 for an unknown chain or a non-standard wearable,
-/// 404 for none or a denylisted one.
+/// The node's own mount, upstream's `/content` one and the lambdas path the
+/// peer's gateway proxies to it (`decentraland/catalyst-owner`
+/// `local/nginx/include/lambdas.conf`).
+const ERC721_MOUNTS: [&str; 3] = [
+    "/queries/erc721",
+    "/content/queries/erc721",
+    "/lambdas/collections/standard/erc721",
+];
+
+/// `GET /queries/erc721/...` over the content database at every mount in
+/// [`ERC721_MOUNTS`], with the content CORS headers the peer answers: the
+/// active entity at the built URN, 400 for a chain id that is not upstream's
+/// `/^\d+$/` or is unknown, or a non-standard wearable (a null or empty
+/// rarity, CS-17), 404 for none, an address with no item, or a denylisted one.
 #[tokio::test]
 async fn the_erc721_route_formats_the_active_wearable() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
@@ -1567,28 +1576,35 @@ async fn the_erc721_route_formats_the_active_wearable() {
         crate::Settings::for_tests(),
         storage,
     ));
-    let app = Router::new()
-        .route(
-            "/queries/erc721/{chainId}/{contract}/{option}",
-            get(erc721::get_erc721_entity),
-        )
-        .route(
-            "/queries/erc721/{chainId}/{contract}/{option}/{emission}",
-            get(erc721::get_erc721_entity),
-        )
-        .with_state(state.clone());
+    let app = crate::build_router(state.clone());
     let get_json = |path: String| {
         let app = app.clone();
         async move {
             let resp = app
                 .oneshot(
-                    axum::http::Request::get(path)
+                    axum::http::Request::get(&path)
+                        .header("origin", "https://example.org")
                         .body(axum::body::Body::empty())
                         .unwrap(),
                 )
                 .await
                 .unwrap();
             let status = resp.status().as_u16();
+            let headers = resp.headers();
+            let upstream_cors = [
+                ("access-control-allow-origin", "*"),
+                ("access-control-expose-headers", "*"),
+            ];
+            let served_by_the_peer = !path.starts_with("/queries/");
+            for (name, value) in [
+                ("content-type", "application/json"),
+                ("x-content-type-options", "nosniff"),
+            ]
+            .into_iter()
+            .chain(upstream_cors.into_iter().filter(|_| served_by_the_peer))
+            {
+                assert_eq!(headers[name], value, "{path} {name}");
+            }
             let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
                 .await
                 .unwrap();
@@ -1596,59 +1612,73 @@ async fn the_erc721_route_formats_the_active_wearable() {
         }
     };
 
-    let (status, body) = get_json(format!("/queries/erc721/137/{contract}/0/12")).await;
-    assert_eq!(status, 200, "{body}");
-    assert_eq!(
-        body,
-        json!({
-            "id": format!("urn:decentraland:matic:collections-v2:{contract}:0"),
-            "name": "Hat",
-            "description": "DCL Wearable 12/1000",
-            "language": "en-US",
-            "thumbnail": "http://localhost/content/contents/bafkreithumb",
-            "attributes": [
-                {"trait_type": "Rarity", "value": "epic"},
-                {"trait_type": "Category", "value": "hat"},
-                {"trait_type": "Tag", "value": "a"}
-            ]
-        })
-    );
-    assert_eq!(
-        get_json(format!("/queries/erc721/137/{contract}/0"))
-            .await
-            .1["description"],
-        ""
-    );
-    assert_eq!(
-        get_json(format!("/queries/erc721/999/{contract}/0")).await,
-        (400, json!({"error": "Invalid chainId '999'"}))
-    );
-    assert_eq!(
-        get_json(format!("/queries/erc721/137/{contract}/1")).await,
-        (400, json!({"error": "Wearable is not standard."}))
-    );
-    assert_eq!(
-        get_json(format!("/queries/erc721/137/{contract}/2")).await,
-        (404, json!({"error": "Entity does not exist"}))
-    );
-    // CS-17: a null or empty rarity is not standard, and the chain id is
-    // upstream's `/^\d+$/` (no sign).
-    for item in ["3", "4"] {
+    for prefix in ERC721_MOUNTS {
+        let (status, body) = get_json(format!("{prefix}/137/{contract}/0/12")).await;
+        assert_eq!(status, 200, "{prefix} {body}");
         assert_eq!(
-            get_json(format!("/queries/erc721/137/{contract}/{item}")).await,
-            (400, json!({"error": "Wearable is not standard."})),
-            "{item}"
+            body,
+            json!({
+                "id": format!("urn:decentraland:matic:collections-v2:{contract}:0"),
+                "name": "Hat",
+                "description": "DCL Wearable 12/1000",
+                "language": "en-US",
+                "thumbnail": "http://localhost/content/contents/bafkreithumb",
+                "attributes": [
+                    {"trait_type": "Rarity", "value": "epic"},
+                    {"trait_type": "Category", "value": "hat"},
+                    {"trait_type": "Tag", "value": "a"}
+                ]
+            }),
+            "{prefix}"
+        );
+        assert_eq!(
+            get_json(format!("{prefix}/137/{contract}/0")).await.1["description"],
+            "",
+            "{prefix}"
+        );
+        assert_eq!(
+            get_json(format!("{prefix}/999/{contract}/0")).await,
+            (400, json!({"error": "Invalid chainId '999'"}))
+        );
+        assert_eq!(
+            get_json(format!("{prefix}/abc/{contract}/0")).await,
+            (400, json!({"error": "Invalid chainId 'abc'"}))
+        );
+        assert_eq!(
+            get_json(format!("{prefix}/137/{contract}/1")).await,
+            (400, json!({"error": "Wearable is not standard."}))
+        );
+        for missing in [
+            format!("{prefix}/137/{contract}/2"),
+            format!("{prefix}/137/0x0000000000000000000000000000000000000001/0"),
+            format!("{prefix}/137/notanaddress/0"),
+        ] {
+            assert_eq!(
+                get_json(missing.clone()).await,
+                (404, json!({"error": "Entity does not exist"})),
+                "{missing}"
+            );
+        }
+        for item in ["3", "4"] {
+            assert_eq!(
+                get_json(format!("{prefix}/137/{contract}/{item}")).await,
+                (400, json!({"error": "Wearable is not standard."})),
+                "{prefix} {item}"
+            );
+        }
+        assert_eq!(
+            get_json(format!("{prefix}/+137/{contract}/0")).await,
+            (400, json!({"error": "Invalid chainId '+137'"}))
         );
     }
-    assert_eq!(
-        get_json(format!("/queries/erc721/+137/{contract}/0")).await,
-        (400, json!({"error": "Invalid chainId '+137'"}))
-    );
     state.denylist.add(&standard);
-    assert_eq!(
-        get_json(format!("/queries/erc721/137/{contract}/0")).await,
-        (404, json!({"error": "Entity does not exist"}))
-    );
+    for prefix in ERC721_MOUNTS {
+        assert_eq!(
+            get_json(format!("{prefix}/137/{contract}/0")).await,
+            (404, json!({"error": "Entity does not exist"})),
+            "{prefix}"
+        );
+    }
 
     sqlx::query("DELETE FROM content.active_pointers WHERE entity_id LIKE $1")
         .bind(format!("bafkreierc721{tag}%"))

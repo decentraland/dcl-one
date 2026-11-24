@@ -13,7 +13,7 @@ use axum::http::{HeaderMap, Request, header};
 use catalyst_testing::conformance::compare::{
     self, compare_body, query_string, status_and_header_notes,
 };
-use catalyst_testing::conformance::fixture::Fixture;
+use catalyst_testing::conformance::fixture::{Fixture, multipart_body};
 use catalyst_testing::conformance::volatility::Volatility;
 use tower::ServiceExt;
 
@@ -45,6 +45,21 @@ pub async fn replay_signed(
     fx: &Fixture,
     auth: &HeaderMap,
 ) -> Vec<String> {
+    replay_with(app, prefix, name, fx, auth, &Volatility::default())
+        .await
+        .0
+}
+
+/// [`replay_signed`] under `volatility` (which also names the keys the
+/// differ never compares), returning the candidate's body with the notes.
+pub async fn replay_with(
+    app: &Router,
+    prefix: &str,
+    name: &str,
+    fx: &Fixture,
+    auth: &HeaderMap,
+    volatility: &Volatility,
+) -> (Vec<String>, Vec<u8>) {
     let mut uri = format!("{prefix}{}", fx.request.path);
     if let Some(query) = query_string(&fx.request.query, None) {
         uri = format!("{uri}?{query}");
@@ -60,9 +75,13 @@ pub async fn replay_signed(
     for (k, v) in auth {
         request = request.header(k, v);
     }
-    let body = match &fx.request.body {
-        Some(json) => Body::from(serde_json::to_vec(json).unwrap()),
-        None => Body::empty(),
+    let body = match (&fx.request.body, multipart_body(&fx.request.multipart)) {
+        (_, Some((content_type, bytes))) => {
+            request = request.header(header::CONTENT_TYPE, content_type);
+            Body::from(bytes)
+        }
+        (Some(json), None) => Body::from(serde_json::to_vec(json).unwrap()),
+        (None, None) => Body::empty(),
     };
     let request = request.body(body).unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
@@ -76,13 +95,12 @@ pub async fn replay_signed(
             .get(key)
             .and_then(|v| v.to_str().ok())
             .map(str::to_string)
-            // hyper writes the length of a sized body on the wire, not here
             .or_else(|| {
                 key.eq_ignore_ascii_case(header::CONTENT_LENGTH.as_str())
                     .then(|| bytes.len().to_string())
             })
     });
-    let diffs = match compare_body(fx, name, &bytes, &Volatility::default()) {
+    let diffs = match compare_body(fx, name, &bytes, volatility) {
         compare::Body::Json(diffs) => diffs,
         compare::Body::Bytes { expected, same } => {
             if !same {
@@ -92,18 +110,18 @@ pub async fn replay_signed(
                     String::from_utf8_lossy(&bytes)
                 ));
             }
-            return notes;
+            return (notes, bytes.to_vec());
         }
         compare::Body::NotJson(_) => {
             notes.push(format!(
                 "candidate body is not JSON: {:?}",
                 String::from_utf8_lossy(&bytes)
             ));
-            return notes;
+            return (notes, bytes.to_vec());
         }
         compare::Body::BadFixture(note) => {
             notes.push(note);
-            return notes;
+            return (notes, bytes.to_vec());
         }
     };
     let mut fields: Vec<String> = diffs
@@ -135,5 +153,5 @@ pub async fn replay_signed(
     fields.sort();
     fields.dedup();
     notes.extend(fields);
-    notes
+    (notes, bytes.to_vec())
 }

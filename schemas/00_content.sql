@@ -143,6 +143,41 @@ CREATE TABLE content.server_sync_cursors (
     CONSTRAINT server_sync_cursors_pkey PRIMARY KEY (server_url)
 );
 
+CREATE TABLE content.item_history_replay (
+    id boolean NOT NULL DEFAULT true,
+    algorithm integer,
+    source_set text[],
+    entity_types text[],
+    history_floor_ms bigint,
+    pass_started_at timestamp without time zone,
+    peer text,
+    from_ms bigint,
+    last_id text,
+    debt bigint NOT NULL DEFAULT 0,
+    observed_frontier_ms bigint NOT NULL DEFAULT 0,
+    stopped boolean NOT NULL DEFAULT false,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT item_history_replay_pkey PRIMARY KEY (id),
+    CONSTRAINT item_history_replay_id_check CHECK (id)
+);
+
+CREATE TABLE content.item_history_coverage (
+    id boolean NOT NULL DEFAULT true,
+    algorithm integer NOT NULL,
+    source_set text[] NOT NULL,
+    entity_types text[] NOT NULL,
+    history_floor_ms bigint NOT NULL,
+    pass_started_at timestamp without time zone NOT NULL,
+    pass_completed_at timestamp without time zone NOT NULL,
+    observed_frontier_ms bigint NOT NULL,
+    debt bigint NOT NULL,
+    lease_namespace text NOT NULL,
+    lease_pid integer NOT NULL,
+    lease_backend_start timestamp without time zone NOT NULL,
+    CONSTRAINT item_history_coverage_pkey PRIMARY KEY (id),
+    CONSTRAINT item_history_coverage_id_check CHECK (id)
+);
+
 -- ── content: local authority and audit ─────────────────────────────────────
 
 -- Provenance for entities published directly against this node's write API,

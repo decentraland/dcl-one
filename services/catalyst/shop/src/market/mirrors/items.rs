@@ -54,6 +54,7 @@ query items($idFrom: ID!, $first: Int!, $verifyChain: Boolean!, $block: Block_he
     searchIsStoreMinter
     searchIsCollectionApproved
     searchText
+    contentHash
     metadata {
       wearable { name description category bodyShapes }
       emote { name description category bodyShapes loop hasSound hasGeometry }
@@ -170,7 +171,6 @@ pub fn record(r: &Value, network: Network) -> Option<Value> {
         "emote_loop": if is_emote { opt_bool_of(&meta, "loop") } else { None },
         "emote_has_sound": if is_emote { opt_bool_of(&meta, "hasSound") } else { None },
         "emote_has_geometry": if is_emote { opt_bool_of(&meta, "hasGeometry") } else { None },
-        // The production collections subgraphs have no `Emote.outcomeType` (probed 2026-09-25); the column stays NULL from this source.
         "emote_outcome_type": if is_emote { opt_str_of(&meta, "outcomeType") } else { None },
         "search_is_store_minter": bool_of(r, "searchIsStoreMinter"),
         "search_is_collection_approved": bool_of(r, "searchIsCollectionApproved"),
@@ -180,6 +180,7 @@ pub fn record(r: &Value, network: Network) -> Option<Value> {
         "sold_at": int_of(r, "soldAt"),
         "first_listed_at": opt_int_of(r, "firstListedAt"),
         "search_text": opt_str_of(r, "searchText"),
+        "content_hash": opt_str_of(r, "contentHash"),
     }))
 }
 
@@ -241,18 +242,19 @@ pub async fn upsert(
               max_supply, available, price, image, name, description, category, body_shapes, is_smart, emote_loop, \
               emote_has_sound, emote_has_geometry, emote_outcome_type, search_is_store_minter, \
               search_is_collection_approved, created_at, updated_at, reviewed_at, sold_at, first_listed_at, mirrored_at, \
-              search_text, testnet_verified) \
+              search_text, content_hash, testnet_verified) \
          SELECT $1, r.contract_address, r.item_id::numeric, $2, r.item_type, r.urn, r.creator, r.beneficiary, r.rarity, \
                 r.total_supply::numeric, r.max_supply::numeric, r.available::numeric, r.price::numeric, r.image, r.name, \
                 r.description, r.category, r.body_shapes, r.is_smart, r.emote_loop, r.emote_has_sound, \
                 r.emote_has_geometry, r.emote_outcome_type, r.search_is_store_minter, r.search_is_collection_approved, \
-                r.created_at, r.updated_at, r.reviewed_at, r.sold_at, r.first_listed_at, $3, r.search_text, $5 \
+                r.created_at, r.updated_at, r.reviewed_at, r.sold_at, r.first_listed_at, $3, r.search_text, r.content_hash, $5 \
          FROM jsonb_to_recordset($4) AS r(contract_address text, item_id text, item_type text, urn text, creator text, \
               beneficiary text, rarity text, total_supply text, max_supply text, available text, price text, image text, \
               name text, description text, category text, body_shapes text[], is_smart boolean, emote_loop boolean, \
               emote_has_sound boolean, emote_has_geometry boolean, emote_outcome_type text, \
               search_is_store_minter boolean, search_is_collection_approved boolean, created_at bigint, \
-              updated_at bigint, reviewed_at bigint, sold_at bigint, first_listed_at bigint, search_text text) \
+              updated_at bigint, reviewed_at bigint, sold_at bigint, first_listed_at bigint, search_text text, \
+              content_hash text) \
          ON CONFLICT (network, contract_address, item_id) DO UPDATE SET \
              testnet_verified = EXCLUDED.testnet_verified, chain_id = EXCLUDED.chain_id, item_type = EXCLUDED.item_type, urn = EXCLUDED.urn, \
              creator = EXCLUDED.creator, beneficiary = EXCLUDED.beneficiary, rarity = EXCLUDED.rarity, \
@@ -265,7 +267,7 @@ pub async fn upsert(
              search_is_collection_approved = EXCLUDED.search_is_collection_approved, \
              created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, reviewed_at = EXCLUDED.reviewed_at, \
              sold_at = EXCLUDED.sold_at, first_listed_at = EXCLUDED.first_listed_at, mirrored_at = EXCLUDED.mirrored_at, \
-             search_text = EXCLUDED.search_text",
+             search_text = EXCLUDED.search_text, content_hash = EXCLUDED.content_hash",
     )
     .bind(network.db_name())
     .bind(chain_id)
@@ -293,7 +295,8 @@ pub(crate) fn fixture(contract: &str, item_id: &str, item_type: &str, name: &str
         "image": format!("https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:{contract}:{item_id}/thumbnail"),
         "urn": format!("urn:decentraland:matic:collections-v2:{contract}:{item_id}"),
         "createdAt": "1700000000", "updatedAt": "1700000500", "reviewedAt": "1700000100", "soldAt": "1700000400", "firstListedAt": "1700000300",
-        "searchIsStoreMinter": true, "searchIsCollectionApproved": true, "searchText": name.to_lowercase(), "metadata": metadata
+        "searchIsStoreMinter": true, "searchIsCollectionApproved": true, "searchText": name.to_lowercase(), "metadata": metadata,
+        "contentHash": format!("bafkreicontent{item_id}")
     })
 }
 
@@ -316,6 +319,7 @@ mod tests {
         assert_eq!(hat["body_shapes"], json!(["BaseMale"]));
         assert_eq!(hat["price"], "5000000000000000000");
         assert_eq!(hat["first_listed_at"], 1_700_000_300_i64);
+        assert_eq!(hat["content_hash"], "bafkreicontent7");
         let dance = record(&fixture(c, "8", "emote_v1", "Dance"), m).unwrap();
         assert_eq!(dance["category"], "dance");
         assert_eq!(dance["emote_loop"], true);
@@ -349,5 +353,41 @@ mod tests {
             "one page carrying an item twice keeps one row"
         );
         assert_eq!(rows[0]["name"], "B");
+        let mut unhashed = fixture(c, "9", "wearable_v2", "Unhashed");
+        unhashed["contentHash"] = Value::Null;
+        assert_eq!(record(&unhashed, m).unwrap()["content_hash"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn the_items_copy_keeps_the_on_chain_content_hash() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let contract = format!(
+            "0x{}",
+            uuid::Uuid::new_v4().simple().to_string()[..20].repeat(2)
+        );
+        upsert(
+            &pool,
+            Network::Matic,
+            137,
+            false,
+            &[fixture(&contract, "3", "wearable_v2", "Hat")],
+        )
+        .await
+        .unwrap();
+        let stored: Option<String> = sqlx::query_scalar(
+            "SELECT content_hash FROM shop.items WHERE network = 'matic' AND contract_address = $1",
+        )
+        .bind(&contract)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
+            .bind(&contract)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("bafkreicontent3"));
     }
 }

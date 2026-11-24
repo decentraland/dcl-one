@@ -293,6 +293,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ),
     ("worlds.worlds.access_secret_hash", "a bcrypt hash"),
     ("shop.items.image", "a URL"),
+    (
+        "shop.items.content_hash",
+        "the subgraph's copy of an item's entity hash",
+    ),
     ("shop.trades.hashed_signature", "an order digest"),
     (
         "shop.trade_cancellations.target_hashed_signature",

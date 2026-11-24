@@ -37,6 +37,48 @@ pub struct RecordedRequest {
     pub headers: BTreeMap<String, String>,
     #[serde(default)]
     pub body: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub multipart: Vec<MultipartPart>,
+}
+
+/// One part of a recorded `multipart/form-data` request: its field `name`,
+/// the `filename` and `type` it was sent with and its synthetic `text`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MultipartPart {
+    pub name: String,
+    pub filename: String,
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub text: String,
+}
+
+/// The boundary [`multipart_body`] separates parts with.
+pub const MULTIPART_BOUNDARY: &str = "conformance-multipart-boundary";
+
+/// The `content-type` header and the body of `parts` sent as form data;
+/// `None` without parts, or when a name, filename or type holds a quote or
+/// a line break.
+pub fn multipart_body(parts: &[MultipartPart]) -> Option<(String, Vec<u8>)> {
+    if parts.is_empty() {
+        return None;
+    }
+    let mut body = String::new();
+    for part in parts {
+        let fields = [&part.name, &part.filename, &part.content_type];
+        if fields.iter().any(|f| f.contains(['"', '\r', '\n'])) {
+            return None;
+        }
+        body.push_str(&format!(
+            "--{MULTIPART_BOUNDARY}\r\ncontent-disposition: form-data; name=\"{}\"; filename=\"{}\"\r\ncontent-type: {}\r\n\r\n{}\r\n",
+            part.name, part.filename, part.content_type, part.text
+        ));
+    }
+    body.push_str(&format!("--{MULTIPART_BOUNDARY}--\r\n"));
+    Some((
+        format!("multipart/form-data; boundary={MULTIPART_BOUNDARY}"),
+        body.into_bytes(),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -269,6 +311,40 @@ mod tests {
             "application/json"
         );
         assert_eq!(media_type("Text/Plain"), "text/plain");
+    }
+
+    #[test]
+    fn multipart_parts_become_one_form_data_body() {
+        let f: Fixture = serde_json::from_str(
+            r#"{"request":{"method":"POST","path":"/x","body":null,"multipart":[
+                {"name":"bafk1","filename":"blob","type":"image/png","text":"abc"},
+                {"name":"bafk2","filename":"b.glb","type":"application/octet-stream","text":"de"}]},
+                "response":{"status":200,"body_json":{}}}"#,
+        )
+        .unwrap();
+        let (content_type, body) = multipart_body(&f.request.multipart).unwrap();
+        assert_eq!(
+            content_type,
+            format!("multipart/form-data; boundary={MULTIPART_BOUNDARY}")
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            format!(
+                "--{b}\r\ncontent-disposition: form-data; name=\"bafk1\"; filename=\"blob\"\r\ncontent-type: image/png\r\n\r\nabc\r\n\
+                 --{b}\r\ncontent-disposition: form-data; name=\"bafk2\"; filename=\"b.glb\"\r\ncontent-type: application/octet-stream\r\n\r\nde\r\n\
+                 --{b}--\r\n",
+                b = MULTIPART_BOUNDARY
+            )
+        );
+        assert!(multipart_body(&[]).is_none());
+        let quoted: Vec<MultipartPart> = serde_json::from_value(serde_json::json!(
+            [{"name":"a\"b","filename":"blob","type":"text/plain","text":""}]
+        ))
+        .unwrap();
+        assert!(
+            multipart_body(&quoted).is_none(),
+            "a quote or line break in a name or type is refused"
+        );
     }
 
     #[test]
