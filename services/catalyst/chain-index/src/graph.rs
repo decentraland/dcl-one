@@ -303,7 +303,8 @@ fn has_data(data: &Value) -> bool {
 
 /// The `url` label of a subgraph URL: the path segment after `/api/`, where
 /// a gateway URL carries its API key (`/api/<key>/subgraphs/id/<id>`), reads
-/// `[redacted]`, so the key never reaches a scrape.
+/// `[redacted]`, so the key never reaches a scrape. A keyless gateway URL
+/// (`/api/subgraphs/...`, `/api/deployments/...`) keeps its path.
 fn url_label(url: &str) -> String {
     let host = url.find("://").map_or(0, |scheme| scheme + 3);
     let path = url[host..].find('/').map_or(url.len(), |at| host + at);
@@ -312,7 +313,9 @@ fn url_label(url: &str) -> String {
     };
     let key = path + api + "/api/".len();
     match url[key..].find('/') {
-        Some(end) if end > 0 => format!("{}[redacted]{}", &url[..key], &url[key + end..]),
+        Some(end) if !matches!(&url[key..key + end], "" | "subgraphs" | "deployments") => {
+            format!("{}[redacted]{}", &url[..key], &url[key + end..])
+        }
         _ => url.to_owned(),
     }
 }
@@ -1233,6 +1236,10 @@ mod tests {
                 "https://api.studio.thegraph.com/query/1/names/v1",
             ),
             ("http://api/api/", "http://api/api/"),
+            (
+                "https://gateway.thegraph.com/api/subgraphs/id/Qm1",
+                "https://gateway.thegraph.com/api/subgraphs/id/Qm1",
+            ),
             ("http://127.0.0.1:1/subgraph", "http://127.0.0.1:1/subgraph"),
         ] {
             assert_eq!(url_label(url), label);

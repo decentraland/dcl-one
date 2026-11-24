@@ -47,5 +47,7 @@ readers, on its own `/metrics`.
 `url` is the configured subgraph URL, except that the path segment after
 `/api/`, where a gateway URL carries its API key, reads `[redacted]`:
 `/api/<key>/subgraphs/id/<id>` becomes `/api/[redacted]/subgraphs/id/<id>`.
+A keyless gateway URL (`/api/subgraphs/...` or `/api/deployments/...`) and a
+URL without an `/api/` segment keep their path.
 The old component exported the key, so a keyed URL's label value differs from
 the legacy one.
