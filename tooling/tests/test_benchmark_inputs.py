@@ -72,6 +72,11 @@ class GitHub:
         self.build_info = {}
         self.ids = {}
         self.calls = []
+        # (path pattern, exception) a read raises; artifact zips that time out; runs whose artifact
+        # list says it has more than one page
+        self.failures = []
+        self.slow_zips = set()
+        self.paged_runs = set()
 
     def web_zip(self, name):
         archive = io.BytesIO()
@@ -84,10 +89,14 @@ class GitHub:
 
     def __call__(self, path, raw=False):
         self.calls.append(path)
+        for pattern, failure in self.failures:
+            if re.search(pattern, path):
+                raise failure
         if path == f'repos/{REPO}/pulls/7':
             return self.pr
-        if path == f'repos/{REPO}/deployments?environment=org&per_page=100':
-            return self.deployments
+        if match := re.fullmatch(rf'repos/{REPO}/deployments\?environment=org&per_page=100&page=([0-9]+)', path):
+            page = int(match.group(1))
+            return self.deployments[(page - 1) * 100:page * 100]
         if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=1', path):
             return [{'state': self.deployment_states[int(match.group(1))]}]
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
@@ -99,11 +108,14 @@ class GitHub:
             names = self.artifacts.get(int(match.group(1)), [])
             rows = [{'id': self.ids.setdefault(name, len(self.ids) + 1), 'name': name,
                      'expired': name in self.expired} for name in names]
-            return {'total_count': len(rows), 'artifacts': rows}
+            return {'total_count': len(rows) + (int(match.group(1)) in self.paged_runs), 'artifacts': rows}
         if match := re.fullmatch(rf'repos/{REPO}/actions/artifacts/([0-9]+)/zip', path):
             if not raw:
                 raise AssertionError('an artifact zip is read as bytes')
-            return self.web_zip(next(name for name, number in self.ids.items() if number == int(match.group(1))))
+            name = next(name for name, number in self.ids.items() if number == int(match.group(1)))
+            if name in self.slow_zips:
+                raise subprocess.TimeoutExpired('gh', 300)
+            return self.web_zip(name)
         if path == f'repos/{REPO}/{inputs.RUNS_PATH}?head_sha={HEAD}&status=success&per_page=100':
             return {'workflow_runs': self.change_runs}
         if path == f'repos/{REPO}/{inputs.RUNS_PATH}?branch=main&event=push&status=success&per_page=100':
@@ -181,50 +193,48 @@ class ResolverTest(unittest.TestCase):
             github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
 
         def no_api(github):
-            """release_build raises; see failures below."""
+            github.failures = [(r'actions/runs/80$', subprocess.CalledProcessError(1, 'gh'))]
 
         def slow_zip(github):
-            """release_build raises; see failures below."""
+            github.slow_zips = {f'bevy-explorer-web-{RELEASE}'}
 
         def too_many_artifacts(github):
-            """release_build raises; see failures below."""
+            github.paged_runs = {80}
+
+        def odd_shape(github):
+            del github.release_run['path']
 
         def deployments_error(github):
-            """latest_release's own read fails."""
+            github.failures = [(r'/deployments\?', subprocess.TimeoutExpired('gh', 60))]
 
         for change, note in ((no_rollout, 'No successful rollout'), (deployments_error, 'could not be read'), (unnamed_run, 'does not name the CI run'),
                              (other_commit, 'is not a successful'), (failed_run, 'is not a successful'),
                              (is_base, 'is the base build'), (expired, 'has expired'),
                              (unoptimized, 'is not optimized'), (no_api, 'could not be read'),
-                             (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read')):
+                             (slow_zip, 'could not be read'), (too_many_artifacts, 'could not be read'),
+                             (odd_shape, 'could not be read')):
             with self.subTest(change=change.__name__):
                 self.github = GitHub()
                 change(self.github)
                 with patch.object(inputs, 'api', side_effect=self.github):
-                    failures = {no_api: subprocess.CalledProcessError(1, 'gh'),
-                                slow_zip: subprocess.TimeoutExpired('gh', 300),
-                                too_many_artifacts: ValueError('run 80 has more artifacts than one page lists')}
-                    if change is deployments_error:
-                        real_api = inputs.api
-
-                        def failing(path, raw=False):
-                            if '/deployments?' in path:
-                                raise subprocess.TimeoutExpired('gh', 60)
-                            return real_api(path, raw)
-
-                        with patch.object(inputs, 'api', side_effect=failing):
-                            result = self.resolve()
-                    elif change in failures:
-                        with patch.object(inputs, 'release_build', side_effect=failures[change]):
-                            result = self.resolve()
-                    else:
-                        result = self.resolve()
+                    result = self.resolve()
                 self.assertTrue(result['run'])
                 self.assertEqual((result['release_sha'], result['release_version']), ('', ''))
                 self.assertEqual({(leg['release_artifact'], leg['release_run_id']) for leg in result['legs']},
                                  {('', '')})
                 self.assertIn('Not compared with the latest release', result['notes'])
                 self.assertIn(note, result['notes'])
+
+    def test_the_release_is_searched_page_by_page_until_the_first_rollout(self):
+        partial = {'creator': {'login': 'github-actions[bot]'},
+                   'payload': {'prefix': inputs.PACKAGE, 'path': 'play', 'percentage': 10, 'version': 'x'}}
+        newer = [{**partial, 'id': 1000 + n} for n in range(150)]
+        self.github.deployments = newer + self.github.deployments
+        self.github.deployment_states.update({row['id']: 'success' for row in newer})
+        result = self.resolve()
+        self.assertEqual(result['release_version'], RELEASE_VERSION)
+        pages = [call for call in self.github.calls if '/deployments?' in call]
+        self.assertEqual([call.rsplit('=', 1)[1] for call in pages], ['1', '2'])
 
     def test_an_unoptimized_change_build_is_not_measured_and_the_pr_is_told_how_to_get_one(self):
         for info in ({'engine': {'optimized': False}}, {'engine': {}}, None):

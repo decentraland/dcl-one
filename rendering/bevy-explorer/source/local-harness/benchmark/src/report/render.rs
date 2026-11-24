@@ -439,7 +439,13 @@ fn caveat_text(note: &RunnerCaveat) -> String {
             "⚠️ No Release run produced data — the change is not compared with the latest release here."
                 .to_string()
         }
-        RunnerCaveat::NoBaselineData => {
+        RunnerCaveat::NoBaselineData {
+            release_compared: true,
+        } => "⚠️ No Baseline run produced data — the change is not compared with the baseline."
+            .to_string(),
+        RunnerCaveat::NoBaselineData {
+            release_compared: false,
+        } => {
             "⚠️ No Baseline run produced data — the change is shown alone, with no verdicts."
                 .to_string()
         }

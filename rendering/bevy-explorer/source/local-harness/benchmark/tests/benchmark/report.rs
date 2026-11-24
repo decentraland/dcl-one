@@ -138,15 +138,17 @@ fn release_each_machine_also_compares_the_change_with_the_latest_release() {
         &report,
         "**Overall: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
     );
+    // the release is 4 ms slower on CPU than the baseline, so it has verdicts of its own, and
+    // the Overall line above stays the baseline's
     has_line(
         &report,
-        "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
+        "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome), Intel Core i5 (Chrome); CPU 1% worst improved on Apple M1 (Chrome), Intel Core i5 (Chrome)**",
     );
     assert!(report
         .markdown
         .contains("latest release: `0.1.0-80.commit-9999999`"));
 
-    // the release runs are the baseline's, so the release table repeats its frame-time rows
+    // the release runs are the baseline's with 4 ms more CPU time a frame
     let apple = section(&report, "Apple M1 (Chrome)");
     let table = apple
         .iter()
@@ -158,14 +160,18 @@ fn release_each_machine_also_compares_the_change_with_the_latest_release() {
             "| Metric | Release | Change | Δ | Result |",
             "| --- | ---: | ---: | ---: | :--- |",
             "| Samples | 10 (×3) | 10 (×3) | | |",
-            "| CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |",
-            "| CPU 1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | 🟢 6% faster |",
-            "| CPU 0.1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | — informational |",
+            "| CPU average | 27.0 ms (26.9–27.1) | 21.0 ms (20.9–21.1) | -6.0 ms | 🟢 22% faster |",
+            "| CPU 1% worst | 36.0 ms (35.4–36.6) | 30.0 ms (29.0–31.0) | -6.0 ms | 🟢 17% faster |",
+            "| CPU 0.1% worst | 36.0 ms (35.4–36.6) | 30.0 ms (29.0–31.0) | -6.0 ms | — informational |",
             "| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚪ within noise |",
             "| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚪ within noise |",
             "| GPU 0.1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | — informational |",
         ]
     );
+    // the baseline table keeps the baseline's numbers
+    assert!(apple.contains(
+        &"| CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |"
+    ));
 }
 
 #[test]
@@ -201,10 +207,13 @@ fn release_a_machine_without_release_runs_says_so_beside_one_with_some() {
     );
     assert!(intel.contains(&note), "{intel:#?}");
 
-    // one machine is below the headline's 10%, so nothing is named
-    has_line(
-        &report,
-        "**Against the latest release: ✅ no significant changes**",
+    // one machine, but by more than 10%: named
+    assert!(
+        report.markdown.lines().any(|line| line.starts_with(
+            "**Against the latest release: 🟢 CPU average improved on Apple M1 (Chrome)"
+        )),
+        "{}",
+        report.markdown
     );
     assert!(report
         .markdown

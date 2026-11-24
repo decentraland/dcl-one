@@ -125,10 +125,18 @@ def base_runs(repo, base_sha):
     return [run for run in runs if ci_run(run, repo, ('push',)) and run['head_branch'] == 'main']
 
 
+def deployments(repo, pages=10):
+    """The `org` deployments, newest first, a page of 100 at a time: a caller stops at its match."""
+    for page in range(1, pages + 1):
+        rows = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100&page={page}')
+        yield from rows
+        if len(rows) < 100:
+            return
+
+
 def latest_release(repo):
     """The version of the newest successful rollout to every player of decentraland.org, or None."""
-    deployments = api(f'repos/{repo}/deployments?environment={RELEASE_ENVIRONMENT}&per_page=100')
-    for deployment in deployments:
+    for deployment in deployments(repo):
         payload = deployment.get('payload')
         if not isinstance(payload, dict) or payload.get('prefix') != PACKAGE or payload.get('path') != RELEASE_PATH:
             continue
@@ -261,7 +269,8 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     notes = []
     try:
         release, why_not = release_build(repo, base['head_sha'])
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+    except Exception:  # pylint: disable=broad-except
+        # the release is optional: an answer of any unexpected shape leaves it out with a note
         release, why_not = None, 'it could not be read from the GitHub API.'
     if release:
         result['release_sha'], result['release_version'] = release['sha'], release['version']

@@ -172,7 +172,8 @@ run whose top 30 leave the scope out counts as 0.
 - "Only *n* of *m* … runs produced data": the missing runs left no CSV (the app crashed or never
   reached the world) or only a `.csv.partial` ([The runner](#the-runner)).
 - "No Baseline run produced data": every base run of the section crashed, or none was measured
-  (`leg` without `--base`). The table shows the change alone, with no verdicts.
+  (`leg` without `--base`). The table shows the change alone, with no verdicts; a release table,
+  when the section has one, still compares the change with the release.
 - "Could not gather the results of …": a file of the section could not be read, for example a CSV
   with a header and no rows, and the whole section is lost. `measure` sets such CSVs aside as
   `.csv.partial`, so a leg's own files do not cause it.
@@ -489,7 +490,8 @@ cargo build -p benchmark --release
 
 `--base` is optional: without it the section shows the change build alone, with the "No Baseline
 run produced data" note. `--release <folder|zip|url>` adds the latest release as a third build and
-its table.
+its table; a release that cannot be fetched or warmed up is left out with a warning and
+`release_not_measured.txt`, as in the workflow.
 
 **The server** listens on `127.0.0.1` and `::1` only. The port is fixed (`--port`, `PERF_PORT`):
 the Chrome profile keeps the local guest per origin. Every response carries the isolation headers
@@ -617,7 +619,7 @@ to the `org` environment, whose payload names the package `@dcl-regenesislabs/be
 (`prefix`), the path (`play`), the rollout percentage and the npm version,
 `0.1.0-<CI run id>.commit-<short sha>`. Setup resolves it in four steps:
 
-1. Among the newest 100 `org` deployments, the first of that package at `play` and 100% that
+1. Among the `org` deployments, newest first and read 100 a page up to 10 pages, the first of that package at `play` and 100% that
    `github-actions[bot]` created (the rollout workflow's token) and whose latest status is
    *success*: a partial rollout, a failed one, one still in progress or a record made by hand is
    not the release.

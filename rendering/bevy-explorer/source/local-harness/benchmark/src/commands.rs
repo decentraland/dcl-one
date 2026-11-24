@@ -180,8 +180,7 @@ fn measure(args: MeasureArgs, ctx: &Context) -> Result<i32, Failure> {
 
     measure_loop(ctx, &settings, &change, &others, runs, settle, label)?;
     if flag(&args.release_not_measured) {
-        fs::write(settings.out_dir.join(RELEASE_NOT_MEASURED), "")?;
-        out::log(format!("wrote {RELEASE_NOT_MEASURED}"));
+        write_release_not_measured(&settings)?;
     }
     Ok(0)
 }
@@ -196,30 +195,65 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
 
     let change_root =
         app_source::provision(change, &settings.out_dir.join(CHANGE_BUILD), &ctx.cancel)?;
-    let provision = |source: &Option<String>, build: &str| -> Result<Option<PathBuf>, Failure> {
-        match given(source) {
-            Some(source) => Ok(Some(app_source::provision(
-                source,
-                &settings.out_dir.join(build),
-                &ctx.cancel,
-            )?)),
-            None => Ok(None),
-        }
+    let base_root = match given(&args.baseline) {
+        Some(baseline) => Some(app_source::provision(
+            baseline,
+            &settings.out_dir.join(BASE_BUILD),
+            &ctx.cancel,
+        )?),
+        None => None,
     };
-    let others = [
-        (BASE_BUILD, provision(&args.baseline, BASE_BUILD)?),
-        (RELEASE_BUILD, provision(&args.release, RELEASE_BUILD)?),
-    ];
+    // the release is optional, as in the workflow: one that cannot be fetched or warmed up is
+    // left out and noted, and the change is still measured against the base
+    let mut release_not_measured = false;
+    let mut release_root = match given(&args.release) {
+        Some(release) => optional_release(
+            app_source::provision(release, &settings.out_dir.join(RELEASE_BUILD), &ctx.cancel),
+            &mut release_not_measured,
+        )?,
+        None => None,
+    };
 
     warm_up(ctx, &settings, &change_root, CHANGE_BUILD)?;
-    for (build, root) in &others {
-        if let Some(root) = root {
-            warm_up(ctx, &settings, root, build)?;
-        }
+    if let Some(base_root) = &base_root {
+        warm_up(ctx, &settings, base_root, BASE_BUILD)?;
+    }
+    if let Some(root) = release_root.take() {
+        release_root = optional_release(
+            warm_up(ctx, &settings, &root, RELEASE_BUILD).map(|()| root),
+            &mut release_not_measured,
+        )?;
     }
 
+    let others = [(BASE_BUILD, base_root), (RELEASE_BUILD, release_root)];
     measure_loop(ctx, &settings, &change_root, &others, runs, settle, label)?;
+    if release_not_measured {
+        write_release_not_measured(&settings)?;
+    }
     Ok(0)
+}
+
+/// A release step's result: its value, or, on any failure but an interrupt, a warning and none.
+fn optional_release<T>(
+    result: Result<T, Failure>,
+    not_measured: &mut bool,
+) -> Result<Option<T>, Failure> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(Failure::Interrupted) => Err(Failure::Interrupted),
+        Err(failure) => {
+            out::warn(format!("the latest release is not measured: {failure}"));
+            *not_measured = true;
+            Ok(None)
+        }
+    }
+}
+
+/// Tells the report that the leg was given the latest release and could not run it.
+fn write_release_not_measured(settings: &Settings) -> Result<(), Failure> {
+    fs::write(settings.out_dir.join(RELEASE_NOT_MEASURED), "")?;
+    out::log(format!("wrote {RELEASE_NOT_MEASURED}"));
+    Ok(())
 }
 
 /// Writes the report of the results under DIR, whether or not a section has data: the workflow

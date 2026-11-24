@@ -129,8 +129,11 @@ enum RunnerCaveat {
     SessionsNotComparable(SessionsNotComparable),
     /// Exception kinds the change threw at least twice and the baseline never did.
     NewExceptionKinds(Vec<(String, u64)>),
-    /// No baseline run produced data: the table shows the change alone, with no verdicts.
-    NoBaselineData,
+    /// No baseline run produced data: the table shows the change alone, with no verdicts;
+    /// `release_compared` when the section still has a release table.
+    NoBaselineData {
+        release_compared: bool,
+    },
     /// The legs measured the latest release, and none of this section's release runs produced
     /// data: it has no release table.
     NoReleaseData,
@@ -446,7 +449,9 @@ fn compare_builds(
         &mut caveats,
     ));
     if base.run_count == 0 {
-        caveats.push(RunnerCaveat::NoBaselineData);
+        caveats.push(RunnerCaveat::NoBaselineData {
+            release_compared: release.run_count > 0,
+        });
     }
     if release.run_count == 0 {
         match expected_release {
@@ -781,6 +786,23 @@ mod tests {
             )
         };
         assert_eq!(section.caveats.iter().filter(too_few).count(), 1);
+
+        // no baseline runs: the note says the release table still compares
+        let section = compare_builds(
+            "apple-m1".to_owned(),
+            vec![run(), run(), run()],
+            Vec::new(),
+            vec![run(), run(), run()],
+            3,
+            ReleaseExpectation::Measured,
+        );
+        assert!(section.release_comparison.is_some());
+        assert!(section.caveats.iter().any(|caveat| matches!(
+            caveat,
+            RunnerCaveat::NoBaselineData {
+                release_compared: true
+            }
+        )));
     }
 
     #[test]
