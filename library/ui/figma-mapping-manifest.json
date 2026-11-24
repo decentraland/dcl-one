@@ -9599,6 +9599,54 @@
       ]
     },
     {
+      "setId": "16846:53476",
+      "name": "tooltip-light-regular",
+      "page": "",
+      "kind": "set",
+      "properties": {
+        "Property 1": {
+          "type": "VARIANT",
+          "default": "Top",
+          "options": [
+            "Top",
+            "Bottom",
+            "Right",
+            "Left"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "16846:53477",
+          "name": "Property 1=Top",
+          "props": {
+            "Property 1": "Top"
+          }
+        },
+        {
+          "id": "16846:53481",
+          "name": "Property 1=Bottom",
+          "props": {
+            "Property 1": "Bottom"
+          }
+        },
+        {
+          "id": "16846:53485",
+          "name": "Property 1=Right",
+          "props": {
+            "Property 1": "Right"
+          }
+        },
+        {
+          "id": "16846:53489",
+          "name": "Property 1=Left",
+          "props": {
+            "Property 1": "Left"
+          }
+        }
+      ]
+    },
+    {
       "setId": "17277:14023",
       "name": "blog-card",
       "page": "",
@@ -9756,6 +9804,54 @@
           "name": "section=places",
           "props": {
             "section": "places"
+          }
+        }
+      ]
+    },
+    {
+      "setId": "17504:29371",
+      "name": "tooltip-dark-bold",
+      "page": "",
+      "kind": "set",
+      "properties": {
+        "Property 1": {
+          "type": "VARIANT",
+          "default": "Top",
+          "options": [
+            "Top",
+            "Bottom",
+            "Right",
+            "Left"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "17504:29372",
+          "name": "Property 1=Top",
+          "props": {
+            "Property 1": "Top"
+          }
+        },
+        {
+          "id": "17504:29376",
+          "name": "Property 1=Bottom",
+          "props": {
+            "Property 1": "Bottom"
+          }
+        },
+        {
+          "id": "17504:29380",
+          "name": "Property 1=Right",
+          "props": {
+            "Property 1": "Right"
+          }
+        },
+        {
+          "id": "17504:29384",
+          "name": "Property 1=Left",
+          "props": {
+            "Property 1": "Left"
           }
         }
       ]

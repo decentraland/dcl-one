@@ -5,13 +5,27 @@ are external. Explorer images: pipeline.
 
 | Output (local tag) | Command | State |
 | --- | --- | --- |
-| `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema`; `cast-bot` | `/data`; PostgreSQL, blobs |
+| `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema`; `cast-bot`; `catalyst-message-router` | `/data`; PostgreSQL, blobs |
 | `image-sites` (`foundation-sites:nix`) | `sites-server` | `/data` |
 | `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
-- The community chat message router, `catalyst-message-router`, is a separate binary that links libwebrtc (`cargo build -p catalyst-message-router --features livekit`); no image carries it ([message router](../../services/catalyst/docs/comms/comms-crate.md#message-router)).
+- The APIs image carries the community chat message router at `/bin/catalyst-message-router`
+  (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
+  with `--features livekit`, from the same patched SDK and libwebrtc as `cast-bot`, its notices
+  at `share/doc/catalyst-message-router/libwebrtc-LICENSE.md`). `serve` does not start it: run
+  one container of the same digest with the entrypoint `/bin/catalyst-message-router` and no
+  command, one replica, restarted whenever it exits (it exits non-zero when it cannot stay in the
+  room). It needs `DATABASE_URL` (after `schema`), `MESSAGE_ROUTER_TOKEN_URL`
+  (`<serve>/internal/message-router/token/v1` at serve's private address: https, or http to a
+  private IP or loopback), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`,
+  `MESSAGE_ROUTER_REPLICA=0`, and `MESSAGE_ROUTER_LIVEKIT_URL` when the SFU has a private
+  address (unset, it dials the URL the gatekeeper hands out); set `MESSAGE_ROUTER_METRICS_BIND=0.0.0.0:5007`
+  for an outside health probe of `/health/ready`. `serve` takes the same `MESSAGE_ROUTER_KEY` and
+  `MESSAGE_ROUTER_IDENTITY_PREFIX=message-router-prd` on decentraland.org, `message-router-dev`
+  elsewhere, the identities the Explorer trusts. The image smoke test runs its `--help`
+  ([message router](../../services/catalyst/docs/comms/comms-crate.md#message-router)).
 - The APIs image has no SDK Play embed (`PLAY_EMBED_DIR` unset) and no `scene-build.wasm`.
 - The APIs image carries `cast-bot` (`.#cast-bot`, `infra/packages/cast-bot.nix`), the LiveKit
   participant `serve` starts once per Cast presentation, and sets `CAST_BOT_BIN` to it, so

@@ -777,18 +777,20 @@ struct EntityFiles {
     snapshots: Vec<(String, String)>,
 }
 
-fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, serde_json::Error> {
-    let entity: serde_json::Value = serde_json::from_slice(entity_data)?;
-    let declared: Vec<(String, String)> = entity
+fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, String> {
+    let entity: serde_json::Value =
+        serde_json::from_slice(entity_data).map_err(|e| e.to_string())?;
+    if !entity.is_object() {
+        return Err("entity must be a JSON object".into());
+    }
+    let declared: Vec<_> = entity
         .get("content")
-        .and_then(|c| c.as_array())
+        .map(crate::entity::parse_peer_content)
+        .transpose()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default()
         .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let hash = entry.get("hash")?.as_str()?;
-            let file = entry.get("file").and_then(|f| f.as_str()).unwrap_or("");
-            Some((file.to_string(), hash.to_string()))
-        })
+        .map(|entry| (entry.file, entry.hash))
         .collect();
     let mut seen = HashSet::new();
     let content = declared
@@ -1111,16 +1113,117 @@ mod tests {
 
     #[test]
     fn content_hashes_are_listed_once_in_order() {
+        let first = hash_bytes_v1(b"scene");
+        let second = hash_bytes_v1(b"model");
         let files = files_of(serde_json::json!({
             "type": "scene",
             "content": [
-                {"file": "scene.json", "hash": "bafabc"},
-                {"file": "model.glb", "hash": "bafdef"},
-                {"file": "copy.glb", "hash": "bafdef"},
+                {"file": "scene.json", "hash": first},
+                {"file": "model.glb", "hash": second},
+                {"file": "copy.glb", "hash": second},
             ]
         }));
-        assert_eq!(files.content, vec!["bafabc", "bafdef"]);
+        assert_eq!(files.content, vec![first, second]);
         assert!(files.snapshots.is_empty());
+    }
+
+    #[test]
+    fn local_and_synced_manifests_accept_omitted_content_and_historical_cids() {
+        let base = serde_json::json!({"type":"scene", "pointers":["0,0"], "timestamp":1});
+        let bytes = serde_json::to_vec(&base).unwrap();
+        assert!(entity_files(&bytes).unwrap().content.is_empty());
+        assert!(
+            serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                .unwrap()
+                .content
+                .is_empty()
+        );
+        let legacy = hash_bytes(b"historical content");
+        let mut entity = base;
+        entity["content"] = serde_json::json!([{"file":"a.txt","hash":legacy}]);
+        let bytes = serde_json::to_vec(&entity).unwrap();
+        assert_eq!(entity_files(&bytes).unwrap().content, vec![legacy.clone()]);
+        assert_eq!(
+            serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                .unwrap()
+                .content[0]
+                .hash,
+            legacy
+        );
+    }
+
+    #[test]
+    fn peer_replay_reads_legacy_null_content_as_empty() {
+        let entity = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":null}"#;
+
+        assert!(entity_files(entity).unwrap().content.is_empty());
+        assert!(
+            crate::validator::entity_parser::parse_entity_from_bytes(entity, "id")
+                .unwrap()
+                .content
+                .is_empty()
+        );
+        assert!(serde_json::from_slice::<crate::entity::Entity>(entity).is_err());
+    }
+
+    #[test]
+    fn local_and_synced_manifests_reject_the_same_invalid_content() {
+        for (content, explanation) in [
+            (serde_json::json!("not an array"), "array"),
+            (
+                serde_json::json!([{"file":"missing-hash"}]),
+                "valid strings",
+            ),
+            (
+                serde_json::json!([{"file":"invalid","hash":"not-a-cid"}]),
+                "invalid hash",
+            ),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "type":"scene", "pointers":["0,0"], "timestamp":1, "content":content
+            }))
+            .unwrap();
+            assert!(entity_files(&bytes).unwrap_err().contains(explanation));
+            assert!(
+                serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(explanation)
+            );
+            assert!(
+                crate::validator::entity_parser::parse_entity_from_bytes(&bytes, "id")
+                    .unwrap_err()
+                    .to_string()
+                    .contains(explanation)
+            );
+        }
+    }
+
+    #[test]
+    fn content_file_cap_counts_declarations_before_deduplicating_hashes() {
+        let hash = hash_bytes_v1(b"duplicate");
+        let entry = serde_json::json!({"file": "a", "hash": hash});
+        let mut entries = vec![entry.clone(); 25_000];
+        assert_eq!(
+            files_of(serde_json::json!({"content": entries})).content,
+            vec![hash.clone()]
+        );
+        entries.push(entry);
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "type":"scene", "pointers":["0,0"], "timestamp":1, "content": entries
+        }))
+        .unwrap();
+        assert!(
+            entity_files(&bytes)
+                .unwrap_err()
+                .contains("maximum of 25000")
+        );
+        assert!(
+            serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("maximum of 25000")
+        );
     }
 
     /// As snapshots-fetcher: only a profile's renders missing from `content[]` are added, and
