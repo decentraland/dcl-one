@@ -690,8 +690,14 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             json!({ "elements": [], "totalAmount": 0, "pageNum": 1, "pageSize": 100 })
         )
     );
-    let (status, _) = get(&state, "/lambdas/names/alice/owner").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // This node walks the nft index, so its NAMEs read the index alone:
+    // unpublished, the name owner is its envelope, never the subgraph's.
+    let (status, body) = get(&state, "/lambdas/names/alice/owner").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
     let (status, body) = get(&state, "/lambdas/collections/emotes?textSearch=nothing").await;
     assert_eq!(
         (status, body["emotes"].as_array().map(Vec::len)),
@@ -844,7 +850,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["alice"]));
+    // The NAME as minted (the index's `Alice`), as the subgraph listed it.
+    assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["Alice"]));
     let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     assert_eq!(
         body["metadata"]["outfits"],
@@ -2538,14 +2545,63 @@ async fn set_nft_cursor(pool: &PgPool, network: &str, published: Option<i64>) {
     .unwrap();
 }
 
+/// A walking node reads a profile's `hasClaimedName` from the Ethereum
+/// index, in the items' snapshot, and files the profile under that
+/// publication: once a pass publishes the NAME's transfer, the cached
+/// profile is not served again. The marketplace subgraph (whose fake still
+/// lists the NAME) is never the source.
+#[tokio::test]
+async fn a_claimed_name_follows_the_ethereum_publication() {
+    let Some(OwnershipFixture { db, walking, .. }) = ownership_fixture().await else {
+        return;
+    };
+    // The deployed avatar's name, as minted.
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 77, $2, 'alice', 1, 1, 1, 0, 1)",
+    )
+    .bind(super::nft_index::DCL_REGISTRAR)
+    .bind(OWNER)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    set_nft_cursor(&db.pool, "ethereum", Some(0)).await;
+    set_nft_cursor(&db.pool, "matic", Some(0)).await;
+    let claimed = || async {
+        let (status, body) = get(&walking, &format!("/lambdas/profiles/{OWNER}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["avatars"][0]["hasClaimedName"].clone()
+    };
+    assert_eq!(claimed().await, json!(true));
+
+    sqlx::query("UPDATE shop.nft SET owner = '0xbbbb000000000000000000000000000000000002' WHERE contract_address = $1 AND token_id = 77")
+        .bind(super::nft_index::DCL_REGISTRAR)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 101, folded_block = 101, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'nft' AND network = 'ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        claimed().await,
+        json!(false),
+        "the profile filed under the former publication is not served"
+    );
+    db.drop().await;
+}
+
 /// Every ownership route against each state of the nft index: switched off
 /// (profiles and outfits as deployed, the rest the envelope), walked but
 /// incomplete (everything fails closed: a direct profile read 503s and a
 /// Registry batch is an error the batch leaves out), complete but published
 /// an hour ago (profiles serve, the strict routes answer the envelope), only
-/// Polygon published (a Polygon item's profile and the emotes serve, the
-/// wearables need Ethereum too), and published. No route asks the
-/// collections subgraphs.
+/// Polygon published (the emotes serve; the wearables need Ethereum too, and
+/// so do a profile and its outfits, whose DCL NAMEs the Ethereum index
+/// holds), and published. No route asks the collections subgraphs.
 #[tokio::test]
 async fn each_ownership_route_follows_the_nft_index_state() {
     let Some(OwnershipFixture {
@@ -2634,10 +2690,10 @@ async fn each_ownership_route_follows_the_nft_index_state() {
             Some(None),
             Some(Some(0)),
             Expect {
-                profile: Some(owned_profile.clone()),
+                profile: None,
                 wearables: unavailable,
                 emotes: ok,
-                outfits: ok,
+                outfits: unavailable,
                 nfts: unavailable,
                 nfts_matic: ok,
             },

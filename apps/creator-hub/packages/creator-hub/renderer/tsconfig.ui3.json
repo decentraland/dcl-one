@@ -38,6 +38,7 @@
     "../../../../ui3/src/data/catalyst/client.ts",
     "../../../../ui3/src/data/catalyst/landListing.ts",
     "../../../../ui3/src/generated/bridge/*.ts",
+    "../../../../../library/ui/components/Tooltip/Tooltip.tsx",
     "../../../../../library/shop/land/contracts.ts",
     "../../../../../library/shop/checkout/chain/selection.ts",
     "../../../../../library/web-core/shop-chain-env.ts",

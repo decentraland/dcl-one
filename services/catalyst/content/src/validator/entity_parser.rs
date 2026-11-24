@@ -5,7 +5,7 @@
 use serde::Deserialize;
 
 use super::error::ValidatorError;
-use super::types::{ContentMapping, Entity, EntityType};
+use super::types::{Entity, EntityType};
 
 /// The six deployable types in the order the messages list them.
 pub const ENTITY_TYPES: &[&str] = &["scene", "profile", "wearable", "store", "emote", "outfits"];
@@ -36,12 +36,6 @@ struct RawEntity {
     metadata: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
-struct RawContentEntry {
-    file: Option<serde_json::Value>,
-    hash: Option<serde_json::Value>,
-}
-
 pub fn parse_entity_from_bytes(buffer: &[u8], id: &str) -> Result<Entity, ValidatorError> {
     let raw: RawEntity = serde_json::from_slice(buffer).map_err(|e| {
         ValidatorError::EntityParse(format!(
@@ -52,7 +46,13 @@ pub fn parse_entity_from_bytes(buffer: &[u8], id: &str) -> Result<Entity, Valida
     let entity_type = validate_entity_type(&raw)?;
     let pointers = validate_pointers(&raw)?;
     let timestamp = validate_timestamp(&raw)?;
-    let content = validate_content(&raw)?;
+    let content = raw
+        .content
+        .as_ref()
+        .map(crate::entity::parse_peer_content)
+        .transpose()
+        .map_err(|e| ValidatorError::EntityParse(e.to_string()))?
+        .unwrap_or_default();
 
     let version = raw
         .version
@@ -143,70 +143,21 @@ fn validate_timestamp(raw: &RawEntity) -> Result<i64, ValidatorError> {
     )))
 }
 
-fn validate_content(raw: &RawEntity) -> Result<Vec<ContentMapping>, ValidatorError> {
-    let val = match &raw.content {
-        None => return Ok(Vec::new()),
-        Some(v) if v.is_null() => return Ok(Vec::new()),
-        Some(v) => v,
-    };
-
-    let arr = val
-        .as_array()
-        .ok_or_else(|| ValidatorError::EntityParse("Expected an array as content".to_string()))?;
-
-    if arr.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut result = Vec::with_capacity(arr.len());
-    for item in arr {
-        let entry: RawContentEntry = serde_json::from_value(item.clone()).map_err(|_| {
-            ValidatorError::EntityParse(
-                "Content must contain a file name and a file hash".to_string(),
-            )
-        })?;
-
-        let file = entry
-            .file
-            .as_ref()
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ValidatorError::EntityParse(
-                    "Content must contain a file name and a file hash".to_string(),
-                )
-            })?
-            .to_string();
-
-        let hash = entry
-            .hash
-            .as_ref()
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ValidatorError::EntityParse(
-                    "Please make sure that all file names and a file hashes are valid strings"
-                        .to_string(),
-                )
-            })?
-            .to_string();
-
-        result.push(ContentMapping { file, hash });
-    }
-
-    Ok(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parse_minimal_entity() {
-        let json = r#"{
+        let hash = crate::auth::hash_bytes_v1(b"scene");
+        let json = format!(
+            r#"{{
             "type": "scene",
             "pointers": ["0,0"],
             "timestamp": 1700000000000,
-            "content": [{"file": "scene.json", "hash": "bafkreiaaaa"}]
-        }"#;
+            "content": [{{"file": "scene.json", "hash": "{hash}"}}]
+        }}"#
+        );
 
         let entity = parse_entity_from_bytes(json.as_bytes(), "bafkreitest").unwrap();
         assert_eq!(entity.entity_type, EntityType::Scene);

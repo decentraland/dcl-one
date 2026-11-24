@@ -32,7 +32,6 @@ use serde_json::{Value, json};
 
 use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 
-use super::graph;
 use super::owned_items::{self, Rule};
 use super::third_party;
 use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
@@ -469,6 +468,11 @@ async fn process_profiles_observed(
     entities: &[Value],
 ) -> Result<Vec<(Option<Value>, Option<owned_items::Publications>)>, String> {
     let collections = owned_items::walks_here(state);
+    // A node that walks the nft index reads the NAMEs in the items'
+    // snapshot (one observation for the whole answer); one that does not
+    // reads them from the subgraph beside the items, or claims none, as it
+    // serves the items as deployed.
+    let index_names = collections && state.name_authority.as_ref().is_some_and(|a| a.observes());
     state.warm_faces(
         entities
             .iter()
@@ -499,10 +503,18 @@ async fn process_profiles_observed(
         let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
         let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
         if !addresses.is_empty() {
-            // `owned_names` answers empty without a marketplace subgraph.
-            let names_futs = addresses
-                .iter()
-                .map(|a| graph::owned_names(&state.index, a));
+            // Without the subgraph an address that is not read from the
+            // index claims no name.
+            let names_futs = addresses.iter().map(|a| async move {
+                match state.name_authority.as_ref() {
+                    Some(authority) if !authority.observes() => authority
+                        .owned_names(a, crate::chain_index::names::Purpose::Display)
+                        .await
+                        .map(|answer| answer.value)
+                        .map_err(|e| e.to_string()),
+                    _ => Ok(std::sync::Arc::new(Vec::new())),
+                }
+            });
             // A profile whose linked items could not be checked keeps
             // its v1 items only; the others in the batch are unaffected.
             let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
@@ -524,12 +536,25 @@ async fn process_profiles_observed(
             use futures::stream::StreamExt;
             let (owned_res, names, third_party) = tokio::join!(
                 async {
-                    if collections && !requested.is_empty() {
+                    if index_names {
+                        // The items and the NAMEs, Ethereum always, in one
+                        // snapshot.
+                        owned_items::owned_tokens_and_names(
+                            &state.pool,
+                            &requested,
+                            &addresses,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, names, seen)| (owned, Some(names), Some(seen)))
+                        .map_err(|e| e.to_string())
+                    } else if collections && !requested.is_empty() {
                         owned_items::owned_tokens_observed(&state.pool, &requested, Rule::Complete)
                             .await
+                            .map(|(owned, seen)| (owned, None, seen))
                             .map_err(|e| e.to_string())
                     } else {
-                        Ok((HashMap::new(), None))
+                        Ok((HashMap::new(), None, None))
                     }
                 },
                 futures::future::join_all(names_futs),
@@ -537,14 +562,25 @@ async fn process_profiles_observed(
                     .buffer_unordered(THIRD_PARTY_CONCURRENCY)
                     .collect::<HashMap<String, Vec<String>>>()
             );
-            let (read, seen) = owned_res?;
+            let (read, indexed_names, seen) = owned_res?;
             owned = read;
             observed = seen.map(|seen| seen.publications);
-            for (address, names) in addresses.iter().zip(names) {
-                names_by_address.insert(
-                    address.clone(),
-                    names?.iter().map(|n| n.name.clone()).collect(),
-                );
+            match indexed_names {
+                Some(mut indexed) => {
+                    for address in &addresses {
+                        let names = indexed.remove(address.as_str()).unwrap_or_default();
+                        names_by_address
+                            .insert(address.clone(), names.into_iter().map(|n| n.name).collect());
+                    }
+                }
+                None => {
+                    for (address, names) in addresses.iter().zip(names) {
+                        names_by_address.insert(
+                            address.clone(),
+                            names?.iter().map(|n| n.name.clone()).collect(),
+                        );
+                    }
+                }
             }
             third_party_by_address = third_party;
         }

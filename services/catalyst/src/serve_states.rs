@@ -494,6 +494,7 @@ pub(super) async fn comms_states(
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
+    .with_name_authority(market.name_authority.clone())
     .with_deny_list_url(config.worlds.deny_list())
     .with_content_denylist(content_denylist)
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
