@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Request, State};
-use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use axum::extract::{Path, Request, State};
+use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
@@ -134,6 +134,7 @@ fn create_failure(e: CreateError) -> Response {
             StatusCode::TOO_MANY_REQUESTS,
             CreateError::MaxConcurrent(max).to_string(),
         ),
+        CreateError::TokenInUse => error(StatusCode::CONFLICT, e.to_string()),
         CreateError::SlideRender(message) => {
             tracing::warn!("{message}");
             error(
@@ -183,12 +184,12 @@ async fn parse_json(presenter: &Arc<Presenter>, body: bytes::Bytes) -> Result<Pa
     };
     let livekit_token = credentials(presenter, text("livekitToken"), text("livekitUrl"))?;
     // The token first, so a refused one takes no slot, starts no bot and
-    // costs no download; then one slot for the check, the download and the
-    // presentation.
-    presenter
-        .verify_token(&livekit_token)
+    // costs no download; then its bot's slot for the check, the download
+    // and the presentation.
+    let slot = presenter
+        .reserve(&livekit_token)
+        .await
         .map_err(create_failure)?;
-    let slot = presenter.reserve().map_err(create_failure)?;
     presenter
         .validate_credentials(&slot, &livekit_token)
         .await
@@ -274,9 +275,6 @@ pub async fn create_presentation(
         Ok(parsed) => parsed,
         Err(response) => return response,
     };
-    // Stored by upstream only for client composition, which this node does not run.
-    let _ = parsed.presenter_identity;
-
     let file_name = files::sanitize_filename(&parsed.file_name);
     let Some(file_type) = files::file_type_from_name(&file_name) else {
         return bad_request("Unsupported file type. Only .pdf and .pptx files are supported.");
@@ -300,21 +298,53 @@ pub async fn create_presentation(
         size = parsed.file.len(),
         "Creating presentation from pdf file"
     );
+    let identity = parsed.presenter_identity;
     let created = match parsed.slot {
         Some(slot) => {
             presenter
-                .create_reserved(slot, parsed.file, &parsed.livekit_token, &file_name)
+                .create_reserved(
+                    slot,
+                    parsed.file,
+                    &parsed.livekit_token,
+                    &file_name,
+                    identity,
+                )
                 .await
         }
         None => {
             presenter
-                .create(parsed.file, &parsed.livekit_token, &file_name)
+                .create(parsed.file, &parsed.livekit_token, &file_name, identity)
                 .await
         }
     };
     match created {
         Ok(info) => (StatusCode::CREATED, Json(info)).into_response(),
         Err(e) => create_failure(e),
+    }
+}
+
+/// `GET /presentations/{id}/slides/{hash}.png`, upstream's
+/// `src/controllers/handlers/slide-image-handler.ts`: the PNG of a slide the
+/// session keeps, else 404. No authorization: the session id and the content
+/// hash are the capability, so the answer is `private`.
+pub async fn slide_picture(
+    State(presenter): State<PresenterState>,
+    Path((id, file)): Path<(String, String)>,
+) -> Response {
+    let picture = match (presenter, file.strip_suffix(".png")) {
+        (Some(presenter), Some(hash)) => presenter.slide_picture(&id, hash).await,
+        _ => None,
+    };
+    match picture {
+        Some(png) => (
+            [
+                (CONTENT_TYPE, "image/png"),
+                (CACHE_CONTROL, "private, max-age=31536000, immutable"),
+            ],
+            png,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

@@ -121,7 +121,8 @@ pub struct RawSettings {
     pub authoritative_server_address: Option<String>,
     /// `MODERATOR_TOKEN`: the bearer of the user-moderation routes.
     pub moderator_token: Option<String>,
-    /// `PLATFORM_USER_MODERATORS`: comma/space-separated moderator wallets.
+    /// `PLATFORM_USER_MODERATORS`: comma/space-separated moderator wallets,
+    /// read only while no `platform_user_moderators` flag document is held.
     pub moderator_addresses: String,
     /// `COMMS_GATEKEEPER_AUTH_TOKEN`: the platform service token in front of
     /// the voice routes and the world ban-status route; unset answers 503.
@@ -156,6 +157,8 @@ pub struct RawSettings {
     /// `preview`/`localpreview` realm) gets a Genesis scene token without a
     /// deployed scene behind it.
     pub allow_local_preview: bool,
+    /// `REALM_NAME`: this node's Genesis City realm name (default `main`).
+    pub realm_name: Option<String>,
 }
 
 impl RawSettings {
@@ -202,6 +205,8 @@ pub struct Settings {
     pub commit_hash: Option<String>,
     /// Local preview scenes skip the Genesis deployment check (`ALLOW_LOCAL_PREVIEW`).
     pub allow_local_preview: bool,
+    /// This node's Genesis City realm name: never read as a world's label.
+    pub realm_name: String,
 }
 
 /// Masks the moderator and gatekeeper tokens (the LiveKit secret is masked
@@ -318,7 +323,7 @@ impl Settings {
         }
         if moderator_token.is_none() && moderator_addresses.is_empty() {
             tracing::warn!(
-                "neither MODERATOR_TOKEN nor PLATFORM_USER_MODERATORS set; the user-moderation routes reject every caller"
+                "neither MODERATOR_TOKEN nor PLATFORM_USER_MODERATORS set; until a platform_user_moderators flag document is held, the user-moderation routes reject every caller"
             );
         }
         if gatekeeper_auth_token.is_none() {
@@ -367,6 +372,9 @@ impl Settings {
             },
             commit_hash: raw.commit_hash,
             allow_local_preview: raw.allow_local_preview,
+            realm_name: raw
+                .realm_name
+                .unwrap_or_else(|| crate::world_identity::GENESIS_CITY_REALM.to_string()),
         })
     }
 
@@ -397,9 +405,13 @@ impl Settings {
             cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
             allow_local_preview: false,
+            realm_name: crate::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }
 }
+
+/// The dapps flag whose variant payload lists the moderator wallets.
+pub const PLATFORM_USER_MODERATORS_FLAG: &str = "platform_user_moderators";
 
 crate::shared::send_sync_once! {
     pub struct CommsState {
@@ -461,6 +473,9 @@ crate::shared::send_sync_once! {
         /// holds this state through its gateway.
         island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
         pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+        /// The dapps flags document whose `platform_user_moderators` variant
+        /// lists the moderator wallets; `serve` attaches it once.
+        platform_moderator_flags: std::sync::OnceLock<Arc<crate::shared::feature_flags::Snapshot>>,
     }
 }
 
@@ -510,7 +525,42 @@ impl CommsState {
             bus: Arc::new(bus::DisabledBus),
             assignments: None,
             island_feed: Mutex::new(Weak::new()),
+            platform_moderator_flags: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Attaches the refreshed dapps flags document the moderator gate reads (once).
+    pub fn set_platform_moderator_flags(&self, flags: Arc<crate::shared::feature_flags::Snapshot>) {
+        let _ = self.platform_moderator_flags.set(flags);
+    }
+
+    /// The wallets the moderator gate admits, read on every check: the
+    /// `platform_user_moderators` flag once a flags document is held (none
+    /// while the flag or its variant is off), `PLATFORM_USER_MODERATORS`
+    /// before that (`FF_URL` unset, or never fetched and none stored).
+    /// A failed refresh keeps the last document with no age limit, so a
+    /// revocation waits for the next successful refresh. Social's
+    /// `social_dapps_flags_last_refresh_timestamp_seconds` shows its age; it
+    /// exists only after a process's first successful refresh, so a staleness
+    /// alert must also fire while it is absent.
+    pub fn platform_moderators(&self) -> std::borrow::Cow<'_, [Address]> {
+        let held = self
+            .platform_moderator_flags
+            .get()
+            .map(|flags| flags.held());
+        let Some((doc, true)) = held else {
+            return std::borrow::Cow::Borrowed(&self.settings.moderator_addresses);
+        };
+        crate::shared::feature_flags::enabled_variant_values(
+            &doc,
+            "dapps",
+            PLATFORM_USER_MODERATORS_FLAG,
+        )
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|value| Address::parse(value).ok())
+        .collect::<Vec<_>>()
+        .into()
     }
 
     pub fn with_ban_status(mut self, bans: Arc<dyn moderation::BanStatus>) -> Self {
@@ -701,7 +751,8 @@ impl CommsState {
                 self.bans.clone(),
                 self.settings.authoritative_server_address.clone(),
             )
-            .with_assignments(self.assignment_reader()),
+            .with_assignments(self.assignment_reader())
+            .with_local_preview(self.settings.allow_local_preview),
         );
         let authority = if generation_required {
             let audience = self.cluster.control_v4_audience.clone().ok_or_else(|| {
@@ -759,8 +810,20 @@ impl CommsState {
     /// is operator configuration, commonly a private address).
     /// Read-only local recovery runs in every serving replica, independently
     /// of fleet-wide jobs and the primary connector assignment subscriber.
+    /// Every replica applies any replica's World room events to its online view.
     pub fn spawn_presence_recovery(self: &Arc<Self>, jobs: &Jobs) {
-        self.presence.spawn_recovery(self.clone(), jobs);
+        use crate::protocol::bus::room_events::{RoomEvent, SUBJECT};
+        let presence = self.presence.clone();
+        let events = self.bus.subscribe(
+            SUBJECT,
+            None,
+            Arc::new(move |_, payload| {
+                if let Ok(event) = RoomEvent::decode(payload) {
+                    presence.apply_room_event(&event);
+                }
+            }),
+        );
+        self.presence.spawn_recovery(self.clone(), events, jobs);
     }
 
     pub fn room_service(&self) -> livekit::RoomServiceClient<'_> {

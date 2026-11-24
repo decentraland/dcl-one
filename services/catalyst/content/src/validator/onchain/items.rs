@@ -125,15 +125,32 @@ fn token_ref(l1: bool, contract: Option<Address>, id: &str) -> ItemRef {
 }
 
 pub fn item_ref(urn: &str) -> ItemRef {
-    // Classify the decoded segments the content step resolved, not the raw spelling.
+    item_ref_of(urn, super::super::urn::segments(urn).as_deref())
+}
+
+/// [`item_ref`], and whether the reference's on-chain client
+/// (`ownsItemsAtTimestamp`) leaves the item out, counting it as owned: a
+/// collections-v2 item on L1, a collections-v1 item on L2, and a third-party
+/// item whose `nftChain` is not spelled as a listed network (`ethereum` is
+/// not one). The URN is resolved once for both.
+pub fn classify(urn: &str) -> (ItemRef, bool) {
     let resolved = super::super::urn::segments(urn);
-    let segments: Vec<String> = match &resolved {
+    let item = item_ref_of(urn, resolved.as_deref());
+    let skipped = resolved
+        .as_deref()
+        .is_some_and(|segments| reference_skips(&item, segments));
+    (item, skipped)
+}
+
+fn item_ref_of(urn: &str, resolved: Option<&[(String, String)]>) -> ItemRef {
+    // Classify the decoded segments the content step resolved, not the raw spelling.
+    let segments: Vec<String> = match resolved {
         Some(segments) => segments.iter().map(|(_, d)| d.to_lowercase()).collect(),
         None => urn.split(':').map(str::to_lowercase).collect(),
     };
     let parts: Vec<&str> = segments.iter().map(String::as_str).collect();
     // The resolver picks the collections-v1 route on the raw collection segment.
-    let v1_by_contract = |collection: &str| match &resolved {
+    let v1_by_contract = |collection: &str| match resolved {
         Some(segments) => segments
             .get(4)
             .is_some_and(|(raw, _)| super::super::urn::is_v1_contract(raw)),
@@ -199,9 +216,52 @@ pub fn item_ref(urn: &str) -> ItemRef {
     }
 }
 
+/// Whether the reference skips `item`, given the URN's resolved segments.
+fn reference_skips(item: &ItemRef, segments: &[(String, String)]) -> bool {
+    let kind = segments.get(3).map(|(_, d)| d.to_lowercase());
+    match (kind.as_deref(), item) {
+        (Some("collections-v1"), ItemRef::Token { l1, .. }) => !l1,
+        (Some("collections-v2"), ItemRef::Token { l1, .. }) => *l1,
+        (Some("collections-thirdparty"), ItemRef::ThirdParty { .. }) => {
+            let nft_chain = segments.get(7).map(|(_, d)| d.as_str()).unwrap_or("");
+            !L1_NETWORKS.contains(&nft_chain) && !L2_NETWORKS.contains(&nft_chain)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reference_skips_cross_layer_items_and_unlisted_nft_chains() {
+        for skipped in [
+            format!("urn:decentraland:ethereum:collections-v2:{A}:0:5"),
+            format!("urn:decentraland:sepolia:collections-v2:{A}:0:5"),
+            format!("urn:decentraland:matic:collections-v1:{A}:hat:3"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:ethereum:{A}:5"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:Mainnet:{A}:5"),
+        ] {
+            let (item, skipped_by_reference) = classify(&skipped);
+            assert!(skipped_by_reference, "{skipped}");
+            assert_eq!(item, item_ref(&skipped), "{skipped}");
+            assert!(item.on_l1().is_some(), "{skipped} is asked locally");
+        }
+        for asked in [
+            format!("urn:decentraland:matic:collections-v2:{A}:0:5"),
+            format!("urn:decentraland:ethereum:collections-v1:{A}:hat:3"),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12".to_string(),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:mainnet:{A}:5"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:amoy:{A}:5"),
+            format!("urn:decentraland:matic:collections-v2:{A}:1"),
+            "invalid-urn".to_string(),
+        ] {
+            let (item, skipped_by_reference) = classify(&asked);
+            assert!(!skipped_by_reference, "{asked}");
+            assert_eq!(item, item_ref(&asked), "{asked}");
+        }
+    }
 
     const A: &str = "0xaaa0000000000000000000000000000000000001";
 
@@ -245,7 +305,6 @@ mod tests {
                 token: U256::from(42u8)
             }
         );
-        assert!(!super::super::is_malformed_item(&urn));
         let by_name = "urn:decentraland:ethereum:collections-v1:halloween%5F2019:hat:12";
         assert_eq!(
             crate::validator::urn::parse(by_name),
@@ -332,7 +391,7 @@ mod tests {
         assert_eq!(
             item_ref(&format!("urn:decentraland:sepolia:collections-v2:{A}:0:5")),
             token(true, Some(addr), 5),
-            "a v2 item on an L1 network is asked on L1, as the reference splits it"
+            "a v2 item on an L1 network is asked on L1 for a local deploy"
         );
         assert_eq!(
             item_ref(&format!("urn:decentraland:matic:collections-v1:{A}:hat:3")),

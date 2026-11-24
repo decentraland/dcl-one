@@ -45,15 +45,13 @@ describe('in-world realm change', () => {
     expect(h.session().travelError).toBeNull()
   })
 
-  it('/world and /goto genesis in chat travel the same way', async () => {
+  it('/world and /goto genesis in chat travel the same way, /goto genesis to Genesis Plaza', async () => {
     const h = renderSession()
     await enterAsGuest(h)
     act(() => h.session().chat.send('/world boedo.dcl.eth'))
     act(() => h.session().chat.send('/goto genesis'))
-    expect(h.driver.sentOf('changeRealm')).toEqual([
-      { kind: 'changeRealm', realm: 'boedo.dcl.eth', travelId: 2 },
-      { kind: 'changeRealm', realm: DEFAULT_REALM, travelId: 3 }
-    ])
+    expect(h.driver.sentOf('changeRealm')).toEqual([{ kind: 'changeRealm', realm: 'boedo.dcl.eth', travelId: 2 }])
+    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0, travelId: 3 }])
     expect(h.session().travellingTo).toBe(DEFAULT_REALM)
   })
 

@@ -12,14 +12,19 @@ import {
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getAddress } from "viem";
+import {
+  dclLogoUrl as sitesLogo,
+  SitesLocaleContext,
+  type SitesLocale,
+  SiteLayout,
+  ChromeAuthContext,
+  type ChromeAuth,
+  ChromeNavContext,
+} from "@dcl/one-ui";
 import DclTopBar from "@ui/web/frames/DclTopBar";
-import SiteLayout from "@ui/web/frames/SiteLayout";
-import { ChromeAuthContext, type ChromeAuth } from "@ui/web/frames/chrome-auth";
-import { ChromeNavContext } from "@ui/web/frames/chrome-nav";
-import { SitesLocaleContext, type SitesLocale } from "@ui/web/frames/sites-locale";
 import { forgetSignIn, recordSignIn } from "@/data/lib/auth/signin-kind";
 import { setIdentity } from "@/data/lib/auth/session";
-import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
+import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
 import ChromeNavBridge from "./ChromeNavBridge";
 
 vi.hoisted(() => {
@@ -1061,5 +1066,19 @@ describe("when Home notifications are opened", () => {
     it("should restore focus to the bell", () => {
       expect(document.activeElement).toBe(bell);
     });
+  });
+});
+
+describe("the Sites banner logo", () => {
+  it("shows the decorative 40px Decentraland logo in the banner", () => {
+    render(<Host />);
+
+    const logos = Array.from(screen.getByRole("banner").querySelectorAll("img"))
+      .filter((image) => image.getAttribute("src") === sitesLogo);
+    expect(logos).toHaveLength(1);
+    const [logo] = logos;
+    expect(logo?.getAttribute("alt")).toBe("");
+    expect(logo?.getAttribute("width")).toBe("40");
+    expect(logo?.getAttribute("height")).toBe("40");
   });
 });

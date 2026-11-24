@@ -140,6 +140,30 @@ describe('claiming, saving and failing', () => {
     expect(screen.getByText('failed to deploy to server.')).toBeTruthy()
   })
 
+  it('keeps a discarded draft for the same wallet and hides it from another account', async () => {
+    const session = fakeSession()
+    const onClose = vi.fn()
+    const renderEditor = (data: Profile | null, saving: boolean, saveError: string | null) => (
+      <SessionProvider value={{ ...session, profile: fakeProfileState({ data, saving, saveError }) }}>
+        <NameEditModal onClose={onClose} />
+      </SessionProvider>
+    )
+    const error = 'Your session changed before the save was confirmed.'
+    const { rerender } = render(renderEditor(UNCLAIMED, false, null))
+    await userEvent.clear(screen.getByLabelText('Username'))
+    await userEvent.type(screen.getByLabelText('Username'), 'PrivateDraft')
+    rerender(renderEditor(UNCLAIMED, true, null))
+    rerender(renderEditor(null, false, error))
+    expect(screen.queryByDisplayValue('PrivateDraft')).toBeNull()
+    rerender(renderEditor(UNCLAIMED, false, error))
+    expect(screen.getByText(error)).toBeVisible()
+    expect(screen.getByLabelText('Username')).toHaveValue('PrivateDraft')
+    expect(onClose).not.toHaveBeenCalled()
+    rerender(renderEditor(CLAIMED, false, error))
+    expect(screen.queryByDisplayValue('PrivateDraft')).toBeNull()
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('opens over the passport through the popup layer', () => {
     const s = fakeSession()
     s.profile = fakeProfileState({ data: CLAIMED, ownedNames: ['Mojito'] })

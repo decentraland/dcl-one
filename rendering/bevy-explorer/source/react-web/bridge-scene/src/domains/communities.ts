@@ -33,11 +33,13 @@ import type {
   CommunityRequestMember,
   CommunityRequestsGroup,
   CommunitySaveResultMessage,
+  DiscoverPlace,
   ManageCommunityRequestRequest
 } from '@explorer-core/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
-// live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
+// are the camera-reel photos taken in the community's places (as unity-explorer's card: a signed
+// POST /api/places/images with the place ids). Community thumbnails are NOT
 // in the upstream list response — Unity builds them from the id against the assets CDN
 // (DecentralandUrl.CommunityThumbnail); a dcl-one deployment sends `thumbnailUrl`, which wins.
 // Some 404 (no thumbnail set) → the React <img> falls back to the initial.
@@ -274,19 +276,35 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
   }
 }
 
+/** A places-service row as the card's actions and Place Detail read it: a World is one with a name
+ *  even when the row leaves out `world`, and the texts and parcels are never missing. */
+function placeDetail(row: PlaceRaw & Partial<DiscoverPlace>): DiscoverPlace {
+  const worldName = row.world_name ?? ''
+  return {
+    ...row,
+    title: row.title ?? row.name ?? '',
+    description: row.description ?? '',
+    image: row.image ?? '',
+    owner: row.owner ?? null,
+    positions: row.positions ?? (row.base_position != null ? [row.base_position] : []),
+    world: row.world ?? worldName !== '',
+    world_name: worldName !== '' ? worldName : undefined
+  }
+}
+
 async function detail(id: string): Promise<{ members: CommunityMember[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
   const b = await base('v2')
   const placesBase = await base('v1')
   const eventsBase = `${await serviceBase('events')}/api/events`
-  const reelBase = `${await serviceBase('cameraReel')}/api/communities`
   // The id reaches us from the service (a uuid), but it lands in a URL — encode it so it
   // can only ever be one path segment / one query value.
   const cid = encodeURIComponent(id)
-  const [membersRes, placesRes, eventsRes, photosRes] = await Promise.all([
+  const [membersRes, placesRes, eventsRes] = await Promise.all([
     signed<{ results?: MemberRaw[] }>(`${b}/${cid}/members?limit=100`).catch(() => undefined),
-    signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places?limit=20`).catch(() => undefined),
-    getJson<{ data?: { events?: EventRaw[] } }>(`${eventsBase}?community_id=${cid}&list=upcoming`).catch(() => undefined),
-    signed<{ images?: PhotoRaw[] }>(`${reelBase}/${cid}/images?limit=30`).catch(() => undefined)
+    // as unity-explorer's card: no limit, so the service's full page (100); the photos query and
+    // the PLACES tab both take every id it lists
+    signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places`).catch(() => undefined),
+    getJson<{ data?: { events?: EventRaw[] } }>(`${eventsBase}?community_id=${cid}&list=upcoming`).catch(() => undefined)
   ])
   const memberRows = membersRes?.results ?? []
   // One batch for every member's name and face — the list alone would otherwise be up to 100
@@ -296,26 +314,41 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; places:
   // As unity-explorer's card: the community's place ids, then each place from the places service
   // (title, picture, owner). The social service's own row is the fallback when that read fails.
   const placeRows = placesRes?.results ?? []
-  const destinations =
+  const [destinations, photosRes] = await Promise.all([
     placeRows.length > 0
-      ? await serviceBase('places')
-          .then((b) => signed<PlaceRaw[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
+      ? serviceBase('places')
+          .then((b) => signed<(PlaceRaw & Partial<DiscoverPlace>)[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
           .catch((e: unknown) => {
             console.error('[communities] places details failed', e)
             return undefined
           })
+      : undefined,
+    placeRows.length > 0
+      ? serviceBase('cameraReel')
+          .then((b) =>
+            signed<{ images?: PhotoRaw[] }>(`${b}/api/places/images?limit=30&offset=0`, 'POST', {
+              placesIds: placeRows.map((pl) => pl.id)
+            })
+          )
+          .catch((e: unknown) => {
+            console.error('[communities] photos failed', e)
+            return undefined
+          })
       : undefined
+  ])
   const byId = new Map((destinations ?? []).map((d) => [d.id, d]))
   const me = (getPlayer()?.userId ?? '').toLowerCase()
   const places: CommunityPlace[] = placeRows.map((row) => {
-    const pl = byId.get(row.id) ?? row
+    const read = byId.get(row.id)
+    const pl = read ?? row
     return {
       id: pl.id,
       title: pl.title ?? pl.name ?? '',
       thumbnail: pl.image,
       positions: (pl.world_name ?? '') !== '' ? (pl.world_name ?? undefined) : (pl.base_position ?? pl.positions?.[0]),
       likeRate: pl.like_rate ?? pl.likeRate,
-      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me
+      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me,
+      ...(read != null ? { detail: placeDetail(read) } : {})
     }
   })
   const events: CommunityEvent[] = (eventsRes?.data?.events ?? []).map((e) => ({

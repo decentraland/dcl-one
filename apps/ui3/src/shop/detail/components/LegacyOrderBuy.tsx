@@ -18,13 +18,14 @@ import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
-import { declined, isTxPending, isTxReverted, type WaitOptions } from "../../market/lib/tx";
+import { purchaseFailure, type PurchaseFailure, type WaitOptions } from "../../market/lib/tx";
 import { executeLegacyOrder, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";
 import { landCategoryOf } from "@shop/land/contracts";
 import { readEstateFingerprint } from "../../land/estate";
 import { rpcReader, type ChainReader } from "../../land/evm";
 import type { LegacyOrderRef } from "@shop/detail/api";
+import ConfirmingNotice from "./ConfirmingNotice";
 import "./legacyorderbuy.css";
 
 export type LegacyOrderBuyProps = {
@@ -36,13 +37,15 @@ export type LegacyOrderBuyProps = {
   quoted: ManaWei | null;
   onClose(): void;
   onDone?(txHash: string): void;
+  /** The sale was sent and is still confirming: the dialog stays on its notice, and the page may read the token again. */
+  onPending?(txHash: string): void;
   wait?: WaitOptions;
   portal?: boolean;
   /** Reads the Estate registry (defaults to the node's read relay for the order's chain). */
   reader?: ChainReader;
 };
 
-type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | { kind: "pending"; txHash: string } | { kind: "error"; message: string };
+type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | PurchaseFailure;
 
 const STEP_TEXT: Record<OrderPhase, string> = {
   approving: "Allow the marketplace to use your MANA in your wallet…",
@@ -50,7 +53,7 @@ const STEP_TEXT: Record<OrderPhase, string> = {
   pending: "Waiting for the transaction to confirm…",
 };
 
-export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, wait, portal, reader }: LegacyOrderBuyProps) {
+export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, onPending, wait, portal, reader }: LegacyOrderBuyProps) {
   const wallet = useShopWallet();
   const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
@@ -113,11 +116,13 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
       invalidateAfterPurchase(qc, { contractAddress, tokenId });
       onDone?.(hash);
     } catch (e) {
-      if (isTxPending(e)) setPhase({ kind: "pending", txHash: (e as { txHash: string }).txHash });
-      else if (declined(e)) setPhase({ kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." });
-      else if (isTxReverted(e)) setPhase({ kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." });
-      else if (sent) setPhase({ kind: "pending", txHash: sent });
-      else setPhase({ kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." });
+      const failure = purchaseFailure(e, sent);
+      setPhase(failure);
+      if (failure.kind === "pending") {
+        // The sale sent but not confirmed: the MANA is probably spent, so the balances are read again here too.
+        invalidateAfterPurchase(qc, { contractAddress, tokenId });
+        onPending?.(failure.txHash);
+      }
     }
   }
 
@@ -130,11 +135,8 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
             <p role="status">Purchase complete. {name} is on its way to your wallet.</p>
             <Button onClick={onClose}>Done</Button>
           </>
-        ) : phase.kind === "pending" ? (
-          <>
-            <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your activity in a moment.</p>
-            <Button onClick={onClose}>Close</Button>
-          </>
+        ) : phase.kind === "pending" || phase.kind === "approval-pending" ? (
+          <ConfirmingNotice outcome={phase} chainId={chainId} onClose={onClose} />
         ) : (
           <>
             <dl className="shop-orderbuy__terms">

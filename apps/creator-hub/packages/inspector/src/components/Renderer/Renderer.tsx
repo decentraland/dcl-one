@@ -72,6 +72,7 @@ import { Shortcuts } from './Shortcuts';
 import { TransformInput } from './TransformInput';
 import { Metrics } from './Metrics';
 import { SceneMinimap } from './SceneMinimap';
+import { deleteSelectedEntities, duplicateSelectedEntities } from './entity-shortcuts';
 
 import './Renderer.css';
 
@@ -138,32 +139,14 @@ const Renderer: React.FC = () => {
   const isUIDesignerOpen = !hiddenPanels[PanelName.UI_DESIGNER];
   const assetExplorerActive = useAppSelector(isAssetExplorerActive);
 
-  const deleteSelectedEntities = useCallback(() => {
+  const handleDeleteShortcut = useCallback(() => {
     if (!sdk || isUIDesignerOpen) return;
-    const selectedEntitites = sdk.operations.getSelectedEntities();
-    selectedEntitites.forEach(entity => sdk.operations.removeEntity(entity));
-    void sdk.operations.dispatch();
+    deleteSelectedEntities(sdk);
   }, [sdk, isUIDesignerOpen]);
 
-  const duplicateSelectedEntities = useCallback(() => {
+  const handleDuplicateShortcut = useCallback(() => {
     if (!sdk || isUIDesignerOpen) return;
-    sdk.renderer.camera.setControlEnabled(false);
-    const selectedEntitites = sdk.operations.getSelectedEntities();
-    const preferredGizmo =
-      selectedEntitites.length > 0
-        ? sdk.components.Selection.getOrNull(selectedEntitites[0])?.gizmo
-        : undefined;
-    sdk.operations.removeSelectedEntities();
-    let insertAfter =
-      selectedEntitites.length > 1 ? selectedEntitites[selectedEntitites.length - 1] : undefined;
-    selectedEntitites.forEach(entity => {
-      const cloned = sdk.operations.duplicateEntity(entity, preferredGizmo, insertAfter);
-      insertAfter = cloned;
-    });
-    void sdk.operations.dispatch();
-    setTimeout(() => {
-      sdk.renderer.camera.setControlEnabled(true);
-    }, 100);
+    duplicateSelectedEntities(sdk);
   }, [sdk, isUIDesignerOpen]);
 
   const copySelectedEntities = useCallback(() => {
@@ -213,10 +196,10 @@ const Renderer: React.FC = () => {
   }, [sdk]);
 
   const entityKeys = { enabled: !assetExplorerActive };
-  useHotkey([DELETE, BACKSPACE], deleteSelectedEntities, document.body, entityKeys);
+  useHotkey([DELETE, BACKSPACE], handleDeleteShortcut, document.body, entityKeys);
   useHotkey([COPY, COPY_ALT], copySelectedEntities, document.body, entityKeys);
   useHotkey([PASTE, PASTE_ALT], pasteSelectedEntities, document.body, entityKeys);
-  useHotkey([DUPLICATE, DUPLICATE_ALT], duplicateSelectedEntities, document.body, entityKeys);
+  useHotkey([DUPLICATE, DUPLICATE_ALT], handleDuplicateShortcut, document.body, entityKeys);
   const cameraKeys = { enabled: !isUIDesignerOpen };
   useHotkey([ZOOM_IN, ZOOM_IN_ALT], zoomIn, document.body, cameraKeys);
   useHotkey([ZOOM_OUT, ZOOM_OUT_ALT], zoomOut, document.body, cameraKeys);

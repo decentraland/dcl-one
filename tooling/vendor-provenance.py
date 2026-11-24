@@ -26,7 +26,6 @@ VENDOR = ROOT / "rendering/bevy-explorer/vendor"
 # different repository fails; changing a line here is the review of the new repository.
 ANCHORS = {
     "bevy_dui": "https://github.com/robtfm/bevy_dui",
-    "boimp": "https://github.com/robtfm/boimp",
     "rpc-rust": "https://github.com/decentraland/rpc-rust",
 }
 

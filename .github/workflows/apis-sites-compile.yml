@@ -63,7 +63,7 @@ jobs:
           df -h /
           free -m
       - name: Fetch Sites media and shared fonts from Git LFS
-        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/apps/sites/assets/**,library/ui/foundations/typography/fonts/**,apps/ui3/public/assets/invite/**'
+        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/apps/sites/assets/**,library/ui/assets/**,library/ui/foundations/typography/fonts/**,apps/ui3/public/assets/invite/**'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
@@ -91,15 +91,24 @@ jobs:
           lookup-only: true
           key: ${{ steps.cache-keys.outputs.sites-app-key }}
           restore-keys: ${{ steps.cache-keys.outputs.sites-app-main-key }}
+      - name: Look for the compiled UI gallery
+        id: ui-gallery-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ui-gallery-nix
+          lookup-only: true
+          key: ${{ steps.cache-keys.outputs.ui-gallery-key }}
+          restore-keys: ${{ steps.cache-keys.outputs.ui-gallery-main-key }}
       - name: Decide which packages already have an exact entry
         id: compiled
         env:
           APIS: ${{ steps.cache-keys.outputs.apis-key }} ${{ steps.apis-cache.outputs.cache-matched-key }}
           SITES_APP: ${{ steps.cache-keys.outputs.sites-app-key }} ${{ steps.sites-app-cache.outputs.cache-matched-key }}
+          UI_GALLERY: ${{ steps.cache-keys.outputs.ui-gallery-key }} ${{ steps.ui-gallery-cache.outputs.cache-matched-key }}
         run: |
           # An entry under the exact derivation digest leaves the image build nothing to compile.
           exact() { [ -n "$2" ] && [ "${2##*-}" = "${1##*-}" ] && echo true || echo false; }
-          for group in APIS SITES_APP; do
+          for group in APIS SITES_APP UI_GALLERY; do
             read -r primary matched <<< "${!group}"
             name=${group,,}
             echo "${name//_/-}=$(exact "$primary" "$matched")" >> "$GITHUB_OUTPUT"
@@ -111,11 +120,12 @@ jobs:
           SAVE: ${{ steps.cache-keys.outputs.save }}
           APIS: ${{ steps.compiled.outputs.apis }}
           SITES_APP: ${{ steps.compiled.outputs.sites-app }}
+          UI_GALLERY: ${{ steps.compiled.outputs.ui-gallery }}
         run: |
           # A compiled package reaches the image build only through the cache. A run that cannot
           # save an entry (a rerun, a ref that only reads the main entries) compiles in the image build.
           work=false
-          if [ "$SAVE" = true ] && [ "$GITHUB_RUN_ATTEMPT" = 1 ] && { [ "$APIS" != true ] || [ "$SITES_APP" != true ]; }; then
+          if [ "$SAVE" = true ] && [ "$GITHUB_RUN_ATTEMPT" = 1 ] && { [ "$APIS" != true ] || [ "$SITES_APP" != true ] || [ "$UI_GALLERY" != true ]; }; then
             work=true
           fi
           echo "work=$work" >> "$GITHUB_OUTPUT"
@@ -149,12 +159,13 @@ jobs:
           SITES: ${{ steps.cache-keys.outputs.sites-key }} ${{ steps.sites-cache.outputs.cache-matched-key }}
           APIS: ${{ steps.cache-keys.outputs.apis-key }} ${{ steps.apis-cache.outputs.cache-matched-key }}
           SITES_APP: ${{ steps.cache-keys.outputs.sites-app-key }} ${{ steps.sites-app-cache.outputs.cache-matched-key }}
+          UI_GALLERY: ${{ steps.cache-keys.outputs.ui-gallery-key }} ${{ steps.ui-gallery-cache.outputs.cache-matched-key }}
           # A dependency archive skipped for an exact compiled hit was neither restored nor built.
           SKIPPED: ${{ steps.compiled.outputs.apis == 'true' && 'CATALYST' || '' }} ${{ steps.compiled.outputs.sites-app == 'true' && 'SITES' || '' }}
         run: |
           # An entry is saved when the restored one, if any, is not this exact derivation set.
           saves() { [ "${2##*-}" != "${1##*-}" ] && echo true || echo false; }
-          for group in CATALYST SITES APIS SITES_APP; do
+          for group in CATALYST SITES APIS SITES_APP UI_GALLERY; do
             read -r primary matched <<< "${!group}"
             case " $SKIPPED " in
               *" $group "*) save=false ;;
@@ -186,13 +197,13 @@ jobs:
           df -h /
       - name: Build the complete Sites toolchain and dependencies
         if: steps.plan.outputs.work == 'true' && steps.compiled.outputs.sites-app != 'true'
-        # runtime-deps, unlike the fixed-output sites-deps, rebuilds when the lockfile changes.
         run: nix build .#sites-toolchain .#sites-runtime-deps --no-link -L
       - name: Compile the APIs and the Sites apps
         if: steps.plan.outputs.work == 'true'
         env:
           APIS: ${{ steps.compiled.outputs.apis }}
           SITES_APP: ${{ steps.compiled.outputs.sites-app }}
+          UI_GALLERY: ${{ steps.compiled.outputs.ui-gallery }}
         run: |
           # The same flake reference as the image build, so that build finds these derivations.
           targets=()
@@ -200,6 +211,7 @@ jobs:
           if [ "$SITES_APP" != true ]; then
             targets+=('git+file:.?lfs=1#sites-app' 'git+file:.?lfs=1#sites-app-polygon-credits')
           fi
+          if [ "$UI_GALLERY" != true ]; then targets+=('git+file:.?lfs=1#ui-gallery'); fi
           nix build "${targets[@]}" --no-link -L
           df -h /
       - name: Allow cache uploads only from current first attempts
@@ -211,16 +223,15 @@ jobs:
         run: |
           allowed=false
           if [ "$GITHUB_RUN_ATTEMPT" = 1 ]; then
-            ref=${GITHUB_REF#refs/}
-            expected=$GITHUB_SHA
-            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              ref=${ref%/merge}/head
-              expected=$PR_HEAD_SHA
-            fi
-            if [ -n "$expected" ] && current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/$ref" --jq .object.sha); then
-              if [ "$current" = "$expected" ]; then allowed=true; fi
-            else
-              echo '::warning::Cannot verify the current ref; skipping cache uploads'
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+              allowed=true
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              ref=${GITHUB_REF#refs/}
+              if [ -n "$PR_HEAD_SHA" ] && current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/${ref%/merge}/head" --jq .object.sha); then
+                if [ "$current" = "$PR_HEAD_SHA" ]; then allowed=true; fi
+              else
+                echo '::warning::Cannot verify the current ref; skipping cache uploads'
+              fi
             fi
           fi
           echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
@@ -272,6 +283,25 @@ jobs:
         with:
           path: .cache/apis-nix
           key: ${{ steps.cache-keys.outputs.apis-key }}
+      - name: Export the compiled UI gallery
+        if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.ui-gallery == 'true'
+        run: |
+          cache_drv=$(nix eval --raw .#ui-gallery.drvPath)
+          image_drv=$(nix eval --raw --impure 'git+file:.?lfs=1#ui-gallery.drvPath')
+          if [ "$cache_drv" != "$image_drv" ]; then
+            echo '::error::UI gallery derivation differs between cache and image refs'
+            exit 1
+          fi
+          mkdir -p .cache/ui-gallery-nix
+          # Static files with no store references: the closure is the gallery alone.
+          nix copy --to "file://$PWD/.cache/ui-gallery-nix?compression=zstd&compression-level=3" .#ui-gallery
+          du -sh .cache/ui-gallery-nix
+      - name: Save the compiled UI gallery
+        if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.ui-gallery == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ui-gallery-nix
+          key: ${{ steps.cache-keys.outputs.ui-gallery-key }}
       - name: Export the compiled Sites app
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.sites-app == 'true'
         run: |

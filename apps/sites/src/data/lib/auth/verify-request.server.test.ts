@@ -169,8 +169,15 @@ describe("verifyAuthChainRequest", () => {
     return verifyAuthChainRequest(new Request("http://localhost/v1/collections", { headers: s.headers }));
   }
 
+  it("accepts an expiration Date.parse reads, such as a bare date", async () => {
+    for (const expiration of ["2999-01-01", "Jan 1 2999"]) {
+      const res = await delegatedRequest((address) => `Decentraland Login\nEphemeral address: ${address}\nExpiration: ${expiration}`);
+      expect(res.ok, expiration).toBe(true);
+    }
+  });
+
   it("refuses an expiration it cannot read instead of treating it as never expiring", async () => {
-    for (const expiration of ["not a date", "2999-01-01", "Jan 1 2999", "32503680000000"]) {
+    for (const expiration of ["not a date", "", "32503680000000", " 2999-01-01T00:00:00.000Z"]) {
       const res = await delegatedRequest((address) => `Decentraland Login\nEphemeral address: ${address}\nExpiration: ${expiration}`);
       expect(res, expiration).toEqual({ ok: false, status: 401, error: "malformed ephemeral payload" });
     }
@@ -187,37 +194,19 @@ describe("verifyAuthChainRequest", () => {
 });
 
 describe("parseExpiration", () => {
-  it("reads the date shapes the shared verifier reads, and nothing else", () => {
+  it("reads the expiration as Date.parse does", () => {
     const accepted: Array<[string, number]> = [
       ["2100-01-01T00:00:00.000Z", 4102444800000],
-      ["2100-01-01T00:00:00.123456789Z", 4102444800123],
       ["2100-01-01T00:00:00+03:00", 4102434000000],
-      ["2100-01-01T00:00:00", 4102444800000],
-      ["2100-01-01 00:00:00Z", 4102444800000],
-      ["  2100-01-01T00:00:00.000Z  ", 4102444800000],
+      ["2026-11-19", 1795046400000],
       ["Thu, 13 Feb 2020 15:31:10 GMT", 1581607870000],
-      ["Thu, 13 Feb 2020 15:31:10 +0300", 1581597070000],
-      ["Thu, 13 FEB 2020 15:31:10 est", 1581625870000],
-      ["Thu, 13 Feb 20 15:31:10 GMT", 1581607870000],
       ["Thu Feb 13 2020 15:31:10 GMT-0300 (Argentina Standard Time)", 1581618670000],
-      ["Thu Feb 3 2020 15:31:10 GMT-0300", 1580754670000],
-      ["Thu Feb 13 2020 15:31:10 GMT-03:00", 1581618670000],
-      ["2100-01-01T00:00:60Z", 4102444860000],
     ];
     for (const [raw, millis] of accepted) expect(parseExpiration(raw), raw).toBe(millis);
+  });
 
-    for (const raw of [
-      "2100-01-01",
-      "2100-01-01 00:00:00",
-      "2100-01-01T00:00Z",
-      "2100-01-01T00:00:00-0300",
-      "2100-02-30T00:00:00Z",
-      "Thu, 3 Feb 2020 15:31:10 GMT",
-      "Thu, 13 Feb 2020 15:31:10 UTC",
-      "Feb 13 2020 15:31:10 GMT-0300",
-      "Thu Feb 13 2020 15:31:10 GMT-03",
-      "1700000000000",
-    ]) {
+  it("refuses what Date.parse cannot read, without trimming", () => {
+    for (const raw of ["not a date", "", "1700000000000", "  2100-01-01T00:00:00.000Z  "]) {
       expect(parseExpiration(raw), raw).toBeNull();
     }
   });

@@ -752,7 +752,7 @@ fn display_tracked_components(
         return;
     };
 
-    if !track.0 || f.0.is_multiple_of(100) {
+    if !track.0 || !f.0.is_multiple_of(100) {
         return;
     }
 

@@ -21,8 +21,8 @@
 //! - Events: `dataReceived {identity, payload}` (base64 packet; only from
 //!   the room metadata's presenters and carrying `presentation:`, so scene
 //!   traffic never crosses), `roomMetadata {metadata}`, `participantCount
-//!   {count}` (remote participants) and `disconnected {reason}`, after which
-//!   the bot exits.
+//!   {count}` (the audience: remote participants but presentation bots and
+//!   the RTMP ingress) and `disconnected {reason}`, after which the bot exits.
 //!
 //! One reader takes the bot's stdout and never waits on the session: replies
 //! complete their commands at once, the room's metadata and participant
@@ -65,7 +65,7 @@ pub struct RoomData {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoomState {
     pub metadata: String,
-    /// Remote participants in the room.
+    /// The room's audience: no presentation bot, no RTMP ingress.
     pub participants: usize,
 }
 
@@ -97,6 +97,30 @@ pub struct Connected {
     pub link: Arc<dyn BotLink>,
     pub data: mpsc::Receiver<RoomData>,
     pub room: watch::Receiver<RoomState>,
+}
+
+/// The gatekeeper's side of the presenter: the room service calls for a bot
+/// that ended without leaving (it holds the LiveKit key), and whether a bot's
+/// Cast credential is still the room's active one.
+#[async_trait::async_trait]
+pub trait Rooms: Send + Sync {
+    fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_>;
+    /// Whether the bot `identity` of `room` holds the room's active Cast
+    /// credential: a bot of a revoked or rotated one does not.
+    async fn holds_credential(&self, room: &str, identity: &str) -> anyhow::Result<bool>;
+}
+
+#[async_trait::async_trait]
+impl Rooms for crate::gatekeeper::CommsState {
+    fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_> {
+        Self::room_service(self)
+    }
+    async fn holds_credential(&self, room: &str, identity: &str) -> anyhow::Result<bool> {
+        Ok(
+            crate::gatekeeper::streaming::publisher_credential_current(&self.pool, room, identity)
+                .await?,
+        )
+    }
 }
 
 /// Starts bots.

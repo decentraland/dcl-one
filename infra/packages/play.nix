@@ -20,6 +20,7 @@ let
       /rendering/bevy-explorer/vendor
       /library/protocol/proto
       /library/hashing
+      /apps/creator-hub/packages/zip-extract
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml

@@ -50,3 +50,50 @@ it("does not let a website storage event replace the active explorer wallet", as
   unsubscribe();
   session.setHostIdentity(undefined);
 });
+
+it("leaves the account out of page views when another tab signs it out", async () => {
+  const session = await import("./session");
+  const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+  const { sessionChangePending } = await import("./session-change");
+  const unsubscribe = session.subscribe(vi.fn());
+  expect(session.getIdentity()?.signer).toBe(site.signer);
+  storage.delete(session.SESSION_STORAGE_KEY);
+  window.dispatchEvent(Object.assign(new Event("storage"), { key: session.SESSION_STORAGE_KEY, newValue: null }));
+  expect(session.getIdentity()).toBeNull();
+  expect(trackedUserDropped()).toBe(true);
+  expect(sessionChangePending()).toBe(true);
+  unsubscribe();
+});
+
+it("keeps the account in page views when another tab's change leaves it signed in, or signs one in", async () => {
+  const session = await import("./session");
+  const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+  const unsubscribe = session.subscribe(vi.fn());
+  window.dispatchEvent(Object.assign(new Event("storage"), { key: session.SESSION_STORAGE_KEY }));
+  expect(session.getIdentity()?.signer).toBe(site.signer);
+  expect(trackedUserDropped()).toBe(false);
+  unsubscribe();
+
+  vi.resetModules();
+  storage.clear();
+  const fresh = await import("./session");
+  const tracked = await import("@/core/lib/telemetry/tracked-user");
+  const stop = fresh.subscribe(vi.fn());
+  storage.set(fresh.SESSION_STORAGE_KEY, JSON.stringify(site));
+  window.dispatchEvent(Object.assign(new Event("storage"), { key: fresh.SESSION_STORAGE_KEY }));
+  expect(fresh.getIdentity()?.signer).toBe(site.signer);
+  expect(tracked.trackedUserDropped()).toBe(false);
+  stop();
+});
+
+it("does not treat the Explorer's account as signed out by a website storage event", async () => {
+  const session = await import("./session");
+  const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+  const unsubscribe = session.subscribe(vi.fn());
+  session.setHostIdentity(explorer);
+  storage.delete(session.SESSION_STORAGE_KEY);
+  window.dispatchEvent(Object.assign(new Event("storage"), { key: session.SESSION_STORAGE_KEY, newValue: null }));
+  expect(trackedUserDropped()).toBe(false);
+  unsubscribe();
+  session.setHostIdentity(undefined);
+});
