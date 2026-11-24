@@ -33,12 +33,12 @@ A script under apps/ that imports a library/ui module by a relative path
 way; stylesheets and the Node-only Figma review tooling listed in
 SHARED_RELATIVE_TOOLING keep their paths.
 
-`--kit-ceiling` is a check: for every component kit under KIT_PATHS (the kits an
-app or the HUD still owns beside library/ui/components) it fails when the number
-of component files differs from what tooling/ui-kit-ceiling.json records. A kit
-may only shrink, and a smaller kit lowers its ceiling in the same change:
-`--write-kit-ceiling` records the current counts
-(docs/adr/2026-11-24-library-ui-single-source.md).
+`--kit-ceiling` is a check: for every component kit under KIT_PATHS (app-owned
+kits whose consumers can already import library/ui/components) it fails when the
+number of tracked component files differs from what tooling/ui-kit-ceiling.json
+records. A kit may only shrink, and a smaller kit lowers its ceiling in the same
+change: `--write-kit-ceiling` records the current counts and refuses to raise a
+recorded one (docs/adr/2026-11-24-library-ui-single-source.md).
 """
 import argparse
 import json
@@ -597,22 +597,31 @@ def floor_issues(floor, current):
 
 
 KIT_FILE = ROOT / 'tooling' / 'ui-kit-ceiling.json'
-# The component kits an app or the HUD still owns. library/ui/components replaces each of them.
-KIT_PATHS = ('apps/creator-hub/packages/inspector/src/components/ui', 'apps/ui3/src/atoms', 'apps/ui3/src/components',
-             'library/ui/apps/hud/design', 'library/ui/apps/sites/shared')
+# App-owned component kits that library/ui/components replaces. Each one's consumers can already import
+# @dcl/one-ui; the Explorer HUD's and the inspector's kits join when their builds can
+# (docs/adr/2026-11-24-library-ui-single-source.md).
+KIT_PATHS = ('apps/ui3/src/atoms', 'apps/ui3/src/components', 'library/ui/apps/sites/shared')
 KIT_TEST = re.compile(r'\.(?:test|spec|stories)\.[jt]sx$')
 
 
-def kit_counts(paths=KIT_PATHS, root=None):
-    """The number of component files (.tsx and .jsx, tests and stories aside) under each kit path."""
-    root = ROOT if root is None else root
-    counts = {}
-    for given in paths:
-        path = root / given
-        counts[given] = sum(1 for extension in COMPONENT_EXTENSIONS for file in path.rglob(f'*{extension}')
-                            if not KIT_TEST.search(file.name)
-                            and not SKIPPED_DIRECTORIES.intersection(file.relative_to(path).parts))
-    return counts
+def kit_counts(files, paths=KIT_PATHS):
+    """The number of component files (.tsx and .jsx, tests and stories aside) among the given paths under each kit."""
+    components = [name for name in files if name.endswith(COMPONENT_EXTENSIONS) and not KIT_TEST.search(name)]
+    return {kit: sum(1 for name in components if name.startswith(kit + '/')) for kit in paths}
+
+
+def tracked_kit_files(paths=KIT_PATHS):
+    """The tracked files under the kits that are in the working tree, so the count is what CI sees."""
+    return sorted(name for name in names(('ls-files',), '--', *paths) if (ROOT / name).is_file())
+
+
+def read_kit_ceiling(text):
+    """The recorded ceiling, or ValueError when it is not an object of whole, non-negative counts."""
+    ceiling = json.loads(text)
+    if not isinstance(ceiling, dict) or not all(
+            type(count) is int and count >= 0 for count in ceiling.values()):
+        raise ValueError('expected an object that maps each kit path to a whole number')
+    return ceiling
 
 
 def kit_issues(ceiling, current):
@@ -629,6 +638,12 @@ def kit_issues(ceiling, current):
             issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
                           'lower it with --write-kit-ceiling')
     return issues
+
+
+def raised_ceilings(ceiling, current):
+    """Each recorded kit whose current count is above its ceiling: the writer never records those."""
+    return [f'{name}: {count} component files, the ceiling is {ceiling[name]}; a ceiling is never raised'
+            for name, count in sorted(current.items()) if name in ceiling and count > ceiling[name]]
 
 
 def main():
@@ -648,16 +663,23 @@ def main():
     parser.add_argument('--write-kit-ceiling', action='store_true',
                         help='Record the current kit sizes as the ceiling')
     args = parser.parse_args()
-    if args.write_kit_ceiling:
-        KIT_FILE.write_text(json.dumps(kit_counts(), indent=2, sort_keys=True) + '\n', encoding='utf-8')
-        return 0
-    if args.kit_ceiling:
+    if args.write_kit_ceiling or args.kit_ceiling:
         try:
-            ceiling = json.loads(KIT_FILE.read_text(encoding='utf-8'))
-        except (OSError, ValueError) as error:
-            print(f'UI standards kit ceiling could not be read: {error}', file=sys.stderr)
+            ceiling = read_kit_ceiling(KIT_FILE.read_text(encoding='utf-8')) if KIT_FILE.exists() else None
+            current = kit_counts(tracked_kit_files())
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            print(f'UI standards kit ceiling could not run: {error}', file=sys.stderr)
             return 2
-        issues = kit_issues(ceiling, kit_counts())
+        if args.write_kit_ceiling:
+            issues = raised_ceilings(ceiling or {}, current)
+            if not issues:
+                KIT_FILE.write_text(json.dumps(current, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+                return 0
+        elif ceiling is None:
+            print(f'UI standards kit ceiling could not run: {relative(KIT_FILE)} is missing', file=sys.stderr)
+            return 2
+        else:
+            issues = kit_issues(ceiling, current)
         if issues:
             print('\n'.join(issues), file=sys.stderr)
             return 1

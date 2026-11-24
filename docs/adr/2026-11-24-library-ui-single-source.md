@@ -18,7 +18,8 @@ Two of these surfaces cannot import the public components today. The Explorer HU
 - A component that more than one surface needs and the library lacks is written in `library/ui/components` when its first consumer migrates.
 - App-specific UI lives in `library/ui/apps/<app>/` and is built from the shared components and tokens.
 - Every surface imports shared UI from the `@dcl/one-ui` entry and styles with the `--dcl-*` tokens.
-- The app-owned kits listed in `KIT_PATHS` of `tooling/ui_standards.py` may only shrink. `--kit-ceiling` fails when one grows, and when one shrinks without its recorded ceiling being lowered.
+- An app-owned kit whose consumers can already import the entry may only shrink: `apps/ui3/src/atoms`, `apps/ui3/src/components` and `library/ui/apps/sites/shared` (the `KIT_PATHS` of `tooling/ui_standards.py`). `--kit-ceiling` fails when one grows, and when one shrinks without its recorded ceiling being lowered; `--write-kit-ceiling` refuses to raise a recorded ceiling.
+- The Explorer HUD kit (`library/ui/apps/hud/design`) and the inspector's `components/ui` keep receiving the components their surfaces need until those surfaces can import the entry. Each joins `KIT_PATHS` in the change that makes the entry importable there.
 - `apps/ui3` is not the destination of any UI, including Creator Hub's and the inspector's.
 
 Scene UI written with the SDK's `react-ecs` and pages that do not use React (`apps/dcl-scene-cli`, the HTML pages services render, `rendering/avatar-preview`) are outside this decision.

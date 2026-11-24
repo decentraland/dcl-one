@@ -286,15 +286,33 @@ class TokensReportTest(unittest.TestCase):
         self.assertEqual(sorted(recorded), ['a.css', 'b.css'])
         self.assertEqual(ui_standards.floor_issues(recorded, current), [])
 
-    def test_kit_ceiling_counts_components_and_skips_tests_stories_and_build_output(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in ('kit/Button.tsx', 'kit/menu/Menu.jsx', 'kit/Button.test.tsx', 'kit/Button.spec.tsx',
-                         'kit/Button.stories.tsx', 'kit/Button.browser.test.tsx', 'kit/index.ts',
-                         'kit/Button.module.css', 'kit/node_modules/x/X.tsx'):
-                (root / name).parent.mkdir(parents=True, exist_ok=True)
-                (root / name).write_text('')
-            self.assertEqual(ui_standards.kit_counts(('kit', 'gone'), root), {'kit': 2, 'gone': 0})
+    def test_kit_ceiling_counts_components_and_skips_tests_stories_and_other_files(self):
+        files = ['kit/Button.tsx', 'kit/menu/Menu.jsx', 'kit/Button.test.tsx', 'kit/Button.spec.tsx',
+                 'kit/Button.stories.tsx', 'kit/Button.browser.test.tsx', 'kit/index.ts', 'kit/Button.module.css',
+                 'kitchen/Sink.tsx', 'other/Other.tsx']
+        self.assertEqual(ui_standards.kit_counts(files, ('kit', 'gone')), {'kit': 2, 'gone': 0})
+
+    def test_kit_ceiling_counts_tracked_files_only(self):
+        kit = ui_standards.KIT_PATHS[0]
+        scratch = ui_standards.ROOT / kit / 'UntrackedKitCeilingProbe.tsx'
+        before = ui_standards.kit_counts(ui_standards.tracked_kit_files())
+        scratch.write_text('')
+        try:
+            self.assertEqual(ui_standards.kit_counts(ui_standards.tracked_kit_files()), before)
+        finally:
+            scratch.unlink()
+
+    def test_kit_ceiling_file_must_map_kits_to_whole_numbers(self):
+        self.assertEqual(ui_standards.read_kit_ceiling('{"kit": 2}'), {'kit': 2})
+        for text in ('[1]', '"kit"', '{"kit": "2"}', '{"kit": 1.5}', '{"kit": true}', '{"kit": -1}', '{"kit": null}',
+                     '{'):
+            with self.assertRaises(ValueError, msg=text):
+                ui_standards.read_kit_ceiling(text)
+
+    def test_kit_ceiling_writer_never_raises_a_recorded_ceiling(self):
+        self.assertEqual(ui_standards.raised_ceilings({'kit': 3, 'other': 2}, {'kit': 3, 'other': 1, 'new': 5}), [])
+        self.assertEqual(ui_standards.raised_ceilings({'kit': 3}, {'kit': 4}),
+                         ['kit: 4 component files, the ceiling is 3; a ceiling is never raised'])
 
     def test_kit_ceiling_fails_when_a_kit_grows_or_shrinks_without_lowering_it(self):
         ceiling = {'kit': 3, 'other': 1}

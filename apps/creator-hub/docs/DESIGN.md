@@ -145,7 +145,7 @@ All inspector tokens are CSS custom properties on `:root` in **`packages/inspect
 
 ### Token naming
 
-A canonical token name is its name in dcl-one's [`apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3) (`src/atoms/primitives.css` and `surface-tokens.css`), the UI's new standard (user decision). Both token files define each mapped token under its ui3 name with our current value, and keep every older name as an alias of it (`--primary-main: var(--brand)`), so nothing repaints. The older names, the ui2-style `--palette-*` / `--shape-*` names included, are legacy: they stay valid in code and are marked "(legacy)" where this doc prescribes one. `--primary-main` is legacy for `--brand` in every one of its mentions below. New CSS uses the ui3 name. Where ui3's value differs from ours, our value stays and the row says drift, to decide later. A token with no ui3 equivalent keeps its current name (names are the user's call), and `--mui-*` are ui2's own runtime variables, left as they are.
+A canonical token name is its name in dcl-one's [`apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3) (`src/atoms/primitives.css` and `surface-tokens.css`), the names the renderer's shared atoms read (user decision). Both token files define each mapped token under its ui3 name with our current value, and keep every older name as an alias of it (`--primary-main: var(--brand)`), so nothing repaints. The older names, the ui2-style `--palette-*` / `--shape-*` names included, are legacy: they stay valid in code and are marked "(legacy)" where this doc prescribes one. `--primary-main` is legacy for `--brand` in every one of its mentions below. New CSS uses the ui3 name. Where ui3's value differs from ours, our value stays and the row says drift, to decide later. A token with no ui3 equivalent keeps its current name (names are the user's call), and `--mui-*` are ui2's own runtime variables, left as they are.
 
 | Legacy | World | ui3 name | Our value | ui3 value | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -3101,7 +3101,7 @@ Creator Hub's own chrome (home, scenes list, editor shell, settings, and modals)
 
 The brand pink matches the inspector's `--primary-main`, but it's defined separately on each side of the iframe. Change both, or neither.
 
-**ui3 names (user decision).** Creator Hub's UI moves to dcl-one `apps/ui3`, so its tokens take ui3's names (`apps/ui3/src/atoms/primitives.css` and `surface-tokens.css`) as additive aliases. A new token is defined under its ui3 name, with our value. An existing name stays and points at it (`--old: var(--ui3-name)`), keeping our value, so nothing repaints. A token ui3 has no name for gets one in ui3's scheme, which the user confirms before it lands. ui3's `--menu-bg` is a gradient; ours (`#35333b`) keeps its name. The inspector's `vars.css` keeps its own names: no token crosses the iframe.
+**ui3 names (user decision).** The renderer uses dcl-one's `apps/ui3` atoms, so its tokens take ui3's names (`apps/ui3/src/atoms/primitives.css` and `surface-tokens.css`) as additive aliases. A new token is defined under its ui3 name, with our value. An existing name stays and points at it (`--old: var(--ui3-name)`), keeping our value, so nothing repaints. A token ui3 has no name for gets one in ui3's scheme, which the user confirms before it lands. ui3's `--menu-bg` is a gradient; ours (`#35333b`) keeps its name. The inspector's `vars.css` keeps its own names: no token crosses the iframe.
 
 **Figma alignment of the status, surface, and hover tokens.** `--error`, `--danger`, `--background`, `--bg`, `--primary-hover` and `--purple-banner` carry Figma's System/Red, System/Orange, Neutrals/Shadow, Primary Light 1 and Brand/Purple values.
 
@@ -4046,7 +4046,7 @@ Everything here is current and unresolved. Design owns the Figma-side defects; t
 
 ### Code gaps
 
-Code that doesn't follow Figma or these conventions yet. Every row is open: no PR is planned, and UI work moves to dcl-one `apps/ui3` (see the note at the top), so these describe the current inspector and Creator Hub.
+Code that doesn't follow Figma or these conventions yet. Every row is open: no PR is planned, and the shared components move to dcl-one `library/ui` (see the note at the top), so these describe the current inspector and Creator Hub.
 
 | Set or area | Gap | Where | Owner | Status |
 | --- | --- | --- | --- | --- |
