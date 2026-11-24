@@ -726,7 +726,9 @@ mod tests {
             "hash".to_owned(),
             PortableSource::new("pid".to_owned(), None, None, true),
         );
-        let player = world.spawn((GlobalTransform::default(), OutOfWorld)).id();
+        let player = world
+            .spawn((GlobalTransform::default(), OutOfWorld { spawn_point: None }))
+            .id();
         world.insert_resource(PrimaryPlayerRes(player));
         app.update();
         assert_eq!(sky(&app).scene_zenith, Vec4::new(3.0, 0.0, 0.0, 1.0));
