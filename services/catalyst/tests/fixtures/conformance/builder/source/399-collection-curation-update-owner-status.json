@@ -1,0 +1,37 @@
+{
+  "description": "PATCH /collections/{id}/curation signed by the owner, approving its own collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PATCH",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000401/curation",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"patch:/v1/collections/c011ec71-0000-4000-8000-000000000401/curation:1767225600000:{}\",\"signature\":\"0xc3ce83a2eefe06f18898b150b24c17d58631ee4e280ea200a961cb5f0e89145d7748ac14396c0ac8a5184124f5083974ef01622c5ade808f38b1ad1e1e2d04061c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "curation": {
+        "status": "approved"
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000401"
+      },
+      "error": "Only committee members can approve or reject a curation"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

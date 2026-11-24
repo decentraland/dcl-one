@@ -1,0 +1,36 @@
+{
+  "description": "POST /items/{id}/files signed by an on-chain manager, uploading to a minted item. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000003b1/files",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/items/c011ec71-0000-4000-8000-0000000003b1/files:1767225600000:{}\",\"signature\":\"0x64b07846fefab73ee2074186c0a590ba505b80c1e59dc9baae94844dc4cf007a69dde081c0d3a43b84b524510960f316ea2cef64d99c76655acd7e9e82bf7f0b1b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null,
+    "multipart": [
+      {
+        "name": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+        "filename": "blob",
+        "type": "application/octet-stream",
+        "text": "conformance model glb"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

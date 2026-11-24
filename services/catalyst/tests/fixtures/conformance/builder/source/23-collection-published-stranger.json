@@ -1,0 +1,48 @@
+{
+  "description": "GET /collections/{id} signed by a wallet that holds no role on a collection on chain. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000006",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000006:1767225600000:{}\",\"signature\":\"0x43fe1205a4b2529312ab91fab2413de7c6da8369fdfe3f32f46155507507b2f569ce617640e80a76e9ff9eaa18a8dc5643d381447af8c8bd8ad33d61615ef7ac1c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000006",
+        "name": "Chain unapproved",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "contract_address": "0x5eed000000000000000000000000000000000006",
+        "is_published": true,
+        "created_at": "2025-12-03T00:00:00.000Z",
+        "updated_at": "2025-12-03T00:00:00.000Z",
+        "managers": [
+          "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0"
+        ],
+        "minters": [],
+        "is_approved": false,
+        "reviewed_at": "1970-01-01T00:00:00.000Z",
+        "linked_contract_address": null,
+        "linked_contract_network": null,
+        "is_mapping_complete": false,
+        "item_count": "1",
+        "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000006"
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

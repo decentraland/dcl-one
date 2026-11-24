@@ -1,0 +1,36 @@
+{
+  "description": "POST /collections/{id}/validation-result signed by the validator, a result of its collection while no review flow records starts. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/validation-result",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-wearable-validator-signature": "sha256=36ff47d764c27678b9cfb88d386456d6a85daf4095c150c508ccab0994facd47",
+      "x-wearable-validator-timestamp": "1767225600000"
+    },
+    "body": {
+      "validationId": "c011ec71-0000-4000-8000-0000000005a1",
+      "collectionId": "c011ec71-0000-4000-8000-000000000302",
+      "verdict": "passed",
+      "rulesVersion": "1.4.0",
+      "items": [
+        {
+          "itemId": "c011ec71-0000-4000-8000-0000000003b1",
+          "contentHash": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
+          "passed": true,
+          "findings": []
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 204,
+    "headers": {},
+    "body_bytes_b64": ""
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "validator_sign": {}
+}

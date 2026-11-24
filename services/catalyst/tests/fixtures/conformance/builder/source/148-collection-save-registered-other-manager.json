@@ -1,0 +1,68 @@
+{
+  "description": "PUT /collections/{id} signed by a manager the registry lists, saving a collection another manager of the provider created. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000207",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1eba15006e9d7f629bcad7a7dd41285f012b949\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x3eCc8E1B9CcE59AEA55be41103591A5064F9C337\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xcb6e16aa8396764684947466cd223e9d8b166e80ed22012133965867854ebb710ab86d7cde1240236e931ef44a5c3ce256e11e11cfcd62608c86a2a42d7b3aaf1c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/collections/c011ec71-0000-4000-8000-000000000207:1767225600000:{}\",\"signature\":\"0xb0349ffe4d043bfcf7dbb56610a44637a5f4264395577a350f16aaa735e658431819f7c81b1bc86bfe547d9757e09c97fafd80281de04efc8a75ac3eea9655e51b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "collection": {
+        "id": "c011ec71-0000-4000-8000-000000000207",
+        "name": "Registered winter",
+        "eth_address": "0xc1eba15006e9d7f629bcad7a7dd41285f012b949",
+        "salt": null,
+        "contract_address": null,
+        "is_published": false,
+        "is_approved": false,
+        "minters": [],
+        "managers": [],
+        "urn": "urn:decentraland:matic:collections-thirdparty:registered:winter"
+      },
+      "data": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000207",
+        "name": "Registered winter",
+        "eth_address": "",
+        "salt": "",
+        "contract_address": null,
+        "is_published": false,
+        "created_at": "<<VOLATILE>>",
+        "updated_at": "<<VOLATILE>>",
+        "managers": [],
+        "minters": [],
+        "is_approved": false,
+        "reviewed_at": null,
+        "forum_link": null,
+        "lock": null,
+        "forum_id": null,
+        "linked_contract_address": null,
+        "linked_contract_network": null,
+        "is_mapping_complete": true,
+        "item_count": "0",
+        "urn": "urn:decentraland:matic:collections-thirdparty:registered:winter"
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.created_at",
+    "data.updated_at"
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "description": "GET /curations signed by the on-chain minter of a collection with a curation. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/curations",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1eba15006e9d7f629bcad7a7dd41285f012b949\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x3eCc8E1B9CcE59AEA55be41103591A5064F9C337\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xcb6e16aa8396764684947466cd223e9d8b166e80ed22012133965867854ebb710ab86d7cde1240236e931ef44a5c3ce256e11e11cfcd62608c86a2a42d7b3aaf1c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/curations:1767225600000:{}\",\"signature\":\"0x6a5a471217a0f09e9030e8c0eddd6b57dbdd8e90e12d2b5a65ce0a0b18e89135249ec39834b8c0e89f1028b88a0be336852a0f5711b2cf9d8398cff55beadb1c1c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "<<VOLATILE>>",
+          "collection_id": "c011ec71-0000-4000-8000-000000000302",
+          "status": "pending",
+          "created_at": "<<VOLATILE>>",
+          "updated_at": "<<VOLATILE>>",
+          "assignee": "0x01eba3f0e992f53debaf51ed3738dc2f23e09aee",
+          "reviewed_by": null,
+          "rejection_reasons": null,
+          "rejection_message": null
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.id",
+    "data.created_at",
+    "data.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.created_at",
+      "data.updated_at"
+    ]
+  ]
+}

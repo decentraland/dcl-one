@@ -1,0 +1,43 @@
+{
+  "description": "POST /collections/{id}/publish of a third-party collection signed by a wallet that manages no provider, with a cheque it signed. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000403/publish",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000403/publish:1767225600000:{}\",\"signature\":\"0x8d05b27a3449138811c07c66ef51245f890fa0b087ad0b32d335a9da085c8af71eaf42ab3d6d0acfc59fdba375d2fa198ef3665b9b4d5e099a0d8240470ceb011c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "itemIds": [
+        "c011ec71-0000-4000-8000-0000000004b1"
+      ],
+      "cheque": {
+        "qty": 1,
+        "salt": "0xe2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+        "signature": "0xd523f72519a8e36d1616bc9a5d62c7454672d23625bd97bed6108ba16cff15740985a7f9db6022618f25a0b1c5fb4bc5c15c7d0a76c6a2a4fc31fafadbcdd2a11b"
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "ethAddress": "0xcd6884d4258edc833f31ac773e24affe6a7d3154",
+        "tableName": "collections"
+      },
+      "error": "Unauthorized user 0xcd6884d4258edc833f31ac773e24affe6a7d3154 for collections c011ec71-0000-4000-8000-000000000403"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

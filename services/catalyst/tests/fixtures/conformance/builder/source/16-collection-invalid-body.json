@@ -1,0 +1,54 @@
+{
+  "description": "PUT /collections/{id} signed by the owner with a collection whose name is not a string. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000004",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/collections/c011ec71-0000-4000-8000-000000000004:1767225600000:{}\",\"signature\":\"0xef81cbe7affc2a6c3db5bf1f8a3a8fe7c6b908a698796474bf73f1c84d48d3d92ed261fdde1ef41ef0c31a4b6d30f8899e2cc3dfb158f67e2ad0f023a3a423a61b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "collection": {
+        "id": "c011ec71-0000-4000-8000-000000000004",
+        "name": 5,
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "salt": null,
+        "contract_address": null,
+        "is_published": false,
+        "is_approved": false,
+        "minters": [],
+        "managers": []
+      },
+      "data": "0x00"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": [
+        {
+          "instancePath": "/collection/name",
+          "schemaPath": "#/properties/collection/properties/name/type",
+          "keyword": "type",
+          "params": {
+            "type": "string"
+          },
+          "message": "must be string"
+        }
+      ],
+      "error": "Invalid request body"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

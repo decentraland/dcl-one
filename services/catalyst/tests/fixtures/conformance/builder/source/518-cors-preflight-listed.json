@@ -1,0 +1,28 @@
+{
+  "description": "OPTIONS /collections/{id}, the preflight of a signed PUT from an origin CORS_ORIGIN lists. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000001",
+    "query": {},
+    "headers": {
+      "access-control-request-headers": "content-type,x-identity-auth-chain-0",
+      "access-control-request-method": "PUT",
+      "origin": "https://create.decentraland.example"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-origin": "https://create.decentraland.example",
+      "access-control-expose-headers": "ETag,Cache-Control,Content-Language,Content-Type,Expires,Last-Modified,Pragma",
+      "vary": "Origin",
+      "access-control-allow-methods": "*",
+      "access-control-allow-headers": "*"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

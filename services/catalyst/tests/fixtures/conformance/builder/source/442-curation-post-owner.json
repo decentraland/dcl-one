@@ -1,0 +1,38 @@
+{
+  "description": "POST /collections/{id}/curation/post signed by the owner, who is not on the committee. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000401/curation/post",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000401/curation/post:1767225600000:{}\",\"signature\":\"0x874736ef150e99928d66036ad67465701ce7d9e694bac917adb4b905d414ef653380b82e01f8eebd27a52223a6ea9e8ac4b14a0d259960317d91a6cb44f267ad1c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "forumPost": {
+        "raw": "The collection has been assigned to <a target=\"_blank\" href=\"https://market.example.org/accounts/0x01eba3f0e992f53debaf51ed3738dc2f23e09aee\">Curator</a>"
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000401",
+        "ethAddress": "0x043b83d2010ee75cc3c0419348327eb9c6da7268"
+      },
+      "error": "Unauthorized"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}
