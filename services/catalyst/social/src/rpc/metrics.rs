@@ -1,15 +1,5 @@
-//! Legacy uWS GET scrape contract, reading the one existing process recorder.
-//! This family filter does not establish label/instrumentation or reset parity.
-use super::State as RpcState;
-use axum::{
-    body::Body,
-    extract::{Request, State},
-    http::{StatusCode, header},
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
-use std::sync::Arc;
-
+//! Social HTTP, RPC and subscription observations for the process recorder.
+use axum::{body::Body, extract::Request, http::header, middleware::Next, response::Response};
 // The pinned source registers all metadata, but prom-client only creates
 // unlabelled counters and gauges before their first observation.
 pub(super) fn register() {
@@ -224,120 +214,43 @@ impl Drop for RpcStream {
     }
 }
 
-pub(super) async fn serve_if_requested(
-    State(state): State<Arc<RpcState>>,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
-    let configured = state
-        .settings
-        .metrics_path
-        .as_deref()
-        .filter(|path| !path.is_empty())
-        .unwrap_or("/metrics");
-    let path = format!("/social-rpc{configured}");
-    // /status was registered before metrics on the source uWS app.
-    if request.method() != axum::http::Method::GET
-        || request.uri().path() != path
-        || configured == "/status"
+pub(super) async fn record_request(request: Request<Body>, next: Next) -> Response {
+    let uri = request.uri().path();
+    if !uri.starts_with("/social-rpc") {
+        return next.run(request).await;
+    }
+    if matches!(uri, "/social-rpc/info" | "/social-rpc/health") {
+        return next.run(request).await;
+    }
+    let get = request.method() == axum::http::Method::GET;
+    let upgrade = request.headers().contains_key(header::SEC_WEBSOCKET_KEY);
+    let handler = if get && uri == "/social-rpc/status" {
+        "/status"
+    } else if uri == "/social-rpc/health/live" {
+        "/health/live"
+    } else if get && uri.starts_with("/social-rpc/v1/users/") && uri.ends_with("/privacy-settings")
     {
-        let uri = request.uri().path();
-        if !uri.starts_with("/social-rpc") {
-            return next.run(request).await;
-        }
-        if matches!(uri, "/social-rpc/info" | "/social-rpc/health") {
-            return next.run(request).await;
-        }
-        let get = request.method() == axum::http::Method::GET;
-        let upgrade = request.headers().contains_key(header::SEC_WEBSOCKET_KEY);
-        let handler = if get && uri == "/social-rpc/status" {
-            "/status"
-        } else if uri == "/social-rpc/health/live" {
-            "/health/live"
-        } else if get
-            && uri.starts_with("/social-rpc/v1/users/")
-            && uri.ends_with("/privacy-settings")
-        {
-            "/v1/users/:address/privacy-settings"
-        } else if upgrade && uri == "/social-rpc" {
-            "/ws"
-        } else if upgrade && uri == "/social-rpc/v1/stream" {
-            "/v1/stream"
-        } else {
-            ""
-        };
-        let started = std::time::Instant::now();
-        let method = request.method().as_str().to_ascii_lowercase();
-        let response = next.run(request).await;
-        http_finished(method, handler, response.status().as_u16(), started);
-        return response;
-    }
-    dcl_metrics::http::exclude(request.extensions());
-    if let Some(expected) = state
-        .settings
-        .metrics_bearer_token
-        .as_deref()
-        .filter(|token| !token.is_empty())
-    {
-        let mut parts = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|header| header.to_str().ok())
-            .unwrap_or("")
-            .split(' ');
-        let scheme = parts.next();
-        let presented = parts.next();
-        if scheme != Some("Bearer")
-            || !presented.is_some_and(|presented| {
-                crate::auth::admin_bearer::timing_safe_eq(presented.as_bytes(), expected.as_bytes())
-            })
-        {
-            return StatusCode::UNAUTHORIZED.into_response();
-        }
-    }
-    // Authorization precedes rendering. Dropping the request future needs no
-    // write into a disconnected uWS response object in this HTTP transport.
-    let rendered = state
-        .settings
-        .metrics_handle
-        .as_ref()
-        .map(|handle| handle.render())
-        .unwrap_or_default();
-    (
-        [(
-            header::CONTENT_TYPE,
-            "text/plain; version=0.0.4; charset=utf-8",
-        )],
-        filter_families(&rendered),
-    )
-        .into_response()
-}
-
-pub(super) fn filter_families(rendered: &str) -> String {
-    let mut out = String::new();
-    for descriptor in super::FAMILIES {
-        let family = descriptor.name;
-        let kind = descriptor.prometheus_type();
-        let help = descriptor.help;
-        out.push_str(&format!("# HELP {family} {help}\n# TYPE {family} {kind}\n"));
-        for line in rendered.lines().filter(|line| !line.starts_with('#')) {
-            let name = line.split(['{', ' ']).next().unwrap_or("");
-            if name == family
-                || ["_sum", "_count", "_bucket"]
-                    .iter()
-                    .any(|suffix| name.strip_suffix(suffix) == Some(family))
-            {
-                out.push_str(line);
-                out.push('\n');
-            }
-        }
-    }
-    out
+        "/v1/users/:address/privacy-settings"
+    } else if upgrade && uri == "/social-rpc" {
+        "/ws"
+    } else if upgrade && uri == "/social-rpc/v1/stream" {
+        "/v1/stream"
+    } else {
+        ""
+    };
+    let started = std::time::Instant::now();
+    let method = request.method().as_str().to_ascii_lowercase();
+    let response = next.run(request).await;
+    http_finished(method, handler, response.status().as_u16(), started);
+    response
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::State as RpcState;
     use super::*;
+    use axum::http::StatusCode;
+    use std::sync::Arc;
 
     fn samples<'a>(rendered: &'a str, name: &str) -> Vec<&'a str> {
         rendered
@@ -516,18 +429,12 @@ mod tests {
     }
 
     #[test]
-    fn source_registration_has_exact_metadata_and_only_sixteen_initial_zeros() {
+    fn source_registration_seeds_sixteen_initial_zeros_in_the_process_recorder() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
         let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
         dcl_metrics::with_local_recorder(&recorder, register);
-        let rendered = filter_families(&handle.render());
-        let metadata = |body: &str| {
-            body.lines()
-                .filter(|line| line.starts_with('#'))
-                .map(str::to_owned)
-                .collect::<std::collections::BTreeSet<_>>()
-        };
+        let rendered = handle.render();
         let samples = |body: &str| {
             body.lines()
                 .filter(|line| !line.starts_with('#') && !line.is_empty())
@@ -535,22 +442,13 @@ mod tests {
                 .collect::<std::collections::BTreeSet<_>>()
         };
         assert_eq!(
-            metadata(&rendered),
-            metadata(fixture["initial"].as_str().unwrap())
-        );
-        assert_eq!(
             samples(&rendered),
             samples(fixture["initial"].as_str().unwrap())
         );
         assert_eq!(samples(&rendered).len(), 16);
-        dcl_metrics::with_local_recorder(&recorder, || {
-            dcl_metrics::counter!("shop_orders_total").increment(99)
-        });
-        assert!(!filter_families(&handle.render()).contains("shop_orders_total"));
     }
     #[tokio::test]
-    async fn status_privacy_health_and_fallback_emit_source_http_labels_and_scraping_is_unmeasured()
-    {
+    async fn status_privacy_health_and_fallback_emit_source_http_labels() {
         use tower::ServiceExt;
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
         let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
@@ -561,10 +459,7 @@ mod tests {
             .unwrap();
         let state = Arc::new(RpcState::new(
             pool,
-            super::super::Settings {
-                metrics_handle: Some(handle.clone()),
-                ..Default::default()
-            },
+            super::super::Settings::default(),
             None,
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         ));
@@ -574,6 +469,7 @@ mod tests {
             ("GET", "/social-rpc/v1/users/invalid/privacy-settings", 400),
             ("POST", "/social-rpc/health/live", 200),
             ("HEAD", "/social-rpc/missing", 404),
+            ("GET", "/social-rpc/metrics", 404),
         ] {
             let response = app
                 .clone()
@@ -588,17 +484,6 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status().as_u16(), status);
         }
-        let before = handle.render();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/social-rpc/metrics")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
         let rendered = handle.render();
         for item in fixture["httpObservations"]
             .as_array()
@@ -632,11 +517,6 @@ mod tests {
             };
             assert_eq!(matching(&rendered).len(), 1, "{item}");
             assert!(matching(&rendered)[0].ends_with(" 1"), "{item}");
-            assert_eq!(
-                matching(&before),
-                matching(&rendered),
-                "scrape changed {name}"
-            );
         }
         assert!(
             !rendered.contains("http_request_size_bytes_bucket"),

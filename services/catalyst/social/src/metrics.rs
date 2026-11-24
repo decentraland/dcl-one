@@ -1,4 +1,4 @@
-//! Social service families outside the RPC compatibility view.
+//! Social badge, event delivery and Segment webhook families.
 use dcl_metrics::{Descriptor, Unit};
 
 pub const FAMILIES: &[Descriptor] = &[

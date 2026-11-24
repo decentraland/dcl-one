@@ -59,7 +59,7 @@ fn invoke(args: &[&str], variables: &[(&str, &str)]) -> (i32, String, String) {
 }
 
 #[test]
-fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
+fn removed_stats_matcher_settings_do_not_interfere_with_startup() {
     for args in [
         &["--help"][..],
         &["serve", "--help"],
@@ -107,8 +107,8 @@ fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
         ),
         (
             &["index"][..],
-            vec![],
-            "connecting index worker to DATABASE_URL",
+            vec![("INDEX_METRICS_BIND", "invalid-bind")],
+            "INDEX_METRICS_BIND",
         ),
         (
             &["pulse"][..],
@@ -125,19 +125,8 @@ fn stats_compilation_is_serve_only_and_follows_cli_refusals() {
     }
     let (code, stdout, stderr) = invoke(&["serve"], &[]);
     assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let text = stderr;
-    assert!(text.contains("compiling WKC_METRICS_PUBLIC_PATH"), "{text}");
-    assert!(text.contains("Missing parameter name"));
-    assert!(!text.contains("metrics listening"));
-    let (code, stdout, stderr) =
-        invoke(&["serve"], &[("WKC_METRICS_PUBLIC_PATH", "/scrape/:name?")]);
-    assert_eq!(code, 1);
     let text = format!("{stdout}{stderr}");
     assert!(text.contains("SERVE_METRICS_BIND"), "{text}");
     assert!(!text.contains("compiling WKC_METRICS_PUBLIC_PATH"));
     assert!(!text.contains("metrics listening"));
-    eprintln!(
-        "startup: help/schema unaffected, Pulse/index skip matcher, argv/posture precede compiler, invalid pattern fails before bind, valid optional pattern reaches metrics-bind validation"
-    );
 }

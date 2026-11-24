@@ -11,13 +11,13 @@ pub(super) fn register_metrics() {
     crate::worlds::core::metrics::register_series();
 }
 
-pub(super) fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
+pub(super) fn install_metrics(raw: &str) -> anyhow::Result<()> {
     let bind = comms::metrics::serve_metrics_bind(raw)?;
     let registry = registry()?;
-    let handle = registry.listen(dcl_metrics::PrometheusBuilder::new(), bind)?;
+    registry.listen(dcl_metrics::PrometheusBuilder::new(), bind)?;
     register_metrics();
     tracing::info!(%bind, "serve /metrics listening");
-    Ok(handle)
+    Ok(())
 }
 
 fn registry() -> anyhow::Result<dcl_metrics::Registry> {

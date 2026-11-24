@@ -97,8 +97,7 @@
 //! path, and the `x-original-path` the proxy sets when it ends with the
 //! route).
 //!
-//! `/metrics` exposes this router's request counts and latency histograms.
-//! Scrapes require `CAMERA_REEL_METRICS_BEARER_TOKEN`; an unset token fails closed.
+//! Request counts and latency are exposed by the host process under the camera-reel component.
 //! Documentation and Swagger UI assets are served locally under `/api/docs`.
 
 // The crates this one builds on, under their module names (AGENTS.md).
@@ -165,8 +164,6 @@ pub struct Settings {
     pub admin_token: Option<String>,
     /// `CREATE_WRITES_ENABLED`.
     pub writes_enabled: bool,
-    /// Protects the service metrics endpoint; an unset token refuses scrapes.
-    pub metrics_bearer_token: Option<String>,
     /// Successful world-name lookup cache lifetime (`PLACES_CACHE_TTL_SECONDS`).
     pub places_cache_ttl_seconds: u64,
     /// Maximum world-name lookup cache entries (`PLACES_CACHE_MAX_SIZE`).
@@ -181,7 +178,6 @@ impl Settings {
             max_images_per_user: DEFAULT_MAX_IMAGES_PER_USER,
             admin_token: None,
             writes_enabled: false,
-            metrics_bearer_token: None,
             places_cache_ttl_seconds: DEFAULT_PLACES_CACHE_TTL_SECONDS,
             places_cache_max_size: DEFAULT_PLACES_CACHE_MAX_SIZE,
         }
@@ -198,7 +194,6 @@ pub struct State {
     /// `/api/images/{hash}` included.
     pub denylist: Arc<Denylist>,
     eip1654: Option<Arc<dyn Eip1654Validator>>,
-    metrics: http::Metrics,
     /// Keep a committed camera verdict and its shared in-memory projection in
     /// the same order across upload finalization, deletion and moderation.
     blob_verdict: tokio::sync::Mutex<()>,
@@ -231,7 +226,6 @@ impl State {
             storage,
             denylist,
             eip1654,
-            metrics: http::Metrics::default(),
             blob_verdict: tokio::sync::Mutex::new(()),
         }
     }
@@ -428,19 +422,13 @@ pub fn router(state: SharedState) -> Router {
     let router = Router::new()
         .route("/health", get(health))
         .route("/health/live", get(health))
-        .route(
-            "/metrics",
-            get(http::metrics).head(|| async { axum::http::StatusCode::NOT_FOUND }),
-        )
         .nest("/api", api)
         .merge(admin)
         .fallback(not_found)
         .method_not_allowed_fallback(not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(state.clone());
-    let router = router
-        .layer(axum::middleware::from_fn(http::cors))
-        .layer(axum::middleware::from_fn_with_state(state, http::observe));
+        .with_state(state)
+        .layer(axum::middleware::from_fn(http::cors));
     Router::new()
         .fallback_service(
             tower::ServiceBuilder::new()

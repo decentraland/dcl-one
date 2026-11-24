@@ -164,7 +164,7 @@ pub(super) fn record_diagnostics(state: &AppState) {
         .absolute(state.feed.dropped_close_count());
 }
 /// Emit the same snapshot as the public JSON diagnostics on the process recorder.
-/// This sampler is independent of public-host scrapes and their midnight resets.
+/// Sampling runs independently of Prometheus scrape timing.
 pub(super) fn start_metrics(state: &AppState, jobs: &crate::jobs::Jobs) {
     let state = state.clone();
     jobs.spawn_periodic(

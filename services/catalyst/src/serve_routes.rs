@@ -91,7 +91,7 @@ pub(super) struct Routes<'a> {
 
 pub(super) fn build_routes(
     config: &Config,
-    prepared: crate::metrics_matcher::PreparedStats,
+    statistics_settings: comms::stats::http::Settings,
     primary: bool,
     routes: Routes<'_>,
 ) -> axum::Router {
@@ -140,12 +140,10 @@ pub(super) fn build_routes(
     // connector answers at the root and under /archipelago-ea-stats; its
     // socket routes only on the primary.
     let connector_lifecycle = archipelago_state.clone();
-    let (statistics_settings, statistics_matcher) = prepared.into_parts();
     let archipelago = crate::comms::archipelago::mounts(
         archipelago_state,
         primary,
         statistics_settings,
-        statistics_matcher,
         content.denylist.clone(),
     );
     let statistics = archipelago.statistics.clone();

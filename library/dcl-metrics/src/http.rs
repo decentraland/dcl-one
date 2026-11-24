@@ -8,10 +8,7 @@ use axum::{
     middleware::{Next, from_fn},
 };
 use std::{
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, OnceLock},
     time::Instant,
 };
 
@@ -60,20 +57,12 @@ struct Context {
     component: OnceLock<&'static str>,
     matched: OnceLock<MatchedPath>,
     manual: OnceLock<(&'static str, &'static str)>,
-    exclude: AtomicBool,
 }
 
 /// For dispatchers that resolve their own finite set of route templates.
 pub fn route(extensions: &Extensions, component: &'static str, template: &'static str) {
     if let Some(context) = extensions.get::<Arc<Context>>() {
         let _ = context.manual.set((component, template));
-    }
-}
-
-/// Called only when a compatibility exporter has actually selected a scrape.
-pub fn exclude(extensions: &Extensions) {
-    if let Some(context) = extensions.get::<Arc<Context>>() {
-        context.exclude.store(true, Ordering::Relaxed);
     }
 }
 
@@ -117,9 +106,6 @@ struct Observation {
 impl Drop for Observation {
     fn drop(&mut self) {
         self.inflight.decrement(1.);
-        if self.context.exclude.load(Ordering::Relaxed) {
-            return;
-        }
         let (component, route) = self.context.manual.get().copied().unwrap_or_else(|| {
             let (default_component, template) = &self.fallback;
             (
@@ -256,33 +242,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_releases_inflight_and_scrapes_are_excluded() {
+    async fn cancellation_releases_inflight() {
         let recorder = crate::PrometheusBuilder::new().build_recorder();
         let _local = metrics::set_default_local_recorder(&recorder);
         let app = instrument(
-            Router::new()
-                .route(
-                    "/busy",
-                    get(|| async { std::future::pending::<()>().await }),
-                )
-                .route(
-                    "/custom-scrape",
-                    get(|req: Request| async move {
-                        exclude(req.extensions());
-                        "scrape"
-                    }),
-                ),
+            Router::new().route(
+                "/busy",
+                get(|| async { std::future::pending::<()>().await }),
+            ),
             "test",
         );
-        app.clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/custom-scrape")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
         let mut future =
             Box::pin(app.oneshot(Request::builder().uri("/busy").body(Body::empty()).unwrap()));
         assert!(futures::poll!(&mut future).is_pending());
@@ -296,7 +265,6 @@ mod tests {
         let scrape = recorder.handle().render();
         assert!(scrape.contains("dcl_http_requests_in_flight{method=\"GET\"} 0"));
         assert!(scrape.contains("status_code=\"cancelled\""), "{scrape}");
-        assert!(!scrape.contains("custom-scrape"), "{scrape}");
         assert!(!scrape.contains("declared_size_bytes"));
     }
 }

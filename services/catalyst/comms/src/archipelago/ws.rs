@@ -70,7 +70,7 @@ async fn connector_upgrade(
             .get("sec-websocket-key")
             .is_some_and(|key| key.as_bytes().len() == 24)
     {
-        return http.respond(method, uri, headers, extensions).await;
+        return http.respond(method, uri, extensions).await;
     }
     match ws {
         Ok(ws) => ws_upgrade(ws, State(state), headers, peer, raw)
@@ -87,7 +87,6 @@ async fn ws_upgrade(
     peer: Peer,
     raw: Option<axum::Extension<raw_transport::Signal>>,
 ) -> impl IntoResponse {
-    let start = std::time::Instant::now();
     let client = crate::shared::client_ip::distinct_client_ip(
         &headers,
         peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
@@ -109,23 +108,13 @@ async fn ws_upgrade(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let response = upgrade(
+    upgrade(
         ws,
         state.clone(),
         protocols,
         client.as_deref(),
         raw.map(|axum::Extension(raw)| raw),
-    );
-    state
-        .connector_metrics
-        .observe_connector(crate::stats::http::Observation {
-            method: "GET".into(),
-            handler: "/ws".into(),
-            code: response.status().as_u16(),
-            request_size: 0.,
-            duration: start.elapsed(),
-        });
-    response
+    )
 }
 
 fn upgrade(

@@ -99,15 +99,6 @@ impl Descriptor {
         }
     }
 
-    pub const fn prometheus_type(self) -> &'static str {
-        match self.kind {
-            Kind::Counter => "counter",
-            Kind::Gauge => "gauge",
-            Kind::Histogram(_) => "histogram",
-            Kind::Summary => "summary",
-        }
-    }
-
     fn describe(self, recorder: &impl Recorder) {
         let name = self.name.into();
         let help = self.help.into();
@@ -239,7 +230,10 @@ impl Registry {
         let scrape_handle = handle.clone();
         let app = axum::Router::new()
             .route("/health", axum::routing::any(|| async { "OK" }))
-            .fallback(move || render(scrape_handle.clone()));
+            .route(
+                "/metrics",
+                axum::routing::get(move || render(scrape_handle.clone())),
+            );
         let upkeep_handle = handle.clone();
         runtime.spawn(async move {
             tokio::select! {
@@ -268,7 +262,7 @@ pub async fn upkeep(handle: PrometheusHandle) {
 pub async fn render(handle: PrometheusHandle) -> axum::response::Response {
     let body = tokio::task::spawn_blocking(move || {
         let mut body = handle.render();
-        process::collect().append(&mut body, &mut Some([0.0, 0.0]));
+        process::collect().append(&mut body);
         body
     })
     .await;

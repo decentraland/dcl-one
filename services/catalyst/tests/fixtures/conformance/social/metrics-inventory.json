@@ -24,10 +24,10 @@
   },
   "scope": "Static literal name/type/label inventory across entire production Rust files, excluding dedicated test paths. Inline test-module hits are possible and require source review. Presence does not establish production execution, runtime event meaning, series initialization, histogram buckets, dynamic-name sites or sample values. Missing literals remain candidates until dynamic sites are checked.",
   "known_differences": [
-    "WKC_METRICS_RESET_AT_NIGHT=true is accepted but the social view does not reset; the global recorder is preserved for other domains.",
+    "Social records process-lifetime measurements into the private Catalyst Serve scrape. The source HTTP scrape path, bearer token and midnight reset are retired.",
     "Node/V8/process default collectors are not fabricated by the Rust exporter. Their runtime-specific families are outside this declared-family inventory.",
-    "The filtered shared recorder can include shared-family labels emitted by other domains; source-compatible per-family instrumentation and labels require review.",
-    "The Social view renders all 44 source HELP/TYPE declarations and seeds only the 16 captured unlabelled counter/gauge zeros; the other 28 declarations have no invented initial samples. Registration and literal presence do not prove event or value equality.",
+    "Shared-family labels can include observations from multiple services in the process.",
+    "Social registers 44 source descriptors and seeds 16 captured unlabelled counter/gauge zeros. Registration and literal presence do not prove event or value equality.",
     "Portable ordinary/guarded acceptance is observed after the Tokio sink accepts a frame, before flush. Native uWS backpressure/drop/drain/buffer observations remain unavailable; the success label does not establish native buffering equivalence.",
     "Source logger event coverage and LOG_LEVEL filtering remain incomplete. Source authentication-race completion, stale subscriber reconciliation, and stream producer errors represented as ordinary Generator termination remain explicit event gaps."
   ],
@@ -43,15 +43,8 @@
       "source_buckets": null,
       "candidate": [
         {
-          "path": "services/catalyst/comms/src/stats/runtime.rs",
-          "line": 76,
-          "kind": "histogram",
-          "scope": "production_file_inline_test_possible",
-          "labels": []
-        },
-        {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 93,
+          "line": 83,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -61,7 +54,7 @@
           ]
         }
       ],
-      "status": "literal_type_or_labels_differ"
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "http_requests_total",
@@ -74,15 +67,8 @@
       "source_buckets": null,
       "candidate": [
         {
-          "path": "services/catalyst/comms/src/stats/runtime.rs",
-          "line": 75,
-          "kind": "counter",
-          "scope": "production_file_inline_test_possible",
-          "labels": []
-        },
-        {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 92,
+          "line": 82,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -92,7 +78,7 @@
           ]
         }
       ],
-      "status": "literal_type_or_labels_differ"
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "http_request_size_bytes",
@@ -105,13 +91,6 @@
       "source_buckets": null,
       "candidate": [
         {
-          "path": "services/catalyst/comms/src/stats/runtime.rs",
-          "line": 79,
-          "kind": "histogram",
-          "scope": "production_file_inline_test_possible",
-          "labels": []
-        },
-        {
           "path": "services/catalyst/social/src/rpc/http.rs",
           "line": 209,
           "kind": "histogram",
@@ -123,7 +102,7 @@
           ]
         }
       ],
-      "status": "literal_type_or_labels_differ"
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "wkc_logger_logs_total",
@@ -136,7 +115,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 97,
+          "line": 87,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -308,7 +287,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 16,
+          "line": 6,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -331,7 +310,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 17,
+          "line": 7,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -361,7 +340,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 18,
+          "line": 8,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -398,7 +377,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 19,
+          "line": 9,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -414,7 +393,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 20,
+          "line": 10,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -466,7 +445,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 21,
+          "line": 11,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -502,7 +481,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 22,
+          "line": 12,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -518,7 +497,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 23,
+          "line": 13,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -565,7 +544,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 163,
+          "line": 153,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -596,7 +575,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 165,
+          "line": 155,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -627,7 +606,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 156,
+          "line": 146,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -658,7 +637,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 193,
+          "line": 183,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -679,7 +658,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 214,
+          "line": 204,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -833,7 +812,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 24,
+          "line": 14,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -859,7 +838,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 25,
+          "line": 15,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -930,7 +909,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 26,
+          "line": 16,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -953,7 +932,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 27,
+          "line": 17,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -976,7 +955,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 28,
+          "line": 18,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -992,7 +971,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 29,
+          "line": 19,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -1008,7 +987,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 30,
+          "line": 20,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -1078,7 +1057,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 31,
+          "line": 21,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []

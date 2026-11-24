@@ -14,11 +14,8 @@ pub struct Sample {
 impl Sample {
     /// The metrics facade's integer counters cannot represent fractional CPU seconds.
     /// Render only these measured families directly, with their actual Prometheus types.
-    pub fn append(&self, body: &mut String, origin: &mut Option<[f64; 2]>) {
-        if let Some(cpu) = self.cpu {
-            let origin = origin.get_or_insert(cpu);
-            let user = (cpu[0] - origin[0]).max(0.);
-            let system = (cpu[1] - origin[1]).max(0.);
+    pub fn append(&self, body: &mut String) {
+        if let Some([user, system]) = self.cpu {
             for (name, help, value) in [
                 (
                     "process_cpu_user_seconds_total",
@@ -244,26 +241,24 @@ pub fn collect() -> Sample {
 mod tests {
     use super::*;
     #[test]
-    fn cpu_seconds_keep_fractions_and_restart_from_the_last_scrape_on_reset() {
+    fn cpu_seconds_report_fractional_process_lifetime_totals() {
         assert_eq!(filetime_seconds(1_250_000, 0), 0.125);
         let sample = Sample {
             cpu: Some([10.125, 2.25]),
             ..Default::default()
         };
-        let mut origin = Some([10., 2.]);
         let mut body = String::new();
-        sample.append(&mut body, &mut origin);
-        assert!(body.contains("process_cpu_user_seconds_total 0.125\n"));
-        assert!(body.contains("process_cpu_system_seconds_total 0.25\n"));
-        assert!(body.contains("process_cpu_seconds_total 0.375\n"));
-        origin = sample.cpu;
+        sample.append(&mut body);
+        assert!(body.contains("process_cpu_user_seconds_total 10.125\n"));
+        assert!(body.contains("process_cpu_system_seconds_total 2.25\n"));
+        assert!(body.contains("process_cpu_seconds_total 12.375\n"));
         body.clear();
         Sample {
             cpu: Some([10.25, 2.5]),
             ..Default::default()
         }
-        .append(&mut body, &mut origin);
-        assert!(body.contains("process_cpu_seconds_total 0.375\n"));
+        .append(&mut body);
+        assert!(body.contains("process_cpu_seconds_total 12.75\n"));
         assert!(!body.contains("process_resident_memory_bytes"));
     }
     #[test]
@@ -292,7 +287,7 @@ mod tests {
         let mut sample = Sample::default();
         proc_memory(&mut sample, "VmRSS: nope kB\nVmSize: 20 MB\n");
         let mut body = String::new();
-        sample.append(&mut body, &mut None);
+        sample.append(&mut body);
         assert!(body.is_empty());
     }
 }

@@ -1,4 +1,4 @@
-//! HTTP families shared by the Social and Worlds compatibility views.
+//! Source-compatible HTTP metric names shared by Social and Worlds.
 use crate::{Descriptor, Unit};
 
 /// Both legacy families use prom-client's default buckets.
