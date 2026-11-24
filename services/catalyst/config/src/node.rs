@@ -52,9 +52,9 @@ pub struct NodeConfig {
     #[arg(long, env = "SERVE_METRICS_BIND", default_value = "127.0.0.1:5006")]
     pub serve_metrics_bind: String,
 
-    /// Loopback Prometheus scrape listener for the index process. Unset disables the listener.
-    #[arg(long, env = "INDEX_METRICS_BIND")]
-    pub index_metrics_bind: Option<String>,
+    /// Operator-local scrape listener used by the standalone index process.
+    #[arg(long, env = "INDEX_METRICS_BIND", default_value = "127.0.0.1:5008")]
+    pub index_metrics_bind: String,
 
     #[arg(
         long,

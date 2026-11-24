@@ -89,6 +89,26 @@ the data and its operations.
    regenerates those windows; the row keeps its real `generation_time`, which
    `/snapshots` publishes as upstream does.
 
+Content sync looks up peer snapshot receipts by primary key in batches during
+bootstrap and periodic refresh. A receipt records the entity types already
+processed. Unfiltered coverage uses a null array. Migration 0061 initializes
+older receipts to an empty set. On the first sync pass after upgrade, the
+leader can redownload and parse every advertised peer snapshot with a legacy
+receipt, including on unfiltered nodes. The existing snapshot concurrency
+bounds parallel work, and the deployer still skips entities already present.
+Writes extend coverage and a peer's cursor advances after its receipts are durable.
+Peer downloads use temporary staging. The blob collector can reclaim old
+peer snapshot files once their final owning reference is gone. A local
+published snapshot continues to retain its blob.
+
+New local deployments require an array when `content` is present. Peer replay
+reads an explicit null as an empty list for compatibility with legacy manifests.
+Both paths accept at most 25,000 declarations per entity, counted before hashes
+are deduplicated. An older manifest above that limit can remain stored on the
+node that accepted it. A new deployment or a replay of that manifest fails
+validation. The `content_sync_manifest_rejections_total` counter reports peer
+rejections with the reason `declaration_limit` or `invalid_cid`.
+
 ## Worlds, persistent storage and scene hosting
 
 One worlds subsystem owns deployment/permission lookup, world/player storage
@@ -1832,6 +1852,39 @@ so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
 
+## Wallet rental reads
+
+`GET /v1/rentals/{address}` reads `shop.chain_cursor` and
+`shop.rental_event` in one statement snapshot. A single lookup returns
+both wallet roles. The two partial participant indexes find the
+wallet's historical assets in the requested venue, and the existing asset
+index finds each candidate's latest rent or claim and the current period's
+rent events. Each result contains one row per asset and role. There is no new
+projection table or response cache. Production lookup rates and latency
+have not been measured.
+
+The missing-objects step of `schema migrate` builds
+`rental_event_lessor_idx` and `rental_event_tenant_idx` non-concurrently.
+It holds a SHARE lock on `shop.rental_event` until the migration commits,
+so chain index writes wait. To keep writes moving during an index build on
+a large history, prebuild both indexes with `CREATE INDEX CONCURRENTLY`
+using the definitions in `schemas/30_shop.sql`.
+
+The read stops at the published block. A stale or unpublished cursor
+returns 503. The latest rent or claim is evaluated before checking the
+current participants. A rent stays in the lessor's list until claim and
+in the tenant's list until expiry. Extensions add to the end of the original
+period, as the Rentals contract does. The route returns the operator on the
+latest rent event. Mainnet and Sepolia use separate
+`(network, block_number, log_index)` event keys and separate cursors under the
+Ethereum supervisor. Only the mainnet index updates listing statuses and
+supplies rental notifications.
+
+The index worker uses the `TRADE_RPC_URLS` entry for chain 11155111 or
+`ETH_RPC_URL` with `ETH_NETWORK=sepolia`. Check the selected chain's
+`ready` field at `GET /signatures-api/v1/rentals-index` before routing
+clients to the wallet rental endpoint.
+
 ## Rental listing status workload
 
 `signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
@@ -2141,7 +2194,7 @@ On Ethereum and Polygon, `shop.sale_event.bid_fee` records the integer emitted b
 
 A Polygon store purchase ends at its `Bought` log. Each explicitly priced line matches one preceding `Issue` with the same transaction, collection, item and beneficiary, after the previous purchase in that transaction. Repeated copies keep their line order. The sales cursor records historical changes to venue rates and recipients in `shop.sale_fee_change`. Rates take effect at their log position.
 
-The accounting job reads three mainnet cursors per network. Step `0061_shop_sale_accounting` leaves their new decoder version and verified height empty on upgraded databases. Each cursor owner repairs at most 10,000 old blocks per pass, checking its stored tip hash around each RPC window. A Polygon repair asks for issues from the collections named by the store even when a collection has yet to reach the mirror. A rewind clips the verified height. A repair changes the history revision even if the tip stays at the same height.
+The accounting job reads three mainnet cursors per network. Step `0062_shop_sale_accounting` leaves their new decoder version and verified height empty on upgraded databases. Each cursor owner repairs at most 10,000 old blocks per pass, checking its stored tip hash around each RPC window. A Polygon repair asks for issues from the collections named by the store even when a collection has yet to reach the mirror. A rewind clips the verified height. A repair changes the history revision even if the tip stays at the same height.
 
 `shop.sale_execution` stores one row per store purchase, accepted bid, successful order, off-chain execution or NAME fee. `shop.sale_asset` and `shop.sale_payment` store the ordered asset and consideration legs. The asset ID combines the network, transaction hash, execution number in that transaction and asset ordinal. A block or log position can change when the same transaction is included on a replacement branch. Store line prices and single-asset prices with one currency support per-item counts. An unpriced bundle retains its execution consideration in each currency and its individual unpriced assets. NAME fees have their own payment and no asset sale.
 
@@ -2462,13 +2515,13 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
-With `INDEX_METRICS_BIND` set, the index process reads these bounded cursor
+Each index process reads these bounded cursor
 tables once per minute. It samples the height, stored history mode, fold
 publication and quarantine from `shop.chain_cursor` and the height, replay
 mode and fold from `land_authz.index_cursor` for its configured registries
@@ -2480,7 +2533,7 @@ The sampler uses the index worker's existing pool and writes no rows.
 `chain-walk-matic`, in the process that runs the indexes. It walks each
 projection that process enables under the projection's own lease,
 `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
-`rentals-index-ethereum`), so
+`rentals-index-ethereum`, `rentals-index-sepolia-ethereum`), so
 processes with different projections enabled share a network. Each
 projection keeps its own cadence and backoff, though one that reached the
 target may join a due companion's shared walk ahead of its own turn, so
@@ -2904,6 +2957,121 @@ readers use the subgraph fallbacks and Genesis collaborator grants fail
 closed. Its duration is not measured. Completeness check: `SELECT
 min(block_number) FROM land_authz.estate_data_event` is at or below the
 first `CreateEstate` block.
+
+## Map grid build workload
+
+`explore_api.map_grid` (`schemas/11_explore_api.sql`) holds the tile grid
+behind the explorer map routes (`/api/v{1,2}/tiles`, `/api/v2/tiles/info`,
+`map.png`, the minimaps and the parcel and estate metadata). The node
+builds it from its own indexes.
+
+- **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `run_pass`),
+  leased, every 60 s with 10 s of jitter, started once the land-authz index
+  and Shop's reader are attached. A failed pass backs off up to 5 minutes.
+  It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
+  marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
+  Every process also runs `explorer-map-grid-reload` every 60 s (`follow`):
+  one primary-key read of the row's stamp, a reload only when another
+  process stored a newer grid, and one read of the pass marker for what the
+  build waits for.
+- **One snapshot:** every read below runs in one REPEATABLE READ, READ ONLY
+  transaction, the one the land-authz index opens once it finds itself
+  published for the configured registries
+  (`indexer::ready_snapshot`; a database error fails the pass as itself,
+  not as an unpublished index). The build's clock is that snapshot's
+  `now()`: every comparison the build makes (the readiness windows, expiry,
+  the stamp, the publication floor) uses that one PostgreSQL transaction
+  clock. Shop's readiness checks and rows run
+  on the same connection, which `serve` hands to Shop through
+  `src/serve_adapters.rs` (Shop sits above Explore). The LAND facts, the
+  index cursors and Shop's rows are therefore one state of the database: a
+  rewind committed during the build, a withdrawn publication or deleted
+  rows, is invisible to it, and the next pass sees it whole.
+- **LAND reads** (`explore/src/api/map/build.rs`): every LAND `token_right`
+  row with coordinates, its `estate_land` row and the `authz_event` row its
+  `(updated_block, updated_log)` names, by primary key, for the time of its
+  last rights event. Every Estate `token_right` row that holds LAND, with
+  the same event join and the name of its latest `estate_data_event`
+  (`estate_data_event_estate_idx`, one probe per estate).
+- **Shop reads** (`shop/src/market/land_map.rs`): the Ethereum
+  `shop.nft_order` rows of the LAND and Estate registries, whatever their
+  status (primary-key range). The `shop.land_data` rows of both registries,
+  with the `shop.nft_event` row their `(updated_block, updated_log)` names,
+  by primary key. The open `public_nft_order` trades that sell a token of
+  either registry (`catalog::unified_trades_cte_of` scoped to the two
+  contracts, `idx_trade_assets_sent_contract`), priced in MANA: received
+  as an ERC-20 (asset type 1) whose token is the chain's MANA
+  (`listings::mana_token`); another token or a USD-pegged price is not a
+  MANA amount. The open, unexpired
+  `signatures.rentals` rows of both registries signed for the grid's chain
+  and its Rentals contract, with their periods.
+- **Readiness:** the land-authz index published for the configured
+  registries; the grid's chain being Ethereum mainnet, the only chain the
+  nft index walks (a Sepolia LAND index reports the nft index as not
+  ready); the nft index published on Ethereum and bound to chain 1
+  (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
+  readable (a recent complete trades-mirror pass read in the snapshot, or
+  local authority). The trade-events verdicts (`shop.trade_chain_state`)
+  close a sold or cancelled trade while that index is published on
+  Ethereum, as in the Shop's own listings. A source that is not ready fails
+  the pass, naming it in the marker's `last_error`, and nothing is built.
+  The held grid keeps serving. Until a grid exists, every map route answers
+  the unavailable envelope (503, `Retry-After: 60`, `no-store`, no
+  validators, even to a conditional request), naming the source the build
+  recorded, or the grid itself (`map-grid`, no `configure`) before any
+  build has.
+- **Write:** the stored row is the grid's revision. `etag` holds the hex
+  SHA-256 of the body a build stored (the canonical JSON, tiles in key
+  order), and `last_updated_at` its stamp, which only grows. A pass reads
+  the row (or its absence) in its input snapshot, as the revision its
+  inputs follow, and compares its body with that revision, not with what
+  its process holds. An equal body writes nothing, and a process holding an
+  older grid reloads the row. A different body waits until that revision
+  was built 5 minutes earlier (`fetched_at`, `MIN_PUBLISH_INTERVAL`), so a
+  token relisted every
+  minute does not write a 4.4 MB row and make every process reload it every
+  minute. Then it is gzipped and written with an `UPDATE` guarded on that
+  revision's stamp and `etag` (an `INSERT ...
+  ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
+  in milliseconds and at least one second past it. A leased build runs that
+  write on its lease's own session (`LeaseControl::with_connection`): it
+  commits while the process holds the lease or not at all, and a lease lost
+  while the statement waits takes the statement with it. If another publisher
+  stored a revision after the snapshot began, the write stores nothing and
+  the build is discarded: a pass never overwrites a revision published
+  since its snapshot. A process serves a grid only if its stamp
+  is newer than the one it holds, decided under its grid lock, so a slow
+  reload never brings back an older revision. An order or rental that
+  expires changes the body on the next pass, published under the same
+  5-minute floor. A PNG answer takes one grid
+  for its validators, cache key and body, and for an estate's
+  dissolved-estate redirect.
+- **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
+  `getEstateFlags` and `applyTrades`, with its roads and plazas vendored
+  (`special_tiles.json`). The rules and the known differences are in the
+  `build.rs` module docs. An order whose seller no longer owns the token
+  shows no price, while the atlas still prices it until it expires: 19 of
+  the 412 tiles the atlas priced by a legacy order on 2026-11-24. Bids do
+  not move `updatedAt`. Rental listings are this node's own, and a listing
+  is not checked against the token's current owner: the
+  `rental-listing-status` job cancels one whose asset left its lessor.
+  While a source is not ready, the held grid keeps its prices and listings,
+  including ones that expire meanwhile, until a pass builds again.
+- **Volume and cost:** mainnet holds 92,598 LAND, 65,086 of them in about
+  2,700 estates. On a synthetic database of that size (1.02M rights
+  events, 30,866 orders, 69,448 names among 1.07M `nft_event` rows, 52,000
+  trades), measured on a laptop with Postgres 17 and a release build: the
+  LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
+  names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
+  serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
+- **Deploy:** no schema step. Stop every process of a binary that runs
+  the `explorer-map-mirror` job before this one's first build: that job
+  rewrites the row's stamp without a guard. An environment that still sets
+  `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts, as
+  the binary and the posture checks read neither. A node without the
+  land-authz index, the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet
+  only) or a trades source never builds a grid, and its map routes answer
+  the envelope.
 
 ## Place removal feed
 
@@ -3668,3 +3836,15 @@ The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
 `nft_item_idx`.
+
+The DCL NAME owner read (`services/catalyst/shop/src/market/names.rs`) looks
+a label up lowercased, through `nft_ens_label_idx`, which only the
+DCLRegistrar's rows enter (`ens_subdomain` set). The object pass builds it the
+same way; to build it outside the release window:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_ens_label_idx
+    ON shop.nft (lower(ens_subdomain)) WHERE ens_subdomain IS NOT NULL;
+```
+
+Its size and the lookup time on production data are unmeasured.

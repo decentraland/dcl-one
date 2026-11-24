@@ -38,6 +38,8 @@ on:
       - 'apps/ui3/src/explorer/components/mapsurface.css'
       - 'apps/ui3/src/data/**'
       - 'apps/ui3/src/generated/bridge/**'
+      - 'library/ui/components/Tooltip/**'
+      - 'library/ui/package.json'
       - 'library/shop/**'
       - 'library/web-core/shop-chain-env.ts'
       - 'library/web-core/site.ts'
@@ -81,7 +83,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$BASE...$HEAD" \
-              | grep -qE '^(apps/creator-hub/|apps/ui3/(package|tsconfig)\.json$|apps/ui3/src/(atoms|shop/land|shop/checkout/chain|data|generated/bridge)/|apps/ui3/src/explorer/components/(MapSurface\.tsx|mapsurface\.css)$|library/shop/|library/web-core/(shop-chain-env|site)\.ts$|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
+              | grep -qE '^(apps/creator-hub/|apps/ui3/(package|tsconfig)\.json$|apps/ui3/src/(atoms|shop/land|shop/checkout/chain|data|generated/bridge)/|apps/ui3/src/explorer/components/(MapSurface\.tsx|mapsurface\.css)$|library/ui/(components/Tooltip/|package\.json$)|library/shop/|library/web-core/(shop-chain-env|site)\.ts$|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
             if [ "$DESKTOP" != true ]; then
               echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS, Windows and Linux on this pull request, or ci:linux for Linux alone."

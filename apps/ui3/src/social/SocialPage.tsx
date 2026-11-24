@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import ChromeShell from "../components/ChromeShell";
 import DclTopBar from "../web/frames/DclTopBar";
 import Communities, { type SocialCommunity, type SocialDetail, type SocialMember, type SocialPost, type SocialPlace } from "../explorer/pages/Communities";
-import CommunityCreate from "../explorer/components/CommunityCreate";
+import { CommunityCreate } from "@dcl/one-ui";
 import ConfirmDialog from "../explorer/components/ConfirmDialog";
 import CommunityRequests, { type CommunityRequest, type RequestDecision } from "./CommunityRequests";
 import CommunityPosts from "./CommunityPosts";
@@ -11,6 +11,7 @@ import CommunityMemberActions from "./CommunityMemberActions";
 import { eventXY, fetchEvents } from "@web-core/catalyst/events";
 import { PLAY_EVENTS_PARAMS } from "@web-core/screens/play";
 import { publicThumbnail, useThumbnailPublicBase } from "../data/thumbnail";
+import { siteUrl } from "../data/site";
 import "./social-page.css";
 
 type Props = {
@@ -218,6 +219,8 @@ export default function SocialPage({ viewer, communityId, postId, request, onSel
           return result;
         }}
         onDone={() => setCreating(false)}
+        contentPolicyUrl={siteUrl("/content")}
+        nameClaimUrl="/shop/names"
       />}
     </ChromeShell>
   );

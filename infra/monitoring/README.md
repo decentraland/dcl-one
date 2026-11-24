@@ -1,7 +1,9 @@
 # Catalyst index alerts
 
-Set `INDEX_METRICS_BIND` on the `catalyst index` process to an allocated
-loopback socket address. Scrape its `/metrics` endpoint every minute with
+Every `catalyst index` process starts its lag monitor and binds
+`127.0.0.1:5008` by default. Before deploying a second index process in the
+same network namespace, set `INDEX_METRICS_BIND` to an available loopback
+address for that instance. An occupied socket prevents startup. Scrape its `/metrics` endpoint every minute with
 the Prometheus job name `catalyst-index`. Use a collector in the same
 network namespace or a private scrape proxy. Keep each expected index
 instance in target discovery across process restarts. When a target can

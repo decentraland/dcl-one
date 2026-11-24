@@ -135,6 +135,7 @@ pub async fn ws_upgrade(
         Some(scene) => Target::Hosted(scene),
         None if state.settings.autoload && key != SceneKey::Local => {
             if state.scenes.len() >= state.settings.max_scenes {
+                dcl_metrics::ws::rejected("scene_state", "capacity");
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     format!(
@@ -180,6 +181,7 @@ pub async fn ws_upgrade(
 }
 
 fn not_loaded(scene_name: &str, why: Option<&str>) -> axum::response::Response {
+    dcl_metrics::ws::rejected("scene_state", "unavailable");
     let body = match why {
         Some(why) => format!("{scene_name} is not currently loaded in the server: {why}"),
         None => format!("{scene_name} is not currently loaded in the server"),
@@ -194,7 +196,7 @@ async fn handle_socket(
     paths: Vec<String>,
     caller_ip: String,
 ) {
-    let (mut sink, mut stream) = socket.split();
+    let (mut sink, mut stream) = dcl_metrics::ws::Socket::new(socket, "scene_state").split();
     let identity = target.identity().clone();
     drop(target);
     let name = identity.key.room_key();

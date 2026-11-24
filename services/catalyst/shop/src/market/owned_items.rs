@@ -676,6 +676,52 @@ pub async fn owned_tokens_observed(
     ))
 }
 
+/// A profile's or an outfit's composite read: the tokens `requested` names
+/// and the DCL NAMEs `owners` hold, in ONE snapshot on which the networks
+/// of both (Ethereum always, for the NAMEs) meet `rule`, and what it
+/// observed. The answer is filed under that one observation, so a NAME read
+/// before a transfer is never filed under the items' later publication.
+pub async fn owned_tokens_and_names(
+    pool: &PgPool,
+    requested: &HashSet<(String, String)>,
+    owners: &[String],
+    rule: Rule,
+) -> Result<
+    (
+        OwnedTokens,
+        HashMap<String, Vec<crate::chain_index::names::OwnedName>>,
+        Observed,
+    ),
+    ReadError,
+> {
+    let r = requests(requested);
+    let mut nets = r.nets.clone();
+    if !nets.contains(&ChainNet::Ethereum) {
+        nets.push(ChainNet::Ethereum);
+    }
+    let mut tx = snapshot(pool, &nets, rule, false).await?;
+    let publications = Publications::read(&mut tx).await?;
+    let owned = if r.v2.is_empty() && r.v1.is_empty() {
+        HashMap::new()
+    } else {
+        read_tokens(&mut tx, &r).await?
+    };
+    let names = super::names::read_owned_names_of(&mut tx, owners).await?;
+    tx.rollback().await.ok();
+    let fresh_until = match rule {
+        Rule::Fresh => publications.fresh_until(&nets),
+        Rule::Complete => None,
+    };
+    Ok((
+        owned,
+        names,
+        Observed {
+            publications,
+            fresh_until,
+        },
+    ))
+}
+
 /// Seeds what the gates read: a published nft cursor per network and,
 /// with `items`, the items mirror's complete pass.
 #[cfg(test)]

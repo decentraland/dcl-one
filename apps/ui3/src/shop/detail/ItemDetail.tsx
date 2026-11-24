@@ -9,7 +9,7 @@ import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } fr
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import Button from "../../atoms/Button";
-import Tooltip from "../../atoms/Tooltip";
+import { Tooltip } from "@dcl/one-ui";
 import EmptyState from "../../components/EmptyState";
 import { useCart } from "../cart/store";
 import { itemAsset, tokenAsset, type AssetId } from "@shop/model/asset";

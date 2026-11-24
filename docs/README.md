@@ -13,6 +13,7 @@
 
 ## Architecture decisions
 
+- [Shared service metrics](adr/2026-11-24-shared-service-metrics.md)
 - [Organizing library and services](adr/2026-10-19-organizing-library-services-folders.md)
 - [`comms-e2e`, a tool crate beside the Catalyst domain crates](adr/2026-11-19-comms-e2e-tool-crate.md)
 - [Protocol in dcl-one](adr/2026-10-25-protocol-in-dcl-one.md)

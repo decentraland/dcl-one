@@ -277,7 +277,7 @@ pub struct Cursor {
     pub diverged_at: Option<NaiveDateTime>,
 }
 
-const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
+pub(crate) const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
 
 /// Runs `ANALYZE <table>` in the fold's transaction only when the fold needs
 /// statistics the table does not have yet: a rebuild (`since` -1), a table
