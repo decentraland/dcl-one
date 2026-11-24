@@ -1,0 +1,43 @@
+{
+  "description": "POST /collections/{id}/publish of a third-party collection signed by its provider's manager naming an item of another collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000403/publish",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000403/publish:1767225600000:{}\",\"signature\":\"0xe3e9b5ac71e99c193a3e54eae6ea11b61d552f1915eec7416466f4abf78f58901775143e29df9f25a1f3a4f4a9fbbef4c812c340f8f308e13d08ada184477bc61c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "itemIds": [
+        "c011ec71-0000-4000-8000-0000000004b1",
+        "c011ec71-0000-4000-8000-0000000004a1"
+      ],
+      "cheque": {
+        "qty": 2,
+        "salt": "0xe6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6",
+        "signature": "0x6983ea94ac983e59ac8501fe4257e13974b114ec412c91cde19946a2bf30608e1596243778bb7e54671498e7f25acaf41734453d264bfcc3d02279890756db5d1c"
+      }
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000403"
+      },
+      "error": "Cannot publish items that belong to different collections"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,32 @@
+{
+  "description": "GET /{address}/collections signed by a committee member for another address. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/0x05bb381a642d932037707c4a626f93fb009696b2/collections",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x01eba3f0e992f53debaf51ed3738dc2f23e09aee\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xcb35E8511368f0De8759EEeAc3Fe51C8D5ea2e63\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x1a44116ede83b32f13ed080cc98e89d27d7ed635276ab2fabb9276554046bcc56070fc0c8edf5eece56d831406945891ae585e76b8fe1ddb8870481082b9be1d1b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/0x05bb381a642d932037707c4a626f93fb009696b2/collections:1767225600000:{}\",\"signature\":\"0x27142816e9bc658a3142a9d4740c4ce774418bfb61f099c68dd9a4878dd1178d2f4941be9fdbba4d7240998d410b1f59916be070afd3e25e7214ca71b43dba3f1b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "eth_address": "0x05bb381a642d932037707c4a626f93fb009696b2"
+      },
+      "error": "Unauthorized"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

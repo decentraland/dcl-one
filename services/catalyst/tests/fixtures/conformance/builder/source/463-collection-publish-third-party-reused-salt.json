@@ -1,0 +1,147 @@
+{
+  "description": "POST /collections/{id}/publish of a third-party collection signed by its provider's manager with a cheque whose salt another publication of the provider used. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000406/publish",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000406/publish:1767225600000:{}\",\"signature\":\"0x1d10990fc482b365c0e028f250bd41ac755ceffc501dedb5518f9361357e579529d0dfcbcd076228828ff42a9b2eaff86fbd3cf307c517adccc9ca8951fcae151b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "itemIds": [
+        "c011ec71-0000-4000-8000-0000000004e1"
+      ],
+      "cheque": {
+        "qty": 1,
+        "salt": "0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "signature": "0xa9b9949c8e31186ad435fcca9a3469c55787b933582bece8d391560ead1c7737034acd87ffec57f548c9d43e59c137609443d8bcf8a8c7caca8fdcff0c9cb0601b"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "collection": {
+          "id": "c011ec71-0000-4000-8000-000000000406",
+          "name": "Reused wearables",
+          "eth_address": "",
+          "salt": "0x4064064064064064064064064064064064064064064064060000000000000000",
+          "contract_address": null,
+          "is_published": true,
+          "created_at": "<<VOLATILE>>",
+          "updated_at": "<<VOLATILE>>",
+          "managers": [],
+          "minters": [],
+          "is_approved": false,
+          "reviewed_at": "<<VOLATILE>>",
+          "forum_link": null,
+          "lock": null,
+          "forum_id": null,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "is_mapping_complete": false,
+          "item_count": "1",
+          "urn": "urn:decentraland:matic:collections-thirdparty:registered:reused"
+        },
+        "items": [
+          {
+            "id": "c011ec71-0000-4000-8000-0000000004e1",
+            "name": "Reused hat",
+            "description": null,
+            "eth_address": "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+            "collection_id": "c011ec71-0000-4000-8000-000000000406",
+            "blockchain_item_id": "hat-1",
+            "price": "0",
+            "beneficiary": "0x0000000000000000000000000000000000000000",
+            "rarity": null,
+            "type": "wearable",
+            "data": {
+              "category": "hat",
+              "hides": [],
+              "replaces": [],
+              "representations": [],
+              "tags": []
+            },
+            "created_at": "2025-12-26T00:00:00.000Z",
+            "updated_at": "2025-12-26T00:00:00.000Z",
+            "metrics": {},
+            "thumbnail": "thumbnail.png",
+            "contents": {},
+            "total_supply": 0,
+            "local_content_hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+            "video": null,
+            "utility": null,
+            "mappings": null,
+            "urn": "urn:decentraland:matic:collections-thirdparty:registered:reused:hat-1",
+            "in_catalyst": false,
+            "is_approved": false,
+            "is_published": true,
+            "content_hash": null,
+            "catalyst_content_hash": null,
+            "isMappingComplete": false
+          }
+        ],
+        "itemCurations": [
+          {
+            "id": "<<VOLATILE>>",
+            "item_id": "c011ec71-0000-4000-8000-0000000004e1",
+            "status": "pending",
+            "content_hash": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+            "created_at": "<<VOLATILE>>",
+            "updated_at": "<<VOLATILE>>",
+            "is_mapping_complete": false
+          }
+        ]
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.collection.created_at",
+    "data.collection.updated_at",
+    "data.collection.reviewed_at",
+    "data.itemCurations.id",
+    "data.itemCurations.created_at",
+    "data.itemCurations.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.collection.created_at",
+      "data.collection.updated_at",
+      "data.collection.reviewed_at",
+      "data.itemCurations.created_at",
+      "data.itemCurations.updated_at"
+    ]
+  ],
+  "slack": [
+    {
+      "channel": "curation-example",
+      "text": "📦 New Third Party items ready for review: <https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000406&reviewing=true|Reused wearables> by <https://creators.example.org/shop/items/creator/0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0|0x1257...48c0> (1 item).",
+      "unfurl_links": false,
+      "unfurl_media": false
+    }
+  ],
+  "forum": [
+    {
+      "method": "POST",
+      "path": "/posts.json",
+      "username": null,
+      "body": {
+        "title": "Third Party collection Reused wearables with URN: urn:decentraland:matic:collections-thirdparty:registered",
+        "raw": "# Reused wearables\n\n  [View entire collection](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000406&reviewing=true)\n\n  ## Wearables\n\n  **Reused hat**\n      - Category: hat\n      ![](https://builder-api.example.org/v1/storage/contents/)\n      [Link to editor](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000406&item=c011ec71-0000-4000-8000-0000000004e1&reviewing=true)",
+        "category": "12"
+      }
+    }
+  ]
+}

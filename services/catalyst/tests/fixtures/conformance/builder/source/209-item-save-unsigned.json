@@ -1,0 +1,82 @@
+{
+  "description": "PUT /items/{id} without a signature. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000003d1",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "item": {
+        "beneficiary": null,
+        "blockchain_item_id": null,
+        "collection_id": "c011ec71-0000-4000-8000-000000000301",
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "id": "c011ec71-0000-4000-8000-0000000003d1",
+        "is_approved": false,
+        "is_published": false,
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Anonymous hat",
+        "price": null,
+        "rarity": "common",
+        "thumbnail": "thumbnail.png",
+        "total_supply": 0,
+        "type": "wearable",
+        "urn": null,
+        "utility": null,
+        "video": null
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "message": "\"verify\" method failed with error: Invalid Auth Chain. \"validateSignature\" method failed with error: ERROR: Invalid final authority. Expected: put:/items/c011ec71-0000-4000-8000-0000000003d1. Current ."
+      },
+      "error": "Unauthenticated"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

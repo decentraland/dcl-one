@@ -1,0 +1,98 @@
+{
+  "description": "GET /{address}/items signed by a wallet holding one item with no collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/0xcd6884d4258edc833f31ac773e24affe6a7d3154/items",
+    "query": {
+      "page": "1",
+      "limit": "60"
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/0xcd6884d4258edc833f31ac773e24affe6a7d3154/items:1767225600000:{}\",\"signature\":\"0xe6dbce6766a5a0f8ab8eabf126d4f15c09ec7cdd3fcbbb1c45a96ec1ed206bc40fe916a030bc3974253aa901f3f4046bed85d3d6b648ff0854117161465e838d1b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "total": 1,
+        "limit": 60,
+        "pages": 1,
+        "page": 1,
+        "results": [
+          {
+            "id": "c011ec71-0000-4000-8000-0000000003a2",
+            "name": "Stranger orphan",
+            "description": null,
+            "eth_address": "0xcd6884d4258edc833f31ac773e24affe6a7d3154",
+            "collection_id": null,
+            "blockchain_item_id": null,
+            "price": null,
+            "beneficiary": null,
+            "rarity": "common",
+            "type": "wearable",
+            "data": {
+              "category": "hat",
+              "hides": [],
+              "replaces": [],
+              "representations": [
+                {
+                  "bodyShapes": [
+                    "urn:decentraland:off-chain:base-avatars:BaseMale"
+                  ],
+                  "contents": [
+                    "model.glb"
+                  ],
+                  "mainFile": "model.glb",
+                  "overrideHides": [],
+                  "overrideReplaces": []
+                }
+              ],
+              "tags": [
+                "conformance"
+              ]
+            },
+            "created_at": "2025-12-11T00:00:00.000Z",
+            "updated_at": "2025-12-11T00:00:00.000Z",
+            "metrics": {
+              "bodies": 1,
+              "entities": 1,
+              "materials": 1,
+              "meshes": 1,
+              "textures": 1,
+              "triangles": 100
+            },
+            "thumbnail": "thumbnail.png",
+            "contents": {
+              "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+              "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+            },
+            "total_supply": 0,
+            "local_content_hash": null,
+            "video": null,
+            "utility": null,
+            "mappings": null,
+            "urn": null,
+            "in_catalyst": false,
+            "is_approved": false,
+            "is_published": false,
+            "content_hash": null,
+            "catalyst_content_hash": null
+          }
+        ]
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

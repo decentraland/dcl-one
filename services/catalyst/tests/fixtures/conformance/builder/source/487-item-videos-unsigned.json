@@ -1,0 +1,34 @@
+{
+  "description": "POST /items/{id}/videos without a signature. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000003fa/videos",
+    "query": {},
+    "headers": {},
+    "body": null,
+    "multipart": [
+      {
+        "name": "video.mp4",
+        "filename": "video.mp4",
+        "type": "video/mp4",
+        "text": "\u0000\u0000\u0000\u0018ftypisom\u0000\u0000\u0002\u0000isomconf\u0000\u0000\u0000\bmoov\u0000\u0000\u0000\u0019mdatconformance video"
+      }
+    ]
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "message": "\"verify\" method failed with error: Invalid Auth Chain. \"validateSignature\" method failed with error: ERROR: Invalid final authority. Expected: post:/items/c011ec71-0000-4000-8000-0000000003fa/videos. Current ."
+      },
+      "error": "Unauthenticated"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,88 @@
+{
+  "description": "PUT /items/{id} signed by the provider's manager, changing the URN of a curated third-party item. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000004a1",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/items/c011ec71-0000-4000-8000-0000000004a1:1767225600000:{}\",\"signature\":\"0xa5d9237301bc7d27b55600a2be622a17befe3ef99f61abcfdfaa187738e75233147a3083f872f19689469b50bb414ae932e7f2f42c4dbd1f13313dc59d8652031c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "item": {
+        "beneficiary": null,
+        "blockchain_item_id": null,
+        "collection_id": "c011ec71-0000-4000-8000-000000000402",
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0x043b83d2010ee75cc3c0419348327eb9c6da7268",
+        "id": "c011ec71-0000-4000-8000-0000000004a1",
+        "is_approved": false,
+        "is_published": false,
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Curated cap",
+        "price": null,
+        "rarity": null,
+        "thumbnail": "thumbnail.png",
+        "total_supply": 0,
+        "type": "wearable",
+        "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:cap-9",
+        "utility": null,
+        "video": null
+      }
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-0000000004a1",
+        "urn": "urn:decentraland:matic:collections-thirdparty:curated:curated-wearables:cap-1"
+      },
+      "error": "The third party item is already published. It can't be inserted or updated."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

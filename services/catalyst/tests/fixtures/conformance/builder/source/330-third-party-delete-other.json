@@ -1,0 +1,32 @@
+{
+  "description": "DELETE /thirdParties/{id} signed by a wallet the virtual third party doesn't list. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/thirdParties/urn:decentraland:matic:collections-thirdparty:fresh",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/v1/thirdparties/urn:decentraland:matic:collections-thirdparty:fresh:1767225600000:{}\",\"signature\":\"0x1861c008fc7921e29c3efcc32a1bc5f0fc80a3a4ad40709f05064eab7e9613b7589c5d5803555464e22e56a5cb1fbde11e597d3ea7b853955e21e0ba9f4278c81b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "urn:decentraland:matic:collections-thirdparty:fresh"
+      },
+      "error": "You are not the manager of this Third Party."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

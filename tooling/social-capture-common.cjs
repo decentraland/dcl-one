@@ -1,6 +1,5 @@
 'use strict'
 
-// Capture tooling only: importing this module never loads an upstream dependency.
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
@@ -9,19 +8,27 @@ const { createRequire } = require('node:module')
 
 const SOCIAL_REVISION = 'b6b2cefefdf727b2ed47ddb887e77d226a41eea6'
 const GATEKEEPER_REVISION = 'be6a4b97a2189157884503485892ff46d0ac68da'
+const BUILDER_REVISION = '98897af692f26063a088aebb2ea5bb3f683168a2'
 const SOURCES = Object.freeze({
   social: Object.freeze({ repository: 'decentraland/social-service-ea', revision: SOCIAL_REVISION }),
-  gatekeeper: Object.freeze({ repository: 'decentraland/comms-gatekeeper', revision: GATEKEEPER_REVISION })
+  gatekeeper: Object.freeze({ repository: 'decentraland/comms-gatekeeper', revision: GATEKEEPER_REVISION }),
+  builder: Object.freeze({ repository: 'decentraland/builder-server', revision: BUILDER_REVISION })
 })
+const RUNTIMES = Object.freeze({ social: ['Social', '26'], gatekeeper: ['Social', '26'], builder: ['Builder', '24'] })
+
+function requireNode(kind = 'social') {
+  const [label, major] = RUNTIMES[kind]
+  if (process.versions.node.split('.')[0] !== major) throw Error(`${label} captures require Node ${major}`)
+}
 
 function requireNode26() {
-  if (process.versions.node.split('.')[0] !== '26') throw Error('Social captures require Node 26')
+  requireNode('social')
 }
 
 function assertPinnedSource(root, kind = 'social') {
-  requireNode26()
   const source = SOURCES[kind]
   if (!source) throw Error('Unknown capture source kind')
+  requireNode(kind)
   if (typeof root !== 'string' || !root.trim()) throw Error('A source checkout root is required')
   let upstream
   try { upstream = fs.realpathSync(root) } catch { throw Error('Source checkout root does not exist') }
@@ -38,9 +45,8 @@ function assertPinnedSource(root, kind = 'social') {
   return { upstream, ...source }
 }
 
-function sourceCapture(root, { companions = [] } = {}) {
-  const source = assertPinnedSource(root)
-  // Validate every companion before even loading the TypeScript registrar.
+function sourceCapture(root, { companions = [], kind = 'social' } = {}) {
+  const source = assertPinnedSource(root, kind)
   for (const companion of companions) assertPinnedSource(companion.root, companion.kind)
   const req = createRequire(path.join(source.upstream, 'package.json'))
   req('ts-node').register({
@@ -55,7 +61,6 @@ function sha256(root, file) {
   return crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')
 }
 
-// Callers retain their existing metadata layout; use sha256 directly for variants.
 function provenance(root, files, extra = {}) {
   return { ...SOURCES.social, sha256: Object.fromEntries(files.map(file => [file, sha256(root, file)])), ...extra }
 }
@@ -65,4 +70,4 @@ function requireDatabaseUrl(value) {
   return value
 }
 
-module.exports = { SOCIAL_REVISION, GATEKEEPER_REVISION, requireNode26, assertPinnedSource, sourceCapture, sha256, provenance, requireDatabaseUrl }
+module.exports = { SOCIAL_REVISION, GATEKEEPER_REVISION, BUILDER_REVISION, requireNode, requireNode26, assertPinnedSource, sourceCapture, sha256, provenance, requireDatabaseUrl }

@@ -1,0 +1,76 @@
+{
+  "description": "PUT /items/{id} signed by the owner moving its item with no collection into a third-party collection it manages. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000000a1",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/items/c011ec71-0000-4000-8000-0000000000a1:1767225600000:{}\",\"signature\":\"0x8ced29d542b6bfc5602c832805ad3a284c785fd721e1cc1ca11a09417e99bb1d0bc77c56a990e975e0d7ab772979fcc209a133d597a39d9db84bb774e62da7fa1c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "item": {
+        "id": "c011ec71-0000-4000-8000-0000000000a1",
+        "name": "Conformance moved",
+        "description": "",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "collection_id": "c011ec71-0000-4000-8000-000000000008",
+        "type": "wearable",
+        "rarity": "common",
+        "price": "0",
+        "thumbnail": "thumbnail.png",
+        "contents": {
+          "model.glb": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
+          "thumbnail.png": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+        },
+        "metrics": {
+          "meshes": 1,
+          "bodies": 1,
+          "materials": 1,
+          "textures": 1,
+          "triangles": 1,
+          "entities": 1
+        },
+        "data": {
+          "category": "hat",
+          "tags": [],
+          "replaces": [],
+          "hides": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "mainFile": "model.glb",
+              "contents": [
+                "model.glb"
+              ],
+              "overrideReplaces": [],
+              "overrideHides": []
+            }
+          ]
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-0000000000a1"
+      },
+      "error": "Item can't change between collections."
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}
