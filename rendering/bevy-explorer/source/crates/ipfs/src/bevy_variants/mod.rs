@@ -39,10 +39,10 @@
 //! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
 //! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
 //! [`IpfsIo::bevy_lod_descriptor`]), and its far LOD, abgen's one simplified mesh for the scene
-//! (`{base}/LOD/lods-bevy/lods/{sceneId}_1.glb`, [`IpfsIo::bevy_far_lod`]), the latter under the
-//! conditions of a manifest request, on a GPU with BC textures only. A far LOD the server has
-//! none for is not asked for again in the session, and far LODs pause while their requests fail
-//! (`far_lod`).
+//! (`{base}/LOD/lods-bevy/lods/{sceneId}_1.glb`, [`IpfsIo::bevy_far_lod`]), the latter on a GPU
+//! with BC textures only, and not turned off with the variants for the session. A far LOD the
+//! server has none for is not asked for again in the session, and far LODs pause while their
+//! requests fail, probing until one is answered (`far_lod`).
 
 mod debug_panel;
 mod far_lod;
@@ -712,8 +712,9 @@ impl IpfsIo {
     }
 
     /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
-    /// the terms a manifest request has (variants on and not turned off for the session, the
-    /// scene eligible) and only on a GPU with BC textures: the mesh's atlases are BC KTX2 only.
+    /// the variants base (variants on, the scene eligible) and only on a GPU with BC textures:
+    /// the mesh's atlases are BC KTX2 only. It does not depend on the variants client having
+    /// turned itself off for the session: far LODs keep to their own breaker.
     /// Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
     /// smaller, and the server sends it to a browser that accepts `br`.
     ///
@@ -724,9 +725,6 @@ impl IpfsIo {
         let Some(base) = self.bevy_variants.base() else {
             return FarLodSource::Unavailable("bevy variants off".to_owned());
         };
-        if let Some(reason) = self.bevy_variants.disabled() {
-            return FarLodSource::Unavailable(format!("variants off: {reason}"));
-        }
         match self.bevy_variants.bc.get() {
             None => return FarLodSource::NotYet,
             Some(false) => {
@@ -791,11 +789,8 @@ impl IpfsIo {
 
     /// Whether a far LOD's download may start now. While far LODs are paused it is false, except
     /// once per cool-down (the probe), which a true answer spends, so call it only right before
-    /// starting a download.
+    /// starting a download. Independent of the variants session switch.
     pub fn far_lod_may_request(&self) -> bool {
-        if self.bevy_variants.disabled().is_some() {
-            return false;
-        }
         self.bevy_variants
             .far_lods
             .lock_ignore_poison()
@@ -814,12 +809,12 @@ impl IpfsIo {
             })
     }
 
-    /// Whether no far LOD can be offered this session: no variants base, variants turned off,
-    /// a GPU known to have no BC textures, or preview.
+    /// Whether no far LOD can be offered this session: no variants base, a GPU known to have no
+    /// BC textures, or preview. Far LODs are not turned off with the variants client for the
+    /// session: an outage is the far LOD breaker's to handle, and it recovers.
     pub fn far_lods_off(&self) -> bool {
         self.is_preview
             || self.bevy_variants.base().is_none()
-            || self.bevy_variants.disabled().is_some()
             || self.bevy_variants.bc.get() == Some(&false)
     }
 
