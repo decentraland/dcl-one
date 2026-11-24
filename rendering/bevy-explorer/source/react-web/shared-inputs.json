@@ -6278,7 +6278,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "f77353b340e59526e2ce0f6a30310a64fe4c5d21644bebed07f432d964da4abd"
+      "sha256": "f880c50d26a66aeaca3972909ca9f393e278242163cc8aa9648d84d61ef52173"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",

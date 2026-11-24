@@ -56,6 +56,19 @@ describe('?gateway=', () => {
     expect(engineLaunch(new URLSearchParams(window.location.search)).options.gateway).toBe('https://gateway.example.test')
   })
 
+  it("signs the path a gateway. host forwards, with the engine's service urls on native", async () => {
+    // the native shell hands the HUD the engine's resolved services and its gateway
+    const places = 'https://gateway.decentraland.org/places'
+    window.history.replaceState(null, '', `/?native=1&gateway=https://gateway.decentraland.org&places=${encodeURIComponent(places)}`)
+    vi.resetModules()
+    const m = await import('../lib/baseDomain')
+    expect(m.serviceUrl('places')).toBe(places)
+    expect(m.gatewaySignedPath(`${places}/api/places?limit=1`)).toBe('/api/places')
+    expect(m.gatewaySignedPath('https://places.decentraland.org/api/places')).toBe(null)
+    const { untrustedLaunchParams } = await import('../lib/launchGate')
+    expect(untrustedLaunchParams({ native: true })).toEqual([])
+  })
+
   it("trusts an https origin under Decentraland's deployments, never a path under one", async () => {
     for (const [gateway, untrusted] of [
       ['https://gateway.decentraland.org', []],

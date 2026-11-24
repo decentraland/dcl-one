@@ -40,7 +40,10 @@ HUD = """
     const { SERVICES } = await import(pathToFileURL(resolve(core, 'engine/generated/serviceTable.ts')));
     const urls = Object.fromEntries(SERVICES.map((s) => [s.name, hud.serviceUrl(s.name)]));
     const options = hud.engineServiceOptions?.() ?? null;
-    console.log(JSON.stringify({ services: SERVICES, options, urls }));
+    // what the HUD signs for the same probes the engine signs (gateway_routes_match_deployment)
+    const signing = Object.fromEntries(SERVICES.map((s) => [s.name, Object.fromEntries(
+        ['', '/', '/child?query=x/y'].map((suffix) => [urls[s.name] + suffix, hud.gatewaySignedPath(urls[s.name] + suffix)]))]));
+    console.log(JSON.stringify({ services: SERVICES, options, urls, signing }));
 """
 
 
@@ -72,6 +75,17 @@ def check_gateway_option(rows, root):
                 expected = row[key] if row[key] is not None else row["fallback"]
                 for name, urls in (("play", hud["urls"]), ("react-web", react_web["urls"])):
                     assert urls[row["name"]] == expected, (name, gateway, row["name"], urls[row["name"]], expected)
+                if key != "vhost" or row[key] is None:
+                    continue
+                # Requests the HUD signs itself sign what the engine signs, which is what nginx
+                # forwards through the virtual host.
+                for probe in row["signing"]:
+                    target = urlsplit(probe["target"])
+                    request_uri = target.path + ("?" + target.query if target.query else "")
+                    _, original = route(target.hostname, request_uri)
+                    for name, signing in (("play", hud["signing"]), ("react-web", react_web["signing"])):
+                        signed = signing[row["name"]][probe["target"]]
+                        assert signed == probe["signed"] == original.split("?")[0], (name, probe, signed, original)
 
         node = run_hud(root, f"https://node.example.test/play?gateway={gateway}", True)
         assert node["options"]["gateway"] == gateway, node["options"]

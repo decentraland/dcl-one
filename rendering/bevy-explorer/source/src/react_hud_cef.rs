@@ -259,6 +259,12 @@ fn spawn_hud(
         url.push_str("&nativeProfileImageBase=");
         url.push_str(&urlencoding::encode(&base));
     }
+    // the gateway too, so a request the HUD signs itself signs the path a `gateway.` host forwards
+    if let Some(gateway) = common::base_domain::gateway() {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("gateway=");
+        url.push_str(&urlencoding::encode(gateway));
+    }
     // and so does each explicit service override the HUD has a param for (it resolves its own
     // service urls); a native-only service is not in its table, so it would land in the page's
     // unrecognised-parameter dialog
