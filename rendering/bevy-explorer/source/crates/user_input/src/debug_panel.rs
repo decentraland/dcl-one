@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    dynamics::grounded,
+    dynamics::PLAYER_LANDED_THRESHOLD,
     structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser},
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -148,7 +148,7 @@ fn movement_state(
         "doubleJump":loc.and_then(|s| s.double_jump_height), "landing":loc.and_then(|s| s.hard_landing_cooldown),
         "requested":requested.map(vector), "actual":actual.map(vector),
         "external":step.external_velocity.map(vector),
-        "grounded":ground_height.map(grounded),
+        "grounded":ground_height.map(|height| height < PLAYER_LANDED_THRESHOLD),
         "groundHeight":ground_height,
         "unavailable":{
             "grounded":"No player movement state.",
@@ -194,6 +194,35 @@ mod tests {
         assert_eq!(report["requested"], json!([0.0, 0.0, 0.0]));
         assert_eq!(report["actual"], json!([0.0, 0.0, 0.0]));
         assert!(report["external"].is_null());
+    }
+
+    #[test]
+    fn the_player_is_on_the_ground_within_the_landed_height() {
+        for (ground_height, grounded) in [(0.1, true), (PLAYER_LANDED_THRESHOLD, false)] {
+            let mut app = App::new();
+            app.add_event::<ConsoleCommandEntered>()
+                .add_event::<PrintConsoleLine>()
+                .init_resource::<LastMovementStep>()
+                .add_systems(Update, movement_state);
+            app.world_mut().spawn((
+                PrimaryUser::default(),
+                ActivePlayerComponent::<AvatarMovement>::from_config(&default()),
+                AvatarDynamicState {
+                    ground_height,
+                    ..default()
+                },
+            ));
+            let (tx, rx) = mpsc::channel();
+            app.world_mut().send_event(ConsoleCommandEntered {
+                command_name: "/movement_state".into(),
+                args: vec![],
+                responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+            });
+            app.update();
+            let reply = rx.try_recv().unwrap().unwrap();
+            let report: serde_json::Value = serde_json::from_str(&reply).unwrap();
+            assert_eq!(report["grounded"], grounded, "{ground_height}");
+        }
     }
 
     #[test]
