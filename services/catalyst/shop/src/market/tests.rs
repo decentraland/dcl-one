@@ -116,7 +116,10 @@ pub(crate) mod support {
     /// rows: a configured reader that truly has nothing.
     pub async fn serve_empty_graph() -> String {
         use axum::routing::post;
-        let app = Router::new().route("/", post(|| async { axum::Json(json!({ "data": {} })) }));
+        let app = Router::new().route(
+            "/",
+            post(|| async { axum::Json(json!({ "data": { "nfts": [] } })) }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

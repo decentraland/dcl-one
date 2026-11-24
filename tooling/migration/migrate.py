@@ -98,6 +98,14 @@ CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
     max_parcels integer,
     max_size_bytes bigint
 );
+-- Exact attendance rows written by the import; later local changes retain ownership.
+CREATE TABLE IF NOT EXISTS dcl_migration.event_attendance_loaded (
+    event_id text NOT NULL,
+    signer text NOT NULL,
+    signed_at timestamp NOT NULL,
+    signed_payload jsonb NOT NULL,
+    PRIMARY KEY (event_id, signer)
+);
 -- What the notifications-workers loads wrote, so its reconcile steps delete only imported rows that
 -- upstream no longer holds; a row whose values no longer match was changed on the node and is kept.
 CREATE TABLE IF NOT EXISTS dcl_migration.notification_opt_out_loaded (
@@ -232,6 +240,25 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
 );
+-- Upstream's ranking counters as last loaded: unchanged, the node's are left alone; the node's own
+-- photo/stream count is what it holds above them.
+CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ranking_loaded (
+    community_id uuid PRIMARY KEY,
+    events_count integer NOT NULL,
+    photos_count integer NOT NULL,
+    streams_count integer NOT NULL,
+    events_total_attendees integer NOT NULL,
+    streams_total_participants integer NOT NULL,
+    ranking_score real NOT NULL
+);
+DO $ddl$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+             AND table_name = 'social_community_ranking_loaded' AND column_name = 'written_photos_count') THEN
+    ALTER TABLE dcl_migration.social_community_ranking_loaded
+        DROP COLUMN written_photos_count, DROP COLUMN written_streams_count,
+        DROP COLUMN written_streams_total_participants;
+  END IF;
+END $ddl$;
 -- The has_started_program the wallet import last wrote; a wallet that no longer matches started
 -- the program on the node.
 CREATE TABLE IF NOT EXISTS dcl_migration.credit_wallet_loaded (
@@ -1509,6 +1536,9 @@ SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(k, 'UTF8'), 'hex'
     UNION ALL
     SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
     WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
+    UNION ALL
+    SELECT legacy_sha256 || ' (legacy thumbnail)', blob_cid FROM worlds.thumbnail_aliases
+    WHERE mirror_expires_at IS NULL
 ) x ORDER BY o, k""",
         'steps': {'world', 'world_scene'},
     },

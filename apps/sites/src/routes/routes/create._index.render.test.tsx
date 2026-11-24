@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { createRoutesStub } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import layout from "@/features/components/chrome/SitesLayout.module.css";
-
-import CreateRoute from "./create._index";
+import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
+import { afterEach, expect, it, vi } from "vitest";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -16,37 +13,71 @@ vi.hoisted(() =>
   }),
 );
 
-vi.mock("@/features/create-landing/CreateLanding", () => ({ default: () => <h1>Create landing</h1> }));
-vi.mock("@/features/creators/components/SubNav", () => ({ SubNav: () => <nav aria-label="Creators sections" /> }));
+const landing = vi.hoisted(() => vi.fn((_props: { sid?: string; userId?: string }) => <h1>Create landing</h1>));
+vi.mock("@/features/create-landing/CreateLanding", () => ({ default: landing }));
 vi.mock("@/data/lib/shop/marketplace-access", () => ({ useMarketplaceHere: () => false }));
+vi.mock("@/features/creators/components/SubNav", () => ({ SubNav: () => null }));
 
-afterEach(() => cleanup());
+import CreateRoute from "./create._index";
 
-describe("when a visitor opens /create", () => {
-  beforeEach(async () => {
-    const Stub = createRoutesStub([
-      { path: "/create", Component: CreateRoute, loader: () => ({ dehydratedState: undefined, downloads: null, sid: "s1" }) },
-    ]);
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <Stub initialEntries={["/create"]} />
-      </QueryClientProvider>,
-    );
-    await screen.findByRole("heading", { name: "Create landing" });
-  });
+afterEach(() => {
+  cleanup();
+  landing.mockClear();
+});
 
-  it("should show the Sites top bar", () => {
-    const banner = within(screen.getByRole("banner", { name: "Decentraland" }));
-    expect(banner.getByRole("button", { name: "Open menu" })).toBeTruthy();
-    expect(banner.queryByRole("button", { name: "Toggle navigation menu" })).toBeNull();
-  });
+function renderCreate(routeData: { sid?: string } | null) {
+  const router = createMemoryRouter(
+    [
+      {
+        id: "root",
+        path: "/",
+        loader: () => ({ sid: "root-sid", analyticsUserId: "0xabc" }),
+        Component: Outlet,
+        HydrateFallback: () => null,
+        children: [
+          {
+            path: "create",
+            loader: () => routeData,
+            Component: () => <CreateRoute loaderData={routeData as never} params={{}} matches={[] as never} />,
+          },
+        ],
+      },
+    ],
+    { initialEntries: ["/create"] },
+  );
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+}
 
-  it("should float the top bar over the landing's hero", () => {
-    expect(document.querySelector("[data-site-layout]")?.classList.contains(layout.overlay)).toBe(true);
-  });
+it("hands the hero the root's session after a client navigation, whose clientLoader carries no sid", async () => {
+  renderCreate(null);
+  await waitFor(() => expect(landing).toHaveBeenCalled());
+  expect(landing.mock.lastCall?.[0]).toMatchObject({ sid: "root-sid", userId: "0xabc" });
+});
 
-  it("should render the landing and the site footer", () => {
-    expect(screen.getByRole("heading", { name: "Create landing" })).toBeTruthy();
-    expect(screen.getByRole("contentinfo")).toBeTruthy();
-  });
+it("keeps the route's own session on a server render", async () => {
+  renderCreate({ sid: "route-sid" });
+  await waitFor(() => expect(landing).toHaveBeenCalled());
+  expect(landing.mock.lastCall?.[0]).toMatchObject({ sid: "route-sid" });
+});
+
+it("shows the Sites top bar", async () => {
+  renderCreate(null);
+  const banner = within(await screen.findByRole("banner", { name: "Decentraland" }));
+  expect(banner.getByRole("button", { name: "Open menu" })).toBeTruthy();
+  expect(banner.queryByRole("button", { name: "Toggle navigation menu" })).toBeNull();
+});
+
+it("floats the top bar over the landing's hero", async () => {
+  renderCreate(null);
+  await screen.findByRole("heading", { name: "Create landing" });
+  expect(document.querySelector("[data-site-layout]")?.classList.contains(layout.overlay)).toBe(true);
+});
+
+it("renders the site footer", async () => {
+  renderCreate(null);
+  expect(await screen.findByRole("contentinfo")).toBeTruthy();
 });

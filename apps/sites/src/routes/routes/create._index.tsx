@@ -10,6 +10,7 @@ import SitesLayout from "@/features/components/chrome/SitesLayout";
 import CreateLanding from "@/features/create-landing/CreateLanding";
 import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
 import { SubNav } from "@/features/creators/components/SubNav";
+import { useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 
 import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/create._index";
@@ -68,11 +69,14 @@ export async function clientLoader(): Promise<null> {
 }
 
 export default function CreateRoute({ loaderData }: Route.ComponentProps) {
+  const userId = useAnalyticsUserId();
+  // A client navigation runs the clientLoader, which carries no sid: the root's session stands in.
+  const rootSid = useAnalyticsSid();
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
       <SitesLayout active="create" overlayNav>
         <SubNav landing />
-        <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid} />
+        <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid || rootSid} userId={userId} />
       </SitesLayout>
     </HydrationBoundary>
   );

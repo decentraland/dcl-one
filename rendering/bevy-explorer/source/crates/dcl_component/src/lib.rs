@@ -153,6 +153,8 @@ impl SceneComponentId {
     pub const ANIMATOR: SceneComponentId = SceneComponentId(1042);
     pub const GLTF_NODE_MODIFIERS: SceneComponentId = SceneComponentId(1099);
 
+    /// CRC32 of the zero-padded 128-byte name `asset-packs::VideoControlState`, plus 2048.
+    pub const VIDEO_CONTROL_STATE: SceneComponentId = SceneComponentId(2_092_194_694);
     pub const VIDEO_PLAYER: SceneComponentId = SceneComponentId(1043);
     pub const VIDEO_EVENT: SceneComponentId = SceneComponentId(1044);
     pub const AUDIO_EVENT: SceneComponentId = SceneComponentId(1105);

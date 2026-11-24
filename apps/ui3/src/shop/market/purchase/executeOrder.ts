@@ -14,7 +14,7 @@ import type { Order } from "../lib/api";
 import { LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, marketplaceForTrade } from "@shop/market/lib/contracts";
 import { ensureManaAllowance } from "../lib/mana";
 import { acceptTrade, TRADE_ASSET, type Trade } from "../lib/trades";
-import { sendCall, waitForReceipt, type WaitOptions } from "../lib/tx";
+import { bounded, READ_TIMEOUT_MS, sendCall, waitForReceipt, walletAccount, WalletAccountChangedError, type WaitOptions } from "../lib/tx";
 
 export type OrderPhase = "approving" | "confirming" | "pending";
 
@@ -33,6 +33,19 @@ export function manaAllowanceFor(trade: Trade, quote: ManaWei | null, headroomPc
   return capped;
 }
 
+/**
+ * The account a purchase starts on, read within the read bound. The approval and the sale are both bound to it: a
+ * wallet that moves to another account between them sends no sale.
+ */
+function buyerOf(provider: Eip1193Provider, wait: WaitOptions | undefined): Promise<string> {
+  return bounded(walletAccount(provider), wait?.readTimeoutMs ?? READ_TIMEOUT_MS);
+}
+
+/** A sale stopped because the wallet left the buyer's account says whether this purchase's approval had gone out. */
+function stoppedAfterApproval(e: unknown, approval: string | null): unknown {
+  return e instanceof WalletAccountChangedError && approval !== null ? new WalletAccountChangedError({ approvalSent: true }) : e;
+}
+
 /** EXECUTE_ORDER for a signed trade listing: MANA allowance, then `accept([trade])`. */
 export async function buyTradeWithMana(opts: {
   provider: Eip1193Provider;
@@ -45,24 +58,31 @@ export async function buyTradeWithMana(opts: {
 }): Promise<string> {
   const marketplace = marketplaceForTrade({ contract: opts.trade.contract, chainId: opts.trade.chainId });
   if (!marketplace) throw new Error("This listing names a contract that is not a marketplace.");
+  const buyer = await buyerOf(opts.provider, opts.wait);
   opts.onPhase?.("approving");
-  await ensureManaAllowance({
+  const approval = await ensureManaAllowance({
     provider: opts.provider,
     chainId: opts.trade.chainId,
     spender: marketplace.address,
     amount: manaAllowanceFor(opts.trade, opts.manaQuote ?? null),
     wait: opts.wait,
+    owner: buyer,
   });
   opts.onPhase?.("confirming");
-  return acceptTrade({
-    provider: opts.provider,
-    trade: opts.trade,
-    wait: opts.wait,
-    onSubmitted: (hash) => {
-      opts.onPhase?.("pending");
-      opts.onSubmitted?.(hash);
-    },
-  });
+  try {
+    return await acceptTrade({
+      provider: opts.provider,
+      trade: opts.trade,
+      wait: opts.wait,
+      buyer,
+      onSubmitted: (hash) => {
+        opts.onPhase?.("pending");
+        opts.onSubmitted?.(hash);
+      },
+    });
+  } catch (e) {
+    throw stoppedAfterApproval(e, approval);
+  }
 }
 
 /**
@@ -86,16 +106,24 @@ export async function executeLegacyOrder(opts: {
   if (!legacy || (named && named !== legacy.address.toLowerCase()) || !opts.order.tokenId) throw new Error("This order cannot be executed from the Shop.");
   const venue = legacy.address;
   const price = BigInt(opts.order.price);
+  const buyer = await buyerOf(opts.provider, opts.wait);
   opts.onPhase?.("approving");
-  await ensureManaAllowance({ provider: opts.provider, chainId, spender: venue, amount: price, wait: opts.wait });
+  const approval = await ensureManaAllowance({ provider: opts.provider, chainId, spender: venue, amount: price, wait: opts.wait, owner: buyer });
   opts.onPhase?.("confirming");
   const assetId = BigInt(opts.order.tokenId);
-  const hash = await sendCall(
-    opts.provider,
-    opts.fingerprint
-      ? { chainId, to: venue, abi: LEGACY_MARKETPLACE_ABI, functionName: "safeExecuteOrder", args: [opts.order.contractAddress, assetId, price, opts.fingerprint] }
-      : { chainId, to: venue, abi: LEGACY_MARKETPLACE_ABI, functionName: "executeOrder", args: [opts.order.contractAddress, assetId, price] },
-  );
+  // The sale goes from the buyer the approval was made for, or not at all.
+  const bound = { account: buyer, readTimeoutMs: opts.wait?.readTimeoutMs ?? READ_TIMEOUT_MS };
+  let hash: string;
+  try {
+    hash = await sendCall(
+      opts.provider,
+      opts.fingerprint
+        ? { chainId, to: venue, abi: LEGACY_MARKETPLACE_ABI, functionName: "safeExecuteOrder", args: [opts.order.contractAddress, assetId, price, opts.fingerprint], ...bound }
+        : { chainId, to: venue, abi: LEGACY_MARKETPLACE_ABI, functionName: "executeOrder", args: [opts.order.contractAddress, assetId, price], ...bound },
+    );
+  } catch (e) {
+    throw stoppedAfterApproval(e, approval);
+  }
   opts.onPhase?.("pending");
   opts.onSubmitted?.(hash);
   return waitForReceipt(chainId, hash, "The purchase", opts.wait);

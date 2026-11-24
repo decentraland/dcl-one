@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DEFAULT_REALM } from '@hud-host'
 import type { SceneToPage } from '@explorer-core/engine/protocol'
@@ -12,6 +12,7 @@ import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
 import { MARKER_ART } from '../../features/map/mapArt'
+import chromeStyles from '../../features/map/MapChrome.module.css'
 import type { MapState, TravelOutcome } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
@@ -85,7 +86,7 @@ function serve(services: Services = {}): MapRequest[] {
 
 function renderMap(over: Partial<MapState> = {}, genesis = true, compact?: { onTravel: () => void }): MapState {
   const session = fakeSession()
-  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), ...over }
+  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), clearHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
   render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} compact={compact} onNavigate={vi.fn()} />)
   return map
@@ -139,6 +140,15 @@ describe('map page controls', () => {
     }
   })
 
+  it("wraps the category chips only in the lobby's section modal", () => {
+    serve()
+    renderMap()
+    expect(screen.getByRole('group', { name: 'Categories' }).parentElement).not.toHaveClass(chromeStyles.categoriesWrap)
+    cleanup()
+    renderMap({}, true, { onTravel: vi.fn() })
+    expect(screen.getByRole('group', { name: 'Categories' }).parentElement).toHaveClass(chromeStyles.categoriesWrap)
+  })
+
   it('stops zooming at the closest and the farthest view', async () => {
     serve()
     vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -189,22 +199,20 @@ describe('map layers', () => {
     expect(within(view()).queryByRole('button', { name: 'Friday Party' })).not.toBeInTheDocument()
   })
 
-  it('draws the quest pins of portable experiences, with their own icon, and hides them with their layer', async () => {
+  it('draws the quest pins of portable experiences, each as the default pin, and hides them with their layer', async () => {
     serve({ places: [place('p', 'Plaza', ['10,-5'])] })
     renderMap()
     act(() =>
       mapPins.receive([
-        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null },
-        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' },
-        { id: 'bafypx:514', x: 4, y: 2, title: '   ', icon: null }
+        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid' },
+        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally' },
+        { id: 'bafypx:514', x: 4, y: 2, title: '   ' }
       ])
     )
     expect(marker('Pin at 4, 2')).toHaveAttribute('data-marker', 'pins')
     const memory = marker('Memory Grid')
     expect(memory).toHaveAttribute('data-marker', 'pins')
     expect(within(view()).queryByText('Memory Grid')).not.toBeInTheDocument()
-    expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
-    fireEvent.error(marker('Tile Tally').querySelector('img')!)
     expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', MARKER_ART.quest)
 
     await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
@@ -215,7 +223,7 @@ describe('map layers', () => {
   it('opens the place under a quest pin when it is clicked', async () => {
     serve({ places: [place('p', 'Plaza', ['10,-5'])] })
     renderMap()
-    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null }]))
+    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid' }]))
     await userEvent.click(marker('Memory Grid'))
     expect(await within(panel()).findByRole('heading', { name: 'Plaza' })).toBeInTheDocument()
   })
@@ -424,9 +432,9 @@ describe('map place panel', () => {
     expect(vi.mocked(map.setHome)).toHaveBeenCalledWith(DEFAULT_REALM, { x: -20, y: 60 })
   })
 
-  it('marks the home on the map, and keeps it home when pressed again', async () => {
+  it('marks the home on the map, and takes the home back when pressed again', async () => {
     serve({ search: [CLUB], places: [CLUB] })
-    const map = renderMap({ home: { realm: null, parcel: '-20,60' } })
+    const map = renderMap({ home: { realm: null, parcel: '-20,60', pinned: true } })
     expect(marker('Home')).toBeInTheDocument()
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
@@ -434,6 +442,26 @@ describe('map place panel', () => {
     expect(home).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(home)
     expect(vi.mocked(map.setHome)).not.toHaveBeenCalled()
+    expect(vi.mocked(map.clearHome)).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers no Set as Home to a guest with no account, and still marks the home it starts in', async () => {
+    serve({ search: [PLAZA], places: [PLAZA] })
+    renderMap({ home: { realm: null, parcel: '-20,60', pinned: true }, canPinHome: false })
+    expect(document.querySelector('[data-marker="home"]')).not.toBeNull()
+    await search('plaza')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Genesis Plaza/ }))
+    expect(await within(panel()).findByRole('button', { name: 'Dislike' })).toBeInTheDocument()
+    expect(within(panel()).queryByRole('button', { name: 'Set as Home' })).toBeNull()
+  })
+
+  it('shows no home for an account that pinned none', async () => {
+    serve({ search: [PLAZA], places: [PLAZA] })
+    renderMap({ home: { realm: null, parcel: '0,0', pinned: false } })
+    expect(document.querySelector('[data-marker="home"]')).toBeNull()
+    await search('plaza')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Genesis Plaza/ }))
+    expect(await within(panel()).findByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'false')
   })
 
   it('makes a world home by its name, and jumps in to it by its realm', async () => {
@@ -453,7 +481,7 @@ describe('map place panel', () => {
 
   it('opens the home place from the home control', async () => {
     serve({ places: [CLUB] })
-    renderMap({ home: { realm: null, parcel: '-20,60' } })
+    renderMap({ home: { realm: null, parcel: '-20,60', pinned: true } })
     await userEvent.click(screen.getByRole('button', { name: 'Center on home' }))
     expect(await within(panel()).findByRole('heading', { name: 'Sugar Club' })).toBeInTheDocument()
     expect(within(panel()).getByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'true')

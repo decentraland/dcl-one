@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { forgetSignIn, recordSignIn, signInKindFor } from "./signin-kind";
+import { browserWalletRdnsFor, forgetSignIn, recordSignIn, signInKindFor, UNRECORDED_BROWSER_WALLET } from "./signin-kind";
 
 const A = "0x" + "ab".repeat(20);
 const B = "0x" + "cd".repeat(20);
@@ -26,5 +26,22 @@ describe("the sign-in's record", () => {
     expect(signInKindFor(A)).toBeNull();
     localStorage.setItem("dcl:auth:signin-kind:v1", JSON.stringify({ signer: A, kind: "other" }));
     expect(signInKindFor(A)).toBeNull();
+  });
+});
+
+describe("when a browser wallet provider is recorded", () => {
+  beforeEach(() => recordSignIn(A, "web3", "com.coinbase.wallet"));
+
+  it("should identify the provider for that wallet only", () => {
+    expect(browserWalletRdnsFor(A)).toBe("com.coinbase.wallet");
+    expect(browserWalletRdnsFor(B)).toBeNull();
+  });
+});
+
+describe("when a legacy Web3 sign-in comes without a provider", () => {
+  beforeEach(() => localStorage.setItem("dcl:auth:signin-kind:v1", JSON.stringify({ signer: A, kind: "web3" })));
+
+  it("should indicate that the browser wallet needs to be verified", () => {
+    expect(browserWalletRdnsFor(A)).toBe(UNRECORDED_BROWSER_WALLET);
   });
 });

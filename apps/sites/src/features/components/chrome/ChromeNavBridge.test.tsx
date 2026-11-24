@@ -5,9 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
 import SitesLayout from "./SitesLayout";
-import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
-import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
-import { useChromeNav, type ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import DclTopBar from "@ui/web/frames/DclTopBar";
+import { SiteLayout, ChromeLink, useChromeNav } from "@dcl/one-ui";
 import ChromeNavBridge, { chromeHrefTarget, upstreamShopPath } from "./ChromeNavBridge";
 import SitesTopBar from "./SitesTopBar";
 
@@ -65,12 +64,6 @@ function Probe() {
   return <span>{useChromeNav().navigate ? "bridged" : "plain"}</span>;
 }
 
-// A page that keeps its own top bar (Social) renders whatever the chrome puts in the TopBar slot.
-function SlotTopBar(props: ChromeTopBarProps) {
-  const { TopBar } = useChromeNav();
-  return TopBar ? <TopBar {...props} /> : <span>no top bar</span>;
-}
-
 describe("ChromeNavBridge", () => {
   it("discovers application card links while keeping documents, downloads and fragments native", () => {
     const html = renderToString(<MemoryRouter><ChromeNavBridge>
@@ -91,7 +84,7 @@ describe("ChromeNavBridge", () => {
       <MemoryRouter initialEntries={["/blog"]}>
         <QueryClientProvider client={new QueryClient()}><ChromeNavBridge>
           <Probe />
-          <SlotTopBar variant="sites" active="learn" signedIn={false} />
+          <DclTopBar variant="sites" active="learn" signedIn={false} />
         </ChromeNavBridge></QueryClientProvider>
       </MemoryRouter>,
     );

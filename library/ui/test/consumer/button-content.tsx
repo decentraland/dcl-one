@@ -70,6 +70,46 @@ function Fixture() {
       >
         Native destination
       </Button>
+      {(['xl', 'lg', 'md', 'sm'] as const).map((size) => (
+        <Button key={size} variant="secondaryLight" size={size} startIcon={<svg />} loading>
+          Remind me
+        </Button>
+      ))}
+      <Button data-case="responsive-label" viewport="responsive" size="md" startIcon={<svg />}>
+        Remind me
+      </Button>
+      <Button
+        data-case="responsive-icon"
+        viewport="responsive"
+        size="md"
+        variant="secondaryLight"
+        iconOnly
+        aria-label="Copy link"
+        startIcon={<svg />}
+      />
+      <Button data-case="default-medium" size="md" startIcon={<svg />}>
+        Default medium
+      </Button>
+      <Button
+        data-case="static-icon"
+        size="md"
+        variant="secondaryLight"
+        iconOnly
+        aria-label="Static copy link"
+        startIcon={<svg />}
+      />
+      <Button
+        data-case="responsive-small-icon"
+        viewport="responsive"
+        size="sm"
+        variant="secondaryLight"
+        iconOnly
+        aria-label="Small copy link"
+        startIcon={<svg />}
+      />
+      <Button data-case="responsive-loading" viewport="responsive" size="md" loading>
+        Save reminder
+      </Button>
       <output>{calls}</output>
       <span id="target">Destination</span>
     </main>

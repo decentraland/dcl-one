@@ -11,6 +11,8 @@ import {
 /** An in-site link: always an `<a href>`, so it works before hydration and without JavaScript. */
 export type BlogLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   href: string
+  /** Allows the router to prefetch a destination on focus or pointer intent. */
+  prefetch?: 'intent'
   /** Keeps the scroll position on a client-side navigation ("Load more"). */
   preventScrollReset?: boolean
 }
@@ -34,8 +36,9 @@ export type BlogRouting = {
   Form: ComponentType<BlogFormProps>
 }
 
-function PlainLink({ preventScrollReset, ...props }: BlogLinkProps) {
+function PlainLink({ preventScrollReset, prefetch, ...props }: BlogLinkProps) {
   void preventScrollReset
+  void prefetch
   return <a {...props} />
 }
 const PlainForm = (props: BlogFormProps) => <form {...props} />

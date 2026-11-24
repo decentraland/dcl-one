@@ -103,6 +103,11 @@ takes `#![expect(dead_code, reason = …)]` with the reason that
   engine invariants and compiles out of release builds unless the `dcl-assert` feature is on.
 - `SceneMeta` is parsed for every scene, so a field added to it parses leniently: a malformed
   value reads as absent and the scene still loads. Add a field only with the code that reads it.
+- A `std::sync` `Mutex` or `RwLock` is acquired through `common::sync::{MutexExt, RwLockExt}`
+  (`lock_ignore_poison`, `read_ignore_poison`, `write_ignore_poison` and their `try_` forms),
+  never `.lock().unwrap()`: a panic while another thread held the lock then does not spread to
+  every later caller. The guard comes back as the panicking thread left the data. Crates that do
+  not depend on `common` recover with `unwrap_or_else(PoisonError::into_inner)`.
 - `anyhow` at boundaries (ops, loaders, fetches). A named error enum where a caller branches
   on the kind.
 - When one variant of a `match` is filtered by a flag, the guard goes inside that arm, not in

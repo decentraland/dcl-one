@@ -43,6 +43,11 @@
     background: var(--dcl-neutrals-onix);
   }
 
+  /* A dimmed card fades its cover only, so the title, host and time keep their contrast. */
+  .media[data-dimmed] {
+    opacity: 0.5;
+  }
+
   .cover {
     position: absolute;
     inset: 0;
@@ -489,10 +494,6 @@
       box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
     }
 
-    .day:not(.isLive):is(:hover, :focus-within) {
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
-    }
-
     .day.isLive .media {
       transition: height 250ms ease;
     }
@@ -614,6 +615,15 @@
     .hasActions:focus-within .hideOnHover {
       grid-template-rows: 0fr;
       opacity: 0;
+    }
+  }
+
+  /* A day card has no line of its own, as in decentraland.org/events' day column. Forced colours drop
+     its background, so it takes a system-colour boundary there; the focus outline still wins. */
+  @media (forced-colors: active) {
+    .day {
+      outline: 1px solid CanvasText;
+      outline-offset: -1px;
     }
   }
 

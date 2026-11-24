@@ -278,7 +278,8 @@ describe('sidebar volume', () => {
     namedVariants: [],
     stepSize: 1,
     value: 70,
-    default: 100
+    default: 100,
+    disabled: false
   })
 
   it('asks the engine for its settings when pressed', async () => {

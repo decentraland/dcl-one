@@ -320,6 +320,25 @@ async fn edge_case_fixtures_replay_exactly() {
     );
 }
 
+#[tokio::test]
+async fn lambdas_about_uses_the_public_lambdas_policy() {
+    let node = TestNode::without_db("lambdas-about-cors").await;
+    for method in ["GET", "OPTIONS"] {
+        let (_, headers, _) = send(
+            node.router(),
+            Request::builder()
+                .method(method)
+                .uri("/lambdas/about")
+                .header(header::ORIGIN, "https://example.org")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+    }
+}
+
 async fn get_json(router: Router, uri: &str) -> (StatusCode, Value) {
     let resp = router
         .oneshot(Request::get(uri).body(Body::empty()).unwrap())

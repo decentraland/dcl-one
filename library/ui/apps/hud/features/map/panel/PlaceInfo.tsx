@@ -204,8 +204,8 @@ export interface PlaceInfoProps {
   /** The route the player follows ends at this place. */
   navigating: boolean
   onPlaceChange: (place: DiscoverPlace) => void
-  /** Make this place home; it stays home until another place is set. */
-  onHome: () => void
+  /** Make this place home, or take the home back when it is this place. */
+  onHome?: () => void
   onStartNavigation: () => void
   onStopNavigation: () => void
   onJumpIn: () => void
@@ -335,7 +335,7 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
             size={26}
             onClick={favourite}
           />
-          <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={() => !isHome && onHome()} />
+          {onHome != null && <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={onHome} />}
           {donate.visible && (
             <button type="button" className={styles.action} aria-label="Donate" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
               <MaskIcon src={tipIcon} size={26} />
