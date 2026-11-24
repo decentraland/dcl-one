@@ -426,8 +426,8 @@ impl PriorityGate {
 
     /// A frame's keys, written in place: the first write of a hash replaces its key, later
     /// writes in the same publish take the best, and a hash nobody registered is ignored.
-    /// While a hold is on, a key that leaves the held tiers (the player walks into a neighbour)
-    /// offers its waiting requests a free slot at once.
+    /// While a hold is on, a key that leaves the held tiers offers its waiting requests a free
+    /// slot at once.
     pub fn publish<'a>(self: &Arc<Self>, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
         let mut state = self.state();
         state.generation += 1;

@@ -137,10 +137,8 @@ pub fn update_scene_partitions(
 /// only on a frame in which a download waits for or holds a slot: a grant that chooses between
 /// downloads happens at an enqueue while others wait or at a release, so it reads this frame's
 /// keys unless the gate was idle when the frame began, and the steady state costs nothing.
-/// While engine memory is full, held requests keep the gate busy; then it publishes only when a
-/// scene's key disagrees with whether it is one of the player's scenes, the one change that moves
-/// a hash across the hold (the player's own avatar and previews rank from their registration).
-/// Other keys only order held requests.
+/// While downloads are held, it publishes only when a scene's key disagrees with whether the
+/// scene is one of the player's scenes.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(

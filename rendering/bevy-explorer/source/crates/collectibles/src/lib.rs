@@ -54,8 +54,7 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
 }
 
 /// While loads wait for memory, drop the metadata (name, thumbnail, flags) of collectibles no
-/// one has asked for in the last few frames; a later request loads it again. Runs once per
-/// retention period.
+/// one has asked for in the last few frames. Runs once per retention period.
 fn release_idle_data<T: CollectibleType>(
     refusal: Res<LoadRefusal>,
     mut collectibles: ResMut<Collectibles<T>>,

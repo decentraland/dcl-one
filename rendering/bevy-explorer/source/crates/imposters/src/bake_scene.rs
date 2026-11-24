@@ -120,8 +120,7 @@ fn make_scene_oven(
         return;
     };
 
-    // while loads wait for memory the scene cannot finish loading, so the countdown to a
-    // dummy oven starts afresh
+    // while loads wait for memory the countdown to a dummy oven starts afresh
     if load_refusal.refusing
         || start_tick
             .as_ref()

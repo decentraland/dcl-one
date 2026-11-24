@@ -7,8 +7,7 @@ use common::{
 use ipfs::IpfsResource;
 use std::time::Duration;
 
-/// The first tier the request slots hold while engine memory is full: only the player's own
-/// avatar and the player's scenes keep downloading.
+/// The first tier held while engine memory is full.
 const HELD_FROM: Tier = Tier::Avatar;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);

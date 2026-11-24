@@ -126,8 +126,7 @@ impl MemoryStatus {
     }
 }
 
-/// Whether new loads wait because engine memory is full. The scene lifecycle and the download
-/// slots read it to admit only the player's loads; work already running continues.
+/// Whether new loads wait because engine memory is full.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Resource)]
 pub struct LoadRefusal {
     pub refusing: bool,
@@ -137,14 +136,10 @@ pub struct LoadRefusal {
 
 impl LoadRefusal {
     /// How long a refusal outlasts the last `Full` reading while the reading stays in `Warning`.
-    /// Freed memory can stay resident, so the reading may never fall below the warning threshold
-    /// once it has risen past it; without a limit, loads would wait for the rest of the session.
     pub const WARNING_HOLD: Duration = Duration::from_secs(30);
 
     /// On at `Full`; held through `Warning` for up to [`Self::WARNING_HOLD`] after the last `Full`
-    /// reading; off at `Normal`, `Abundance` or with no reading. The gap between the two
-    /// thresholds keeps a reading at the full threshold from admitting and refusing on alternate
-    /// samples.
+    /// reading; off at `Normal`, `Abundance` or with no reading.
     pub fn next(self, reading: Option<MemoryReading>, now: Duration) -> Self {
         match reading.map(|reading| reading.pressure()) {
             Some(MemoryPressure::Full) => Self {

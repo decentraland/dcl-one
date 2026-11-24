@@ -1875,7 +1875,7 @@ fn open_nft_dialog(
 #[derive(Component)]
 pub struct NftDialogSpawn {
     h_nft: Handle<Nft>,
-    /// the scene that opened the dialog, whose NFT frame shares the image
+    /// the scene that opened the dialog
     scene_hash: String,
     response: RpcResultSender<Result<(), String>>,
 }
@@ -1892,8 +1892,7 @@ fn show_nft_dialog(
             commands.entity(ent).remove::<NftDialogSpawn>();
 
             let url = &nft.image_url;
-            // only the scene the player stands in can open it, so its loads are not held; the
-            // scene's own NFT frame shares the image
+            // ranked under the opening scene's hash, as the scene's NFT frame ranks the image
             let ipfs_path =
                 IpfsPath::new_from_url(url, "image").with_slot_owner(&nft_spawn.scene_hash);
             let h_image = asset_server.load::<Image>(PathBuf::from(&ipfs_path));

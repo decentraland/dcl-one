@@ -623,8 +623,7 @@ impl IpfsPath {
         self.with_keyvalue(IpfsKey::SlotOwner, owner.to_owned())
     }
 
-    /// Rank this load's requests with the player's own, which do not wait while engine memory is
-    /// full: small files shared by every scene, whichever scene asks, and UI the player opens.
+    /// Rank this load's requests with the player's own, under the one session-wide player owner.
     /// Every such load of a url shares one asset path.
     pub fn with_player_slot_owner(self) -> Self {
         self.with_slot_owner(PLAYER_SLOT_OWNER)

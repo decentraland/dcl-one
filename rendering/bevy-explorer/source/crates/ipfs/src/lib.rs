@@ -448,9 +448,8 @@ impl IpfsAssetServer<'_, '_> {
         Ok(self.server.load(path))
     }
 
-    /// An uncached url every scene of a kind needs to start (the SDK6 adaption layer). Its
-    /// requests rank with the player's loads, so they are not held while engine memory is full;
-    /// the path names no scene, so every scene shares one load.
+    /// Loads an uncached url whose requests rank with the player's loads. The path names no
+    /// scene, so every load of the url shares one asset.
     pub fn load_scene_runtime_url<T: IpfsAsset>(&self, url: &str) -> Handle<T> {
         let ext = T::ext();
         let ipfs_path = IpfsPath::new_from_url_uncached(url, ext).with_player_slot_owner();
@@ -1305,7 +1304,7 @@ impl IpfsIo {
     }
 
     /// Whether downloads are held and each `(scene hash, is_player_scene)` already ranks as it
-    /// should, so a publish would change nothing that a grant reads.
+    /// should.
     pub fn downloads_held_and_current<'a>(
         &self,
         scenes: impl IntoIterator<Item = (&'a str, bool)>,

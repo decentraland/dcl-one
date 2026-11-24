@@ -279,8 +279,7 @@ pub struct AvatarLoadReport {
 }
 
 /// Copies the scene's bounds and hash onto a scene-placed avatar whenever its selection changes.
-/// An avatar a system scene places (the backpack, a passport) is a preview the player opened, so
-/// its downloads are the player's.
+/// An avatar a system scene places is marked [`PlayerDownloads`].
 #[cfg(feature = "explorer")]
 fn sync_avatar_scene_context(
     mut commands: Commands,

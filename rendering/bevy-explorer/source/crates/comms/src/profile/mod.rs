@@ -494,11 +494,10 @@ impl ProfileCache {
     }
 }
 
-/// Whose download a profile picture is, which decides whether it waits while engine memory is
-/// full.
+/// Whose download a profile picture is: the request-slot owner its load is tagged with.
 #[derive(Clone, Copy, Debug)]
 pub enum ProfileImageOwner<'a> {
-    /// UI the player opens: never waits.
+    /// UI the player opens: ranks with the player's loads.
     Player,
     /// A scene's texture: ranks with that scene's hash.
     Scene(&'a str),
