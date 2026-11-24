@@ -45,6 +45,7 @@ mod bounds;
 use bounds::ColliderBounds;
 mod volume;
 use volume::SceneVolume;
+pub use volume::DRAWN_PAST_BOUNDS;
 
 pub struct MeshColliderPlugin;
 

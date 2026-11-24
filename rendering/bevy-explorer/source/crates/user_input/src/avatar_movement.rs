@@ -45,7 +45,8 @@ use scene_runner::{
     update_world::{
         avatar_modifier_area::InputModifier,
         mesh_collider::{
-            ColliderId, PreviousColliderTransform, SceneColliderData, GROUND_COLLISION_MASK,
+            ColliderId, PreviousColliderTransform, SceneColliderData, DRAWN_PAST_BOUNDS,
+            GROUND_COLLISION_MASK,
         },
         AddCrdtInterfaceExt,
     },
@@ -823,7 +824,7 @@ pub(crate) fn apply_movement(
     if !everywhere {
         containing_scenes.extend_area_position(
             transform.translation,
-            PLAYER_COLLIDER_RADIUS + reach + COLLIDER_OVERHANG,
+            PLAYER_COLLIDER_RADIUS + reach + DRAWN_PAST_BOUNDS as f32,
             &mut area,
         );
     }
@@ -1037,12 +1038,6 @@ impl Nearby<'_, '_, '_> {
         }
     }
 }
-
-/// How far past its scene's parcels a collider still stops the avatar coming from the next parcel
-/// (m): a wall or a fence set on the parcel edge, part of its thickness over it.
-/// [`apply_movement`] casts against the scenes whose parcels come within the capsule's radius,
-/// the frame's reach and this.
-const COLLIDER_OVERHANG: f32 = 0.2;
 
 /// The velocity of a step that moved the avatar from `from` to `to` in `delta` seconds. A frame
 /// with no elapsed time (the first) reports none, though the ground snap can still move the
@@ -1885,10 +1880,12 @@ mod tests {
     }
 
     #[test]
-    fn a_wall_reaching_over_its_scenes_edge_stops_a_walk_from_the_next_parcel() {
-        // the scene of parcel 1,0 holds a wall reaching 0.2 m over the parcels' edge (x 16)
-        let wall = (Vec3::new(16.3, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        let face = 15.8 - PLAYER_COLLIDER_RADIUS;
+    fn a_wall_drawn_past_its_scenes_edge_stops_a_walk_from_the_next_parcel() {
+        // the scene of parcel 1,0 holds a wall reaching as far over the parcels' edge (x 16) as
+        // the scene is drawn
+        let over = DRAWN_PAST_BOUNDS as f32;
+        let wall = (Vec3::new(16.5 - over, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
+        let face = 16.0 - over - PLAYER_COLLIDER_RADIUS;
         for fps in [30.0, 60.0, 144.0] {
             let frame = std::time::Duration::from_secs_f64(1.0 / fps);
             let (mut app, player) = movement_app_at(&[], Vec3::new(14.5, 0.0, -8.0), frame);
