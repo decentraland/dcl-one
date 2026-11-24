@@ -5,6 +5,12 @@ use bevy::math::{FloatOrd, IVec2, Vec2, Vec3, Vec3Swizzles};
 
 pub const PARCEL_SIZE: f32 = 16.0;
 
+pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
+    (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
+        .floor()
+        .as_ivec2()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartitionData {
     /// squared distance from the player to the nearest point of the scene's nearest parcel, or
