@@ -13,9 +13,9 @@ describe('when a pull request build pins the dependencies of a packed package', 
     pinned = pinWorkspaceDependencies(dependencies, 'https://bucket.example/branch/feat/x', '7.33.1-5.commit-abc1234')
   })
 
-  it('should point each workspace package at the tarball pnpm pack names in the build folder', () => {
+  it("should point each workspace package at the tarball pnpm pack names in that package's folder", () => {
     expect(pinned['@dcl/sdk-commands']).toBe(
-      'https://bucket.example/branch/feat/x/dcl-sdk-commands-7.33.1-5.commit-abc1234.tgz'
+      'https://bucket.example/branch/feat/x/@dcl/sdk-commands/dcl-sdk-commands-7.33.1-5.commit-abc1234.tgz'
     )
   })
 

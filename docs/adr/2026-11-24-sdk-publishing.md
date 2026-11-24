@@ -56,12 +56,15 @@ npm trusted publishing (workflow `sdk.yml`, environment `sdk-release`, `main` on
 - **Pull request builds.** A pull request from a branch of this repository packs the same set at
   its snapshot version and publishes nothing to npm. Each `workspace:` dependency points at its
   sibling's tarball URL (`make prepare` with `PACKAGE_BASE_URL`), and so does a protocol or hashing
-  snapshot npm does not hold yet. The tarballs go to the SDK bucket under
-  `@dcl/js-sdk-toolchain/branch/<branch>/`, and `playground-assets` goes beside them, where the
-  playground's `?sdk-branch=` reads it. The "SDK test builds" comment gives the install commands.
-  The CLI e2e job runs `init`, `build` and `export-static` with those tarballs and uploads the realm
-  to the bucket's `ipfs/`. `main` uploads its tarballs and playground the same way. The upload
-  role is `CREATOR_HUB_SDK_BUCKET_ROLE_ARN`, the same role as the Inspector's previews.
+  snapshot npm does not hold yet. Each tarball goes to the SDK bucket in its package's folder,
+  `@dcl/js-sdk-toolchain/branch/<branch>/@dcl/<package>/`. `playground-assets` goes to
+  `@dcl/js-sdk-toolchain/branch/<branch>/playground-assets`, where the playground's `?sdk-branch=`
+  reads it. The "SDK test builds" comment gives the install commands. The CLI e2e job runs
+  `init`, `build` and `export-static` with those tarballs and uploads the realm to the bucket's
+  `ipfs/`. `main` uploads nothing, since npm carries its packages. The upload role is
+  `CREATOR_HUB_SDK_BUCKET_ROLE_ARN`, the same role as the Inspector's previews. As in the Creator
+  Hub workflows, each step that needs the bucket, its region or its base URL reads that secret
+  itself.
 - **GitHub releases.** A package release in this repository (`@dcl/sdk`, `@dcl/inspector`,
   `@dcl/asset-packs`) is never a pre-release and never the repository's Latest. dcl-one releases
   several projects, npm carries the packages, and the Creator Hub's updater reads only
@@ -78,8 +81,9 @@ npm trusted publishing (workflow `sdk.yml`, environment `sdk-release`, `main` on
 
 1. Point npm trusted publishing for the eight packages at `decentraland/dcl-one`, workflow
    `sdk.yml`, environment `sdk-release`. Create that environment, limited to `main`.
-2. Let the SDK bucket role (`CREATOR_HUB_SDK_BUCKET_ROLE_ARN`) trust `sdk.yml` runs from pull
-   requests and from the `sdk-release` environment.
+2. Let the pull request role behind `CREATOR_HUB_SDK_BUCKET_ROLE_ARN` write, set the ACL of and
+   delete objects under `@dcl/js-sdk-toolchain/*` and `ipfs/*`, and list the bucket for the
+   playground sync. It writes only under `creator-hub/` today.
 3. Tag the last SDK release published from `decentraland/js-sdk-toolchain`: `@dcl/sdk@7.33.0`.
 4. Stop publishing from `decentraland/js-sdk-toolchain`, `decentraland/protocol` and
    `decentraland/hashing`. Until then, both sides move the same `next` dist-tags and write the
