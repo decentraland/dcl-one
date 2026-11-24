@@ -95,17 +95,34 @@ class CiLocalTest(unittest.TestCase):
 
     def test_shared_ui_edits_run_the_sites_unit_tests_before_commit(self):
         names = lambda changed: [step.name for step in ci.pre_commit_steps(changed)]
-        for path in ('library/ui/components/Button/Button.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
-                     'apps/sites/src/routes/root.tsx'):
+        for path in ('apps/sites/src/routes/root.tsx', 'library/ui/figma/src/cli.ts'):
             with self.subTest(path=path):
                 self.assertIn('sites unit tests', names({path}))
                 self.assertNotIn('ui3 unit tests', names({path}))
         for path in ('library/ui/apps/shop/ShopChrome.tsx', 'library/ui/apps/hud/Panel.tsx',
-                     'library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/chrome/SitesFooter.tsx'):
+                     'library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/chrome/SitesFooter.tsx',
+                     'library/ui/components/NavBar/NavMenuItem.tsx', 'library/ui/components/Button/Button.tsx',
+                     'library/ui/apps/sites/shared/Button/Button.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
+                     'library/ui/foundations/icons/index.ts', 'library/ui/index.ts'):
             with self.subTest(path=path):
                 self.assertIn('ui3 unit tests', names({path}))
                 self.assertIn('sites unit tests', names({path}))
         self.assertNotIn('sites unit tests', names({'docs/README.md'}))
+
+    def test_every_library_ui_module_ui3_imports_selects_the_ui3_tests(self):
+        root = Path(__file__).resolve().parents[2]
+        # The package specifier, or a relative path into library/ui (browser tests run outside `pnpm test`).
+        specifier = re.compile(r"""['"](?:@dcl/one-ui|(?:\.\./)+library/ui)(/[^'"?]*)?['"?]""")
+        imported = set()
+        for source in (root / 'apps/ui3/src').rglob('*'):
+            if source.suffix not in ('.ts', '.tsx') or 'node_modules' in source.parts or '.browser.test.' in source.name:
+                continue
+            for match in specifier.finditer(source.read_text(encoding='utf-8', errors='ignore')):
+                sub = (match.group(1) or '').strip('/')
+                imported.add(f'library/ui/{sub}' if sub else 'library/ui/index.ts')
+        self.assertTrue(imported)
+        uncovered = sorted(path for path in imported if not ci.touches({path}, *ci.UI3_SOURCES))
+        self.assertEqual(uncovered, [], 'add the folder to UI3_SOURCES in tooling/ci-local.py')
 
     def test_engine_edits_select_the_engine_and_its_sites_consumer(self):
         changed = {'rendering/bevy-explorer/source/src/lib.rs'}
