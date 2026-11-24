@@ -19,14 +19,18 @@ vi.mock('/shared/fetch', () => ({ fetch: (...args: unknown[]) => fetchMock(...ar
 vi.mock('/@/config', () => ({
   config: {
     get: (key: string) =>
-      ({ LAND_REGISTRY_ADDRESS: LAND_REGISTRY, ESTATE_REGISTRY_ADDRESS: ESTATE_REGISTRY })[key] ??
-      'https://subgraph.example.org',
+      ({
+        LAND_REGISTRY_ADDRESS: LAND_REGISTRY,
+        ESTATE_REGISTRY_ADDRESS: ESTATE_REGISTRY,
+        RENTALS_API_URL: 'https://catalyst.example.org/signatures-api',
+        CHAIN_ID: '11155111',
+      })[key] ?? 'https://subgraph.example.org',
   },
 }));
 
 vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn() }));
 
-const { Lands, Rentals, RoleType } = await import('/@/lib/land');
+const { Lands, LandType, Rentals, RoleType } = await import('/@/lib/land');
 const { selectors } = await import('./slice');
 
 const parcel = (x: number, y: number, fields: Partial<ParcelFields> = {}): ParcelFields => ({
@@ -494,47 +498,77 @@ describe('getLandTiles, the parcels the Publish to LAND picker offers', () => {
 });
 
 describe('Rentals.fetchRentalTokenIds', () => {
-  const NOW = new Date('2026-06-01T00:00:00Z');
-  const seconds = (date: Date) => String(Math.floor(date.getTime() / 1000));
-
-  const rental = (tokenId: string, endsAt: Date): RentalFields => ({
-    id: tokenId,
-    contractAddress: LAND_REGISTRY,
-    tokenId,
-    lessor: OWNER,
-    tenant: ME,
-    operator: ME,
-    startedAt: seconds(new Date('2026-01-01T00:00:00Z')),
-    endsAt: seconds(endsAt),
-  });
+  let client: InstanceType<typeof Rentals>;
 
   beforeEach(() => {
-    fetchMock.mockReset();
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(NOW);
+    client = new Rentals();
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    fetchMock.mockReset();
   });
 
-  describe('when one of the wallet’s rentals has run out but was never claimed back', () => {
+  describe('when Catalyst returns a rental for each wallet role', () => {
+    let tenant: RentalFields;
+    let lessor: RentalFields;
+    let wallet: string;
+    let endpoint: URL;
+
     beforeEach(() => {
+      tenant = {
+        id: 'rent-in',
+        contractAddress: LAND_REGISTRY,
+        tokenId: '23',
+        lessor: OWNER,
+        tenant: ME,
+        operator: ME,
+        startedAt: 1780272000,
+        endsAt: 1782864000,
+      };
+      lessor = {
+        ...tenant,
+        id: 'rent-out',
+        contractAddress: ESTATE_REGISTRY,
+        lessor: ME,
+        tenant: TENANT,
+        operator: TENANT,
+        startedAt: 1777593600,
+        endsAt: 1780272000,
+      };
+      wallet = ME.toUpperCase();
+      endpoint = new URL(
+        `https://catalyst.example.org/signatures-api/v1/rentals/${ME}?chainId=11155111`,
+      );
       fetchMock.mockResolvedValueOnce(
-        respond({
-          tenantRentals: [
-            rental('1', new Date('2026-05-01T00:00:00Z')),
-            rental('2', new Date('2026-07-01T00:00:00Z')),
-          ],
-          lessorRentals: [],
-        }),
+        respond({ tenantRentals: [tenant], lessorRentals: [lessor] }),
       );
     });
 
-    it('should keep only the rental still running', async () => {
-      const { tenantRentals } = await new Rentals().fetchRentalTokenIds(ME);
+    it('should request the wallet and configured chain from Catalyst', async () => {
+      await client.fetchRentalTokenIds(wallet);
 
-      expect(tenantRentals.map(({ tokenId }) => tokenId)).toEqual(['2']);
+      expect(fetchMock).toHaveBeenCalledWith(endpoint);
+    });
+
+    it('should preserve both roles, the asset types, and the rental dates', async () => {
+      await expect(client.fetchRentalTokenIds(wallet)).resolves.toMatchObject({
+        tenantRentals: [
+          { tokenId: tenant.tokenId, type: LandType.PARCEL, endsAt: tenant.endsAt * 1000 },
+        ],
+        lessorRentals: [
+          { tokenId: lessor.tokenId, type: LandType.ESTATE, endsAt: lessor.endsAt * 1000 },
+        ],
+      });
+    });
+  });
+
+  describe('when the rentals index is not ready', () => {
+    beforeEach(() => {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    });
+
+    it('should surface the unavailable response to the LAND loader', async () => {
+      await expect(client.fetchRentalTokenIds(ME)).rejects.toThrow('HTTP 503');
     });
   });
 });

@@ -1395,7 +1395,7 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// The projections `state` enables on `net`, each with its endpoint, as the
 /// switches and endpoints configure them; `rentals` is the rentals index's
-/// switch (`None`: on wherever a chain-1 endpoint is configured).
+/// switch (`None`: on for each configured Ethereum endpoint).
 pub fn projections(
     state: &Arc<MarketplaceState>,
     net: ChainNet,
@@ -1503,16 +1503,26 @@ pub fn projections(
             market_cfg(),
         );
     }
-    // The rentals venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
     if net == ChainNet::Ethereum && rentals != Some(false) {
+        use crate::rentals::index::RentalsIndex;
+        let rentals_cfg = || {
+            PeriodicCfg::every(settings.interval)
+                .with_jitter(Duration::from_secs(20))
+                .with_error_backoff(Duration::from_secs(1800))
+        };
         add(
             "rentals-index",
             state.venue_rpc_url(1),
-            Arc::new(|| Arc::new(crate::rentals::index::RentalsIndex::mainnet())),
+            Arc::new(|| Arc::new(RentalsIndex::mainnet())),
             None,
-            PeriodicCfg::every(settings.interval)
-                .with_jitter(Duration::from_secs(20))
-                .with_error_backoff(Duration::from_secs(1800)),
+            rentals_cfg(),
+        );
+        add(
+            "rentals-index-sepolia",
+            state.sepolia_rentals_rpc_url(),
+            Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+            None,
+            rentals_cfg(),
         );
     }
     out

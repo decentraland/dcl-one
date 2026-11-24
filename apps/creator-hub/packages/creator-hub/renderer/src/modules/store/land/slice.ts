@@ -39,13 +39,11 @@ export const fetchLandList = createAsyncThunk(
     const LandsAPI = new Lands();
 
     const rentals = await fetchRentalsList(address);
-    const tenantTokenIds = rentals.tenantRentals.map(rental => rental.tokenId);
-    const lessorTokenIds = rentals.lessorRentals.map(rental => rental.tokenId);
 
     const [land, authorizations]: [Land[], Authorization[]] = await LandsAPI.fetchLand(
       address,
-      tenantTokenIds,
-      lessorTokenIds,
+      rentals.tenantRentals,
+      rentals.lessorRentals,
     );
 
     return {

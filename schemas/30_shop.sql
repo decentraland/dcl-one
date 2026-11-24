@@ -395,7 +395,7 @@ CREATE TABLE shop.chain_cursor (
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -16186,7 +16186,7 @@ CREATE TABLE shop.rental_event (
     new_index numeric(78,0),
     tx_hash text NOT NULL,
     PRIMARY KEY (network, block_number, log_index),
-    CONSTRAINT rental_event_network_known CHECK (network IN ('ethereum')),
+    CONSTRAINT rental_event_network_known CHECK (network IN ('ethereum', 'sepolia')),
     CONSTRAINT rental_event_kind_known CHECK (kind IN ('rented', 'claimed', 'asset_index_updated', 'signer_index_updated', 'contract_index_updated')),
     CONSTRAINT rental_event_asset_kinds CHECK ((kind IN ('rented', 'claimed', 'asset_index_updated')) = (contract_address IS NOT NULL AND token_id IS NOT NULL)),
     CONSTRAINT rental_event_rented_fields CHECK ((kind = 'rented') = (signature IS NOT NULL AND tenant IS NOT NULL AND rental_days IS NOT NULL AND price_per_day IS NOT NULL)),
@@ -16197,6 +16197,9 @@ CREATE TABLE shop.rental_event (
 -- The fold's per-asset legs: a listing's rent and claim, and the lessor's
 -- asset bump (WHERE rentals_address = $2 AND contract_address, token_id = ...).
 CREATE INDEX rental_event_asset_idx ON shop.rental_event (rentals_address, contract_address, token_id, block_number, log_index) WHERE contract_address IS NOT NULL;
+-- Discover candidate assets by either participant in the wallet rentals route.
+CREATE INDEX rental_event_lessor_idx ON shop.rental_event (network, rentals_address, signer) INCLUDE (contract_address, token_id, block_number) WHERE kind = 'rented';
+CREATE INDEX rental_event_tenant_idx ON shop.rental_event (network, rentals_address, tenant) INCLUDE (contract_address, token_id, block_number) WHERE kind = 'rented';
 -- The rent that consumed a listing: WHERE kind = 'rented' AND signature = lower(r.signature).
 CREATE INDEX rental_event_signature_idx ON shop.rental_event (signature) WHERE kind = 'rented';
 -- The lessor's signer index: WHERE kind = 'signer_index_updated' AND signer = l.lessor.

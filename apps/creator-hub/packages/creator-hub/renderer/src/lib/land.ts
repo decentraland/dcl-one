@@ -208,17 +208,23 @@ export const estateFields = () => `
 const GRANTING_AUTHORIZATIONS = ['UpdateManager', 'ApprovalForAll', 'Operator'] as const;
 
 const getLandQuery = (skip = 0) => `
-  query Land($address: Bytes, $tenantTokenIds: [String!], $lessorTokenIds: [String!]) {
-    tenantParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { tokenId_in: $tenantTokenIds }) {
+  query Land(
+    $address: Bytes,
+    $tenantParcelIds: [String!],
+    $tenantEstateIds: [String!],
+    $lessorParcelIds: [String!],
+    $lessorEstateIds: [String!]
+  ) {
+    tenantParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { tokenId_in: $tenantParcelIds }) {
       ...parcelFields
     }
-    tenantEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { id_in: $tenantTokenIds }) {
+    tenantEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { id_in: $tenantEstateIds }) {
       ...estateFields
     }
-    lessorParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { tokenId_in: $lessorTokenIds }) {
+    lessorParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { tokenId_in: $lessorParcelIds }) {
       ...parcelFields
     }
-    lessorEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { id_in: $lessorTokenIds }) {
+    lessorEstates: estates(first: ${MAX_RESULTS}, skip: ${skip}, where: { id_in: $lessorEstateIds }) {
       ...estateFields
     }
     ownerParcels: parcels(first: ${MAX_RESULTS}, skip: ${skip}, where: { estate: null, owner: $address }) {
@@ -353,9 +359,9 @@ export type RentalFields = {
   tokenId: string;
   lessor: string;
   tenant: string;
-  operator: string;
-  startedAt: string;
-  endsAt: string;
+  operator: string | null;
+  startedAt: number;
+  endsAt: number;
 };
 
 export type Rental = {
@@ -364,7 +370,7 @@ export type Rental = {
   tokenId: string;
   lessor: string;
   tenant: string;
-  operator: string;
+  operator: string | null;
   /** Epoch milliseconds. */
   startedAt: number;
   /** Epoch milliseconds. */
@@ -491,17 +497,23 @@ export class Lands {
 
   fetchLand = async (
     _address: string,
-    tenantTokenIds: string[] = [],
-    lessorTokenIds: string[] = [],
+    tenantRentals: Rental[] = [],
+    lessorRentals: Rental[] = [],
   ): Promise<[Land[], Authorization[]]> => {
     const address = _address.toLowerCase();
+
+    // LAND and Estate are separate registries and can use the same token ID.
+    const tokenIds = (rentals: Rental[], type: LandType) =>
+      rentals.filter(rental => rental.type === type).map(rental => rental.tokenId);
 
     // Every page before any reduction: the latest authorization event of a kind can sit on
     // a later page than the event it supersedes.
     const data = await this.queryAllPages<LandQueryResult>(getLandQuery, {
       address,
-      tenantTokenIds,
-      lessorTokenIds,
+      tenantParcelIds: tokenIds(tenantRentals, LandType.PARCEL),
+      tenantEstateIds: tokenIds(tenantRentals, LandType.ESTATE),
+      lessorParcelIds: tokenIds(lessorRentals, LandType.PARCEL),
+      lessorEstateIds: tokenIds(lessorRentals, LandType.ESTATE),
     });
 
     const lands: Land[] = [];
@@ -711,51 +723,21 @@ export class Lands {
   }
 }
 
-export const rentalFields = () => `
-  fragment rentalFields on Rental {
-    id
-    contractAddress
-    tokenId
-    lessor
-    tenant
-    operator
-    startedAt
-    endsAt
-  }
-`;
-
-const getRentalsQuery = () => `query Rentals($address: Bytes) {
-    tenantRentals: rentals(where: { tenant: $address, isActive: true }) {
-      ...rentalFields
-    }
-    lessorRentals: rentals(where: { lessor: $address, isActive: true }) {
-      ...rentalFields
-    }
-  }
-  ${rentalFields()}
-`;
-
 export class Rentals {
-  private subgraph = config.get('RENTALS_SUBGRAPH');
+  private apiUrl = config.get('RENTALS_API_URL');
+  private chainId = config.get('CHAIN_ID');
   private LAND_REGISTRY_ADDRESS = config.get('LAND_REGISTRY_ADDRESS');
   private ESTATE_REGISTRY_ADDRESS = config.get('ESTATE_REGISTRY_ADDRESS');
 
   fetchRentalTokenIds = async (
     address: string,
   ): Promise<{ lessorRentals: Rental[]; tenantRentals: Rental[] }> => {
-    const response: Response = await fetch(this.subgraph, {
-      method: 'POST',
-      body: JSON.stringify({
-        query: getRentalsQuery(),
-        variables: {
-          address: address.toLowerCase(),
-        },
-      }),
-      headers: {
-        Accept: '*/*',
-        'Content-Type': 'application/json',
-      },
-    });
+    const url = new URL(`${this.apiUrl}/v1/rentals/${encodeURIComponent(address.toLowerCase())}`);
+    url.searchParams.set('chainId', this.chainId);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Could not load LAND rentals (HTTP ${response.status})`);
+    }
 
     const {
       data,
@@ -766,12 +748,9 @@ export class Rentals {
       };
     } = await response.json();
 
-    const now = Date.now();
     return {
       lessorRentals: data.lessorRentals.map(this.fromRentalFields),
-      tenantRentals: data.tenantRentals
-        .map(this.fromRentalFields)
-        .filter(rental => rental.endsAt > now),
+      tenantRentals: data.tenantRentals.map(this.fromRentalFields),
     };
   };
 
@@ -794,8 +773,8 @@ export class Rentals {
       lessor: fields.lessor,
       tenant: fields.tenant,
       operator: fields.operator,
-      startedAt: +fields.startedAt * 1000,
-      endsAt: +fields.endsAt * 1000,
+      startedAt: fields.startedAt * 1000,
+      endsAt: fields.endsAt * 1000,
     };
   };
 }
