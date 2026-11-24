@@ -562,7 +562,7 @@ pub struct ValidatorConfig {
     pub third_party_registry_l2_subgraph_url: Option<String>,
 
     /// Skip the chain-derived access checks of local deploys (LAND, names, items, collections, third party); the pointer-ownership rule still runs.
-    /// Also lets `WORLDS_WRITES_ENABLED=true` start without `MARKETPLACE_SUBGRAPH_URL`, with personal worlds only.
+    /// Also lets `WORLDS_WRITES_ENABLED=true` start without a DCL NAME reader (the nft index or `MARKETPLACE_SUBGRAPH_URL`), with personal worlds only.
     #[arg(long, env = "IGNORE_BLOCKCHAIN_ACCESS_CHECKS", default_value_t = false, action = clap::ArgAction::Set)]
     pub ignore_blockchain_access_checks: bool,
 

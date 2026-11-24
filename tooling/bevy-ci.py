@@ -113,6 +113,20 @@ HEADLESS_JOBS = {
     'Headless packages / build (macos-amd64, darwin-x64, macos-15, x86_64-apple-darwin)',
     'Headless packages / build (windows-amd64, win32-x64, windows-2025, x86_64-pc-windows-msvc)',
 }
+# What the browser test of the relay wake (job "Relay wake in the browser") compiles and runs with:
+# its crate and every path dependency it reaches, in the workspace or vendored (the selection tests
+# derive this list from Cargo.lock), the protocol that dcl_component's build script compiles, the
+# Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the fork's
+# revision), the workspace's manifests and Cargo configuration, the tools, the cache tools that
+# restore the build and its file times before Cargo runs, and the workflow. It is not a lane: on
+# main it follows the web lane's baseline.
+RELAY_WAKE_CRATE_DIRS = (*(SOURCE + 'crates/' + crate + '/' for crate in (
+    'dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform', 'system_api_types',
+    'system_bridge')), 'rendering/bevy-explorer/vendor/rpc-rust/rpc/')
+RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATE_DIRS, 'library/protocol/proto/',
+                     PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
+                     '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
+                     'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
 APP_INPUTS = {
     'README.md': (),
@@ -258,7 +272,7 @@ def ensure_commit(sha):
 
 
 def full_selection(reason):
-    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes'), True), 'reason': reason}
+    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), True), 'reason': reason}
 
 
 def platform_input(path):
@@ -301,7 +315,7 @@ def select(base, head):
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
     paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
-    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
+    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), False)
     if bootstrap:
         selected['web'] = True
     for path in paths:
@@ -373,6 +387,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix', 'scenes')
         for lane in affected:
             selected[lane] = True
+        if path.startswith(RELAY_WAKE_INPUTS):
+            selected['relay-wake'] = True
     names = [name for name, enabled in selected.items() if enabled]
     return {**selected, 'base': base,
             'reason': 'Selected: ' + ', '.join(names) if names else 'Inputs unchanged; integrity checks only'}
@@ -392,6 +408,7 @@ def plan(event, base, head, repo):
                     selections[previous] = select(previous, head) if previous else full_selection('Missing lane baseline')
                 result[lane] = selections[previous][lane]
             result['native-matrix'] = result['test']
+            result['relay-wake'] = selections[baselines.get('web')]['relay-wake']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):
