@@ -163,12 +163,13 @@ def unit_hashes(path):
 
 
 def uplifted(path):
-    """The hash of deps/<crate>-<hash>, the unit Cargo copied or linked to a binary it reports only at the profile's top level.
+    """The hash of deps/<crate>-<hash>, the unit Cargo copied or linked to a file it reports only at the profile's top level.
 
-    Every candidate stays when the binary is gone or none matches it."""
-    stem, suffix = (path.name[:-4], '.exe') if path.name.endswith('.exe') else (path.name, '')
-    crate = stem.replace('-', '_')
-    # An MSVC executable keeps no hash: the hashed files beside it are its test harnesses, named by their own messages.
+    Every candidate stays when the file is gone or none matches it."""
+    # Target names hold no dot, so the suffix is everything after the first: .exe, .so, .dll.lib, .wasm.
+    stem, dot, extension = path.name.partition('.')
+    suffix, crate = dot + extension, stem.replace('-', '_')
+    # An unhashed namesake is the unit itself (MSVC exe, path cdylib); hashed ones beside an MSVC exe are its test harnesses.
     if (path.parent / 'deps' / (crate + suffix)).is_file():
         return set()
     pattern = re.compile(re.escape(crate) + r'-([0-9a-f]{16})' + re.escape(suffix))

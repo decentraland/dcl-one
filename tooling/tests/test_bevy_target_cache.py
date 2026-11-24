@@ -366,6 +366,18 @@ class GenerationTest(unittest.TestCase):
         for name in (f'tool-{copy}', f'tool-{other}', f'gone-{gone}', f'gone-{also_gone}'):
             self.assertTrue((self.target / 'release/deps' / name).exists(), name)
 
+    def test_an_uplifted_library_keeps_its_linked_unit(self):
+        live, stale = unit('e1'), unit('e2')
+        for name, text in ((f'release/deps/libpm-{live}.so', 'pm'), (f'release/deps/libpm-{stale}.so', 'pm, older'),
+                           (f'release/.fingerprint/pm-{live}/lib-pm', 'x'), (f'release/.fingerprint/pm-{stale}/lib-pm', 'x')):
+            self.write(name, text)
+        os.link(self.target / f'release/deps/libpm-{live}.so', self.target / 'release/libpm.so')
+        self.prune(map(json.dumps, [*self.messages, self.artifact('release/libpm.so')]))
+        for name in (f'release/deps/libpm-{live}.so', f'release/.fingerprint/pm-{live}/lib-pm'):
+            self.assertTrue((self.target / name).exists(), name)
+        for name in (f'release/deps/libpm-{stale}.so', f'release/.fingerprint/pm-{stale}/lib-pm'):
+            self.assertFalse((self.target / name).exists(), name)
+
     def test_without_a_message_that_names_a_unit_every_generation_stays(self):
         for lines in ([], ['not json'], [json.dumps({'reason': 'build-finished', 'success': True})]):
             with self.subTest(lines=lines):
@@ -440,26 +452,42 @@ class WorkflowTest(unittest.TestCase):
                 self.assertEqual(job.count(self.GUARD), 2)
                 self.assertEqual(job.count(self.PATHS), 2)
 
+    # A Cargo call in shell or in a script's argument list, aliases included; `metadata` builds nothing.
+    CALL = re.compile(r"""\bcargo['"]?,?\s*['"]?(\+\S+\s+)?(build|test|check|clippy|run|doc|nextest|rustc|bench|[btcrd])\b""")
+    # Scripts the native jobs run that call Cargo, and why their units are still named.
+    CARGO_SCRIPTS = {'apps/bevy-explorer/build-headless.py': 'writes CARGO_MESSAGES',
+                     'tooling/dev-regressions.py': 'runs no Cargo with --bevy-artifacts'}
+
     def test_every_cargo_call_of_a_native_job_writes_its_messages(self):
         # A call that writes none loses its units at every save, and every later run rebuilds them.
-        call = re.compile(r'\bcargo (\+\S+ )?(build|test|check|clippy|run|doc|nextest|rustc|bench)\b')
-
         def units(line):
-            # What selects the units: no test arguments, filters, flags that only change output, or redirect.
-            command = re.split(r' -- |\s[>|]', line[call.search(line).start():])[0]
+            # What selects the units: the env prefix and arguments, without test arguments, filters, output-only flags or redirect.
+            start = self.CALL.search(line).start()
+            prefix = re.search(r'((?:[A-Za-z_]\w*=\S*\s+)*)$', line[:start]).group(1)
+            command = re.split(r' -- |\s[>|]', prefix + line[start:])[0]
             return [word for word in command.split()
                     if '::' not in word and word not in ('--no-run', '--timings', '--message-format=json-render-diagnostics')]
         for name in ('test', 'headless-smoke', 'clippy', 'relay-wake'):
+            job = self.job(name)
+            self.assertRegex(job, r'(?m)^    defaults:\n      run:\n(?:        .*\n)*?        working-directory: rendering/bevy-explorer/source$')
             owners = set()
-            for step in re.split(r'^      - ', self.job(name), flags=re.M):
+            for step in re.split(r'^      - ', job, flags=re.M):
+                step = re.split(r'(?m)^    \S', step)[0]
                 # One file per step, or a later step overwrites the units an earlier one named.
                 for file in set(re.findall(r'target/cargo-messages/([\w.-]+\.jsonl)', step)):
                     with self.subTest(job=name, file=file):
                         self.assertNotIn(file, owners)
                     owners.add(file)
+                if self.CALL.search(step) or 'build-headless.py' in step:
+                    # target/cargo-messages is relative to the job's working directory, the pruned target's parent.
+                    self.assertNotIn('working-directory:', step)
                 listed = None
                 for line in re.sub(r'\\\n\s*', ' ', step).splitlines():
-                    if not call.search(line) or line.lstrip().startswith('#'):
+                    if line.lstrip().startswith('#'):
+                        continue
+                    if not self.CALL.search(line):
+                        if re.search(r'(^|[;&|]\s*)[A-Za-z_]\w*=|\b(export|unset)\s+[A-Za-z_]', line.strip()):
+                            listed = None
                         continue
                     writes = '--message-format=json-render-diagnostics' in line and '> target/cargo-messages/' in line
                     with self.subTest(job=name, line=line.strip()):
@@ -468,6 +496,19 @@ class WorkflowTest(unittest.TestCase):
                         listed = units(line)
                 if 'build-headless.py' in step:
                     self.assertIn('CARGO_MESSAGES: ${{ github.workspace }}/rendering/bevy-explorer/source/target/cargo-messages/', step)
+
+    def test_every_script_of_a_native_job_that_calls_cargo_keeps_its_units_named(self):
+        source = ROOT / 'rendering/bevy-explorer/source'
+        for name in ('test', 'headless-smoke', 'clippy', 'relay-wake'):
+            job = self.job(name)
+            paths = {ROOT / token[len('$GITHUB_WORKSPACE/'):] if token.startswith('$GITHUB_WORKSPACE/') else (source / token).resolve()
+                     for token in re.findall(r'[\w$./-]+\.(?:py|sh|js|mjs|cjs)\b', job)}
+            paths |= {ROOT / action / 'action.yml' for action in re.findall(r'uses: \./(\.github/actions/[\w-]+)', job)}
+            for path in sorted(path for path in paths if path.is_file()):
+                script = path.relative_to(ROOT).as_posix()
+                if self.CALL.search(path.read_text(encoding='utf-8')):
+                    with self.subTest(job=name, script=script):
+                        self.assertIn(script, self.CARGO_SCRIPTS)
 
 
 if __name__ == '__main__':
