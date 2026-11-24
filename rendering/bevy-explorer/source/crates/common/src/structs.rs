@@ -2110,6 +2110,11 @@ pub struct SceneTime {
     pub time: f32,
 }
 
+/// Whether a scene sets the time of day where the player stands (`scene.json` `skyboxConfig` or
+/// the SDK's `SkyboxTime`) and the player's own explicit time does not override it.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SceneTimeLock(pub bool);
+
 // porting aid, used to be one component
 pub type TextStyle = (TextFont, TextColor);
 

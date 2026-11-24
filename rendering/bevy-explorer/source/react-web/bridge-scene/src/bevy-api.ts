@@ -42,6 +42,7 @@ import type {
   ProximityEvent,
   SatelliteView,
   SceneLoadingUi,
+  SceneRestrictions,
   SetAvatarData,
   SetSinglePermission,
   TextureOptimizationStatus,
@@ -207,6 +208,9 @@ export type BevyApiInterface = {
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
   getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>
+  /** What the scene the player stands in restricts: the state now, then on every change.
+   *  Optional: absent on runtimes whose SystemApi predates it. */
+  getSceneRestrictionsStream?: () => Promise<AsyncIterable<SceneRestrictions>>
   retryConnectivity: () => void
   /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
    *  absent on runtimes whose SystemApi predates it. */

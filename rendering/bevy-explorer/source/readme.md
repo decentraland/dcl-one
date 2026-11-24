@@ -281,6 +281,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   nearby voice rooms and, as `call`, the private call or community stream the player is in:
   `status`, `kind`, `peer`, `communityId`, `connection`, `participants`, `micEnabled`,
   `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
+  `/scene_restrictions_state` (what the scene the player stands in restricts, as the minimap's
+  restrictions icon lists it: `cameraLocked`, `avatarHidden`, `avatarMovementsBlocked`,
+  `passportCannotBeOpened`, `experiencesBlocked`, `skyboxTimeUiBlocked`, `nearbyVoiceChatBlocked`),
   `/connectivity_state` (safe room state, offline warning and reachability probe; room states
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access),

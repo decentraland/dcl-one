@@ -39,7 +39,7 @@ import {
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
 import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
-import type { Color3, PortableInfo, PortableState } from './generated/index'
+import type { Color3, PortableInfo, PortableState, SceneRestrictions } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { fixMapPublicReads } from '../features/map/mapApi'
 import { MOCK_MAP_PINS, MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
@@ -160,6 +160,17 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
 
 // Nearby roster — shared by the `members` stream and getUserProfile (so a fetched
 // passport resolves a real name from the clicked sender's address).
+// ?mockrestrictions=1: everything a scene can restrict, restricted.
+const MOCK_SCENE_RESTRICTIONS: SceneRestrictions = {
+  cameraLocked: true,
+  avatarHidden: true,
+  avatarMovementsBlocked: true,
+  passportCannotBeOpened: true,
+  experiencesBlocked: true,
+  skyboxTimeUiBlocked: true,
+  nearbyVoiceChatBlocked: true
+}
+
 const MOCK_NEARBY = [
   { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', picture: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' },
   { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', picture: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' },
@@ -1081,6 +1092,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
+    // ?mockrestrictions=1 → a scene that restricts everything, so the minimap's list shows whole.
+    if (new URLSearchParams(location.search).get('mockrestrictions') === '1') reply({ kind: 'sceneRestrictions', state: MOCK_SCENE_RESTRICTIONS })
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
     // a few used permissions so the rail's permissions list has something to review.
     if (new URLSearchParams(location.search).get('perm') === '1') {

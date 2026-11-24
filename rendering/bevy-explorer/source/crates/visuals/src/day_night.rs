@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 use bevy_console::{AddConsoleCommand, ConsoleCommand};
-use common::structs::{PrimaryPlayerRes, SceneTime, TimeOfDay};
+use common::structs::{PrimaryPlayerRes, SceneTime, SceneTimeLock, TimeOfDay};
 use dcl_component::{
     proto_components::sdk::components::{PbSkyboxTime, TransitionMode},
     SceneComponentId,
@@ -82,6 +82,7 @@ impl Plugin for DayNightPlugin {
             ComponentPosition::RootOnly,
         );
 
+        app.init_resource::<SceneTimeLock>();
         app.add_systems(Startup, start_clock);
         app.add_systems(
             First,
@@ -92,6 +93,7 @@ impl Plugin for DayNightPlugin {
                 ),
                 push_time_of_day_from_time_skip.run_if(resource_exists::<TimeSkip>),
                 push_time_of_day_from_running_clock.run_if(not(resource_exists::<TimeSkip>)),
+                publish_scene_time_lock,
             )
                 .chain()
                 .after(bevy::time::TimeSystem),
@@ -246,6 +248,20 @@ fn fetch_time_from_skybox(
             .entity(time_keeper)
             .try_remove::<(SkyboxTime, SkyboxTimeSource)>();
         commands.trigger_targets(OnInsert, (time_keeper, *scene_time_component_id));
+    }
+}
+
+fn publish_scene_time_lock(
+    time_keeper: Single<
+        (&RunningClock, Has<SceneTimeSource>, Has<SkyboxTimeSource>),
+        With<TimeKeeper>,
+    >,
+    mut lock: ResMut<SceneTimeLock>,
+) {
+    let (running_clock, scene, skybox) = *time_keeper;
+    let locked = (scene || skybox) && !running_clock.overrides_scene();
+    if lock.0 != locked {
+        lock.0 = locked;
     }
 }
 

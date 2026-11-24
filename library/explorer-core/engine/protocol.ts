@@ -11,6 +11,7 @@ import type {
   Color3,
   CommunityVoiceStatus,
   ConnectivitySnapshot,
+  SceneRestrictions,
   HomeScene,
   MapPinInfo,
   OutfitData,
@@ -2556,6 +2557,8 @@ export type SceneToPage =
   | PlaceMessage
   | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  /** What the scene the player stands in restricts: on bridge start, on `hello` and on every change. */
+  | { kind: 'sceneRestrictions'; state: SceneRestrictions }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage

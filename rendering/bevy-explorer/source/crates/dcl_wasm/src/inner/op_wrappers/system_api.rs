@@ -543,6 +543,26 @@ pub fn op_set_world_password(state: &WorkerContext, password: Option<String>) {
 }
 
 #[wasm_bindgen]
+pub async fn op_get_scene_restrictions_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_scene_restrictions_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_scene_restrictions_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    dcl_js::system_api::op_read_scene_restrictions_stream(state.rc(), rid)
+        .await
+        .map(|value| {
+            value
+                .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_proximity_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_proximity_stream(state.rc()).await
 }

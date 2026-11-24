@@ -1,8 +1,87 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
 .icon {
   display: grid;
   flex: none;
   place-items: center;
   width: 22px;
   height: 22px;
-  color: var(--text-dim);
+  color: var(--text);
+}
+
+/* The list: 276px beside the icon, its header level with it and pointing at it. It lies over the
+   header's other buttons only while the pointer is on the icon, and takes no pointer itself. */
+.panel {
+  --restrictions-head: 58px;
+  --restrictions-peak: 6px;
+
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 4px + var(--restrictions-peak));
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  width: 276px;
+  margin-top: calc(var(--restrictions-head) / -2);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: var(--type-14);
+  line-height: 17px;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-mid) ease;
+}
+
+.wrap:hover .panel {
+  opacity: 1;
+}
+
+/* the peak, on the header's left edge at the icon's height */
+.panel::before {
+  content: '';
+  position: absolute;
+  top: calc(var(--restrictions-head) / 2 - var(--restrictions-peak));
+  right: 100%;
+  width: var(--restrictions-peak);
+  height: calc(2 * var(--restrictions-peak));
+  background: var(--black);
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+}
+
+.head {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  min-height: var(--restrictions-head);
+  padding: 12px 23px;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: var(--black);
+  font-weight: var(--fw-semibold);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 18px 16px;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  background: var(--panel);
+  font-weight: var(--fw-regular);
+}
+
+.line {
+  min-height: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    transition: none;
+  }
 }

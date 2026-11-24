@@ -60,6 +60,22 @@ describe('world domain', () => {
     expect(h.session().minimap.sceneTitle).toBe('')
   })
 
+  it('lists what the scene restricts, in one order, and locks the skybox menu where the scene sets the time', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    expect(h.session().minimap.restrictions).toEqual([])
+    const none = { cameraLocked: false, avatarHidden: false, avatarMovementsBlocked: false, passportCannotBeOpened: false, experiencesBlocked: false, skyboxTimeUiBlocked: false, nearbyVoiceChatBlocked: false }
+    h.driver.emit({ kind: 'sceneRestrictions', state: { ...none, skyboxTimeUiBlocked: true, cameraLocked: true } })
+    expect(h.session().minimap.restrictions).toEqual(['Camera locked', 'Day/Night controller disabled'])
+    expect(h.session().skybox.sceneLocked).toBe(true)
+
+    // an engine without the stream still says where nearby voice is off
+    h.driver.emit({ kind: 'sceneRestrictions', state: none })
+    h.driver.emit({ kind: 'mic', enabled: false, available: true, sceneBlocked: true })
+    expect(h.session().minimap.restrictions).toEqual(['Nearby voice disabled'])
+    expect(h.session().skybox.sceneLocked).toBe(false)
+  })
+
   it('mic toggle posts setMic (optimistic) and the stream confirms availability', async () => {
     const h = renderSession()
     await enterAsGuest(h)

@@ -553,6 +553,29 @@ pub struct ProximityEvent {
     pub actions: Vec<HoverAction>,
 }
 
+/// What the scene the player stands in restricts, for the minimap's restrictions list. Sent on
+/// subscribe and whenever a field changes.
+#[derive(Clone, Copy, Default, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct SceneRestrictions {
+    /// A camera mode area or a virtual camera holds the camera.
+    pub camera_locked: bool,
+    /// An avatar modifier area hides the player's avatar.
+    pub avatar_hidden: bool,
+    /// The scene blocks walking, running, jumping or emotes.
+    pub avatar_movements_blocked: bool,
+    /// An avatar modifier area turns the player's passport off.
+    pub passport_cannot_be_opened: bool,
+    /// The scene turns portable experiences and smart wearables off, or hides their UI.
+    pub experiences_blocked: bool,
+    /// The scene sets the time of day.
+    pub skybox_time_ui_blocked: bool,
+    /// Nearby voice is off where the player stands.
+    pub nearby_voice_chat_blocked: bool,
+}
+
 /// Photo mode as the HUD shows it: whether the in-world camera is open, what it is doing with
 /// the last photo, and how much room the player has. `event_seq` increments on each `event`,
 /// which carries the capture's preview (base64 JPEG) or the upload's failure message.

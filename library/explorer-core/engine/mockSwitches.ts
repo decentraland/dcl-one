@@ -17,5 +17,7 @@ export const MOCK_SWITCHES = [
   'mockcall',
   'mockstream',
   'mockportables',
+  // a scene that restricts everything
+  'mockrestrictions',
   'mockEvents'
 ] as const

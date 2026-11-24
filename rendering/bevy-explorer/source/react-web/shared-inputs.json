@@ -136,6 +136,14 @@
         {
           "name": "requestIds.ts",
           "kind": "regular"
+        },
+        {
+          "name": "sceneRestrictions.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "sceneRestrictions.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -5966,7 +5974,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "3ff2c2d735e48309e20caf9d80fccded911eaf653b2b4e4c2ed6e5f3fbd3dbfb"
+      "sha256": "5cbfa218706a91fa19e9728216a7809bce191ed529d11f92639a55f097e16059"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6462,7 +6470,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/world.test.tsx",
-      "sha256": "823fcabefadfe0ddd13966909eb8a0c276ae22e8b288ae25783a0f13899f1fd5"
+      "sha256": "c3d3f5c1e35792006836d06683bd531dd35560e101bc41a4ee23c3fb035075cd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/vite-env.d.ts",
@@ -6622,7 +6630,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "6a06c7f98d355f9d052324b0f29b0cc14cd985d4d60c333b09c0ab8903a2c5b2"
+      "sha256": "208f57ab2f423496c0055aec6381e72252250973c26521295be53ea801a989ce"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6634,7 +6642,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "a5d884dbb337003c8a30d535d091744fcb33d25c64f4a9a7be6121ad1692c08d"
+      "sha256": "fc889facd6b14ee160d1ff807db7a623ec3ca95cb1eb660cbe9bdea1d320eccc"
     },
     {
       "path": "library/explorer-core/engine/nameColor.test.ts",
@@ -6662,11 +6670,19 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "185173126941f3e3ee016ee219139b96f605944993a50356e9bbc1c5f4e1274d"
+      "sha256": "e65e81fd3f1ce7576c3bc41dab989508023da5e5a3bf2560a6cc714185b8cc48"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
       "sha256": "f93d2a0f67daea1802917c0591fb2440d8a3861d7bd1094af79342d93c11c1eb"
+    },
+    {
+      "path": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "sha256": "1228678a60b095dfa920ff80239f52598c39c9fd133f79bc5f6c7169e76f2b89"
+    },
+    {
+      "path": "library/explorer-core/engine/sceneRestrictions.ts",
+      "sha256": "0d842d20bb7613f70e0d78ad178772ea72c5f5473de53edd5c1fd7bf93fba0ab"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -10014,11 +10030,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
-      "sha256": "7db8b252b71265bcaeb99c039c2c75a4c9d1f872f9a00ccf619a186910d9ce11"
+      "sha256": "dea2d31706684f058e76ad246eba49123289f6f3718df9726f987fb7bb0870ab"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
-      "sha256": "20b10c2a7d2df7a2a082e58b7c5c009bbb35a728705765b4c36c21889393cbff"
+      "sha256": "882038fc4bed58c77cc4bb9480edd6141d3b9b9178c2e538187acee6668fd014"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/icons.tsx",
@@ -10226,7 +10242,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "ec37fe80a8dda4e32188ffc929c9d6d738637f0efd1e1f06ab1debc4e1d9a81f"
+      "sha256": "06c0fe3197719fb258efa7e7f30cbf7e113a15577732b4975b006f2c019e2920"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10326,7 +10342,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "ebf3a64b2ec6b28cb2035aa5b960a655e4044868fdbcf0a1f22b37785c1660a1"
+      "sha256": "cdb68ef85f618a6ac9baf22d10cd5f3bd366cf46239723fffbe41d1a5dc2c279"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -10574,7 +10590,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "60a1fd80b9f056dc774195c5f203e3ee0904a37b54111624ccea1de459896f28"
+      "sha256": "b266a6b03b317911b6691c7155bd730fa9e4852122ec32c74f7c9dcd010e704d"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10862,7 +10878,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "29a5693550db0fa7b55b34bd77a1c1e941184123654280b5d063287f7764528f"
+      "sha256": "89f2f32fdc4a870503e1e015586155d673ec8c3b4851353f4c426c5bd77ba009"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -11596,6 +11612,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/auth/guest.ts",
       "to": "library/explorer-core/features/auth/guestWalletParam.ts",
       "kind": "native:runtime"
@@ -33163,6 +33194,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
       "kind": "test:runtime"
     },
     {
@@ -45908,6 +45954,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/sceneRestrictions.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/sceneRestrictions.ts",
       "kind": "type"
     },
     {

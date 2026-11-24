@@ -268,6 +268,12 @@ State, in every build:
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/scene_restrictions_state`: what the scene the player stands in restricts, as JSON, the Scene
+  restrictions debug section's source and what the minimap's restrictions icon lists:
+  `cameraLocked`, `avatarHidden`, `avatarMovementsBlocked`, `passportCannotBeOpened`,
+  `experiencesBlocked` (the scene turns portable experiences off or hides their UI),
+  `skyboxTimeUiBlocked` (the scene sets the time of day and no explicit `/time` overrides it) and
+  `nearbyVoiceChatBlocked`.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
   `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
   don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in

@@ -187,6 +187,8 @@ pub enum SystemApi {
     GetNearbyMuteStream(RpcStreamSender<Vec<String>>),
     GetHoverStream(RpcStreamSender<HoverEvent>),
     GetProximityStream(RpcStreamSender<ProximityEvent>),
+    /// What the current scene restricts: the state now, then again on every change.
+    GetSceneRestrictionsStream(RpcStreamSender<SceneRestrictions>),
     GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),

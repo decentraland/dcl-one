@@ -669,6 +669,21 @@ module.exports.getProximityStream = async function() {
   return streamGenerator();
 }
 
+// what the scene the player stands in restricts, now and on every change; see SceneRestrictions
+module.exports.getSceneRestrictionsStream = async function() {
+  const rid = await Deno.core.ops.op_get_scene_restrictions_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_scene_restrictions_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // photo mode (the camera reel's in-world camera) as a stream of its state; see PhotoModeState
 module.exports.getPhotoModeStream = async function() {
   const rid = await Deno.core.ops.op_get_photo_mode_stream();

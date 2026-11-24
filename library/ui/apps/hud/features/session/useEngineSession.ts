@@ -42,6 +42,7 @@ import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
 import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
 import { nextRequestId } from '@explorer-core/engine/requestIds'
+import { NO_SCENE_RESTRICTIONS, sceneRestrictionLabels } from '@explorer-core/engine/sceneRestrictions'
 import { beginProfileSave, finishProfileSave, profileChanged, profileReadFailed, receiveOwnProfile, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
@@ -194,8 +195,6 @@ function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfi
 // Fallbacks only: the menu reads the live clock with `/time` when it opens.
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
-
-const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
 // The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
 // "speed <S> (elapsed: <seconds since midnight>)".
@@ -574,6 +573,8 @@ export interface SkyboxState {
   hours: number
   /** The sky follows the engine's day cycle; the slider is locked while on. */
   progressing: boolean
+  /** The scene the player stands in sets the time of day: both controls are off meanwhile. */
+  sceneLocked: boolean
   setHours: (hours: number) => void
   setProgressing: (on: boolean) => void
 }
@@ -1576,6 +1577,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
+  const [sceneRestrictions, setSceneRestrictions] = useState(NO_SCENE_RESTRICTIONS)
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
   const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
@@ -2213,6 +2215,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'mic':
           setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
+          break
+        case 'sceneRestrictions':
+          setSceneRestrictions(msg.state)
           break
         case 'nearbyMutes':
           applyNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
@@ -5293,18 +5298,20 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       clearHome: clearHomeScene
     }
   }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, canPinHome, setHomeScene, clearHomeScene, pickDestination, closeAllPanels])
+  // An engine without the restrictions stream still says where nearby voice is off.
+  const restrictionsKey = sceneRestrictionLabels({ ...sceneRestrictions, nearbyVoiceChatBlocked: sceneRestrictions.nearbyVoiceChatBlocked || mic.sceneBlocked }).join('\n')
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,
       satelliteView,
       sceneTitle,
-      restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
+      restrictions: restrictionsKey === '' ? [] : restrictionsKey.split('\n'),
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
       linkRealm,
       setConfig: setMinimapConfig,
       reloadScene
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, reloadScene]
+    [satelliteView, sceneTitle, restrictionsKey, donatePlaceKey, linkRealm, setMinimapConfig, reloadScene]
   )
 
   return {
@@ -5413,6 +5420,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       toggle: toggleSkybox,
       hours: skyboxHours,
       progressing: skyboxProgressing,
+      sceneLocked: sceneRestrictions.skyboxTimeUiBlocked,
       setHours: setSkyboxHours,
       setProgressing: setSkyboxProgressing
     },
