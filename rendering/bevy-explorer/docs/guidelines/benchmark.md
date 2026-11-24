@@ -126,9 +126,10 @@ the `performance-profiler` feature, lists none), the 15 highest by the
 larger of the two builds' values, so a scope that fell out of one build's top rows stays listed.
 A build's value is the scope's self time summed over its summaries, divided by their number: a
 run whose top 30 leave the scope out counts as 0. Where a run's log holds the load-time entries
-([Files](#files)), *Time to world* (launch to arriving in world) and *First ring ready* (the
-spawn scene's spawn to it and every scene within one parcel of the player being ready) follow,
-in seconds.
+([Files](#files)), *Time to world* (app start to arriving in world; on the web the page load and
+the wasm download and compile come first and are not counted) and *First ring ready* (the spawn
+scene's spawn to it and every scene within one parcel of the player being ready) follow, in
+seconds.
 
 - A value is the **median** of the build's runs, followed by the **(min–max)** range when the runs
   differ. A wide range means a noisy metric, where small differences mean little.
@@ -309,8 +310,8 @@ and `AutopilotPhase`.
     last pair before the exit line whose entry category is `perf_summary`
     (`report/perf_summary.rs`); a log without them gets no hiccup, memory or scope rows.
   - The load times come from two entries before the exit line (`report/load_times.rs`): the
-    autopilot's `phase Measuring at <s> s` (category `autopilot`, the real time since launch,
-    `src/autopilot.rs`) and the first `player's scene and first ring ready <ms> ms after the
+    autopilot's `phase Measuring at <s> s` (category `autopilot`, the real time since the app
+    started, `src/autopilot.rs`) and the first `player's scene and first ring ready <ms> ms after the
     scene spawned` (category `scene_timing`, `crates/scene_runner/src/load_timing.rs`). A log
     without one gets no row for it.
 - Both formats live once in `crates/perf_output/src/format.rs`; the desktop sinks and the page's

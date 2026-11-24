@@ -1,6 +1,7 @@
 //! The run's load times, read from its log before the exit line:
 //! - time to world: the autopilot's `phase Measuring at <s> s` entry (category `autopilot`), the
-//!   app's real time when the run arrived in world;
+//!   app's real time when the run arrived in world; on the web the page load and the wasm
+//!   download and compile come before the app starts and are not counted;
 //! - first ring ready: the first `player's scene and first ring ready <ms> ms after the scene
 //!   spawned` entry (category `scene_timing`), the arrival at spawn.
 //!

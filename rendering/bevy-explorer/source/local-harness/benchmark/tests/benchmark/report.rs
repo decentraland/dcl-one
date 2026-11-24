@@ -442,14 +442,33 @@ fn load_time_lines_add_rows_with_verdicts() {
 }
 
 /// The load-time entries the log parser reads are the ones the explorer writes: the autopilot's
-/// phase line (`AutopilotPhase::Measuring` prints as `Measuring`) and the scene load timing's
-/// arrival line.
+/// phase line (the derived `Debug` of the unit variant `AutopilotPhase::Measuring` prints
+/// `Measuring`) and the scene load timing's arrival line.
 #[test]
 fn the_load_time_lines_are_the_explorers() {
     let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
     let read = |file: &str| std::fs::read_to_string(source.join(file)).unwrap();
     assert_eq!(report::ARRIVED_IN_WORLD_PREFIX, "phase Measuring at ");
     assert!(read("src/autopilot.rs").contains(r#""phase {:?} at {:.1} s""#));
+    let phase = read("crates/common/src/autopilot.rs");
+    let phase = phase.split("pub enum AutopilotPhase {").collect::<Vec<_>>();
+    let [derives, variants] = phase[..] else {
+        panic!("AutopilotPhase in common/src/autopilot.rs");
+    };
+    let derive = derives
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("#[derive("))
+        .unwrap();
+    assert!(
+        derive.contains(" Debug)") || derive.contains(" Debug,"),
+        "{derive}"
+    );
+    let variants = variants.split_once("\n}").unwrap().0;
+    assert!(
+        variants.lines().any(|l| l.trim() == "Measuring,"),
+        "{variants}"
+    );
     assert!(
         read("crates/scene_runner/src/load_timing.rs").contains(&format!(
             "\"{}{{}} ms after the scene spawned\"",
