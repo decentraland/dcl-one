@@ -1,7 +1,7 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import {
-  AIR_JUMP_IMPULSE, ACCEL_CURVE_END, ACCEL_CURVE_START, AIR_ACCEL, AIR_DRAG, AIR_MAX_ACCEL, AIR_SPEED_LOSS, EXTERNAL_ENV_DRAG, EXTERNAL_GROUND_FRICTION,
+  AIR_JUMP_IMPULSE, ACCEL_CURVE_END, ACCEL_CURVE_START, AIR_ACCEL, AIR_DRAG, AIR_MAX_ACCEL, EXTERNAL_ENV_DRAG, EXTERNAL_GROUND_FRICTION,
   GROUND_ACCEL, GROUND_MAX_ACCEL, MAX_EXTERNAL_SPEED,
   SLOPE_SPEED_FACTOR, SLOPE_SPEED_MAX_ANGLE, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_FORWARD, VEC3_HORIZONTAL_MASK, VEC3_RIGHT,
   VEC3_UP, VEC3_ZERO,
@@ -182,10 +182,8 @@ function step(s: State, c: StepInput, h: number) {
   let tx = right.x * s.ax + fwd.x * s.az;
   let tz = right.z * s.ax + fwd.z * s.az;
   const tl = Math.sqrt(tx * tx + tz * tz);
-  // in the air the keys drive the move toward the gait speed less AIR_SPEED_LOSS of its square
-  const limit = c.grounded ? c.limit : c.limit * Math.max(0, 1 - AIR_SPEED_LOSS * c.limit);
-  if (tl > limit) {
-    const f = limit / tl;
+  if (tl > c.limit) {
+    const f = c.limit / tl;
     tx *= f; tz *= f;
   }
 

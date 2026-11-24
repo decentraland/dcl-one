@@ -25,9 +25,6 @@ export const HORIZONTAL_ACCEL_TIME_GROUND = 0.5; // s for the input-hold weight 
 export const HORIZONTAL_DAMP_TIME_GROUND = 0;
 // Quadratic horizontal drag while airborne (1/m): dv/dt = -AIR_DRAG * |v| * v.
 export const AIR_DRAG = 0.2;
-// In the air the keys drive the move toward the gait speed v less AIR_SPEED_LOSS * v^2 (s/m): a jog 7.74 m/s, a run
-// 9.6 m/s, a glide 5.86 m/s.
-export const AIR_SPEED_LOSS = 0.004;
 // Linear damping of external (impulse/force) horizontal velocity (1/s): always, plus on ground.
 export const EXTERNAL_ENV_DRAG = 1.5;
 export const EXTERNAL_GROUND_FRICTION = 4;
@@ -62,17 +59,14 @@ export const VERTICAL_STOP_DECEL = 5;
 // can't produce absurd speeds.
 export const MAX_SPEED = 30;
 
-// Jump: the player's own move on top of GRAVITY. It launches at the speed that reaches its height, less the takeoff
-// loss below, while slowing at JUMP_RISE_DECEL, so a 1 m jump peaks after 0.21 s (1.5 m: 0.26 s, 2 m: 0.31 s); from
-// the apex the avatar falls under GRAVITY. Heights are those of a jump released at once (AvatarLocomotionSettings
-// jumpHeight, runJumpHeight, doubleJumpHeight); a key held into JUMP_HOLD_TIME adds height, and a running jump blends
-// toward JUMP_HEIGHT_SPRINT with speed.
+// Jump: the player's own move on top of GRAVITY. It launches at the speed that reaches its height while slowing at
+// JUMP_RISE_DECEL, so a 1 m jump peaks after 0.22 s (1.5 m: 0.27 s, 2 m: 0.32 s); from the apex the avatar falls
+// under GRAVITY. Heights are those of a jump released at once (AvatarLocomotionSettings jumpHeight, runJumpHeight,
+// doubleJumpHeight); a key held into JUMP_HOLD_TIME adds height, and a running jump blends toward JUMP_HEIGHT_SPRINT
+// with speed.
 export const JUMP_HEIGHT = 1;
 export const JUMP_HEIGHT_SPRINT = 1.5;
 export const JUMP_RISE_DECEL = 40; // m/s^2, the jump's own slowdown from the launch to the apex
-// Takeoff loss: a jump launches at the speed v that rises its height less v * JUMP_TAKEOFF_TIME / 2, 0.09 m of a 1 m
-// jump (s).
-export const JUMP_TAKEOFF_TIME: number = 0.02;
 // Held jump: while the key is held, for JUMP_HOLD_TIME after the press, the player's own vertical acceleration (the
 // jump's slowdown, then the fall) is scaled by JUMP_HOLD_SCALE. A held ground jump rises about twice as high in twice
 // the time.

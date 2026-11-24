@@ -5,7 +5,7 @@ import {
   AIR_JUMP_COOLDOWN, AIR_JUMP_HOVER_SPEED, AIR_JUMP_HOVER_TIME,
   GLIDE_CLOSE_TIME, GLIDE_COOLDOWN, GLIDE_DAMP_TIME, GLIDE_MIN_GROUND_DISTANCE, GLIDE_OPEN_TIME,
   GRAVITY, GROUNDED_HEIGHT,
-  JUMP_BUFFER_TIME, JUMP_COYOTE_TIME, JUMP_HOLD_SCALE, JUMP_HOLD_TIME, JUMP_RISE_DECEL, JUMP_TAKEOFF_TIME,
+  JUMP_BUFFER_TIME, JUMP_COYOTE_TIME, JUMP_HOLD_SCALE, JUMP_HOLD_TIME, JUMP_RISE_DECEL,
   JUMP_TO_GLIDE_TIME, LANDING_STUN_DROP, MAX_STEP_HEIGHT, MIN_STEP_HEIGHT, STEP_UP_PLAN_SPEED, STEP_UP_REACH_TIME, STEP_UP_TIME,
   GROUNDED_ANGLE, PLAYER_COLLIDER_RADIUS, VEC3_FORWARD, VEC3_ZERO,
   VERTICAL_DAMP_TIME, VERTICAL_STOP_DECEL, VERTICAL_TRACK_BLOCK, VERTICAL_TRACK_MAX, VERTICAL_TRACK_TIME,
@@ -177,11 +177,9 @@ function airJumpAllowed(s: VState): boolean {
     && s.t0 - s.consumedT >= AIR_JUMP_COOLDOWN - EPS && s.y > groundY;
 }
 
-// The launch speed of a jump of `height`: the speed v that rises height - v * JUMP_TAKEOFF_TIME / 2 while slowing at
-// JUMP_RISE_DECEL.
+// The launch speed of a jump of `height`: the speed that rises height while slowing at JUMP_RISE_DECEL.
 function launchFor(height: number): number {
-  const v = Math.sqrt(2 * Math.max(0, height) * JUMP_RISE_DECEL);
-  return Math.sqrt(Math.max(0, v * v - JUMP_RISE_DECEL * v * JUMP_TAKEOFF_TIME));
+  return Math.sqrt(2 * Math.max(0, height) * JUMP_RISE_DECEL);
 }
 
 function launchSpeed(running: boolean): number {
