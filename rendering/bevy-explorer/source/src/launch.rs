@@ -147,7 +147,7 @@ pub fn apply_client(
 struct BevyVariantsRouting {
     /// A base url, or `off`.
     base: String,
-    /// What set it, for the debug panel.
+    /// What set it.
     source: &'static str,
     /// Whether the endpoint flag may replace it once the flags are read.
     flag_may_route: bool,

@@ -99,7 +99,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     manifests.sort();
 
     let session = variants.session.lock_ignore_poison();
-    // `current` was read above: `base` is never taken while `session` is held
+    // `base` was released above, before `session` is taken
     let state = match (current.as_deref(), &session.disabled, variants.bc.get()) {
         (None, _, _) => "off".to_owned(),
         (Some(_), Some(reason), _) => format!("off for this session: {reason}"),

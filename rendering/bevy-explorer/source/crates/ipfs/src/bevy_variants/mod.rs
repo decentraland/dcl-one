@@ -272,8 +272,7 @@ impl Variant {
     }
 }
 
-/// The feature flag that routes the variants when no launch option or config field sets their
-/// base (`explorer-bevy-variants-endpoint` in Unleash).
+/// The feature flag that names the variants base (`explorer-bevy-variants-endpoint` in Unleash).
 pub(crate) const ENDPOINT_FLAG: &str = "bevy-variants-endpoint";
 
 /// Whether a flag may name `url` as the variants base: `https` on a Decentraland host (one of
@@ -563,9 +562,9 @@ impl Session {
 struct Bases {
     /// None while variants are off.
     current: Option<String>,
-    /// Every base set this session, so a far LOD url named under an earlier one still settles.
+    /// Every base set this session.
     used: Vec<String>,
-    /// What set the current base, for the debug panel.
+    /// What set the current base.
     source: String,
 }
 
@@ -626,8 +625,7 @@ impl BevyVariants {
         }
         // the serialised form, so a prefix match agrees with a re-serialised remote url
         let url = parsed.as_str().trim_end_matches('/');
-        // the base lock is held while the breakers reset, and while a report is counted
-        // (`transport_failed`, `far_lod_fetched`), so a report is counted for the base it went to
+        // held until the breakers have reset
         let mut bases = self.base.lock_ignore_poison();
         if bases.current.as_deref() == Some(url) {
             return;
@@ -637,8 +635,7 @@ impl BevyVariants {
             bases.used.push(url.to_owned());
         }
         info!("bevy variants: on, from `{url}`");
-        // an entity asked for again asks the new base; reads of the dropped manifests that
-        // are in flight keep their own receiver and find the base moved on
+        // every manifest requested so far belongs to the old base
         self.manifests.lock_ignore_poison().clear();
         self.requested_at.lock_ignore_poison().clear();
         // what the breakers learnt was about another service
@@ -808,13 +805,13 @@ fn describe_fetch_error(error: &platform::FetchError<anyhow::Error>) -> String {
 }
 
 impl IpfsIo {
-    /// Points the variants client at `url`, or turns it off with None. Entities asked for
-    /// earlier keep the base their manifest came from.
+    /// Points the variants client at `url`, or turns it off with None. An invalid url leaves the
+    /// base as it is.
     pub fn set_bevy_variants_base(&self, url: Option<&str>) {
         self.bevy_variants.set_base(url);
     }
 
-    /// Records what set the variants base, for the debug panel.
+    /// Records what set the variants base.
     pub fn set_bevy_variants_source(&self, source: &str) {
         self.bevy_variants.base.lock_ignore_poison().source = source.to_owned();
     }
@@ -1099,8 +1096,8 @@ impl IpfsIo {
         let ManifestState::Loaded(manifest) = state else {
             return None;
         };
-        // a manifest from an earlier base, or variants turned off while it was awaited: the
-        // original, so an earlier base is never asked again once the base has moved on
+        // a manifest from an earlier base, or variants turned off while it was awaited: no
+        // variant, so a base that is no longer current is never asked
         if !variants.is_current(&manifest.base) {
             return None;
         }
@@ -1247,8 +1244,8 @@ impl IpfsIo {
     }
 }
 
-/// The base [`ENDPOINT_FLAG`] falls back to, None for off. Inserted when no launch option sets
-/// the base, and removed once the flag has routed the variants.
+/// The base [`ENDPOINT_FLAG`] falls back to, None for off. While present, the flag may route the
+/// variants once.
 #[derive(Resource)]
 pub struct FlagDefaultBase(pub Option<String>);
 

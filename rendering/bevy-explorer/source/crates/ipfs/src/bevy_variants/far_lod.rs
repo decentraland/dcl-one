@@ -85,8 +85,8 @@ impl FarLodHealth {
         self.answered_names.insert(scene.to_owned());
     }
 
-    /// The variants base changed: what the old service answered no longer holds. The names stay,
-    /// so a far LOD named under the old base still reports.
+    /// Forgets the missing set, the failures and the pause, which describe the previous base;
+    /// keeps the names.
     pub(crate) fn new_base(&mut self) {
         self.missing.clear();
         self.failures = 0;
