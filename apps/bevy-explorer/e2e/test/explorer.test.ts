@@ -83,12 +83,34 @@ describe('Explorer', () => {
   test('reload and scene state read the settling replies', async () => {
     const fake = new FakeConsole({
       reload: JSON.stringify({ reloaded: true, ...settled, hint: 'new scene' }),
-      scene_state: JSON.stringify({ playerParcel: [149, 149], outOfWorld: false, sceneId: 'bafy', state: 'running', isReady: true, loadingStage: 'Running' })
+      scene_loading_state: JSON.stringify({
+        current: false,
+        stage: 'Running',
+        state: 'running',
+        isReady: true,
+        sceneHash: 'bafy',
+        playerParcel: [149, 149],
+        spawned: 0,
+        definition: 0,
+        crdt: 0,
+        javascript: 0,
+        failed: 0,
+        running: 1,
+        blocked: 0,
+        broken: 0,
+        gltf: 0,
+        preloads: 0,
+        texturePreloads: 0,
+        settleWaits: 0
+      })
     })
     const explorer = new Explorer(fake)
     assert.equal((await explorer.reload()).settled, true)
-    assert.equal((await explorer.sceneState()).isReady, true)
-    assert.deepEqual(fake.lines, ['/reload --current --wait', '/scene_state'])
+    const state = await explorer.sceneState()
+    assert.equal(state.isReady, true)
+    assert.equal(state.sceneHash, 'bafy')
+    assert.deepEqual(state.playerParcel, [149, 149])
+    assert.deepEqual(fake.lines, ['/reload --current --wait', '/scene_loading_state'])
   })
 
   test('a settling wait stays under the transport\'s command timeout', async () => {

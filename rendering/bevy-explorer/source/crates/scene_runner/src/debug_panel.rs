@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
     initialize_scene::{
-        CurrentSceneLoading, LiveScenes, PointerResult, SceneLoading, ScenePointers,
+        CurrentSceneLoading, LiveScenes, PointerResult, SceneHash, SceneLoading, ScenePointers,
         SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
@@ -19,7 +19,7 @@ use crate::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
-    util::settle::SceneWaits,
+    util::settle::{is_ready, state_name, SceneWaits},
     vec3_to_parcel, ContainerEntity, ContainingScene,
 };
 
@@ -305,8 +305,8 @@ pub(crate) fn scene_on_parcel(
     }
 }
 
-/// The stage a scene's load or run is at: the one classification `/scene_loading_state`,
-/// `/scene_state` and the settling waits (`util::settle`) read.
+/// The stage a scene's load or run is at: the one classification `/scene_loading_state` and the
+/// settling waits (`util::settle`) read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Stage {
     Spawning,
@@ -338,7 +338,7 @@ impl Stage {
         }
     }
 
-    /// The stage as `/scene_loading_state` and `/scene_state` name it.
+    /// The stage as `/scene_loading_state` names it.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Spawning => "Spawning",
@@ -610,6 +610,9 @@ fn scene_content(
         "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
 }
 
+/// How scene loading stands, as JSON: the parcel scene under the player (`playerParcel`,
+/// `sceneHash`, its `stage`, its lifecycle `state` and whether it `isReady`, the readiness
+/// `/teleport --wait` and `/reload --wait` wait for) and counts of every scene by stage
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_loading_state")]
 struct LoadingState;
@@ -622,6 +625,7 @@ fn loading_state(
     stages: Query<&SceneLoading>,
     scenes: Query<(&RendererSceneContext, Option<&GltfLoadingCount>)>,
     preloads: Query<&PreloadedAsset, With<LoadingPreloadedAsset>>,
+    hashes: Query<&SceneHash>,
     waits: Res<SceneWaits>,
 ) {
     if input.take().is_none() {
@@ -638,15 +642,38 @@ fn loading_state(
         }] += 1;
     }
     let [spawned, definition, crdt, javascript, failed] = stages_by_kind;
-    let stage = parcel_root(&containing, player.single().ok(), true)
-        .map(|root| {
-            Stage::of(
-                stages.get(root).ok(),
-                scenes.get(root).ok().map(|(context, _)| context),
-            )
-            .name()
-        })
-        .unwrap_or_else(|reason| reason);
+    let player = player.single().ok();
+    let player_parcel = player
+        .and_then(|id| containing.transforms.get(id).ok())
+        .map(|(transform, _)| vec3_to_parcel(transform.translation()))
+        .map(|parcel| [parcel.x, parcel.y]);
+    let root = parcel_root(&containing, player, true);
+    let under_player = root.map(|root| {
+        (
+            stages.get(root).ok(),
+            scenes.get(root).ok().map(|(context, _)| context),
+        )
+    });
+    let (stage, state, ready) = match under_player {
+        Ok((loading, context)) => (
+            Stage::of(loading, context).name(),
+            state_name(loading, context),
+            is_ready(loading, context),
+        ),
+        Err(reason) => (
+            reason,
+            if reason == NO_SCENE {
+                "none"
+            } else {
+                "loading"
+            },
+            false,
+        ),
+    };
+    let scene_hash = root
+        .ok()
+        .and_then(|root| hashes.get(root).ok())
+        .map(|hash| hash.0.as_str());
     let (mut running, mut blocked, mut broken, mut gltf) = (0, 0, 0, 0);
     for (scene, loading) in &scenes {
         if scene.broken() {
@@ -671,7 +698,8 @@ fn loading_state(
             textures += 1;
         }
     }
-    input.reply_ok(json!({"current":current.0, "stage": stage, "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
+    input.reply_ok(json!({"current":current.0, "stage": stage, "state": state, "isReady": ready,
+        "sceneHash": scene_hash, "playerParcel": player_parcel, "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
         "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures,
         "settleWaits":waits.pending()}).to_string());
 }
@@ -717,19 +745,105 @@ mod tests {
     }
 
     fn read_scene_state(app: &mut App) -> Value {
+        read(app, "/current_scene_state")
+    }
+
+    fn read(app: &mut App, command: &str) -> Value {
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let result = result.clone();
             Arc::new(move |reply| *result.lock().unwrap() = Some(reply))
         };
         app.world_mut().send_event(ConsoleCommandEntered {
-            command_name: "/current_scene_state".into(),
+            command_name: command.into(),
             args: Vec::new(),
             responder: Some(responder),
         });
         app.update();
         let reply = result.lock().unwrap().take().unwrap().unwrap();
         serde_json::from_str(&reply).unwrap()
+    }
+
+    #[test]
+    fn loading_state_reports_the_readiness_of_the_scene_under_the_player() {
+        use crate::renderer_context::STARTUP_TICKS;
+
+        let mut app = scene_state_app();
+        app.init_resource::<CurrentSceneLoading>()
+            .init_resource::<SceneWaits>()
+            .add_console_command::<LoadingState, _>(loading_state);
+        app.world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY));
+
+        // the parcel's pointer has not resolved yet
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["playerParcel"], json!([0, 0]));
+        assert_eq!(report["state"], "loading");
+        assert_eq!(report["isReady"], false);
+        assert!(report["sceneHash"].is_null());
+
+        // an empty parcel
+        app.world_mut()
+            .resource_mut::<ScenePointers>()
+            .insert(IVec2::ZERO, PointerResult::Nothing);
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["state"], "none");
+        assert_eq!(report["stage"], NO_SCENE);
+        assert_eq!(report["isReady"], false);
+
+        // a scene in its startup ticks, then past them
+        let world = app.world_mut();
+        let root = world.spawn_empty().id();
+        let mut context = RendererSceneContext::new(
+            dcl_types::SceneId(root),
+            "hash".to_owned(),
+            String::new(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            [IVec2::ZERO].into_iter().collect(),
+            vec![],
+            default(),
+            vec![],
+            root,
+            0.0,
+            false,
+            "sdk7",
+            false,
+            false,
+        );
+        context.tick_number = STARTUP_TICKS;
+        world
+            .entity_mut(root)
+            .insert((context, SceneHash("hash".to_owned())));
+        world
+            .resource_mut::<LiveScenes>()
+            .scenes
+            .insert("hash".to_owned(), root);
+        world.resource_mut::<ScenePointers>().insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "hash".to_owned(),
+                urn: None,
+            },
+        );
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["sceneHash"], "hash");
+        assert_eq!(report["stage"], "Running");
+        assert_eq!(report["state"], "starting");
+        assert_eq!(report["isReady"], false);
+        // the counts every caller already reads are still there
+        assert_eq!(report["running"], 1);
+        assert_eq!(report["settleWaits"], 0);
+
+        app.world_mut()
+            .get_mut::<RendererSceneContext>(root)
+            .unwrap()
+            .tick_number = STARTUP_TICKS + 1;
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["state"], "running");
+        assert_eq!(report["isReady"], true);
     }
 
     #[test]

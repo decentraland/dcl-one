@@ -243,10 +243,14 @@ State, in every build:
   glTFs loaded), which is when its content replaces its stand-ins and a teleport releases the
   player; until then it is `starting` or `blocked`. `/reload` with neither a hash nor `--current` reloads every scene and
   takes no `--wait`.
-- `/scene_state`: JSON of the parcel scene under the player: `playerParcel`, `outOfWorld`,
-  `sceneId` (the hash), `title`, `parcel` (its base), `state` (`loading`, `failed`, `starting`,
-  `blocked` with `blocked` naming the holds, `broken`, `running`, or `none` on an empty parcel),
-  `isReady`, `loadingStage`, `sdkVersion`, `tick`.
+- `/scene_loading_state`: JSON of how scene loading stands. Of the parcel scene under the player:
+  `playerParcel`, `sceneHash` (null on an empty parcel, or before its scene is known), `stage`
+  (its load stage, or why there is none), `state` (`loading`, `failed`, `starting`, `blocked`,
+  `broken`, `running`, or `none` on an empty parcel) and `isReady`, the readiness the two
+  `--wait` commands above wait for. Of every scene: counts by load stage (`spawned`,
+  `definition`, `crdt`, `javascript`, `failed`, `running`, `blocked`, `broken`), `gltf`,
+  `preloads`, `texturePreloads`, `current` and `settleWaits` (the `--wait` commands still
+  waiting). The scene's title (`name`), SDK version and tick are in `/current_scene_state`.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`

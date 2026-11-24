@@ -48,7 +48,7 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
-/** A scene's lifecycle state as `/scene_state` and the settling waits name it. */
+/** A scene's lifecycle state as `/scene_loading_state` and the settling waits name it. */
 export type SceneLifecycle = 'loading' | 'failed' | 'starting' | 'blocked' | 'broken' | 'running' | 'none'
 
 /** What `/teleport --wait` and `/reload --wait` report: the scene settled (it runs, its content is
@@ -80,20 +80,33 @@ export interface ReloadReport extends SettleReport {
   hint?: string
 }
 
-/** What `/scene_state` reports of the parcel scene under the player. */
+/** What `/scene_loading_state` reports: the parcel scene under the player, then counts of every
+ *  scene by stage. */
 export interface SceneStateReport {
-  playerParcel: [number, number]
-  outOfWorld: boolean
-  sceneId?: string
-  title?: string
-  /** the scene's base parcel */
-  parcel?: [number, number]
+  /** null until the player has a position */
+  playerParcel: [number, number] | null
+  /** null on a parcel with no scene, or while its scene is not known yet */
+  sceneHash: string | null
   state: SceneLifecycle
+  /** the readiness `/teleport --wait` and `/reload --wait` wait for */
   isReady: boolean
-  loadingStage: string
-  sdkVersion?: string
-  tick?: number
-  blocked?: string[]
+  /** the load stage of the scene under the player, or why there is none */
+  stage: string
+  /** the player's own scene is still loading, which holds the others back */
+  current: boolean
+  spawned: number
+  definition: number
+  crdt: number
+  javascript: number
+  failed: number
+  running: number
+  blocked: number
+  broken: number
+  gltf: number
+  preloads: number
+  texturePreloads: number
+  /** `--wait` commands still waiting for a scene to settle */
+  settleWaits: number
 }
 
 /**
@@ -751,9 +764,10 @@ export class Explorer {
     return Math.max(1, Math.min(timeoutMs, this.#maxSettleMs())) / 1000
   }
 
-  /** The parcel scene under the player: its id, state and whether it is ready. */
+  /** The parcel scene under the player (its hash, state and whether it is ready) and the counts
+   *  of every scene by load stage. */
   sceneState(): Promise<SceneStateReport> {
-    return this.json<SceneStateReport>('/scene_state')
+    return this.json<SceneStateReport>('/scene_loading_state')
   }
 
   /** Change realm (a realm URL or a world name) and wait for the arrival in it. */

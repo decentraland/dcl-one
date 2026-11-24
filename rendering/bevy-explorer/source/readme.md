@@ -350,8 +350,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   answer once the player has landed and the parcel's scene runs, shows its content (past tick 5,
   nothing blocking it) and a frame with it was presented (`settled`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs`; a
   teleport adds `arrived`, `sceneReady`, `sceneHash`), or with `settled:false` and a `warning`
-  naming what it waited for. `/scene_state` reads the parcel scene under the player: `sceneId`
-  (its hash), `title`, `parcel`, `state`, `isReady`, `loadingStage`, `sdkVersion`.
+  naming what it waited for. `/scene_loading_state` reads the parcel scene under the player
+  (`playerParcel`, `sceneHash`, `stage`, `state`, `isReady`) beside its counts of every scene by load stage.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

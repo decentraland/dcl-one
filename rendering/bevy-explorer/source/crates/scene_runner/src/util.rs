@@ -38,7 +38,6 @@ impl Plugin for SceneUtilPlugin {
         app.insert_resource(ConsoleRelay { send, recv });
         app.add_preview_console_command::<DebugDumpScene, _>(debug_dump_scene);
         app.add_console_command::<ReloadCommand, _>(reload_command);
-        app.add_console_command::<settle::SceneStateCommand, _>(settle::scene_state_command);
         app.init_resource::<settle::SceneWaits>();
         app.add_event::<ReturnedToWorld>();
         app.add_plugins(rapid_reload::RapidReloadPlugin);

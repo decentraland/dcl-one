@@ -1,8 +1,7 @@
 //! Waiting for a parcel scene to settle, for the commands that replace one (`/teleport --wait`,
-//! `/reload --wait`), and `/scene_state`, the readiness they wait for.
+//! `/reload --wait`), and the readiness they wait for, which `/scene_loading_state` reports.
 
 use bevy::{diagnostic::FrameCount, prelude::*};
-use bevy_console::ConsoleCommand;
 use common::{
     rpc::RpcResultReceiver,
     structs::{OutOfWorld, PrimaryUser, ReturnedToWorld},
@@ -11,10 +10,9 @@ use serde_json::{json, Value};
 
 use crate::{
     debug_panel::{scene_on_parcel, Stage, NO_SCENE},
-    initialize_scene::{LiveScenes, SceneHash, SceneLoading, ScenePointers, SuperUserScene},
+    initialize_scene::{LiveScenes, SceneLoading, ScenePointers, SuperUserScene},
     load_timing::scene_is_halted,
     renderer_context::{RendererSceneContext, STARTUP_TICKS},
-    vec3_to_parcel,
 };
 
 /// Frames waited once the scene is ready, so the frame it first drew in has been presented: the
@@ -38,10 +36,10 @@ pub fn wait_timeout(wait: bool, timeout_seconds: Option<f32>) -> Result<Option<f
     Ok(Some(timeout))
 }
 
-/// A scene's lifecycle state as the settling replies and `/scene_state` name it, from its
+/// A scene's lifecycle state as the settling replies and `/scene_loading_state` name it, from its
 /// [`Stage`]: `loading` (definition, main.crdt or JavaScript still being fetched), `failed`,
 /// `starting` (running, still in its [`STARTUP_TICKS`]), `blocked`, `broken` or `running`.
-fn state_name(
+pub(crate) fn state_name(
     loading: Option<&SceneLoading>,
     context: Option<&RendererSceneContext>,
 ) -> &'static str {
@@ -58,7 +56,10 @@ fn state_name(
 /// Whether the scene runs with its content shown ([`RendererSceneContext::content_shown`]: past
 /// its [`STARTUP_TICKS`], nothing blocking it). A halted scene shows what it has and is never
 /// ready ([`never_ready`]).
-fn is_ready(loading: Option<&SceneLoading>, context: Option<&RendererSceneContext>) -> bool {
+pub(crate) fn is_ready(
+    loading: Option<&SceneLoading>,
+    context: Option<&RendererSceneContext>,
+) -> bool {
     loading.is_none() && context.is_some_and(|c| c.content_shown() && !scene_is_halted(c))
 }
 
@@ -337,73 +338,6 @@ impl SceneWait {
         }
         self.finish(Ok(reply.to_string()))
     }
-}
-
-/// The parcel scene under the player: its id (the hash), title, base parcel, lifecycle state,
-/// whether it is ready, its loading stage and SDK version
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/scene_state")]
-pub(super) struct SceneStateCommand;
-
-pub(super) fn scene_state_command(
-    mut input: ConsoleCommand<SceneStateCommand>,
-    live: Res<LiveScenes>,
-    pointers: Option<Res<ScenePointers>>,
-    player: Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
-    scenes: Query<
-        (
-            Option<&SceneHash>,
-            Option<&SceneLoading>,
-            Option<&RendererSceneContext>,
-        ),
-        Without<SuperUserScene>,
-    >,
-) {
-    if input.take().is_none() {
-        return;
-    }
-    let Ok((transform, out_of_world)) = player.single() else {
-        input.reply_failed("the player has no position yet");
-        return;
-    };
-    let parcel = vec3_to_parcel(transform.translation());
-    let mut reply = json!({
-        "playerParcel": [parcel.x, parcel.y],
-        "outOfWorld": out_of_world,
-    });
-    let root = match scene_on_parcel(pointers.as_deref(), &live, parcel) {
-        Ok(root) => root,
-        Err(why) => {
-            reply["state"] = json!(if why == NO_SCENE { "none" } else { "loading" });
-            reply["isReady"] = json!(false);
-            reply["loadingStage"] = json!(why);
-            input.reply_ok(reply.to_string());
-            return;
-        }
-    };
-    let (hash, loading, context) = scenes.get(root).unwrap_or((None, None, None));
-    let state = state_name(loading, context);
-    if let Some(hash) = hash {
-        reply["sceneId"] = json!(hash.0);
-    }
-    reply["state"] = json!(state);
-    reply["isReady"] = json!(is_ready(loading, context));
-    reply["loadingStage"] = json!(match state {
-        "starting" => "Starting",
-        _ => Stage::of(loading, context).name(),
-    });
-    if let Some(context) = context {
-        reply["title"] = json!(context.title);
-        reply["parcel"] = json!([context.base.x, context.base.y]);
-        reply["sdkVersion"] = json!(context.sdk_version);
-        reply["tick"] = json!(context.tick_number);
-        if !context.blocked.is_empty() {
-            let mut blocked: Vec<_> = context.blocked.iter().collect();
-            blocked.sort();
-            reply["blocked"] = json!(blocked);
-        }
-    }
-    input.reply_ok(reply.to_string());
 }
 
 #[cfg(test)]
