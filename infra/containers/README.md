@@ -208,7 +208,7 @@ registry history, API replicas prefer the native index and can serve manager and
 The NFT worker supplies wallet holdings for open mappings.
 
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
-Step `0062_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The index is off
+Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The index is off
 under every posture; `MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` with a Polygon RPC in `TRADE_RPC_URLS`
 (chain 137) starts its walk from block 15,202,000. Nothing reads it yet: the catalogue keeps serving the
 collections subgraph's copy.
