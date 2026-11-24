@@ -594,6 +594,7 @@ fn cacheable(status: StatusCode, content_type: &str, body: Bytes) -> Result<Conv
 }
 
 #[cfg(test)]
+#[path = "convert"]
 mod tests {
     use super::*;
 
@@ -1451,7 +1452,5 @@ mod tests {
         assert!(cacheable(StatusCode::OK, "image/png", big).is_err());
     }
 
-    mod poster_tests {
-        include!("convert/poster_tests.rs");
-    }
+    mod poster_tests;
 }

@@ -14,7 +14,7 @@ For a recognized event poster, `GET /convert?url=…` and its gateway alias `/me
 | Source bytes | Native response |
 | --- | --- |
 | JPEG or PNG | Original bytes, dimensions and media type |
-| WebP or GIF | First displayed frame, fitted within 960 × 960 pixels without enlargement and with its aspect ratio and orientation preserved. The renderer uses JPEG at quality 80 when all pixels are opaque and PNG when any pixel is translucent or transparent. |
+| WebP or GIF | First displayed frame, fitted within 960 × 960 pixels without enlargement and with its aspect ratio and orientation preserved. The renderer uses JPEG at quality 80 when all pixels are opaque and PNG when any pixel is translucent or transparent. If that PNG exceeds 2 MiB, it encodes the oriented still once more within 640 × 640 pixels, retaining alpha. |
 | Other image types, including AVIF | HTTP 415 on the native poster request. The browser media route can still serve a supported original. |
 
 Recognition uses the source URL as well as the request path. The canonical HTTPS bucket `events-assets-099ac00.decentraland.org` serves `/poster/<file>` and `/poster-vertical/<file>`. On the configured node, both paths sit under `PUBLIC_URL` plus `/events-assets-099ac00`. The node also serves the exact bundled poster at `PUBLIC_URL` plus `/events/assets/event-default.webp`. A deployment prefix in `PUBLIC_URL` is part of the path. Recognition requires a canonical URL and a valid poster filename, with no credentials, query or fragment. [Node asset URLs (accepted)](2026-11-18-node-asset-urls-by-path.md)
