@@ -33,12 +33,14 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
 - **Main, nightly.** A `schedule` run measures main's newest web build against the
   [latest release](#the-latest-release), so regressions that several merged pull requests add up
   to are measured on main. It skips silently when that build is the release's.
-- **By hand.** *Run workflow* on *Bevy Explorer / Benchmark* (`workflow_dispatch`) with `pr` (its
-  number or its URL; empty runs main against the latest release, as the nightly run does, where
-  `change_sha` may name any commit with a passed CI run and a web app and `base_sha` replaces the
-  release) and optionally `change_sha` (a commit of the pull request; its head by
-  default), `base_sha` (a commit on main; by default the newest main build that has each
-  artifact) and `runs` (1 to 3). Starting one takes write access.
+- **By hand, for a pull request.** *Run workflow* on *Bevy Explorer / Benchmark*
+  (`workflow_dispatch`) with `pr` (its number or its URL) and optionally `change_sha` (a commit of
+  the pull request; its head by default), `base_sha` (a commit on main; by default the newest main
+  build that has each artifact) and `runs` (1 to 3). Starting one takes write access.
+- **By hand, for main.** The same with `pr` empty runs main against the latest release, as the
+  nightly run does. `change_sha` may name any commit with a passed CI run and a web app (only its
+  web app is taken; the runners come from main) and `base_sha` a commit on main in place of the
+  release.
 - **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main,
   unless `BENCHMARK_ENABLED_RUNNERS` is `none`: then a pull request that compiles the engine skips
   it, while one that reuses main's compiled engine stays optimized. Setup reads `engine.optimized`
@@ -60,7 +62,10 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   empty; a `pr` of spaces is refused.
 - **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
   an expired release build, no runner, no laptop, an unoptimized build), so a nightly never stays
-  green without measuring. Main unchanged since the release skips and passes.
+  green without measuring. Main unchanged since the release skips and passes. A report in which
+  nothing was compared (no base leg produced data) fails the regression job too. The one quiet
+  case is the [queue watchdog](#the-fleet): a laptop that never starts its leg leaves the run
+  *cancelled*, which GitHub does not notify; the watchdog's job summary names the laptop.
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
   any passed CI run of it that a `pull_request` event started (a re-run of an older commit's
   included, which then skips), or a manual run naming it by number (one naming it by URL is a
@@ -629,7 +634,8 @@ run wrote.
 
 **The regression issue.** For a run of main, a report whose **Overall** line is 🔴 (the
 [verdict](#reading-the-results) threshold) opens the one open issue titled *Bevy Explorer:
-frame-time regression on main against the latest release*, or, when it is open, replaces its body
+performance regression on main against the latest release* that this workflow opened (an issue of
+the same title opened by anyone else is ignored), or, when it is open, replaces its body
 with the newest report and comments with the run. A manual run that names `change_sha` or
 `base_sha` uses an issue titled after its own comparison instead. Close it once main is back within the threshold;
 the next regression opens a new one. A report longer than an issue holds points to the run's

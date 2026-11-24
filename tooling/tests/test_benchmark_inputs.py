@@ -346,6 +346,8 @@ class MainTest(Fixture):
         self.assertIn(HEAD, result['issue_title'])
         self.assertEqual((result['legs'][0]['change_artifact'], result['legs'][0]['base_run_id']),
                          (f'bevy-explorer-web-{MERGE}', '89'))
+        # A given commit's run supplies only the web app; the runners come from main.
+        self.assertEqual({leg['runner_run_id'] for leg in result['legs']} | {result['report_runner_run_id']}, {'90'})
         self.github.artifacts[100] = artifacts(MERGE, web=False)
         self.assertIn('no successful Bevy Explorer / CI run', self.resolve('workflow_dispatch', event)['notes'])
 
@@ -470,6 +472,74 @@ class QueueWatchdogTest(unittest.TestCase):
                 self.assertEqual(output, 'stuck=true\n')
                 self.assertIn('**second-chrome**', summary)
                 self.assertNotIn('**a leg**', summary)
+
+
+
+class RegressionIssueTest(unittest.TestCase):
+    """The regression job's step, run with a gh that records its calls and lists the given issues."""
+
+    def step(self, report, issues=()):
+        source = (Path(__file__).parents[2] / '.github/workflows/bevy-explorer-benchmark.yml').read_text()
+        step = source.split('      - name: Open or update the regression issue\n', 1)[1]
+        body = step.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / 'report').mkdir()
+            (folder / 'report/report.md').write_text(report)
+            (folder / 'issues.json').write_text(json.dumps(list(issues)))
+            gh = folder / 'gh'
+            gh.write_text(f'#!{sys.executable}\n' + textwrap.dedent("""\
+                import json, os, sys
+                from pathlib import Path
+                folder = Path(os.environ['FIXTURE'])
+                with open(folder / 'calls', 'a') as calls:
+                    calls.write(json.dumps(sys.argv[1:]) + '\\n')
+                if sys.argv[1:3] == ['issue', 'list']:
+                    print((folder / 'issues.json').read_text())
+                elif sys.argv[1:3] == ['issue', 'create']:
+                    print('https://example.test/issues/9')
+                """))
+            gh.chmod(0o755)
+            environment = dict(os.environ, PATH=f'{folder}{os.pathsep}{os.environ["PATH"]}', FIXTURE=str(folder),
+                               TITLE='Main issue', CHANGE_DESCRIPTION='main at c', BASE_DESCRIPTION='release at e',
+                               RUN_URL='https://example.test/run', GITHUB_STEP_SUMMARY=str(folder / 'summary'))
+            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', textwrap.dedent(body)], cwd=folder,
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            calls = [json.loads(line) for line in (folder / 'calls').read_text().splitlines()] \
+                if (folder / 'calls').exists() else []
+            written = (folder / 'body.md').read_text() if (folder / 'body.md').exists() else ''
+            return result, calls, written
+
+    def test_no_regression_touches_no_issue(self):
+        for line in ('**Overall: ✅ no significant changes**', '**Overall: 🟢 CPU average improved on A**'):
+            with self.subTest(line=line):
+                result, calls, _ = self.step(f'## Report\n\n{line}\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, [])
+
+    def test_a_report_that_compared_nothing_fails(self):
+        result, calls, _ = self.step('**Overall: ⚠️ nothing was compared — no Baseline run produced data**\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('Nothing was compared', result.stdout)
+        self.assertEqual(calls, [])
+
+    def test_a_regression_opens_the_issue_and_only_this_workflows_issue_is_updated(self):
+        report = '**Overall: 🔴 GPU average regressed on A**\n'
+        result, calls, written = self.step(report, [{'number': 3, 'title': 'Main issue (copy)'}])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--author', calls[0])
+        self.assertEqual(calls[0][calls[0].index('--author') + 1], 'app/github-actions')
+        self.assertEqual(calls[1][:4], ['issue', 'create', '--title', 'Main issue'])
+        self.assertIn(report, written)
+
+        result, calls, _ = self.step(report, [{'number': 3, 'title': 'Main issue'}])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call[:3] for call in calls[1:]], [['issue', 'edit', '3'], ['issue', 'comment', '3']])
+
+    def test_a_report_too_long_for_an_issue_points_to_the_artifact(self):
+        _, _, written = self.step('**Overall: 🔴 CPU average regressed on A**\n' + 'x' * 60001)
+        self.assertIn('benchmark-report artifact', written)
+        self.assertNotIn('x' * 100, written)
 
 
 if __name__ == '__main__':

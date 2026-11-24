@@ -42,7 +42,7 @@ SHA = re.compile(r'[0-9a-f]{40}')
 RELEASE_ENVIRONMENT = 'org'
 RELEASE_PACKAGE = '@dcl-regenesislabs/bevy-explorer-web'
 RELEASE_VERSION = re.compile(r'.+-([0-9]+)\.commit-([0-9a-f]{7,40})')
-MAIN_ISSUE = 'Bevy Explorer: frame-time regression on main against the latest release'
+MAIN_ISSUE = 'Bevy Explorer: performance regression on main against the latest release'
 # Days a run keeps its leg results and report: a pull request's for its review, main's as history.
 RETENTION_DAYS = {'pr': '7', 'main': '90'}
 NO_LAPTOP = 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.'
@@ -301,7 +301,7 @@ def resolve_main(inputs, repo, enabled, runs):
     result['base_description'] = base_description
     # The issue a regression opens or updates: main's one issue, or one per overridden comparison.
     result['issue_title'] = (MAIN_ISSUE if not change_sha and not base_sha else
-                             f"Bevy Explorer: frame-time regression of {change_description} against {base_description}")
+                             f"Bevy Explorer: performance regression of {change_description} against {base_description}")
 
     if not fleet(enabled):
         return stop(result, NO_LAPTOP)
@@ -309,9 +309,11 @@ def resolve_main(inputs, repo, enabled, runs):
         return stop(result, f"The change web build (CI run {change['id']}) is not optimized.")
     if not optimized(repo, base_web_id):
         return stop(result, f"The base web build ({base['head_sha']}, CI run {base['id']}) is not optimized.")
-    # The runner comes from the change run, else from main's newest run that has it: it reads
-    # files of the newest format.
-    return measure(repo, result, enabled, (change, change_names, change_web), (base, base_web),
+    # The runner comes from main's newest run that has it, which reads files of the newest format;
+    # from the change run only when that is a main push run, so a given commit's runner never
+    # writes the report.
+    own = change['event'] == 'push' and change['head_branch'] == 'main'
+    return measure(repo, result, enabled, (change, change_names if own else {}, change_web), (base, base_web),
                    base_runs(repo, ''), 'main', change_description)
 
 
