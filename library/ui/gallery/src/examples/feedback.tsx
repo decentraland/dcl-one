@@ -214,6 +214,11 @@ export const feedbackEntries: GalleryEntry[] = [
     examples: [
       { id: 'light', title: 'Light (dark surface)', render: () => <Spinner variant="light" /> },
       {
+        id: 'thin',
+        title: 'Thin, sized (Explorer HUD)',
+        render: () => <Spinner variant="thin" size={26} />
+      },
+      {
         id: 'dark',
         title: 'Dark (light surface)',
         surface: 'light',

@@ -8,8 +8,8 @@ import galleryBanner from '../../assets/lobby/gallery-banner-image.png'
 import goIcon from '../../assets/lobby/jump-in-rounded.png'
 import locationIcon from '../../assets/lobby/location-icn.png'
 import warningIcon from '../../assets/map/panel/warning.png'
-import { Skeleton as SharedSkeleton } from '@dcl/one-ui'
-import { MaskIcon, Spinner } from '../../design'
+import { Skeleton as SharedSkeleton, Spinner } from '@dcl/one-ui'
+import { MaskIcon } from '../../design'
 import { userColor } from '@explorer-core/lib/identity'
 import { isDestination } from '@explorer-core/features/lobby/goto'
 import type { EventData } from '@explorer-core/engine/protocol'
@@ -373,7 +373,7 @@ function GoTo({ ctx }: { ctx: LobbyWidgetContext }): React.JSX.Element {
           }}
         />
         {checking ? (
-          <span className={styles.gotoSpinner}><Spinner size={26} /></span>
+          <span className={styles.gotoSpinner}><Spinner variant="thin" size={26} /></span>
         ) : (
           text.trim() !== '' && (
             <button type="button" className={styles.gotoGo} aria-label="Go" onClick={() => void submit()}>

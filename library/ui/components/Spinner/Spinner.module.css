@@ -25,12 +25,47 @@
     border-left-color: var(--dcl-transparencies-white-40);
   }
 
+  /* Not in Figma: the Explorer HUD's ring, drawn as an SVG so the arc has round ends. */
+  .thin {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 0;
+    transform: none;
+    animation: none;
+  }
+
+  .thin svg {
+    width: 100%;
+    height: 100%;
+    animation: thin-turn 900ms linear infinite;
+  }
+
+  .thinTrack {
+    stroke: rgba(255, 255, 255, 0.12); /* the HUD's 12 % white track; no token */
+  }
+
+  .thinArc {
+    stroke: var(--dcl-primary-primary);
+  }
+
   /* Not in Figma. The ring is the only sign of progress, so it keeps turning under reduced motion, at a
      quarter of the speed: one turn in 4 s. */
   @media (prefers-reduced-motion: reduce) {
     .root {
       animation-duration: 4s;
     }
+
+    .thin svg {
+      animation-duration: 3600ms;
+    }
+  }
+}
+
+@keyframes thin-turn {
+  to {
+    transform: rotate(360deg);
   }
 }
 

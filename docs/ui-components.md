@@ -102,6 +102,10 @@ Panel tabs use the default `Tabs` and `TabsBar` contracts. Route links use `Tabs
 The route parent `TabsBar mode="navigation"` supports route links and caller-owned controls. `TabsBarProps` keeps the existing panel shape; `TabsBarNavigationProps` names route-parent props. Panel `onSelect` retains its native event meaning, while navigation `onSelect` reports the selected route id. Blog category links use the navigation parent with the router adapter and the desktop search slot. A category listing marks the current page, and an article marks its category.
 The route parent `TabsBar mode="navigation"` supports route links and caller-owned controls. `TabsBarProps` keeps the existing panel shape; `TabsBarNavigationProps` names route-parent props. Panel `onSelect` retains its native event meaning, while navigation `onSelect` reports the selected route id.
 
+### Explorer HUD adoption
+
+The Explorer HUD imports shared components from `@dcl/one-ui` ([ADR](adr/2026-11-24-explorer-hud-shared-entry.md)). Its Lobby (`library/ui/apps/hud/features/lobby/LobbyWidgets.tsx`), rendered by the Explorer and by Sites `/play`, uses Skeleton (`overlay` tone) for the loading rows of its friends, cards and photos, and Spinner (`thin` variant, 26px) while the Go-to field checks a destination. On 2026-11-24 the Lobby tests passed under both hosts and the gallery showed both variants with the values the Lobby drew before; the loading rows were not observed in a host, because the mock host loads its data at once. [Skeleton and the entry](https://github.com/decentraland/dcl-one/pull/2253)
+
 ### Panel-tab adoption
 
 Source inspection on 2026-11-23 confirmed that these Sites consumers render both shared panel components.
