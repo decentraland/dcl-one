@@ -15,6 +15,7 @@ export type ShopSearchRow = {
 }
 
 type ShopSearchProps = {
+  className?: string
   inputRef: Ref<HTMLInputElement>
   value: string
   open: boolean
@@ -35,6 +36,7 @@ type ShopSearchProps = {
 }
 
 export function ShopSearch({
+  className,
   inputRef,
   value,
   open,
@@ -69,7 +71,7 @@ export function ShopSearch({
       ]
   return (
     <div
-      className={styles.root + ' shop-search'}
+      className={[styles.root, className].filter(Boolean).join(' ')}
       data-testid="search"
       onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && onOpenChange(false)}
     >

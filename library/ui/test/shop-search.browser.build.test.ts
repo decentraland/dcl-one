@@ -33,14 +33,18 @@ describe('Shop search with only the shared foundations loaded', () => {
         const field = document.querySelector('[role=combobox]')
         const form = field.closest('form')
         const panel = document.querySelector('[data-testid=search-panel]')
+        form.style.fontWeight = '600'
+        form.style.lineHeight = '23px'
         return [
           form.getBoundingClientRect().height,
           getComputedStyle(field).fontSize,
+          getComputedStyle(field).fontWeight,
+          getComputedStyle(field).lineHeight,
           getComputedStyle(panel).backgroundColor,
           getComputedStyle(panel).color
         ]
       })()`)
-      ).toEqual([40, fontSize, 'rgb(60, 21, 86)', 'rgb(252, 252, 252)'])
+      ).toEqual([40, fontSize, '600', '23px', 'rgb(60, 21, 86)', 'rgb(252, 252, 252)'])
     }
   })
 

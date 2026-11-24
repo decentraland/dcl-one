@@ -230,6 +230,7 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
 
   return (
     <ShopSearch
+      className="shop-search"
       inputRef={inputRef}
       value={value}
       open={open}

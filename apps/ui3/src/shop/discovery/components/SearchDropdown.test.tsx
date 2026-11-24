@@ -41,8 +41,7 @@ describe("the search panel as decentraland.org's Shop draws it", () => {
     fireEvent.focus(input);
     const panel = screen.getByTestId("search-panel");
     const chips = within(panel).getAllByRole("option").filter((option) => option.dataset.kind === "popular");
-    expect(chips.length).toBeGreaterThan(3);
-    expect([...chips].every((c) => c.getAttribute("role") === "option")).toBe(true);
+    expect(chips.map((chip) => chip.textContent)).toEqual(expect.arrayContaining(["duck", "sword", "kimono", "wings"]));
     const recent = within(panel).getAllByRole("option")[0]!;
     expect(recent.textContent).toBe("pirate");
     expect(within(recent).queryByRole("button")).toBeNull();
