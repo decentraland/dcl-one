@@ -396,7 +396,10 @@ impl NatsBus for BrokerBus {
         }
         let mut task = self.task.lock().unwrap();
         if let Some(rx) = self.shared.rx.lock().unwrap().take() {
-            *task = Some(tokio::spawn(supervise(self.shared.clone(), rx)));
+            *task = Some(crate::shared::task::spawn(supervise(
+                self.shared.clone(),
+                rx,
+            )));
         }
     }
 
@@ -727,7 +730,7 @@ async fn activate(shared: &Shared, link: &Arc<Link>) -> Result<(), ()> {
         }
         .map_err(|_| ())?;
         let current_link = Arc::downgrade(link);
-        let live = tokio::spawn(async move {
+        let live = crate::shared::task::spawn(async move {
             while let Some(message) = subscriber.next().await {
                 invoke(&handler, message.subject.as_str(), &message.payload);
             }

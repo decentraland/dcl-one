@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Box } from 'decentraland-ui2';
-import { editor } from '#preload';
+import { useEffect, useRef, useState } from 'react';
+import { analytics, editor } from '#preload';
 import type { MobileDebugSessionInfo } from '/shared/types/ipc';
 
 import { t } from '/@/modules/store/translation/utils';
-import { Modal, onBackNoop } from '..';
+import { Modal } from '..';
 import type { Props } from './types';
 
 import './styles.css';
@@ -21,6 +20,18 @@ export function MobileQRCode({ open, onClose, url, qr }: Props) {
     return unsubscribe;
   }, [open]);
 
+  // One event per device as it connects, with how many are connected then. Main keeps a
+  // session in the list after its device disconnects.
+  const reported = useRef(new Set<MobileDebugSessionInfo['id']>());
+  useEffect(() => {
+    const live = sessions.filter(session => !session.disconnectedAt);
+    for (const session of live) {
+      if (reported.current.has(session.id)) continue;
+      reported.current.add(session.id);
+      void analytics.track('Mobile Preview Connected', { devices: live.length });
+    }
+  }, [sessions]);
+
   return (
     <Modal
       className="MobileQRCodeModal"
@@ -28,35 +39,34 @@ export function MobileQRCode({ open, onClose, url, qr }: Props) {
       size="tiny"
       title={t('modal.mobile_qr.title')}
       subtitle={t('modal.mobile_qr.description')}
-      onBack={onBackNoop}
       onClose={onClose}
     >
-      <Box className="MobileQRCodeContent">
-        <Box className="QRContainer">
+      <div className="MobileQRCodeContent">
+        <div className="QRContainer">
           <img
             src={qr}
             alt="QR Code"
             className="QRImage"
           />
-        </Box>
+        </div>
         <span className="Url">{url}</span>
-        <Box className="SessionsContainer">
+        <div className="SessionsContainer">
           {sessions.length === 0 ? (
             <span className="SessionStatus waiting">Waiting for mobile connection...</span>
           ) : (
             sessions.map(s => (
-              <Box
+              <div
                 key={s.id}
                 className="SessionItem"
               >
                 <span className="SessionBadge connected">Session #{s.id}</span>
                 <span className="SessionMessages">{s.messageCount.toLocaleString()} entries</span>
-              </Box>
+              </div>
             ))
           )}
-        </Box>
+        </div>
         <span className="Disclaimer">{t('modal.mobile_qr.disclaimer')}</span>
-      </Box>
+      </div>
     </Modal>
   );
 }

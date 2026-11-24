@@ -73,7 +73,6 @@ impl BrowsersInner {
 }
 
 impl BrowsersInner {
-    #[allow(clippy::too_many_arguments)]
     pub fn create_browser(
         &mut self,
         webview: Entity,
@@ -471,7 +470,6 @@ impl Default for Browsers {
 }
 
 impl Browsers {
-    #[allow(clippy::too_many_arguments)]
     pub fn create_browser(
         &mut self,
         webview: Entity,
@@ -771,11 +769,6 @@ pub fn make_underlines_for(
 #[inline]
 fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
-}
-
-#[allow(dead_code)]
-fn utf16_index_from_byte(s: &str, byte_idx: usize) -> u32 {
-    s[..byte_idx].encode_utf16().count() as u32
 }
 
 #[cfg(test)]

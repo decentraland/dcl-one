@@ -3,34 +3,37 @@
 //
 // | Checklist case                    | Here                                                                         | Class   |
 // | Open Lobby in world               | the top bar's Lobby opens it over the world; its Close and Escape close it    | Port    |
-// | Travel from in-world Lobby        | the landing card's Jump in goes home; a Recommended Places card's travels     | Partial |
-// | Jump in to Home                   | the in-world landing card shows the home place and its Jump in goes there     | Partial |
+// | Travel from in-world Lobby        | the landing card's Jump In goes home; a Recommended Places card's travels     | Partial |
+// | Jump in to Home                   | the in-world landing card shows the home place and its Jump In goes there     | Partial |
 // | Customize avatar from Lobby       | Customize opens the Backpack over the Lobby, and Escape returns to it          | Partial |
 // | Notifications from Lobby          | the Lobby's bell opens the notifications panel and closes it again           | Port    |
-// | Profile menu in Lobby             | the profile chip's Profile row opens the passport  (Sign out: `auth`)         | Partial |
+// | Profile menu in Lobby             | the profile chip's Profile row opens the passport  (Sign Out: `auth`)         | Partial |
 // | Recommended Places                | the section shows cards, and one's Jump in travels                            | Partial |
 // | Jump Back In                      | a place visited from the Lobby is listed under Jump Back In                   | Gap     |
-// | Live Now                          | the section's cards each offer a Jump in, when anything is live               | Partial |
+// | Live Now                          | the Live Events widget's cards offer a Jump in, when anything is live         | Partial |
 // | Lobby on startup                  | a sign-in with no destination lands in the Lobby: welcome, bell, chip, card  | Port    |
 // | Failed travel from Lobby          | no Lobby control takes a destination that cannot be reached                  | Gap     |
 //
 // Partial:
-// - The cards' titles, creators, images and counters are divs with no role: the HUD matcher reaches
-//   only their `Jump in` buttons and the sections' headings, so a card is not checked by its place.
-//   A Jump in is checked by the travel it makes: the Lobby closes and the player arrives somewhere
-//   else (`/world_state` arrivals and position).
-// - The landing card is the first `Jump in` on the page (its section comes first); the Recommended
-//   Places rail is the last section, so its cards' buttons are the last ones. A rail scrolls its
+// - The Lobby is a board of widgets (#996): Welcome and the landing card, Friends, Live Events,
+//   Upcoming Events, Jump Back In and Recommended Places, each a section, in that page order. The
+//   landing card's button is `Jump In`; a place's or a live event's is `Jump in to <title>`. A Jump
+//   in is checked by the travel it makes: the Lobby closes and the player arrives somewhere else
+//   (`/world_state` arrivals and position).
+// - The landing card is the first Jump in on the page (its widget comes first); the Recommended
+//   Places rail is the last widget, so its cards' buttons are the last ones. A rail scrolls its
 //   pages, so only the cards on its first page are visible.
 // - Travel to a World from the Lobby needs a World card on a rail, which the backend's data decides:
 //   not staged (on zone a Recommended Places card is often one, and the scenario reports where it
 //   went). Customize's change of look on the Lobby's avatar is the engine's drawing, not checked.
-// - The in-world Lobby's profile chip has no Sign out (`LobbyHome` passes none with a Close): the
-//   startup Lobby's does, and `auth` signs out there. The chip is named `<initial> <name>#<tag>`;
-//   a guest's name is the HUD's own pick (`Bevy_User`), whatever name the sign-in asked for.
-// - Live Now lists live events (the events service, which refuses this loopback origin by CORS
-//   when the suite serves the app itself) and busy places: an empty section is hidden, and the
-//   scenario then only reports it.
+// - The in-world Lobby's profile menu offers Sign Out on the web only (`signOutOfWorld`; the
+//   standalone keeps its account while a realm is loaded). The scenario does not press it, since
+//   the session is shared; `auth` signs out from the startup Lobby. The chip is named after the
+//   profile, `<name>#<tag>`; a guest's name is the HUD's own pick (`Bevy_User`), whatever name the
+//   sign-in asked for.
+// - The checklist's Live Now is the Live Events widget: live events, from the events service, which
+//   refuses this loopback origin by CORS when the suite serves the app itself. An empty widget is
+//   hidden, and the scenario then only reports it.
 //
 // Gap, Jump Back In: the Lobby reads the visited places back with a POST to the places service's
 // /destinations, whose CORS preflight refuses the loopback origin the suite serves the app from, so
@@ -38,7 +41,8 @@
 // allowed origin (`DCL_E2E_WEB_URL`).
 //
 // Gap, Failed travel: the Lobby's destinations are its cards, which the backend lists: a World that
-// is not deployed is never one of them, and the Lobby has no field to type one in.
+// is not deployed is never one of them. The Go to widget, which takes a typed World, is not on the
+// default board (a user adds it from Customize lobby layout).
 //
 // The in-world scenarios share the default session and put the player back at the target's parcel.
 // The startup Lobby needs a sign-in that picks no destination, which the default session's boot
@@ -50,6 +54,7 @@ import { buildAuthIdentity, newPrivateKey, readTarget, spec, until, type Explore
 import { PAGES, pressRailRow } from './pages.ts'
 
 const scenario = spec(import.meta.url)
+const target = readTarget()
 
 const CONTROL_TIMEOUT_MS = 20_000
 const LOBBY_TIMEOUT_MS = 30_000
@@ -63,17 +68,21 @@ const LOBBY_BUTTON: Selector = { name: 'Lobby', role: 'button' }
 const WELCOME: Selector = { name: 'Welcome', role: 'heading', exact: false }
 const LOBBY_CLOSE: Selector = { name: 'Close', role: 'button' }
 const CUSTOMIZE: Selector = { name: 'Customize', role: 'button' }
-const BELL: Selector = { name: 'Notifications', role: 'button' }
+/** The bell: `Notifications`, or `Notifications, <n> unread` with unread ones. */
+const BELL_NAME = /^Notifications(, \d+ unread)?$/
 const NOTIFICATIONS_CLOSE: Selector = { name: 'Close notifications', role: 'button' }
 const BACKPACK_MODAL: Selector = { name: 'Backpack', role: 'dialog' }
 const VIEW_PROFILE: Selector = { name: 'Profile', role: 'menuitem' }
 /** The profile chip's menu (LobbyProfile.tsx): its rows are menu items. */
 const SIGN_OUT: Selector = { name: 'Sign Out', role: 'menuitem' }
 const PASSPORT: Selector = { name: 'Passport sections', role: 'tablist' }
+/** Part of the landing card's `Jump In` and of the cards' `Jump in to <title>`. */
 const JUMP_IN = 'Jump in'
 const RECOMMENDED: Selector = { name: 'Recommended Places', role: 'heading' }
 const JUMP_BACK_IN: Selector = { name: 'Jump Back In', role: 'heading' }
-const LIVE_NOW: Selector = { name: 'Live Now', role: 'heading' }
+const LIVE_EVENTS: Selector = { name: 'Live Events', role: 'heading' }
+/** The in-world Lobby offers Sign Out on the web only. */
+const NO_IN_WORLD_SIGN_OUT = target.transport === 'native'
 
 function parcelOf(state: WorldState): [number, number] | undefined {
   const p = state.position
@@ -107,13 +116,20 @@ async function closeLobby(explorer: Explorer): Promise<void> {
   await explorer.hud.waitHidden(WELCOME, CONTROL_TIMEOUT_MS)
 }
 
-/** The visible `Jump in` buttons, in page order. */
+/** The Lobby's bell, by its name of the moment (it carries the unread count). */
+async function bell(explorer: Explorer): Promise<Selector> {
+  const found = (await explorer.hud.list('button')).find((button) => BELL_NAME.test(button.name))
+  assert.ok(found, 'the Lobby should show its Notifications bell')
+  return { name: found.name, role: 'button' }
+}
+
+/** The visible Jump in buttons (`Jump In`, `Jump in to <title>`), in page order. */
 async function jumpIns(explorer: Explorer): Promise<Selector[]> {
   const found: Selector[] = []
   for (let index = 0; index < 40; index++) {
-    const read = await explorer.hud.read({ name: JUMP_IN, role: 'button', index })
+    const read = await explorer.hud.read({ name: JUMP_IN, role: 'button', exact: false, index })
     if (!read.found) break
-    if (read.visible) found.push({ name: JUMP_IN, role: 'button', index })
+    if (read.visible) found.push({ name: JUMP_IN, role: 'button', exact: false, index })
   }
   return found
 }
@@ -132,7 +148,6 @@ async function jumpAndArrive(explorer: Explorer, button: Selector): Promise<Worl
 
 /** Put the player back where the run starts. */
 async function backToStart(explorer: Explorer): Promise<void> {
-  const target = readTarget()
   const [x, y] = target.position.split(',').map(Number) as [number, number]
   // a Jump in can land in a World: its `realm` stays the catalyst's, its `realmName` is the World's
   if (((await explorer.worldState()).realmName ?? '').toLowerCase().endsWith('.eth')) await explorer.changeRealm(target.realm, { timeoutMs: TRAVEL_TIMEOUT_MS })
@@ -143,10 +158,9 @@ async function backToStart(explorer: Explorer): Promise<void> {
 
 scenario('the top bar opens the Lobby over the world, and Close and Escape close it', async ({ explorer }) => {
   await openLobby(explorer)
-  for (const control of [CUSTOMIZE, BELL]) {
-    assert.ok(await explorer.hud.isVisible(control), `the Lobby should show its ${JSON.stringify(control)} control`)
-  }
-  assert.ok((await jumpIns(explorer)).length >= 1, 'the Lobby should show the landing card\'s Jump in')
+  assert.ok(await explorer.hud.isVisible(CUSTOMIZE), 'the Lobby should show its Customize control')
+  await bell(explorer)
+  assert.ok((await jumpIns(explorer)).length >= 1, 'the Lobby should show the landing card\'s Jump In')
   await press(explorer, LOBBY_CLOSE)
   await explorer.hud.waitHidden(WELCOME, CONTROL_TIMEOUT_MS)
   assert.equal((await explorer.worldState()).inWorld, true, 'closing the Lobby should leave the player in the world')
@@ -208,17 +222,17 @@ scenario('a place visited from the Lobby shows under Jump Back In', async ({ exp
     : 'the Lobby reads the visited places back with a POST to the places service\'s /destinations, whose CORS preflight refuses the loopback origin the suite serves the app from, so the section never loads (Recommended Places\' GET passes)'
 })
 
-scenario('the Lobby\'s Live Now cards each offer a way in, when anything is live', async ({ explorer, t }) => {
+scenario('the Lobby\'s Live Events cards each offer a way in, when anything is live', async ({ explorer, t }) => {
   await openLobby(explorer)
   // the sections load on their own; Recommended Places is the last to settle the layout
   await explorer.hud.wait(RECOMMENDED, { timeoutMs: LOBBY_TIMEOUT_MS }).catch(() => undefined)
-  if (!(await explorer.hud.isVisible(LIVE_NOW))) {
-    t.diagnostic('nothing is live on the backend (or the events service refused this origin): the Live Now section is hidden')
+  if (!(await explorer.hud.isVisible(LIVE_EVENTS))) {
+    t.diagnostic('nothing is live on the backend (or the events service refused this origin): the Live Events widget is hidden')
   } else {
-    // the landing card, the live places' cards and the rails': more than the landing card alone
+    // the landing card's, the live events' and the rails': more than the landing card's alone
     const buttons = await jumpIns(explorer)
-    t.diagnostic(`Live Now is shown; ${buttons.length} Jump in on the page`)
-    assert.ok(buttons.length >= 1, 'a Lobby with Live Now should offer a Jump in')
+    t.diagnostic(`Live Events is shown; ${buttons.length} Jump in on the page`)
+    assert.ok(buttons.length >= 2, 'a Lobby with Live Events should offer a Jump in beside the landing card\'s')
   }
   await closeLobby(explorer)
 })
@@ -235,20 +249,26 @@ scenario('Customize opens the Backpack over the Lobby, and Escape returns to the
 
 scenario('the Lobby\'s bell opens the notifications panel and closes it', async ({ explorer }) => {
   await openLobby(explorer)
-  await press(explorer, BELL)
+  await press(explorer, await bell(explorer))
   await explorer.hud.wait(NOTIFICATIONS_CLOSE, { timeoutMs: CONTROL_TIMEOUT_MS })
-  await press(explorer, BELL)
+  // opening the panel can mark the notifications read, which renames the bell
+  await press(explorer, await bell(explorer))
   await explorer.hud.waitHidden(NOTIFICATIONS_CLOSE, CONTROL_TIMEOUT_MS)
   assert.ok(await explorer.hud.isVisible(WELCOME), 'the bell should leave the Lobby open')
   await closeLobby(explorer)
 })
 
-scenario('the Lobby\'s profile chip opens the own passport, and has no Sign out in-world', async ({ explorer }) => {
+scenario('the Lobby\'s profile chip opens the own passport, and offers Sign Out in-world on the web only', async ({ explorer }) => {
   const { name } = await explorer.userData()
   await openLobby(explorer)
   await press(explorer, { name: name.split('#')[0]!, role: 'button', exact: false })
   await explorer.hud.wait(VIEW_PROFILE, { timeoutMs: CONTROL_TIMEOUT_MS })
-  assert.equal(await explorer.hud.isVisible(SIGN_OUT), false, 'the in-world Lobby\'s chip should not offer Sign out')
+  // not pressed: the in-world sign-out would end the session every scenario shares
+  assert.equal(
+    await explorer.hud.isVisible(SIGN_OUT),
+    !NO_IN_WORLD_SIGN_OUT,
+    NO_IN_WORLD_SIGN_OUT ? 'the standalone\'s in-world Lobby should not offer Sign Out' : 'the web\'s in-world Lobby should offer Sign Out'
+  )
   await press(explorer, VIEW_PROFILE)
   await explorer.hud.wait(PASSPORT, { timeoutMs: LOBBY_TIMEOUT_MS })
   // the passport's Close comes after the Lobby's in the page
@@ -282,13 +302,12 @@ async function signInToLobby(explorer: Explorer): Promise<void> {
 scenario('a sign-in with no destination lands in the Lobby, and its landing card enters the world', async ({ explorer, t }) => {
   await signInToLobby(explorer)
   assert.equal((await explorer.worldState()).inWorld, false, 'the startup Lobby holds the world')
-  for (const control of [BELL, CUSTOMIZE]) {
-    assert.ok(await explorer.hud.isVisible(control), `the startup Lobby should show its ${JSON.stringify(control)} control`)
-  }
+  assert.ok(await explorer.hud.isVisible(CUSTOMIZE), 'the startup Lobby should show its Customize control')
+  await bell(explorer)
   assert.ok(await profileChip(explorer), 'the startup Lobby should show the profile chip')
-  assert.equal(await explorer.hud.isVisible(LOBBY_CLOSE), false, 'the startup Lobby has no Close: Jump in is the way out')
+  assert.equal(await explorer.hud.isVisible(LOBBY_CLOSE), false, 'the startup Lobby has no Close: Jump In is the way out')
   const [landing] = await jumpIns(explorer)
-  assert.ok(landing, 'the landing card should offer a Jump in')
+  assert.ok(landing, 'the landing card should offer a Jump In')
   // the Jump ins are disabled until the sign-in has finished
   await explorer.hud.wait(landing, { state: 'actionable', timeoutMs: LOBBY_TIMEOUT_MS })
   await explorer.hud.click(landing)

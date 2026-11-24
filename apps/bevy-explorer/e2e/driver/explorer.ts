@@ -73,6 +73,32 @@ export interface RaycastStats {
   uncappedSpentMs: number
 }
 
+/** A `/media_state` player row; the retry fields are the web backend's. */
+export interface MediaPlayerRow {
+  type: 'video' | 'audio'
+  entity: string
+  scene: string | null
+  source: string
+  lastPlaybackState?: string | null
+  retryAttempt?: number | null
+  retryFailures?: number | null
+  retryDelaySeconds?: number | null
+  retryGaveUp?: boolean | null
+  lastError?: string | null
+}
+
+/** `/media_state`: the loaded media players. */
+export interface MediaState {
+  backend: string
+  players: MediaPlayerRow[]
+}
+
+/** `/media_retry_delay`: the wait before a failed web source's first reopen and the reopens allowed. */
+export interface MediaRetryDelay {
+  firstDelayMs: number
+  maxReopens: number
+}
+
 export interface Control {
   found: true
   role: string
@@ -309,6 +335,8 @@ export interface BanBlockState {
     scope: 'platform' | 'world' | 'scene' | null
     message: string | null
     sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
   }
   sceneRoom: {
     state: 'not_connected' | 'connected'
@@ -337,6 +365,28 @@ export interface ScreenPosition {
   depth: number
   distance: number
   viewport: { x: number; y: number; width: number; height: number }
+  /** `x`/`y` as 0 to 1 of the window from the top left, as `clickAt(..., { normalized: true })` takes them */
+  normalized: { x: number; y: number } | null
+  screen: Screen
+}
+
+/** The window a coordinate is read against, in the logical pixels the commands use; `scale` is
+ *  the device pixel ratio, so a screenshot's pixels are `scale` times as many. */
+export interface Screen {
+  width: number
+  height: number
+  scale: number
+}
+
+/** Where `/click_at` clicked, in pixels and normalized, and on what window. The web page adds how
+ *  (`input`: `trusted` from the test runner, else `synthetic`). */
+export interface ClickAtReply {
+  x: number
+  y: number
+  normalized: { x: number; y: number }
+  button: MouseButton
+  screen: Screen
+  input?: 'trusted' | 'synthetic'
 }
 
 export interface Position {
@@ -471,6 +521,8 @@ export interface ExplorerOptions {
   allowSyntheticInput?: boolean
   /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
   profileDeployWindowMs?: number
+  /** How many deployments of one profile go through in a span (`PROFILE_DEPLOY_BURST`). */
+  profileDeployBurst?: { count: number; spanMs: number }
 }
 
 /** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
@@ -478,6 +530,11 @@ export interface ExplorerOptions {
  *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
  *  after the engine reports the new version. */
 export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** And no more than five deployments of a profile in a minute: zone's peers answer a sixth with
+ *  `429 Too many requests` and no `Retry-After` (seen on runs that deployed at 0, 5, 14, 27, 32
+ *  and 38 s), which the engine does not retry and the HUD shows as "Couldn't save your look". */
+export const PROFILE_DEPLOY_BURST = { count: 5, spanMs: 61_000 }
 
 /** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
  *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
@@ -509,9 +566,14 @@ function scrubbed(line: string, error: unknown): unknown {
 export class Explorer {
   readonly console: Console
   readonly hud: Hud
+  /** When this client's driver was made: before its sign-in, so before anything the sign-in did. */
+  readonly openedAt = Date.now()
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
   readonly #deployWindowMs: number
+  readonly #deployBurst: { count: number; spanMs: number }
+  /** When each recent deployment of the own profile was seen, oldest first. */
+  readonly #deploymentsSeenAt: number[] = []
   /** The own profile's version as last read, and when it was last seen to change. */
   #ownVersion: number | undefined
   #ownVersionChangedAt = 0
@@ -522,6 +584,7 @@ export class Explorer {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
     this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
+    this.#deployBurst = options.profileDeployBurst ?? PROFILE_DEPLOY_BURST
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -719,7 +782,10 @@ export class Explorer {
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
     const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
     if (address === undefined) {
-      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      // Each edit is one version above the last (`bump_version`), so a read that skipped some counts
+      // them all; a version a failed deploy used and the next edit skips counts too, which only
+      // waits longer.
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#deploymentSeen(Math.max(1, data.version - this.#ownVersion))
       this.#ownVersion = data.version
     }
     return data
@@ -728,16 +794,29 @@ export class Explorer {
   /** Count a deployment of the own profile from now that no version change showed: the sign-in,
    *  whose first login deploys a new profile before any version was read. */
   profileDeployed(): void {
+    this.#deploymentSeen()
+  }
+
+  #deploymentSeen(count = 1): void {
     this.#ownVersionChangedAt = Date.now()
+    for (let i = 0; i < count; i++) this.#deploymentsSeenAt.push(this.#ownVersionChangedAt)
   }
 
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
    *  the passport): wait out the catalyst's window since the profile was last seen to change, a
-   *  deployment of its own. A change since the last read counts from now. */
+   *  deployment of its own, and, with a burst's worth of deployments in its span, until the oldest
+   *  of them leaves it. A change since the last read counts from now. */
   async profileDeployWindow(): Promise<void> {
     await this.userData()
     const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
     if (left > 0) await sleep(left)
+    const { count, spanMs } = this.#deployBurst
+    const recent = this.#deploymentsSeenAt
+    while (recent.length > 0 && recent[0]! <= Date.now() - spanMs) recent.shift()
+    if (recent.length >= count) {
+      const wait = recent[recent.length - count]! + spanMs - Date.now()
+      if (wait > 0) await sleep(wait)
+    }
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -769,7 +848,8 @@ export class Explorer {
     return this.json<ChatHistory>(`/chat_history ${count}`)
   }
 
-  /** A direct message; `/dm` takes several words, `/chat` does not. Not a delivery confirmation. */
+  /** A direct message; `/dm` takes the rest of the line, so runs of spaces collapse to one. Not a
+   *  delivery confirmation. */
   async dm(address: string, message: string): Promise<void> {
     await this.run(`/dm ${address} ${message}`)
   }
@@ -870,6 +950,13 @@ export class Explorer {
     return Buffer.from(await this.run('/screenshot'), 'base64')
   }
 
+  /** Lay the HUD out at `[width, height]` CSS px, or at the window's size again with `null`, and
+   *  resolve once it has drawn at that size. Throws on a transport without `resizeView`. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    if (!this.console.resizeView) throw new Error(`the ${this.console.kind} transport cannot resize the view`)
+    await this.console.resizeView(size)
+  }
+
   // --- input --------------------------------------------------------------------------------
 
   /** A key by its `KeyboardEvent.code`; `state` holds or releases it. */
@@ -905,9 +992,11 @@ export class Explorer {
     await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
   }
 
-  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
-  async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
-    await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
+  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them), or, with
+   *  `normalized`, at 0 to 1 of the window from the top left. */
+  async clickAt(x: number, y: number, button: MouseButton = 'left', options: { normalized?: boolean } = {}): Promise<ClickAtReply> {
+    const flags = `${button === 'left' ? '' : ` --button ${button}`}${options.normalized ? ' --normalized' : ''}`
+    return this.json<ClickAtReply>(`/click_at ${x} ${y}${flags}`)
   }
 
   // --- scenes -------------------------------------------------------------------------------
@@ -1012,6 +1101,15 @@ export class Explorer {
     const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
     if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
     return Number(match[1])
+  }
+
+  mediaState(): Promise<MediaState> {
+    return this.json<MediaState>('/media_state')
+  }
+
+  /** The wait before a failed web media source's first reopen; with `ms`, sets it first. */
+  mediaRetryDelay(ms?: number): Promise<MediaRetryDelay> {
+    return this.json<MediaRetryDelay>(ms === undefined ? '/media_retry_delay' : `/media_retry_delay ${ms}`)
   }
 
   /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */

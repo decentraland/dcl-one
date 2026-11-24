@@ -3,6 +3,7 @@
 - Read `docs/guidelines/README.md` first: the security model, how to contribute,
   scheduling, code style, platforms, the bevy fork, and the things that look like bugs but
   aren't.
+- To review an engine change, apply [the review bar](docs/guidelines/review.md).
 - For changes to service routing, scene network capabilities or request instrumentation,
   apply the [security rules](docs/guidelines/security.md) and the
   [test requirements](docs/guidelines/contributing.md#tests).

@@ -7,11 +7,10 @@ use super::{
 use crate::protocol::room_authority::{
     self as wire, AUTHORITY_PATH, MAX_BODY, MAX_LEASES, address_bytes,
 };
+use crate::shared::signed_request;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::StreamExt;
-use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     future::Future,
@@ -177,18 +176,8 @@ fn signed_headers_with_source(
     nonce: &str,
     source: Option<&str>,
 ) -> Result<String, ()> {
-    let hash = Sha256::digest(body)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let input = if let Some(source) = source {
-        format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce}\n{source}\n{hash}")
-    } else {
-        format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce}\n{hash}")
-    };
-    let mut signature = Hmac::<Sha256>::new_from_slice(key).map_err(|_| ())?;
-    signature.update(input.as_bytes());
-    Ok(URL_SAFE_NO_PAD.encode(signature.finalize().into_bytes()))
+    let preimage = signed_request::preimage(AUTHORITY_PATH, timestamp, nonce, source, body);
+    Ok(signed_request::sign(key, &preimage))
 }
 async fn request(
     inner: &Inner,
@@ -492,7 +481,7 @@ impl HttpAuthority {
             return;
         };
         let inner = self.inner.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let _permit = permit;
             let operation =
                 wire::authority_request::Operation::Release(context(&inner, &nonce, &lease));
@@ -505,6 +494,8 @@ impl HttpAuthority {
 mod tests {
     use super::*;
     use crate::pulse::application_relay::PendingJoin;
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::{Digest, Sha256};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     struct Generation {

@@ -25,15 +25,14 @@ import {
   normalizeEventAttendee,
 } from "./events";
 import { isUsableNotification, parseNotifications } from "./notifications";
-import { categoryForType, humanizeType, unreadCount } from "./notificationsView";
-import type { Notification } from "./notificationsView";
+import { categoryForType, humanizeType, unreadCount } from "@web-core/notifications/notificationsView";
+import type { Notification } from "@web-core/notifications/notificationsView";
 import {
   isRenderablePlace,
   isRenderablePlaceCategory,
   normalizePlace,
   normalizePlaceCategory,
   toCategoryView,
-  toPlaceDetail,
   toPlaceView,
 } from "./places";
 import { normalizeProfileEnvelope } from "./profile";
@@ -61,8 +60,7 @@ const CASES: GuardCase[] = [
     guard: isRenderablePlace,
     minimal: { id: "", base_position: "", positions: [], categories: [] },
     map: (row) => {
-      const view = toPlaceView(normalizePlace(row as never));
-      return toPlaceDetail(view);
+      return toPlaceView(normalizePlace(row as never));
     },
     edges: [
       { id: "", base_position: "", positions: [], categories: [] },

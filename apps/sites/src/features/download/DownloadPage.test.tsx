@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DownloadPage } from "@dcl/one-ui/apps/sites/download/DownloadPage";
+import { DownloadPage } from "@dcl/one-ui";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -30,12 +30,14 @@ describe("DownloadPage", () => {
         osName: "Windows",
         href: "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.exe",
       },
-      alternatives: [
-        {
-          icon: "macos",
-          label: "Download for macOS",
-          href: "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
-        },
+      alternativeGroups: [
+        [
+          {
+            icon: "macos",
+            label: "Download for macOS",
+            href: "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
+          },
+        ],
       ],
       downloads: "Total Downloads: +438K",
     };

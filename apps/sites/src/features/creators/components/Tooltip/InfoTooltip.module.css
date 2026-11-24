@@ -1,0 +1,4 @@
+/* A class, not an inline style, so a field label's own `svg` size still wins over it. */
+.icon {
+  font-size: 16px;
+}

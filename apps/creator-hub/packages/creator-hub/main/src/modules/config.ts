@@ -1,9 +1,14 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import log from 'electron-log/main';
 
 import { FileSystemStorage, type IFileSystemStorage } from '/shared/types/storage';
-import deepmerge from 'deepmerge';
-import { SETTINGS_DIRECTORY, CONFIG_FILE_NAME, getFullScenesPath } from '/shared/paths';
+import {
+  SETTINGS_DIRECTORY,
+  CONFIG_FILE_NAME,
+  getDefaultScenesPath,
+  getLegacyScenesPath,
+} from '/shared/paths';
 import {
   DEFAULT_CONFIG,
   dropCompressAssetsSettings,
@@ -11,11 +16,12 @@ import {
   mergeConfig,
   promoteAiAssistantSetting,
   promoteDebugConsoleSetting,
+  promoteScenesPath,
   type Config,
 } from '/shared/types/config';
 import { DEFAULT_RENDERER } from '/shared/types/settings';
 
-import { getUserDataPath } from './electron';
+import { getHome, getUserDataPath } from './electron';
 import { waitForMigrations } from './migrations';
 
 export const CONFIG_PATH = path.join(getUserDataPath(), SETTINGS_DIRECTORY, CONFIG_FILE_NAME);
@@ -23,9 +29,19 @@ export const CONFIG_PATH = path.join(getUserDataPath(), SETTINGS_DIRECTORY, CONF
 let configStorage: IFileSystemStorage<Config> | undefined;
 
 export function getDefaultConfig(): Config {
-  const defaultConfig = deepmerge({}, DEFAULT_CONFIG);
-  defaultConfig.settings.scenesPath = getFullScenesPath(getUserDataPath());
+  const defaultConfig = structuredClone(DEFAULT_CONFIG);
+  defaultConfig.settings.scenesPath = getDefaultScenesPath(getHome());
   return defaultConfig;
+}
+
+/** Whether a folder holds anything a user made: a scene is a folder, hidden ones aside. */
+async function holdsScenes(folder: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(folder, { withFileTypes: true });
+    return entries.some(entry => !entry.name.startsWith('.') && entry.isDirectory());
+  } catch {
+    return false;
+  }
 }
 
 export async function getConfigStorage(): Promise<IFileSystemStorage<Config>> {
@@ -37,6 +53,8 @@ export async function getConfigStorage(): Promise<IFileSystemStorage<Config>> {
     // Initialize with default values if empty or merge with defaults if partial
     const defaultConfig = getDefaultConfig();
     const existingConfig = await configStorage.getAll();
+    // Read before the merge, which fills a missing folder with the new default.
+    const storedScenesPath = existingConfig.settings?.scenesPath;
 
     // One-time: the `experimental` flag was added after the `renderer` setting. A
     // config that predates it must derive the toggle from its active renderer —
@@ -57,6 +75,15 @@ export async function getConfigStorage(): Promise<IFileSystemStorage<Config>> {
     dropCompressAssetsSettings(mergedConfig.settings);
     promoteAiAssistantSetting(mergedConfig.settings);
     promoteDebugConsoleSetting(mergedConfig.settings);
+    if (!mergedConfig.settings?.scenesPathPromoted) {
+      const legacyPath = getLegacyScenesPath(getUserDataPath());
+      promoteScenesPath(mergedConfig.settings, {
+        storedPath: storedScenesPath,
+        legacyPath,
+        defaultPath: defaultConfig.settings.scenesPath,
+        legacyHasScenes: await holdsScenes(legacyPath),
+      });
+    }
 
     if (JSON.stringify(existingConfig) !== JSON.stringify(mergedConfig)) {
       log.info('[Config] Writing merged config to storage');

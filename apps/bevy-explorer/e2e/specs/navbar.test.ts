@@ -7,6 +7,7 @@
 // | TestOpenControlsPanelFromHelpMenu    | the System panel has no controls row                         | Gap     |
 // | (none)                               | on the web, the Me panel's Sign Out row asks first; Cancel and Escape keep the session | New |
 // | (none)                               | on the web, the confirmed Sign Out ends the engine session   | New     |
+// | (none)                               | on the web, every rail button stays whole and clickable at 700x900 and 1600x400 | New |
 //
 // Partial:
 // - TestSidebarShowsAllNavigationButtons reads the client's feature flags; the Bevy HUD reads none,
@@ -24,7 +25,7 @@
 //   panel has FAQ, Report Bug, Contact Support and Discord under its Settings row, and no controls
 //   row. The rows are read, not pressed: each opens a browser tab.
 import assert from 'node:assert/strict'
-import { readTarget, spec, until, type Explorer, type OpenOptions, type Selector } from '../driver/index.ts'
+import { DocumentGoneError, readTarget, spec, until, type Explorer, type OpenOptions, type Selector } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 const target = readTarget()
@@ -128,6 +129,34 @@ scenario('the System button opens a panel with the help rows, Escape closes it',
   assert.equal((await explorer.hud.get({ name: 'System', role: 'button' })).checked, false, 'System should not read pressed once its panel is closed')
 })
 
+/** A tall and a wide view. */
+const VIEW_SIZES: Array<[number, number]> = [[700, 900], [1600, 400]]
+/** Skipped on the standalone: its transport has no `resizeView`. */
+const NO_VIEW_RESIZE = target.transport === 'native' ? 'the standalone: the suite cannot resize its window' : undefined
+
+/** The rail buttons not wholly inside a `width` x `height` view, or not actionable. */
+async function railButtonsOffView(explorer: Explorer, [width, height]: [number, number]): Promise<string[]> {
+  const off: string[] = []
+  for (const name of RAIL_BUTTONS) {
+    const control = await explorer.hud.find({ name, role: 'button' })
+    const inside = control != null && control.x >= -1 && control.y >= -1 && control.x + control.width <= width + 1 && control.y + control.height <= height + 1
+    if (!inside || !control.actionable) off.push(control ? `${name} (${Math.round(control.x)},${Math.round(control.y)} ${Math.round(control.width)}x${Math.round(control.height)}${control.reason ? `, ${control.reason}` : ''})` : `${name} (not visible)`)
+  }
+  return off
+}
+
+scenario('the rail stays whole and clickable in a tall and in a wide view', async ({ explorer, restore }) => {
+  await explorer.hud.wait(ME, { timeoutMs: CONTROL_TIMEOUT_MS })
+  restore(() => explorer.resizeView(null))
+  for (const size of VIEW_SIZES) {
+    await explorer.resizeView(size)
+    await until(() => railButtonsOffView(explorer, size), (off) => off.length === 0, {
+      timeoutMs: PRESENT_TIMEOUT_MS,
+      what: `every rail button to be inside a ${size[0]}x${size[1]} view and clickable`
+    })
+  }
+}, { skip: NO_VIEW_RESIZE })
+
 // Only the refusals: the confirmed sign-out ends the session, so it has a scenario and a session of its own.
 scenario("the Me panel's Sign Out row asks first, and Cancel and Escape keep the session", async ({ explorer }) => {
   const { address } = await explorer.userData()
@@ -160,8 +189,11 @@ scenario(
     await explorer.hud.wait(ME_PANEL, { timeoutMs: CONTROL_TIMEOUT_MS })
     await press(explorer, SIGN_OUT_ROW)
     await explorer.hud.wait(SIGN_OUT_QUESTION, { timeoutMs: CONTROL_TIMEOUT_MS })
-    // two controls are named Sign Out while the question is open: the row, then the question's button
-    await press(explorer, { name: 'Sign Out', role: 'button', index: 1 })
+    // two controls are named Sign Out while the question is open: the row, then the question's button.
+    // The page then loads again, and the click's answer may go with the document it ran in.
+    await press(explorer, { name: 'Sign Out', role: 'button', index: 1 }).catch((error: unknown) => {
+      if (!(error instanceof DocumentGoneError)) throw error
+    })
     await until(
       () => explorer.worldState(),
       (state) => !state.signedIn,

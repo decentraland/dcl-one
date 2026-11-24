@@ -391,3 +391,60 @@ describe("castMachine \u{2014} a stopped invocation", () => {
     expect(names(track)).not.toContain(CAST_EVENTS.invalidToken);
   });
 });
+
+describe("castMachine \u{2014} one join from device select", () => {
+  it("SELECT_DEVICES with join goes live once access is granted, without stopping at preview", async () => {
+    const track = vi.fn();
+    const goLive = vi.fn<GoLiveFn>(async ({ identity }) => ({ ...RESULT.credentials!, identity }));
+    const actor = createActor(castMachine, {
+      input: { ...inputFor(okResolve, grant, track), goLive },
+    }).start();
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name: " Ada ", join: true });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+
+    expect(goLive).toHaveBeenCalledTimes(1);
+    expect(goLive.mock.calls[0]![0]).toMatchObject({ identity: "Ada", devices: DEFAULT_DEVICES });
+    expect(names(track)).toContain(CAST_EVENTS.permissionsGranted);
+    expect(names(track)).toContain(CAST_EVENTS.joinRequested);
+    expect(names(track)).not.toContain(CAST_EVENTS.previewReady);
+    actor.stop();
+  });
+
+  it("a denied join waits for RETRY_PERMISSIONS and then joins by itself", async () => {
+    let granted = false;
+    const goLive = vi.fn<GoLiveFn>(async () => RESULT.credentials!);
+    const actor = createActor(castMachine, {
+      input: { ...inputFor(okResolve, async () => ({ granted }), vi.fn()), goLive },
+    }).start();
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, join: true });
+    await waitFor(actor, (s) => s.matches("permissions") && s.context.permissionsDenied);
+    expect(goLive).not.toHaveBeenCalled();
+
+    granted = true;
+    actor.send({ type: "RETRY_PERMISSIONS" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+    expect(goLive).toHaveBeenCalledTimes(1);
+    actor.stop();
+  });
+
+  it("a failed join lands on preview, whose JOIN takes the name typed there", async () => {
+    const goLive = vi
+      .fn<GoLiveFn>()
+      .mockRejectedValueOnce(new Error("room is full"))
+      .mockImplementation(async ({ identity }) => ({ ...RESULT.credentials!, identity }));
+    const actor = createActor(castMachine, {
+      input: { ...inputFor(okResolve, grant, vi.fn()), goLive },
+    }).start();
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name: "Ada", join: true });
+    await waitFor(actor, (s) => s.matches("preview"));
+    expect(actor.getSnapshot().context.joinError).toBe("room is full");
+
+    actor.send({ type: "JOIN", name: "Grace" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+    expect(goLive.mock.calls[1]![0]).toMatchObject({ identity: "Grace" });
+    actor.stop();
+  });
+});

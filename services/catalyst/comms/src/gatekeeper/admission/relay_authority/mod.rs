@@ -5,7 +5,8 @@
 //! renewal (at most two seconds apart) and at release. The request is
 //! authenticated with a dedicated HMAC service key (`PULSE_ROOM_AUTHORITY_KEY`,
 //! never the LiveKit secret) over the method, path, timestamp, nonce, canonical
-//! source UUID and body hash, replay-protected by nonce; the join carries the claim
+//! source UUID and body hash, replay-protected by nonce (`shared::signed_request`, shared with
+//! the message router's token route); the join carries the claim
 //! (`header.payload` of the LiveKit token comms minted) and the possession
 //! proof, verified exclusively here. Shared frames, path and limits live in
 //! `comms::protocol::room_authority`; proof verification and claims live here. A lease admits the
@@ -23,18 +24,16 @@ use proof::{ProofVerifier, VerifiedRoom};
 use crate::protocol::room_authority::{
     self as wire, AUTHORITY_PATH, MAX_BODY, MAX_CLAIMS_BYTES, MAX_LEASES,
 };
+use crate::shared::routing::any;
+use crate::shared::signed_request::{self, Replay, ReplayCache, one_header};
 use async_trait::async_trait;
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{HeaderMap, Method, Request, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::any,
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -49,7 +48,6 @@ const MAX_CHECKS: usize = 128;
 const CHECK_TIMEOUT: Duration = Duration::from_millis(650);
 const LEASE_TTL: Duration = Duration::from_secs(2);
 const REPLAY_TTL: Duration = Duration::from_secs(11);
-type HmacSha256 = Hmac<Sha256>;
 
 #[async_trait]
 pub trait RelayPolicy: Send + Sync {
@@ -65,7 +63,7 @@ pub struct RelayAuthority {
     requests: Semaphore,
     checks: Semaphore,
     leases: Mutex<LeaseRegistry>,
-    replays: Mutex<HashMap<[u8; 16], Instant>>,
+    replays: ReplayCache,
 }
 
 struct LeaseRegistry {
@@ -109,7 +107,7 @@ impl RelayAuthority {
                 entries: HashMap::new(),
                 next_sweep: Instant::now(),
             }),
-            replays: Mutex::new(HashMap::new()),
+            replays: ReplayCache::new(REPLAY_TTL, MAX_REPLAYS),
         })
     }
 
@@ -235,45 +233,36 @@ impl RelayAuthority {
     ) -> Result<(), DenialReason> {
         let timestamp =
             one_header(headers, "x-pulse-authority-timestamp").ok_or(DenialReason::Invalid)?;
-        let seconds = timestamp
-            .parse::<u64>()
-            .map_err(|_| DenialReason::Invalid)?;
-        if seconds.to_string() != timestamp || seconds.abs_diff(now_secs) > 5 {
+        if !signed_request::fresh_timestamp(timestamp, now_secs, 5) {
             return Err(DenialReason::Invalid);
         }
         let nonce_text =
             one_header(headers, "x-pulse-authority-nonce").ok_or(DenialReason::Invalid)?;
         let nonce = decode_fixed::<16>(nonce_text)?;
-        let signature = decode_fixed::<32>(
-            one_header(headers, "x-pulse-authority-signature").ok_or(DenialReason::Invalid)?,
-        )?;
-        let hash = hex::encode(Sha256::digest(body));
-        let preimage = if self.generation.is_some() {
+        let signature =
+            one_header(headers, "x-pulse-authority-signature").ok_or(DenialReason::Invalid)?;
+        decode_fixed::<32>(signature)?;
+        let source = if self.generation.is_some() {
             let source =
                 one_header(headers, "x-pulse-authority-source").ok_or(DenialReason::Invalid)?;
             if !Uuid::parse_str(source).is_ok_and(|id| id.to_string() == source) {
                 return Err(DenialReason::Invalid);
             }
-            format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce_text}\n{source}\n{hash}")
+            Some(source)
         } else {
-            format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce_text}\n{hash}")
+            None
         };
-        let mut mac =
-            HmacSha256::new_from_slice(&self.service_key).map_err(|_| DenialReason::Unavailable)?;
-        mac.update(preimage.as_bytes());
-        mac.verify_slice(&signature)
-            .map_err(|_| DenialReason::NotAuthorized)?;
-        let mut replays = self.replays.lock().map_err(|_| DenialReason::Unavailable)?;
-        if replays.get(&nonce).is_some_and(|expires| *expires > now) {
+        let preimage =
+            signed_request::preimage(AUTHORITY_PATH, timestamp, nonce_text, source, body);
+        if !signed_request::verify(&self.service_key, &preimage, signature) {
             return Err(DenialReason::NotAuthorized);
         }
-        if replays.len() >= MAX_REPLAYS {
-            replays.retain(|_, expires| *expires > now);
-            if replays.len() >= MAX_REPLAYS {
-                return Err(DenialReason::Capacity);
-            }
-        }
-        replays.insert(nonce, now + REPLAY_TTL);
+        self.replays
+            .admit(nonce, now)
+            .map_err(|replay| match replay {
+                Replay::Seen => DenialReason::NotAuthorized,
+                Replay::Full => DenialReason::Capacity,
+            })?;
         Ok(())
     }
 
@@ -553,27 +542,12 @@ pub fn router<S: Clone + Send + Sync + 'static>(authority: Arc<RelayAuthority>) 
     )
 }
 
-fn one_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    let mut values = headers.get_all(name).iter();
-    let value = values.next()?.to_str().ok()?;
-    values.next().is_none().then_some(value)
-}
-
 fn fixed<const N: usize>(bytes: &[u8]) -> Result<[u8; N], DenialReason> {
     bytes.try_into().map_err(|_| DenialReason::Invalid)
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], DenialReason> {
-    if value.len() != (N * 8).div_ceil(6) {
-        return Err(DenialReason::Invalid);
-    }
-    let bytes = URL_SAFE_NO_PAD
-        .decode(value)
-        .map_err(|_| DenialReason::Invalid)?;
-    if URL_SAFE_NO_PAD.encode(&bytes) != value {
-        return Err(DenialReason::Invalid);
-    }
-    fixed(&bytes)
+    signed_request::decode_fixed(value).ok_or(DenialReason::Invalid)
 }
 
 fn denied(reason: DenialReason) -> wire::authority_response::Result {
@@ -606,16 +580,11 @@ fn protobuf_response(status: StatusCode, body: wire::AuthorityResponse) -> Respo
 /// `PULSE_ROOM_AUTHORITY_KEY`: 32 base64url bytes without padding, distinct
 /// from the LiveKit secret (the old comms config's rule).
 pub fn parse_service_key(encoded: &str, livekit_secret: &[u8]) -> anyhow::Result<[u8; 32]> {
-    let bytes = URL_SAFE_NO_PAD.decode(encoded.trim()).map_err(|_| {
-        anyhow::anyhow!("PULSE_ROOM_AUTHORITY_KEY must be 32 base64url bytes without padding")
-    })?;
-    let key: [u8; 32] = bytes.try_into().map_err(|_| {
-        anyhow::anyhow!("PULSE_ROOM_AUTHORITY_KEY must be 32 base64url bytes without padding")
-    })?;
-    if key.as_slice() == livekit_secret {
-        anyhow::bail!("PULSE_ROOM_AUTHORITY_KEY must not reuse the LiveKit secret");
-    }
-    Ok(key)
+    Ok(signed_request::parse_key(
+        "PULSE_ROOM_AUTHORITY_KEY",
+        encoded,
+        Some(livekit_secret),
+    )?)
 }
 
 #[cfg(test)]

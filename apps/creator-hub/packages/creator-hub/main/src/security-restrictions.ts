@@ -6,7 +6,7 @@
  * `self.crossOriginIsolated` — which the Bevy engine's `SharedArrayBuffer` requires — is only
  * true when the top-level document AND every ancestor frame are isolated via COOP: same-origin
  * plus COEP. The engine runs three frames deep: creator-hub renderer, inspector iframe,
- * bevy-engine iframe. The inspector and engine come from our http-server, which already stamps
+ * bevy-engine iframe. The inspector and engine come from our static server, which already stamps
  * these headers, but the top document loads from `file://` in production (mainWindow's
  * `loadFile`), which carries no HTTP headers, leaving the whole chain un-isolated and the
  * engine's asset-loader worker throwing `SharedArrayBuffer transfer requires
@@ -17,7 +17,7 @@
  * studios are left alone, since a blanket COEP would block their cross-origin subresources. The
  * frames listed under "Frames the app embeds" below get COEP alone, and nothing else. COEP is
  * `credentialless` rather than `require-corp` so the inspector iframe's cross-origin
- * subresources load without needing CORP on every one, matching the inspector http-server and
+ * subresources load without needing CORP on every one, matching the inspector static server and
  * the engine's own service worker.
  *
  * ## Frames the app embeds
@@ -30,9 +30,9 @@
  * (so the spinner never resolved), and the video players a scene's markdown may embed, which
  * simply rendered nothing. Neither sends an enforced COEP of its own — YouTube sends only
  * `Cross-Origin-Embedder-Policy-Report-Only`, which does not count — so it is stamped here.
- * Every wearable-preview environment is listed because decentraland-ui picks the origin from
- * its own env config; the video origins mirror the inspector's markdown iframe allowlist, and
- * a test asserts this list keeps covering it.
+ * Every wearable-preview environment is listed because the inspector picks the origin from its
+ * `env` query parameter or its host name; the video origins mirror the inspector's markdown
+ * iframe allowlist, and a test asserts this list keeps covering it.
  *
  * ## One listener, one handler
  *
@@ -79,6 +79,30 @@ const ALLOWED_ORIGINS_AND_PERMISSIONS = new Map<string, Set<Permission>>(
 );
 
 /**
+ * The session recorder's microphone: audio only, and only for the app's own top-level page —
+ * never the inspector iframe, an embedded page or a camera. The recorder asks for it only after
+ * the creator presses Record (and macOS asks the user once more on top of this).
+ */
+function isAppMicrophoneRequest(
+  permission: Permission,
+  details: Electron.PermissionRequest | Electron.MediaAccessPermissionRequest,
+): boolean {
+  if (permission !== 'media' || !details.isMainFrame) return false;
+  const mediaTypes = 'mediaTypes' in details ? (details.mediaTypes ?? []) : [];
+  if (mediaTypes.length === 0 || mediaTypes.some(type => type !== 'audio')) return false;
+  let url: URL;
+  try {
+    url = new URL(details.requestingUrl);
+  } catch {
+    return false;
+  }
+  if (IS_DEV && import.meta.env.VITE_DEV_SERVER_URL) {
+    return url.origin === new URL(import.meta.env.VITE_DEV_SERVER_URL).origin;
+  }
+  return url.protocol === 'file:';
+}
+
+/**
  * A list of origins that you allow open IN BROWSER.
  * Navigation to the origins below is only possible if the link opens in a new window.
  *
@@ -96,6 +120,7 @@ const ALLOWED_EXTERNAL_ORIGINS = new Set<AllowedOrigins<typeof IS_DEV>>([
   'https://decentraland.org',
   'https://decentraland.today',
   'https://decentraland.zone',
+  'https://dcl.dev',
   'https://studios.decentraland.org',
   'https://docs.decentraland.org',
   'https://youtube.com',
@@ -218,10 +243,12 @@ app.on('web-contents-created', (_, contents) => {
    *
    * @see https://www.electronjs.org/docs/latest/tutorial/security#5-handle-session-permission-requests-from-remote-content
    */
-  contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+  contents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const { origin } = new URL(webContents.getURL());
 
-    const permissionGranted = !!ALLOWED_ORIGINS_AND_PERMISSIONS.get(origin)?.has(permission);
+    const permissionGranted =
+      !!ALLOWED_ORIGINS_AND_PERMISSIONS.get(origin)?.has(permission) ||
+      isAppMicrophoneRequest(permission, details);
     callback(permissionGranted);
 
     if (!permissionGranted && IS_DEV) {

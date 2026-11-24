@@ -107,7 +107,10 @@ export const myPlaces = (places: CreatorFundPlace[], forCycle: Cycle = RUNNING):
 
 type Values = Partial<
   Record<
-    'new_decentraland_players_30d' | 'd3_retention_rate_30d' | 'avg_playtime_seconds_30d',
+    | 'new_decentraland_players_30d'
+    | 'd3_retention_rate_30d'
+    | 'avg_playtime_seconds_30d'
+    | 'unique_visits_30d',
     number
   >
 >;
@@ -119,6 +122,7 @@ export const metricsBatch = (
     new_decentraland_players_30d: 1234,
     d3_retention_rate_30d: 0.102,
     avg_playtime_seconds_30d: 7680,
+    unique_visits_30d: 40,
   },
 ): MetricsBatch => ({
   exported_at: '2026-11-03T15:24:00Z',

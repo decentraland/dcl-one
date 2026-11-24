@@ -1,13 +1,12 @@
 import { useMemo } from 'react';
-import cx from 'classnames';
-import CheckIcon from '@mui/icons-material/Check';
-import CloseIcon from '@mui/icons-material/Close';
+import { cx } from '/@/lib/cx';
+import { CheckIcon, CloseIcon } from '@ui/atoms/icons-material';
 
-import type { Step } from './types';
+import type { Step as StepProps } from './types';
 
 import './styles.css';
 
-export function Step({ bulletText, name, description, state = 'idle', testId }: Step) {
+export function Step({ bulletText, name, description, state = 'idle', testId }: StepProps) {
   const bullet = useMemo(() => {
     if (state === 'complete') return <CheckIcon />;
     if (state === 'failed') return <CloseIcon />;
@@ -29,7 +28,7 @@ export function Step({ bulletText, name, description, state = 'idle', testId }: 
   );
 }
 
-export function ConnectedSteps({ steps }: { steps: Step[] }) {
+export function ConnectedSteps({ steps }: { steps: StepProps[] }) {
   return (
     <div className="ConnectedSteps">
       {steps.map(($, idx) => (

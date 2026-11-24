@@ -1,0 +1,98 @@
+.root {
+  --alert-tone: var(--alert-info, var(--info));
+  --alert-tone-light: var(--alert-info-light, var(--alert-tone));
+
+  display: flex;
+  box-sizing: border-box;
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--alert-radius, var(--r-control));
+  background: color-mix(in srgb, var(--alert-tone-light) 10%, black);
+  color: color-mix(in srgb, var(--alert-tone-light) 40%, white);
+  font-family: var(--font-family);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+}
+
+.root[data-severity="success"] {
+  --alert-tone: var(--alert-success, var(--success));
+  --alert-tone-light: var(--alert-success-light, var(--alert-tone));
+}
+
+.root[data-severity="warning"] {
+  --alert-tone: var(--alert-warning, var(--warning));
+  --alert-tone-light: var(--alert-warning-light, var(--alert-tone));
+}
+
+.root[data-severity="error"] {
+  --alert-tone: var(--alert-error, var(--error));
+  --alert-tone-light: var(--alert-error-light, var(--alert-tone));
+}
+
+.root[data-variant="filled"] {
+  background: var(--alert-tone);
+  color: var(--white, #fff);
+  font-weight: 500;
+}
+
+.root[data-variant="outlined"] {
+  border-color: var(--alert-tone-light);
+  background: none;
+}
+
+.icon {
+  display: flex;
+  flex: none;
+  margin-right: 12px;
+  padding: 7px 0;
+  color: var(--alert-tone);
+}
+
+.root[data-variant="filled"] .icon { color: inherit; }
+
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.title {
+  margin: -2px 0 0.35em;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.action {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  margin-right: -8px;
+  margin-left: auto;
+  padding: 4px 0 0 16px;
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.close:hover { background: var(--fill-3); }
+
+.close:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}

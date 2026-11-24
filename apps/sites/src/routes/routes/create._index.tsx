@@ -1,198 +1,84 @@
-import ScreenFreshness from "@/features/components/chrome/ScreenFreshness";
+import { redirect } from "react-router";
+import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 
-import { useEffect, useRef } from "react";
-import { data, redirect, useNavigate, useRevalidator, useSearchParams } from "react-router";
+import SitesChrome from "@ui/web/frames/SitesChrome";
 
-import CreatorHubHome, { type ChTemplateCard } from "@ui/creatorhub/pages/CreatorHubHome";
-import { STARTER_TEMPLATES } from "@ui/creatorhub/pages/ChTemplates";
+import { latestPostsQuery } from "@/data/lib/create-landing/blog-posts";
+import { latestPosts } from "@/data/lib/create-landing/blog-posts.server";
+import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
+import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hub.server";
+import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import CreateLanding from "@/features/create-landing/CreateLanding";
+import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
+import { SubNav } from "@/features/creators/components/SubNav";
+import { useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 
-import { useAuth } from "@/data/lib/auth/index";
-import { isDesktopShell } from "@/data/lib/auth/native-shell";
-import { openSignIn } from "@/features/components/auth/signin-store";
-import type { CreatorScene } from "@/data/lib/catalyst/create/index.server";
-import { loadCreateScreen } from "@/data/lib/screens/create.server";
-import { pageLoader } from "@/core/lib/telemetry/page-loader";
-import { track } from "@/core/lib/telemetry/track";
-
-import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
-
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/create._index";
-import type { StoryId } from "@/core/lib/telemetry/story-id";
 
-export const meta = () => creatorHubMeta("Creator Hub");
+// decentraland.org serves /create from creators-website, whose shell carries this card.
+const CREATE_SOCIAL_IMAGE =
+  "https://images.ctfassets.net/ea2ybdmmn1kv/3fZB29mbYNJdp7sv1y2SJ2/108e55d6d3e23cd11e7d75563d81caf5/hero.webp?fm=jpg&q=85";
 
-const STORY: StoryId = "creator-hub/home";
-const FALLBACK = { variant: "base" };
+export function meta({ matches }: Route.MetaArgs) {
+  return socialMeta({
+    title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds",
+    description:
+      "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
+    image: CREATE_SOCIAL_IMAGE,
+    url: absoluteUrl(publicBase(matches), "/create"),
+  });
+}
 
-/** Where `/create?projectUrl=…` (the link dcl-scene-cli start prints) goes: the SDK workspace of the
-    scene editor. The run token rides the link as a `#token=` fragment, which the browser carries
-    across this redirect untouched and the editor route claims client-side; it never reaches a
-    query string or this server. */
-export function sdkWorkspaceHandoff(url: URL): string | null {
-  const projectUrl = url.searchParams.get("projectUrl")?.trim();
-  if (!projectUrl) return null;
-  const target = new URLSearchParams({ source: "sdk", projectUrl, from: "home" });
-  return `/create/scene-editor?${target.toString()}`;
+// The landing never waits long for the release: without it the hero links to the download page, which does.
+const RELEASE_WAIT_MS = 300;
+
+async function latestReleaseInTime() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      loadLatestRelease().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), RELEASE_WAIT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const url = new URL(request.url);
-  const handoff = sdkWorkspaceHandoff(url);
-  if (handoff) throw redirect(handoff, { headers: { "Cache-Control": "private, no-store" } });
-
-  const { sid, wrap } = await pageLoader(request, context, FALLBACK);
-  const screen = await loadCreateScreen(request);
-  const response = wrap({ sid, ...screen.data });
-  const headers = new Headers(response.init?.headers);
-  headers.set("Server-Timing", screen.serverTiming);
-  headers.set("Cache-Control", "private, no-store");
-  return data(response.data, { ...response.init, headers });
-}
-
-export function headers({ loaderHeaders, parentHeaders }: Route.HeadersArgs) {
-  const headers = new Headers(parentHeaders);
-  for (const name of ["Cache-Control", "Server-Timing"]) {
-    const value = loaderHeaders.get(name);
-    if (value) headers.set(name, value);
+  // `dcl-scene-cli start` still links here with `?projectUrl=`; scenes are edited in the desktop app.
+  if (new URL(request.url).searchParams.has("projectUrl")) {
+    throw redirect(CREATOR_HUB_DOWNLOAD, { headers: { "Cache-Control": "private, no-store" } });
   }
-  return headers;
+  const { sid, wrap } = sidLoader(request, context);
+  const queryClient = new QueryClient();
+  const [release] = await Promise.all([
+    latestReleaseInTime(),
+    queryClient.prefetchQuery(liveScenesQuery()),
+    queryClient.prefetchQuery({ ...latestPostsQuery(), queryFn: () => latestPosts() }),
+  ]);
+  const dehydratedState = dehydrate(queryClient);
+  queryClient.clear();
+  const downloads = release ? heroDownloads(release, request.headers.get("user-agent")) : null;
+  return wrap({ dehydratedState, downloads, sid });
 }
 
-export default function CreateHome({ loaderData }: Route.ComponentProps) {
-  const d = loaderData;
-
-  return (
-    <>
-    <ScreenFreshness freshness={d.freshness} />
-    <HubHomeView
-      sid={d.sid}
-      creator={d.creator}
-      profileAddress={d.profileAddress}
-      profileName={d.profileName}
-      scenes={d.scenes}
-      scenesError={d.scenesError}
-    />
-    </>
-  );
+export async function clientLoader(): Promise<null> {
+  return null;
 }
 
-const TEMPLATE_CARDS: ChTemplateCard[] = STARTER_TEMPLATES.map((t) => ({
-  id: t.id,
-  title: t.title,
-  thumb: t.thumb,
-  difficulty: t.difficulty_level,
-  href: `/create/scene-editor?new=1&template=${encodeURIComponent(t.id)}&name=${encodeURIComponent(t.title)}&from=home`,
-}));
-
-function HubHomeView({
-  sid,
-  creator,
-  profileAddress,
-  profileName,
-  scenes,
-  scenesError,
-}: {
-  sid: string;
-  creator: string;
-  profileAddress: string;
-  profileName: string;
-  scenes: CreatorScene[];
-  scenesError: boolean;
-}) {
-  const navigate = useNavigate();
-  const revalidator = useRevalidator();
-  const [, setSearchParams] = useSearchParams();
-  const { isConnected, address } = useAuth();
-
-  const name = isConnected && address?.toLowerCase() === profileAddress ? profileName : "";
-
-  useEffect(() => {
-    if (!isDesktopShell()) return;
-    type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-    const tauri = (window as { __TAURI__?: { core: { invoke: Invoke } } }).__TAURI__;
-    if (!tauri) {
-      window.location.assign("/create?mp_ipc_error=no-global-tauri");
-      return;
-    }
-    tauri.core
-      .invoke("mp_hello", { name: "create-home" })
-      .then((r) => tauri.core.invoke("mp_log", { msg: `round-trip ok: ${String(r)}` }))
-      .catch((e: unknown) => {
-        window.location.assign(`/create?mp_ipc_error=${encodeURIComponent(String(e))}`);
-      });
-  }, []);
-
-  useEffect(() => {
-    if (isConnected && address && (!creator || address.toLowerCase() !== profileAddress)) {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (!creator) next.set("creator", address);
-          next.set("viewer", address);
-          return next;
-        },
-        { replace: true, preventScrollReset: true },
-      );
-    }
-  }, [isConnected, address, creator, profileAddress, setSearchParams]);
-
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-
-    track("ch_home_viewed", { scene_count: scenes.length }, { sid, story: STORY });
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sid]);
-
-  const rescoping = isConnected && !!address && !creator;
-
-  const sceneRows = scenes.map((s) => ({
-    id: s.id,
-    title: s.title,
-    href: s.base_position
-      ? `/create/scene-editor?pointer=${encodeURIComponent(s.base_position)}${s.world_name ? `&world=${encodeURIComponent(s.world_name)}` : ""}&from=home`
-      :
-        `/create/scene-editor?new=1&name=${encodeURIComponent(s.title)}&from=home`,
-  }));
-
-  function onScenesRetry() {
-    track("ch_home_card_opened", { card: "scenes_retry" }, { sid, story: STORY });
-    if (typeof revalidator.revalidate === "function") {
-      revalidator.revalidate();
-    } else {
-      navigate(0);
-    }
-  }
-
+export default function CreateRoute({ loaderData }: Route.ComponentProps) {
+  const userId = useAnalyticsUserId();
+  // A client navigation runs the clientLoader, which carries no sid: the root's session stands in.
+  const rootSid = useAnalyticsSid();
   return (
-      <CreatorHubHome
-        scenes={sceneRows}
-        scenesError={scenesError}
-        rescoping={rescoping}
-        templates={TEMPLATE_CARDS}
-        onCardClick={(card) => {
-          track("ch_home_card_opened", { card }, { sid, story: STORY });
-        }}
-        onRetry={onScenesRetry}
-        signedIn={isConnected}
-        account={address ?? ""}
-        name={name}
-        onSignIn={() => {
-          track("ch_home_signin_clicked", {}, { sid, story: STORY });
-          openSignIn();
-        }}
-        onStartBuilding={() => {
-          track("ch_home_start_building", {}, { sid, story: STORY });
-          navigate(sceneRows.length > 0 ? "/create/scenes" : "/create/templates");
-        }}
-        onScenes={() => {
-          track("ch_scenes_clicked", { from: "home", card: "scenes" }, { sid, story: STORY });
-        }}
-        onLearn={() => {
-          track("ch_home_card_opened", { card: "learn" }, { sid, story: STORY });
-        }}
-      />
+    <HydrationBoundary state={loaderData?.dehydratedState}>
+      <SitesChrome active="create" overlayNav>
+        <SubNav landing />
+        <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid || rootSid} userId={userId} />
+      </SitesChrome>
+    </HydrationBoundary>
   );
 }

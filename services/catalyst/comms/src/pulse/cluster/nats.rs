@@ -134,7 +134,7 @@ impl NatsClusterFeed {
             statistics_sequence: AtomicU64::new(0),
             statistics_pending: Notify::new(),
         });
-        let drain = tokio::spawn(supervise(shared.clone(), options));
+        let drain = crate::shared::task::spawn(supervise(shared.clone(), options));
         Self {
             shared,
             drain: Mutex::new(Some(drain)),

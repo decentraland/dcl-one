@@ -11,8 +11,8 @@ type TabsBaseProps = {
   label: ReactNode
   /** The current tab: `aria-selected`, and the only one in the tab order (TabsBar moves focus with the arrows). */
   selected?: boolean
-  /** `underline` is the Figma tab; `pill` is the rounded tab decentraland.org shows on the events page. */
-  variant?: 'underline' | 'pill'
+  /** `compact` uses a shorter desktop underline; `pill` is the rounded filter tab. */
+  variant?: 'underline' | 'compact' | 'pill'
   /** Fixes the Figma device size; without it the tab follows the viewport. */
   device?: 'mobile' | 'desktop'
 }
@@ -70,6 +70,8 @@ export type TabsNavigationProps = Omit<
   href: string
   label: string
   selected?: boolean
+  /** The active link can name the current category from a page inside that category. */
+  current?: 'page' | 'true'
   variant?: never
   device?: never
 }
@@ -77,7 +79,7 @@ export type TabsNavigationProps = Omit<
 export type TabsProps = PanelTabsProps
 export function Tabs(props: (TabsProps & { mode?: 'panel' }) | TabsNavigationProps) {
   if (props.mode === 'navigation') {
-    const { mode, label, selected = false, className, target, rel, ...anchor } = props
+    const { mode, label, selected = false, current = 'page', className, target, rel, ...anchor } = props
     return (
       <a
         {...anchor}
@@ -87,7 +89,7 @@ export function Tabs(props: (TabsProps & { mode?: 'panel' }) | TabsNavigationPro
         role={undefined}
         data-mode={mode}
         className={[styles.routeRoot, className].filter(Boolean).join(' ')}
-        aria-current={selected ? 'page' : undefined}
+        aria-current={selected ? current : undefined}
         data-label={label}
       >
         <span className={styles.routeLabel}>{label}</span>

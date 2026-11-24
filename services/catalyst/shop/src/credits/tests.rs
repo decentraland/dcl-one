@@ -56,6 +56,8 @@ pub(crate) struct FakeMarket {
     pub orders: Vec<ListingRow>,
     pub trades: HashMap<String, TradeLookup>,
     pub mana_usd: Option<String>,
+    /// The creator coupon every trade is priced with, when set.
+    pub coupon: Option<crate::types::TradeCoupon>,
     pub item_reads: AtomicUsize,
     pub order_reads: AtomicUsize,
     pub oracle_reads: AtomicUsize,
@@ -109,6 +111,15 @@ impl FakeMarket {
         self.trades.insert(id.to_string(), TradeLookup::Open(trade));
         self
     }
+
+    fn with_coupon(mut self, discount_ppm: u32) -> Self {
+        self.coupon = Some(crate::types::TradeCoupon {
+            contract: crate::types::EvmAddress::parse("0xc914507fe297b2dddd1232ac3a8903f1c125e794")
+                .unwrap(),
+            discount_ppm,
+        });
+        self
+    }
 }
 
 #[async_trait]
@@ -151,7 +162,7 @@ impl Market for FakeMarket {
         _trade: &crate::types::SignedTrade,
         _trade_type: &str,
     ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
-        Ok(None)
+        Ok(self.coupon)
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
@@ -305,6 +316,7 @@ struct StateCfg {
     mock_card: bool,
     fulfillment_mode: &'static str,
     stripe_webhook_secret: Option<&'static str>,
+    stripe_secret_key: Option<&'static str>,
     onchain_authorize_enabled: bool,
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
@@ -317,6 +329,7 @@ impl Default for StateCfg {
             mock_card: false,
             fulfillment_mode: "secondary",
             stripe_webhook_secret: None,
+            stripe_secret_key: None,
             onchain_authorize_enabled: false,
             require_purchase_intent: false,
             admin_token: None,
@@ -337,6 +350,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         },
         checkout_fulfillment_mode: cfg.fulfillment_mode.to_string(),
         stripe_webhook_secret: cfg.stripe_webhook_secret.map(str::to_string),
+        stripe_secret_key: cfg.stripe_secret_key.map(str::to_string),
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
@@ -371,8 +385,18 @@ pub(super) fn scratch_wallet() -> Wallet {
 }
 
 pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    signed_headers_with(w, method, path, "{}").await
+}
+
+/// [`signed_headers`] with `metadata` signed into the payload.
+pub(super) async fn signed_headers_with(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    metadata: &'static str,
+) -> HeaderMap {
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let payload = build_payload_v6(method, path, &timestamp, metadata);
     let signature = w
         .signer
         .sign_message(payload.as_bytes())
@@ -396,7 +420,7 @@ pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Head
         AUTH_TIMESTAMP_HEADER,
         HeaderValue::from_str(&timestamp).unwrap(),
     );
-    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(metadata));
     for (i, link) in chain.iter().enumerate() {
         headers.insert(
             axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
@@ -436,6 +460,22 @@ pub(super) async fn send(
     let body = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     (status, headers, body)
+}
+
+/// A signed web3 session's metadata, as the web Shop signs it (`walletKind`).
+const WEB3: &str = r#"{"walletKind":"web3"}"#;
+
+/// [`call`] with `metadata` signed into the request.
+async fn call_signed(
+    app: &Router,
+    w: &Wallet,
+    path: &str,
+    metadata: &'static str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let headers = signed_headers_with(w, "post", path, metadata).await;
+    let (status, _, body) = send(app, "POST", path, headers, Some(body)).await;
+    (status, body)
 }
 
 /// A signed call over the PUBLIC path (`/credits/...`), the way the explorer signs it.
@@ -6390,6 +6430,225 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     cleanup(&pool, &addr).await;
 }
 
+/// Claims `key` through the broker's own claim statement.
+async fn claim_through_broker(pool: &PgPool, key: &str) -> crate::checkout::claims::Claim {
+    claim_through_broker_at(pool, key, crate::evm::now()).await
+}
+
+async fn claim_through_broker_at(
+    pool: &PgPool,
+    key: &str,
+    now: chrono::NaiveDateTime,
+) -> crate::checkout::claims::Claim {
+    crate::checkout::claims::claim_broker_purchase(
+        pool,
+        &crate::checkout::claims::BrokerPurchaseClaim {
+            key,
+            collection: COLLECTION,
+            item_id: Some("1"),
+            token_id: None,
+            buyer_address: COLLECTION,
+            escrow_address: "0x0000000000000000000000000000000000000001",
+            price_wei: "1",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn compensation_fences_unrecorded_claims_and_the_claim_refuses_a_frozen_checkout() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line failed unclaimed; its sibling's claim is still being signed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (failed, signing) = (lines[0].0, lines[1].0);
+    let (failed_key, signing_key) = (
+        format!("checkout:{checkout}:{failed}"),
+        format!("checkout:{checkout}:{signing}"),
+    );
+    // A fresh claim: its caller may still record and broadcast it.
+    let claimed_at = crate::evm::now();
+    assert!(
+        claim_through_broker_at(&pool, &signing_key, claimed_at)
+            .await
+            .claimed
+    );
+    sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+        .bind(failed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    state.outbox_worker().run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "10", "both lines refunded");
+    let (status, updated_at): (String, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT status, updated_at FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(&signing_key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "error", "the unrecorded claim is fenced");
+    assert_ne!(
+        updated_at, claimed_at,
+        "a late record (fenced on 'pending' and the claim's clock) matches no row"
+    );
+
+    // The frozen checkout's lines are neither re-armed nor claimed afresh.
+    let rearm = claim_through_broker(&pool, &signing_key).await;
+    assert!(!rearm.claimed && !rearm.rearmed);
+    assert_eq!(rearm.status.as_deref(), Some("error"));
+    let fresh = claim_through_broker(&pool, &failed_key).await;
+    assert!(!fresh.claimed && !fresh.rearmed);
+    assert_eq!(fresh.status, None);
+
+    // A checkout still fulfilling claims as before.
+    let live = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, live).await[0].0;
+    assert!(
+        claim_through_broker(&pool, &format!("checkout:{live}:{line}"))
+            .await
+            .claimed
+    );
+    assert_reconciles(&pool, &addr, "after fencing the unrecorded claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_refuses_a_checkout_compensation_is_reversing() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "20", "15").await;
+    let credits = Credits::new(pool.clone());
+    let checkout_id: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, total_credits, status) VALUES ($1, $2, 25, 'fulfilling') RETURNING id",
+    )
+    .bind(unique("test-reversing"))
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    credits
+        .spend(&addr, "25", &format!("checkout:{checkout_id}"), None)
+        .await
+        .unwrap();
+    // the worker froze it after the handler read 'fulfilling'
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = balances(&pool, &addr).await;
+
+    let plain = credits
+        .refund_checkout_manual(checkout_id, &addr, "25")
+        .await;
+    assert_eq!(plain.unwrap_err().status().as_u16(), 409);
+    let audited = credits
+        .refund_checkout_manual_audited(checkout_id, &addr, "25", "token:qc-admin", |_| json!({}))
+        .await;
+    assert_eq!(audited.unwrap_err().status().as_u16(), 409);
+
+    assert_eq!(checkout_status(&pool, checkout_id).await, "reversing");
+    assert_eq!(balances(&pool, &addr).await, before, "nothing refunded");
+    let entries: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.idempotency WHERE scope = 'refund' AND idempotency_key = $1",
+    )
+    .bind(format!("admin:refund:{checkout_id}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(entries, 0, "no admin:refund entry");
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND action = 'checkout.refund' AND target = $1",
+    )
+    .bind(checkout_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 0);
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_fences_its_checkout_lines_unrecorded_claims() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line's claim is still being signed; its sibling is unclaimed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (signing_key, unclaimed_key) = (
+        format!("checkout:{checkout}:{}", lines[0].0),
+        format!("checkout:{checkout}:{}", lines[1].0),
+    );
+    assert!(claim_through_broker(&pool, &signing_key).await.claimed);
+
+    let (_, closed) = state
+        .credits
+        .refund_checkout_manual(checkout, &addr, "6")
+        .await
+        .unwrap();
+    assert!(closed);
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM shop.broker_purchases WHERE idempotency_key = $1")
+            .bind(&signing_key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        status, "error",
+        "the record fenced on 'pending' matches no row"
+    );
+    for key in [&signing_key, &unclaimed_key] {
+        let claim = claim_through_broker(&pool, key).await;
+        assert!(!claim.claimed && !claim.rearmed, "{key}");
+    }
+
+    cleanup(&pool, &addr).await;
+}
+
 #[tokio::test]
 async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_ledger_row() {
     let _serial = OUTBOX_SERIAL.lock().await;
@@ -7680,6 +7939,7 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
         contract_address: None,
         item_id: None,
         registered_name: None,
+        credits_cents: None,
     };
     let derived =
         super::batch::derive_line(&state, ChainId::POLYGON, session, rate, 0, &line(offered))
@@ -8172,6 +8432,25 @@ async fn opid_lane_with(
     market: FakeMarket,
     trial: Option<super::trial::TrialBuyers>,
 ) -> Router {
+    opid_lane_flagged(pool, contract, market, trial, split_on()).await
+}
+
+/// The market's flags with the Credits + MANA split on: a node that takes a Credits part.
+fn split_on() -> Arc<crate::market::features::DappsFlags> {
+    crate::market::features::DappsFlags::for_tests(&[(
+        crate::market::features::CREDITS_MANA_SPLIT,
+        true,
+    )])
+}
+
+/// [`opid_lane_with`] over the given `dapps` flags.
+async fn opid_lane_flagged(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+    flags: Arc<crate::market::features::DappsFlags>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -8202,7 +8481,8 @@ async fn opid_lane_with(
             Arc::new(MockBroker::configured()),
             None,
         )
-        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_dapps_flags(flags),
     );
     app(state)
 }
@@ -8327,6 +8607,572 @@ async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_
     let (status, _) = authorize(opid_item(200, "200", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}
+
+/// A request of one line of one unit may pay part of the price with credits
+/// (`creditsCents`) and the rest with MANA, on either route. The price check
+/// stays on the whole quote; the Credits part alone is reserved, recorded and
+/// echoed; the credit is that part's share of the whole price's cap; an
+/// operation binds the part. Every refusal comes before a reservation.
+#[tokio::test]
+async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
+    let Some((db, lane, wallet)) = opid_setup("credits-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let post = |w: &'static str, body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, w, WEB3, body).await }
+    };
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = |cents: i64, item: &str, leg: Value| {
+        let mut body = opid_item(cents, item, None);
+        body["creditsCents"] = leg;
+        body
+    };
+    // Item 200 is 4 MANA at 0.5 USD/MANA, a 200-cent quote: a part's credit is
+    // its share of those 4 MANA, with no buffer and no headroom.
+    let share = |leg: u64| {
+        (alloy_primitives::U256::from(4_000_000_000_000_000_000u64)
+            * alloy_primitives::U256::from(leg)
+            / alloy_primitives::U256::from(200u64))
+        .to_string()
+    };
+
+    let mut two_units = part(200, "200", json!(120));
+    two_units["quantity"] = json!(2);
+    for (body, why) in [
+        (part(200, "200", json!(200)), "the whole price"),
+        (part(200, "200", json!(210)), "above the price"),
+        (part(200, "200", json!(125)), "not whole credits"),
+        (part(200, "200", json!(0)), "nothing"),
+        (part(200, "200", json!(-10)), "negative"),
+        (part(200, "200", json!("120")), "not a number"),
+        (two_units, "two units"),
+        (
+            json!({ "usdPriceCents": 500, "name": "mauri", "creditsCents": 100 }),
+            "a NAME registration",
+        ),
+    ] {
+        let (status, v) = post(SINGLE, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("\"creditsCents\""),
+            "{why}: the message names the field: {v}"
+        );
+    }
+    for (items, index) in [
+        (
+            json!([part(200, "200", json!(120)), opid_item(95, "95", None)]),
+            0,
+        ),
+        (
+            json!([opid_item(95, "95", None), part(200, "200", json!(120))]),
+            1,
+        ),
+    ] {
+        let (status, v) = post(BATCH, json!({ "items": items })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(
+            v["error"],
+            format!("items[{index}]: {}", super::batch::CREDITS_CENTS_ALONE),
+            "a Credits part beside another line"
+        );
+    }
+    let (status, v) = post(SINGLE, part(210, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    assert_eq!(
+        v["error"], "Price changed",
+        "the whole price is still checked"
+    );
+    let poor = scratch_wallet();
+    seed_paid_credits(&pool, &poor.address, "5").await;
+    let (status, v) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
+    assert_eq!(
+        (v["balanceCents"].as_i64(), v["requiredCents"].as_i64()),
+        (Some(50), Some(120)),
+        "the balance is checked against the part"
+    );
+    let (status, _) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(50))).await;
+    assert_eq!(status, StatusCode::OK, "a part the balance covers");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused request reserved anything"
+    );
+
+    // The single route: the part is reserved and echoed, the credit is its share.
+    let (status, v) = post(SINGLE, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["usdCents"], 120);
+    assert_eq!(
+        v["credit"]["amount"],
+        share(120),
+        "floor(4 MANA * 120 / 200): 2.4 MANA, the buyer's MANA the other 1.6"
+    );
+    assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 120);
+    let salt = v["credit"]["id"].as_str().unwrap().to_string();
+    let (quoted, charged): (Option<i64>, i64) =
+        sqlx::query_as("SELECT quoted_cents, usd_cents FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (quoted, charged),
+        (Some(200), 120),
+        "the quote checked, the part charged"
+    );
+    let line: (i64, i64) = sqlx::query_as(
+        "SELECT quoted_cents, charged_cents FROM credits.authorization_lines WHERE authorization_id = $1",
+    )
+    .bind(&salt)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        line,
+        (120, 120),
+        "the line is its Credits part, quoted and charged"
+    );
+
+    // The batch route with one line, as the in-world Shop authorizes: the
+    // operation binds the part; a retry replays one credit, another part is
+    // refused without a reservation.
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let body = json!({ "operationId": op, "items": [part(200, "200", json!(80))] });
+    let (status, first) = post(BATCH, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        (
+            first["usdCents"].as_i64(),
+            first["lines"][0]["usdCents"].as_i64()
+        ),
+        (Some(80), Some(80))
+    );
+    assert_eq!(first["credit"]["amount"], share(80));
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = post(BATCH, body).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    for other in [
+        json!({ "operationId": op, "items": [part(200, "200", json!(90))] }),
+        json!({ "operationId": op, "items": [opid_item(200, "200", None)] }),
+    ] {
+        let (status, v) = post(BATCH, other).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{v}");
+        assert_eq!(v["code"], "operation_reused", "{v}");
+    }
+    assert_eq!(
+        (
+            authorized_count(&pool, &wallet.address).await,
+            authorized_sum_cents(&pool, &wallet.address).await
+        ),
+        (2, 200),
+        "the refused operations reserved nothing"
+    );
+
+    db.drop().await;
+}
+
+/// A Credits part is judged on the session the signed metadata states, as
+/// the quote that offered it was: a signed web2 session, or none stated, is
+/// refused on both routes with nothing reserved; a signed web3 wallet is
+/// authorized. A whole-price credit needs no metadata, as before.
+#[tokio::test]
+async fn a_credits_part_needs_a_signed_web3_session_on_both_routes() {
+    let Some((db, lane, wallet)) = opid_setup("part-session").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = json!({ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200", "creditsCents": 120 });
+    let bodies = [
+        (SINGLE, part.clone()),
+        (BATCH, json!({ "items": [part.clone()] })),
+    ];
+    for (metadata, why) in [
+        (r#"{"walletKind":"web2"}"#, "a signed web2 session"),
+        ("{}", "no stated session"),
+    ] {
+        for (route, body) in bodies.clone() {
+            let (status, v) = call_signed(&lane, &wallet, route, metadata, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why} on {route}: {v}");
+            assert_eq!(
+                v["refusal"], "mana_remainder_not_allowed",
+                "{why} on {route}: {v}"
+            );
+        }
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused session reserved anything"
+    );
+    for (route, body) in bodies {
+        let (status, v) = call_signed(&lane, &wallet, route, WEB3, body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a signed web3 wallet on {route}: {v}"
+        );
+        assert_eq!(v["usdCents"], 120);
+    }
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        SINGLE,
+        &[],
+        Some(opid_item(200, "200", None)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price needs no metadata: {v}"
+    );
+
+    db.drop().await;
+}
+
+/// The Credits + MANA split's rollout (`dapps-shop-credits-mana-split`) is read
+/// on the shared authorization path. Off, a request with `creditsCents` is a
+/// 400 on either route before anything else, a replay of an operation it
+/// authorized while on included, and nothing new is reserved; a whole price
+/// authorizes, and a credit issued while it was on is still cancelled. On, a
+/// Credits part authorizes on both routes.
+#[tokio::test]
+async fn a_credits_part_follows_its_rollout_on_both_routes_and_a_whole_price_never_does() {
+    let Some(db) = OwnDatabase::create("split-rollout").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_mana_usd("0.5");
+    let flags = crate::market::features::DappsFlags::for_tests(&[]);
+    let lane = opid_lane_flagged(&pool, OPID_MANAGER, market, None, flags.clone()).await;
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "200").await;
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let split = crate::market::features::CREDITS_MANA_SPLIT;
+    const OP_A: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a01";
+    const OP_B: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a02";
+    let part = |op: &str| {
+        let mut body = opid_item(200, "200", Some(op));
+        body["creditsCents"] = json!(120);
+        body
+    };
+    let refused = |status: StatusCode, v: &Value, why: &str| {
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert_eq!(v["code"], "credits_mana_split_off", "{why}: {v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("dapps-shop-credits-mana-split"),
+            "{why}: {v}"
+        );
+    };
+
+    // Off from the start (absent reads off): no Credits part on either route, nothing reserved.
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "single, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "batch, off");
+    assert_eq!(v["index"], 0);
+    assert_eq!(rows_of(&pool, &wallet.address).await, 0);
+
+    // On: both routes authorize the part.
+    flags.set_for_tests(split, true);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    assert_eq!(status, StatusCode::OK, "single, on: {v}");
+    assert_eq!(v["usdCents"], 120);
+    let issued = v["credit"]["id"].as_str().unwrap().to_string();
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch, on: {v}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+
+    // Off again: a replay of the operation it authorized is refused before it is recovered, and nothing new is
+    // reserved; a whole price authorizes on both routes.
+    flags.set_for_tests(split, false);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "a replay, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "a batch replay, off");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK, "a whole price, off: {v}");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        "{}",
+        json!({ "items": [opid_item(200, "200", None)] }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price on the batch route, off: {v}"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 4);
+
+    // A credit issued while it was on is still cancelled.
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/credits/authorize/cancel",
+        &[],
+        Some(json!({ "salts": [issued] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["released"].as_i64(), Some(1), "{v}");
+
+    db.drop().await;
+}
+
+/// A USD-pegged trade has no Credits part: its MANA is only fixed when the
+/// marketplace reads its feed at settlement. Refused with the rule's reason,
+/// before the feed is read and before anything is reserved; its whole price
+/// still authorizes.
+#[tokio::test]
+async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_reservation() {
+    let Some(db) = OwnDatabase::create("feed-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    // $2.00 pegged (USD wei) on Polygon's V3 marketplace.
+    let trade = json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+        "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+        "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+        "received": [{ "assetType": 2, "contractAddress": MANA_POLYGON, "amount": "2000000000000000000", "beneficiary": CREATOR }] });
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "4", "4000000000000000000", true)
+        .with_trade("be6e", trade)
+        .with_mana_usd("0.5");
+    let feed = Arc::new(FakeFeed::default());
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some(OPID_MANAGER.to_string()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(OPID_MANAGER.to_string()),
+        ..super::usage::Settings::default()
+    };
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone())
+        .with_dapps_flags(split_on()),
+    );
+    let lane = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "50").await;
+    feed.answer(Address::from_str(LISTED).unwrap(), Ok("0.55"));
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, "/credits/credits/authorize", WEB3, body).await }
+    };
+
+    let (status, v) =
+        authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e", "creditsCents": 80 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+    assert!(feed.asked().is_empty(), "the feed was not read");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "nothing reserved"
+    );
+    let (status, whole) = authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e" })).await;
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+
+    db.drop().await;
+}
+
+/// The split vector through the route: a listing of 101 MANA wei with a 10%
+/// coupon moves 91; quoted 30 cents, a 10-cent part. The credit signs 30 wei
+/// (floor(91 * 10 / 30)), the buyer's MANA is the other 61, the 10 cents are
+/// what is reserved, and none of it moves with the node's buffer or headroom.
+/// A listing paid in another ERC-20 than the chain's MANA is refused before
+/// anything is reserved.
+#[tokio::test]
+async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_sizing() {
+    let Some(db) = OwnDatabase::create("split-vector").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let trade = |token: &str| {
+        json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+            "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+            "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+            "received": [{ "assetType": 1, "contractAddress": token, "amount": "101", "beneficiary": CREATOR }] })
+    };
+    let lane = |buffer_bps: u32, headroom_pct: u32| {
+        // 3.2e15 USD a MANA: 101 wei is 33 cents rounded up, 30 after the coupon.
+        let market = FakeMarket::default()
+            .with_item(COLLECTION, "4", "4000000000000000000", true)
+            .with_trade("5b1a", trade(MANA_POLYGON))
+            .with_trade("0e20", trade("0x00000000000000000000000000000000000000e2"))
+            .with_coupon(100_000)
+            .with_mana_usd("3200000000000000");
+        let mut settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            mock_card: true,
+            usage_chain_id: super::usage::CHAIN_AMOY,
+            credits_onchain_authorize_enabled: true,
+            credits_signer_key: Some(
+                "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+            ),
+            credits_manager_contract: Some(OPID_MANAGER.to_string()),
+            mana_price_max_staleness_secs: 3600,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        settings.usage = super::usage::Settings {
+            enabled: true,
+            rpc_url: Some("http://127.0.0.1:9/".into()),
+            chain_id: 137,
+            contract: Some(OPID_MANAGER.to_string()),
+            ..super::usage::Settings::default()
+        };
+        settings.credit_buffer_bps = buffer_bps;
+        settings.credit_cap_headroom_pct = headroom_pct;
+        app(Arc::new(
+            State::with_sources(
+                pool.clone(),
+                Outbound::for_tests(),
+                settings,
+                Arc::new(market),
+                Arc::new(MockBroker::configured()),
+                None,
+            )
+            .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+            .with_dapps_flags(split_on()),
+        ))
+    };
+    let part = json!({ "usdPriceCents": 30, "tradeId": "5b1a", "creditsCents": 10 });
+
+    for (buffer, headroom) in [(200, 100), (1_000, 150)] {
+        let lane = lane(buffer, headroom);
+        let wallet = scratch_wallet();
+        seed_paid_credits(&pool, &wallet.address, "50").await;
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+        assert_eq!(
+            authorized_count(&pool, &wallet.address).await,
+            0,
+            "nothing reserved for another ERC-20"
+        );
+
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            part.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{buffer} bps, {headroom}%: {v}");
+        assert_eq!(
+            v["credit"]["amount"], "30",
+            "floor(91 * 10 / 30), with no buffer or headroom"
+        );
+        assert_eq!(v["maxCreditedValue"], "30");
+        assert_eq!(v["usdCents"], 10, "the part is what is charged");
+        assert_eq!(
+            authorized_sum_cents(&pool, &wallet.address).await,
+            10,
+            "and what is reserved"
+        );
+    }
 
     db.drop().await;
 }
@@ -9584,4 +10430,385 @@ async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() 
     )
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+}
+
+#[test]
+fn only_a_live_secret_key_serves_live_events() {
+    use super::handlers::stripe::is_live_key;
+    assert!(is_live_key("sk_live_x"));
+    assert!(is_live_key("rk_live_x"));
+    for key in ["sk_test_x", "rk_test_x", "sk", ""] {
+        assert!(!is_live_key(key), "{key:?}");
+    }
+}
+
+/// Delivers a `payment_intent.succeeded` in the given mode for a fresh 50-credit purchase, then answers the
+/// status, whether its id was claimed, and the buyer's balance.
+async fn deliver_in_mode(
+    pool: &PgPool,
+    secret_key: Option<&'static str>,
+    livemode: bool,
+) -> (StatusCode, i64, String) {
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            stripe_secret_key: secret_key,
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "mode-pack".into(),
+        title: "Mode".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_mode");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let evt = unique("evt_mode");
+    let body = json!({ "id": evt, "type": "payment_intent.succeeded", "livemode": livemode, "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    let (status, _) = deliver(&app, &body).await;
+    let claimed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM credits.stripe_events WHERE event_id = $1")
+            .bind(&evt)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (status, claimed, available(pool, &addr).await)
+}
+
+/// A live key serves live events only and a test key test events only; the other mode is refused before
+/// its id is claimed, so it grants nothing.
+#[tokio::test]
+async fn a_webhook_event_from_the_other_stripe_mode_is_refused_unclaimed() {
+    let Some(pool) = pool().await else { return };
+    let refused = (StatusCode::BAD_REQUEST, 0, "0".to_string());
+    let processed = (StatusCode::OK, 1, "50".to_string());
+    for (key, livemode, expected) in [
+        (Some("sk_live_x"), true, &processed),
+        (Some("sk_live_x"), false, &refused),
+        (Some("sk_test_x"), false, &processed),
+        (Some("sk_test_x"), true, &refused),
+    ] {
+        assert_eq!(
+            &deliver_in_mode(&pool, key, livemode).await,
+            expected,
+            "key {key:?}, livemode {livemode}"
+        );
+    }
+}
+
+/// A node with the webhook secret and no secret key (settling payments already started) has no mode to
+/// compare: the signed event of either mode is processed, so refunds and disputes still revoke.
+#[tokio::test]
+async fn a_webhook_without_a_secret_key_processes_events_of_either_mode() {
+    let Some(pool) = pool().await else { return };
+    for livemode in [true, false] {
+        assert_eq!(
+            deliver_in_mode(&pool, None, livemode).await,
+            (StatusCode::OK, 1, "50".to_string()),
+            "livemode {livemode}"
+        );
+    }
+}
+
+/// A refused event leaves its id unclaimed, so the same id redelivered to a correctly configured node
+/// still processes.
+#[tokio::test]
+async fn a_refused_mode_leaves_the_event_id_for_a_redelivery() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            stripe_secret_key: Some("sk_test_x"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "mode-pack".into(),
+        title: "Mode".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_mode");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let evt = unique("evt_mode");
+    let paid = |livemode: bool| {
+        json!({ "id": evt, "type": "payment_intent.succeeded", "livemode": livemode, "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string()
+    };
+
+    let (status, out) = deliver(&app, &paid(true)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+    let (status, out) = deliver(&app, &paid(false)).await;
+    assert_eq!(
+        (status, out["detail"].as_str()),
+        (StatusCode::OK, Some("processed"))
+    );
+    assert_eq!(available(&pool, &addr).await, "50");
+}
+
+/// A dispute opened as an inquiry withdraws no funds and revokes nothing; once it escalates
+/// (`charge.dispute.funds_withdrawn`) the pack is revoked.
+#[tokio::test]
+async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "inquiry-pack".into(),
+        title: "Inquiry".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_inquiry");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let paid = json!({ "id": unique("evt_inq_paid"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    let (status, out) = deliver(&app, &paid).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    let dispute = |kind: &str, status: &str| {
+        json!({ "id": unique("evt_inq"), "type": kind, "data": { "object": { "id": "dp_1", "payment_intent": pi, "status": status, "amount": 500 } } }).to_string()
+    };
+    let (status, out) = deliver(
+        &app,
+        &dispute("charge.dispute.created", "warning_needs_response"),
+    )
+    .await;
+    assert_eq!(
+        (status, out["detail"].as_str()),
+        (StatusCode::OK, Some("processed"))
+    );
+    assert_eq!(
+        available(&pool, &addr).await,
+        "50",
+        "an inquiry revokes nothing"
+    );
+    let recorded: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.payment_reversals WHERE payment_intent = $1",
+    )
+    .bind(&pi)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded, 0, "nothing for a later grant to replay");
+
+    let (status, _) = deliver(
+        &app,
+        &dispute("charge.dispute.funds_withdrawn", "needs_response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(available(&pool, &addr).await, "0");
+}
+
+/// A stub of Stripe's checkout session endpoints. `expire` answers `expire_status`, with an expired unpaid
+/// session on 200; a read answers `session`. Both are counted.
+async fn stub_stripe(
+    expire_status: StatusCode,
+    session: Value,
+) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    let expired = Arc::new(AtomicUsize::new(0));
+    let read = Arc::new(AtomicUsize::new(0));
+    let (expire_count, read_count) = (expired.clone(), read.clone());
+    let app = Router::new()
+        .route(
+            "/v1/checkout/sessions/{id}/expire",
+            axum::routing::post(
+                move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let count = expire_count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        (
+                            expire_status,
+                            axum::Json(
+                                json!({ "id": id, "status": "expired", "payment_status": "unpaid" }),
+                            ),
+                        )
+                    }
+                },
+            ),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}",
+            axum::routing::get(
+                move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let count = read_count.clone();
+                    let mut session = session.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        session["id"] = json!(id);
+                        axum::Json(session)
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, expired, read)
+}
+
+/// Lands on `cancel-return` for a session order (pending, or retired first) against a stubbed Stripe, and
+/// answers the order's status and the expire and read counts.
+async fn cancel_return_with(
+    pool: &PgPool,
+    expire_status: StatusCode,
+    session_at_stripe: Value,
+    retire_first: bool,
+) -> (String, usize, usize) {
+    let (stripe_url, expired, read) = stub_stripe(expire_status, session_at_stripe).await;
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.stripe_secret_key = Some("sk_test_stub".into());
+    settings.stripe_api_base = stripe_url;
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (order_id, session) = session_order_fixture(&state, &addr).await;
+    if retire_first {
+        state
+            .credits
+            .mark_order_status_by_session(&session, "abandoned", Some("cancelled by the buyer"))
+            .await
+            .unwrap();
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/credits/credits/orders/{order_id}/cancel-return"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success() || resp.status().is_redirection(),
+        "{}",
+        resp.status()
+    );
+    (
+        session_order_row(pool, &session).await.0,
+        expired.load(Ordering::SeqCst),
+        read.load(Ordering::SeqCst),
+    )
+}
+
+/// Stripe's cancel landing expires the open session before the order is retired, so the hosted page the buyer
+/// left can no longer be paid.
+#[tokio::test]
+async fn the_cancel_return_expires_the_checkout_session() {
+    let Some(pool) = pool().await else { return };
+    let open = json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" });
+    assert_eq!(
+        cancel_return_with(&pool, StatusCode::OK, open, false).await,
+        ("abandoned".to_string(), 1, 0)
+    );
+}
+
+/// A session Stripe will not expire (400: already closed) is read back: a paid or complete one leaves the
+/// order to the webhook, an expired unpaid one retires it.
+#[tokio::test]
+async fn the_cancel_return_reads_back_a_session_stripe_did_not_expire() {
+    let Some(pool) = pool().await else { return };
+    for (session, status) in [
+        (
+            json!({ "status": "complete", "payment_status": "paid" }),
+            "pending",
+        ),
+        (
+            json!({ "status": "complete", "payment_status": "unpaid" }),
+            "pending",
+        ),
+        (
+            json!({ "status": "expired", "payment_status": "unpaid" }),
+            "abandoned",
+        ),
+    ] {
+        assert_eq!(
+            cancel_return_with(&pool, StatusCode::BAD_REQUEST, session.clone(), false).await,
+            (status.to_string(), 1, 1),
+            "{session}"
+        );
+    }
+}
+
+/// A failed expire (a 5xx, or one replayed under the same idempotency key) still reads the session back, so
+/// a closed unpaid session retires the order and an open one keeps it.
+#[tokio::test]
+async fn the_cancel_return_reads_back_after_a_failed_expire() {
+    let Some(pool) = pool().await else { return };
+    for (session, status) in [
+        (
+            json!({ "status": "expired", "payment_status": "unpaid" }),
+            "abandoned",
+        ),
+        (
+            json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" }),
+            "pending",
+        ),
+    ] {
+        assert_eq!(
+            cancel_return_with(
+                &pool,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                session.clone(),
+                false
+            )
+            .await,
+            (status.to_string(), 1, 1),
+            "{session}"
+        );
+    }
+}
+
+/// An order that is no longer pending costs no Stripe call.
+#[tokio::test]
+async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
+    let Some(pool) = pool().await else { return };
+    let open = json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" });
+    assert_eq!(
+        cancel_return_with(&pool, StatusCode::OK, open, true).await,
+        ("abandoned".to_string(), 0, 0)
+    );
 }

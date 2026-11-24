@@ -68,13 +68,19 @@ describe('applyTextRoles', () => {
   })
 
   describe('when every configured node id is captured with its layer names', () => {
+    let roles: Record<string, TextRole>
+
+    beforeEach(() => {
+      roles = rolesFor(list)
+    })
+
     it('should bind all 78 text nodes of the 9 visible roles and declare the label role', () => {
-      const roles = applyTextRoles(spec, rolesFor(list))
+      const applied = applyTextRoles(spec, roles)
 
       expect(list).toHaveLength(78)
       for (const target of list)
         expect(nodeAt(spec, target.view, target.path).slot).toBe(target.role)
-      expect(roles.map((role) => role.name).sort()).toEqual([
+      expect(applied.map((role) => role.name).sort()).toEqual([
         'createLabel',
         'creditsBalance',
         'discoverLabel',
@@ -86,7 +92,7 @@ describe('applyTextRoles', () => {
         'shopLabel',
         'signInLabel'
       ])
-      expect(roles.find((role) => role.name === 'notificationCount')).toEqual({
+      expect(applied.find((role) => role.name === 'notificationCount')).toEqual({
         name: 'notificationCount',
         type: 'count',
         label: 'notificationsLabel'
@@ -98,7 +104,7 @@ describe('applyTextRoles', () => {
       const tabs = list.filter((target) => target.view === view && target.path.startsWith('0.1.'))
       expect(new Set(tabs.map((target) => JSON.stringify(target.namePath))).size).toBe(1)
 
-      applyTextRoles(spec, rolesFor(list))
+      applyTextRoles(spec, roles)
 
       expect(tabs.map((target) => nodeAt(spec, view, target.path).slot)).toEqual([
         'discoverLabel',
@@ -110,9 +116,14 @@ describe('applyTextRoles', () => {
   })
 
   describe('when a configured node id is not in the capture', () => {
-    it('should fail generation, naming the role and the id', () => {
-      const roles = rolesFor(list)
+    let roles: Record<string, TextRole>
+
+    beforeEach(() => {
+      roles = rolesFor(list)
       roles.signInLabel!.nodes[0]!.nodeId = '90001:999'
+    })
+
+    it('should fail generation, naming the role and the id', () => {
       expect(() => applyTextRoles(spec, roles)).toThrow(
         'DemoNav text roles: signInLabel: unknown Figma node id 90001:999'
       )
@@ -120,12 +131,17 @@ describe('applyTextRoles', () => {
   })
 
   describe('when the captured layer names differ from the configured path', () => {
-    it('should fail generation instead of binding the text', () => {
-      const roles = rolesFor(list)
+    let roles: Record<string, TextRole>
+
+    beforeEach(() => {
+      roles = rolesFor(list)
       roles.shopLabel!.nodes[0]!.namePath = [
         ...roles.shopLabel!.nodes[0]!.namePath.slice(0, -1),
         'Renamed'
       ]
+    })
+
+    it('should fail generation instead of binding the text', () => {
       expect(() => applyTextRoles(spec, roles)).toThrow(
         `shopLabel: name path mismatch for ${roles.shopLabel!.nodes[0]!.nodeId}`
       )
@@ -133,14 +149,19 @@ describe('applyTextRoles', () => {
   })
 
   describe('when a node id names a layer that is not text', () => {
-    it('should fail generation', () => {
+    let roles: Record<string, TextRole>
+
+    beforeEach(() => {
       const view = 'viewport:largeDesktop|balances:none|theme:dark'
       nodeAt(spec, view, '1.0').figmaId = '90001:500'
-      const roles = rolesFor(list)
+      roles = rolesFor(list)
       roles.signInLabel!.nodes.push({
         nodeId: '90001:500',
         namePath: [nodeAt(spec, view, '').name, 'Right', 'SignIn']
       })
+    })
+
+    it('should fail generation', () => {
       expect(() => applyTextRoles(spec, roles)).toThrow(
         'signInLabel: node 90001:500 is not a text layer'
       )
@@ -148,16 +169,24 @@ describe('applyTextRoles', () => {
   })
 
   describe('when two roles claim the same node', () => {
-    it('should fail generation', () => {
-      const roles = rolesFor(list)
+    let roles: Record<string, TextRole>
+
+    beforeEach(() => {
+      roles = rolesFor(list)
       roles.shopLabel!.nodes.push(roles.discoverLabel!.nodes[0]!)
+    })
+
+    it('should fail generation', () => {
       expect(() => applyTextRoles(spec, roles)).toThrow('is already bound to discoverLabel')
     })
   })
 
   describe('when the same id appears twice in the capture', () => {
-    it('should fail generation', () => {
+    beforeEach(() => {
       nodeAt(spec, list[1]!.view, list[1]!.path).figmaId = list[0]!.nodeId
+    })
+
+    it('should fail generation', () => {
       expect(() => applyTextRoles(spec, rolesFor(list))).toThrow(
         `Figma node id ${list[0]!.nodeId} appears more than once in the capture`
       )
@@ -165,6 +194,12 @@ describe('applyTextRoles', () => {
   })
 
   describe('when a role configuration is inconsistent', () => {
+    let roles: Record<string, TextRole>
+
+    beforeEach(() => {
+      roles = rolesFor(list)
+    })
+
     it.each([
       [
         'a count without a label',
@@ -221,7 +256,6 @@ describe('applyTextRoles', () => {
         'shop-label is not a valid prop name'
       ]
     ])('should fail generation for %s', (_case, change, message) => {
-      const roles = rolesFor(list)
       change(roles)
       expect(() => applyTextRoles(spec, roles)).toThrow(message)
     })
@@ -231,7 +265,6 @@ describe('applyTextRoles', () => {
     it.each([...RESERVED_IDENTIFIERS].map((name) => [name]))(
       'should reject the role name %s',
       (name) => {
-        const roles = rolesFor(list)
         roles[name] = roles.shopLabel!
         delete roles.shopLabel
         expect(() => applyTextRoles(spec, roles)).toThrow(
@@ -243,7 +276,6 @@ describe('applyTextRoles', () => {
     it.each([...RESERVED_IDENTIFIERS].map((href) => [href]))(
       'should reject the href %s',
       (href) => {
-        const roles = rolesFor(list)
         roles.discoverLabel!.href = href
         expect(() => applyTextRoles(spec, roles)).toThrow(
           `discoverLabel: href ${href} is not a valid prop name`
@@ -254,7 +286,6 @@ describe('applyTextRoles', () => {
     it.each([['rest'], ['styles'], ['demoNavViews'], ['demoNavCases'], ['demoNavSuppressedProps']])(
       'should reject the role name %s, which the generated module binds itself',
       (name) => {
-        const roles = rolesFor(list)
         roles[name] = roles.shopLabel!
         delete roles.shopLabel
         expect(() => applyTextRoles(spec, roles)).toThrow(
@@ -263,23 +294,35 @@ describe('applyTextRoles', () => {
       }
     )
 
-    it('should leave the captured views untouched when a later role fails to bind', () => {
-      const before = JSON.stringify(spec.views)
-      const roles = rolesFor(list)
-      roles.signInLabel!.nodes.push({ nodeId: '90001:999', namePath: ['x'] })
-      expect(() => applyTextRoles(spec, roles)).toThrow(
-        'signInLabel: unknown Figma node id 90001:999'
-      )
-      expect(JSON.stringify(spec.views)).toBe(before)
+    describe('and a later role fails to bind', () => {
+      let before: string
+
+      beforeEach(() => {
+        before = JSON.stringify(spec.views)
+        roles.signInLabel!.nodes.push({ nodeId: '90001:999', namePath: ['x'] })
+      })
+
+      it('should fail generation and leave the captured views untouched', () => {
+        expect(() => applyTextRoles(spec, roles)).toThrow(
+          'signInLabel: unknown Figma node id 90001:999'
+        )
+        expect(JSON.stringify(spec.views)).toBe(before)
+      })
     })
 
-    it('should leave the captured views untouched when it fails', () => {
-      const before = JSON.stringify(spec.views)
-      const roles = rolesFor(list)
-      roles.class = roles.shopLabel!
-      delete roles.shopLabel
-      expect(() => applyTextRoles(spec, roles)).toThrow('class is not a valid prop name')
-      expect(JSON.stringify(spec.views)).toBe(before)
+    describe('and a role name is reserved', () => {
+      let before: string
+
+      beforeEach(() => {
+        before = JSON.stringify(spec.views)
+        roles.class = roles.shopLabel!
+        delete roles.shopLabel
+      })
+
+      it('should fail generation and leave the captured views untouched', () => {
+        expect(() => applyTextRoles(spec, roles)).toThrow('class is not a valid prop name')
+        expect(JSON.stringify(spec.views)).toBe(before)
+      })
     })
   })
 })
@@ -334,9 +377,13 @@ describe('buildComponentSpecs with text roles', () => {
   })
 
   describe('when a REST capture carries the 78 text ids and the configuration binds the roles', () => {
-    it('should bind every role and keep the ids out of the spec', async () => {
-      const spec = await restSpecs(list, rolesFor(list))
+    let spec: ComponentSpec
 
+    beforeEach(async () => {
+      spec = await restSpecs(list, rolesFor(list))
+    })
+
+    it('should bind every role and keep the ids out of the spec', () => {
       for (const target of list)
         expect(nodeAt(spec, target.view, target.path).slot).toBe(target.role)
       expect(spec.textRoles).toHaveLength(10)
@@ -379,49 +426,65 @@ describe('buildComponentSpecs with text roles', () => {
     const mobile = 'viewport:mobile|balances:none|theme:dark'
     const namePath = (root: string) => [root, 'Right', 'SignIn', 'Label']
 
-    it('should not give the variant the base node id, and leave its unmapped text unbound without failing', async () => {
-      const spec = await partialSpec([], {
-        signInLabel: {
-          type: 'string',
-          nodes: [
-            {
-              nodeId: '90001:1',
-              namePath: namePath(
-                'viewport=large-desktop, signed-in=false, balances=none, theme=dark'
-              )
-            }
-          ]
-        }
+    describe('and only the base node id is bound', () => {
+      let spec: ComponentSpec
+
+      beforeEach(async () => {
+        spec = await partialSpec([], {
+          signInLabel: {
+            type: 'string',
+            nodes: [
+              {
+                nodeId: '90001:1',
+                namePath: namePath(
+                  'viewport=large-desktop, signed-in=false, balances=none, theme=dark'
+                )
+              }
+            ]
+          }
+        })
       })
-      expect(nodeAt(spec, base, '1.0.0').slot).toBe('signInLabel')
-      expect(nodeAt(spec, mobile, '1.0.0').slot).not.toBe('signInLabel')
+
+      it('should not give the variant the base node id, and leave its unmapped text unbound without failing', () => {
+        expect(nodeAt(spec, base, '1.0.0').slot).toBe('signInLabel')
+        expect(nodeAt(spec, mobile, '1.0.0').slot).not.toBe('signInLabel')
+      })
     })
 
-    it('should bind the variant node through its own set.id', async () => {
-      const spec = await partialSpec([{ at: [1, 0, 0], set: { id: '90001:2' } }], {
-        signInLabel: {
-          type: 'string',
-          nodes: [
-            {
-              nodeId: '90001:1',
-              namePath: namePath(
-                'viewport=large-desktop, signed-in=false, balances=none, theme=dark'
-              )
-            },
-            {
-              nodeId: '90001:2',
-              namePath: namePath('viewport=mobile, signed-in=false, balances=none, theme=dark')
-            }
-          ]
-        }
+    describe('and the variant node carries its own set.id', () => {
+      let spec: ComponentSpec
+
+      beforeEach(async () => {
+        spec = await partialSpec([{ at: [1, 0, 0], set: { id: '90001:2' } }], {
+          signInLabel: {
+            type: 'string',
+            nodes: [
+              {
+                nodeId: '90001:1',
+                namePath: namePath(
+                  'viewport=large-desktop, signed-in=false, balances=none, theme=dark'
+                )
+              },
+              {
+                nodeId: '90001:2',
+                namePath: namePath('viewport=mobile, signed-in=false, balances=none, theme=dark')
+              }
+            ]
+          }
+        })
       })
-      expect(nodeAt(spec, base, '1.0.0').slot).toBe('signInLabel')
-      expect(nodeAt(spec, mobile, '1.0.0').slot).toBe('signInLabel')
+
+      it('should bind the variant node through it', () => {
+        expect(nodeAt(spec, base, '1.0.0').slot).toBe('signInLabel')
+        expect(nodeAt(spec, mobile, '1.0.0').slot).toBe('signInLabel')
+      })
     })
 
-    it('should fail generation when a role points at a variant node whose only id was inherited', async () => {
-      await expect(
-        partialSpec([], {
+    describe('and a role points at a variant node whose only id was inherited', () => {
+      let roles: Record<string, TextRole>
+
+      beforeEach(() => {
+        roles = {
           signInLabel: {
             type: 'string',
             nodes: [
@@ -437,20 +500,31 @@ describe('buildComponentSpecs with text roles', () => {
               }
             ]
           }
-        })
-      ).rejects.toThrow('signInLabel: name path mismatch for 90001:1')
+        }
+      })
+
+      it('should fail generation', async () => {
+        await expect(partialSpec([], roles)).rejects.toThrow(
+          'signInLabel: name path mismatch for 90001:1'
+        )
+      })
     })
   })
 
   describe('when figma.config.json binds an id the capture lacks', () => {
-    it('should fail generation', async () => {
-      const input = await demoNavInput()
+    let input: Awaited<ReturnType<typeof demoNavInput>>
+
+    beforeEach(async () => {
+      input = await demoNavInput()
       input.config.components.DemoNav = {
         ...input.config.components.DemoNav,
         textRoles: {
           signInLabel: { type: 'string', nodes: [{ nodeId: '90001:1', namePath: ['x'] }] }
         }
       }
+    })
+
+    it('should fail generation', () => {
       expect(() => buildComponentSpecs(input)).toThrow(
         'DemoNav text roles: signInLabel: unknown Figma node id 90001:1'
       )
@@ -459,28 +533,39 @@ describe('buildComponentSpecs with text roles', () => {
 })
 
 describe('configured generated names', () => {
-  // Every generated name a configuration states follows the same identifier rule as text roles.
-  it.each([
-    ['viewport', 'class'],
-    ['signed-in', 'eval']
-  ])('should fail generation when propNames maps %s to %s', async (figmaName, name) => {
-    const input = await demoNavInput()
-    input.config.components.DemoNav = {
-      ...input.config.components.DemoNav,
-      propNames: { [figmaName]: name }
-    }
-    expect(() => buildComponentSpecs(input)).toThrow(
-      `Invalid generated TypeScript identifier: ${JSON.stringify(name)}`
-    )
+  let input: Awaited<ReturnType<typeof demoNavInput>>
+
+  beforeEach(async () => {
+    input = await demoNavInput()
   })
 
-  it('should keep a valid configured prop name as written', async () => {
-    const input = await demoNavInput()
-    input.config.components.DemoNav = {
-      ...input.config.components.DemoNav,
-      propNames: { viewport: 'screen' }
-    }
-    const spec = buildComponentSpecs(input).find((item) => item.name === 'DemoNav')!
-    expect(spec.props.map((prop) => prop.name)).toContain('screen')
+  // Every generated name a configuration states follows the same identifier rule as text roles.
+  describe('when propNames maps a Figma name to a reserved word', () => {
+    it.each([
+      ['viewport', 'class'],
+      ['signed-in', 'eval']
+    ])('should fail generation for %s mapped to %s', (figmaName, name) => {
+      input.config.components.DemoNav = {
+        ...input.config.components.DemoNav,
+        propNames: { [figmaName]: name }
+      }
+      expect(() => buildComponentSpecs(input)).toThrow(
+        `Invalid generated TypeScript identifier: ${JSON.stringify(name)}`
+      )
+    })
+  })
+
+  describe('when propNames maps a Figma name to a valid prop name', () => {
+    beforeEach(() => {
+      input.config.components.DemoNav = {
+        ...input.config.components.DemoNav,
+        propNames: { viewport: 'screen' }
+      }
+    })
+
+    it('should keep the configured prop name as written', () => {
+      const spec = buildComponentSpecs(input).find((item) => item.name === 'DemoNav')!
+      expect(spec.props.map((prop) => prop.name)).toContain('screen')
+    })
   })
 })

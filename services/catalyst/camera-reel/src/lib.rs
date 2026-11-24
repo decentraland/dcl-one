@@ -21,7 +21,8 @@
 //! `decentraland-kernel-scene` under any spelling, or whose lowercased bytes
 //! contain it, is refused (upstream never checks it); a read serves a scene's
 //! request as its signer, as upstream does. World names resolve through
-//! local `explore.place_indexed` reads ([`db::Database::world_place_ids`]).
+//! the catalogue and live `explore.world_scene_place` deployment bindings,
+//! independently of listing visibility ([`db::Database::world_place_ids`]).
 //!
 //! Every write route goes behind `CREATE_WRITES_ENABLED` ([`writes`];
 //! default false, 503 with `Retry-After`, built the way `social::writes`
@@ -54,10 +55,10 @@
 //! builder's `/contents/{hash}` (from `camera_reel.withheld_blobs`, written
 //! in the review's and the delete's transaction and mirrored into the shared
 //! in-memory `content::Denylist`, refilled at boot by
-//! [`State::load_withheld`]). A hash is
-//! newly withheld only when no non-rejected row and no content file or builder
-//! upload names it, so an owner's delete cannot hide a deployed file of the
-//! same bytes. A later successful upload can release deletion withholding;
+//! [`State::load_withheld`]). A rejection withholds the row's hashes whatever
+//! else names them. A delete withholds a hash only when no non-rejected row and
+//! no content file or builder upload names it, so an owner's delete cannot hide
+//! a deployed file of the same bytes. A later successful upload can release deletion withholding;
 //! it does not release rejected hashes or operator and remote denials. A private, non-rejected photo is served to whoever holds its
 //! filename URL or hash. Deletion removes the gallery row and applies withholding
 //! without unlinking immutable shared blobs. `GET /api/files/{name}` serves only

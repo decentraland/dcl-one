@@ -38,8 +38,8 @@ PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenanc
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
-          'library/hashing', 'tooling/check-local-hashing.mjs',
+          'tooling/bevy-ci.py', 'tooling/bevy-dead-code-check.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'library/hashing', 'tooling/check-local-hashing.mjs', 'apps/creator-hub/packages/zip-extract',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -77,6 +77,7 @@ IMAGES_INPUTS = (
     '.cargo/**',
     'apps/sites/**',
     'apps/ui3/**',
+    'apps/creator-hub/packages/zip-extract/**',
     'tooling/image-*',
     'tooling/ci-publication.py',
     'tooling/ci_paths.py',
@@ -92,7 +93,12 @@ IMAGES_PACKAGING = (
     'flake.*', 'rust-toolchain*', 'infra/packages/**', 'infra/containers/**', '.cargo/**',
     'services/catalyst/rust-toolchain*', 'services/catalyst/Cargo.*', 'services/catalyst/**/Cargo.toml',
     'library/**/Cargo.toml', 'apps/dcl-scene-cli/Cargo.toml',
+    # cast-bot's lock, and the patched LiveKit SDK it builds from (infra/packages/cast-bot.nix).
+    'services/catalyst/cast-bot/Cargo.lock', 'rendering/bevy-explorer/patches/client-sdk-rust/**',
+    'tooling/patched-sources.py',
     'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
+    # The UI gallery Sites serves (infra/packages/ui-gallery.nix) pins library/ui's dependency set.
+    'library/ui/package.json', 'library/ui/pnpm-lock.yaml', 'library/ui/pnpm-workspace.yaml',
     'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
     'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
     'tooling/tests/check_hud_manifest_nix.py',
@@ -173,7 +179,7 @@ def hold_for_draft(result, pull_request):
         return result
     print(f'::notice::This draft does not run these engine jobs on larger runners: {", ".join(held)}. '
           f'Mark it ready for review, or add the {ENGINE_LABEL} label and push, to run them.')
-    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False),
+    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False), 'held': True,
             'reason': result['reason'] + '; draft: ' + ', '.join(held) + ' wait until it is ready for review'}
 
 
@@ -310,9 +316,10 @@ def select(base, head):
             affected = ('web', 'headless')
         elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
-        elif path.startswith('library/hashing/') or path == 'tooling/check-local-hashing.mjs':
-            # The bridge scene's SDK commands load library/hashing, and play-artifact.py
-            # fingerprints both paths with the web app.
+        elif path.startswith(('library/hashing/', 'apps/creator-hub/packages/zip-extract/')) or path == 'tooling/check-local-hashing.mjs':
+            # The bridge scene's SDK commands load library/hashing and its install copies
+            # Creator Hub's zip-extract (pnpm-workspace.yaml); play-artifact.py fingerprints
+            # these paths with the web app.
             affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
@@ -326,8 +333,9 @@ def select(base, head):
             affected = ()
         elif path == PATCH_TOOL or path.startswith(PATCHES + '/bevy/'):
             # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates
-            # on each system. Every build takes a patched source by the revision that Cargo.lock names.
-            affected = ('test', 'native-matrix')
+            # on each system; Clippy rebuilds it for a shader that `common`'s tests include. Every
+            # build takes a patched source by the revision that Cargo.lock names.
+            affected = ('test', 'clippy', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
             # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
             affected = ('test',)

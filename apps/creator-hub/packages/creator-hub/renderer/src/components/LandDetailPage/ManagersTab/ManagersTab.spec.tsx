@@ -1,8 +1,8 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { LandType, type Authorization } from '/@/lib/land';
@@ -48,9 +48,9 @@ function renderTab(authorizations: Authorization[], profiles: Record<string, str
   );
   render(
     <Provider store={store as never}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <ManagersTab />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
 }

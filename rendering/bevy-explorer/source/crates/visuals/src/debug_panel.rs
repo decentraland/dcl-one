@@ -10,17 +10,23 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::structs::{
-    AppConfig, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics, TimeOfDay,
+    AppConfig, FogSetting, LandscapeDistance, LensFlare, PrimaryCamera, SceneLoadDistance,
+    SessionGraphics, StageLight, TimeOfDay,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
+    lens_flare::{LensFlareSettings, DAY_FLARE},
     shell_texturing::{Ground, ParcelGrass},
+    sky_envmap::{SkyAmbient, SkyEnvmapSettings},
     trees::Tree,
     upscale::{Compositor, SceneTarget},
-    user_cover, CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
+    user_cover, CloudCover, FogDensity, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
+
+/// The Lighting section's action that puts the fog density back to the sky preset's.
+const RESTORE_FOG_DENSITY: &str = "/fog true 0.0005";
 
 const fn toggle(
     label: &'static str,
@@ -87,6 +93,64 @@ impl Plugin for VisualsDebugPanelPlugin {
                 0.05,
             )],
         })
+        .add_console_command::<LightingState, _>(lighting_state)
+        .add_debug_section(DebugSection {
+            title: "Lighting",
+            query: "/lighting_state",
+            fields: &[
+                ("Fog falloff rendered (per m)", "fogFalloff"),
+                ("Fog colour, sRGB (R / G / B)", "fogColor"),
+                ("Ambient sky, linear (R / G / B)", "ambientSky"),
+                ("Ambient equator, linear (R / G / B)", "ambientEquator"),
+                ("Ambient ground, linear (R / G / B)", "ambientGround"),
+                ("Directional light (lux)", "sunLux"),
+                ("Directional light colour, sRGB (R / G / B)", "sunColor"),
+                ("Reflection floor scale", "reflectionFloor"),
+                ("Reflection compression", "reflectionCompression"),
+            ],
+            actions: &[
+                ("Restore fog density", RESTORE_FOG_DENSITY),
+                (
+                    "Restore ambient scales",
+                    "/ambient --sky 1 --equator 1 --ground 1",
+                ),
+            ],
+            inputs: &[
+                toggle("Fog", "fog", "/fog {value}"),
+                slider(
+                    "Fog density (per m)",
+                    "fogDensity",
+                    "/fog true {value}",
+                    0.0,
+                    0.01,
+                    0.0001,
+                ),
+                slider(
+                    "Ambient sky scale",
+                    "skyScale",
+                    "/ambient --sky {value}",
+                    0.0,
+                    4.0,
+                    0.05,
+                ),
+                slider(
+                    "Ambient equator scale",
+                    "equatorScale",
+                    "/ambient --equator {value}",
+                    0.0,
+                    4.0,
+                    0.05,
+                ),
+                slider(
+                    "Ambient ground scale",
+                    "groundScale",
+                    "/ambient --ground {value}",
+                    0.0,
+                    4.0,
+                    0.05,
+                ),
+            ],
+        })
         .add_console_command::<SunShadows, _>(sun_shadows)
         .add_console_command::<SunShadowMap, _>(sun_shadow_map)
         .add_preview_debug_inputs(DebugSection {
@@ -124,8 +188,8 @@ impl Plugin for VisualsDebugPanelPlugin {
                     kind: DebugInputKind::Select(&[
                         ("512", "512"),
                         ("1024", "1024"),
-                        ("2048", "2048"),
-                        ("4096 (default)", "4096"),
+                        ("2048 (default)", "2048"),
+                        ("4096", "4096"),
                     ]),
                 },
                 slider(
@@ -203,6 +267,23 @@ impl Plugin for VisualsDebugPanelPlugin {
                     1.0,
                 ),
             ],
+        })
+        .add_console_command::<LensFlareCommand, _>(lens_flare_command)
+        .add_debug_section(DebugSection {
+            title: "Lens flare",
+            query: "/lens_flare",
+            fields: &[
+                ("Flare (day / night)", "flare"),
+                ("Intensity by time of day", "intensity"),
+                ("Light elevation (degrees)", "elevation"),
+                ("Light from view direction (degrees)", "fromView"),
+            ],
+            actions: &[],
+            inputs: &[toggle(
+                "Lens flare (this session)",
+                "enabled",
+                "/lens_flare {value}",
+            )],
         });
         if app
             .world()
@@ -250,6 +331,55 @@ impl Plugin for VisualsDebugPanelPlugin {
             inputs: if culling { &inputs } else { &[] },
         });
     }
+}
+
+/// Read the lens flare, or turn it on or off on the player's camera for this session (the Lens
+/// Flare setting applies again to a new camera).
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/lens_flare")]
+struct LensFlareCommand {
+    enabled: Option<bool>,
+}
+
+fn lens_flare_command(
+    mut cmd: ConsoleCommand<LensFlareCommand>,
+    mut commands: Commands,
+    settings: Res<LensFlareSettings>,
+    camera: Query<(Entity, &GlobalTransform, Has<LensFlare>), With<PrimaryCamera>>,
+) {
+    let Some(Ok(command)) = cmd.take() else {
+        return;
+    };
+    let camera = camera.single().ok();
+    let mut enabled = camera.is_some_and(|(_, _, flare)| flare);
+    if let (Some(set), Some((entity, _, _))) = (command.enabled, camera) {
+        if set {
+            commands.entity(entity).try_insert(LensFlare);
+        } else {
+            commands.entity(entity).remove::<LensFlare>();
+        }
+        enabled = set;
+    }
+    let toward = settings.toward_light;
+    let elevation = toward.y.clamp(-1.0, 1.0).asin().to_degrees();
+    let from_view = camera.map(|(_, transform, _)| {
+        transform
+            .forward()
+            .dot(toward)
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    });
+    let flare = if std::ptr::eq(settings.elements, DAY_FLARE.as_slice()) {
+        "day"
+    } else {
+        "night"
+    };
+    cmd.reply_ok(
+        json!({"enabled": enabled, "flare": flare, "intensity": settings.intensity,
+            "elevation": elevation, "fromView": from_view})
+        .to_string(),
+    );
 }
 
 #[derive(Resource)]
@@ -370,6 +500,44 @@ fn render_scale_state(
     );
 }
 
+/// Read the fog, the Trilight ambient and the directional light in effect. The fog density is
+/// the one `/fog` holds; the falloff is what the primary camera renders, a scene's fog component
+/// and the Off setting included. The ambient colours are before the band scales.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/lighting_state")]
+struct LightingState;
+
+fn lighting_state(
+    mut cmd: ConsoleCommand<LightingState>,
+    config: Res<AppConfig>,
+    fog_density: Res<FogDensity>,
+    fog: Query<&DistanceFog, With<PrimaryCamera>>,
+    ambient: Res<SkyAmbient>,
+    envmap: Res<SkyEnvmapSettings>,
+    sun: Query<&DirectionalLight, Without<StageLight>>,
+) {
+    let Some(Ok(_)) = cmd.take() else { return };
+    let srgb = |color: Color| color.to_srgba().to_vec3().to_array();
+    let fog = fog.single().ok();
+    let falloff = fog.and_then(|fog| match fog.falloff {
+        FogFalloff::Exponential { density } => Some(density),
+        _ => None,
+    });
+    let [sky, equator, ground] = ambient.bands.map(|band| band.to_array());
+    let sun = sun.iter().next();
+    cmd.reply_ok(
+        json!({"fog": config.graphics.fog == FogSetting::On, "fogDensity": fog_density.0,
+            "fogFalloff": falloff, "fogColor": fog.map(|fog| srgb(fog.color)),
+            "ambientSky": sky, "ambientEquator": equator, "ambientGround": ground,
+            "skyScale": envmap.trilight.x, "equatorScale": envmap.trilight.y,
+            "groundScale": envmap.trilight.z,
+            "sunLux": sun.map(|light| light.illuminance),
+            "sunColor": sun.map(|light| srgb(light.color)),
+            "reflectionFloor": envmap.floor, "reflectionCompression": envmap.compression})
+        .to_string(),
+    );
+}
+
 /// Read the sun's effective shadow quality, cascades and biases.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/sun_shadows")]
@@ -380,7 +548,7 @@ fn sun_shadows(
     config: Res<AppConfig>,
     bias: Res<ShadowBiasOverride>,
     map: Res<DirectionalLightShadowMap>,
-    sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
+    sun: Query<(&DirectionalLight, &CascadeShadowConfig), Without<StageLight>>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
         let preset = SUN_SHADOW_BIAS;
@@ -439,7 +607,6 @@ struct RenderView {
     enabled: Option<bool>,
 }
 
-#[allow(clippy::type_complexity)]
 fn render_view(
     mut cmd: ConsoleCommand<RenderView>,
     preview: Option<Res<common::structs::PreviewMode>>,
@@ -500,4 +667,15 @@ fn render_view(
         }
     }
     cmd.reply_ok(json!({"gpuInstances":caps.gpu_instances, "supported":caps.culling, "indirect":indirect, "occlusion":occlusion}).to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_action_carries_the_preset_fog_density() {
+        let density = crate::sky_preset::FOG_DENSITY_PER_METRE.to_string();
+        assert_eq!(RESTORE_FOG_DENSITY, format!("/fog true {density}"));
+    }
 }

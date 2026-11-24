@@ -2,6 +2,7 @@
 // Rebuilt in TS + CSS Modules, design referencing eordano/dcl-react-ui.
 
 export { Button } from './Button'
+export { ArmedButton, ARM_MS } from './ArmedButton'
 export { IconButton } from './IconButton'
 export { ControlButton } from './ControlButton'
 export { Tooltip } from './Tooltip'
@@ -47,12 +48,12 @@ export { PopupHost, openPopup, closeTopPopup, hasOpenPopup, subscribePopups, top
 export * from './Glyphs'
 export { MaskIcon } from './MaskIcon'
 export { Skeleton } from './Skeleton'
-export { rarityPanel, rarityTile } from './rarityArt'
+export { rarityOf, rarityPanel, rarityTile } from './rarityArt'
 export { Chip } from './Chip'
 export { Pager, pageWindow } from './Pager'
 export { OptionMenu, type OptionSection } from './OptionMenu'
 export { HintsButton, KeyCap, type Hint } from './HintsButton'
-export { showToast, ToastHost, type ToastOptions } from './Toast'
+export { dismissToast, showToast, ToastHost, type ToastAction, type ToastOptions } from './Toast'
 export { Rail } from './Rail'
 export { HeaderButton } from './HeaderButton'
 export { AnchoredMenu, anchoredMenuPosition } from './AnchoredMenu'

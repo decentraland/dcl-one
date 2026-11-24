@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
-import { LiveNow } from "@dcl/one-ui/apps/sites/places/LiveNow";
-import { PlaceCardSlot } from "@dcl/one-ui/apps/sites/places/cards/PlaceCardSlot";
-import type { PlaceCardData } from "@dcl/one-ui/apps/sites/places/cards/types";
+import { PlacesLiveNow as LiveNow, PlaceCardSlot, type PlaceCardData } from "@dcl/one-ui";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -32,8 +30,8 @@ function layOut(rail: HTMLElement, scrollLeft: number) {
   fireEvent.scroll(rail);
 }
 
-let scrollBy: ReturnType<typeof vi.fn>;
-let scrollIntoView: ReturnType<typeof vi.fn>;
+let scrollBy: Mock;
+let scrollIntoView: Mock;
 
 beforeEach(() => {
   scrollBy = vi.fn();
@@ -42,7 +40,10 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = scrollIntoView as never;
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.resetAllMocks();
+});
 
 function renderRail(count = 4) {
   const cards = Array.from({ length: count }, (_, i) => card(String(i + 1)));
@@ -52,88 +53,191 @@ function renderRail(count = 4) {
 }
 
 describe("when Live Now has cards", () => {
-  it("should show no arrows while the row fits", () => {
-    renderRail();
-    expect(screen.queryByRole("button", { name: "More live places" })).toBeNull();
+  describe("and the row fits", () => {
+    beforeEach(() => {
+      renderRail();
+    });
+
+    it("should show no arrows", () => {
+      expect(screen.queryByRole("button", { name: "More live places" })).toBeNull();
+    });
+
+    it("should mark the first dot current", () => {
+      expect(screen.getByRole("button", { name: "Show Scene 1 (1)" }).getAttribute("aria-current")).toBe("true");
+    });
+
+    describe("and a dot is clicked", () => {
+      beforeEach(async () => {
+        await userEvent.setup().click(screen.getByRole("button", { name: "Show Scene 3 (3)" }));
+      });
+
+      it("should scroll to the card the dot names", () => {
+        expect(scrollIntoView).toHaveBeenCalledOnce();
+      });
+    });
   });
 
-  it("should disable the previous arrow at the start and the next arrow at the end", () => {
-    const { rail } = renderRail();
-    layOut(rail, 0);
-    expect(screen.getByRole("button", { name: "Previous live places" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: "More live places" })).toHaveProperty("disabled", false);
-    layOut(rail, 600);
-    expect(screen.getByRole("button", { name: "Previous live places" })).toHaveProperty("disabled", false);
-    expect(screen.getByRole("button", { name: "More live places" })).toHaveProperty("disabled", true);
+  describe("and the row overflows", () => {
+    let rail: HTMLElement;
+
+    beforeEach(() => {
+      ({ rail } = renderRail());
+      layOut(rail, 0);
+    });
+
+    describe("and the rail is at the start", () => {
+      it("should disable the previous arrow", () => {
+        expect(screen.getByRole("button", { name: "Previous live places" })).toHaveProperty("disabled", true);
+      });
+
+      it("should enable the next arrow", () => {
+        expect(screen.getByRole("button", { name: "More live places" })).toHaveProperty("disabled", false);
+      });
+    });
+
+    describe("and the rail is scrolled to the end", () => {
+      beforeEach(() => {
+        layOut(rail, 600);
+      });
+
+      it("should enable the previous arrow", () => {
+        expect(screen.getByRole("button", { name: "Previous live places" })).toHaveProperty("disabled", false);
+      });
+
+      it("should disable the next arrow", () => {
+        expect(screen.getByRole("button", { name: "More live places" })).toHaveProperty("disabled", true);
+      });
+    });
+
+    describe("and the focus is inside the carousel", () => {
+      let user: ReturnType<typeof userEvent.setup>;
+
+      beforeEach(async () => {
+        user = userEvent.setup();
+        screen.getByRole("link", { name: "Scene 1" }).focus();
+        await user.keyboard("{ArrowRight}");
+      });
+
+      describe("and ArrowRight is pressed", () => {
+        it("should move one card forward", () => {
+          expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ left: 300 }));
+        });
+      });
+
+      describe("and ArrowLeft is pressed after it", () => {
+        beforeEach(async () => {
+          await user.keyboard("{ArrowLeft}");
+        });
+
+        it("should move one card back", () => {
+          expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ left: -300 }));
+        });
+      });
+    });
+
+    describe("and the next arrow is clicked", () => {
+      beforeEach(async () => {
+        await userEvent.setup().click(screen.getByRole("button", { name: "More live places" }));
+      });
+
+      it("should move one card forward", () => {
+        expect(scrollBy).toHaveBeenCalledWith(expect.objectContaining({ left: 300 }));
+      });
+    });
   });
 
-  it("should move one card per arrow key from inside the carousel", async () => {
-    const { rail } = renderRail();
-    layOut(rail, 0);
-    const user = userEvent.setup();
-    screen.getByRole("link", { name: "Scene 1" }).focus();
-    await user.keyboard("{ArrowRight}");
-    expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ left: 300 }));
-    await user.keyboard("{ArrowLeft}");
-    expect(scrollBy).toHaveBeenLastCalledWith(expect.objectContaining({ left: -300 }));
-  });
+  describe("and it has a single card", () => {
+    beforeEach(() => {
+      renderRail(1);
+    });
 
-  it("should move with the arrow buttons", async () => {
-    const { rail } = renderRail();
-    layOut(rail, 0);
-    await userEvent.setup().click(screen.getByRole("button", { name: "More live places" }));
-    expect(scrollBy).toHaveBeenCalledWith(expect.objectContaining({ left: 300 }));
+    it("should show no dots", () => {
+      expect(screen.queryByRole("button", { name: /Show Scene/ })).toBeNull();
+    });
   });
+});
 
-  it("should mark the first dot current and scroll to the card a dot names", async () => {
-    renderRail();
-    expect(screen.getByRole("button", { name: "Show Scene 1 (1)" }).getAttribute("aria-current")).toBe("true");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Show Scene 3 (3)" }));
-    expect(scrollIntoView).toHaveBeenCalledOnce();
-  });
-
-  it("should show no dots for a single card", () => {
-    renderRail(1);
-    expect(screen.queryByRole("button", { name: /Show Scene/ })).toBeNull();
-  });
-
-  it("should render nothing without cards", () => {
+describe("when Live Now has no cards", () => {
+  beforeEach(() => {
     render(<LiveNow title="Live Now" cards={[]} labels={LABELS} cardLabels={CARD_LABELS} />);
+  });
+
+  it("should render nothing", () => {
     expect(screen.queryByRole("heading", { name: "Live Now" })).toBeNull();
   });
 });
 
 describe("when a place card renders", () => {
-  it("should name the people count, the LIVE event and Jump In", () => {
-    render(
-      <ul>
-        <PlaceCardSlot card={card("a", { users: 3, usersLabel: "3 people in-world", live: true, featured: true })} labels={CARD_LABELS} />
-      </ul>,
-    );
-    expect(screen.getByText("3 people in-world")).toBeTruthy();
-    expect(screen.getByText("Live")).toBeTruthy();
-    expect(screen.getByText("Featured")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Jump in: Scene a" }).getAttribute("href")).toBe("/play?position=a");
+  describe("and it has people, a LIVE event, the featured mark and a Jump In target", () => {
+    let liveCard: PlaceCardData;
+
+    beforeEach(() => {
+      liveCard = card("a", { users: 3, usersLabel: "3 people in-world", live: true, featured: true });
+      render(
+        <ul>
+          <PlaceCardSlot card={liveCard} labels={CARD_LABELS} />
+        </ul>,
+      );
+    });
+
+    it("should name the people count", () => {
+      expect(screen.getByRole("img", { name: "3 people in-world" })).toBeTruthy();
+    });
+
+    it("should name the LIVE event", () => {
+      expect(screen.getByText("Live")).toBeTruthy();
+    });
+
+    it("should name the featured mark", () => {
+      expect(screen.getByText("Featured")).toBeTruthy();
+    });
+
+    it("should link Jump In to the target", () => {
+      expect(screen.getByRole("link", { name: "Jump in: Scene a" }).getAttribute("href")).toBe("/play?position=a");
+    });
   });
 
-  it("should leave Jump In out without a target and link the creator only with a profile", () => {
-    render(
-      <ul>
-        <PlaceCardSlot card={card("a", { jumpHref: undefined, creator: { name: "Ann" } })} labels={CARD_LABELS} />
-        <PlaceCardSlot card={card("b", { creator: { name: "Bo", href: "/profile/0xb" } })} labels={CARD_LABELS} />
-      </ul>,
-    );
-    expect(screen.queryByRole("link", { name: "Jump in: Scene a" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Ann" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Bo" }).getAttribute("href")).toBe("/profile/0xb");
+  describe("and one has no Jump In target and a creator without a profile, the other a creator with one", () => {
+    let noTarget: PlaceCardData;
+    let withProfile: PlaceCardData;
+
+    beforeEach(() => {
+      noTarget = card("a", { jumpHref: undefined, creator: { name: "Ann" } });
+      withProfile = card("b", { creator: { name: "Bo", href: "/profile/0xb" } });
+      render(
+        <ul>
+          <PlaceCardSlot card={noTarget} labels={CARD_LABELS} />
+          <PlaceCardSlot card={withProfile} labels={CARD_LABELS} />
+        </ul>,
+      );
+    });
+
+    it("should leave Jump In out without a target", () => {
+      expect(screen.queryByRole("link", { name: "Jump in: Scene a" })).toBeNull();
+    });
+
+    it("should not link a creator without a profile", () => {
+      expect(screen.queryByRole("link", { name: "Ann" })).toBeNull();
+    });
+
+    it("should link a creator with a profile", () => {
+      expect(screen.getByRole("link", { name: "Bo" }).getAttribute("href")).toBe("/profile/0xb");
+    });
   });
 
-  it("should hide a skeleton from assistive technology", () => {
-    const { container } = render(
-      <ul>
-        <PlaceCardSlot skeleton />
-      </ul>,
-    );
-    expect(container.querySelector("li")?.getAttribute("aria-hidden")).toBe("true");
+  describe("and it is a skeleton", () => {
+    let container: HTMLElement;
+
+    beforeEach(() => {
+      ({ container } = render(
+        <ul>
+          <PlaceCardSlot skeleton />
+        </ul>,
+      ));
+    });
+
+    it("should hide it from assistive technology", () => {
+      expect(container.querySelector("li")?.getAttribute("aria-hidden")).toBe("true");
+    });
   });
 });

@@ -97,6 +97,30 @@ pub struct NodeConfig {
     #[arg(long, env = "ONBOARDING_API_KEY", hide_env_values = true)]
     pub onboarding_api_key: Option<String>,
 
+    /// Magic application audience for account deletion.
+    #[arg(long, env = "MAGIC_CLIENT_ID")]
+    pub magic_client_id: Option<String>,
+
+    /// Magic admin credential for account deletion, or MAGIC_SECRET_KEY_FILE.
+    #[arg(long, env = "MAGIC_SECRET_KEY", hide_env_values = true)]
+    pub magic_secret_key: Option<String>,
+
+    /// Exact browser origins authorized to request Magic account deletion. Empty refuses all origins.
+    #[arg(long, env = "ACCOUNT_DELETION_ALLOWED_ORIGINS", value_delimiter = ';')]
+    pub account_deletion_allowed_origins: Vec<String>,
+
+    /// Hourly Magic deletion attempt limit (wallet).
+    #[arg(long, env = "ACCOUNT_DELETION_WALLET_LIMIT", default_value_t = 3)]
+    pub account_deletion_wallet_limit: u32,
+
+    /// Hourly Magic deletion attempt limit (network).
+    #[arg(long, env = "ACCOUNT_DELETION_NETWORK_LIMIT", default_value_t = 20)]
+    pub account_deletion_network_limit: u32,
+
+    /// Hourly Magic deletion attempt limit (global).
+    #[arg(long, env = "ACCOUNT_DELETION_GLOBAL_LIMIT", default_value_t = 120)]
+    pub account_deletion_global_limit: u32,
+
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this
     /// node's own `<PUBLIC_URL>/api`. `NODE_POSTURE=mirror` sets
@@ -231,6 +255,14 @@ pub struct WritesConfig {
     #[arg(long, env = "CONTENT_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_writes_enabled: bool,
 
+    /// The old content server's `READ_ONLY`: `true` turns the content write
+    /// path off as `CONTENT_WRITES_ENABLED=false` does, whatever that says
+    /// (the refusal wins), and `POST /entities` and `DELETE /scenes/{coord}`
+    /// answer the router's not-found, as the old server, which did not
+    /// register the route. The console's read-only toggle cannot lift it.
+    #[arg(long, env = "READ_ONLY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub read_only: bool,
+
     /// A catalyst base URL every local deploy is sent on to, unchanged, at
     /// `<url>/content/entities` once it committed here (src/content/forward.rs;
     /// local authority is unchanged). Unset forwards nothing. A public http(s)
@@ -265,6 +297,14 @@ pub struct WritesConfig {
     // they sit behind the social switch's twin (`marketplace::DataWrites`).
     #[arg(long, env = "DATA_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub data_writes_enabled: bool,
+}
+
+impl WritesConfig {
+    /// Whether the content write path is on: `CONTENT_WRITES_ENABLED` and
+    /// not `READ_ONLY`.
+    pub fn content_writes(&self) -> bool {
+        self.content_writes_enabled && !self.read_only
+    }
 }
 
 #[cfg(test)]
@@ -372,6 +412,7 @@ mod tests {
         let c = cli;
         assert!(!c.writes.social_writes_enabled, "social writes are opt-in");
         assert!(!c.writes.content_writes_enabled, "local deploys are opt-in");
+        assert!(!c.writes.read_only && !c.writes.content_writes());
         assert!(
             c.writes.content_forward_upstream_url.is_none()
                 && c.writes.catalyrst_content_admin_token.is_none(),
@@ -387,6 +428,39 @@ mod tests {
         assert!(
             !c.writes.data_writes_enabled,
             "data-plane writes are opt-in, the social switch's twin"
+        );
+    }
+
+    #[test]
+    fn read_only_turns_content_writes_off_whatever_the_switch_says() {
+        let writes = |extra: &[&str]| {
+            let args = [&["x", "--database-url", "postgres:///catalyst"][..], extra].concat();
+            parse(&args).unwrap().writes.content_writes()
+        };
+        assert!(writes(&["--content-writes-enabled", "true"]));
+        assert!(!writes(&[
+            "--content-writes-enabled",
+            "true",
+            "--read-only",
+            "true"
+        ]));
+        assert!(!writes(&[
+            "--content-writes-enabled",
+            "false",
+            "--read-only",
+            "false"
+        ]));
+        assert!(!writes(&["--read-only", "true"]));
+        assert!(
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--read-only",
+                "yes"
+            ])
+            .is_err(),
+            "only true or false"
         );
     }
 }

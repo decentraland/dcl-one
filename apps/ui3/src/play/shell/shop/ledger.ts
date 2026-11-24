@@ -10,11 +10,18 @@
 //
 // Each operation's record is a key of its own, written only by the tab that holds the operation's lock
 // (./purchase): tabs running different purchases never write the same key, so neither can undo the
-// other's checkpoint. A buyer's operations are found by their keys' prefix.
+// other's checkpoint. A buyer's operations are found by their keys' prefix. A purchase paid in MANA is
+// kept under a prefix of its own: a build that doesn't know MANA (an older one, after a rollback or in a
+// tab left open) never finds it, so it never reads it as a Credits purchase and never ends it.
 
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
 import type { GroupProgress, GroupStatus } from '@shop/model/purchase'
-import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '../../lib/shopProtocol'
+import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '@dcl/one-ui/apps/shop/shopProtocol'
+import { isManaAttempt, type ManaAttemptRecord } from './manaPurchase'
+import { isSplitSale, type SplitSale } from '../../../shop/checkout/purchase/splitEvidence'
+
+/** What the buyer is told when a write the purchase depends on was refused: nothing goes without its record. */
+export const STORAGE_REFUSED = "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought."
 
 /** What a purchase's dialog shows of one item it buys (one per unit: two of an item are two). */
 export interface PurchaseDisplay {
@@ -24,6 +31,8 @@ export interface PurchaseDisplay {
   thumbnail?: string
   category?: string
   credits: number
+  /** The item's identity (its cart line), shared by its units. */
+  key?: string
 }
 
 export interface OperationRecord {
@@ -43,6 +52,26 @@ export interface OperationRecord {
   progress?: GroupProgress
   /** One per unit it buys, in order. */
   displays?: PurchaseDisplay[]
+  /** Paid in MANA: how far its sale got on each way it was sent (./manaPurchase). A Credits purchase has none. */
+  mana?: ManaAttemptRecord
+  /**
+   * Paid with Credits and MANA together: its sale's terms, kept before it was signed (./splitEvidence). Only an execution
+   * carrying exactly these counts as this purchase, live or after a reload.
+   */
+  split?: SplitSale
+  /**
+   * Paid by its Credits alone: its group's useCredits as built (and the bytes it sent), kept before it was signed. Only an
+   * execution carrying exactly these terms counts as this purchase: a successful receipt for the hash it was answered, its
+   * checkout's confirmed step or its credit's SETTLED aren't enough on their own. Such a record lives apart from the Credits
+   * records (`record:kept-v1`): a build that doesn't read the terms would take those for the purchase.
+   */
+  sale?: SplitSale
+  /**
+   * A Credits part whose credit the node lists as spent, in a transaction this page reads but can't read as its call (a
+   * bundle through an EntryPoint, a smart wallet's call to itself): not known bought, so its items stay in the cart and it
+   * says so; never sent again, and its credit never given back. Bought only by evidence of its own terms.
+   */
+  unverified?: true
   createdAt: number
   updatedAt: number
 }
@@ -50,6 +79,23 @@ export interface OperationRecord {
 const NS = 'dcl-inworld-shop'
 const recordPrefix = (buyer: string): string => `${NS}:record:v1:${buyer}:`
 const recordKey = (buyer: string, id: string): string => recordPrefix(buyer) + id
+const manaPrefix = (buyer: string): string => `${NS}:record:mana-v1:${buyer}:`
+const manaKey = (buyer: string, id: string): string => manaPrefix(buyer) + id
+/** A purchase paid with Credits and MANA together lives apart too: a build that doesn't know splits never reads it. */
+const splitPrefix = (buyer: string): string => `${NS}:record:split-v1:${buyer}:`
+const splitKey = (buyer: string, id: string): string => splitPrefix(buyer) + id
+/**
+ * A Credits purchase kept with its call lives apart as well: a build that doesn't find a purchase out by its own execution
+ * never reads it (it would take its checkout's confirmed step for the purchase).
+ */
+const keptPrefix = (buyer: string): string => `${NS}:record:kept-v1:${buyer}:`
+const keptKey = (buyer: string, id: string): string => keptPrefix(buyer) + id
+/** The key a record belongs under, by how it pays, and the keys it must not be left under. */
+const keysOf = (record: OperationRecord & { buyer: string }): { key: string; others: string[] } => {
+  const all = { mana: manaKey(record.buyer, record.id), split: splitKey(record.buyer, record.id), kept: keptKey(record.buyer, record.id), credits: recordKey(record.buyer, record.id) }
+  const kind = record.mana ? 'mana' : record.split ? 'split' : record.sale ? 'kept' : 'credits'
+  return { key: all[kind], others: Object.entries(all).filter(([k]) => k !== kind).map(([, v]) => v) }
+}
 const opPrefix = (id: string): string => `${NS}:operation:v1:${id}:`
 /** Each ledger probes its own key, so two tabs probing at once don't answer for each other. */
 const probeKey = (): string => `${NS}:probe:${Math.random().toString(36).slice(2)}`
@@ -96,7 +142,8 @@ function isDisplay(v: unknown): boolean {
     typeof v.rarity === 'string' &&
     typeof v.credits === 'number' &&
     (v.thumbnail === undefined || typeof v.thumbnail === 'string') &&
-    (v.category === undefined || typeof v.category === 'string')
+    (v.category === undefined || typeof v.category === 'string') &&
+    (v.key === undefined || typeof v.key === 'string')
   )
 }
 
@@ -128,6 +175,10 @@ function isRecord(v: unknown, buyer: string): v is OperationRecord {
     (v.chainId === undefined || isChain(v.chainId)) &&
     (v.progress === undefined || isProgress(v.progress)) &&
     (v.displays === undefined || (Array.isArray(v.displays) && v.displays.length <= MAX_DISPLAYS && v.displays.every(isDisplay))) &&
+    (v.mana === undefined || isManaAttempt(v.mana)) &&
+    (v.split === undefined || isSplitSale(v.split)) &&
+    (v.sale === undefined || isSplitSale(v.sale)) &&
+    (v.unverified === undefined || v.unverified === true) &&
     isTime(v.createdAt) &&
     isTime(v.updatedAt)
   )
@@ -150,29 +201,54 @@ export interface Ledger {
 export function createLedger(storage: () => Storage | null): Ledger {
   const failures = new Set<string>()
   const PROBE = probeKey()
-  /** The record under `key`, if it is `buyer`'s operation `id` in the shape this page writes. */
+  /**
+   * The record under `key`, if it is `buyer`'s operation `id` in the shape this page writes, and under the prefix its
+   * payment belongs to (a MANA purchase only under its own).
+   */
   const parse = (s: Storage, key: string, buyer: string, id: string): OperationRecord | null => {
     try {
       const raw = s.getItem(key)
       const v = raw ? upgrade(JSON.parse(raw) as unknown) : null
-      return isRecord(v, buyer) && v.id === id ? v : null
+      if (!isRecord(v, buyer) || v.id !== id) return null
+      // Under the prefix its payment belongs to only: MANA under MANA's, a split under the split's, a Credits purchase kept with
+      // its call under the kept one, else the Credits one.
+      const prefix = v.mana !== undefined ? manaPrefix(buyer) : v.split !== undefined ? splitPrefix(buyer) : v.sale !== undefined ? keptPrefix(buyer) : recordPrefix(buyer)
+      return key.startsWith(prefix) ? v : null
     } catch {
       return null
     }
+  }
+  /**
+   * Operation `id` of `buyer`'s. Its record moves between the two prefixes when its payment changes, and a key left
+   * behind may still be there (written by another build, or its removal threw). A MANA record with a send that went is
+   * the purchase, whatever the other says: nothing else may end a sale that may have left. Otherwise the one written
+   * last is it, and on the same instant, the MANA one.
+   */
+  const pick = (s: Storage, buyer: string, id: string): OperationRecord | null => {
+    const mana = parse(s, manaKey(buyer, id), buyer, id)
+    // A split's record holds its sale's terms from before it was signed: it is the purchase, whatever a Credits copy says.
+    const split = parse(s, splitKey(buyer, id), buyer, id)
+    if (split) return split
+    // So does a Credits purchase kept with its call: a plain Credits copy beside it is older, or another build's.
+    const kept = parse(s, keptKey(buyer, id), buyer, id)
+    if (kept) return kept
+    const credits = parse(s, recordKey(buyer, id), buyer, id)
+    if (!mana || !credits) return mana ?? credits
+    if (mana.mana?.sends.some((x) => x.stage === 'dispatched')) return mana
+    return credits.updatedAt > mana.updatedAt ? credits : mana
   }
   /** `buyer`'s operations, oldest first. */
   const read = (buyer: string): OperationRecord[] => {
     try {
       const s = storage()
       if (!s) return []
-      const prefix = recordPrefix(buyer)
-      const keys: string[] = []
+      const ids = new Set<string>()
       for (let i = 0; i < s.length; i++) {
         const key = s.key(i)
-        if (key?.startsWith(prefix)) keys.push(key)
+        for (const prefix of [recordPrefix(buyer), manaPrefix(buyer), splitPrefix(buyer), keptPrefix(buyer)]) if (key?.startsWith(prefix)) ids.add(key.slice(prefix.length))
       }
-      return keys
-        .map((key) => parse(s, key, buyer, key.slice(prefix.length)))
+      return [...ids]
+        .map((id) => pick(s, buyer, id))
         .filter((r): r is OperationRecord => r !== null)
         .sort((a, b) => a.createdAt - b.createdAt)
     } catch {
@@ -182,7 +258,12 @@ export function createLedger(storage: () => Storage | null): Ledger {
   const forget = (s: Storage, record: OperationRecord): void => {
     const p = opPrefix(record.id)
     for (const key of [CART_KEY_PREFIX + record.buyer, CHECKOUT_KEY_PREFIX + record.buyer]) s.removeItem(p + key)
-    if (record.buyer) s.removeItem(recordKey(record.buyer, record.id))
+    if (record.buyer) {
+      s.removeItem(recordKey(record.buyer, record.id))
+      s.removeItem(manaKey(record.buyer, record.id))
+      s.removeItem(splitKey(record.buyer, record.id))
+      s.removeItem(keptKey(record.buyer, record.id))
+    }
   }
   /** The operation's prefix over storage, remembering a write that throws (the cart store hides it). */
   const watched = (s: Storage, id: string): CartStorage => {
@@ -216,8 +297,25 @@ export function createLedger(storage: () => Storage | null): Ledger {
         failures.add(record.id)
         return false
       }
+      const { key, others } = keysOf(record as OperationRecord & { buyer: string })
       try {
-        s.setItem(recordKey(record.buyer, record.id), JSON.stringify(record))
+        s.setItem(key, JSON.stringify(record))
+      } catch (e) {
+        failures.add(record.id)
+        console.warn('[shell/shop] could not keep the purchase record', e)
+        return false
+      }
+      // Under the other prefixes it is gone, or this write didn't stick: a copy left there could be read as the purchase
+      // (by a build that doesn't know MANA, splits or kept calls, the Credits one), so the purchase goes no further until it is gone.
+      for (const left of others) {
+        try {
+          s.removeItem(left)
+        } catch {
+          // Checked below.
+        }
+      }
+      try {
+        if (others.some((left) => s.getItem(left) !== null)) throw new Error('A copy of the record under another key is still there')
       } catch (e) {
         failures.add(record.id)
         console.warn('[shell/shop] could not keep the purchase record', e)
@@ -235,7 +333,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
     },
     saved(buyer, id) {
       const s = storage()
-      return s ? parse(s, recordKey(buyer, id), buyer, id) : null
+      return s ? pick(s, buyer, id) : null
     },
     writable() {
       const s = storage()

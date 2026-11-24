@@ -95,7 +95,7 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
         transformer: F,
     ) -> Generator<O> {
         let (generator, generator_yielder) = Generator::create();
-        tokio::spawn(async move {
+        crate::task::spawn(async move {
             while let Some(item) = self.next().await {
                 if let Some(item_decoded) = transformer(item)
                     && generator_yielder.r#yield(item_decoded).await.is_err()
@@ -162,7 +162,7 @@ impl<T: Transport + ?Sized + 'static> StreamProtocol<T> {
         let token = self.process_cancellation_token.clone();
         let (messages_listener, messages_processor) = unbounded_channel();
         let internal_channel = self.generator.1.clone();
-        tokio::spawn(async move {
+        crate::task::spawn(async move {
             let token_cloned = token.clone();
             select! {
                 _ = token.cancelled() => {
@@ -287,7 +287,7 @@ impl<M: Send + Sync + 'static> Generator<M> {
         transformer: F,
     ) -> Generator<O> {
         let (generator, yielder) = Generator::with_policy(old_generator.policy);
-        tokio::spawn(async move {
+        crate::task::spawn(async move {
             loop {
                 let item = tokio::select! { _ = yielder.closed() => break, item = old_generator.next_item() => item };
                 let Some(item) = item else {

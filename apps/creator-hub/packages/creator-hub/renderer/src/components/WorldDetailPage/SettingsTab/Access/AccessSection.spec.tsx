@@ -1,15 +1,15 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { useAuth } from '/@/hooks/useAuth';
 import type * as WorldsModule from '/@/lib/worlds';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../../tests/utils/testStore';
 import { AccessSection } from '.';
 
@@ -81,10 +81,6 @@ vi.mock('/@/lib/profile', () => ({
 vi.mock('../../../AvatarWithInfo', () => ({
   AvatarWithInfo: ({ value }: { value: string }) => <span>{value}</span>,
 }));
-vi.mock('decentraland-ui2', async importOriginal => ({
-  ...(await importOriginal<object>()),
-  AvatarFace: () => null,
-}));
 
 type Access =
   | { type: 'unrestricted' }
@@ -107,9 +103,9 @@ async function renderSection(access: Access) {
   api.deletePermissionType.mockResolvedValue(true);
   render(
     <Provider store={createTestStore() as never}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <AccessSection worldName="plaza.dcl.eth" />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   await screen.findByRole('combobox', { name: 'Access' });
@@ -117,7 +113,7 @@ async function renderSection(access: Access) {
 
 const dropdown = () => screen.getByRole('combobox', { name: 'Access' });
 const choose = (name: RegExp) => {
-  fireEvent.mouseDown(dropdown());
+  fireEvent.click(dropdown());
   fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name }));
 };
 const invitedNames = () =>
@@ -152,7 +148,7 @@ describe('AccessSection', () => {
       expect(within(field).getByText('Public')).not.toBe(field);
       expect(within(field).getByText('Anyone can access this world')).not.toBe(field);
 
-      fireEvent.mouseDown(dropdown());
+      fireEvent.click(dropdown());
       const option = within(screen.getByRole('listbox')).getByRole('option', { name: /^Public/ });
       expect(within(option).getByText('Public')).not.toBe(option);
       expect(within(option).getByText('Anyone can access this world')).not.toBe(option);

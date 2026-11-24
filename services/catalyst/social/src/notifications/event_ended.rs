@@ -690,10 +690,18 @@ mod tests {
 
     #[tokio::test]
     async fn metric_query_prefilters_expired_series_and_counts_attendance_only_after_page_limit() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        // The plan depends on every row in explore.event, so no other test's
+        // events may share its table.
+        let Some(database) = crate::db::scratch::OwnedDatabase::new(
+            "endedplan",
+            crate::db::scratch::Schema::Full,
+            2,
+        )
+        .await
+        else {
             return;
         };
+        let pool = database.pool.clone();
         let prefix = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().naive_utc();
         let since = now - Duration::days(30);
@@ -748,11 +756,7 @@ mod tests {
         let mut attendee_loops = Vec::new();
         let mut indexes = Vec::new();
         inspect(&plan, &mut attendee_loops, &mut indexes);
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        database.drop().await;
         assert!(!attendee_loops.is_empty());
         assert!(attendee_loops.iter().all(|loops| *loops <= PAGE as u64));
         assert!(

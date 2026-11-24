@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::ops::RangeInclusive;
 
 // structs representing dcl components and de/serialization
@@ -145,11 +147,14 @@ impl SceneComponentId {
 
     pub const TEXT_SHAPE: SceneComponentId = SceneComponentId(1030);
     pub const NFT_SHAPE: SceneComponentId = SceneComponentId(1040);
+    pub const MAP_PIN: SceneComponentId = SceneComponentId(1097);
 
     pub const GLTF_CONTAINER: SceneComponentId = SceneComponentId(1041);
     pub const ANIMATOR: SceneComponentId = SceneComponentId(1042);
     pub const GLTF_NODE_MODIFIERS: SceneComponentId = SceneComponentId(1099);
 
+    /// CRC32 of the zero-padded 128-byte name `asset-packs::VideoControlState`, plus 2048.
+    pub const VIDEO_CONTROL_STATE: SceneComponentId = SceneComponentId(2_092_194_694);
     pub const VIDEO_PLAYER: SceneComponentId = SceneComponentId(1043);
     pub const VIDEO_EVENT: SceneComponentId = SceneComponentId(1044);
     pub const AUDIO_EVENT: SceneComponentId = SceneComponentId(1105);

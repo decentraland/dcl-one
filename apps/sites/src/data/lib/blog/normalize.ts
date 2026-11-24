@@ -7,12 +7,13 @@
 // caller builds; nothing here fetches or caches.
 import {
   BLOG_QUERY_MAX,
+  BLOG_QUERY_MIN,
   type BlogAuthor,
-  type BlogCard,
+  type SitesBlogCard as BlogCard,
   type BlogCategory,
   type BlogImage,
   type BlogRichTextNode,
-} from "@dcl/one-ui/apps/sites/blog/blogModel";
+} from "@dcl/one-ui";
 
 /** A raw CMS entry or asset: `sys.id` plus untyped, already localized `fields`. */
 export type CmsEntry = { sys: { id: string }; fields?: Record<string, unknown> };
@@ -26,7 +27,12 @@ export type BlogCmsCategory = BlogCategory & { id: string; description: string; 
 export type BlogCmsAuthor = { id: string; slug: string; name: string; description: string; imageId: string };
 
 /** A post card plus what only the article page needs. */
-export type BlogCmsPost = BlogCard & { id: string; body: BlogRichTextNode | null };
+export type BlogCmsPost = BlogCard & {
+  id: string;
+  body: BlogRichTextNode | null;
+  /** The CMS's own `publishedDate`, unchanged (an ISO date-time with its offset), or "": the page view sends it. */
+  publishedDate: string;
+};
 
 /** Assets the caller fetched, by id; null for one the CMS did not return. */
 export type AssetLookup = ReadonlyMap<string, BlogImage | null>;
@@ -36,7 +42,7 @@ export const FIRST_PAGE_SIZE = 7;
 export const NEXT_PAGE_SIZE = 6;
 /** Search pages hold 10 posts; a query under 3 characters is not sent (as decentraland/sites). */
 export const SEARCH_PAGE_SIZE = 10;
-export const SEARCH_MIN_LENGTH = 3;
+export const SEARCH_MIN_LENGTH = BLOG_QUERY_MIN;
 /** The deepest `?page=` a list loads: each page is one CMS request, so the cap bounds a request's fan-out. */
 export const MAX_PAGES = 20;
 /** The deepest search page: a search reads its visible results in one request, and cms-server caps a page at 100. */
@@ -126,7 +132,7 @@ export function mapAuthor(entry: CmsEntry): BlogCmsAuthor | null {
 }
 
 /** A post without a known category, as sites. */
-const UNCATEGORIZED: BlogCategory = { slug: "uncategorized", title: "Uncategorized" };
+export const UNCATEGORIZED: BlogCategory = { slug: "uncategorized", title: "Uncategorized" };
 /** A post without a known author, as sites names it; no page to link. */
 const NO_AUTHOR: BlogAuthor = { slug: "", name: "Decentraland", image: "" };
 
@@ -207,6 +213,7 @@ export function mapPost(entry: CmsEntry, lookups: PostLookups): BlogCmsPost | nu
     title,
     description: decoded(fields.description),
     publishedAt: publishedAt(fields.publishedDate),
+    publishedDate: text(fields.publishedDate),
     readMinutes: readMinutes(body),
     category: category ? { slug: category.slug, title: category.title } : UNCATEGORIZED,
     author: author
@@ -220,9 +227,10 @@ export function mapPost(entry: CmsEntry, lookups: PostLookups): BlogCmsPost | nu
 
 /** A card without the body, for lists. */
 export function toCard(post: BlogCmsPost): BlogCard {
-  const { id: _id, body: _body, ...card } = post;
+  const { id: _id, body: _body, publishedDate: _publishedDate, ...card } = post;
   void _id;
   void _body;
+  void _publishedDate;
   return card;
 }
 

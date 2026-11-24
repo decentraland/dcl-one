@@ -1,0 +1,41 @@
+import { z } from "zod";
+
+import { REPORT_LIMITS, REPORT_REASONS } from "@/data/lib/catalyst/landings/report";
+
+const KEY = "dcl:report:sign-in-draft:v1";
+const MAX_AGE_MS = 15 * 60 * 1000;
+
+const fields = z.object({
+  reportedAddress: z.string(),
+  reason: z.enum(["", ...REPORT_REASONS]),
+  description: z.string().max(REPORT_LIMITS.descriptionMax),
+  comments: z.string().max(REPORT_LIMITS.commentsMax),
+  hadEvidence: z.boolean(),
+});
+const storedDraft = fields.extend({ expiresAt: z.number(), returnTo: z.string() });
+
+export function saveSignInDraft(returnTo: string, draft: z.input<typeof fields>): boolean {
+  try {
+    sessionStorage.setItem(KEY, JSON.stringify({ ...draft, returnTo, expiresAt: Date.now() + MAX_AGE_MS }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function takeSignInDraft(returnTo: string) {
+  try {
+    const value = sessionStorage.getItem(KEY);
+    if (value === null) return null;
+    const result = storedDraft.safeParse(JSON.parse(value));
+    if (!result.success || result.data.expiresAt <= Date.now()) {
+      sessionStorage.removeItem(KEY);
+      return null;
+    }
+    if (result.data.returnTo !== returnTo) return null;
+    sessionStorage.removeItem(KEY);
+    return result.data;
+  } catch {
+    return null;
+  }
+}

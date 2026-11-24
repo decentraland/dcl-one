@@ -12,10 +12,7 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::{json, Map, Value};
 use wallet::Wallet;
 
-use crate::{
-    AdmissionView, BanBlock, BlockDirection, Blocks, PlatformBanState, SceneAdmission,
-    SceneRoomView,
-};
+use crate::{AdmissionView, BanBlock, BlockDirection, Blocks, PlatformBanState, SceneRoomView};
 
 pub(crate) struct BanBlockDebugPlugin;
 
@@ -36,6 +33,7 @@ impl Plugin for BanBlockDebugPlugin {
                     ("Checked (s ago)", "platformBan.checkedAgoSecs"),
                     ("Scene admission", "sceneAdmission.state"),
                     ("Refusal scope", "sceneAdmission.scope"),
+                    ("Retained scene refusals", "sceneAdmission.retainedRefusals"),
                     ("Scene room", "sceneRoom.state"),
                     ("Scene banned addresses", "sceneRoom.bannedAddresses"),
                     ("Scene admins", "sceneRoom.sceneAdmins"),
@@ -159,7 +157,7 @@ pub(crate) fn snapshot(
         "address": own.map(hex),
         "blocks": blocks_json,
         "platformBan": platform_ban,
-        "sceneAdmission": scene_admission_json(ban_block.scene_admission(), &mut unavailable),
+        "sceneAdmission": scene_admission_json(ban_block, &mut unavailable),
         "sceneRoom": scene_room_json(room, &mut unavailable),
         "lookup": lookup_json,
         "unavailable": unavailable,
@@ -230,8 +228,9 @@ fn platform_ban_json(
     }
 }
 
-fn scene_admission_json(admission: &SceneAdmission, unavailable: &mut Map<String, Value>) -> Value {
-    match admission.view() {
+fn scene_admission_json(ban_block: &BanBlock, unavailable: &mut Map<String, Value>) -> Value {
+    let admission = ban_block.scene_admission();
+    let mut state = match admission.view() {
         AdmissionView::Unknown => {
             unavailable.insert(
                 "sceneAdmission.scope".into(),
@@ -248,7 +247,13 @@ fn scene_admission_json(admission: &SceneAdmission, unavailable: &mut Map<String
             message,
             scene_id,
         } => json!({ "state": "refused", "scope": scope, "message": message, "sceneId": scene_id }),
-    }
+    };
+    let mut refusals: Vec<_> = admission.retained_refusals().collect();
+    refusals.sort_by(|a, b| a.0.cmp(b.0));
+    state["retainedRefusals"] = json!(refusals.into_iter().map(|(scene_id, scope, checkpoint)| {
+        json!({ "sceneId": scene_id, "scope": scope, "retryDue": ban_block.scene_retry_due(scene_id, checkpoint) })
+    }).collect::<Vec<_>>());
+    state
 }
 
 fn scene_room_json(room: SceneRoomView, unavailable: &mut Map<String, Value>) -> Value {
@@ -267,13 +272,51 @@ fn scene_room_json(room: SceneRoomView, unavailable: &mut Map<String, Value>) ->
         }
         SceneRoomView::Connected {
             scene_id,
-            banned_addresses,
-            scene_admins,
+            moderation,
         } => json!({
             "state": "connected",
             "sceneId": scene_id,
-            "bannedAddresses": addresses(banned_addresses),
-            "sceneAdmins": addresses(scene_admins),
+            "bannedAddresses": addresses(&moderation.banned_addresses),
+            "sceneAdmins": addresses(&moderation.scene_admins),
         }),
+    }
+}
+
+#[cfg(all(test, feature = "livekit"))]
+mod tests {
+    use super::*;
+    use bevy::{ecs::system::RunSystemOnce, prelude::*};
+
+    #[test]
+    fn retained_refusals_report_the_active_retry_before_room_metadata_exists() {
+        let mut world = World::new();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([1; 32]);
+        let address = wallet.address().unwrap();
+        world.insert_resource(wallet);
+        world.init_resource::<crate::PlatformBanStatus>();
+        world.insert_resource(
+            crate::SceneAdmission::from_refusal(
+                403,
+                Some("User is banned from this scene"),
+                false,
+                "scene",
+            )
+            .for_session("realm", address),
+        );
+        let mut recovery = comms::room_connection::RoomRecovery::default();
+        recovery.retry.due = 45.0;
+        world.spawn((comms::SceneRoom("scene".into()), recovery));
+        let state = world
+            .run_system_once(move |ban_block: BanBlock| {
+                snapshot(&ban_block, Some(address), None, 0.0)
+            })
+            .unwrap();
+        assert_eq!(
+            state["sceneAdmission"]["retainedRefusals"],
+            json!([
+                { "sceneId": "scene", "scope": "scene", "retryDue": 45.0 }
+            ])
+        );
     }
 }

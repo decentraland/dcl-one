@@ -4,16 +4,16 @@ import {
   publishData,
   consumeMessages,
 } from '~system/CommsApi';
-import { getDomain, wrapSignedFetch } from '../fetch-utils';
+import { serviceUrl, wrapSignedFetch } from '../fetch-utils';
 import type { Result } from '../fetch-utils';
 import type { PresentationState } from '../types';
 
 const URLS = () => ({
-  STREAM_KEY: `https://comms-gatekeeper.decentraland.${getDomain()}/scene-stream-access`,
-  GET_DCL_CAST_INFO: `https://comms-gatekeeper.decentraland.${getDomain()}/cast/generate-stream-link`,
-  PRESENTERS: `https://comms-gatekeeper.decentraland.${getDomain()}/cast/presenters`,
-  PRESENTATION_BOT_TOKEN: `https://comms-gatekeeper.decentraland.${getDomain()}/cast/presentation-bot-token`,
-  PRESENTATION_SERVER: `https://cast-presenter-service.decentraland.${getDomain()}/presentations`,
+  STREAM_KEY: serviceUrl('comms-gatekeeper', '/scene-stream-access'),
+  GET_DCL_CAST_INFO: serviceUrl('comms-gatekeeper', '/cast/generate-stream-link'),
+  PRESENTERS: serviceUrl('comms-gatekeeper', '/cast/presenters'),
+  PRESENTATION_BOT_TOKEN: serviceUrl('comms-gatekeeper', '/cast/presentation-bot-token'),
+  PRESENTATION_SERVER: serviceUrl('cast-presenter-service', '/presentations'),
 });
 
 type StreamKeyResponse = {
@@ -254,6 +254,16 @@ function extractMessages(response: unknown): { data: string }[] {
   return raw.filter((m): m is { data: string } => isRecord(m) && typeof m.data === 'string');
 }
 
+// The id of the presentation the last state named, kept across drains: a
+// re-share replaces the scene's presentation, and the replaced one's
+// `presentation:stopped` can arrive after the new one's first state.
+let currentPresentationId: string | undefined;
+
+// Forget the current presentation, when the panel tears down.
+export function resetPresentationTracking(): void {
+  currentPresentationId = undefined;
+}
+
 export async function consumePresentationMessages(): Promise<
   PresentationState | 'stopped' | undefined
 > {
@@ -265,6 +275,7 @@ export async function consumePresentationMessages(): Promise<
       try {
         const parsed = JSON.parse(msg.data);
         if (parsed.type === 'presentation:state') {
+          currentPresentationId = typeof parsed.id === 'string' ? parsed.id : undefined;
           latestState = {
             id: parsed.id,
             fileName: parsed.fileName,
@@ -275,6 +286,16 @@ export async function consumePresentationMessages(): Promise<
             videoState: parsed.videoState ?? 'idle',
           };
         } else if (parsed.type === 'presentation:stopped') {
+          // A stop of a presentation other than the current one is a replaced
+          // presentation's: the current one goes on.
+          if (
+            currentPresentationId !== undefined &&
+            typeof parsed.id === 'string' &&
+            parsed.id !== currentPresentationId
+          ) {
+            continue;
+          }
+          currentPresentationId = undefined;
           latestState = 'stopped';
         }
       } catch {

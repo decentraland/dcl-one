@@ -17,6 +17,7 @@
 //! behind a proxy. Exits 0 once every file is written, 1 when the avatars never
 //! finish loading within `--max-frames`, 2 on bad arguments.
 
+use common::sync::MutexExt;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -95,7 +96,9 @@ struct Jobs {
 }
 
 #[derive(Resource)]
-struct Booths(#[allow(dead_code)] Vec<BoothInstance>);
+struct Booths {
+    _live: Vec<BoothInstance>,
+}
 
 #[derive(Resource, Default)]
 struct RenderState {
@@ -286,7 +289,7 @@ fn setup(mut booth: PhotoBooth, jobs: Res<Jobs>, mut commands: Commands) {
             ));
         }
     }
-    commands.insert_resource(Booths(booths));
+    commands.insert_resource(Booths { _live: booths });
 }
 
 fn drive_capture(
@@ -299,7 +302,7 @@ fn drive_capture(
 ) {
     let expected = jobs.jobs.len() * 2;
     if state.captured {
-        let written = state.written.lock().unwrap();
+        let written = state.written.lock_ignore_poison();
         if written.len() < expected {
             return;
         }
@@ -362,7 +365,7 @@ fn drive_capture(
                                 .map(|()| path.clone())
                                 .map_err(|e| format!("{}: {e}", path.display()))
                         });
-                    written.lock().unwrap().push(result);
+                    written.lock_ignore_poison().push(result);
                 });
         }
     }

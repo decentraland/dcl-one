@@ -3,12 +3,15 @@ from pathlib import Path
 import json
 import os
 import re
+import runpy
 import subprocess
 import tempfile
 import textwrap
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+
+from tooling.tests.cache_cleanup_fixture import cache_cleanup_api
 
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'
@@ -95,8 +98,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('        shard: [1, 2, 3]\n', rust)
         self.assertIn('      CATALYST_TEST_SHARD: ${{ matrix.shard }}/3\n', rust)
         # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
-        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '2'\n", rust)
+        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '1'\n", rust)
         self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
+        # One shard runs the doc-tests; tooling/catalyst-test.sh rejects a shard outside 1 to n.
+        self.assertIn("      CATALYST_TEST_DOC_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_DOC_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
@@ -193,11 +199,157 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
 
+    def test_the_tooling_tests_run_beside_smoke_on_the_same_platforms(self):
+        # They need only the dev shell, so smoke does not wait for them and they skip its caches.
+        found = jobs()
+        smoke, tooling = found['smoke'], found['tooling']
+        suite = 'nix develop --command python3 -m unittest discover -s tooling/tests -v\n'
+        self.assertEqual(sum(body.count('unittest discover -s tooling/tests -v') for body in found.values()), 1)
+        self.assertIn(suite, tooling)
+        self.assertIn('    name: Tooling tests\n', tooling)
+        self.assertIn('    needs: changes\n', tooling)
+        head = lambda body: body.split('    timeout-minutes:', 1)[0].split('    if:', 1)[1]
+        self.assertEqual(head(tooling), head(smoke))
+        for cache in ('Restore Rust build cache', 'Restore the pnpm store', 'Reserve disk space', 'cargo-mtimes.py'):
+            self.assertNotIn(cache, tooling)
+        self.assertNotRegex(tooling, r'(?m)^    (env|permissions):')
+
+    def test_smoke_snapshot_preserves_all_active_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            stems = ["libcrate-" + str(index) * 16 for index in range(3)]
+            for stem in stems:
+                for suffix in (".rlib", ".rmeta"):
+                    (deps / (stem + suffix)).write_bytes(b"data")
+            other = deps / ("libother-" + "3" * 16 + ".rlib")
+            other.touch()
+            def message(stem):
+                return json.dumps({"reason": "compiler-artifact", "filenames": [str(deps / (stem + ".rlib"))]})
+            receipts = "\n".join(message(stem) for stem in stems[:2])
+            self.assertEqual(prune(deps, receipts), 8)
+            self.assertEqual(prune(deps, receipts), 0)
+            self.assertEqual({path.name for path in deps.iterdir()},
+                             {stem + suffix for stem in stems[:2] for suffix in (".rlib", ".rmeta")} | {other.name})
+            with self.assertRaises(ValueError):
+                prune(deps, "")
+
+    def test_smoke_prunes_verified_binary_and_dynamic_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            app = deps.parent / 'catalyst'
+            app.write_bytes(b'current')
+            current = deps / ('catalyst-' + 'a' * 16)
+            old = deps / ('catalyst-' + 'b' * 16)
+            old.write_bytes(b'old')
+            other = deps / ('other-' + 'b' * 16)
+            other.touch()
+            libraries = []
+            for suffix in ('.so', '.dylib'):
+                active = deps / ('libmacro-' + 'a' * 16 + suffix)
+                stale = deps / ('libmacro-' + 'b' * 16 + suffix)
+                active.touch()
+                libraries.append(str(active))
+                stale.write_bytes(b'old')
+            library_receipts = json.dumps({'reason': 'compiler-artifact', 'filenames': libraries})
+            os.link(app, current)
+            # The smoke profile disables debug info, so this receipt lists only the executable.
+            bin_receipt = json.dumps({'reason': 'compiler-artifact', 'target': {'kind': ['bin']},
+                                      'filenames': [str(app)], 'executable': str(app)})
+            receipts = library_receipts + '\n' + bin_receipt
+            self.assertEqual(prune(deps, receipts), 9)
+            self.assertTrue(all(Path(lib).exists() for lib in libraries))
+            self.assertFalse(old.exists())
+            self.assertTrue(current.samefile(app))
+            self.assertTrue(other.exists())
+            self.assertEqual(prune(deps, receipts), 0)
+
+    def test_smoke_reports_when_hashed_binaries_are_kept(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        for reported in (False, True):
+            with self.subTest(app_reported=reported), tempfile.TemporaryDirectory() as temporary:
+                deps = Path(temporary) / 'deps'
+                deps.mkdir()
+                app = deps.parent / 'catalyst'
+                app.write_bytes(b'current')
+                candidate = deps / ('catalyst-' + 'a' * 16)
+                lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
+                lib.touch()
+                stale = deps / ('libcrate-' + 'b' * 16 + '.rlib')
+                stale.write_bytes(b'old')
+                filenames = [str(lib)]
+                if reported:
+                    filenames.append(str(app))
+                    candidate.write_bytes(b'unmatched')
+                else:
+                    os.link(app, candidate)
+                receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': filenames})
+                # Keeping the binaries does not stop the superseded library from being pruned.
+                with patch('builtins.print') as diagnostic:
+                    self.assertEqual(prune(deps, receipt), 3)
+                    diagnostic.assert_called_once()
+                    self.assertIn('Kept all 1 hashed Catalyst', diagnostic.call_args.args[0])
+                self.assertTrue(candidate.exists())
+                self.assertTrue(lib.exists())
+                self.assertFalse(stale.exists())
+
+    def test_smoke_prunes_a_dangling_library_symlink(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            active = deps / ('libcrate-' + 'a' * 16 + '.so')
+            active.touch()
+            obsolete = deps / ('libcrate-' + 'b' * 16 + '.so')
+            obsolete.symlink_to('missing-library')
+            link_size = obsolete.lstat().st_size
+            receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(active)]})
+            self.assertEqual(prune(deps, receipt), link_size)
+            self.assertFalse(obsolete.is_symlink())
+            self.assertTrue(active.exists())
+
+    def test_smoke_counts_only_the_last_unlinked_name(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            active, obsolete, linked = [deps / ('libcrate-' + c * 16 + '.rlib') for c in 'abc']
+            active.touch()
+            obsolete.write_bytes(b'old')
+            os.link(obsolete, obsolete.with_suffix('.rmeta'))
+            linked.write_bytes(b'shared')
+            survivor = deps.parent / 'retained'
+            os.link(linked, survivor)
+            receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(active)]})
+            self.assertEqual(prune(deps, receipt), 3)
+            self.assertEqual(set(deps.iterdir()), {active})
+            self.assertEqual(survivor.read_bytes(), b'shared')
+
+    def test_smoke_recognizes_copied_binaries_by_contents(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            app = deps.parent / 'catalyst'
+            app.write_bytes(b'current')
+            first, second, stale = [deps / ('catalyst-' + c * 16) for c in 'abc']
+            for copy in (first, second):
+                copy.write_bytes(app.read_bytes())
+            stale.write_bytes(b'expired')
+            stamp = app.stat().st_mtime_ns
+            os.utime(stale, ns=(stamp, stamp))
+            lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
+            lib.touch()
+            receipts = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(lib), str(app)]})
+            self.assertEqual(prune(deps, receipts), 7)
+            self.assertEqual(set(deps.iterdir()), {first, second, lib})
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
         smoke = jobs()['smoke']
-        restore = '        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
+        restore = '          python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
         record = '        run: python3 tooling/cargo-mtimes.py record services/catalyst/target\n'
         self.assertEqual(smoke.count(restore), 1)
         self.assertEqual(smoke.count(record), 1)
@@ -210,6 +362,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
         self.assertEqual(condition('Record the source file times in the snapshot'),
                          condition('Save successful smoke build snapshot'))
+        self.assertEqual(condition('Prune superseded Rust build artifacts from the smoke snapshot'),
+                         condition('Save successful smoke build snapshot'))
+        self.assertLess(smoke.index('python3 tooling/catalyst-smoke-cache.py'), smoke.index(record))
         self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
 
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
@@ -230,16 +385,17 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
-                    # One Rust test shard saves; the other jobs save from every main run.
+                    # One Rust test shard and the web job's ui3 leg save; the other jobs save from every main run.
                     self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1'"
-                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else ' }}'), snapshot)
+                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else
+                                     " && matrix.app == 'ui3' }}" if 'app: [sites, ui3]' in job else ' }}'), snapshot)
                     self.assertIn('gc-max-store-size: 0', snapshot)
                     self.assertIn('mkdir -p .cache/nix-roots\n', roots)
                     self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 4)
+        self.assertEqual(installs, 5)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -282,24 +438,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         ]}]
         with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
                                      'GITHUB_EVENT_NAME': 'pull_request'}), \
-                patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api(pages)) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-            request = listing.call_args.args[0]
+            request = next(call.args[0] for call in cli.call_args_list if '--paginate' in call.args[0])
             self.assertIn('ref=refs/pull/150/merge', request)
             self.assertIn('--paginate', request)
-            self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+            self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
                 'repos/decentraland/dcl-one/actions/caches/3',
                 'repos/decentraland/dcl-one/actions/caches/5',
             ])
             for number in ('', '0', '-1', '../main', '150; echo unsafe'):
                 with self.subTest(number=number), patch.dict(os.environ, {'PR_NUMBER': number}):
-                    listing.reset_mock()
-                    deletion.reset_mock()
+                    cli.reset_mock()
                     with self.assertRaises(ValueError):
                         exec(compile(script, str(CLEANUP), 'exec'), {})
-                    listing.assert_not_called()
-                    deletion.assert_not_called()
+                    cli.assert_not_called()
 
     def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
@@ -334,20 +487,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
-        def api(args, **kwargs):
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': caches}])
-            if args[-1].endswith('/pulls/10'):
-                return json.dumps({'state': 'closed'})
-            if args[-1].endswith('/pulls/11'):
-                return json.dumps({'state': 'open'})
-            self.fail(f'Unexpected API call: {args}')
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api([{'actions_caches': caches}], {'10': 'MERGED'})) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+        self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
             'repos/decentraland/dcl-one/actions/caches/1',
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
@@ -359,7 +503,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
         ])
-        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
+        self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         command = re.search(r'^          source=(.*)$', jobs()['smoke'], re.M).group(1)
@@ -405,8 +549,12 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
         label = "contains(github.event.pull_request.labels.*.name, 'ci:desktop')"
+        linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
         # main always builds; a skipped build is not a failure for the required check.
-        self.assertIn(f"    if: github.event_name != 'pull_request' || {label}\n", found['creator-hub'])
+        self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
+        # ci:desktop builds macOS, Windows and Linux, ci:linux builds Linux alone; main builds all three.
+        self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
+        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {label} || {linux} }}}}\n", found['creator-hub'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
         self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])
@@ -435,18 +583,32 @@ class DevelopmentWorkflowTest(unittest.TestCase):
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']
-        self.assertIn('name: Web tests and contracts', web)
-        self.assertIn('run: python3 tooling/dev-ci.py', web)
-        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
+        changes = jobs()['changes']
+        self.assertIn('run: python3 tooling/dev-ci.py\n', changes)
+        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
+        self.assertIn('web-units: ${{ steps.web-coverage.outputs.run-web-unit-tests }}', changes)
+        self.assertIn('fail-fast: false', web)
+        self.assertIn('app: [sites, ui3]', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
-        selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
-        self.assertEqual(len(selected), 3)
-        for app in ('ui3', 'sites', 'ui3/editor-scene'):
-            self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
-        contracts = next(step for step in steps if 'name: Check web types' in step)
-        self.assertNotIn('\n        if:', contracts)
+        selected = [step for step in steps if 'needs.changes.outputs.web-units' in step]
+        self.assertEqual(len(selected), 4)
+        for app, command in [('ui3', 'ui3 test'), ('ui3', 'ui3 test:browser'),
+                             ('ui3', 'ui3/editor-scene test'), ('sites', 'sites test')]:
+            step = next(step for step in selected if f'pnpm --dir apps/{command}\n' in step)
+            self.assertIn(f"if: matrix.app == '{app}' && needs.changes.outputs.web-units != 'false'", step)
+        for app in ('ui3', 'sites'):
+            contracts = next(step for step in steps if f'pnpm --dir apps/{app} typecheck\n' in step)
+            self.assertIn(f"if: matrix.app == '{app}'\n", contracts)
         self.assertIn('typecheck:scripts', contracts)
         self.assertIn('gen:schemas:check', contracts)
+        # Both legs share the pnpm cache key, so only the UI3 leg saves it, after the editor scene
+        # install: a store saved from the Sites leg would lack the UI3-only packages.
+        save = next(step for step in steps if step.startswith('name: Save the pnpm store from main'))
+        self.assertIn("if: matrix.app == 'ui3' && github.ref == 'refs/heads/main'", save)
+        installs = [i for i, step in enumerate(steps)
+                    if 'pnpm --dir apps/sites install' in step or 'pnpm --dir apps/ui3/editor-scene install' in step]
+        self.assertEqual(len(installs), 2)
+        self.assertLess(max(installs), steps.index(save))
 
 
 if __name__ == '__main__':

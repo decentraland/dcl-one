@@ -1,0 +1,116 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `ProfilePic` (Size=72|60|48|40|32|28|24|20): a round picture inside a white 60% ring on the
+ * member's name colour. The ring, and the dot's size and offset, are the capture's value for each
+ * size. */
+@layer dcl.components {
+  .root {
+    --profile-pic-size: 72px;
+    --profile-pic-ring: 3.6px;
+    --profile-pic-dot: 12px;
+    --profile-pic-dot-inset: 6px;
+
+    position: relative;
+    display: inline-flex;
+    box-sizing: border-box;
+    flex: none;
+    width: var(--profile-pic-size);
+    height: var(--profile-pic-size);
+    padding: var(--profile-pic-ring);
+    border-radius: var(--dcl-radius-full);
+    background: var(--profile-pic-name-color, var(--dcl-neutrals-pale-black));
+    box-shadow: inset 0 0 0 var(--profile-pic-ring) var(--dcl-transparencies-white-60);
+  }
+
+  .root[data-size='76'] {
+    --profile-pic-size: 76px;
+    --profile-pic-ring: 3.2px;
+  }
+
+  .root[data-size='60'] {
+    --profile-pic-size: 60px;
+    --profile-pic-ring: 3px;
+    --profile-pic-dot: 10px;
+    --profile-pic-dot-inset: 5px;
+  }
+
+  .root[data-size='48'] {
+    --profile-pic-size: 48px;
+    --profile-pic-ring: 2.4px;
+    --profile-pic-dot: 7.2px;
+    --profile-pic-dot-inset: 3.6px;
+  }
+
+  .root[data-size='40'] {
+    --profile-pic-size: 40px;
+    --profile-pic-ring: 2px;
+    --profile-pic-dot: 6px;
+    --profile-pic-dot-inset: 3px;
+  }
+
+  .root[data-size='32'] {
+    --profile-pic-size: 32px;
+    --profile-pic-ring: 2px;
+    --profile-pic-dot: 6px;
+    --profile-pic-dot-inset: 2px;
+  }
+
+  .root[data-size='28'] {
+    --profile-pic-size: 28px;
+    --profile-pic-ring: 2px;
+  }
+
+  .root[data-size='24'] {
+    --profile-pic-size: 24px;
+    --profile-pic-ring: 1.71px;
+  }
+
+  .root[data-size='20'] {
+    --profile-pic-size: 20px;
+    --profile-pic-ring: 1.43px;
+  }
+
+  @media (max-width: 1023.98px) {
+    .root[data-compact-on-mobile] {
+      --profile-pic-size: 48px;
+      --profile-pic-ring: 2.4px;
+      --profile-pic-dot: 7.2px;
+      --profile-pic-dot-inset: 3.6px;
+    }
+  }
+
+  .picture {
+    display: flex;
+    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--dcl-radius-full);
+  }
+
+  .image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* Not in the design: the name's initial, when there is no picture to show. */
+  .initial {
+    color: var(--dcl-neutrals-white);
+    font-family: 'Inter', sans-serif;
+    font-size: calc(var(--profile-pic-size) * 0.45);
+    font-weight: 600;
+    line-height: 1;
+    user-select: none;
+  }
+
+  /* The dot's ring is outside the dot's size, so the offset takes it back. */
+  .status {
+    --connection-status-size: var(--profile-pic-dot);
+
+    position: absolute;
+    top: calc(var(--profile-pic-dot-inset) - var(--profile-pic-dot) / 5);
+    right: calc(var(--profile-pic-dot-inset) - var(--profile-pic-dot) / 5);
+  }
+}

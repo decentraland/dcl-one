@@ -214,6 +214,10 @@ CREATE TABLE social.private_voice_chat_participants (
 CREATE INDEX private_voice_chat_participants_status_idx
     ON social.private_voice_chat_participants (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes and current-call selection.
+CREATE INDEX private_voice_chat_participants_address_idx
+    ON social.private_voice_chat_participants (address);
+
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
@@ -353,14 +357,17 @@ CREATE INDEX community_requests_community_idx
 CREATE INDEX community_requests_member_idx
     ON social.community_requests (member_address, status, created_at DESC);
 
--- place_id is explore.place.id (uuid text) or a world name; no cross-schema
--- FK: a place the mirror dropped is filtered on read.
+-- place_id is explore.place.id (uuid text) or a world name, lowercased as
+-- explore keys both; no cross-schema FK: a place the mirror dropped is
+-- filtered on read. An existing database gains the check from
+-- schemas/releases/community-place-ids-lowercase.sql.
 CREATE TABLE social.community_places (
     place_id text NOT NULL,
     community_id uuid NOT NULL REFERENCES social.communities (id) ON DELETE CASCADE,
     added_by text NOT NULL,
     added_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT community_places_pkey PRIMARY KEY (place_id, community_id)
+    CONSTRAINT community_places_pkey PRIMARY KEY (place_id, community_id),
+    CONSTRAINT community_places_place_id_lowercase CHECK (place_id = lower(place_id))
 );
 
 -- The community's places listing (ORDER BY added_at DESC) and count.
@@ -416,10 +423,49 @@ CREATE TABLE social.community_voice_chat_users (
 CREATE INDEX community_voice_chat_users_status_idx
     ON social.community_voice_chat_users (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes before call admission.
+CREATE INDEX community_voice_chat_users_address_idx
+    ON social.community_voice_chat_users (address);
+
 -- ── scene moderation (comms-gatekeeper, place-scoped) ──────────────────────
 
 -- Ownership of a place is resolved through explore/worlds, not stored here.
--- These three move to `worlds` unchanged when worlds/comms lands.
+-- Social owns these tables; the comms gatekeeper writes them and the worlds
+-- policy reads them (`worlds::policy`), both by shared SQL.
+--
+-- scene_admins.place_id is the scene's place, the storage scope the room
+-- resolver reads from the active deployment: a world scene's identity
+-- (explore.world_scene_place.identity as text), a Genesis scene's canonical
+-- base parcel "x,y". A redeploy of the same place and an owner change write
+-- nothing here, so the grants stay; another place has none. Read by primary
+-- key on every scene-signed gatekeeper request of a non-owner; written by
+-- POST/DELETE /scene-admin and the place removal cleanup (DATABASE.md
+-- "Scene admin grants").
+-- The effective base parcel "x,y" of a scene footprint: the declared base
+-- when it is one of the parcels, else the numerically first parcel; NULL
+-- when no parcel parses. This is the one SQL copy of the room resolver's
+-- ParcelSet::effective_base over Parcel::parse (comms/src/world_identity.rs)
+-- for the release scripts and the import loads; a test compares the two.
+-- W is the White_Space that Rust's trim strips (\s excludes NBSP on some
+-- locales). Leading zeros go before the bounded cast, so a long padding
+-- parses and an oversized magnitude never overflows.
+CREATE FUNCTION social.scene_base_parcel(parcels text[], declared_base text) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  WITH coordinates AS (
+    SELECT declared, x, y, x::text || ',' || y::text AS canonical
+      FROM (SELECT declared,
+                   CASE WHEN length(m[2]) <= 10 THEN (m[1] || m[2])::bigint END AS x,
+                   CASE WHEN length(m[4]) <= 10 THEN (m[3] || m[4])::bigint END AS y
+              FROM (SELECT p AS pointer, false AS declared FROM unnest(parcels) p
+                    UNION ALL SELECT declared_base, true) inputs,
+                   regexp_match(pointer, replace('^W(-?)0*([0-9]+)W,W(-?)0*([0-9]+)W$', 'W',
+                       U&'[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*')) m) bounded
+     WHERE x BETWEEN -2147483648 AND 2147483647 AND y BETWEEN -2147483648 AND 2147483647)
+  SELECT f.canonical FROM coordinates f WHERE NOT f.declared
+   ORDER BY f.canonical IS DISTINCT FROM (SELECT canonical FROM coordinates WHERE declared), f.x, f.y
+   LIMIT 1
+$$;
+
 CREATE TABLE social.scene_admins (
     place_id text NOT NULL,
     admin_address text NOT NULL,
@@ -454,6 +500,7 @@ CREATE TABLE social.scene_stream_access (
     streaming_key text NOT NULL,
     ingress_id text,
     room_id text,
+    admin_place_key text,
     generated_by text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     expiration_time timestamp without time zone,
@@ -474,6 +521,15 @@ CREATE UNIQUE INDEX scene_stream_access_active_place_key
 CREATE INDEX scene_stream_access_active_ingress_idx
     ON social.scene_stream_access (ingress_id) WHERE active;
 
+-- Cast 2.0: the streamer, presentation-bot and stream-info lookups of a
+-- streaming key (stream-info is unauthenticated), and the presenter routes'
+-- lookup of the active credential streaming into a room. Active rows only:
+-- at most one per place, while replaced rows accumulate.
+CREATE INDEX scene_stream_access_active_key_idx
+    ON social.scene_stream_access (streaming_key) WHERE active;
+CREATE INDEX scene_stream_access_active_room_idx
+    ON social.scene_stream_access (room_id) WHERE active;
+
 -- Comms-owned streaming cleanup intents: no FK, so revocation survives place/access removal.
 CREATE TABLE social.scene_stream_cleanup (
  access_id uuid PRIMARY KEY, place_id text NOT NULL, ingress_id text,
@@ -481,7 +537,10 @@ CREATE TABLE social.scene_stream_cleanup (
  occurred_at timestamp without time zone NOT NULL, due_at timestamp without time zone NOT NULL,
  claim_token uuid, claim_until timestamp without time zone,
  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0), ingress_deleted boolean NOT NULL DEFAULT false,
- recipient text, metadata jsonb, source_context jsonb
+ recipient text, metadata jsonb, source_context jsonb,
+ recipients text[] NOT NULL DEFAULT '{}', recipients_resolved boolean NOT NULL DEFAULT false,
+ recipient_cursor integer NOT NULL DEFAULT 0 CHECK (recipient_cursor >= 0),
+ notification_started boolean NOT NULL DEFAULT false
 );
 -- Bounded ordered cleanup retries.
 CREATE INDEX scene_stream_cleanup_due_idx ON social.scene_stream_cleanup (due_at, access_id);
@@ -688,6 +747,11 @@ CREATE INDEX notifications_address_time_idx
 -- partial predicate, and carries the keyset tie-breaker).
 CREATE INDEX notifications_unread_idx
     ON social.notifications (address, occurred_at DESC, id DESC) WHERE NOT read;
+-- Event history adoption probes one wallet/type/event in created order.
+-- Keyed carriers leave this index; other producers without an eventId do not enter it.
+CREATE INDEX notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
@@ -1506,6 +1570,22 @@ CREATE TABLE social.worn_history (
     CONSTRAINT worn_history_pkey PRIMARY KEY (address, urn)
 );
 
+-- Notification preparation can fail after the wear is claimed. The claim and
+-- obligation commit together; completion deletes this row with its notices.
+CREATE TABLE social.first_wear_outbox (
+    address text NOT NULL,
+    urn text NOT NULL,
+    wearer text,
+    attempts integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    retry_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    CONSTRAINT first_wear_outbox_pkey PRIMARY KEY (address, urn),
+    CONSTRAINT first_wear_outbox_history_fkey FOREIGN KEY (address, urn)
+        REFERENCES social.worn_history (address, urn) ON DELETE CASCADE
+);
+CREATE INDEX first_wear_outbox_due_idx
+    ON social.first_wear_outbox (retry_at, address, urn);
+
 -- A wallet with a row is eligible; its first profile seen seeds worn_history
 -- silently (an empty outfit still gets a row, or its real first wear would be
 -- swallowed by the seed path).
@@ -1725,7 +1805,11 @@ FROM (VALUES
 ) AS t (badge_id, tier_id, tier_name, description, slot, steps, ordinal);
 -- ==== end section: badges ====
 
+-- The reconciliation reads the 20 credentials checked longest ago of each
+-- kind: the streaming ones (a lost ingress_ended), then the idle ones (a lost
+-- ingress_started). DATABASE.md "Stream state reconciliation".
 CREATE INDEX scene_stream_access_reconcile_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND streaming;
+CREATE INDEX scene_stream_access_reconcile_idle_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND NOT streaming;
 
 -- Workload: rare island cleanup transitions and exact-wallet credential checks;
 -- no position writes. Historical wallet/attempt counts and write cost unmeasured.

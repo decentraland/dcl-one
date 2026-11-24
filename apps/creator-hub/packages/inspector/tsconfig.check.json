@@ -2,6 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "emitDeclarationOnly": false
-  }
+    "emitDeclarationOnly": false,
+    "incremental": true
+  },
+  "references": [{ "path": "./tsconfig.ui3.json" }]
 }

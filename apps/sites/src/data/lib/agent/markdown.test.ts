@@ -1,14 +1,13 @@
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 
-import type { BlogArticle, BlogCard } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import type { BlogArticle, SitesBlogCard as BlogCard } from "@dcl/one-ui";
 
 import { FIRST_POST_BODY } from "../blog/cms.test-utils";
 import type { Place } from "../catalyst/schema";
 import {
   blogIndexToMarkdown,
   blogPostToMarkdown,
-  communityToMarkdown,
   discoverToMarkdown,
   estimateTokens,
   eventDetailToMarkdown,
@@ -325,35 +324,6 @@ describe("shopPageToMarkdown", () => {
   });
 });
 
-describe("communityToMarkdown", () => {
-  it("renders community info, members, and events; no HTML", () => {
-    const detail = {
-      source: "live",
-      community: {
-        id: "c1", name: "Builders Guild", description: "Where scene builders meet.",
-        ownerAddress: "0xowner", ownerName: "chief", privacy: "public", membersCount: 128, role: "none",
-      },
-      members: [
-        { memberAddress: "0xm1", name: "ada", role: "owner", hasClaimedName: true, profilePictureUrl: "" },
-        { memberAddress: "0xm2", name: "", role: "member", hasClaimedName: false, profilePictureUrl: "" },
-      ],
-      events: [{ id: "ev1", name: "Build Jam", image: "", creatorName: "ada", timeLabel: "Sat 6pm" }],
-    } as unknown as Parameters<typeof communityToMarkdown>[0];
-    const md = communityToMarkdown(detail);
-    expect(md.startsWith("# Builders Guild")).toBe(true);
-    expect(md).toContain("Where scene builders meet.");
-    expect(md).toContain("- Owner: chief");
-    expect(md).toContain("- Privacy: public");
-    expect(md).toContain("- Members: 128");
-    expect(md).toContain("## Members");
-    expect(md).toContain("- ada (owner)");
-    expect(md).toContain("- 0xm2 (member)");
-    expect(md).toContain("## Events");
-    expect(md).toContain("Build Jam");
-    expect(md).not.toMatch(NO_HTML);
-  });
-});
-
 describe("profileToMarkdown", () => {
   it("renders name, bio, facts, info fields and links; no HTML", () => {
     const p = {
@@ -423,6 +393,15 @@ describe("whatsOnToMarkdown", () => {
     const md = whatsOnToMarkdown({ live: [], upcoming: [] });
     expect(md).toContain("0 live now, 0 upcoming.");
     expect(md).toContain("No events right now");
+    expect(md).not.toContain("## My Events");
+  });
+
+  it("keeps the public listing and adds the sign-in pointer for My Events", () => {
+    const md = whatsOnToMarkdown({ live: [], upcoming: [], tab: "my" });
+    expect(md.startsWith("# What's On in Decentraland")).toBe(true);
+    expect(md).toContain("## My Events");
+    expect(md).toContain("[Open My Events](/events?tab=my)");
+    expect(md).not.toContain("My Hangouts");
   });
 });
 

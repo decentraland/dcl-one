@@ -18,7 +18,7 @@
 // The scenario runs on a client of its own (the engine's own guest, whose HUD stays on its start
 // page), never the default session's, which every other scenario shares; it closes it afterwards.
 import assert from 'node:assert/strict'
-import { buildAuthIdentity, newPrivateKey, spec, until, type Explorer, type Selector } from '../driver/index.ts'
+import { DocumentGoneError, buildAuthIdentity, newPrivateKey, spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -55,7 +55,10 @@ scenario('the startup Lobby\'s profile chip signs out of the engine and the HUD'
   await press(explorer, await profileChip(explorer))
   await press(explorer, SIGN_OUT)
   await explorer.hud.wait(CONFIRM, { timeoutMs: CONTROL_TIMEOUT_MS })
-  await press(explorer, CONFIRM_SIGN_OUT)
+  // The confirmed Sign Out loads the page again, and the click's answer may go with the document it ran in.
+  await press(explorer, CONFIRM_SIGN_OUT).catch((error: unknown) => {
+    if (!(error instanceof DocumentGoneError)) throw error
+  })
   await explorer.hud.waitHidden(WELCOME, LOBBY_TIMEOUT_MS)
   const after = await until(() => explorer.worldState(), (state) => !state.signedIn || state.address?.toLowerCase() !== reply.address.toLowerCase(), {
     timeoutMs: LOBBY_TIMEOUT_MS,

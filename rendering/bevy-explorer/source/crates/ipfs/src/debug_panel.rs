@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::structs::AppConfig;
+use common::sync::MutexExt;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 use std::sync::atomic::Ordering;
@@ -26,6 +27,8 @@ impl Plugin for WebRequestsDebugPanelPlugin {
                         "Content files answered as missing for the session",
                         "missingForSession",
                     ),
+                    ("Cache entries checked after a failed load", "cacheChecks"),
+                    ("Cached entries dropped for bad bytes", "cacheDrops"),
                     #[cfg(not(target_arch = "wasm32"))]
                     ("IPFS connection failures (native)", "connectFailed"),
                     ("Available request slots", "available"),
@@ -200,7 +203,7 @@ mod request_tests {
             tokio::sync::mpsc::unbounded_channel().0,
         ));
         {
-            let mut failed = ipfs.failed_remotes.lock().unwrap();
+            let mut failed = ipfs.failed_remotes.lock_ignore_poison();
             failed.record(
                 "https://a.example/contents/x".into(),
                 Some(reqwest::StatusCode::NOT_FOUND),
@@ -212,7 +215,7 @@ mod request_tests {
         ipfs.record_scene_batch(2);
         ipfs.record_attachment_batch(4);
         {
-            let mut metrics = ipfs.request_metrics.downloads.lock().unwrap();
+            let mut metrics = ipfs.request_metrics.downloads.lock_ignore_poison();
             metrics.download(0, Duration::from_millis(500), None);
             metrics.download(
                 10 * 1024,
@@ -242,6 +245,8 @@ mod request_tests {
         let state: serde_json::Value =
             serde_json::from_str(&rx.try_recv().unwrap().unwrap()).unwrap();
         assert_eq!(state["missingForSession"], 1);
+        assert_eq!(state["cacheChecks"], 0);
+        assert_eq!(state["cacheDrops"], 0);
         assert_eq!(state["bytes"], 1_058_816);
         assert_eq!(state["firstByteMs"], 100.0);
         assert_eq!(state["smallMs"], 750.0);
@@ -264,6 +269,7 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
         let connect_failed = Some(stats.connect_failed);
         #[cfg(target_arch = "wasm32")]
         let connect_failed: Option<u64> = None;
+        let (cache_checks, cache_drops) = ipfs.cache_heals.counts();
         input.reply_ok(
             json!({
                 "inFlight": IPFS_IN_FLIGHT.load(Ordering::Relaxed),
@@ -273,9 +279,10 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
                 "failed": IPFS_FAILED.load(Ordering::Relaxed),
                 "missingForSession": ipfs
                     .failed_remotes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .lock_ignore_poison()
                     .session_len(),
+                "cacheChecks": cache_checks,
+                "cacheDrops": cache_drops,
                 "connectFailed": connect_failed,
                 "available": ipfs.request_slots.available_permits(),
                 "slots": config.max_concurrent_remotes,

@@ -13,7 +13,7 @@ Paths are relative to `source/`; the pointer code is in `crates/scene_runner/src
 | Proximity reach | 3 m from the player, for a PROXIMITY entry that sets no distance | `PROXIMITY_DEFAULT_MAX_DISTANCE` |
 | Proximity cone | 120 degrees wide, horizontal, around the body's forward direction | `PROXIMITY_FOV_ANGLE_DEGREES` |
 | Scenes considered | The scenes within 16 m of the player (`get_area(player, PARCEL_SIZE)`) | `pointer_results.rs`, `update_pointer_target` |
-| Cursor ray | Unbounded: it ends at the first hit in the scenes considered, and the entry's distances decide whether that hit is in reach | `pointer_results.rs`, `update_pointer_target` |
+| Cursor ray | Unbounded, and cast against each scene considered only where that scene is drawn (over its parcels, up to their height limit): it ends at the first such hit, and the entry's distances decide whether that hit is in reach | `pointer_results.rs`, `update_pointer_target` |
 
 ## Scene raycasts
 
@@ -30,10 +30,14 @@ Scene raycast requests run in two tiers each frame (`update_scene/raycast_budget
   under the budget. A cast that starts under budget finishes, so the last one may cross the line.
   The rest wait for a later frame. When the player walks into a capped scene it becomes uncapped,
   so its requests run then.
+- **World casts are cut per scene.** A cast that includes the world (`include_world`, or any cast
+  of a portable) meets each scene it crosses only where that scene is drawn: over its parcels, up
+  to their height limit. The caster's own colliders are not cut, in a world cast or in a cast
+  at its own scene. See [Decisions](decisions.md).
 - **Budget.** A tenth of the target frame: `SceneUpdates::frame_target`, which `run_scene_loop`
-  sets from the vsync refresh rate or the fps target (with the session override). That is 1.67 ms
-  at 60 fps, 0.69 ms at 144 and 0.42 ms at 240. It follows the target, not the measured frame, so a
-  slow frame does not raise the next one's budget. Raycasts run before the scene loop, so they use
+  sets from the fps target (with the session override), capped at the refresh rate under vsync.
+  That is 1.67 ms at 60 fps, 0.69 ms at 144 and 0.42 ms at 240. It follows the target, not the
+  measured frame, so a slow frame does not raise the next one's budget. Raycasts run before the scene loop, so they use
   the previous frame's target. With an uncapped frame rate (fps 0) it is a tenth of a 60 fps frame.
 - **`/raycast_budget [ms|auto]`.** Without an argument it answers
   `raycast budget: <ms> ms (auto|override)`. A value from 0 to 10 overrides the capped budget for

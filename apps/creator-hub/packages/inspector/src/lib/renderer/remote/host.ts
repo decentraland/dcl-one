@@ -100,7 +100,6 @@ export class RendererHost {
       default:
         // Exhaustiveness guard: an unknown command (e.g. version skew with a
         // newer inspector) is logged rather than silently dropped.
-        // eslint-disable-next-line no-console
         return void console.warn(
           `[renderer host] unknown command "${(command as { kind: string }).kind}" (ignored)`,
         );
@@ -113,8 +112,10 @@ export class RendererHost {
   ): Promise<RendererRequestResult[K]> {
     try {
       switch (request.kind) {
-        case 'getPointerWorldPoint':
-          return (await this.renderer.getPointerWorldPoint()) as RendererRequestResult[K];
+        case 'getPointerWorldPoint': {
+          const { ndc } = request as Extract<RendererRequest, { kind: 'getPointerWorldPoint' }>;
+          return (await this.renderer.getPointerWorldPoint(ndc)) as RendererRequestResult[K];
+        }
         case 'getEntityAnimations': {
           const { entity } = request as Extract<RendererRequest, { kind: 'getEntityAnimations' }>;
           return (await this.renderer.getEntityAnimations(

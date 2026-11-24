@@ -1,18 +1,28 @@
-import path from 'path';
 import { ipcRenderer, type IpcRendererEvent } from 'electron';
 import {
   DEPENDENCY_UPDATE_STRATEGY,
   DEFAULT_DEPENDENCY_UPDATE_STRATEGY,
 } from '/shared/types/settings';
 import type { AppSettings } from '/shared/types/settings';
-import { SCENES_DIRECTORY } from '/shared/paths';
+import { watchlistFor, withWatchlist } from '/shared/types/analytics-watchlist';
 
+import * as fs from '../services/fs';
 import { invoke } from '../services/ipc';
 import { getConfig, setConfig } from '../services/config';
 
-export async function getDefaultScenesPath() {
-  const userDataPath = await invoke('electron.getUserDataPath');
-  return path.join(userDataPath, SCENES_DIRECTORY);
+/** Where new scenes go unless the user picks another folder. Reading it creates nothing. */
+export async function getDefaultScenesPath(): Promise<string> {
+  return invoke('electron.getDefaultScenesPath');
+}
+
+/**
+ * Creates the default scenes folder and returns it, for a user who switches to it in Settings:
+ * Settings checks that the folder it shows exists, and that user may never have had it.
+ */
+export async function createDefaultScenesFolder(): Promise<string> {
+  const scenesPath = await getDefaultScenesPath();
+  await fs.mkdir(scenesPath, { recursive: true });
+  return scenesPath;
 }
 
 export async function getScenesPath() {
@@ -35,9 +45,41 @@ export async function getUpdateDependenciesStrategy() {
   return DEFAULT_DEPENDENCY_UPDATE_STRATEGY;
 }
 
+/**
+ * Writes the app settings, except the AI sharing keys and the Analytics watchlist: those are
+ * written only by `updateAiSharingSettings` and `setAnalyticsWatchlist`, so a screen holding an
+ * older copy of the settings can't bring back a decision or pins the creator has since changed.
+ */
 export async function updateAppSettings(settings: AppSettings) {
-  // update app settings on config file
-  await setConfig(config => (config.settings = settings));
+  await setConfig(config => {
+    const { aiDataSharing, aiSharingPending, analyticsWatchlist } = config.settings ?? {};
+    config.settings = { ...settings, aiDataSharing, aiSharingPending, analyticsWatchlist };
+  });
+}
+
+/** The places `address` pinned to the Analytics watchlist; none when nothing valid is stored. */
+export async function getAnalyticsWatchlist(address: string): Promise<string[]> {
+  const config = await getConfig();
+  return watchlistFor(config.settings?.analyticsWatchlist, address);
+}
+
+/** Replaces `address`'s Analytics watchlist, leaving every other wallet's and setting as stored. */
+export async function setAnalyticsWatchlist(address: string, placeIds: string[]): Promise<void> {
+  await setConfig(config => {
+    config.settings = {
+      ...config.settings,
+      analyticsWatchlist: withWatchlist(config.settings?.analyticsWatchlist, address, placeIds),
+    };
+  });
+}
+
+export type AiSharingSettings = Pick<AppSettings, 'aiDataSharing' | 'aiSharingPending'>;
+
+/** Writes the AI sharing keys of the settings, and nothing else. */
+export async function updateAiSharingSettings(sharing: AiSharingSettings) {
+  await setConfig(config => {
+    config.settings = { ...config.settings, ...sharing };
+  });
 }
 
 export async function selectSceneFolder(): Promise<string | undefined> {

@@ -1,8 +1,8 @@
-import mitt from 'mitt';
+import { createEmitter } from './emitter';
 import type { IInputSystem } from '@dcl/ecs';
 import { InputAction, PointerEventType } from '@dcl/ecs';
 
-export const globalInputActions = mitt<Record<InputAction, null>>();
+export const globalInputActions = createEmitter<Record<InputAction, null>>();
 
 export function createInputActionSystem(inputSystem: IInputSystem) {
   return function inputActionSystem() {

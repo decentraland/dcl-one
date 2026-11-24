@@ -35,6 +35,20 @@ class WorldsMigrationCases:
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permissions;').strip(), '1')
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permission_parcels;').strip(), '0')
 
+    def test_world_permission_load_passes_with_the_stream_key_triggers(self):
+        """A grant narrowed to parcels and a grant removed each announce the world once per transaction."""
+        db = self.permission_fixture()
+        load = self.migration_sql('worlds-content-server', 'world_permission', 'load')
+        notice = 'Asynchronous notification "world_authority" with payload "world:scope.eth" received'
+        self.sql(db, """INSERT INTO public.world_permission_parcels VALUES (1, '1,2'), (1, '1,3');
+            INSERT INTO public.world_permissions VALUES
+                (2, 'scope.eth', 'streaming', '0x' || repeat('b',40), '2026-01-01', '2026-01-01');""")
+        run = 'LISTEN world_authority;\nBEGIN;\n' + self.permission_stage() + load + '\nCOMMIT;\nSELECT 1;\n'
+        self.assertEqual(self.sql(db, run).count(notice), 1)
+        self.sql(db, 'DELETE FROM public.world_permissions WHERE id = 2;')
+        self.assertEqual(self.sql(db, run).count(notice), 1)
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permissions;').strip(), '1')
+
     def test_world_permissions_reject_invalid_scope_without_widening_existing_grant(self):
         from tooling.tests import migration_harness as harness
         db = self.permission_fixture()
@@ -189,3 +203,48 @@ class WorldsMigrationCases:
         self.sql(db, "UPDATE public.profile_subscriptions SET p256dh='new-key';")
         self.sql(db, stage + load)
         self.assertEqual(self.sql(db, 'SELECT count(*), min(p256dh) FROM explore.event_profile_subscriptions;').strip(), '1\tnew-key')
+
+    def test_world_scene_final_imported_undeploy_retains_exact_removal_admin_keys(self):
+        from tooling.tests import migration_harness as harness
+        db = self.catalyst_db('world_scene_removal_keys')
+        self.sql(db, harness.migrate.CHECKPOINT_DDL)
+        self.sql(db, """
+            INSERT INTO worlds.worlds(name) VALUES ('gone.eth');
+            INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size)
+            VALUES ('gone.eth','last','[]','{}','owner',ARRAY['1,2'],0);
+            INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES
+            ('gone.eth','11111111-1111-4111-8111-111111111111','last',ARRAY['1,2']),
+            ('gone.eth','22222222-2222-4222-8222-222222222222','later-import',ARRAY['3,4']);
+            INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels,active) VALUES
+            ('gone.eth','99999999-9999-4999-8999-999999999999',NULL,ARRAY['1,2'],false);
+            INSERT INTO explore.place(id,base_position,raw) VALUES
+            ('gone.eth','1,2','{"world":true,"world_name":"gone.eth"}');
+        """)
+        stage = """CREATE TEMP TABLE stage(world_name text,entity_id text,deployed boolean,
+            deployment_auth_chain jsonb,entity jsonb,deployer text,parcels text[],size bigint,
+            created_at timestamptz,updated_at timestamptz) ON COMMIT DROP;
+            INSERT INTO stage VALUES ('gone.eth','last',false,'[]','{}','owner',ARRAY['1,2'],0,now(),now());
+        """
+        self.sql(db, 'BEGIN;\n' + stage + self.migration_sql('worlds-content-server','world_scene','load') + '\nCOMMIT;')
+        self.assertEqual(self.sql(db,"SELECT active FROM explore.world_scene_place WHERE entity_id='later-import';").strip(),'t')
+        self.assertEqual(self.sql(db,"SELECT active FROM explore.world_scene_place WHERE identity='11111111-1111-4111-8111-111111111111';").strip(),'f')
+        self.assertEqual(self.sql(db,"SELECT cardinality(removal_admin_keys) FROM explore.place WHERE id='gone.eth';").strip(),'2')
+        self.assertEqual(self.sql(db,"SELECT entity_id,identity::text FROM explore.world_scene_binding WHERE world_name='gone.eth';").strip(),
+                         'last\t11111111-1111-4111-8111-111111111111')
+        self.sql(db, 'BEGIN;\n' + stage + self.migration_sql('worlds-content-server','world_scene','load') + '\nCOMMIT;')
+        self.assertEqual(self.sql(db,"SELECT count(*) FROM explore.world_scene_binding WHERE world_name='gone.eth';").strip(), '1')
+        self.sql(db,"UPDATE explore.place SET disabled=true WHERE id='gone.eth';")
+        self.assertEqual(self.sql(db,"SELECT cardinality(admin_keys) FROM explore.place_removal_pending WHERE place_id='gone.eth';").strip(),'2')
+        self.assertEqual(self.sql(db,"SELECT '99999999-9999-4999-8999-999999999999'=ANY(admin_keys) FROM explore.place_removal_pending WHERE place_id='gone.eth';").strip(),'f')
+
+    def test_places_reimport_preserves_local_removal_admin_keys(self):
+        from tooling.tests import migration_harness as harness
+        db=self.catalyst_db('places_removal_keys')
+        self.sql(db,harness.migrate.CHECKPOINT_DDL)
+        self.sql(db,"INSERT INTO explore.place(id,base_position,raw,removal_admin_keys) VALUES ('snapshot','1,2','{}',ARRAY['exact-key']);")
+        stage="""CREATE TEMP TABLE stage ON COMMIT DROP AS SELECT id,base_position,title,description,creator_address,
+            content_rating,categories,deployed_at,disabled,highlighted,raw,world_name,
+            false AS mod_disabled,NULL::text AS mod_rating,NULL::jsonb AS ranking_overlay
+            FROM explore.place WHERE id='snapshot';"""
+        self.sql(db,'BEGIN;\n'+stage+self.migration_sql('places','place','load')+'\nCOMMIT;')
+        self.assertEqual(self.sql(db,"SELECT removal_admin_keys[1] FROM explore.place WHERE id='snapshot';").strip(),'exact-key')

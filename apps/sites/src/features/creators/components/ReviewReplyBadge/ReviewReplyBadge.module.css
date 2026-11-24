@@ -1,0 +1,10 @@
+.badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-warning-overlay);
+  color: var(--color-warning-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}

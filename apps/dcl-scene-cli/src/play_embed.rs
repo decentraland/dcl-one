@@ -748,8 +748,8 @@ mod tests {
                 "pkg/webgpu_build.d.ts",
                 "pkg/webgpu_build.js",
                 "pkg.prev-20260830/webgpu_build.js",
-                "vendor/hls-1.6.16.min.js",
-                "vendor/hls-1.6.16.min.js.br",
+                "vendor/livekit-client-2.20.0.umd.min.js",
+                "vendor/livekit-client-2.20.0.umd.min.js.br",
                 "vendor/README.md",
                 "fonts/NotoColorEmoji.subset.ttf",
                 "fonts/NotoColorEmoji.subset.ttf.br",
@@ -787,7 +787,7 @@ mod tests {
                 "v/2b6436930d8c33b3/pkg/webgpu_build_bg.wasm",
                 "v/72d02f6d5f0a705f/assets_bundle.bin",
                 "vendor/README.md",
-                "vendor/hls-1.6.16.min.js",
+                "vendor/livekit-client-2.20.0.umd.min.js",
             ]
         );
         let by_served = |p: &str| picked.iter().find(|s| s.served == p).unwrap().clone();
@@ -801,7 +801,7 @@ mod tests {
             "the .br twin stands in for the wasm"
         );
         assert!(by_served("assets_bundle.bin").br);
-        assert!(by_served("vendor/hls-1.6.16.min.js").br);
+        assert!(by_served("vendor/livekit-client-2.20.0.umd.min.js").br);
         assert!(!by_served("main.js").br);
         assert!(select::compressible("main.js"));
         assert!(select::compressible("pkg/webgpu_build.js"));

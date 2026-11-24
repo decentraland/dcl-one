@@ -10,8 +10,9 @@ use common::{
     dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, PrimaryPlayerRes,
-        PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback, SceneDrivenAnimationRequest,
+        avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
+        PlayerModifiers, PrimaryPlayerRes, PrimaryUser, SceneDrivenAnim,
+        SceneDrivenAnimationFeedback, SceneDrivenAnimationRequest,
     },
 };
 use dcl_component::{
@@ -66,6 +67,7 @@ impl Plugin for AvatarMovementPlugin {
         );
 
         app.init_resource::<AvatarMovementInfo>();
+        app.register_required_components::<PrimaryUser, LocomotionSpeeds>();
         app.register_required_components::<RendererSceneContext, MovementPeriod>();
         app.init_resource::<CollisionPush>();
         app.init_resource::<CentralCollisions>();
@@ -79,6 +81,8 @@ impl Plugin for AvatarMovementPlugin {
                 ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
                 ActivePlayerComponent::<AvatarLocomotionSettings>::pick_by_priority,
                 ActivePlayerComponent::<InputModifier>::pick_by_priority,
+                update_locomotion_speeds
+                    .after(ActivePlayerComponent::<AvatarLocomotionSettings>::pick_by_priority),
                 update_priority_scene.after(
                     ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
                 ),
@@ -104,6 +108,37 @@ impl Plugin for AvatarMovementPlugin {
                 .chain()
                 .in_set(PostUpdateSets::PlayerUpdate),
         );
+    }
+}
+
+/// The speeds the active locomotion settings give; a speed they leave unset is the player's own
+/// (configured speed with area modifiers).
+fn locomotion_speeds(
+    base: &PrimaryUser,
+    settings: Option<&PbAvatarLocomotionSettings>,
+) -> LocomotionSpeeds {
+    LocomotionSpeeds {
+        walk: settings
+            .and_then(|s| s.walk_speed)
+            .unwrap_or(base.walk_speed),
+        jog: settings.and_then(|s| s.jog_speed).unwrap_or(base.jog_speed),
+        run: settings.and_then(|s| s.run_speed).unwrap_or(base.run_speed),
+    }
+}
+
+/// Keeps the player's [`LocomotionSpeeds`] in step with the active locomotion settings.
+fn update_locomotion_speeds(
+    mut player: Query<(
+        &PrimaryUser,
+        Option<&PlayerModifiers>,
+        Option<&ActivePlayerComponent<AvatarLocomotionSettings>>,
+        &mut LocomotionSpeeds,
+    )>,
+) {
+    for (user, modifiers, active, mut speeds) in player.iter_mut() {
+        let base = modifiers.map_or_else(|| user.clone(), |m| m.combine(user));
+        let settings = active.map(|a| &a.component.0);
+        speeds.set_if_neq(locomotion_speeds(&base, settings));
     }
 }
 
@@ -377,7 +412,6 @@ struct CollisionPush(Vec3);
 
 impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
     // pick from available of any write-time, based on priority
-    #[allow(clippy::too_many_arguments)]
     fn pick_by_priority(
         mut commands: Commands,
         q: Query<(Entity, Ref<C>, &SceneEntity)>,
@@ -507,7 +541,6 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn apply_impulses(
     impulses: Query<(&PhysicsCombinedImpulse, &SceneEntity), Changed<PhysicsCombinedImpulse>>,
     forces: Query<(Ref<PhysicsCombinedForce>, &SceneEntity)>,
@@ -607,6 +640,9 @@ pub fn apply_movement(
             scenes
                 .iter_mut()
                 .fold(transform.translation.y, |gh, (_, mut collider_data)| {
+                    if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+                        return gh;
+                    }
                     gh.min(
                         collider_data
                             .get_ground(transform.translation)
@@ -646,7 +682,7 @@ pub fn apply_movement(
         let mut contact_normal = DVec3::ZERO;
         if movement_control.suppress_clipping.is_empty() {
             for (e, mut collider_data) in scenes.iter_mut() {
-                if let Some(hit) = collider_data.cast_avatar_nearest(
+                if let Some(hit) = collider_data.cast_avatar_nearest_in_scene(
                     position,
                     velocity,
                     step_time,
@@ -699,6 +735,9 @@ pub fn apply_movement(
         scenes
             .iter_mut()
             .fold(transform.translation.y, |gh, (_, mut collider_data)| {
+                if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+                    return gh;
+                }
                 gh.min(
                     collider_data
                         .get_ground(transform.translation)
@@ -749,6 +788,9 @@ fn record_ground_collider(
         let Ok(mut collider_data) = scenes.get_mut(scene) else {
             continue;
         };
+        if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+            continue;
+        }
 
         if let Some((height, collider_id)) = collider_data.get_ground(transform.translation) {
             if height < best_height {
@@ -860,10 +902,13 @@ fn resolve_collisions(
     {
         prev = current_offset;
 
+        let position = transform.translation.as_dvec3() + current_offset;
         for (_, mut collider_data) in scenes.iter_mut() {
+            if !collider_data.reaches_avatar(position) {
+                continue;
+            }
             // Note: collisions that intersect the avatar central segment are automatically excluded here
-            let (scene_min, scene_max) =
-                collider_data.avatar_constraints(transform.translation.as_dvec3() + current_offset);
+            let (scene_min, scene_max) = collider_data.avatar_constraints(position);
 
             constraint_min = constraint_min.max(scene_min + current_offset);
             constraint_max = constraint_max.min(scene_max + current_offset);
@@ -928,6 +973,7 @@ fn resolve_collisions(
 
     central.0 = scenes
         .iter_mut()
+        .filter(|(_, collider_data)| collider_data.reaches_avatar(transform.translation.as_dvec3()))
         .flat_map(|(scene, mut collider_data)| {
             let results = collider_data.avatar_central_collisions(transform.translation.as_dvec3());
             if results.is_empty() {
@@ -951,7 +997,6 @@ fn resolve_collisions(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn broadcast_movement_info(
     mut info: ResMut<AvatarMovementInfo>,
     active_components: Query<
@@ -1062,6 +1107,45 @@ fn accumulate_movement_periods(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unset_locomotion_speeds_use_the_players_own() {
+        let base = PrimaryUser {
+            walk_speed: 3.0,
+            jog_speed: 7.0,
+            run_speed: 9.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            locomotion_speeds(&base, None),
+            LocomotionSpeeds {
+                walk: 3.0,
+                jog: 7.0,
+                run: 9.0
+            }
+        );
+        let settings = PbAvatarLocomotionSettings {
+            walk_speed: Some(1.0),
+            run_speed: Some(20.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            locomotion_speeds(&base, Some(&settings)),
+            LocomotionSpeeds {
+                walk: 1.0,
+                jog: 7.0,
+                run: 20.0
+            }
+        );
+    }
+}
+
+#[cfg(test)]
+mod scene_reach_tests;
 
 #[cfg(test)]
 mod jump_tests {

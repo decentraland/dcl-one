@@ -64,7 +64,7 @@ describe('guard and retire commands', () => {
   })
 
   describe('when the staged tree matches the base', () => {
-    it('should exit 0', async () => {
+    it('should exit 0 and report the tree as ok', async () => {
       const result = await run(base, ['guard', '--base', base, '--staged', staged])
 
       expect(result.code).toBe(0)
@@ -73,72 +73,80 @@ describe('guard and retire commands', () => {
   })
 
   describe('when an automated run changed a frozen page', () => {
-    it('should exit 1 and name the file', async () => {
+    beforeEach(async () => {
       await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
-
-      const result = await run(base, [
-        'guard',
-        '--base',
-        base,
-        '--staged',
-        staged,
-        '--captured',
-        '1:1'
-      ])
-
-      expect(result.code).toBe(1)
-      expect(JSON.parse(result.out).violations[0].path).toBe(
-        `${GEN}/components/places/PlaceCard.tsx`
-      )
     })
 
-    it('should pass when that page was captured in the run', async () => {
-      await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
+    describe('and that page was not captured in the run', () => {
+      it('should exit 1 and name the file', async () => {
+        const result = await run(base, [
+          'guard',
+          '--base',
+          base,
+          '--staged',
+          staged,
+          '--captured',
+          '1:1'
+        ])
 
-      const result = await run(base, [
-        'guard',
-        '--base',
-        base,
-        '--staged',
-        staged,
-        '--captured',
-        PLACES
-      ])
+        expect(result.code).toBe(1)
+        expect(JSON.parse(result.out).violations[0].path).toBe(
+          `${GEN}/components/places/PlaceCard.tsx`
+        )
+      })
+    })
 
-      expect(result.code).toBe(0)
+    describe('and that page was captured in the run', () => {
+      it('should exit 0', async () => {
+        const result = await run(base, [
+          'guard',
+          '--base',
+          base,
+          '--staged',
+          staged,
+          '--captured',
+          PLACES
+        ])
+
+        expect(result.code).toBe(0)
+      })
     })
   })
 
   describe('when a developer records a retirement', () => {
-    it('should write the owned artifacts into the record', async () => {
-      const result = await run(path.join(base, 'figma'), [
-        'retire',
-        '--page-id',
-        PLACES,
-        '--reason',
-        'obsolete'
-      ])
+    describe('and the page is known', () => {
+      it('should exit 0 and write the owned artifacts and the reason into the record', async () => {
+        const result = await run(path.join(base, 'figma'), [
+          'retire',
+          '--page-id',
+          PLACES,
+          '--reason',
+          'obsolete'
+        ])
 
-      expect(result.code).toBe(0)
-      const saved = JSON.parse(
-        await readFile(path.join(base, 'figma/ledger/retirements.json'), 'utf8')
-      )
-      expect(saved.retired[0].owned).toEqual(
-        expect.arrayContaining([`${GEN}/components/places/PlaceCard.tsx`])
-      )
-      expect(saved.retired[0].reason).toBe('obsolete')
+        expect(result.code).toBe(0)
+        const saved = JSON.parse(
+          await readFile(path.join(base, 'figma/ledger/retirements.json'), 'utf8')
+        )
+        expect(saved.retired[0].owned).toEqual(
+          expect.arrayContaining([`${GEN}/components/places/PlaceCard.tsx`])
+        )
+        expect(saved.retired[0].reason).toBe('obsolete')
+      })
     })
 
-    it('should refuse an unknown page', async () => {
-      const result = await run(path.join(base, 'figma'), [
-        'retire',
-        '--page-id',
-        '99:99',
-        '--reason',
-        'x'
-      ])
+    describe('and the page is unknown', () => {
+      it('should refuse it with exit 1', async () => {
+        const result = await run(path.join(base, 'figma'), [
+          'retire',
+          '--page-id',
+          '99:99',
+          '--reason',
+          'x'
+        ])
 
-      expect(result.code).toBe(1)
+        expect(result.code).toBe(1)
+      })
     })
   })
 })

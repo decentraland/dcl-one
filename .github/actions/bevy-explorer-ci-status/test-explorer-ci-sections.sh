@@ -211,25 +211,21 @@ artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-$
   "bevy-explorer-web-$SPOOF_SHA:13"
 jq '.artifacts[-1].created_at = "2026-10-28T11:00:00Z"' "$WORK/artifacts.json" > "$WORK/new.json"
 mv "$WORK/new.json" "$WORK/artifacts.json"
-cat > "$WORK/npm" <<'EOF'
-#!/usr/bin/env bash
-set -eu
-[[ "$1" = view ]]
-case "$2 $3" in
-  '@dcl-regenesislabs/bevy-explorer-web@pr-10 version') printf '%s\n' "${TAG_VERSION:-}" ;;
-  *) exit 64 ;;
-esac
-EOF
 cat > "$WORK/curl" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 url="${*: -1}"
+if [ "$url" = "https://registry.npmjs.org/@dcl-regenesislabs/bevy-explorer-web/pr-10" ]; then
+  [ -n "${TAG_VERSION:-}" ] || exit 22
+  jq -nc --arg v "$TAG_VERSION" '{name:"@dcl-regenesislabs/bevy-explorer-web", version:$v}'
+  exit 0
+fi
 [ "$url" = "https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$PUBLISHED_VERSION/.deploy-complete.json" ] || exit 22
 if [ -n "${MARKER_BODY+set}" ]; then printf '%s' "$MARKER_BODY"; exit 0; fi
 jq -nc --arg v "$PUBLISHED_VERSION" --arg c "$PUBLISHED_SHA" \
   '{package:"@dcl-regenesislabs/bevy-explorer-web", version:$v, commit:$c, objectCount:1, kind:"upload"}'
 EOF
-chmod +x "$WORK/npm" "$WORK/curl"
+chmod +x "$WORK/curl"
 preview_compose() {
   PATH="$WORK:$PATH" PUBLISHED_VERSION="$VERSION" PUBLISHED_SHA="$1" compose
 }
@@ -334,7 +330,7 @@ check "the early tests section has the row of each ended job" tests.md '| ✅ Pa
 check_absent "the build section of an early report has no download" build.md 'artifacts/'
 
 # 10. The early report of the build: the products ended and the preview still publishes. No
-# registry or CDN lookup runs for a publication that has not ended (no npm or curl stub here).
+# registry or CDN lookup runs for a publication that has not ended (no curl stub here).
 run_metadata pull_request "$WEB_SHA"
 jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 530)" \
   "$(job 'Web package for the CDN' success 51)" "$(job 'Publish the web package' '')" \

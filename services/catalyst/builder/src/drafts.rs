@@ -216,6 +216,28 @@ pub(super) const ITEM_DRAFT_PROJECTION: &str = "to_jsonb(i) || jsonb_build_objec
 
 const FK_VIOLATION: &str = "23503";
 
+/// The store lock's shared side for a blob writer (`gc::lock_store_shared`), waited for at most
+/// `gc::SHARED_LOCK_WAIT`: past it the request answers 503 instead of holding its connection and
+/// row locks while unlink batches run.
+pub(crate) async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), ApiError> {
+    use crate::storage::gc;
+    gc::lock_store_shared_within(conn, gc::SHARED_LOCK_WAIT)
+        .await
+        .map_err(store_lock_refusal)
+}
+
+/// A store-lock failure as builder answers it: 503 for a busy lock.
+pub(crate) fn store_lock_refusal(e: crate::storage::gc::GcError) -> ApiError {
+    use crate::storage::gc::GcError;
+    match e {
+        GcError::LockTimeout => {
+            ApiError::service_unavailable("The content store is being collected; retry shortly")
+        }
+        GcError::Database(e) => e.into(),
+        e => ApiError::internal(e.to_string()),
+    }
+}
+
 /// The bound of the committee-wide and the public listings: the per-owner
 /// ones are a wallet's own handful, these span every wallet.
 pub const LISTING_LIMIT: i64 = 1000;
@@ -350,6 +372,34 @@ impl ItemsComponent {
         .ok_or_else(|| ApiError::not_found("Item not found"))
     }
 
+    /// The collection an item belongs to, if any.
+    pub async fn item_collection(&self, id: Uuid) -> Result<Option<Uuid>, ApiError> {
+        Ok(
+            sqlx::query_scalar("SELECT collection_id FROM builder.items WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten(),
+        )
+    }
+
+    /// An item of `collection` with no owner filter: the caller authorized
+    /// the signer against the collection's on-chain creator.
+    pub async fn collection_item_draft(
+        &self,
+        collection: Uuid,
+        id: Uuid,
+    ) -> Result<Value, ApiError> {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT {ITEM_DRAFT_PROJECTION} FROM builder.items i WHERE i.id = $1 AND i.collection_id = $2"
+        )))
+        .bind(id)
+        .bind(collection)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Item not found"))
+    }
+
     /// One owned, unpublished item by primary key. Use publication's parent-then-item
     /// lock order; cascading content links go away, shared uploaded bytes remain.
     pub async fn delete_item_draft(&self, signer: &str, id: Uuid) -> Result<(), ApiError> {
@@ -428,7 +478,10 @@ impl ItemsComponent {
     /// The multipart upload: 1..100 files, 20 MB together. Each file's bytes
     /// are stored under their CIDv1 in the ONE blob store before the row
     /// that records the acceptance (the store is immutable and idempotent, so
-    /// a rolled-back transaction leaves nothing wrong behind).
+    /// a rolled-back transaction leaves nothing wrong behind). The existence
+    /// check, the store and the rows run under the store lock's shared side
+    /// (`gc::lock_store_shared`): a blob found stored is not unlinked before
+    /// the rows naming it commit.
     pub async fn save_item_files(
         &self,
         signer: &str,
@@ -454,6 +507,7 @@ impl ItemsComponent {
                 "Item is publishing, published, or belongs to another wallet",
             ));
         }
+        lock_store_shared(&mut tx).await?;
         let mut contents = BTreeMap::new();
         for (file, bytes) in files {
             if !valid_filename(&file) {
