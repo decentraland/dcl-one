@@ -232,10 +232,10 @@ def render(table, cfg, mime):
         servers = "\n".join(f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg[name])
         upstreams += f"upstream {name} {{ zone {name} 64k; {servers} keepalive 32; }}\n"
 
-    # Engine.IO polling and upgrades for one client must reach the same process.
+    # Hash across resolved peers. Consistent hashing groups replicas sharing a DNS name.
     socket_servers = "\n".join(
         f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg["apis"])
-    upstreams += ("upstream auth_socket { zone auth_socket 64k; hash $binary_remote_addr consistent; "
+    upstreams += ("upstream auth_socket { zone auth_socket 64k; hash $binary_remote_addr; "
                   + socket_servers + " }\n")
 
     names = set()

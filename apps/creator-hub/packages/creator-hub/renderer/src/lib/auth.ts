@@ -37,7 +37,9 @@ export class SignInError extends Error {
   }
 }
 
-type RelayErrorReason = 'rejected' | 'expired' | 'no_identity';
+const RELAY_SETUP_TIMEOUT_MS = 15_000;
+
+type RelayErrorReason = 'rejected' | 'expired' | 'no_identity' | 'unavailable';
 
 export class RelayError extends Error {
   constructor(
@@ -318,13 +320,24 @@ export class AuthServerProvider {
         ? io(base.origin, { path: `${path}/socket.io`, transports: ['websocket'] })
         : io(url, { transports: ['websocket'] });
 
-    await new Promise<void>(resolve => {
-      const onConnect = () => {
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(deadline);
         socket.off('connect', onConnect);
+        socket.off('connect_error', onFailure);
+      };
+      const onConnect = () => {
+        cleanup();
         resolve();
       };
-
+      const onFailure = () => {
+        cleanup();
+        socket.disconnect();
+        reject(new RelayError('unavailable', 'Could not connect to the signing relay. Try again.'));
+      };
+      const deadline = setTimeout(onFailure, RELAY_SETUP_TIMEOUT_MS);
       socket.on('connect', onConnect);
+      socket.on('connect_error', onFailure);
     });
 
     return socket;
@@ -338,11 +351,20 @@ export class AuthServerProvider {
     socket: Socket,
     payload: Payload & { authChain?: AuthChain },
   ) => {
-    const response = await socket.emitWithAck('request', {
-      method: payload.method,
-      params: payload.params,
-      authChain: payload.authChain,
-    });
+    const response = await socket
+      .timeout(RELAY_SETUP_TIMEOUT_MS)
+      .emitWithAck('request', {
+        method: payload.method,
+        params: payload.params,
+        authChain: payload.authChain,
+      })
+      .catch(() => {
+        socket.disconnect();
+        throw new RelayError(
+          'unavailable',
+          'The signing relay did not acknowledge the request. Try again.',
+        );
+      });
 
     if (response.error) {
       socket.disconnect();
