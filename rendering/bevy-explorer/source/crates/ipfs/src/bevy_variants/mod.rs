@@ -94,7 +94,7 @@ const RECENT_FALLBACKS: usize = 20;
 
 /// What a supported variant's bytes are handed to the loaders as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Decoded {
+pub enum ContentFilePayloadKind {
     /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), which the image loaders unwrap
     /// to the DDS they decode.
     BcTexture,
@@ -121,7 +121,7 @@ pub struct SupportedFormat {
     pub without_extension: bool,
     /// The GPU must decode BC textures.
     pub needs_bc: bool,
-    pub decoded: Decoded,
+    pub payload_kind: ContentFilePayloadKind,
 }
 
 impl SupportedFormat {
@@ -142,7 +142,7 @@ pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
         extensions: &TEXTURE_EXTENSIONS,
         without_extension: true,
         needs_bc: true,
-        decoded: Decoded::BcTexture,
+        payload_kind: ContentFilePayloadKind::BcTexture,
     },
     SupportedFormat {
         kind: "model",
@@ -150,7 +150,7 @@ pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
         extensions: &MODEL_EXTENSIONS,
         without_extension: false,
         needs_bc: true,
-        decoded: Decoded::BcGlb,
+        payload_kind: ContentFilePayloadKind::BcGlb,
     },
     // web only: the browser decodes the Brotli copy; native has no decoder on its http client
     #[cfg(target_arch = "wasm32")]
@@ -160,12 +160,12 @@ pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
         extensions: &MODEL_EXTENSIONS,
         without_extension: false,
         needs_bc: false,
-        decoded: Decoded::BrotliGlb,
+        payload_kind: ContentFilePayloadKind::BrotliGlb,
     },
 ];
 
 /// The row for a manifest variant's `kind`/`format`, if this client takes it.
-pub fn supported_format(variant: &Variant) -> Option<&'static SupportedFormat> {
+pub fn supported_format(variant: &ContentFileVariant) -> Option<&'static SupportedFormat> {
     SUPPORTED_FORMATS
         .iter()
         .find(|row| row.kind == variant.kind && row.format == variant.format)
@@ -182,11 +182,15 @@ pub fn taken_formats() -> String {
     // the formats grouped by what they are handed to the loaders as, in table order
     let mut groups: Vec<(Vec<&str>, &str)> = Vec::new();
     for row in SUPPORTED_FORMATS {
-        let how = match row.decoded {
-            Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
+        let how = match row.payload_kind {
+            ContentFilePayloadKind::BcTexture => {
+                "BC1/BC5/BC7, unwrapped to DDS by the image loaders"
+            }
             #[cfg(target_arch = "wasm32")]
-            Decoded::BrotliGlb => "Brotli, decoded by the browser",
-            Decoded::BcGlb => "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader",
+            ContentFilePayloadKind::BrotliGlb => "Brotli, decoded by the browser",
+            ContentFilePayloadKind::BcGlb => {
+                "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader"
+            }
         };
         match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
             Some((formats, _)) => formats.push(row.format),
@@ -235,17 +239,17 @@ const FAR_LOD_SUFFIX: &str = "_1.glb";
 /// names. The path also identifies it (failed variants, caches): abgen keeps a path's bytes
 /// fixed for the life of its generation.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Variant {
+pub struct ContentFileVariant {
     /// Relative to the base: `bevy/{prefix}/{name}`.
     pub path: String,
     pub kind: String,
     pub format: String,
 }
 
-impl Variant {
+impl ContentFileVariant {
     /// The variant at `path`, when it is `bevy/{prefix}/{name}` with plain segments and its
     /// prefix letter is a class the schema names; anything else is dropped.
-    pub fn from_path(path: &str) -> Option<Variant> {
+    pub fn from_path(path: &str) -> Option<ContentFileVariant> {
         if !is_variant_path(path) {
             return None;
         }
@@ -256,7 +260,7 @@ impl Variant {
             b'g' => ("model", "glb"),
             _ => return None,
         };
-        Some(Variant {
+        Some(ContentFileVariant {
             path: path.to_owned(),
             kind: kind.to_owned(),
             format: format.to_owned(),
@@ -270,7 +274,7 @@ pub struct Manifest {
     /// panel; the client does not act on it.
     pub lanes: BTreeMap<String, String>,
     /// Variants by original content CID, in the manifest's order of preference.
-    pub files: HashMap<String, Vec<Variant>>,
+    pub files: HashMap<String, Vec<ContentFileVariant>>,
 }
 
 #[derive(Deserialize)]
@@ -296,7 +300,7 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
         .map(|(original, paths)| {
             let variants: Vec<_> = paths
                 .iter()
-                .filter_map(|path| Variant::from_path(path))
+                .filter_map(|path| ContentFileVariant::from_path(path))
                 .collect();
             (original, variants)
         })
@@ -351,18 +355,18 @@ pub fn could_have_variant(file_path: &str) -> bool {
 
 /// Whether this client can load `variant` at `file_path`: a supported format, for a file type
 /// it may replace, on a GPU that has what it needs (`bc`: BC texture support).
-pub fn supports(variant: &Variant, file_path: &str, bc: bool) -> bool {
+pub fn supports(variant: &ContentFileVariant, file_path: &str, bc: bool) -> bool {
     supported_format(variant)
         .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(file_path))
 }
 
 /// The first variant this client supports that has not failed this session.
 pub fn select_variant<'a>(
-    variants: &'a [Variant],
+    variants: &'a [ContentFileVariant],
     file_path: &str,
     bc: bool,
     is_bad: impl Fn(&str) -> bool,
-) -> Option<&'a Variant> {
+) -> Option<&'a ContentFileVariant> {
     variants
         .iter()
         .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.path))
@@ -572,7 +576,7 @@ impl BevyVariants {
         self.session.lock_ignore_poison().bad.contains(variant)
     }
 
-    /// The variant `manifest` gives `file`, whose original is `original`, with how it is decoded
+    /// The variant `manifest` gives `file`, whose original is `original`, with its payload kind
     /// and the url it is read from; else the original is read, and why when that is worth
     /// reporting.
     fn choose(
@@ -581,7 +585,7 @@ impl BevyVariants {
         manifest: &Manifest,
         original: &str,
         file: &str,
-    ) -> Result<(Variant, Decoded, String), Option<String>> {
+    ) -> Result<(ContentFileVariant, ContentFilePayloadKind, String), Option<String>> {
         let options = manifest.files.get(original).ok_or(None)?;
         if self.disabled().is_some() {
             return Err(None);
@@ -603,16 +607,18 @@ impl BevyVariants {
         let variant = select_variant(options, file, bc, |path| self.is_bad(path))
             .ok_or(None)?
             .clone();
-        let decoded = supported_format(&variant).ok_or(None)?.decoded;
+        let payload_kind = supported_format(&variant).ok_or(None)?.payload_kind;
         // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
         // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
         // own path is fetched and the server sends the copy to a client that accepts `br`
-        let url = match decoded {
-            Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+        let url = match payload_kind {
+            ContentFilePayloadKind::BcTexture | ContentFilePayloadKind::BcGlb => {
+                format!("{base}/{}", variant.path)
+            }
             #[cfg(target_arch = "wasm32")]
-            Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
+            ContentFilePayloadKind::BrotliGlb => format!("{base}/{}.br", variant.path),
         };
-        Ok((variant, decoded, url))
+        Ok((variant, payload_kind, url))
     }
 
     /// The url of the variant a read of `ipfs_path`, whose original is `original`, would take
@@ -644,7 +650,7 @@ impl BevyVariants {
         }
     }
 
-    fn fail(&self, scene: &str, file: &str, variant: Option<&Variant>, reason: String) {
+    fn fail(&self, scene: &str, file: &str, variant: Option<&ContentFileVariant>, reason: String) {
         let mut session = self.session.lock_ignore_poison();
         if let Some(variant) = variant {
             session.bad.insert(variant.path.clone());
@@ -1078,7 +1084,7 @@ impl IpfsIo {
             .collection
             .hash(file)?
             .into_owned();
-        let (variant, decoded, url) = match variants.choose(base, &manifest, &original, file) {
+        let (variant, payload_kind, url) = match variants.choose(base, &manifest, &original, file) {
             Ok(chosen) => chosen,
             Err(reason) => {
                 if let Some(reason) = reason {
@@ -1144,11 +1150,11 @@ impl IpfsIo {
 
         // checks that need no decoding; a copy that fails them is dropped from the cache too,
         // so a later session does not read it again
-        let rejected = match decoded {
+        let rejected = match payload_kind {
             // the loaders unwrap the KTX2 (`ktx2::bc_ktx2_dds`), inside the asset load; here
             // only its header is read, so a file that is not a BC KTX2 at all falls back
             // before it reaches them
-            Decoded::BcTexture => ktx2::bc_format(&fetched)
+            ContentFilePayloadKind::BcTexture => ktx2::bc_format(&fetched)
                 .err()
                 .map(|reason| format!("invalid KTX2: {reason}")),
             // the browser hands over the decoded bytes, which are the original `.glb` byte for
@@ -1156,7 +1162,7 @@ impl IpfsIo {
             // copy falls back here, and one that passes is the original, so a glTF loader
             // failure on it is the original's own and needs no reload
             #[cfg(target_arch = "wasm32")]
-            Decoded::BrotliGlb => {
+            ContentFilePayloadKind::BrotliGlb => {
                 (!content_hash::matches_content_hash(&original, &fetched)).then(|| {
                     format!(
                         "{} bytes from the Brotli copy are not the original `{original}`",
@@ -1168,7 +1174,7 @@ impl IpfsIo {
             // unwraps BC to DDS inside the asset load; here only the GLB magic is read. An image
             // that does not unwrap fails the `Gltf` load, which reloads the original
             // (`fall_back_from_failed_variants::<Gltf>`)
-            Decoded::BcGlb => (!fetched.starts_with(b"glTF"))
+            ContentFilePayloadKind::BcGlb => (!fetched.starts_with(b"glTF"))
                 .then(|| "invalid glb variant: not a binary glTF".to_owned()),
         };
         if let Some(reason) = rejected {

@@ -37,8 +37,8 @@ fn served_path(id: &str) -> String {
     served_path_of("ktx2-bc", id)
 }
 
-fn variant(id: &str, kind: &str, format: &str) -> Variant {
-    Variant {
+fn variant(id: &str, kind: &str, format: &str) -> ContentFileVariant {
+    ContentFileVariant {
         path: served_path_of(format, id),
         kind: kind.to_owned(),
         format: format.to_owned(),
