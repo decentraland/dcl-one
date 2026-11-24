@@ -193,17 +193,29 @@ fn invalid_data(save: &CollectionSave, signer: &str) -> ApiError {
         .with_data(json!({ "id": save.id, "eth_address": signer }))
 }
 
+/// What a save whose `initialize` data names a token metadata base other
+/// than the network's or this node's is told.
+pub const FOREIGN_BASE_URI: &str =
+    "The collection's token metadata base is neither this node's nor the network's";
+
 /// The salt and contract address on `network` of a standard save whose
 /// signer may save it: `data` must be `initialize` calldata naming the
-/// signer.
+/// signer and, as its token metadata base, the network's or the one the
+/// node at `node` serves.
 pub fn standard_deployment(
     network: &Network,
+    node: &str,
     save: &CollectionSave,
     signer: &str,
 ) -> Result<Deployment, ApiError> {
     standard_request(save, signer)?;
     let data = save.data.as_deref().unwrap_or_default();
-    let bytes = contract::initialize_for(data, signer).ok_or_else(|| invalid_data(save, signer))?;
+    let (bytes, base_uri) =
+        contract::initialize_for(data, signer).ok_or_else(|| invalid_data(save, signer))?;
+    if !network.serves_token_metadata(&base_uri, node) {
+        return Err(ApiError::bad_request(FOREIGN_BASE_URI)
+            .with_data(json!({ "id": save.id, "base_uri": base_uri })));
+    }
     let salt = contract::salt(&save.id);
     Ok(Deployment {
         contract_address: contract::address(network, salt, &bytes),
@@ -663,7 +675,7 @@ mod tests {
             );
         }
         save.data = Some("0x00".into());
-        let refused = standard_deployment(&crate::network::POLYGON, &save, owner)
+        let refused = standard_deployment(&crate::network::POLYGON, "", &save, owner)
             .err()
             .unwrap();
         assert_eq!(
