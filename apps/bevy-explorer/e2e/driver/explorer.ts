@@ -571,7 +571,7 @@ export interface CapturedShot {
 }
 
 export interface CaptureSequenceOptions extends ScreenshotOptions {
-  /** 1 to 20, default 5 */
+  /** 1 to 20; 5 when not given */
   count?: number
   /** 0.05 to 2, default 0.5 */
   intervalSeconds?: number
@@ -598,7 +598,7 @@ export interface CapturedFrame {
   savedTo?: string
 }
 
-/** A `/capture_sequence` reply: paths, never images. */
+/** A `/screenshot --count` reply: paths, never images. */
 export interface CaptureSequence {
   directory: string
   stored: 'disk' | 'memory'
@@ -618,9 +618,9 @@ export interface CaptureSequence {
   warning?: string
 }
 
-/** `/capture_state`: the capture gate. */
+/** `/screenshot --state`: the capture gate. */
 export interface CaptureState {
-  holder: 'screenshot' | 'capture_sequence' | 'none'
+  holder: 'screenshot' | 'screenshot --count' | 'none'
   framesTaken: number
   count: number
   worldOnly: boolean
@@ -633,14 +633,14 @@ function captureFlags(options: ScreenshotOptions): string {
 }
 
 /** Writes the frames a sequence kept in the engine's memory (`stored: "memory"`) into `dir`, read
- *  with `/capture_frame`, and names each file in its `savedTo`. A sequence on disk is returned as is. */
+ *  with `/screenshot --frame`, and names each file in its `savedTo`. A sequence on disk is returned as is. */
 export async function saveCaptureFrames(explorer: Pick<Explorer, 'run'>, sequence: CaptureSequence, dir: string): Promise<CaptureSequence> {
   if (sequence.stored !== 'memory') return sequence
   await mkdir(dir, { recursive: true })
   const frames: CapturedFrame[] = []
   for (const frame of sequence.frames) {
     const file = path.join(dir, path.posix.basename(frame.path))
-    await writeFile(file, Buffer.from(await explorer.run(`/capture_frame ${frame.path}`), 'base64'))
+    await writeFile(file, Buffer.from(await explorer.run(`/screenshot --frame ${quoteWord(frame.path)}`), 'base64'))
     frames.push({ ...frame, savedTo: file })
   }
   return { ...sequence, frames }
@@ -1055,19 +1055,19 @@ export class Explorer {
   /** `count` frames `intervalSeconds` apart, as paths; with `saveTo`, frames the engine kept in
    *  memory (the web client) are written there too. */
   async captureSequence(options: CaptureSequenceOptions = {}): Promise<CaptureSequence> {
-    const flags = `${options.count === undefined ? '' : ` --count ${options.count}`}${options.intervalSeconds === undefined ? '' : ` --interval-seconds ${options.intervalSeconds}`}${captureFlags(options)}${options.dir ? ` --dir ${quoteWord(options.dir)}` : ''}`
-    const sequence = await this.json<CaptureSequence>(`/capture_sequence${flags}`)
+    const flags = ` --count ${options.count ?? 5}${options.intervalSeconds === undefined ? '' : ` --interval-seconds ${options.intervalSeconds}`}${captureFlags(options)}${options.dir ? ` --dir ${quoteWord(options.dir)}` : ''}`
+    const sequence = await this.json<CaptureSequence>(`/screenshot${flags}`)
     return options.saveTo ? saveCaptureFrames(this, sequence, options.saveTo) : sequence
   }
 
   /** The capture running now, if any, and what the last in-memory sequence keeps. */
   async captureState(): Promise<CaptureState> {
-    return this.json<CaptureState>('/capture_state')
+    return this.json<CaptureState>('/screenshot --state')
   }
 
   /** One frame of the last in-memory sequence, by its `path`. */
   async captureFrame(framePath: string): Promise<Buffer> {
-    return Buffer.from(await this.run(`/capture_frame ${framePath}`), 'base64')
+    return Buffer.from(await this.run(`/screenshot --frame ${quoteWord(framePath)}`), 'base64')
   }
 
   // --- input --------------------------------------------------------------------------------

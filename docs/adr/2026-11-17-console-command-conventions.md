@@ -39,9 +39,9 @@ does not have yet (durations, waits, entity ids) is added here with its first co
    `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
    form.
 3. **Gates, not queues.** A command that holds a shared resource refuses a second caller while it
-   runs: it fails with `{"refused": "<reason>", "cause": {"holder": "capture_sequence"}}`
-   (`reply::refusal`), the cause naming the holder. `/screenshot` and `/capture_sequence` share
-   one capture gate. Frames a command produces in bulk are returned as paths, never inline: files
+   runs: it fails with `{"refused": "<reason>", "cause": {"holder": "screenshot --count"}}`
+   (`reply::refusal`), the cause naming the holder. A single `/screenshot` and a
+   `/screenshot --count` sequence share one capture gate. Frames a command produces in bulk are returned as paths, never inline: files
    natively, and on the web, which cannot write the host's disk, a memory store read one frame
    at a time.
 

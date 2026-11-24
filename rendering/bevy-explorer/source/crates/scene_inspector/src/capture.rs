@@ -1,5 +1,5 @@
-//! `/screenshot` and `/capture_sequence`: frames of the primary window, read back at the end of
-//! the frame they were rendered in, through one capture job at a time (the gate; a second capture
+//! `/screenshot`, one frame or with `--count` a timed sequence: frames of the primary window, read
+//! back at the end of the frame they were rendered in, through one capture job at a time (the gate; a second capture
 //! is refused and the refusal names the holder). A job waits two frames, then for the camera's
 //! transition (at most 1.5 s), then captures; the frames are scaled and encoded on the IO task
 //! pool, which is off the main thread natively and on the engine's own thread on the web.
@@ -48,13 +48,10 @@ impl Plugin for CapturePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CaptureGate>();
         app.init_resource::<CaptureStore>();
-        app.add_console_command::<ScreenshotCommand, _>(screenshot_cmd);
-        app.add_console_command::<CaptureSequenceCommand, _>(capture_sequence_cmd);
-        app.add_console_command::<CaptureFrameCommand, _>(capture_frame_cmd);
-        app.add_console_command::<CaptureStateCommand, _>(capture_state_cmd)
+        app.add_console_command::<ScreenshotCommand, _>(screenshot_cmd)
             .add_debug_section(DebugSection {
                 title: "Frame capture",
-                query: "/capture_state",
+                query: "/screenshot --state",
                 fields: &[
                     ("Capture running", "holder"),
                     ("Frames taken", "framesTaken"),
@@ -77,91 +74,70 @@ pub struct WorldOnlyCapture;
 // --- /screenshot ---
 
 /// Capture the rendered frame of the primary window. With no option the reply is raw base64 PNG
-/// at full size (no `data:` prefix; the editor host's thumbnail contract). With any option it is
-/// JSON: `caption` (the image size, the screen and frame it was scaled from, the parcel, the
-/// camera wait), `format`, `width`, `height`, `frame`, `screen`, `parcel`, `worldOnly`,
-/// `blendWaitMs`, `image` (base64). Every capture, the bare one included, waits two frames and
-/// then for a camera transition (at most 1.5 s), and is refused while another capture runs.
+/// at full size (no `data:` prefix; the editor host's thumbnail contract). With `--max-width`,
+/// `--jpg` or `--world-only` it is JSON: `caption` (the image size, the screen and frame it was
+/// scaled from, the parcel, the camera wait), `format`, `width`, `height`, `frame`, `screen`,
+/// `parcel`, `worldOnly`, `blendWaitMs`, `image` (base64). Every capture, the bare one included,
+/// waits two frames and then for a camera transition (at most 1.5 s), and is refused while
+/// another capture runs.
+///
+/// `--count` captures a sequence instead: that many frames `--interval-seconds` apart (0.5 by
+/// default), scheduled from the first frame so encoding never delays the next, each at most
+/// `--max-width` wide (640 by default). Natively the frames are files under `--dir` (default: a
+/// new folder in the client's cache); a `--dir` that already holds frames is written over from
+/// `frame-000`, the rest left alone and counted in `staleFrames`. On the web they stay in memory,
+/// the last sequence only, and `--frame <path>` reads one as raw base64. JSON reply: `directory`
+/// (absolute), `stored` (disk or memory), `count`, `requestedIntervalSeconds`,
+/// `meanIntervalSeconds`, `late` (frames taken more than half an interval after their time),
+/// `screen`, `frames` (`path`, `tick` of the scene, `engineFrame`, `atSeconds`, `late`, ...). No
+/// image is inline.
+///
+/// `--state` captures nothing and replies with the capture gate, for the debug panel: `holder`
+/// (`screenshot`, `screenshot --count` or `none`), `framesTaken` and `count` of the running
+/// capture, `worldOnly`, and the `framesInMemory` and `bytesInMemory` the last in-memory sequence
+/// keeps.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/screenshot")]
 struct ScreenshotCommand {
-    /// scale the image down to at most this many pixels wide (64 to 1920)
+    /// scale the image down to at most this many pixels wide (64 to 1920; 640 for a sequence
+    /// when not given)
     #[arg(long, value_parser = clap::value_parser!(u32).range(64..=1920))]
     max_width: Option<u32>,
     /// encode as JPEG (quality 75) instead of PNG
     #[arg(long)]
     jpg: bool,
-    /// hide the HUD and the scenes' window UI for the captured frame
+    /// hide the HUD and the scenes' window UI while the capture runs
     #[arg(long)]
     world_only: bool,
+    /// capture a sequence of this many frames (1 to 20; the burst may span at most 20 s)
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=20))]
+    count: Option<u32>,
+    /// seconds between a sequence's frames (0.05 to 2; 0.5 when not given)
+    #[arg(long, requires = "count")]
+    interval_seconds: Option<f32>,
+    /// folder to write a sequence's frames to (native only; created if missing)
+    #[arg(long, requires = "count")]
+    dir: Option<PathBuf>,
+    /// read one frame of the last in-memory sequence, by the `path` its reply gave
+    /// (`capture://<sequence>/frame-<index>.<ext>`), instead of capturing
+    #[arg(
+        long,
+        conflicts_with_all = ["max_width", "jpg", "world_only", "count", "interval_seconds", "dir", "state"]
+    )]
+    frame: Option<String>,
+    /// read the capture gate, instead of capturing
+    #[arg(
+        long,
+        conflicts_with_all = ["max_width", "jpg", "world_only", "count", "interval_seconds", "dir"]
+    )]
+    state: bool,
 }
+
+const SEQUENCE_DEFAULT_INTERVAL_SECONDS: f32 = 0.5;
+const SEQUENCE_DEFAULT_MAX_WIDTH: u32 = 640;
 
 fn screenshot_cmd(
     mut input: ConsoleCommand<ScreenshotCommand>,
-    mut commands: Commands,
-    mut gate: ResMut<CaptureGate>,
-    time: Res<Time<Real>>,
-    mut console_responses: ResMut<PendingConsoleResponses>,
-) {
-    let Some(Ok(cmd)) = input.take() else {
-        return;
-    };
-    if let Some(refusal) = gate.refusal() {
-        input.reply_failed(refusal);
-        return;
-    }
-    let json = cmd.max_width.is_some() || cmd.jpg || cmd.world_only;
-    let (tx, rx) = oneshot::channel();
-    gate.job = Some(CaptureJob::new(
-        Kind::Shot { json },
-        Options {
-            max_width: cmd.max_width,
-            format: Format::from_jpg(cmd.jpg),
-            world_only: cmd.world_only,
-        },
-        tx,
-        time.elapsed_secs_f64(),
-        &mut commands,
-    ));
-    console_responses.push_oneshot(rx, |r| r, input.take_responder());
-}
-
-// --- /capture_sequence ---
-
-/// Capture `count` frames `interval-seconds` apart, scheduled from the first frame so encoding
-/// never delays the next. Natively the frames are files under `--dir` (default: a new folder in
-/// the client's cache); a `--dir` that already holds frames is written over from `frame-000`, the
-/// rest left alone and counted in `staleFrames`. On the web they stay in memory, the last sequence
-/// only, and `/capture_frame <path>` reads one. JSON reply: `directory` (absolute), `stored`
-/// (disk or memory), `count`,
-/// `requestedIntervalSeconds`, `meanIntervalSeconds`, `late` (frames taken more than half an
-/// interval after their time), `screen`, `frames` (`path`, `tick` of the scene, `engineFrame`,
-/// `atSeconds`, `late`, ...). No image is inline. Shares the gate with `/screenshot`.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/capture_sequence")]
-struct CaptureSequenceCommand {
-    /// frames to capture (1 to 20; the burst may span at most 20 s)
-    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..=20))]
-    count: u32,
-    /// seconds between frames (0.05 to 2)
-    #[arg(long, default_value_t = 0.5)]
-    interval_seconds: f32,
-    /// scale each frame down to at most this many pixels wide (64 to 1920)
-    #[arg(long, default_value_t = 640, value_parser = clap::value_parser!(u32).range(64..=1920))]
-    max_width: u32,
-    /// encode as JPEG (quality 75) instead of PNG
-    #[arg(long)]
-    jpg: bool,
-    /// hide the HUD and the scenes' window UI while the sequence runs
-    #[arg(long)]
-    world_only: bool,
-    /// folder to write the frames to (native only; created if missing)
-    #[arg(long)]
-    dir: Option<PathBuf>,
-}
-
-fn capture_sequence_cmd(
-    mut input: ConsoleCommand<CaptureSequenceCommand>,
     mut commands: Commands,
     mut gate: ResMut<CaptureGate>,
     mut store: ResMut<CaptureStore>,
@@ -171,31 +147,60 @@ fn capture_sequence_cmd(
     let Some(Ok(cmd)) = input.take() else {
         return;
     };
+    if cmd.state {
+        input.reply_ok(state_reply(&gate, &store));
+        return;
+    }
+    if let Some(path) = cmd.frame {
+        match stored_frame(&store, &path) {
+            Ok(frame) => input.reply_ok(frame),
+            Err(reason) => input.reply_failed(reason),
+        }
+        return;
+    }
     if let Some(refusal) = gate.refusal() {
         input.reply_failed(refusal);
         return;
     }
-    if let Err(reason) = check_burst(cmd.count, cmd.interval_seconds) {
-        input.reply_failed(reply::refusal(reason, None));
-        return;
-    }
-    let target = match capture_target(cmd.dir, &mut store) {
-        Ok(target) => target,
-        Err(reason) => {
-            input.reply_failed(reply::refusal(reason, None));
-            return;
+    let format = Format::from_jpg(cmd.jpg);
+    let (kind, max_width) = match cmd.count {
+        None => (
+            Kind::Shot {
+                json: cmd.max_width.is_some() || cmd.jpg || cmd.world_only,
+            },
+            cmd.max_width,
+        ),
+        Some(count) => {
+            let interval = cmd
+                .interval_seconds
+                .unwrap_or(SEQUENCE_DEFAULT_INTERVAL_SECONDS);
+            if let Err(reason) = check_burst(count, interval) {
+                input.reply_failed(reply::refusal(reason, None));
+                return;
+            }
+            let target = match capture_target(cmd.dir, &mut store) {
+                Ok(target) => target,
+                Err(reason) => {
+                    input.reply_failed(reply::refusal(reason, None));
+                    return;
+                }
+            };
+            (
+                Kind::Sequence {
+                    count: count as usize,
+                    interval: interval as f64,
+                    target,
+                },
+                Some(cmd.max_width.unwrap_or(SEQUENCE_DEFAULT_MAX_WIDTH)),
+            )
         }
     };
     let (tx, rx) = oneshot::channel();
     gate.job = Some(CaptureJob::new(
-        Kind::Sequence {
-            count: cmd.count as usize,
-            interval: cmd.interval_seconds as f64,
-            target,
-        },
+        kind,
         Options {
-            max_width: Some(cmd.max_width),
-            format: Format::from_jpg(cmd.jpg),
+            max_width,
+            format,
             world_only: cmd.world_only,
         },
         tx,
@@ -227,7 +232,7 @@ fn capture_target(dir: Option<PathBuf>, store: &mut CaptureStore) -> Result<Targ
     let folder = match dir {
         Some(dir) if cfg!(target_arch = "wasm32") => {
             return Err(format!(
-                "the web client cannot write files ({}); omit --dir, the frames stay in memory for /capture_frame",
+                "the web client cannot write files ({}); omit --dir, the frames stay in memory for /screenshot --frame",
                 dir.display()
             ))
         }
@@ -257,59 +262,30 @@ fn capture_target(dir: Option<PathBuf>, store: &mut CaptureStore) -> Result<Targ
     }
 }
 
-// --- /capture_frame ---
-
-/// One frame of the last in-memory `/capture_sequence` (the web client's), by the `path` its reply
-/// gave, as raw base64.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/capture_frame")]
-struct CaptureFrameCommand {
-    /// the frame's `path`, `capture://<sequence>/frame-<index>.<ext>`
-    path: String,
-}
-
-fn capture_frame_cmd(mut input: ConsoleCommand<CaptureFrameCommand>, store: Res<CaptureStore>) {
-    let Some(Ok(cmd)) = input.take() else {
-        return;
-    };
-    match store.frames.iter().find(|(path, _)| *path == cmd.path) {
-        Some((_, bytes)) => input.reply_ok(BASE64_STANDARD.encode(bytes)),
-        None => input.reply_failed(format!(
-            "no frame {} in memory: only the last in-memory sequence ({}) is kept",
-            cmd.path,
+/// One frame of the last in-memory sequence (the web client's), by the `path` its reply gave, as
+/// raw base64.
+fn stored_frame(store: &CaptureStore, path: &str) -> Result<String, String> {
+    match store.frames.iter().find(|(stored, _)| stored == path) {
+        Some((_, bytes)) => Ok(BASE64_STANDARD.encode(bytes)),
+        None => Err(format!(
+            "no frame {path} in memory: only the last in-memory sequence ({}) is kept",
             store.directory()
         )),
     }
 }
 
-// --- /capture_state ---
-
-/// The capture gate, for the debug panel: `holder` (`screenshot`, `capture_sequence` or `none`),
-/// `framesTaken` and `count` of the running capture, `worldOnly`, and the `framesInMemory` and
-/// `bytesInMemory` the last in-memory sequence keeps.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/capture_state")]
-struct CaptureStateCommand;
-
-fn capture_state_cmd(
-    mut input: ConsoleCommand<CaptureStateCommand>,
-    gate: Res<CaptureGate>,
-    store: Res<CaptureStore>,
-) {
-    if let Some(Ok(_)) = input.take() {
-        let job = gate.job.as_ref();
-        input.reply_ok(
-            json!({
-                "holder": job.map_or("none", CaptureJob::holder),
-                "framesTaken": job.map_or(0, |job| job.frames.len()),
-                "count": job.map_or(0, CaptureJob::count),
-                "worldOnly": job.is_some_and(|job| job.options.world_only),
-                "framesInMemory": store.frames.len(),
-                "bytesInMemory": store.frames.iter().map(|(_, bytes)| bytes.len()).sum::<usize>(),
-            })
-            .to_string(),
-        );
-    }
+/// The capture gate and what the last in-memory sequence keeps, as JSON.
+fn state_reply(gate: &CaptureGate, store: &CaptureStore) -> String {
+    let job = gate.job.as_ref();
+    json!({
+        "holder": job.map_or("none", CaptureJob::holder),
+        "framesTaken": job.map_or(0, |job| job.frames.len()),
+        "count": job.map_or(0, CaptureJob::count),
+        "worldOnly": job.is_some_and(|job| job.options.world_only),
+        "framesInMemory": store.frames.len(),
+        "bytesInMemory": store.frames.iter().map(|(_, bytes)| bytes.len()).sum::<usize>(),
+    })
+    .to_string()
 }
 
 // --- the job ---
@@ -460,7 +436,7 @@ impl CaptureJob {
     fn holder(&self) -> &'static str {
         match self.kind {
             Kind::Shot { .. } => "screenshot",
-            Kind::Sequence { .. } => "capture_sequence",
+            Kind::Sequence { .. } => "screenshot --count",
         }
     }
 
@@ -882,7 +858,7 @@ fn build_reply(
             let read = match target {
                 Target::Disk(_) => "frames are files, read only the ones you need",
                 Target::Memory(_) => {
-                    "frames stay in memory until the next sequence; read one with /capture_frame <path>"
+                    "frames stay in memory until the next sequence; read one with /screenshot --frame <path>"
                 }
             };
             let mut reply = json!({
@@ -938,6 +914,59 @@ fn stale_frames(folder: &std::path::Path, written: &[Encoded]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(args: &[&str]) -> Result<ScreenshotCommand, clap::Error> {
+        use clap::Parser;
+        ScreenshotCommand::try_parse_from(
+            std::iter::once("/screenshot").chain(args.iter().copied()),
+        )
+    }
+
+    #[test]
+    fn the_sequence_flags_need_a_count_and_the_reads_stand_alone() {
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["--max-width", "640", "--jpg", "--world-only"]).is_ok());
+        let sequence = parse(&[
+            "--count",
+            "3",
+            "--interval-seconds",
+            "0.1",
+            "--dir",
+            "frames",
+        ])
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(sequence.count, Some(3));
+        assert_eq!(sequence.interval_seconds, Some(0.1));
+        assert!(parse(&["--interval-seconds", "0.1"]).is_err());
+        assert!(parse(&["--dir", "frames"]).is_err());
+        assert!(parse(&["--count", "21"]).is_err());
+        assert!(parse(&["--frame", "capture://1/frame-000.png"]).is_ok());
+        assert!(parse(&["--frame", "capture://1/frame-000.png", "--count", "2"]).is_err());
+        assert!(parse(&["--frame", "capture://1/frame-000.png", "--state"]).is_err());
+        assert!(parse(&["--state"]).is_ok());
+        assert!(parse(&["--state", "--jpg"]).is_err());
+    }
+
+    #[test]
+    fn a_stored_frame_is_read_by_its_path_and_the_state_counts_what_is_kept() {
+        let store = CaptureStore {
+            sequence: 2,
+            frames: vec![("capture://2/frame-000.png".to_owned(), vec![1, 2, 3])],
+        };
+        assert_eq!(
+            stored_frame(&store, "capture://2/frame-000.png"),
+            Ok(BASE64_STANDARD.encode([1, 2, 3]))
+        );
+        let missing = stored_frame(&store, "capture://1/frame-000.png").unwrap_err();
+        assert!(missing.contains("capture://2"), "{missing}");
+
+        let state: Value =
+            serde_json::from_str(&state_reply(&CaptureGate::default(), &store)).unwrap();
+        assert_eq!(state["holder"], "none");
+        assert_eq!(state["count"], 0);
+        assert_eq!(state["framesInMemory"], 1);
+        assert_eq!(state["bytesInMemory"], 3);
+    }
 
     #[test]
     fn a_burst_longer_than_twenty_seconds_is_refused() {
@@ -1235,9 +1264,9 @@ mod tests {
         let refusal: Value = serde_json::from_str(&refusal).unwrap();
         assert_eq!(
             refusal["refused"],
-            "a capture is already in progress (capture_sequence); retry when it completes"
+            "a capture is already in progress (screenshot --count); retry when it completes"
         );
-        assert_eq!(refusal["cause"]["holder"], "capture_sequence");
+        assert_eq!(refusal["cause"]["holder"], "screenshot --count");
         assert!(CaptureGate::default().refusal().is_none());
     }
 }

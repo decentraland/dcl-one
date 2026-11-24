@@ -137,7 +137,7 @@ struct PageEnvelope(serde_json::Value);
 #[derive(Component)]
 struct HudUiNode;
 
-/// A photo, or a `--world-only` `/screenshot` or `/capture_sequence`, is being captured.
+/// A photo, or a `--world-only` `/screenshot` (one frame or a sequence), is being captured.
 type Capturing = Or<(
     With<camera_reel::CapturingPhoto>,
     With<scene_inspector::WorldOnlyCapture>,

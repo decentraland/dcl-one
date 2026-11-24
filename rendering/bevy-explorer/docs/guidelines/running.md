@@ -345,12 +345,13 @@ State, in every build:
   blend` or `, camera still blending after N ms -- the frame may be mid-transition`, `N` being
   `blendWaitMs`. On the
   web the capture is the engine's canvas, never the page's HUD, and the reply's `info` says so.
-  One capture runs at a time: another `/screenshot` or `/capture_sequence` fails with
+  One capture runs at a time, a single frame or a sequence: another fails with
   `{"refused": "a capture is already in progress (<holder>); retry when it completes", "cause":
-  {"holder"}}`.
-- `/capture_sequence [--count N] [--interval-seconds S] [--max-width N] [--jpg] [--world-only]
-  [--dir <path>]`: `count` frames (1 to 20, default 5) `S` seconds apart (0.05 to 2, default
-  0.5; the burst spans at most 20 s), each scaled to `--max-width` (default 640). The schedule
+  {"holder"}}`, the holder `screenshot` or `screenshot --count`.
+- `/screenshot --count N [--interval-seconds S] [--max-width N] [--jpg] [--world-only]
+  [--dir <path>]`: a sequence of `N` frames (1 to 20) `S` seconds apart (0.05 to 2, default
+  0.5; the burst spans at most 20 s), each scaled to `--max-width` (default 640).
+  `--interval-seconds` and `--dir` need `--count`. The schedule
   runs from the first frame, so encoding never delays the next. Natively the frames are files in
   `--dir` (created; a relative path is the client's working directory's) or a new
   `captures/capture-<ms>` folder in the client's cache, and `directory` and each `path` are
@@ -359,16 +360,18 @@ State, in every build:
   then carries `staleFrames` (their count) and a `warning`: read only the paths in `frames`, or
   give each sequence its own folder. The web client
   cannot write the host's disk, refuses `--dir` and keeps the frames in memory (the last sequence
-  only), `capture://<n>/frame-000.png`, which `/capture_frame <path>` returns as base64. JSON
+  only), `capture://<n>/frame-000.png`, which `/screenshot --frame <path>` returns as raw base64
+  (`--frame` takes no other flag). JSON
   reply, no image: `directory`, `stored` (`disk` or `memory`), `count`, `format`, `worldOnly`,
   `requestedIntervalSeconds`, `meanIntervalSeconds` (null for one frame), `late` (frames taken
   more than half an interval after their time), `screen`, `parcel`, `note`, and `frames` (`index`,
   `path`, `width`, `height`, `bytes`, `atSeconds` from the first, `intervalFromPreviousSeconds`,
   `engineFrame`, `tick` of the scene `/set_scene` chose, else the one under the player, `late`).
   It shares the gate and the camera
-  wait with `/screenshot`.
-- `/capture_state`: the capture gate as JSON, the Frame capture section of the debug panel:
-  `holder` (`screenshot`, `capture_sequence` or `none`), `framesTaken` and `count` of the running
+  wait with a single frame.
+- `/screenshot --state` (no other flag): captures nothing and replies the capture gate as JSON,
+  the Frame capture section of the debug panel:
+  `holder` (`screenshot`, `screenshot --count` or `none`), `framesTaken` and `count` of the running
   capture, `worldOnly`, and the `framesInMemory` and `bytesInMemory` the last in-memory sequence
   keeps.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:

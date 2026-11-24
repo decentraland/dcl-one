@@ -535,12 +535,12 @@ describe('Explorer', () => {
   })
 
   test('captureState and captureFrame read the gate and one frame in memory', async () => {
-    const state = { holder: 'capture_sequence', framesTaken: 1, count: 3, worldOnly: true, framesInMemory: 0, bytesInMemory: 0 }
-    const fake = new FakeConsole({ capture_state: JSON.stringify(state), capture_frame: Buffer.from('frame').toString('base64') })
+    const state = { holder: 'screenshot --count', framesTaken: 1, count: 3, worldOnly: true, framesInMemory: 0, bytesInMemory: 0 }
+    const fake = new FakeConsole({ screenshot: (line) => (line === '/screenshot --state' ? JSON.stringify(state) : Buffer.from('frame').toString('base64')) })
     const explorer = new Explorer(fake)
     assert.deepEqual(await explorer.captureState(), state)
     assert.equal((await explorer.captureFrame('capture://2/frame-001.png')).toString(), 'frame')
-    assert.deepEqual(fake.lines, ['/capture_state', '/capture_frame capture://2/frame-001.png'])
+    assert.deepEqual(fake.lines, ['/screenshot --state', '/screenshot --frame capture://2/frame-001.png'])
   })
 
   test('saveCaptureFrames writes frames kept in memory and leaves a sequence on disk alone', async () => {
@@ -559,18 +559,21 @@ describe('Explorer', () => {
       frames: paths.map((framePath, index) => ({ ...frame, index, path: framePath })),
       note: ''
     })
-    const fake = new FakeConsole({ capture_frame: (line) => Buffer.from(line.split(' ')[1]!).toString('base64'), capture_sequence: JSON.stringify(sequence('memory', ['capture://3/frame-000.png'])) })
+    const fake = new FakeConsole({
+      screenshot: (line) => (line.startsWith('/screenshot --frame ') ? Buffer.from(line.split(' ')[2]!).toString('base64') : JSON.stringify(sequence('memory', ['capture://3/frame-000.png'])))
+    })
+    const frameReads = (): string[] => fake.sent('screenshot').filter((line) => line.includes(' --frame '))
     const explorer = new Explorer(fake)
     const dir = await mkdtemp(path.join(tmpdir(), 'capture-'))
     try {
       const saved = await saveCaptureFrames(explorer, sequence('memory', ['capture://3/frame-000.png', 'capture://3/frame-001.png']), dir)
       assert.deepEqual(saved.frames.map((f) => f.savedTo), [path.join(dir, 'frame-000.png'), path.join(dir, 'frame-001.png')])
       assert.equal(await readFile(path.join(dir, 'frame-001.png'), 'utf8'), 'capture://3/frame-001.png')
-      assert.deepEqual(fake.sent('capture_frame'), ['/capture_frame capture://3/frame-000.png', '/capture_frame capture://3/frame-001.png'])
+      assert.deepEqual(frameReads(), ['/screenshot --frame capture://3/frame-000.png', '/screenshot --frame capture://3/frame-001.png'])
 
       const onDisk = sequence('disk', ['/frames/frame-000.png'])
       assert.equal(await saveCaptureFrames(explorer, onDisk, dir), onDisk)
-      assert.equal(fake.sent('capture_frame').length, 2)
+      assert.equal(frameReads().length, 2)
 
       const viaOption = await explorer.captureSequence({ count: 1, saveTo: dir })
       assert.equal(viaOption.frames[0]!.savedTo, path.join(dir, 'frame-000.png'))
@@ -581,17 +584,19 @@ describe('Explorer', () => {
 
   test('screenshot with options reads the caption; captureSequence passes its flags', async () => {
     const shot = { caption: '640x325 (screen 1600x813, frame 3200x1626) full-view capture', format: 'jpg', width: 640, image: Buffer.from('jpg').toString('base64') }
-    const fake = new FakeConsole({ screenshot: JSON.stringify(shot), capture_sequence: '{"stored":"disk","frames":[]}' })
+    const fake = new FakeConsole({ screenshot: (line) => (line.includes(' --count ') ? '{"stored":"disk","frames":[]}' : JSON.stringify(shot)) })
     const explorer = new Explorer(fake)
     const read = await explorer.screenshot({ maxWidth: 640, jpg: true })
     assert.equal(read.caption, shot.caption)
     assert.equal(read.image.toString(), 'jpg')
     await explorer.screenshot({ worldOnly: true })
     await explorer.captureSequence({ count: 3, intervalSeconds: 0.1, maxWidth: 320, dir: '/tmp/a b' })
+    await explorer.captureSequence()
     assert.deepEqual(fake.lines, [
       '/screenshot --max-width 640 --jpg',
       '/screenshot --world-only',
-      '/capture_sequence --count 3 --interval-seconds 0.1 --max-width 320 --dir "/tmp/a b"'
+      '/screenshot --count 3 --interval-seconds 0.1 --max-width 320 --dir "/tmp/a b"',
+      '/screenshot --count 5'
     ])
   })
 
