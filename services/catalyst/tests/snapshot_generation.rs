@@ -503,7 +503,17 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         None,
     )
     .await;
+    let recorder = content_recorder();
+    let metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let (rows, summary) = generator.generate(end).await.unwrap();
+    drop(metrics);
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("interval_size", "week"), ("reason", "is_outdated")]
+        ),
+        1.0
+    );
     assert_eq!((summary.generated, summary.reused), (1, 3));
     assert_ne!(rows[2].hash, golden[2].hash);
     assert_eq!(rows[2].number_of_entities, 4);
