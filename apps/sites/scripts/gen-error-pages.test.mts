@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { FRAGMENT_SHADER, VERTEX_SHADER } from "@dcl/one-ui/components/AnimatedBackground/shaders";
+import { FRAGMENT_SHADER, VERTEX_SHADER } from "@dcl/one-ui";
 import { ART_FILES, isRetryable, STATIC_ERROR_STATUSES, statusCopy } from "@dcl/one-ui/apps/sites/status/statusCopy";
 
 const SITES = fileURLToPath(new URL("../", import.meta.url));

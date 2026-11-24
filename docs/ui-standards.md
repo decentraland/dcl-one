@@ -212,7 +212,9 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   fails when a script under `apps/`, `library/` (outside `library/ui`) or
   `tooling/` names a `@dcl/one-ui/<path>` module other than a stylesheet. It
   still accepts the app-scoped `@dcl/one-ui/apps/` paths until
-  `library/ui/index.ts` exports those modules.
+  `library/ui/index.ts` exports those modules, and the file and specifier
+  pairs its `SHARED_IMPORT_KEPT` lists with a reason (a lazy `import()` that
+  must name the module so the bundler keeps its chunk).
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 

@@ -2,8 +2,16 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { AnimatedBackground, Button, CheckboxLabel, InputWebCreatorTools, WebSelect, WebTextarea } from "@dcl/one-ui";
-import { GeneralClose, GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
+import {
+  AnimatedBackground,
+  Button,
+  CheckboxLabel,
+  GeneralClose,
+  GeneralDecentralandColor,
+  InputWebCreatorTools,
+  WebSelect,
+  WebTextarea,
+} from "@dcl/one-ui";
 import SitesLayout from "../../components/chrome/SitesLayout";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";

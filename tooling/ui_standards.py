@@ -27,7 +27,8 @@ either kind, which is the floor of an unlisted one.
 fails, because shared foundations and components come from the `@dcl/one-ui`
 entry (docs/ui-standards.md, "Shared foundations and components"). Stylesheets
 (`.css`) and the app-scoped UI under `@dcl/one-ui/apps/` are not shared components
-and stay importable by path.
+and stay importable by path. SHARED_IMPORT_KEPT names the few file and specifier
+pairs kept by path on purpose, each with its reason.
 """
 import argparse
 import json
@@ -364,12 +365,14 @@ def check(base='HEAD', staged=False):
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
 SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
-# Files PR #2028 rewrites; it moves their foundation imports to @dcl/one-ui and empties this list.
-SHARED_IMPORT_PENDING = frozenset({
-    'apps/sites/src/features/not-found/NotFoundPage.tsx',
-    'apps/sites/src/features/social/report/ReportForm.tsx',
-    'apps/sites/src/features/social/report/ReportSuccess.tsx',
-})
+LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
+# Deep imports kept on purpose, each one file and one specifier with its reason.
+SHARED_IMPORT_KEPT = {
+    ('apps/ui3/src/shop/discovery/components/LivePromo.tsx', LAZY_ANIMATED_BACKGROUND):
+        'import() of the @dcl/one-ui entry keeps its whole namespace, which loses the lazy chunk',
+    ('apps/ui3/src/shop/discovery/components/LivePromo.test.tsx', LAZY_ANIMATED_BACKGROUND):
+        'vi.mock has to name the module LivePromo lazy-loads',
+}
 
 
 def deep_shared_imports(text):
@@ -382,12 +385,14 @@ def shared_import_issues(paths, read):
     issues = []
     for name in sorted(paths):
         if (not name.startswith(SHARED_IMPORT_ROOTS) or name.startswith('library/ui/')
-                or not name.endswith(SHARED_IMPORT_EXTENSIONS) or name in SHARED_IMPORT_PENDING):
+                or not name.endswith(SHARED_IMPORT_EXTENSIONS)):
             continue
         text = read(name)
         if '@dcl/one-ui/' not in text:
             continue
         for specifier in deep_shared_imports(text):
+            if (name, specifier) in SHARED_IMPORT_KEPT:
+                continue
             issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
     return issues
 

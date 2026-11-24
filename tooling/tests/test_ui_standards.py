@@ -59,12 +59,16 @@ class UiStandardsTest(unittest.TestCase):
             'rendering/bevy-explorer/source/react-web/src/App.tsx': deep,
             'apps/sites/README.md': deep,
             'apps/sites/src/Clean.tsx': 'import { NavBar } from "@dcl/one-ui"\n',
-            next(iter(ui_standards.SHARED_IMPORT_PENDING)): deep,
+            'apps/ui3/src/shop/discovery/components/LivePromo.tsx':
+                f'const A = lazy(() => import("{ui_standards.LAZY_ANIMATED_BACKGROUND}"))\n',
+            'apps/ui3/src/shop/discovery/components/LivePromo.test.tsx': deep,
+            'apps/ui3/src/Other.tsx': f'const A = lazy(() => import("{ui_standards.LAZY_ANIMATED_BACKGROUND}"))\n',
         }
         issues = ui_standards.shared_import_issues(sources, sources.__getitem__)
         self.assertEqual([issue.split(':')[0] for issue in issues],
-                         ['apps/sites/scripts/check.mts', 'apps/sites/src/Page.tsx', 'library/shop/cart.ts',
-                          'tooling/shop-parity/page.mts'])
+                         ['apps/sites/scripts/check.mts', 'apps/sites/src/Page.tsx',
+                          'apps/ui3/src/Other.tsx', 'apps/ui3/src/shop/discovery/components/LivePromo.test.tsx',
+                          'library/shop/cart.ts', 'tooling/shop-parity/page.mts'])
         self.assertIn("from '@dcl/one-ui' instead", issues[0])
 
     def test_shared_import_scope_empty(self):
