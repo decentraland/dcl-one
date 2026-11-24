@@ -119,6 +119,16 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     expect(fireEvent.click(shop)).toBe(true);
   });
 
+  test("a chrome that names this bar as its own renderer keeps the standalone bar instead of recursing", () => {
+    render(
+      <ChromeNavContext.Provider value={{ TopBar: DclTopBar }}>
+        <DclTopBar />
+      </ChromeNavContext.Provider>,
+    );
+    expect(screen.getByRole("banner")).toBeTruthy();
+    expect(screen.getByLabelText("Toggle navigation menu")).toBeTruthy();
+  });
+
   test("ChromeShell tabs read the same navigator", () => {
     const navigate = vi.fn<ChromeNavigate>(() => true);
     render(

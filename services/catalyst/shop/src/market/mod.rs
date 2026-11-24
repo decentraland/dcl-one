@@ -38,10 +38,13 @@
 //! `/v1/items`, `/v1/contracts`, `/v1/collections` and `/v1/prices` on a
 //! complete pass per configured network. Readers (`readers.rs`: first ≤ 100,
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
-//! `/v1/nfts`, the legacy legs of `/v1/orders` and `/v1/bids`, `/v1/sales`,
-//! `/v1/owners`, `/v1/accounts`, `/v1/rankings`, `/v1/volume`, the sales
-//! signal of the trending and creators rails, and the `/v1/users` routes
-//! over `graph.rs`. Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
+//! the LAND, estate and name pages of `/v1/nfts`, the legacy legs of
+//! `/v1/orders` and `/v1/bids`, `/v1/sales`, `/v1/owners`, `/v1/accounts`,
+//! `/v1/rankings`, `/v1/volume`, the sales signal of the trending and
+//! creators rails, and the `/v1/users` names over `graph.rs`. Wearable and
+//! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,
+//! the lambdas lists, profiles, outfits and the backpack) reads the nft
+//! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
 //! `/v1/activity` over the readers and the local trades (`activity.rs`),
@@ -86,6 +89,7 @@ pub mod nft_reads;
 pub mod nfts;
 pub mod notice_cursor;
 pub mod orders;
+pub mod owned_items;
 pub mod owners;
 pub mod prices;
 pub mod profiles;
@@ -100,6 +104,7 @@ pub mod search;
 pub mod shop;
 pub mod signed;
 pub mod third_party;
+pub mod third_party_registry;
 pub mod tips;
 pub mod trade_events;
 pub mod trades;
@@ -193,7 +198,7 @@ pub struct Settings {
     /// `RPC_ENDPOINT_POLYGON`: the POI list, and third-party ownership on
     /// the L2 of `ETH_NETWORK` (its `TRADE_RPC_URLS` entry otherwise).
     pub polygon_rpc_url: Option<String>,
-    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: the approved third-party providers.
+    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: approved providers on nodes without the local registry index.
     pub third_party_registry_subgraph_url: Option<String>,
     /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
     pub nft_worker_base_url: Option<String>,
@@ -526,8 +531,12 @@ pub struct MarketplaceState {
     pub settings: Settings,
     /// The subgraph readers (`chain_index`), shared with the other domains.
     pub index: Arc<ChainIndex>,
-    pub(crate) profile_cache: TtlMap<String, Value>,
-    pub(crate) by_owner_cache: TtlMap<(String, String, bool), Value>,
+    /// `(pointer, publications)` -> the processed profile (`Null`: none),
+    /// read under that publication of the nft index.
+    pub(crate) profile_cache: TtlMap<(String, owned_items::Publications), Value>,
+    /// `(owner, category, includeDefinitions, publications)`: an answer
+    /// read under another publication of the nft index is never served.
+    pub(crate) by_owner_cache: TtlMap<(String, String, bool, owned_items::Publications), Value>,
     pub(crate) contracts: contracts::Caches,
     /// The readers' memo, one map per freshness budget (`readers::Ttl`).
     pub readers: readers::Caches,
@@ -545,6 +554,8 @@ pub struct MarketplaceState {
     pub(crate) lambdas: lambdas_catalog::Caches,
     /// The third-party readers' memo (`third_party`).
     pub(crate) third_party: third_party::Caches,
+    /// The owners' copies read from the nft index (`owned_items`), 30 s.
+    pub(crate) owned_items: owned_items::Caches,
     /// The explorer backpack, per owner and filter set, 30 s.
     pub(crate) explorer_cache: TtlMap<lambdas_explorer::ExplorerKey, Value>,
     /// The ONE EIP-1654 validator (`/lambdas/crypto/validate-signature`).
@@ -598,6 +609,7 @@ impl MarketplaceState {
             catalog_cache: catalog::Cache::new(settings.market.catalog_cache_ttl),
             lambdas: lambdas_catalog::Caches::default(),
             third_party: third_party::Caches::default(),
+            owned_items: owned_items::Caches::default(),
             explorer_cache: lambdas_explorer::explorer_cache(),
             eip1654: None,
             read_through: None,
@@ -773,15 +785,10 @@ impl MarketplaceState {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
     }
 
-    /// The endpoint the committee walk reads (Polygon only): the
-    /// `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`
-    /// (off mainnet it serves another chain); the walk checks the endpoint
-    /// serves chain 137 before each pass.
-    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
-        if net != chain_walk::ChainNet::Matic {
-            return None;
-        }
-        self.chain_rpc_url(net).or_else(|| {
+    /// The `TRADE_RPC_URLS` 137 entry, with `RPC_ENDPOINT_POLYGON` as a
+    /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
+    pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
+        self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
             (self.settings.eth_network.trim() == "mainnet")
                 .then(|| self.settings.polygon_rpc_url.clone())
                 .flatten()
@@ -966,6 +973,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/lambdas/third-party-integrations",
             get(third_party::third_party_integrations),
+        )
+        .route(
+            "/lambdas/third-party-integrations/managers/{address}",
+            get(third_party_registry::managed_providers),
+        )
+        .route(
+            "/lambdas/third-party-integrations/providers/{id}",
+            get(third_party_registry::provider),
         )
         .route(
             "/lambdas/users/{address}/third-party-wearables",

@@ -7,6 +7,7 @@ export { WalletBalance, type WalletNetworkDisplay, WalletsPanel } from './accoun
 export { DesktopLogin } from './auth/DesktopLogin'
 export { default as MpLaunchForm } from './creator-hub/multiplayer-test/MpLaunchForm'
 export { default as MpLiveRunView } from './creator-hub/multiplayer-test/MpLiveRunView'
+export { default as MpReplayDialog } from './creator-hub/multiplayer-test/MpReplayDialog'
 export {
   default as MpReportView,
   type MpPerfSeries

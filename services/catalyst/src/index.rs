@@ -1,4 +1,5 @@
-//! Chain and marketplace indexing in a process without an HTTP listener.
+//! Chain and marketplace indexing with an optional operator-local metrics listener.
+mod metrics;
 use crate::settings::{jobs_from_config, land_settings, market_settings};
 use crate::{config::Config, content, db, http, land_authz, shop};
 use anyhow::Context;
@@ -8,6 +9,12 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
+    let metrics_bind = config.node.index_metrics_bind.as_deref();
+    if let Some(raw) = metrics_bind {
+        let bind = crate::comms::metrics::operator_metrics_bind("INDEX_METRICS_BIND", raw)?;
+        crate::comms::metrics::install_prometheus_exporter(bind)?;
+        tracing::info!(%bind, "index /metrics listening");
+    }
     let pool = db::connect_pool(
         &config.node.database_url,
         &db::PoolSettings {
@@ -35,6 +42,14 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
+    if metrics_bind.is_some() {
+        metrics::spawn(
+            &jobs,
+            &market,
+            &land.settings,
+            config.shop.shop_rentals_index_enabled,
+        );
+    }
     let shutdown = crate::serve::shutdown_signal();
     tracing::info!(jobs = ?jobs.report().iter().map(|j| &j.name).collect::<Vec<_>>(), "index worker started");
     shutdown.await;

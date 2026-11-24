@@ -138,6 +138,78 @@ async fn native_poster_stays_readable_in_both_cache_orders_and_across_aliases() 
 }
 
 #[tokio::test]
+async fn native_poster_serves_the_first_gif_frame_as_jpeg() {
+    use image::codecs::gif::GifEncoder;
+
+    let first = image::RgbaImage::from_fn(32, 16, |_, y| {
+        if y < 8 {
+            image::Rgba([240, 10, 10, 255])
+        } else {
+            image::Rgba([10, 10, 240, 255])
+        }
+    });
+    let second = image::RgbaImage::from_pixel(32, 16, image::Rgba([10, 240, 10, 255]));
+    let mut gif = Vec::new();
+    GifEncoder::new(&mut gif)
+        .encode_frames([first, second].map(image::Frame::new))
+        .unwrap();
+    let original = Bytes::from(gif);
+    let (base, _) = poster_source(original.clone(), None).await;
+    let url = q(&format!("{base}{LANDSCAPE}"));
+    for (route, browser) in [(NATIVE, BROWSER), (NATIVE_ALIAS, BROWSER_ALIAS)] {
+        let app = app_reading(crate::http::Outbound::for_tests(), sources(&base, true));
+        let (status, headers, body) = get(&app, &format!("{route}?url={url}")).await;
+        assert_eq!(status, StatusCode::OK, "{route}");
+        assert_eq!(headers[header::CONTENT_TYPE], "image/jpeg", "{route}");
+        assert_jpeg(&body, (32, 16));
+
+        let (status, headers, body) = get(&app, &format!("{browser}?url={url}")).await;
+        assert_eq!(status, StatusCode::OK, "{browser}");
+        assert_eq!(headers[header::CONTENT_TYPE], "image/gif", "{browser}");
+        assert_eq!(body, original, "{browser}");
+    }
+}
+
+#[tokio::test]
+async fn native_poster_rotates_orientation_6_webp_and_keeps_alpha() {
+    use image::ImageEncoder;
+    use image::codecs::webp::WebPEncoder;
+
+    let pixels = image::RgbaImage::from_fn(3, 2, |x, y| {
+        image::Rgba([40 * x as u8, 80 * y as u8, 160, 255 - 64 * x as u8])
+    });
+    let mut webp = Vec::new();
+    let mut encoder = WebPEncoder::new_lossless(&mut webp);
+    encoder
+        .set_exif_metadata(vec![
+            0x49, 0x49, 42, 0, 8, 0, 0, 0, // Little-endian TIFF, directory at byte 8.
+            1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, // One Orientation entry, one SHORT value.
+            6, 0, 0, 0, // Rotate 90 degrees clockwise.
+            0, 0, 0, 0, // No next directory.
+        ])
+        .unwrap();
+    encoder
+        .write_image(pixels.as_raw(), 3, 2, image::ExtendedColorType::Rgba8)
+        .unwrap();
+
+    let (base, _) = poster_source(Bytes::from(webp), None).await;
+    let url = q(&format!("{base}{VERTICAL}"));
+    for route in [NATIVE, NATIVE_ALIAS] {
+        let app = app_reading(crate::http::Outbound::for_tests(), sources(&base, true));
+        let (status, headers, body) = get(&app, &format!("{route}?url={url}")).await;
+        assert_eq!(status, StatusCode::OK, "{route}");
+        assert_eq!(headers[header::CONTENT_TYPE], "image/png", "{route}");
+        let rotated = image::load_from_memory_with_format(&body, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(rotated.dimensions(), (2, 3));
+        for (x, y, pixel) in pixels.enumerate_pixels() {
+            assert_eq!(rotated.get_pixel(1 - y, x), pixel);
+        }
+    }
+}
+
+#[tokio::test]
 async fn vertical_and_default_posters_keep_alpha_and_unrelated_sources_keep_webp() {
     let original = webp(18, 36, 96);
     let (base, _) = poster_source(original.clone(), None).await;
