@@ -572,23 +572,23 @@ impl Plugin for StylizedSkyMaterialPlugin {
             .resource_mut::<Assets<StylizedSkyMaterial>>()
             .add(StylizedSkyMaterial::default());
         app.insert_resource(StylizedSkyMaterialHandle(handle))
-            .add_systems(Update, use_stylized_skybox)
+            .add_observer(use_stylized_skybox)
             .add_systems(PostUpdate, update_sky_material);
     }
 }
 
-/// Gives the skyboxes bevy_atmosphere spawns, which show the cube, the per-pixel sky instead.
+/// Gives each skybox bevy_atmosphere spawns, which shows the cube, the per-pixel sky instead.
+/// An observer, so the swap lands in the command flush that spawns the skybox and no frame
+/// renders the cube on the screen.
 fn use_stylized_skybox(
+    trigger: Trigger<OnAdd, AtmosphereSkyBox>,
     mut commands: Commands,
-    skyboxes: Query<Entity, (With<AtmosphereSkyBox>, With<MeshMaterial3d<SkyBoxMaterial>>)>,
     material: Res<StylizedSkyMaterialHandle>,
 ) {
-    for skybox in &skyboxes {
-        commands
-            .entity(skybox)
-            .remove::<MeshMaterial3d<SkyBoxMaterial>>()
-            .insert(MeshMaterial3d(material.0.clone()));
-    }
+    commands
+        .entity(trigger.target())
+        .remove::<MeshMaterial3d<SkyBoxMaterial>>()
+        .insert(MeshMaterial3d(material.0.clone()));
 }
 
 /// Copies the model into the material: what the compute model reads, so the screen and the cube
@@ -1416,5 +1416,26 @@ mod tests {
         };
         let rgba = image.try_into_dynamic().unwrap().to_rgba8();
         (0..64).map(|x| rgba.get_pixel(x, 32).0[0]).collect()
+    }
+
+    #[test]
+    fn a_new_skybox_gets_the_per_pixel_sky_in_its_spawn_flush() {
+        let mut world = World::new();
+        let material = Handle::<StylizedSkyMaterial>::default();
+        world.insert_resource(StylizedSkyMaterialHandle(material.clone()));
+        world.add_observer(use_stylized_skybox);
+        world.commands().spawn((
+            MeshMaterial3d(Handle::<SkyBoxMaterial>::default()),
+            AtmosphereSkyBox,
+        ));
+        world.flush();
+
+        let mut skyboxes = world.query_filtered::<(
+            Option<&MeshMaterial3d<SkyBoxMaterial>>,
+            &MeshMaterial3d<StylizedSkyMaterial>,
+        ), With<AtmosphereSkyBox>>();
+        let (cube, sky) = skyboxes.single(&world).unwrap();
+        assert!(cube.is_none());
+        assert_eq!(sky.0, material);
     }
 }
