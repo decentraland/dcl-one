@@ -126,3 +126,63 @@
 .wrap:hover .rail.top {
   transform: translate(-50%, -4px);
 }
+
+/* titled: a heading band over a list, 276px to the right of the trigger with the heading level
+   with it and a peak pointing at it. No pop: it fades in, and also for keyboard focus. */
+.titled {
+  --tooltip-head: 58px;
+  --tooltip-peak: 6px;
+
+  top: 50%;
+  left: calc(100% + 4px + var(--tooltip-peak));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 276px;
+  margin-top: calc(var(--tooltip-head) / -2);
+  padding: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  font-weight: var(--fw-regular);
+  text-align: left;
+  white-space: normal;
+  box-shadow: none;
+  transition: opacity var(--dur-mid) ease;
+}
+.wrap:has(:focus-visible) .titled {
+  opacity: 1;
+}
+.titled::before {
+  content: '';
+  position: absolute;
+  top: calc(var(--tooltip-head) / 2 - var(--tooltip-peak));
+  right: 100%;
+  width: var(--tooltip-peak);
+  height: calc(2 * var(--tooltip-peak));
+  background: var(--black);
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+}
+.title {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  min-height: var(--tooltip-head);
+  padding: 12px 23px;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: var(--black);
+  font-weight: var(--fw-semibold);
+}
+.body {
+  padding: 18px 16px;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  background: var(--panel);
+  line-height: 21px;
+  white-space: pre-line;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .titled {
+    transition: none;
+  }
+}

@@ -216,7 +216,14 @@ impl Plugin for VisualsDebugPanelPlugin {
             fields: &[],
             actions: &[("Resume sky clock", "/time --resume")],
             inputs: &[
-                slider("Fixed hour", "hour", "/time {value} 0", 0.0, 23.99, 0.01),
+                slider(
+                    "Fixed hour",
+                    "hour",
+                    "/time {value} 0 --force",
+                    0.0,
+                    23.99,
+                    0.01,
+                ),
                 slider("Cloud cover", "cover", "/cloud {value}", 0.0, 1.0, 0.01),
                 slider(
                     "Cloud density",

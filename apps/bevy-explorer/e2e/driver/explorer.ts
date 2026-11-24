@@ -297,6 +297,19 @@ export interface NearbyMutes {
   muted: string[]
 }
 
+/** `/scene_restrictions_state`: what the scene the player stands in restricts, as the minimap's
+ *  restrictions icon lists it. */
+export interface SceneRestrictionsState {
+  cameraLocked: boolean
+  avatarHidden: boolean
+  avatarMovementsBlocked: boolean
+  passportCannotBeOpened: boolean
+  experiencesBlocked: boolean
+  /** The scene sets the time of day: the Skybox panel is locked and `/time` does not move the sky. */
+  skyboxTimeUiBlocked: boolean
+  nearbyVoiceChatBlocked: boolean
+}
+
 export interface ConnectivityState {
   connectionLost: boolean
   probing: boolean
@@ -881,6 +894,10 @@ export class Explorer {
 
   connectivity(): Promise<ConnectivityState> {
     return this.json<ConnectivityState>('/connectivity_state')
+  }
+
+  sceneRestrictions(): Promise<SceneRestrictionsState> {
+    return this.json<SceneRestrictionsState>('/scene_restrictions_state')
   }
 
   retryConnectivity(): Promise<string> {

@@ -14,6 +14,12 @@ interface TooltipBase {
   multiline?: boolean
   /** Keep the wrapper but show no tip (the trigger's own panel is open in its place). */
   quiet?: boolean
+  /** A heading band over the label, which keeps its line breaks: a short list with what it is a
+   *  list of. It stands to the right, its heading level with the trigger, and also opens while
+   *  the trigger has keyboard focus. */
+  title?: string
+  /** The tip's id, for the trigger's `aria-describedby`. */
+  id?: string
   className?: string
   children: React.ReactNode
 }
@@ -30,15 +36,30 @@ export function Tooltip({
   variant = 'default',
   multiline = false,
   quiet = false,
+  title,
+  id,
   className = '',
   children
 }: TooltipProps): React.JSX.Element {
+  if (title != null) {
+    return (
+      <span className={`${styles.wrap} ${className}`.trim()}>
+        {children}
+        {!quiet && (
+          <span className={`${styles.tip} ${styles.titled}`} role="tooltip" id={id}>
+            <span className={styles.title}>{title}</span>
+            <span className={styles.body}>{label}</span>
+          </span>
+        )}
+      </span>
+    )
+  }
   const tip = [styles.tip, styles[side], align === 'end' && variant !== 'rail' && !multiline && styles.end, variant === 'rail' && styles.rail, multiline && styles.multiline].filter(Boolean).join(' ')
   return (
     <span className={`${styles.wrap} ${className}`.trim()}>
       {children}
       {!quiet && (
-        <span className={tip} role="tooltip">
+        <span className={tip} role="tooltip" id={id}>
           {label}
           {shortcut && <span className={styles.shortcut}>[{shortcut}]</span>}
         </span>

@@ -35,6 +35,16 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/connectivity_state', '/connectivity_retry'])
   })
 
+  test('scene restrictions read what the scene the player stands in restricts', async () => {
+    const fake = new FakeConsole({
+      scene_restrictions_state: JSON.stringify({ cameraLocked: true, avatarHidden: false, avatarMovementsBlocked: false, passportCannotBeOpened: false, experiencesBlocked: false, skyboxTimeUiBlocked: true, nearbyVoiceChatBlocked: false })
+    })
+    const restrictions = await new Explorer(fake).sceneRestrictions()
+    assert.equal(restrictions.cameraLocked, true)
+    assert.equal(restrictions.skyboxTimeUiBlocked, true)
+    assert.deepEqual(fake.lines, ['/scene_restrictions_state'])
+  })
+
   test('teleport waits for a new arrival in the world', async () => {
     let arrivals = 1
     let teleported = false

@@ -2110,8 +2110,9 @@ pub struct SceneTime {
     pub time: f32,
 }
 
-/// Whether a scene sets the time of day where the player stands (`scene.json` `skyboxConfig` or
-/// the SDK's `SkyboxTime`) and the player's own explicit time does not override it.
+/// Whether the scene the player stands in sets the time of day (`scene.json` `skyboxConfig` or
+/// the SDK's `SkyboxTime`), which then wins over the player's clock. A portable's time does not
+/// count, and neither does a scene's while `/time --force` holds the sky.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SceneTimeLock(pub bool);
 

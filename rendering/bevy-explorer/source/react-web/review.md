@@ -315,6 +315,28 @@ from HUD-side key matching. The rules:
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
 
+## Scene restrictions
+
+What the scene the player stands in restricts, decided by the engine and relayed as it reports it
+(`bridge-scene/src/domains/sceneRestrictions.ts`). Expectations:
+
+- **Stream**: the engine's `sceneRestrictions` message (`getSceneRestrictionsStream`), sent on
+  subscribe, on every change and again on `hello`. No polling. An engine without the stream sends
+  nothing, and the list then holds nearby voice alone, from the `mic` message.
+- **Minimap**: an info icon in the header only while something is restricted, named
+  `Scene restrictions`, focusable, described by its list. Hover or keyboard focus shows the
+  titled `Tooltip`: `This scene is restricting the use of the following features` over one line
+  for each restriction, always in this order: `Camera locked`, `Avatars hidden`, `Avatar
+  movement disabled`, `User Options Menu disabled`, `Experiences disabled`, `Day/Night
+  controller disabled`, `Nearby voice disabled`. No click action and no toast.
+- **Skybox menu**: its switch and slider are disabled while `skyboxTimeUiBlocked`; when that
+  changes the session reads `/time` again, so the menu never keeps the scene's hour.
+- Mock: `?mock=1&mockrestrictions=1`. Tests:
+  `library/explorer-core/engine/sceneRestrictions.test.ts`,
+  `library/ui/apps/hud/test/hosted/minimap.render.test.tsx`,
+  `library/ui/apps/hud/test/hosted/skybox.test.tsx`, `src/test/world.test.tsx`,
+  `src/test/bridgeSceneRestrictions.test.ts`.
+
 ## Portables
 
 A portable experience runs beside the scene the player stands in: a smart wearable's scene

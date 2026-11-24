@@ -64,8 +64,8 @@ fn update_scene_restrictions(
     player: Query<(Entity, Option<&PlayerModifiers>), With<PrimaryUser>>,
     containing_scene: ContainingScene,
     contexts: Query<&RendererSceneContext>,
-    time_lock: Option<Res<SceneTimeLock>>,
-    mic_state: Option<Res<MicState>>,
+    time_lock: Res<SceneTimeLock>,
+    mic_state: Res<MicState>,
 ) {
     let player = player.single().ok();
     let modifiers = player.and_then(|(_, modifiers)| modifiers);
@@ -82,8 +82,8 @@ fn update_scene_restrictions(
         avatar_movements_blocked: modifiers.is_some_and(movements_blocked),
         passport_cannot_be_opened: modifiers.is_some_and(|modifiers| modifiers.hide_profile),
         experiences_blocked: toggle != PortableExperiencesToggle::Enabled,
-        skybox_time_ui_blocked: time_lock.is_some_and(|lock| lock.0),
-        nearby_voice_chat_blocked: mic_state.is_some_and(|mic| mic.scene_blocked()),
+        skybox_time_ui_blocked: time_lock.0,
+        nearby_voice_chat_blocked: mic_state.scene_blocked(),
     };
     // compare first so the resource is marked changed only on a real change
     if current.0 != restrictions {
@@ -165,6 +165,48 @@ mod tests {
         ] {
             assert!(movements_blocked(&modifiers));
         }
+    }
+
+    #[test]
+    fn a_subscriber_gets_the_state_first_and_then_each_change() {
+        let mut app = App::new();
+        app.add_event::<SystemApi>()
+            .init_resource::<CurrentSceneRestrictions>()
+            .add_systems(Update, pipe_scene_restrictions);
+        app.world_mut()
+            .resource_mut::<CurrentSceneRestrictions>()
+            .0
+            .camera_locked = true;
+        // a frame with nobody listening
+        app.update();
+
+        let (sender, mut receiver) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetSceneRestrictionsStream(sender));
+        let mut received = |app: &mut App| {
+            app.update();
+            std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>()
+        };
+        let camera = SceneRestrictions {
+            camera_locked: true,
+            ..Default::default()
+        };
+        assert_eq!(received(&mut app), [camera]);
+        // nothing changed: nothing sent
+        assert_eq!(received(&mut app), []);
+
+        app.world_mut()
+            .resource_mut::<CurrentSceneRestrictions>()
+            .0
+            .experiences_blocked = true;
+        assert_eq!(
+            received(&mut app),
+            [SceneRestrictions {
+                experiences_blocked: true,
+                ..camera
+            }]
+        );
+        assert_eq!(received(&mut app), []);
     }
 
     #[test]

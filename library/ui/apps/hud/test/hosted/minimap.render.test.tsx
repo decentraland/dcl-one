@@ -57,23 +57,24 @@ describe('minimap header', () => {
     expect(screen.getByText('Empty parcel')).toBeInTheDocument()
   })
 
-  it('lists what the scene turns off', async () => {
+  it('lists what the scene turns off, as the description of a focusable icon', async () => {
     await renderMinimap('Quiet Scene', ['Nearby voice disabled'])
-    expect(screen.getByRole('img', { name: 'Scene restrictions: Nearby voice disabled' })).toBeInTheDocument()
+    const icon = screen.getByRole('img', { name: 'Scene restrictions' })
+    expect(icon).toHaveAttribute('tabindex', '0')
+    expect(icon).toHaveAccessibleDescription('This scene is restricting the use of the following features\u2022 Nearby voice disabled')
     expect(screen.getByRole('tooltip')).toHaveTextContent('\u2022 Nearby voice disabled')
   })
 
   it('titles the list and keeps the order it is given', async () => {
     await renderMinimap('Strict Scene', ['Camera locked', 'Avatar movement disabled', 'Experiences disabled'])
-    expect(screen.getByRole('img', { name: 'Scene restrictions: Camera locked, Avatar movement disabled, Experiences disabled' })).toBeInTheDocument()
     expect(screen.getByRole('tooltip')).toHaveTextContent(
-      'This scene is restricting the use of the following features\u2022 Camera locked\u2022 Avatar movement disabled\u2022 Experiences disabled'
+      'This scene is restricting the use of the following features\u2022 Camera locked \u2022 Avatar movement disabled \u2022 Experiences disabled'
     )
   })
 
   it('shows no restrictions icon where the scene turns nothing off', async () => {
     await renderMinimap('Genesis Plaza')
-    expect(screen.queryByRole('img', { name: /Scene restrictions/ })).toBeNull()
+    expect(screen.queryByRole('img', { name: 'Scene restrictions' })).toBeNull()
   })
 })
 

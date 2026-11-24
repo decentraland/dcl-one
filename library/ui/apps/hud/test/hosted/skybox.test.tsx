@@ -24,6 +24,36 @@ describe('skybox', () => {
     expect(skybox.setProgressing).toHaveBeenCalledWith(false)
   })
 
+  it('turns the switch and the slider off where the scene sets the time of day', () => {
+    const skybox = { ...fakeSession().skybox, open: true, progressing: false, sceneLocked: true }
+    render(<SkyboxMenu skybox={skybox} />)
+    expect(screen.getByRole('switch')).toBeDisabled()
+    expect(screen.getByRole('slider')).toBeDisabled()
+  })
+
+  it('reads the clock again where a scene starts or stops setting the time of day', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const none = { cameraLocked: false, avatarHidden: false, avatarMovementsBlocked: false, passportCannotBeOpened: false, experiencesBlocked: false, skyboxTimeUiBlocked: false, nearbyVoiceChatBlocked: false }
+    const times = (): string[] => h.driver.commands.filter((command) => command.startsWith('/time'))
+    // nothing changed: nothing read
+    h.driver.emit({ kind: 'sceneRestrictions', state: none })
+    expect(times()).toEqual([])
+
+    // in the scene the engine reports the scene's hour
+    h.driver.commandReply = () => 'time 22:0 -> 22:0, speed 0 (elapsed: 79200)'
+    h.driver.emit({ kind: 'sceneRestrictions', state: { ...none, skyboxTimeUiBlocked: true } })
+    await waitFor(() => expect(h.session().skybox.hours).toBe(22))
+    expect(h.session().skybox.sceneLocked).toBe(true)
+
+    // out of it, the player's own stopped clock: the menu must not keep the scene's hour
+    h.driver.commandReply = () => 'time 6:0 -> 6:0, speed 0 (elapsed: 21600)'
+    h.driver.emit({ kind: 'sceneRestrictions', state: none })
+    await waitFor(() => expect(h.session().skybox.hours).toBe(6))
+    expect(h.session().skybox.progressing).toBe(false)
+    expect(times()).toEqual(['/time', '/time'])
+  })
+
   it('reads the live clock on open, freezes it where it is, and drives /time off the chat path', async () => {
     const h = renderSession()
     await enterAsGuest(h)

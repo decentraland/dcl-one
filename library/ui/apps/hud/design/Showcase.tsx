@@ -403,6 +403,11 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
       <Tooltip label="End stream for everyone" side="bottom" align="end">
         <span style={chipLabel}>bottom, end</span>
       </Tooltip>
+      <Tooltip title="A heading over a short list" label={'\u2022 The first line\n\u2022 The second line'}>
+        <span style={chipLabel} tabIndex={0}>
+          titled
+        </span>
+      </Tooltip>
     </div>
   ),
 

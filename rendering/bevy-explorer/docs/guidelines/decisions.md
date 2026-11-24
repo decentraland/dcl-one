@@ -35,15 +35,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
   alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
   wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
-- **Day and night (#1467).** A scene's time always wins, as in Unity: over the running clock,
-  over a time set from the HUD and over `/time`, which still move the clock and show once no
-  scene sets the time. The HUD's Skybox menu is locked meanwhile and the minimap's restrictions
-  list says so. `transitionMode` in scene.json is ignored. HUD and `/time` skips take the
-  nearest direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
+- **Day and night (#1467).** The time of the scene the player stands in always wins, as in
+  Unity: over the running clock, over a time set from the HUD and over `/time`, which still move
+  the clock and show once no scene sets the time. The HUD's Skybox menu is locked meanwhile and
+  the minimap's restrictions list says so. Two exceptions. `/time --force` beats a scene's time
+  until the next `/time` that sets a time or a speed: the scene editor lights a stopped scene
+  with it. A portable's time wins only over a running clock, never locks the menu and is not
+  listed: a portable follows the player everywhere, so the player's own stopped time beats it.
+  `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest direction;
+  SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene restrictions list.** The minimap lists `Experiences disabled` where the scene's
   `featureToggles.portableExperiences` is `disabled` or `hideUi`; Unity defines the line and
-  never shows it. Each line follows the engine's state that frame (`/scene_restrictions_state`),
-  so a restriction that ends without its scene saying so, as on a teleport, leaves the list.
+  never shows it. This client does pause portables and smart wearables there, or hide their UI,
+  and the list is the one place that says the scene is why. Each line follows the engine's
+  state that frame (`/scene_restrictions_state`), so a restriction that ends without its scene
+  saying so, as on a teleport, leaves the list.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for
   reverse rotation, as the public protocol specifies. Unity's environment profile at
   `c78b1f0c59545b0d3b1ff43e109fa63997267850` clamps negative speed to zero. Missing overrides

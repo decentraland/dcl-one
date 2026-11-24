@@ -3409,6 +3409,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       }),
     [exclusive, readClock]
   )
+  // What the sky shows changes where a scene starts or stops setting the time: the menu's hour
+  // and switch follow it, so that they never send the scene's hour to the player's clock.
+  const skyboxSceneLocked = sceneRestrictions.skyboxTimeUiBlocked
+  const lastSkyboxSceneLocked = useRef(skyboxSceneLocked)
+  useEffect(() => {
+    if (lastSkyboxSceneLocked.current === skyboxSceneLocked) return
+    lastSkyboxSceneLocked.current = skyboxSceneLocked
+    void readClock().then((clock) => {
+      if (clock == null) return
+      setSkyboxHoursState(clock.hours)
+      setSkyboxProgressingState(clock.speed !== 0)
+    })
+  }, [skyboxSceneLocked, readClock])
   const setSkyboxHours = useCallback(
     (hours: number) => {
       setSkyboxHoursState(hours)
@@ -5420,7 +5433,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       toggle: toggleSkybox,
       hours: skyboxHours,
       progressing: skyboxProgressing,
-      sceneLocked: sceneRestrictions.skyboxTimeUiBlocked,
+      sceneLocked: skyboxSceneLocked,
       setHours: setSkyboxHours,
       setProgressing: setSkyboxProgressing
     },

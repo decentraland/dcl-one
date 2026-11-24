@@ -158,8 +158,6 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
   }
 }
 
-// Nearby roster — shared by the `members` stream and getUserProfile (so a fetched
-// passport resolves a real name from the clicked sender's address).
 // ?mockrestrictions=1: everything a scene can restrict, restricted.
 const MOCK_SCENE_RESTRICTIONS: SceneRestrictions = {
   cameraLocked: true,
@@ -171,6 +169,8 @@ const MOCK_SCENE_RESTRICTIONS: SceneRestrictions = {
   nearbyVoiceChatBlocked: true
 }
 
+// Nearby roster — shared by the `members` stream and getUserProfile (so a fetched
+// passport resolves a real name from the clicked sender's address).
 const MOCK_NEARBY = [
   { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', picture: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' },
   { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', picture: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' },
