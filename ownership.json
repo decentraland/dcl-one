@@ -114,6 +114,7 @@
       "paths": [
         "/library/dcl-auth/",
         "/library/dcl-http/",
+        "/library/dcl-metrics/",
         "/library/catalyst-api/",
         "/services/catalyst/fed/",
         "/services/catalyst/jobs/",

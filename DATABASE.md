@@ -2555,7 +2555,7 @@ WHERE worker = 'nft_estate_creations' AND scope = 1;
 The final registry replacement commits in the same transaction that reaches
 equality. A missing marker means the next published pass must initialize or
 reopen the repair.
-With `INDEX_METRICS_BIND` set, the index process reads these bounded cursor
+With `INDEX_METRICS_BIND` set, each index process reads these bounded cursor
 tables once per minute. It samples the height, stored history mode, fold
 publication and quarantine from `shop.chain_cursor` and the height, replay
 mode and fold from `land_authz.index_cursor` for its configured registries

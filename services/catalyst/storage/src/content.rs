@@ -129,7 +129,7 @@ impl Storage {
                 if COPY_FALLBACKS.fetch_add(1, Ordering::Relaxed) == 0 {
                     warn!(%error, src = %src.display(), "store_file: hard link failed, copying instead (is the upload spool on another filesystem?)");
                 }
-                metrics::counter!("storage_store_file_copy_fallbacks").increment(1);
+                crate::COPY_FALLBACKS.handle([]).increment(1);
                 std::fs::copy(&src, &staging_target)?;
             }
             // Windows requires a writable handle to flush the staged bytes.
