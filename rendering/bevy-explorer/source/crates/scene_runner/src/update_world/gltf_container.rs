@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeMap,
     f32::consts::{PI, TAU},
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher, RandomState},
 };
 
 use bevy::{
@@ -161,7 +161,7 @@ fn maintain_gltf_caches(
     mut shared: ResMut<SharedGltfs>,
     gltfs: Res<Assets<Gltf>>,
 ) {
-    let mut gone = HashSet::default();
+    let mut gone: HashSet<AssetId<Gltf>> = HashSet::default();
     for ev in events.read() {
         match ev {
             // deliberately not `Unused`: an unused asset can be resurrected by a fresh
@@ -601,6 +601,7 @@ fn update_gltf(
                 ),
             )
         } else if let Some(h_gltf) = shared {
+            // keeps the upload priority of the scene that loaded it
             Ok(h_gltf)
         } else {
             ipfas.load_content_file_with_settings::<Gltf, GltfLoaderSettings>(
@@ -673,7 +674,8 @@ fn update_gltf(
                 .then(|| ipfas.asset_server().get_id_handle(shared))
                 .flatten()
             {
-                // spawned next frame, from the shared asset
+                // spawned next frame, from the shared asset, which keeps the upload priority of
+                // the scene that loaded it
                 commands.entity(ent).try_insert(GltfHandle(h_shared));
                 continue;
             }
@@ -806,6 +808,9 @@ pub struct SceneResourceLookup {
 /// those that are drawn.
 #[derive(Resource, Default)]
 pub(crate) struct SharedMeshes {
+    /// keyed at random for the process, so no scene can make a mesh whose hash matches another
+    /// scene's mesh and have that scene draw it and collide with it
+    hash_state: RandomState,
     by_hash: HashMap<(u64, bool), CachedMeshData>,
     /// a mesh asset's hash, taken before conversion changes the mesh
     hash_by_id: HashMap<AssetId<Mesh>, u64>,
@@ -1067,6 +1072,7 @@ impl NodeProcessing<'_, '_> {
             // get or create hash
             // note we must use the handle lookup rather than recomputing the hash as we may modify the mesh on first load,
             // then recalculating would yield a different hash result
+            let hash_state = shared_meshes.hash_state.clone();
             let maybe_hash = if read_only_mesh_data.has_morph_targets() {
                 // we can't include morph targets in the hash, so just skip hashing for them
                 // TODO: this means we reprocess these meshes even if already loaded which is not optimal
@@ -1077,7 +1083,7 @@ impl NodeProcessing<'_, '_> {
                         .hash_by_id
                         .entry(h_gltf_mesh.id())
                         .or_insert_with(|| {
-                            let hasher = &mut std::hash::DefaultHasher::new();
+                            let hasher = &mut hash_state.build_hasher();
 
                             for (attr, data) in read_only_mesh_data.attributes() {
                                 attr.id.hash(hasher);
@@ -1195,7 +1201,6 @@ impl NodeProcessing<'_, '_> {
                     Some(hash) => {
                         shared_meshes.by_hash.insert((hash, visuals), data.clone());
                     }
-                    // converted for each use: unique each time
                     None => *tracker.0.entry("Unique Meshes").or_default() += 1,
                 }
                 (h_gltf_mesh.0.clone(), data)
@@ -1699,8 +1704,8 @@ pub(crate) fn update_ready_gltfs(
     }
 
     // now that nothing borrows `gltfs`, release the parsed documents + GLB blobs whose
-    // names we just cached. `get_mut` marks the asset Modified; nothing listens for that
-    // on Gltf, and maintain_gltf_caches distinguishes it from a real reload.
+    // names we just cached. `get_mut` marks the asset Modified; maintain_gltf_caches tells
+    // that apart from a real reload by the dropped source.
     for id in drop_sources {
         if let Some(gltf) = gltfs.get_mut(id) {
             gltf.source = None;

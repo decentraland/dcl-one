@@ -777,7 +777,7 @@ impl IpfsIo {
     /// while that manifest is pending, as the read would wait for it.
     ///
     /// Blocking: reads the context.
-    pub fn planned_source_url(&self, path: &Path) -> Option<String> {
+    pub(crate) fn planned_source_url(&self, path: &Path) -> Option<String> {
         if let Some(url) = self.bevy_variants.served_url(path) {
             return Some(url);
         }
