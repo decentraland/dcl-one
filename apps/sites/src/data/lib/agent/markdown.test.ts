@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 
-import type { BlogArticle, BlogCard } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import type { BlogArticle, SitesBlogCard as BlogCard } from "@dcl/one-ui";
 
 import { FIRST_POST_BODY } from "../blog/cms.test-utils";
 import type { Place } from "../catalyst/schema";

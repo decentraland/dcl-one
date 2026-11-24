@@ -250,6 +250,43 @@ class CommsMigrationCases:
         self.assertEqual(self.stream_state(db), '5555\tf\n6666\tt')
         self.assertEqual(self.cleanups(db), '5555\tingress-5555\tt')
 
+    def test_comms_stream_access_import_preserves_native_notification_progress(self):
+        db = self.catalyst_db('comms_stream_notice_progress')
+        identity = '55555555-5555-4555-8555-555555555555'
+        expired = self.stream_row(identity, '2026-01-01Z', active=False)[:-len('false,false)')] + 'true,true)'
+        load = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS, expired)
+        self.sql(db, load)
+        self.assertEqual(self.sql(db, 'SELECT cardinality(recipients), recipients_resolved, recipient_cursor '
+                                     'FROM social.scene_stream_cleanup;').strip(), '0\tf\t0')
+        self.sql(db, "UPDATE social.scene_stream_cleanup SET recipient='0x" + 'a'*40 + "', "
+                     "recipients=ARRAY['0x" + 'a'*40 + "','0x" + 'b'*40 + "'], "
+                     "recipients_resolved=true, recipient_cursor=1;")
+        self.sql(db, load)
+        self.assertEqual(self.sql(db, 'SELECT recipient=recipients[1], cardinality(recipients), '
+                                     'recipients_resolved, recipient_cursor '
+                                     'FROM social.scene_stream_cleanup;').strip(), 't\t2\tt\t1')
+
+    def test_comms_stream_access_replay_keeps_historical_creation_times(self):
+        db = self.catalyst_db('comms_stream_created_at')
+        identity = '55555555-5555-4555-8555-555555555555'
+        run = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                             self.stream_row(identity, '2026-01-01Z', active=False))
+        for _ in range(2):
+            self.sql(db, run)
+        self.assertEqual(self.sql(db, "SELECT count(*) FROM social.scene_stream_access "
+                                 "WHERE place_id='place' AND created_at > timezone('UTC',now())-interval '1 hour';").strip(), '0')
+        self.assertEqual(self.sql(db, "SELECT created_at='2026-01-01'::timestamp, active "
+                                 "FROM social.scene_stream_access;").strip(), 't\tf')
+
+    def test_comms_stream_access_reimport_preserves_native_admin_namespace(self):
+        db = self.catalyst_db('comms_stream_admin_namespace')
+        identity = '55555555-5555-4555-8555-555555555555'
+        run = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS, self.stream_row(identity, '2026-01-01Z'))
+        self.sql(db, run)
+        self.sql(db, "UPDATE social.scene_stream_access SET admin_place_key='10,20';")
+        self.sql(db, run)
+        self.assertEqual(self.sql(db, "SELECT DISTINCT admin_place_key FROM social.scene_stream_access;").strip(), '10,20')
+
     def test_comms_stream_access_rerun_keeps_newer_node_streaming_state(self):
         db = self.catalyst_db('comms_stream_version')
         upstream = '55555555-5555-4555-8555-555555555555'

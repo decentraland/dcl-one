@@ -155,6 +155,22 @@ thumbnails. A worlds mirror pass re-checks the blobs its rows name under
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
+
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
 next read.
@@ -306,8 +322,27 @@ See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-loo
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
-remain external IDs, never storage authority. The old
-`worlds.world_scene_identity` table is a frozen upgrade source only: creating
+remain external IDs, never storage authority.
+
+World publication, undeployment, settings (including spawn), access and block
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
+This relation holds at most one pending row per changed world. Coalescing takes
+the pending row's lock without losing its original queue position, so a worker
+cannot consume a mark before its source update commits. The leased
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
+aggregate and the consumption of its mark commit together. The worker reads
+world and scene rows without taking row locks. A failed refresh rolls back
+both effects. Consecutive refresh failures back off to at most 30 seconds.
+A full reconciliation runs at its configured interval and can
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
+
+The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
 creation. This is once per creation, not once for the lifetime of a database:
 never drop/recreate the authoritative relation to recover it, because that
@@ -2664,6 +2699,13 @@ replicas round-robin without affinity, so the state lives in three
 `explore_api` tables (`schemas/11_explore_api.sql`) every replica reads and
 writes through the explore pool, as the upstream auth server keeps it in Redis.
 
+Socket.IO sessions hold the requests they create on the replica that owns
+the connection. The gateway consistently routes Engine.IO polling and
+upgrades by client address. While the replica has bound requests, it checks
+their live validation and outcome state through one primary-key batch query
+per 500 ms pass. The socket and HTTP poll share a row-locked outcome claim.
+If the socket cannot queue the event, the claim rolls back for HTTP pickup.
+
 Workload: a sign-in is one create, one or two recover reads, a validation mark
 at most, one outcome and a poll about once a second until the outcome lands;
 an identity is one create and one pickup. Rows are small (a challenge of a
@@ -2680,8 +2722,8 @@ identities (100 per network). No production rate is measured.
   WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
   clears `outcome`, `params` and `challenge`, so a concurrent poller on any
   replica waits on the row, finds it fulfilled and answers 410. A request
-  expires 5 minutes after its creation; the read that finds it expired
-  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+  expires 5 minutes after its creation. Reads answer 404 after expiry, and
+  the periodic sweep deletes expired rows.
 - `auth_identities`: one row per parked identity, keyed by its UUID, holding
   the identity document with its ephemeral private key for at most an hour.
   The key is stored in clear, as the upstream auth server keeps it in Redis:
@@ -2719,10 +2761,24 @@ per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
-requests past their grace, then the oldest delivered ones, just enough to admit
+expired requests, then the oldest delivered ones, just enough to admit
 one more. The count scans the table, bounded by the caps to about 10,000 rows;
 sign-in creates are rare enough that serializing them on the lock costs nothing
 measurable.
+
+Magic account deletion inserts one short-lived row per verified request into
+`explore_api.magic_deletion_attempts`. A digest of the wallet address and Magic
+token ID is the unique key. An advisory transaction lock serializes the
+one-use claim across replicas. The default hourly caps allow 3 attempts per
+wallet, 20 per network and 120 globally. A network is one IPv4 address or an
+IPv6 /48. Requests with no trusted source share a network bucket. A refused
+request writes nothing and counts in
+`explore_magic_deletion_rate_limited_total` by the cap it hit. Admission counts the preceding hour
+through the requested-at index, which also serves the one-day expiry sweep.
+The row stores the wallet and source digests and the outcome category. A row
+still marked requested can represent an interrupted operation. The table
+holds neither DID tokens nor Magic response payloads. The relay sweeper
+also prunes these rows when Magic deletion is configured.
 
 Contract-wallet budget: contract-wallet calls (`isValidSignature`, including
 those of the signed-fetch chain on `POST /identities`) are budgeted in process
@@ -2742,14 +2798,16 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
-replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
-second. The periodic `auth-api-identity-sweep` job runs on every replica
-every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
-grace, identities past their hour, tombstones past 14 days), so replicas
-sweeping at once delete each row once. The expiry indexes
+replicas need synchronized clocks (NTP). The periodic
+`auth-api-identity-sweep` job runs on every replica every 30 seconds. It
+deletes expired requests, expired identities, tombstones older than 14
+days and, when Magic deletion is configured, Magic deletion attempts older
+than a day. Each row is deleted once across replicas. The expiry indexes
 (`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
-`auth_identity_tombstones_created_idx`) serve those deletes; every other read
-and write is by primary key. Nothing references these rows and they
+`auth_identity_tombstones_created_idx`,
+`magic_deletion_attempts_requested_idx`) serve those deletes. The Magic
+admission's hourly count reads that last index too. Every other read and
+write is by primary key. Nothing references these rows and they
 reference nothing: no FK. The bootstrap defines the tables; an existing
 database gains them from the object pass, so no step exists. A restart of
 every replica keeps the relay's state.
@@ -2821,6 +2879,38 @@ neither catalogue holds the place and no pending row for it remains. Its context
 `content.deployments` for shared-scene rooms, by primary key or world name.
 Neither table has an FK: queue rows outlive catalogue deletion.
 
+Workload and invariants for removal notices: one immutable recipient set per
+live removal, with a durable `recipient_cursor` advanced after each Social
+acceptance. In the catalogue removal transaction Explore freezes, for a Genesis
+place, the valid active admin wallets of its base parcel into `recipients`. For a
+World it freezes the exact scene place keys into `admin_keys` and each active admin
+there with its original granter into `admin_grants` (a JSON array of
+`[admin, granter]` pairs); World admins are not saved as recipients because
+maintenance must first check that the granter still holds the world-wide
+authority. Its plain MVCC read of `social.scene_admins` (`place_id`,
+`admin_address`, `added_by`, `active`) takes no Social row locks and performs no
+Social writes. A re-grant before the first maintenance pass overwrites
+`added_by`, `added_at` and `removed_at` on the row; the frozen wallets and pairs
+keep the evidence. Safety cleanup also adds the pairs of the World grants it ends
+to `admin_grants`, in its own transaction, before notification enrichment runs.
+Enrichment then reads the owner, the permission surfaces and the grants (live,
+ended by this removal, and frozen), and saves the complete set in one write.
+Missing external authority leaves `recipients_resolved=false` with the frozen
+evidence unchanged; a saved owner alone is never a complete set.
+Retries reuse the complete set and original event time. Initial historical
+feed seeding sets `notify=false`, retaining cleanup without sending old notices.
+
+The catalogue legs keep `removal_admin_keys` as exact local evidence. Before
+final scene retirement, Explore snapshots currently active identity keys when
+no backing `worlds.world_scenes` remain. Removed identities from older
+lifetimes are excluded. The removal trigger freezes their union with current
+active keys into `place_removal_pending.admin_keys`. An actual scene insert
+clears only catalogue evidence, with ordered active-identity locks before
+catalogue writes; importing an identity alone cannot clear it. Queue rows
+survive re-adds. The existing world-row lock serializes publication; imports
+lock affected worlds and identities in order and retire only saved bindings
+whose backing scenes are gone. No grant history is inferred from parcel overlap.
+
 ## Scene admin grants
 
 `social.scene_admins` (`schemas/40_social.sql`) holds the explicit admins of a
@@ -2849,7 +2939,8 @@ Invariants:
 - An owner change writes no row. Ownership is read when a request arrives.
 - The cleanup of a removed place (above) revokes the grants made before the
   removal (`added_at`; a cleanup that runs late keeps the later ones): those
-  on the places of the active scenes of a world (`explore.world_scene_place`
+  on the places of the active scenes of a world and its queued exact retired
+  keys (`explore.world_scene_place`
   by `world_name` on `world_scene_place_deployment_idx`; the id of a world
   place is the world name or an imported id, never the key of a grant), or
   those on the base parcel of a Genesis place when no enabled `explore.place`
@@ -3006,6 +3097,66 @@ Not announced: a LAND owner or operator change, a NAME transfer until the
 owner reconcile writes `worlds.worlds.owner`, a ban. The key job and the check
 on each use cover them. A scene admin removal checks the key in its own
 request.
+
+Streaming notification fanout uses the same owner and permission authorities
+as access decisions: LAND owner/operator/update operator/update managers and
+approved-for-all wallets, or World owner and footprint-scoped grantees, plus
+scene admins. Wallets are normalized and deduplicated. Invalid historical
+admin strings are excluded from delivery without preventing safety cleanup.
+Each credential stores its bound `admin_place_key` at issuance/reset/Cast;
+the cleanup context preserves it for later resolution. Notification preparation
+is bounded to five seconds, retains partial evidence on failure and never takes
+publication row locks. Original place context is captured before binding recovery
+and checkpointed before further fallible deferred lookups; saved snapshots
+survive catalogue deletion and are never refreshed from a replacement lifetime.
+Binding SQL errors and timeouts leave recipient resolution pending, including
+retries after credential deactivation.
+
+Explore owns `world_scene_binding`: one recovery fact for each distinct
+`(world_name, entity_id, identity)` displaced by identity replacement,
+retirement or deletion. Its row trigger inserts the old exact binding in the
+identity transaction, with no Social writes or row locks. A rollback retains
+neither transition nor evidence. The primary key in that order supports the
+exact world/entity probe and makes replay idempotent. There is no FK because
+these facts survive deletion of the source identity. There is no expiry while
+legacy credentials or pending notices may need them; storage grows with
+distinct displaced bindings. Comms reads these columns together with the
+current binding, considering at most two historical identities and the one
+active identity. A saved credential/context key takes precedence. Without one,
+a successful lookup returning zero or multiple candidates records
+`admin_binding_pending=false, admin_binding_unresolvable=true` in
+`source_context`. Such canonical World notices complete for independently
+established owner and permission holders plus preserved recipients, skipping
+local-admin enrichment so parcel overlap cannot select another incarnation.
+SQL errors and timeouts remain retryable instead. Before the place-context
+or binding lookup, preparation freezes the `social.scene_admins` [admin,
+granter] pairs of each candidate key (the saved key, or else those same
+historical and active identities) in `source_context.admin_grant_candidates`;
+the retry keeps the pairs of the key it settles on, so a re-grant in between
+cannot replace the original granter. The
+schema object pass installs this new table, function and trigger; imports
+retain facts through the same trigger. Production insert and retention costs
+are unmeasured.
+
+`scene_stream_cleanup`
+keeps the complete `recipients`, `recipients_resolved` bit and guarded
+`recipient_cursor`. Each Social acceptance advances one cursor under the
+current claim token, so a bounded pass resumes after its accepted prefix.
+`notification_started` commits before the first acceptance; later key regeneration
+cannot suppress an unfinished expiry suffix, including an uncheckpointed acceptance.
+Social deduplicates by recipient, kind and event identity. Reset-to-revoke
+conversion retains the complete recipient set and starts the new kind at zero.
+
+Existing credentials without a saved admin key can recover a unique exact
+current or retained binding, including after credential deactivation and scene
+retirement. Scenes retired before binding capture existed and overwritten
+pre-cutover grant history may have no exact recovery evidence. Existing scalar
+cleanup recipients are preserved while remaining authority classes resolve;
+an existing scalar value alone never marks the snapshot complete.
+
+Credential issuance has no per-place limit, as upstream; historical imports
+preserve creation times. Whether to bound it is open next work in the
+[streaming notification ADR](docs/adr/2026-11-21-streaming-notification-recipients.md).
 
 ## Stream state reconciliation
 
@@ -3202,6 +3353,15 @@ in its own memory with the same rules, like the places reads fall back to the
 API; that mode serves one process only, so a deployment with several Sites
 replicas sets the database URL. The bootstrap defines the table; an existing
 database gains it from the object pass, so no step exists.
+
+Before exposing writers, a Social-writing serve process scans active native
+credentials with missing admin keys in bounded UUID batches, decodes their
+canonical rooms with the existing codec, and saves exact live world identity
+bindings under world/identity locks. Read-only Social replicas skip this write.
+The upgrade requires stopping old writers and finishing offline imports before
+the coordinated startup, so identities cannot retire before this backfill.
+Noncanonical imported rooms and scenes already retired before the upgrade
+remain outside exact recovery; pending authority stays retryable where available.
 
 ## Shop reconciliation and availability sweeps
 

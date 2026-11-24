@@ -6,11 +6,9 @@
 // browser and phone wallets directly; every session lasts a month, as upstream's. Upstream's Fortmatic option goes
 // through decentraland-connect, which this site does not carry, so it is not wired yet.
 
-import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
-import { DesktopLogin } from "@dcl/one-ui/apps/sites/auth/DesktopLogin";
+import { dclLogoUrl as logo, DesktopLogin, Button } from "@dcl/one-ui";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
-import { Button } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";

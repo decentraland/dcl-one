@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { BlogArticle } from "@dcl/one-ui/apps/sites/blog";
+import type { BlogArticle } from "@dcl/one-ui";
 import type { BlogListData } from "@/data/lib/blog/types";
 
 import { blogListPageView, blogPostPageView } from "./page-view";

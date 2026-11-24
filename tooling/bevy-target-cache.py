@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Key and prune the Explorer's native Cargo cache for the Actions cache.
+"""Key and prune the Explorer's Cargo caches for the Actions cache: the native jobs' and the wasm relay wake test's.
 
 Cargo rebuilds a crate when its fingerprint changes: the compiler, an environment variable a
 build script read (the CC and PKG_CONFIG_PATH the tool steps export), or an input file. A cache
@@ -153,7 +153,7 @@ def size(directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('key').add_argument('--lane', required=True, help='the job: test, headless or clippy')
+    commands.add_parser('key').add_argument('--lane', required=True, help='the job: test, headless, clippy or relay-wake')
     commands.add_parser('prune').add_argument('target', type=Path, help="the explorer's Cargo target directory")
     args = parser.parse_args()
     if args.command == 'key':
