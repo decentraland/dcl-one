@@ -61,14 +61,17 @@ Community chat needs the message router, which the stack runs only when
 foundation-dev down && foundation-dev up
 ```
 
-The `message-router` task then starts after LiveKit and the API, and restarts
-whenever it exits. It signs its token requests with the generated
+The `message-router` task then starts after LiveKit and the API, restarts
+whenever it exits with an error (as Pulse does), and is ready once its
+`/health/ready` on `ingress_port + 4` answers. It signs its token requests with the generated
 `MESSAGE_ROUTER_KEY`, and the API mints its LiveKit identity. That identity is
 `message-router-prd-0` on loopback or behind an origin with a port, and
 `message-router-dev-0` behind a bare host. Those are the identities `/play`'s
 Explorer trusts. A native Explorer trusts `-dev-0` only when started with a
-`--base-domain` other than decentraland.org. A path that is not executable only
-prints a warning.
+`--base-domain` other than decentraland.org. With `public_origin` on a bare host,
+chat routes only from the page at that origin: `foundation-dev desktop` and a
+browser on the loopback URL keep decentraland.org and look for `-prd-0`. A path
+that is not executable only prints a warning.
 
 `/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
 restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it

@@ -130,12 +130,18 @@ def livekit_credentials():
     return {'LIVEKIT_API_KEY': 'API' + secrets.token_hex(6), 'LIVEKIT_API_SECRET': secrets.token_hex(32)}
 
 
-def ingress_ports_free(base):
+# The message router's metrics port, in the ingress block after the ingress's four.
+MESSAGE_ROUTER_METRICS_OFFSET = 4
+
+
+def ingress_ports_free(base, router=True):
     # Valkey, the ingress HTTP relay and its health check on loopback; RTMP on every interface, where
-    # livekit-ingress always listens (it has no bind address setting). +4 is the message router's metrics.
-    return bindable([(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
-                     (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1'),
-                     (socket.SOCK_STREAM, base + 4, '127.0.0.1')])
+    # livekit-ingress always listens (it has no bind address setting). New blocks reserve the router's port too.
+    ports = [(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
+             (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1')]
+    if router:
+        ports.append((socket.SOCK_STREAM, base + MESSAGE_ROUTER_METRICS_OFFSET, '127.0.0.1'))
+    return bindable(ports)
 
 
 def ingress_block(base):
@@ -295,7 +301,11 @@ def message_router_identity_prefix(config):
     scheme, host, _, port = origin
     if port not in (None, {'http': 80, 'https': 443}[scheme]):
         return 'message-router-prd'
-    host = host.lower()
+    # The browser and the engine see an IDN host in its punycode form.
+    try:
+        host = host.encode('idna').decode().lower()
+    except UnicodeError:
+        return 'message-router-prd'
     for apex in ('decentraland.org', 'decentraland.zone'):
         if host == apex or host.endswith('.' + apex):
             host = apex
@@ -304,7 +314,7 @@ def message_router_identity_prefix(config):
 
 
 def message_router_metrics_port(config):
-    return ingress_ports(config)[3] + 1
+    return config['ingress_port'] + MESSAGE_ROUTER_METRICS_OFFSET
 
 
 def message_router_env(config):
@@ -979,6 +989,8 @@ def project(config, postgres_only=False):
         # The router exits when it cannot stay in the room (LiveKit or the API restarting); restart it as Pulse.
         router = process('message-router', {'livekit': 'process_healthy', 'api': 'process_healthy'})
         router['availability'] = dict(pulse['availability'])
+        router['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': message_router_metrics_port(config),
+                                                  'path': '/health/ready'}, 'period_seconds': 2, 'failure_threshold': 300}
         processes['message-router'] = router
     if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
@@ -1297,7 +1309,7 @@ def prepare_supervisor(postgres_only=False):
         return None
     # Behind a public origin Pulse's UDP ports sit outside the block; they must be free too.
     if not ports_free(config['port'], pulse_ports(config)[:2] if public(config) else ()) \
-            or not ingress_ports_free(config['ingress_port']):
+            or not ingress_ports_free(config['ingress_port'], router=bool(message_router_bin(config))):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
     temporary = STATE / 'tmp'
     temporary.mkdir(exist_ok=True, mode=0o700)

@@ -436,7 +436,31 @@ class DevTest(unittest.TestCase):
         self.assertEqual(process['depends_on'], {'livekit': {'condition': 'process_healthy'},
                                                  'api': {'condition': 'process_healthy'}})
         self.assertEqual(process['availability']['restart'], 'on_failure')
+        self.assertEqual(process['readiness_probe']['http_get']['port'], dev.message_router_metrics_port(stale))
+        self.assertEqual(process['readiness_probe']['http_get']['path'], '/health/ready')
         self.assertIn('message-router', dev.SERVICES)
+        # Turning the router on under a running stack asks for a full restart.
+        dev.save_json(self.state / 'process-compose.json', {'processes': dev.project(self.config)['processes']})
+        self.assertEqual(dev.stale_graph(stale), {'message-router'})
+
+    def test_the_router_port_is_checked_only_when_the_router_runs(self):
+        base = self.config['ingress_port']
+        router = self.state / 'catalyst-message-router'
+        router.write_text('#!/bin/sh\n')
+        router.chmod(0o755)
+        checked = []
+        with patch.object(dev, 'bindable', side_effect=lambda ports: checked.append(ports) or True):
+            self.assertTrue(dev.ingress_ports_free(base, router=False))
+            self.assertTrue(dev.ingress_ports_free(base))
+        self.assertNotIn(base + 4, [port for _, port, _ in checked[0]])
+        self.assertIn(base + 4, [port for _, port, _ in checked[1]])
+        self.assertEqual(dev.message_router_metrics_port(self.config), base + 4)
+        for config, router_checked in ((self.config, False), ({**self.config, 'message_router_bin': str(router)}, True)):
+            with patch.object(dev, 'settings', return_value=config), patch.object(dev, 'supervisor_running', return_value=False), \
+                    patch.object(dev, 'ports_free', return_value=True), patch.object(dev, 'save_json'), \
+                    patch.object(dev, 'ingress_ports_free', return_value=True) as free:
+                dev.prepare_supervisor()
+            free.assert_called_once_with(base, router=router_checked)
 
     def test_the_message_router_signs_with_its_own_key_and_reaches_loopback(self):
         key = self.config['MESSAGE_ROUTER_KEY']
@@ -470,7 +494,9 @@ class DevTest(unittest.TestCase):
                                ('https://dev.example.test:443', 'message-router-dev'),
                                ('http://localhost', 'message-router-prd'),
                                ('https://play.decentraland.zone', 'message-router-dev'),
-                               ('https://play.decentraland.org', 'message-router-prd')):
+                               ('https://play.decentraland.org', 'message-router-prd'),
+                               # the page's host in punycode is a bare dotted host
+                               ('https://dév.example.test', 'message-router-dev')):
             config = {**self.config, 'public_origin': dev.public_origin(origin)}
             self.assertEqual(dev.message_router_identity_prefix(config), prefix, origin)
 
