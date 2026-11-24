@@ -4245,6 +4245,10 @@
       "path": "library/ui/apps/hud/features/hideUi",
       "entries": [
         {
+          "name": "hideUiToast.module.css",
+          "kind": "regular"
+        },
+        {
           "name": "hideUiToast.tsx",
           "kind": "regular"
         }
@@ -9880,8 +9884,12 @@
       "sha256": "5aa063c49b4d48dbbdd725359f092bd959e31e74bd7e74521f3f62dd3c799cf1"
     },
     {
+      "path": "library/ui/apps/hud/features/hideUi/hideUiToast.module.css",
+      "sha256": "e1a1760c679d9ed30c2364127d9f2388597aa7bbc0bfbacc062d08534b7546c1"
+    },
+    {
       "path": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
-      "sha256": "866156b752bacc4ae401b1d2af8d2e9e562abc0393841787b35bd9813b41c2d8"
+      "sha256": "633a9e0b4fb254821b7be266abe8a4912cc45c360efc5f8926e1639ed6d4d65e"
     },
     {
       "path": "library/ui/apps/hud/features/itemPurchase/answer.ts",
@@ -25354,6 +25362,21 @@
     {
       "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/apps/hud/features/hideUi/hideUiToast.module.css",
       "kind": "test:runtime"
     },
     {

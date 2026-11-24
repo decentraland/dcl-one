@@ -2,6 +2,7 @@
 // drawn as a key cap.
 
 import { dismissToast, KeyCap, showToast } from '../../design'
+import styles from './hideUiToast.module.css'
 
 /** What the HideUi key has hidden: nothing, the Explorer HUD, or the HUD and the scene UI. */
 export type UiHidden = 'none' | 'explorer' | 'all'
@@ -15,7 +16,7 @@ export function showHideUiToast(hidden: UiHidden, key: string): void {
     return
   }
   showToast(
-    <span>
+    <span className={styles.line}>
       Press <KeyCap label={key} /> {hidden === 'explorer' ? 'to hide the scene UI.' : 'to show the UI again.'}
     </span>,
     { key: TOAST_KEY }
