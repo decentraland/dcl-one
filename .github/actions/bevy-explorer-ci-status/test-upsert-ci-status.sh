@@ -43,6 +43,9 @@ if '-X' in args:
     method = args[i + 1]
     del args[i:i + 2]
 path = next(a for a in args if a.startswith('/'))
+if os.environ.get('GH_CALLS_LOG'):
+    with open(os.environ['GH_CALLS_LOG'], 'a') as f:
+        f.write(method + '\n')
 
 comments = load()
 if method == 'GET' and os.environ.get('GH_FAIL_READ_EXIT'):
@@ -105,6 +108,8 @@ body_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[int(
 count() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$STORE"; }
 
 run_upsert() { (cd "$WORK" && SECTION="$1" SECTION_BODY="$2" bash "$UPSERT"); }
+run_sections() { (cd "$WORK" && SECTIONS_DIR="$1" bash "$UPSERT"); }
+calls() { tr '\n' ' ' < "$WORK/calls"; }
 
 # --- 1. create from skeleton -----------------------------------------------------------------
 reset_store
@@ -336,5 +341,132 @@ GH_FAIL_WRITES_LOG="$WORK/failed-writes" run_upsert build WRITE-FAILURE > "$WORK
 [ "$(cat "$GH_RETRY_SLEEP_LOG")" = $'1\n2\n4\n8' ] || fail 'write retries changed or slept after the final attempt'
 grep -q 'after 5 attempts' "$WORK/write-failure.log" || fail 'write exhaustion did not retain its warning'
 pass "failed writes retain five attempts and omit the final wait"
+
+# --- 11. a sections directory writes all its sections with one read, one write, one re-read --
+reset_store
+mkdir -p "$WORK/two"
+printf 'DIR-BUILD\n' > "$WORK/two/build.md"
+printf 'DIR-AUTOMATION\n' > "$WORK/two/automation.md"
+rm -f "$WORK/calls"
+OUT="$(GH_CALLS_LOG="$WORK/calls" run_sections "$WORK/two")"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "dir create: did not settle on attempt 1"
+[ "$(count)" = 1 ] || fail "dir create: expected 1 comment"
+BODY="$(body_of)"
+grep -q 'DIR-BUILD' <<< "$BODY" || fail "dir create: build content missing"
+grep -q 'DIR-AUTOMATION' <<< "$BODY" || fail "dir create: automation content missing"
+grep -q '<!-- ci:tests:start -->' <<< "$BODY" || fail "dir create: skeleton sections missing"
+[ "$(calls)" = 'GET POST GET ' ] || fail "dir create: calls were '$(calls)'"
+rm -f "$WORK/two/automation.md"
+printf 'DIR-BUILD-2\n' > "$WORK/two/build.md"
+printf 'DIR-TESTS\n' > "$WORK/two/tests.md"
+rm -f "$WORK/calls"
+GH_CALLS_LOG="$WORK/calls" run_sections "$WORK/two" >/dev/null
+BODY="$(body_of)"
+grep -q 'DIR-BUILD-2' <<< "$BODY" || fail "dir update: build content missing"
+grep -q 'DIR-TESTS' <<< "$BODY" || fail "dir update: tests content missing"
+grep -q 'DIR-AUTOMATION' <<< "$BODY" || fail "dir update: another section lost"
+grep -q 'measures it against main' <<< "$BODY" || fail "dir update: performance default lost"
+[ "$(calls)" = 'GET PATCH GET ' ] || fail "dir update: calls were '$(calls)'"
+pass "a sections directory writes every section in one update"
+
+# --- 12. every section must settle, not just one, whichever comes last ------------------------
+for changed in tests build; do
+  same=$([ "$changed" = tests ] && echo build || echo tests)
+  reset_store "$(CHANGED=$changed python3 - <<'PY'
+import json, os
+changed = os.environ['CHANGED']
+fence = lambda n: "<!-- ci:%s:start -->\n%s\n<!-- ci:%s:end -->" % (n, 'OLD' if n == changed else 'SAME', n)
+body = "<!-- bevy-explorer-ci-status -->\n### 🚦 Bevy Explorer CI\n" + fence('build') + "\n\n" + fence('tests')
+print(json.dumps([{"id": 8, "user": {"login": "github-actions[bot]"}, "body": body}]))
+PY
+)"
+  rm -f "$STORE.prev" "$WORK/two/"*.md
+  printf 'NEW\n' > "$WORK/two/$changed.md"
+  printf 'SAME\n' > "$WORK/two/$same.md"
+  echo 1 > "$WORK/stale-reads"
+  OUT="$( (cd "$WORK" && SECTIONS_DIR="$WORK/two" STALE_READS_FILE="$WORK/stale-reads" bash "$UPSERT") )"
+  grep -q 'not settled (attempt 1)' <<< "$OUT" || fail "all sections ($changed changed): one settled section passed for all"
+  grep -q 'updated (attempt 2)' <<< "$OUT" || fail "all sections ($changed changed): did not converge on attempt 2"
+  grep -q '^NEW$' <<< "$(body_of)" || fail "all sections ($changed changed): new content missing"
+done
+pass "a directory write settles only when every section landed"
+
+# --- 13. CRLF in a directory body is normalized ----------------------------------------------
+reset_store
+rm -rf "$WORK/crlf" && mkdir -p "$WORK/crlf"
+printf 'CRLF-DIR\r\nSECOND\r\n' > "$WORK/crlf/build.md"
+OUT="$(run_sections "$WORK/crlf")"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "dir crlf: did not settle on attempt 1"
+grep -q $'\r' <<< "$(body_of)" && fail "dir crlf: body still carries CR"
+pass "a directory body with CRLF settles on the first attempt"
+
+# --- 14. a bad sections directory exits 2 before any call ------------------------------------
+rm -rf "$WORK/empty" "$WORK/lint" "$WORK/spaced" && mkdir -p "$WORK/empty" "$WORK/lint" "$WORK/spaced"
+printf 'X\n' > "$WORK/lint/lint.md"
+printf 'X\n' > "$WORK/spaced/build tests.md"
+for spec in "empty||No section files in" "lint||Unknown section 'lint'" "spaced||Unknown section 'build tests'" \
+    "two|SECTION=build|not both" "two|SECTION_BODY=X|not both" "two|SECTION_BODY_FILE=x|not both"; do
+  IFS='|' read -r dir extra want <<< "$spec"
+  reset_store
+  rm -f "$WORK/calls"
+  set +e
+  OUT="$( (cd "$WORK" && env $extra SECTIONS_DIR="$WORK/$dir" GH_CALLS_LOG="$WORK/calls" bash "$UPSERT") 2>&1)"
+  RC=$?
+  set -e
+  [ "$RC" = 2 ] || fail "bad dir '$dir' $extra: expected exit 2, got $RC"
+  grep -qF "$want" <<< "$OUT" || fail "bad dir '$dir' $extra: message missing '$want'"
+  [ ! -s "$WORK/calls" ] || fail "bad dir '$dir' $extra: called GitHub"
+  [ "$(count)" = 0 ] || fail "bad dir '$dir' $extra: wrote a comment"
+done
+pass "a bad sections directory exits 2 before any call"
+
+# --- 15. an unreadable body fails the write instead of emptying the section -------------------
+reset_store
+run_upsert build "KEEP-BUILD" >/dev/null
+rm -rf "$WORK/unreadable" && mkdir -p "$WORK/unreadable/build.md"
+for mode in file dir; do
+  set +e
+  if [ "$mode" = file ]; then
+    (cd "$WORK" && SECTION=build SECTION_BODY= SECTION_BODY_FILE="$WORK/missing.md" bash "$UPSERT") >/dev/null 2>&1
+  else
+    run_sections "$WORK/unreadable" >/dev/null 2>&1
+  fi
+  RC=$?
+  set -e
+  [ "$RC" != 0 ] || fail "unreadable $mode: exited 0"
+  grep -q 'KEEP-BUILD' <<< "$(body_of)" || fail "unreadable $mode: section emptied"
+done
+pass "an unreadable body fails without touching the comment"
+
+# --- 16. a fence that lost its end marker is closed, not allowed to swallow what follows -------
+# A hand edit can drop an end marker; the write closes that fence before the next section (or at
+# the end of the comment) instead of skipping the rest and never settling.
+reset_store "$(python3 - <<'PY'
+import json
+body = ("<!-- bevy-explorer-ci-status -->\n### 🚦 Bevy Explorer CI\n"
+        "<!-- ci:build:start -->\nOLD-BUILD\n\n"
+        "<!-- ci:tests:start -->\nOLD-TESTS\n<!-- ci:tests:end -->\n\n"
+        "<!-- ci:performance:start -->\nOLD-PERF")
+print(json.dumps([{"id": 4, "user": {"login": "github-actions[bot]"}, "body": body}]))
+PY
+)"
+rm -f "$WORK/calls" "$WORK/two/"*.md
+printf 'NEW-BUILD\n' > "$WORK/two/build.md"
+printf 'NEW-TESTS\n' > "$WORK/two/tests.md"
+OUT="$(GH_CALLS_LOG="$WORK/calls" run_sections "$WORK/two")"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "open fence: directory write did not settle on attempt 1"
+[ "$(calls)" = 'GET PATCH GET ' ] || fail "open fence: calls were '$(calls)'"
+grep -qx 'OLD-PERF' <<< "$(body_of)" || fail "open fence: a section after the open fence was dropped"
+OUT="$(run_upsert performance NEW-PERF)"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "open fence: last-section write did not settle on attempt 1"
+BODY="$(body_of)"
+for want in NEW-BUILD NEW-TESTS NEW-PERF; do
+  grep -qx "$want" <<< "$BODY" || fail "open fence: $want missing"
+done
+grep -q 'OLD-' <<< "$BODY" && fail "open fence: stale content left"
+for section in build tests performance; do
+  [ "$(grep -cxF "<!-- ci:$section:end -->" <<< "$BODY")" = 1 ] || fail "open fence: $section end marker count wrong"
+done
+pass "a fence missing its end marker is closed and settles on the first attempt"
 
 [ "$FAILED" = 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
