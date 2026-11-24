@@ -1,0 +1,9 @@
+/* Preserve the ring size and track contrast on the Cast media backdrop. */
+.ring {
+  box-sizing: content-box;
+  width: 48px;
+  height: 48px;
+  border-right-color: var(--dcl-transparencies-white-20);
+  border-bottom-color: var(--dcl-transparencies-white-20);
+  border-left-color: var(--dcl-transparencies-white-20);
+}

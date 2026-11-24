@@ -14,11 +14,12 @@ const fields = z.object({
 });
 const storedDraft = fields.extend({ expiresAt: z.number(), returnTo: z.string() });
 
-export function saveSignInDraft(returnTo: string, draft: z.input<typeof fields>) {
+export function saveSignInDraft(returnTo: string, draft: z.input<typeof fields>): boolean {
   try {
     sessionStorage.setItem(KEY, JSON.stringify({ ...draft, returnTo, expiresAt: Date.now() + MAX_AGE_MS }));
+    return true;
   } catch {
-    // Sign-in is still available when the browser blocks tab storage.
+    return false;
   }
 }
 

@@ -12,7 +12,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tooling/vendor-provenance.py"
 VENDOR = "rendering/bevy-explorer/vendor"
-DIRECTORIES = [f"{VENDOR}/bevy_dui", f"{VENDOR}/boimp", f"{VENDOR}/rpc-rust"]
+DIRECTORIES = [f"{VENDOR}/bevy_dui", f"{VENDOR}/rpc-rust"]
 
 
 def load_guard():
@@ -31,7 +31,7 @@ class InTreeCrateTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(TOOL), *arguments], cwd=ROOT, capture_output=True, text=True)
 
     def test_each_crate_matches_its_lock_file(self):
-        for directory, shipped in zip(DIRECTORIES, (2, 16, 19)):
+        for directory, shipped in zip(DIRECTORIES, (2, 19)):
             with self.subTest(directory=directory):
                 anchor = self.guard.anchor_of(ROOT / directory)
                 self.assertEqual(self.guard.verify_directory(ROOT / directory, anchor, fetch=False)[0], shipped)
@@ -42,7 +42,7 @@ class InTreeCrateTests(unittest.TestCase):
         for name, repository in self.guard.ANCHORS.items():
             self.assertRegex(repository, r"^https://github\.com/[\w.-]+/[\w.-]+$", name)
 
-    def test_one_command_checks_all_three_and_all_is_the_default(self):
+    def test_one_command_checks_both_and_all_is_the_default(self):
         for arguments in (DIRECTORIES, []):
             result = self.run_tool("--offline", *arguments)
             self.assertEqual(result.returncode, 0, result.stderr)

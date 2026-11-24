@@ -7,6 +7,15 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import {
+  SitesNotificationsDialog,
+  notificationMedia,
+  dclLogoUrl as logo,
+  dclNameUrl as wordmark,
+  SitesLocaleContext,
+  type ChromeTopBarProps,
+  useChromeAuth,
+  ChromeLink,
+  useSiteLayout,
   decentralandPublicNavSections,
   NavBar,
   GeneralMarketplace,
@@ -19,15 +28,13 @@ import {
 } from "@dcl/one-ui";
 import { chainLabel } from "@shop/model/chain";
 import { browserProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
-import { ethereumChainId, settlementChainId } from "@ui/shop/checkout/chain/config";
+import { selectEthereumChain, selectSettlementChain } from "@shop/checkout/chain/selection";
+import { shopChainEnvironment } from "@web-core/shop-chain-env";
 import { manaWeiToNumber } from "@ui/shop/checkout/lib/mana-format";
 import { useManaBalance } from "@ui/shop/credits/hooks";
-import { useWalletAccount, useWalletChain } from "@ui/shop/wallet/context";
-import type { Eip1193Provider } from "@ui/data/auth/wallet";
-import type { DclTopBarProps } from "@ui/web/frames/DclTopBar";
-import { useChromeAuth } from "@ui/web/frames/chrome-auth";
-import ChromeLink from "@ui/web/frames/ChromeLink";
-import { useSiteLayout } from "@ui/web/frames/SiteLayout";
+import { useWalletAccount } from "@dcl/one-ui/apps/shop/wallet-account";
+import { useWalletChain } from "@ui/shop/wallet/context";
+import type { Eip1193Provider } from "@web-core/auth/eip1193";
 import {
   categoryForType,
   notificationBody,
@@ -36,11 +43,7 @@ import {
   notificationTitle,
   relativeTime,
   unreadCount,
-} from "@ui/data/catalyst/notificationsView";
-import SitesNotificationsDialog, { notificationMedia } from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
-import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
-import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
+} from "@web-core/notifications/notificationsView";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";
@@ -94,11 +97,9 @@ const SITE_ICONS = {
   ),
 };
 
-function ProfileNetwork({ provider, label }: { provider: Eip1193Provider; label: string }) {
+function ProfileNetwork({ provider, label, ethereum, polygon }: { provider: Eip1193Provider; label: string; ethereum: number; polygon: number }) {
   const { chainId, pendingChainId, switchTo } = useWalletChain(provider);
   if (chainId === null) return null;
-  const ethereum = ethereumChainId();
-  const polygon = settlementChainId();
   return (
     <select
       aria-label={label}
@@ -130,7 +131,7 @@ export default function SitesTopBar({
   accountControl,
   balances,
   onNavigate,
-}: DclTopBarProps) {
+}: ChromeTopBarProps) {
   const NavigationLink = useMemo(
     () =>
       function NavigationLink(props: NavBarLinkProps) {
@@ -179,8 +180,11 @@ export default function SitesTopBar({
   const rows = notifications.data;
   const profileManaEligible = profileWalletAvailable && matchingWallet;
   const manaAccount = profileOpen && profileManaEligible ? identity : null;
-  const { data: mana, isPending: manaPending } = useManaBalance(manaAccount, ethereumChainId());
-  const { data: polygonMana, isPending: polygonManaPending } = useManaBalance(manaAccount, settlementChainId());
+  const chainEnvironment = shopChainEnvironment();
+  const ethereum = selectEthereumChain(chainEnvironment);
+  const polygon = selectSettlementChain(chainEnvironment);
+  const { data: mana, isPending: manaPending } = useManaBalance(manaAccount, ethereum);
+  const { data: polygonMana, isPending: polygonManaPending } = useManaBalance(manaAccount, polygon);
   const menuBalances = manaAccount
     ? {
         mana: mana === undefined ? undefined : manaWeiToNumber(mana),
@@ -316,7 +320,7 @@ export default function SitesTopBar({
           accountMenuBalances={menuBalances}
           accountMenuBalancesPending={profileManaEligible && (manaPending || polygonManaPending)}
           accountMenuNetwork={manaAccount && provider ? (
-            <ProfileNetwork provider={provider} label={walletNetwork} />
+            <ProfileNetwork provider={provider} label={walletNetwork} ethereum={ethereum} polygon={polygon} />
           ) : undefined}
           onAccountMenuOpenChange={setProfileOpen}
           labels={labels}

@@ -38,7 +38,7 @@ describe("list pages", () => {
     });
 
     it("should link the next page", () => {
-      expect(data).toMatchObject({ kind: "home", viewKey: "home", total: 11, activeCategory: "", nextHref: "/blog?page=2" });
+      expect(data).toMatchObject({ kind: "home", viewKey: "home", total: 11, activeCategory: "", authorSlug: null, nextHref: "/blog?page=2" });
     });
 
     it("should list the menu categories", () => {
@@ -87,7 +87,7 @@ describe("list pages", () => {
     });
 
     it("should answer the author's page by slug", () => {
-      expect(data).toMatchObject({ kind: "author", viewKey: "author:jane-doe", title: "Jane Doe", activeCategory: null });
+      expect(data).toMatchObject({ kind: "author", viewKey: "author:jane-doe", title: "Jane Doe", activeCategory: null, authorSlug: "jane-doe" });
     });
 
     it("should list the author's posts", () => {
@@ -199,6 +199,12 @@ describe("post", () => {
 
     it("should answer its share URL", () => {
       expect(outcome.payload.shareUrl).toBe("https://public.example/blog/platform/first-post");
+    });
+
+    it("should answer the CMS's raw publishedDate beside the post's display date", () => {
+      expect(outcome.payload.publishedDate).toBe("2026-07-02T10:00-07:00");
+      expect(outcome.payload.post.publishedAt).toBe("2026-07-02");
+      expect(outcome.payload.post).not.toHaveProperty("publishedDate");
     });
 
     it("should answer its related posts", () => {

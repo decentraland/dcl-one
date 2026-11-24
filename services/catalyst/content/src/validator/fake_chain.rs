@@ -100,6 +100,12 @@ struct Switches {
     requests: Arc<AtomicUsize>,
     /// `eth_getCode` answers empty while set.
     no_code: Arc<AtomicBool>,
+    /// `eth_getBlockByNumber`s left to answer a JSON-RPC error.
+    failing_blocks: Arc<AtomicUsize>,
+    /// `eth_getBlockByNumber`s left to answer `null`.
+    missing_blocks: Arc<AtomicUsize>,
+    /// The HTTP status and raw body every `eth_getBlockByNumber` answers, when set.
+    block_reply: Arc<Mutex<Option<(u16, &'static str)>>>,
 }
 
 #[derive(Clone)]
@@ -130,6 +136,21 @@ impl FakeChain {
     /// Every address holds no code while set (`eth_getCode` answers `0x`).
     pub fn set_no_code(&self, no_code: bool) {
         self.switches.no_code.store(no_code, Ordering::SeqCst);
+    }
+
+    /// The next `n` block reads answer a JSON-RPC error.
+    pub fn fail_block_reads(&self, n: usize) {
+        self.switches.failing_blocks.store(n, Ordering::SeqCst);
+    }
+
+    /// The next `n` block reads answer `null`, as a replica behind the chain does.
+    pub fn miss_block_reads(&self, n: usize) {
+        self.switches.missing_blocks.store(n, Ordering::SeqCst);
+    }
+
+    /// Every block read answers HTTP `status` with `body` as it is.
+    pub fn set_block_reply(&self, status: u16, body: &'static str) {
+        *self.switches.block_reply.lock().unwrap() = Some((status, body));
     }
 
     /// The `eth_chainId` this chain answers (1 by default).
@@ -296,9 +317,19 @@ fn answer_one(fake: &Fake, body: &Value) -> Value {
                 _ => quantity(&params[0]).filter(|n| *n <= head),
             };
             fake.log.lock().unwrap().push(method.clone());
-            Ok(n.map_or(Value::Null, |n| {
-                json!({ "number": format!("0x{n:x}"), "timestamp": format!("0x{:x}", GENESIS + n as i64 * INTERVAL) })
-            }))
+            let take = |left: &AtomicUsize| {
+                left.try_update(Ordering::SeqCst, Ordering::SeqCst, |l| l.checked_sub(1))
+                    .is_ok()
+            };
+            if take(&fake.switches.failing_blocks) {
+                Err((-32000, "upstream request timed out".to_string()))
+            } else if take(&fake.switches.missing_blocks) {
+                Ok(Value::Null)
+            } else {
+                Ok(n.map_or(Value::Null, |n| {
+                    json!({ "number": format!("0x{n:x}"), "timestamp": format!("0x{:x}", GENESIS + n as i64 * INTERVAL) })
+                }))
+            }
         }
         "eth_call" => {
             fake.log.lock().unwrap().push(format!(
@@ -349,6 +380,14 @@ async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::resp
             .await
             .unwrap();
             Json(Value::Array(answers)).into_response()
+        }
+        single
+            if single["method"] == "eth_getBlockByNumber"
+                && fake.switches.block_reply.lock().unwrap().is_some() =>
+        {
+            fake.log.lock().unwrap().push("eth_getBlockByNumber".into());
+            let (status, body) = fake.switches.block_reply.lock().unwrap().unwrap();
+            (axum::http::StatusCode::from_u16(status).unwrap(), body).into_response()
         }
         single => {
             let answer = tokio::task::spawn_blocking(move || answer_one(&fake, &single))

@@ -1,7 +1,7 @@
 import { createMemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 
-import type { CreatorHubHost } from "@ui/creatorhub/explorer-host";
+import type { CreatorHubHost } from "@web-core/creator-hub-host";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { adoptExplorerHost, followExplorerIdentity, reloadingForAccount } from "@/features/components/chrome/explorer-host";
 
@@ -58,6 +58,7 @@ it("reloads root's data when a visitor enters the Creator Hub, which alone reads
   const args = (from: string, to: string) =>
     ({ currentUrl: new URL(`https://sites.test${from}`), nextUrl: new URL(`https://sites.test${to}`), defaultShouldRevalidate: false }) as never;
   expect(shouldRevalidate(args("/profile/me", "/create/preview"))).toBe(true);
+  expect(shouldRevalidate(args("/profile/me", "/Create/preview"))).toBe(true);
   expect(shouldRevalidate(args("/create/preview", "/create/collections"))).toBe(false);
   expect(shouldRevalidate(args("/create/preview", "/blog"))).toBe(false);
 });

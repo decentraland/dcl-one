@@ -93,6 +93,7 @@ async fn orchestrator(pool: &sqlx::PgPool, temp: &std::path::Path) -> Arc<SyncOr
         pool.clone(),
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
             catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),

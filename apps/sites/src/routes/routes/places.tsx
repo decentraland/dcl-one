@@ -2,16 +2,25 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseE
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams, useRouteLoaderData } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import { ExploreBand, type ExploreBandLabels } from "@dcl/one-ui/apps/sites/places/ExploreBand";
-import { JumpInModal } from "@dcl/one-ui/apps/sites/places/JumpInModal";
-import { LiveNow } from "@dcl/one-ui/apps/sites/places/LiveNow";
-import { LoadMore, PlaceGrid, PlacesMessage } from "@dcl/one-ui/apps/sites/places/PlaceGrid";
-import { PlacesPage } from "@dcl/one-ui/apps/sites/places/PlacesPage";
-import type { PlaceCardData, PlaceCardLabels } from "@dcl/one-ui/apps/sites/places/cards/types";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import {
+  ExploreBand,
+  type ExploreBandLabels,
+  JumpInModal,
+  PlacesLiveNow as LiveNow,
+  PlacesLoadMore as LoadMore,
+  PlaceGrid,
+  PlacesMessage,
+  PlacesPage,
+  type PlaceCardData,
+  type PlaceCardLabels,
+} from "@dcl/one-ui";
+import { remoteFlag, remoteFlagsPrimed, remoteFlagVariant } from "@dcl/one-ui/apps/shop/remote-flags";
+import { remoteFlagOn, remoteFlagVariantIn } from "@shop/discovery/lib/rolloutFlags";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -22,14 +31,18 @@ import {
   CATEGORY_OPTIONS,
   effectiveSearch,
   liveFeedQuery,
+  liveMinUsersFrom,
   parseCategory,
   parseSection,
   type DiscoverCategory,
   type ExploreSection,
 } from "@/data/lib/catalyst/places/discover";
+import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
+import { dappsFlagsAnswer, isUnread } from "@/data/lib/feature-flags.server";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { detectPlatform, type DetectedPlatform } from "@/features/download/options";
 import { modalPlace, placeCard, placeJumpIn, type CreatorProfiles } from "@/features/places/cards";
+import { PLACES_PAGE_VIEW } from "@/features/places/page-view";
 import { useBrowsePlaces, useLiveRail, useMemberPlaces, usePlaceCreators } from "@/features/places/hooks";
 
 import { PLACES_SECTION, destinationMeta, sectionCard } from "../lib/destination-meta";
@@ -121,6 +134,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const view = readView(new URL(request.url).searchParams);
   const client = new QueryClient(QUERY_CLIENT_CONFIG);
   let unavailable = false;
+  // Live Now's head count, from the rollout flags this server holds. Null when the service has not answered yet
+  // (the "all off" stand-in is not a read): the rail keeps every scene, and the browser reads the flags later.
+  const minUsers = dappsFlagsAnswer().then(
+    (answer) =>
+      isUnread(answer) ? null : liveMinUsersFrom((flag) => remoteFlagOn(answer, flag), (flag) => remoteFlagVariantIn(answer, flag)),
+    () => null,
+  );
   const reads = Promise.all([
     view.section === "all"
       ? client.fetchInfiniteQuery(browsePlacesQuery(view)).catch(() => {
@@ -142,7 +162,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const dehydratedState = dehydrate(client);
   client.clear();
   return wrap(
-    { sid, platform: detectPlatform(request.headers.get("user-agent")), dehydratedState, unavailable },
+    { sid, platform: detectPlatform(request.headers.get("user-agent")), dehydratedState, unavailable, liveMinUsers: await minUsers },
     { status: unavailable ? 503 : 200 },
   );
 }
@@ -152,24 +172,58 @@ export function headers() {
   return { Vary: "User-Agent" };
 }
 
-/** Client navigations fetch through the browser cache; the server loader runs for the first document only. */
-export async function clientLoader(): Promise<null> {
-  return null;
+/**
+ * Live Now's head count this document knows: the server's answer it rendered, or a browser read that succeeded.
+ * A document rendered before the server had read the flags knows none, so its first client navigation reads them.
+ */
+let knownMinUsers: number | null = null;
+/** One browser read of this server's rollout flags per document that never had the server's answer. */
+let flagsRead: Promise<number | null> | null = null;
+
+/**
+ * Client navigations fetch the feeds through the browser cache; the server loader runs for the first document only.
+ * Live Now's head count is the one this document already knows (the server's, kept at hydration), so a filter change
+ * never waits on the flags. A document that never had it reads this server's flags (/internal/feature-flags) once; a
+ * failed read keeps the last known value, which is 0 (every scene) when there was none.
+ */
+export async function clientLoader(): Promise<{ liveMinUsers: number }> {
+  if (knownMinUsers !== null) return { liveMinUsers: knownMinUsers };
+  flagsRead ??= primeDappsFlags().then(() => (remoteFlagsPrimed() ? liveMinUsersFrom(remoteFlag, remoteFlagVariant) : null));
+  const read = await flagsRead;
+  if (read !== null) knownMinUsers = read;
+  return { liveMinUsers: knownMinUsers ?? 0 };
+}
+
+/** Forgets the head count and the flags read this document holds (tests). */
+export function resetPlacesFlagsRead(): void {
+  knownMinUsers = null;
+  flagsRead = null;
 }
 
 const subscribeHydration = () => () => {};
 
 export default function Places({ loaderData }: Route.ComponentProps) {
+  const server = loaderData && "dehydratedState" in loaderData ? loaderData : undefined;
+  const serverMinUsers = server?.liveMinUsers;
+  // Effects run only in the browser, so the module keeps this document's value and never a server request's.
+  useEffect(() => {
+    if (typeof serverMinUsers === "number") knownMinUsers = serverMinUsers;
+  }, [serverMinUsers]);
   return (
-    <HydrationBoundary state={loaderData?.dehydratedState}>
-      <PlacesExplorer loaderSid={loaderData?.sid} loaderPlatform={loaderData?.platform} unavailable={loaderData?.unavailable ?? false} />
+    <HydrationBoundary state={server?.dehydratedState}>
+      <PlacesExplorer
+        loaderSid={server?.sid}
+        loaderPlatform={server?.platform}
+        unavailable={server?.unavailable ?? false}
+        liveMinUsers={loaderData?.liveMinUsers ?? 0}
+      />
     </HydrationBoundary>
   );
 }
 
-type ExplorerProps = { loaderSid?: string; loaderPlatform?: DetectedPlatform; unavailable: boolean };
+type ExplorerProps = { loaderSid?: string; loaderPlatform?: DetectedPlatform; unavailable: boolean; liveMinUsers: number };
 
-function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProps) {
+function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }: ExplorerProps) {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const view = readView(params);
@@ -197,7 +251,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
     if (heldKey !== null && heldKey !== viewKey) setHeldKey(null);
   }, [heldKey, viewKey]);
   const browse = useBrowsePlaces({ category: view.category, search: view.search }, view.section === "all" && !held);
-  const live = useLiveRail(showsLive(view));
+  const live = useLiveRail(showsLive(view), liveMinUsers);
   const member = useMemberPlaces(view.section, hydrated ? identity : null);
 
   const liveRail = showsLive(view) ? live.rail : [];
@@ -221,6 +275,8 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   const sectionCards = toCards(sectionRows, profiles);
 
   const [modal, setModal] = useState<{ place: Destination; card: PlaceCardData } | null>(null);
+
+  usePageView(PLACES_PAGE_VIEW);
 
   // Analytics: one list view per filter set, as the previous page reported it.
   const viewed = useRef<string | null>(null);
@@ -319,7 +375,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   }
 
   return (
-    <SitesChrome active="explore">
+    <SitesLayout active="explore">
       <PlacesPage
         title="Places"
         status={status}
@@ -362,7 +418,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
           onJumpIn={(event) => jumpIn(modal.place, event)}
         />
       ) : null}
-    </SitesChrome>
+    </SitesLayout>
   );
 
   function exploreResults() {

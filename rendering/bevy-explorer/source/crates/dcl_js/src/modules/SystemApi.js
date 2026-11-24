@@ -116,9 +116,16 @@ module.exports.kernelFetch = async function (body) {
 //   profileExtras?: {field: value}
 //   nameColor: Color3
 // }
-// => deployed version
+// Resolves with the saved version. An engine rejection carries its last confirmed profile.
 module.exports.setAvatar = async function(avatar) {
-    return await Deno.core.ops.op_set_avatar(avatar)
+    const owner = op_get_current_login()
+    if (!owner) throw Object.assign(new Error("No player profile to edit"), { accountChanged: true })
+    const result = await Deno.core.ops.op_set_avatar(owner, avatar)
+    if ('Err' in result) {
+        const { message, profile, accountChanged } = result.Err
+        throw Object.assign(new Error(message), { profile, accountChanged })
+    }
+    return result.Ok
 }
 
 // signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
@@ -247,6 +254,7 @@ module.exports.liveSceneInfo = async function() {
 // { 
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,
+//   pinned: bool, // false = the signed-in account has no home
 // }
 module.exports.getHomeScene = async function() {
     return await Deno.core.ops.op_get_home_scene()
@@ -258,6 +266,10 @@ module.exports.getHomeScene = async function() {
 // }
 module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
+}
+
+module.exports.clearHomeScene = async function() {
+    await Deno.core.ops.op_clear_home_scene()
 }
 
 // { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview

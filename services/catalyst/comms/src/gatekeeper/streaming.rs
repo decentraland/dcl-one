@@ -49,6 +49,9 @@ mod jobs;
 
 #[path = "streaming_cast.rs"]
 pub(super) mod cast;
+/// For the Cast presenter, which replaces a room's presentation only for a
+/// bot of the room's active credential.
+pub(crate) use cast::publisher_credential_current;
 pub(super) use jobs::spawn_jobs;
 
 /// The durable cleanup of one intent, for tests that retry it after a failure.
@@ -66,6 +69,12 @@ pub(crate) async fn ttl_pass_for_test(state: &CommsState, id: Uuid) -> bool {
     jobs::reconcile(state).await.unwrap();
     let cut = jobs::CleanupCommand::DurationExpiry;
     jobs::enqueue(state, id, cut).await.unwrap()
+}
+
+/// The key expiry job's pass, for tests with a database of their own.
+#[cfg(test)]
+pub(crate) async fn key_expiry_pass_for_test(state: &CommsState) {
+    jobs::expire_keys(state).await.unwrap();
 }
 
 pub const PATH: &str = "/scene-stream-access";
@@ -314,19 +323,29 @@ pub(super) fn key_authority<'a>(
     scene: PlaceLookup<'a>,
 ) -> PlaceLookup<'a> {
     match world {
-        Some(world) => PlaceLookup::resolved(
-            state,
-            place_id,
-            scene::PlaceInfo {
-                world: true,
-                world_name: Some(world.key().to_owned()),
-                positions: Vec::new(),
-                base_position: None,
-            },
-            scene::NO_ADMINS,
-        ),
+        Some(world) => world_authority(state, place_id, world),
         None => scene,
     }
+}
+
+/// The world place with no footprint: its owner and the grantees with no
+/// parcel restriction hold it, and no `/scene-admin` grant does.
+pub(super) fn world_authority<'a>(
+    state: &'a CommsState,
+    place_id: &str,
+    world: &WorldName,
+) -> PlaceLookup<'a> {
+    PlaceLookup::resolved(
+        state,
+        place_id,
+        scene::PlaceInfo {
+            world: true,
+            world_name: Some(world.key().to_owned()),
+            positions: Vec::new(),
+            base_position: None,
+        },
+        scene::NO_ADMINS,
+    )
 }
 
 /// The decision for a stream-key verb on `authority` ([`key_authority`]),

@@ -386,7 +386,7 @@ impl catalyst::comms::gatekeeper::moderation::BanStatus for PolicyBan {
     async fn ban(
         &self,
         actor: &catalyst::comms::Address,
-        _: Option<&catalyst::comms::world_identity::SceneId>,
+        _: Option<&catalyst::comms::access::SceneBanKey>,
         _: Option<&str>,
         _: chrono::NaiveDateTime,
     ) -> Result<Option<catalyst::comms::access::Ban>, catalyst::comms::AuthorityNotEstablished>

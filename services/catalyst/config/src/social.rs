@@ -231,7 +231,9 @@ pub struct SocialConfig {
     #[arg(long, env = "RESTRICTED_NAMES", default_value = "")]
     pub restricted_names: String,
 
-    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL.
+    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL. Emitted URLs carry
+    /// `?v=<hash>` and are long-cached: a caching CDN here must key on the `v` parameter only
+    /// and strip other query parameters.
     #[arg(long, env = "COMMUNITIES_CDN_URL")]
     pub communities_cdn_url: Option<String>,
 
@@ -535,7 +537,8 @@ pub struct SocialConfig {
     #[arg(long, env = "MODERATOR_TOKEN", hide_env_values = true)]
     pub moderator_token: Option<String>,
 
-    /// Comma/space-separated wallets allowed on the user-moderation routes by signed fetch.
+    /// Comma/space-separated wallets allowed on the user-moderation routes by signed fetch,
+    /// only while no `platform_user_moderators` flag document (`FF_URL`) is held.
     #[arg(long, env = "PLATFORM_USER_MODERATORS", default_value = "")]
     pub platform_user_moderators: String,
 

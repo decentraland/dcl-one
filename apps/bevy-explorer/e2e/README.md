@@ -288,7 +288,15 @@ same file checks realm entry: entered when not banned or when the check fails, a
 stub, a `/changerealm` refused while banned, including for a new sign-in before it asks to enter.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
-adapter reported as a scene ban.
+adapter unloading its scene, a visit to a neighbouring parcel and return while still refused,
+completion of teleport arrival on return, followed by fresh admission and reloading on that
+parcel. `/ban_block_state` exposes `sceneAdmission.retainedRefusals` (scene id, scope and
+`retryDue` in elapsed engine seconds) for refusals retained while visiting another scene.
+The accepted adapter points at an unused loopback endpoint: this scenario
+checks admission and scene lifetime, not a successful LiveKit connection.
+`/scene_topics` registers the **Scene messages** debug section, covered by the registered-reading
+scenario. Routing, topic delivery and trust-policy counters share this reading; a rejected
+banned topic sender increments both `bannedSenderDrops` and `receiveDropped`.
 
 ## Scenario map
 

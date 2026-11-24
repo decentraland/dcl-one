@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 
-import { Button, Modal } from '@dcl/one-ui'
+import { Button } from '../../../components/Button/Button'
+import { Modal } from '../../../components/Modal/Modal'
 
 import styles from './LeaveCreditsDialog.module.css'
 

@@ -15,9 +15,12 @@ pub enum RpcError {
     Transport(String),
     #[error("rpc returned an error that carries no usable block range: {0}")]
     Rpc(String),
+    /// An answer whose result is not the shape the method returns.
+    #[error("rpc returned a malformed answer: {0}")]
+    Malformed(String),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct RpcLog {
     pub address: String,
     pub topics: Vec<String>,
@@ -80,19 +83,53 @@ pub struct BlockHeader {
 }
 
 /// Ethereum logs and headers over the shared outbound client.
+#[derive(Clone, Copy)]
 pub struct Rpc<'a> {
     http: &'a crate::http::Outbound,
     url: &'a str,
+    /// Counts every HTTP request as it is sent, whatever its outcome.
+    sent: Option<&'a std::sync::atomic::AtomicUsize>,
+    /// One read's own count, kept the same way beside `sent`.
+    also: Option<&'a std::sync::atomic::AtomicUsize>,
 }
 
 impl<'a> Rpc<'a> {
     /// The client over another endpoint, for callers that pass their own
     /// filter to [`Rpc::get_logs_matching`].
     pub fn at(http: &'a crate::http::Outbound, url: &'a str) -> Self {
-        Self { http, url }
+        Self {
+            http,
+            url,
+            sent: None,
+            also: None,
+        }
     }
 
+    /// The same client, adding one to `sent` for every HTTP request it sends
+    /// (a call or a batch), before the request goes out: a read that fails
+    /// after several requests has still spent them.
+    pub fn counting(self, sent: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self {
+            sent: Some(sent),
+            ..self
+        }
+    }
+
+    /// The same client, also adding one to `sent` for every HTTP request it
+    /// sends, beside the counter [`Rpc::counting`] gave it: one read's own
+    /// count, retries and failures included.
+    pub fn also_counting(self, sent: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self {
+            also: Some(sent),
+            ..self
+        }
+    }
+
+    /// One HTTP request about to be sent.
     fn jsonrpc(&self) -> crate::http::jsonrpc::Rpc<'a> {
+        for sent in [self.sent, self.also].into_iter().flatten() {
+            sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         crate::http::jsonrpc::Rpc::new(self.http, self.url)
             .with_timeout(RPC_TIMEOUT)
             .with_body_cap(RPC_BODY_CAP)

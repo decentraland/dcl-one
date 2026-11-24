@@ -32,6 +32,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::FutureExt;
 use parking_lot::Mutex;
 use sqlx::PgPool;
 use sqlx::postgres::PgConnection;
@@ -75,9 +76,67 @@ pub struct JobContext {
     pub cancel: CancellationToken,
     trace: Arc<Mutex<Trace>>,
     name: Arc<str>,
+    lease: Option<LeaseControl>,
+}
+
+/// The lease a fleet-wide job body runs under, one value per acquisition:
+/// the control operations that must run on the session holding the lease
+/// (granting a fencing generation) go through it. A body run without leases
+/// (tests, a node that never runs a second process) has none.
+#[derive(Clone)]
+pub struct LeaseControl {
+    leases: Arc<Leases>,
+    name: Arc<str>,
+    lost: CancellationToken,
+    acquisition: u64,
+}
+
+static LEASE_ACQUISITIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl LeaseControl {
+    fn of(guard: &LeaseGuard) -> Self {
+        Self {
+            leases: guard.leases.clone(),
+            name: Arc::from(guard.name.as_str()),
+            lost: guard.lost.clone(),
+            acquisition: guard.acquisition,
+        }
+    }
+
+    /// Distinct for every time this process took a lease: a body that grants
+    /// itself a generation per acquisition grants a new one when it changes.
+    pub fn acquisition(&self) -> u64 {
+        self.acquisition
+    }
+
+    /// Cancelled when the lease connection was lost.
+    pub fn lost(&self) -> &CancellationToken {
+        &self.lost
+    }
+
+    /// [`LeaseGuard::with_connection`] for the lease this body runs under.
+    pub async fn with_connection<T, F>(&self, operation: F) -> sqlx::Result<T>
+    where
+        T: Send,
+        F: for<'connection> FnOnce(
+                &'connection mut PgConnection,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = sqlx::Result<T>> + Send + 'connection>,
+            > + Send,
+    {
+        self.leases
+            .with_held_connection(&self.name, self.acquisition, &self.lost, false, operation)
+            .await
+    }
 }
 
 impl JobContext {
+    /// The lease this body runs under, when the job is leased and this
+    /// process has leases.
+    pub fn lease(&self) -> Option<&LeaseControl> {
+        self.lease.as_ref()
+    }
+
     /// One line of where the job is; replaces the previous one.
     pub fn progress(&self, msg: impl Into<String>) {
         self.trace.lock().progress = Some(msg.into());
@@ -106,7 +165,9 @@ impl JobContext {
         }
     }
 
-    fn set_state(&self, state: Option<JobState>) {
+    /// Sets the state the job report shows (`None`: running), for a job
+    /// that schedules its own leased work.
+    pub fn set_state(&self, state: Option<JobState>) {
         self.trace.lock().state = state;
     }
 }
@@ -192,7 +253,15 @@ impl Jobs {
         self.first_pass_now
     }
 
-    fn periodic_cfg(&self, cfg: PeriodicCfg) -> PeriodicCfg {
+    /// Whether this process runs fleet-wide jobs ([`Jobs::with_fleet_jobs`]):
+    /// a job that takes leases itself stands down when it does not.
+    pub fn fleet_jobs(&self) -> bool {
+        self.fleet_jobs
+    }
+
+    /// `cfg` as this registry runs a periodic job: with
+    /// [`Jobs::with_first_pass_now`], the first pass right away.
+    pub fn periodic_cfg(&self, cfg: PeriodicCfg) -> PeriodicCfg {
         if self.first_pass_now {
             PeriodicCfg {
                 run_on_start: true,
@@ -250,6 +319,7 @@ impl Jobs {
             cancel: cancel.clone(),
             trace: trace.clone(),
             name: Arc::from(name.as_str()),
+            lease: None,
         };
         self.start(name, cancel, trace, Box::pin(body(ctx)))
     }
@@ -265,9 +335,7 @@ impl Jobs {
         let task_trace = trace.clone();
         let task_name = name.clone();
         let handle = tokio::spawn(async move {
-            let outcome = std::panic::AssertUnwindSafe(fut);
-            use futures::FutureExt;
-            let result = outcome.catch_unwind().await;
+            let result = catch_panic(fut).await;
             let mut t = task_trace.lock();
             match result {
                 Ok(Ok(())) => {
@@ -279,8 +347,7 @@ impl Jobs {
                     t.last_error = Some(e.to_string());
                     t.state = Some(JobState::Failed);
                 }
-                Err(panic) => {
-                    let msg = panic_message(panic.as_ref());
+                Err(msg) => {
                     tracing::error!(job = %task_name, panic = %msg, "job panicked");
                     t.last_error = Some(format!("panic: {msg}"));
                     t.state = Some(JobState::Failed);
@@ -347,15 +414,11 @@ impl Jobs {
                     cancel: run.clone(),
                     trace: ctx.trace.clone(),
                     name: ctx.name.clone(),
+                    lease: Some(LeaseControl::of(&guard)),
                 };
-                use futures::FutureExt;
-                let fut = std::panic::AssertUnwindSafe(async { body(run_ctx).await })
-                    .catch_unwind()
-                    .map(|outcome| {
-                        outcome.unwrap_or_else(|panic| {
-                            Err(anyhow::anyhow!("panic: {}", panic_message(panic.as_ref())))
-                        })
-                    });
+                let fut = catch_panic(async { body(run_ctx).await }).map(|outcome| {
+                    outcome.unwrap_or_else(|panic| Err(anyhow::anyhow!("panic: {panic}")))
+                });
                 tokio::pin!(fut);
                 let lost = guard.lost.clone();
                 let outcome = tokio::select! {
@@ -567,11 +630,7 @@ async fn run_periodic(
     cfg: PeriodicCfg,
     task: Arc<tokio::sync::Mutex<JobBody>>,
 ) -> anyhow::Result<()> {
-    let first_delay = if cfg.run_on_start {
-        first_fire_jitter(&log_name, cfg.jitter)
-    } else {
-        cfg.interval + first_fire_jitter(&log_name, cfg.jitter)
-    };
+    let first_delay = cfg.first_delay(&log_name);
     tracing::info!(
         job = %log_name,
         first_pass_in_ms = first_delay.as_millis() as u64,
@@ -590,9 +649,8 @@ async fn run_periodic(
     loop {
         pass += 1;
         let started = tokio::time::Instant::now();
-        use futures::FutureExt;
         let fut = (task.lock().await)(ctx.clone());
-        let outcome = std::panic::AssertUnwindSafe(fut).catch_unwind().await;
+        let outcome = catch_panic(fut).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         let wait = match outcome {
             Ok(Ok(())) => {
@@ -609,10 +667,9 @@ async fn run_periodic(
                 ctx.progress(format!("pass {pass} failed; next in {} s", wait.as_secs()));
                 wait
             }
-            Err(panic) => {
+            Err(msg) => {
                 failures += 1;
                 let wait = cfg.wait_after_failure(failures);
-                let msg = panic_message(panic.as_ref());
                 tracing::error!(job = %log_name, pass, elapsed_ms, panic = %msg, "pass panicked");
                 ctx.error(format!("pass {pass}: panic: {msg}"));
                 ctx.progress(format!(
@@ -650,7 +707,7 @@ async fn wait_for_lease(leases: &Arc<Leases>, name: &str, ctx: &JobContext) -> O
                 ctx.progress("standby: the lease connection is unavailable");
             }
         }
-        let wait = leases.settings.poll + first_fire_jitter(name, leases.settings.poll / 4);
+        let wait = leases.settings.standby_wait(name);
         if !sleep_or_cancel(&ctx.cancel, wait).await {
             return None;
         }
@@ -667,6 +724,15 @@ pub struct LeaseSettings {
     /// How often the lease connection is checked. A check that fails or takes
     /// longer than this loses every lease this process holds.
     pub keepalive: Duration,
+}
+
+impl LeaseSettings {
+    /// How long a job standing by waits before it asks for the lease `name`
+    /// again: [`LeaseSettings::poll`] plus up to a quarter of it, so standby
+    /// processes started together do not ask in lockstep.
+    pub fn standby_wait(&self, name: &str) -> Duration {
+        self.poll + first_fire_jitter(name, self.poll / 4)
+    }
 }
 
 impl Default for LeaseSettings {
@@ -701,8 +767,30 @@ pub struct Leases {
     /// and marking it stale, so a test can take a lease in that window.
     #[cfg(test)]
     between_lose_and_mark: Mutex<Option<std::pin::Pin<Box<dyn Future<Output = ()> + Send>>>>,
-    held: Mutex<HashMap<String, CancellationToken>>,
-    pending_release: Mutex<Vec<String>>,
+    held: Mutex<HashMap<String, Holding>>,
+    /// Dropped guards' leases the keeper unlocks: (name, acquisition).
+    pending_release: Mutex<Vec<(String, u64)>>,
+}
+
+/// One held lease: its loss token and the acquisition that took it. Every
+/// release and control operation names the acquisition, so one that ended
+/// never touches the same name taken again.
+struct Holding {
+    lost: CancellationToken,
+    acquisition: u64,
+}
+
+/// Whether `err` ended the session. A statement the database refused with
+/// severity ERROR (a lock or statement timeout, a deadlock, a constraint)
+/// leaves it working. FATAL or PANIC ends the backend, and its advisory
+/// locks with it, as does every error that is not the database's answer.
+fn session_ended(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db) => db
+            .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+            .is_none_or(|pg| pg.severity() != sqlx::postgres::PgSeverity::Error),
+        _ => true,
+    }
 }
 
 /// A held lease: dropped without [`LeaseGuard::release`] (a panicking job),
@@ -711,6 +799,7 @@ pub struct LeaseGuard {
     leases: Arc<Leases>,
     name: String,
     lost: CancellationToken,
+    acquisition: u64,
     released: bool,
 }
 
@@ -718,6 +807,12 @@ impl LeaseGuard {
     /// Cancelled when the lease connection was lost while this lease was held.
     pub fn lost(&self) -> &CancellationToken {
         &self.lost
+    }
+
+    /// This acquisition's control, as a leased job body gets it
+    /// ([`JobContext::lease`]), for work that holds the lease itself.
+    pub fn control(&self) -> LeaseControl {
+        LeaseControl::of(self)
     }
 
     /// Runs a bounded control operation on the session that actually holds this lease.
@@ -731,40 +826,78 @@ impl LeaseGuard {
                 Box<dyn std::future::Future<Output = sqlx::Result<T>> + Send + 'connection>,
             > + Send,
     {
-        let mut slot = self.leases.conn.lock().await;
-        if self.released
-            || self.lost.is_cancelled()
-            || !self.leases.held.lock().contains_key(&self.name)
-        {
-            return Err(sqlx::Error::PoolClosed);
-        }
-        let Some(connection) = slot.as_mut() else {
-            return Err(sqlx::Error::PoolClosed);
-        };
-        let result = operation(connection).await;
-        if result.is_err() {
-            *slot = None;
-            self.leases
-                .lose_all("a lease-held control operation failed");
-        }
-        result
+        self.leases
+            .with_held_connection(
+                &self.name,
+                self.acquisition,
+                &self.lost,
+                self.released,
+                operation,
+            )
+            .await
     }
 
     pub async fn release(mut self) {
         self.released = true;
-        self.leases.release(&self.name).await;
+        self.leases.release(&self.name, self.acquisition).await;
     }
 }
 
 impl Drop for LeaseGuard {
     fn drop(&mut self) {
         if !self.released && !self.lost.is_cancelled() {
-            self.leases.pending_release.lock().push(self.name.clone());
+            self.leases
+                .pending_release
+                .lock()
+                .push((self.name.clone(), self.acquisition));
         }
     }
 }
 
 impl Leases {
+    /// Runs `operation` on the session that holds the lease `name`, unless
+    /// that acquisition was released, lost or no longer holds it. A statement
+    /// the database refused is returned with the session kept; any failure
+    /// that ends the session ([`session_ended`]), the keepalive bound
+    /// included, drops it, and every lease on it is lost at once.
+    async fn with_held_connection<T, F>(
+        &self,
+        name: &str,
+        acquisition: u64,
+        lost: &CancellationToken,
+        released: bool,
+        operation: F,
+    ) -> sqlx::Result<T>
+    where
+        T: Send,
+        F: for<'connection> FnOnce(
+                &'connection mut PgConnection,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = sqlx::Result<T>> + Send + 'connection>,
+            > + Send,
+    {
+        let mut slot = self.conn.lock().await;
+        let current = self
+            .held
+            .lock()
+            .get(name)
+            .is_some_and(|h| h.acquisition == acquisition);
+        if released || lost.is_cancelled() || !current {
+            return Err(sqlx::Error::PoolClosed);
+        }
+        let Some(connection) = slot.as_mut() else {
+            return Err(sqlx::Error::PoolClosed);
+        };
+        // Bounded like every statement on the session, so a partitioned
+        // socket never holds the session mutex past the keepalive.
+        let result = self.bounded(operation(connection)).await;
+        if result.as_ref().is_err_and(session_ended) {
+            *slot = None;
+            self.lose_all("a lease-held control operation failed");
+        }
+        result
+    }
+
     pub fn new(pool: PgPool, settings: LeaseSettings) -> Self {
         Self {
             pool,
@@ -843,6 +976,12 @@ impl Leases {
             return Ok(None);
         }
         let mut slot = self.session().await;
+        // Again under the session mutex: the advisory lock is reentrant on
+        // one session, so two calls that both passed the check above would
+        // both take it, and one release would leave it held.
+        if self.held.lock().contains_key(name) {
+            return Ok(None);
+        }
         if slot.is_none() {
             *slot = Some(self.connect().await?);
         }
@@ -858,11 +997,20 @@ impl Leases {
         match taken {
             Ok(true) => {
                 let lost = CancellationToken::new();
-                self.held.lock().insert(name.to_string(), lost.clone());
+                let acquisition =
+                    LEASE_ACQUISITIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                self.held.lock().insert(
+                    name.to_string(),
+                    Holding {
+                        lost: lost.clone(),
+                        acquisition,
+                    },
+                );
                 Ok(Some(LeaseGuard {
                     leases: self.clone(),
                     name: name.to_string(),
                     lost,
+                    acquisition,
                     released: false,
                 }))
             }
@@ -875,9 +1023,25 @@ impl Leases {
         }
     }
 
-    async fn release(&self, name: &str) {
+    /// Forgets and unlocks `name` when `acquisition` still holds it, and
+    /// cancels that acquisition's token, so no control of it runs again. A
+    /// name a newer acquisition holds is left alone.
+    fn forget(&self, name: &str, acquisition: u64) -> bool {
+        let mut held = self.held.lock();
+        if held.get(name).is_none_or(|h| h.acquisition != acquisition) {
+            return false;
+        }
+        if let Some(holding) = held.remove(name) {
+            holding.lost.cancel();
+        }
+        true
+    }
+
+    async fn release(&self, name: &str, acquisition: u64) {
         let mut slot = self.session().await;
-        self.held.lock().remove(name);
+        if !self.forget(name, acquisition) {
+            return;
+        }
         if let Some(conn) = slot.as_mut() {
             let unlocked = self
                 .bounded(
@@ -897,13 +1061,13 @@ impl Leases {
 
     /// Cancels and forgets every held lease; `true` when there was one.
     fn lose_all(&self, why: &str) -> bool {
-        let held: Vec<(String, CancellationToken)> = self.held.lock().drain().collect();
+        let held: Vec<(String, Holding)> = self.held.lock().drain().collect();
         if !held.is_empty() {
             tracing::warn!(leases = ?held.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), "{why}: every lease of this process is lost");
         }
         let any = !held.is_empty();
-        for (_, lost) in held {
-            lost.cancel();
+        for (_, holding) in held {
+            holding.lost.cancel();
         }
         self.pending_release.lock().clear();
         any
@@ -936,9 +1100,11 @@ impl Leases {
             }
             return;
         };
-        let pending: Vec<String> = std::mem::take(&mut *self.pending_release.lock());
-        for name in pending {
-            self.held.lock().remove(&name);
+        let pending: Vec<(String, u64)> = std::mem::take(&mut *self.pending_release.lock());
+        for (name, acquisition) in pending {
+            if !self.forget(&name, acquisition) {
+                continue;
+            }
             let unlocked = self
                 .bounded(
                     sqlx::query("SELECT pg_advisory_unlock(hashtext($1), hashtext($2))")
@@ -1039,7 +1205,18 @@ impl PeriodicCfg {
         self
     }
 
-    fn wait_after_failure(&self, consecutive_failures: u32) -> Duration {
+    /// The delay before the first pass of the job `name`.
+    pub fn first_delay(&self, name: &str) -> Duration {
+        let jitter = first_fire_jitter(name, self.jitter);
+        if self.run_on_start {
+            jitter
+        } else {
+            self.interval + jitter
+        }
+    }
+
+    /// The wait after `consecutive_failures` failed passes in a row.
+    pub fn wait_after_failure(&self, consecutive_failures: u32) -> Duration {
         match self.error_backoff_max {
             None => self.interval,
             Some(max) => {
@@ -1067,6 +1244,27 @@ async fn sleep_or_cancel(cancel: &CancellationToken, wait: Duration) -> bool {
     }
 }
 
+/// Longest panic text kept, in bytes: it reaches stored errors and HTTP responses.
+pub const PANIC_MESSAGE_MAX_BYTES: usize = 512;
+
+/// Runs `fut`, returning a panic as its text, cut to [`PANIC_MESSAGE_MAX_BYTES`]. The caller
+/// vouches that `fut` is unwind safe.
+pub async fn catch_panic<F: Future>(fut: F) -> Result<F::Output, String> {
+    std::panic::AssertUnwindSafe(fut)
+        .catch_unwind()
+        .await
+        .map_err(|panic| capped(panic_message(panic.as_ref())))
+}
+
+fn capped(text: &str) -> String {
+    if text.len() <= PANIC_MESSAGE_MAX_BYTES {
+        return text.to_string();
+    }
+    let end = text.floor_char_boundary(PANIC_MESSAGE_MAX_BYTES);
+    format!("{}…", &text[..end])
+}
+
+/// The text of a caught panic, or a placeholder for a non-string payload.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
@@ -1169,6 +1367,27 @@ mod tests {
         assert_eq!(report[0].state, JobState::Failed);
         assert_eq!(report[0].last_error.as_deref(), Some("panic: kaboom"));
         assert!(jobs.shutdown(Duration::from_secs(1)).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_caught_panic_returns_its_text_and_a_value_passes_through() {
+        assert_eq!(catch_panic(async { 7 }).await, Ok(7));
+        let caught = catch_panic(async { panic!("kaboom {}", 1) }).await;
+        assert_eq!(caught, Err::<(), _>("kaboom 1".to_string()));
+        let caught = catch_panic(async { std::panic::panic_any(7u8) }).await;
+        assert_eq!(caught, Err::<(), _>("non-string panic payload".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_long_panic_text_is_cut_on_a_char_boundary() {
+        // 'é' is two bytes, so the limit falls inside one.
+        let text = format!("a{}", "é".repeat(PANIC_MESSAGE_MAX_BYTES));
+        let caught = catch_panic(async move { panic!("{text}") })
+            .await
+            .unwrap_err();
+        let kept = caught.strip_suffix('…').expect("marked as cut");
+        assert_eq!(kept.len(), PANIC_MESSAGE_MAX_BYTES - 1);
+        assert!(kept.starts_with("aé"));
     }
 
     type Stamps = UnboundedReceiver<tokio::time::Instant>;
@@ -1289,6 +1508,7 @@ mod tests {
             cancel: jobs.root_token().child_token(),
             trace: Arc::default(),
             name: Arc::from("parent"),
+            lease: None,
         };
         jobs.spawn_periodic_scoped(&parent_ctx, "scoped", slow(), |_ctx| async { Ok(()) });
         for name in ["stamp", "fails", "leased", "scoped"] {
@@ -1576,6 +1796,256 @@ mod lease_tests {
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
         assert_eq!(cancelled.load(Ordering::SeqCst), 2);
+    }
+
+    /// An error the database answers to a control operation (here a lock
+    /// timeout) fails only that operation: the session and every lease on it
+    /// stay.
+    #[tokio::test]
+    async fn a_database_error_in_a_control_operation_keeps_the_leases() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings("dberror")));
+        let guard = leases
+            .try_acquire("name")
+            .await
+            .unwrap()
+            .expect("a free name");
+        let other = leases
+            .try_acquire("other")
+            .await
+            .unwrap()
+            .expect("a second lease");
+        let pid = leases.backend_pid().await;
+        let failed = LeaseControl::of(&guard)
+            .with_connection(|conn| {
+                Box::pin(async move { sqlx::query("SELECT 1/0").execute(conn).await.map(|_| ()) })
+            })
+            .await;
+        assert!(
+            matches!(failed, Err(sqlx::Error::Database(_))),
+            "{failed:?}"
+        );
+        assert_eq!(leases.held(), vec!["name".to_string(), "other".to_string()]);
+        assert_eq!(leases.backend_pid().await, pid, "the same session");
+        guard.release().await;
+        other.release().await;
+    }
+
+    /// FATAL ends the backend and its advisory locks with it: the control
+    /// operation that met it cancels every lease of the session before it
+    /// returns, with no keeper pass.
+    #[tokio::test]
+    async fn a_fatal_error_in_a_control_operation_loses_every_lease_at_once() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings("fatal")));
+        let guard = leases
+            .try_acquire("name")
+            .await
+            .unwrap()
+            .expect("a free name");
+        let other = leases
+            .try_acquire("other")
+            .await
+            .unwrap()
+            .expect("a second lease");
+        let failed = LeaseControl::of(&guard)
+            .with_connection(|conn| {
+                Box::pin(async move {
+                    sqlx::query("SELECT pg_terminate_backend(pg_backend_pid())")
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .await;
+        let severity = match &failed {
+            Err(sqlx::Error::Database(db)) => db
+                .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+                .map(|pg| pg.severity()),
+            _ => None,
+        };
+        assert_eq!(
+            severity,
+            Some(sqlx::postgres::PgSeverity::Fatal),
+            "{failed:?}"
+        );
+        assert!(guard.lost().is_cancelled(), "the lease that ran it");
+        assert!(
+            other.lost().is_cancelled(),
+            "the other lease of the session"
+        );
+        assert!(leases.held().is_empty());
+    }
+
+    /// A leased body gets its lease: control operations run on the session
+    /// that holds it, and every acquisition carries its own number.
+    #[tokio::test]
+    async fn a_leased_body_runs_control_operations_on_the_lease_session() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let jobs = Jobs::with_leases(pool.clone(), settings("control"));
+        let seen: Arc<Mutex<Vec<(u64, i32)>>> = Arc::default();
+        let after_cancel: Arc<Mutex<Vec<bool>>> = Arc::default();
+        jobs.spawn_leased("control", {
+            let (seen, after_cancel) = (seen.clone(), after_cancel.clone());
+            move |ctx: JobContext| {
+                let (seen, after_cancel) = (seen.clone(), after_cancel.clone());
+                async move {
+                    let lease = ctx.lease().expect("a leased body has its lease").clone();
+                    let pid: i32 = lease
+                        .with_connection(|conn| {
+                            Box::pin(async move {
+                                sqlx::query_scalar("SELECT pg_backend_pid()")
+                                    .fetch_one(conn)
+                                    .await
+                            })
+                        })
+                        .await
+                        .expect("the lease session answers");
+                    seen.lock().push((lease.acquisition(), pid));
+                    ctx.cancel.cancelled().await;
+                    let ran = lease
+                        .with_connection(|conn| {
+                            Box::pin(async move {
+                                sqlx::query("SELECT 1").execute(conn).await.map(|_| ())
+                            })
+                        })
+                        .await
+                        .is_ok();
+                    after_cancel.lock().push(ran);
+                    Ok(())
+                }
+            }
+        });
+        wait_until("first acquisition", || seen.lock().len() == 1).await;
+        let (first, pid) = seen.lock()[0];
+        assert_eq!(
+            Some(pid),
+            jobs.leases().unwrap().backend_pid().await,
+            "the operation ran on the session holding the lease"
+        );
+        let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+            .bind(pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(killed);
+        wait_until("second acquisition", || seen.lock().len() == 2).await;
+        assert_eq!(
+            after_cancel.lock().first(),
+            Some(&false),
+            "a lost lease runs no control operation"
+        );
+        let (second, pid2) = seen.lock()[1];
+        assert!(second > first, "a new acquisition, a new number");
+        assert_ne!(pid2, pid);
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    /// Two overlapping acquisitions of one name get one guard, and once it
+    /// is released another session takes the name while the first session
+    /// stays open (the advisory lock was taken once).
+    #[tokio::test]
+    async fn overlapping_acquisitions_of_one_name_get_one_guard() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        // Every lease statement here (each session's connect included) runs
+        // under the keepalive bound, and nothing here waits on it: on a
+        // loaded runner the 100 ms one timed the second session's connect
+        // out. A bound beyond any CI stall keeps the test on the guard.
+        let settings = LeaseSettings {
+            keepalive: Duration::from_secs(30),
+            ..settings("overlap")
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings.clone()));
+        let (first, second) = tokio::join!(leases.try_acquire("name"), leases.try_acquire("name"));
+        let guards: Vec<LeaseGuard> = [first.unwrap(), second.unwrap()]
+            .into_iter()
+            .flatten()
+            .collect();
+        assert_eq!(guards.len(), 1, "exactly one guard");
+        for guard in guards {
+            guard.release().await;
+        }
+        assert!(
+            leases.backend_pid().await.is_some(),
+            "the first session stays open"
+        );
+        let other = Arc::new(Leases::new(pool.clone(), settings));
+        let taken = other.try_acquire("name").await.unwrap();
+        assert!(taken.is_some(), "another session takes the released name");
+        taken.unwrap().release().await;
+    }
+
+    /// A control kept from an acquisition that was released normally never
+    /// runs on the session once the same name is taken again, and a late
+    /// release of that acquisition leaves the new one alone.
+    #[tokio::test]
+    async fn a_control_of_a_released_lease_never_runs_on_the_name_taken_again() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings("released")));
+        let a = leases
+            .try_acquire("name")
+            .await
+            .unwrap()
+            .expect("a free name");
+        let control_a = LeaseControl::of(&a);
+        a.release().await;
+        let b = leases
+            .try_acquire("name")
+            .await
+            .unwrap()
+            .expect("free again after the release");
+        let control_b = LeaseControl::of(&b);
+        assert!(control_b.acquisition() > control_a.acquisition());
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let refused = control_a
+            .with_connection({
+                let ran = ran.clone();
+                move |conn| {
+                    ran.store(true, Ordering::SeqCst);
+                    Box::pin(async move { sqlx::query("SELECT 1").execute(conn).await.map(|_| ()) })
+                }
+            })
+            .await;
+        assert!(refused.is_err());
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "the released acquisition's operation never runs"
+        );
+        control_b
+            .with_connection(|conn| {
+                Box::pin(async move { sqlx::query("SELECT 1").execute(conn).await.map(|_| ()) })
+            })
+            .await
+            .expect("the current acquisition's operation runs");
+        leases
+            .pending_release
+            .lock()
+            .push(("name".to_string(), control_a.acquisition()));
+        leases.keepalive_once().await;
+        assert_eq!(
+            leases.held(),
+            vec!["name".to_string()],
+            "a late release leaves B's lease"
+        );
+        control_b
+            .with_connection(|conn| {
+                Box::pin(async move { sqlx::query("SELECT 1").execute(conn).await.map(|_| ()) })
+            })
+            .await
+            .expect("B still holds it");
+        b.release().await;
+        assert!(leases.held().is_empty());
     }
 
     #[tokio::test]

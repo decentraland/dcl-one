@@ -87,7 +87,9 @@ export type TabsBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
 type SharedProps = {
   /** Caller-owned route configuration. IDs, labels and destinations must be non-empty. */
   items: readonly TabsBarItem[]
-  activeId: string
+  activeId: string | null
+  /** Describes the active route link from the current page. */
+  current?: 'page' | 'true'
   label?: string
   onSelect?: (id: string) => void
   /** The app adapter forwards anchor attributes and owns client routing and intent prefetch. */
@@ -101,6 +103,7 @@ export type TabsBarNavigationProps = SharedProps & {
   variant?: never
 } & (
     | { page?: 'create'; search?: never; actions?: never }
+    | { page: 'blog'; search: ReactNode; actions?: never }
     | {
         page: 'shop' | 'learn'
         /** Explicit caller-owned content, including empty or loading states. */
@@ -114,6 +117,7 @@ function NavigationTabsBar({
   page = 'create',
   items,
   activeId,
+  current = 'page',
   label = 'Sections',
   onSelect,
   LinkComponent,
@@ -121,7 +125,7 @@ function NavigationTabsBar({
   search,
   actions
 }: TabsBarNavigationProps) {
-  if (!['create', 'shop', 'learn'].includes(page)) throw new Error('Unsupported TabsBar page')
+  if (!['create', 'shop', 'learn', 'blog'].includes(page)) throw new Error('Unsupported TabsBar page')
   assertNavigationEntries(items, (href) => typeof href === 'string' && !!href.trim(), {
     id: 'TabsBar item IDs must be unique non-empty strings',
     entry: 'TabsBar routes require a non-empty label and href'
@@ -147,7 +151,7 @@ function NavigationTabsBar({
     /* Keep the current route clear of the fades: the scroll padding is the fade width. */
     const revealCurrent = () => {
       if (!list.isConnected) return
-      const current = list.querySelector<HTMLElement>('[aria-current="page"]')
+      const current = list.querySelector<HTMLElement>('[aria-current]')
       if (!current) return
       const frame = list.getBoundingClientRect()
       const route = current.getBoundingClientRect()
@@ -220,7 +224,7 @@ function NavigationTabsBar({
                     prefetch="intent"
                     data-label={item.label}
                     className={styles.routeLink}
-                    aria-current={item.id === activeId ? 'page' : undefined}
+                    aria-current={item.id === activeId ? current : undefined}
                     onClick={select}
                   >
                     <span className={styles.routeText}>{item.label}</span>
@@ -231,6 +235,7 @@ function NavigationTabsBar({
                     href={item.href}
                     label={item.label}
                     selected={item.id === activeId}
+                    current={current}
                     className={styles.routeLink}
                     onClick={select}
                   />
@@ -245,9 +250,11 @@ function NavigationTabsBar({
           <div className={styles.routeSearch} data-region="search">
             {search}
           </div>
-          <div className={styles.routeActions} data-region="actions">
-            {actions}
-          </div>
+          {page !== 'blog' && (
+            <div className={styles.routeActions} data-region="actions">
+              {actions}
+            </div>
+          )}
         </div>
       ) : null}
     </nav>
@@ -260,6 +267,7 @@ type TabsBarComponentProps =
       mode?: 'panel'
       items?: never
       activeId?: never
+      current?: never
       page?: never
       search?: never
       actions?: never
