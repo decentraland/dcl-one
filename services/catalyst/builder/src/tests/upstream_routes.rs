@@ -2,8 +2,7 @@
 //! registers under `/v1` at `98897af692f26063a088aebb2ea5bb3f683168a2`, and
 //! whether this crate's router answers its method and path. A `Routed` route
 //! reaches a handler, which says nothing about matching upstream's
-//! behaviour; an `Unrouted` one is inside the port but this router doesn't
-//! answer it; a `Removed` route is outside the port and stays unanswered:
+//! behaviour; a `Removed` route is outside the port and stays unanswered:
 //! the node keeps no scenes (projects, manifests, templates, deployments,
 //! asset packs, assets and their files), analytics or NFT reads.
 //! [`SCENE_ROUTES`] lists the scene routes the node itself added beyond
@@ -23,10 +22,9 @@ use crate::{Settings, State};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Route {
     Routed,
-    Unrouted,
     Removed,
 }
-use Route::{Removed, Routed, Unrouted};
+use Route::{Removed, Routed};
 
 pub(super) const UPSTREAM: &[(&str, &str, Route)] = &[
     ("GET", "/info", Routed),
@@ -70,20 +68,20 @@ pub(super) const UPSTREAM: &[(&str, &str, Route)] = &[
     ("PUT", "/collections/:id", Routed),
     ("DELETE", "/collections/:id", Routed),
     ("GET", "/addresses", Routed),
-    ("GET", "/curations", Unrouted),
-    ("GET", "/collections/:id/itemCurations", Unrouted),
-    ("GET", "/collections/:id/curation", Unrouted),
-    ("PATCH", "/collections/:id/curation", Unrouted),
-    ("POST", "/collections/:id/curation", Unrouted),
+    ("GET", "/curations", Routed),
+    ("GET", "/collections/:id/itemCurations", Routed),
+    ("GET", "/collections/:id/curation", Routed),
+    ("PATCH", "/collections/:id/curation", Routed),
+    ("POST", "/collections/:id/curation", Routed),
     ("POST", "/collections/:id/curation/post", Routed),
-    ("GET", "/items/:id/curation", Unrouted),
-    ("PATCH", "/items/:id/curation", Unrouted),
-    ("POST", "/items/:id/curation", Unrouted),
-    ("POST", "/collections/:id/validations", Unrouted),
-    ("POST", "/collections/:id/curation/appeal", Unrouted),
-    ("GET", "/collections/:id/events", Unrouted),
-    ("POST", "/collections/:id/comments", Unrouted),
-    ("POST", "/collections/:id/validation-result", Unrouted),
+    ("GET", "/items/:id/curation", Routed),
+    ("PATCH", "/items/:id/curation", Routed),
+    ("POST", "/items/:id/curation", Routed),
+    ("POST", "/collections/:id/validations", Routed),
+    ("POST", "/collections/:id/curation/appeal", Routed),
+    ("GET", "/collections/:id/events", Routed),
+    ("POST", "/collections/:id/comments", Routed),
+    ("POST", "/collections/:id/validation-result", Routed),
     ("GET", "/committee", Routed),
     ("GET", "/thirdParties", Routed),
     ("GET", "/thirdParties/:id/slots", Routed),

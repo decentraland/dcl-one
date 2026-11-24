@@ -116,6 +116,31 @@ source is down.
   involves a third-party collection answers 503 until a read succeeds.
 - **Access checks never write.** A decision reads its sources and changes no
   row, also when it refuses.
+- **Curations.** A collection's curations, and an item's, are read and
+  written by a wallet with a role on the collection or by a current
+  committee member. The collection must exist (404) and be published: a
+  standard one on chain, a third-party one with an item curation (409);
+  only then are the roles asked, so a stranger gets 401. The committee is
+  asked only when no role answers: while the committee can't tell, the
+  committee's curation listing and every decision only the committee
+  can make answer 503, never a narrower view. Which status change each caller may make is
+  one table (`builder/src/curation/transitions.rs`); a write asks it again
+  inside its transaction, with the collection row locked. There it also
+  reads the committee again: a curator the committee admitted, and the
+  assignee a write names, must still be members (401 otherwise). A review comment, appeal or retry asks the committee
+  again only when no role on the collection still admits its signer.
+- **Admins.** The operator's routes, the item status routes and the
+  console's under-review listing (`GET /v1/collections/curation`), admit
+  the curation console's bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`) and a
+  signed request from a `BUILDER_ADMIN_ADDRESSES` wallet
+  (`builder/src/auth.rs` `authorize_admin`). Neither opens another route or
+  grants a role on collections, items or their curations. On the item status routes the operator sets the status of
+  an item curation of a published collection (404 when the collection is
+  absent, 409 when it isn't published) with the moves the committee has on
+  an item's status, asked of the same table as the operator, in one
+  transaction that locks the collection and decides again, each move
+  recorded in `ops.admin_audit`.
+
 ## Consequences
 
 - A wallet the registry stops listing as a provider's manager is refused
@@ -145,7 +170,15 @@ source is down.
   already answers it.
 - Between a creator transfer and the copy's next pass, the previous creator
   keeps the owner's access.
-- A new role or source is one change to `access.rs`.
+- A wallet the committee no longer lists reads and changes no curation,
+  even one it is assigned to or decided, and a write the committee admitted
+  commits nothing once the subgraph drops the curator or the assignee before
+  the write's transaction reads the committee; a committee member who also holds a
+  role reads and writes as that role until the table asks for the
+  committee.
+- A new role or source is one change to `access.rs`, which the authorization
+  matrix test (`builder/src/tests/access_matrix.rs`) covers for every routed
+  operation.
 
 ## Alternatives considered
 

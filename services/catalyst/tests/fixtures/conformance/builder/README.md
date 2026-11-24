@@ -3,9 +3,8 @@
 These files compare the node's builder routes with
 `github.com/decentraland/builder-server` at
 `98897af692f26063a088aebb2ea5bb3f683168a2`. Each capture is a request and
-the answer the pinned upstream gave to it. The parity ledger records, per
-operation, what the node's replay of the captures shows. The replay and its
-tests are pending (see Tests).
+the answer the pinned upstream gave to it. The node replays every capture
+and the parity ledger records, per operation, what the replay shows.
 
 ## Files
 
@@ -21,10 +20,10 @@ captures.
 
 Captures use the shared conformance fixture format
 (`services/catalyst/testing/src/conformance/fixture.rs`): `request` with
-`method`, `path`, `query`, `headers` and `body`; an upload's capture carries
-`multipart` parts instead of a body (each part's field `name`, `filename`,
-`type` and synthetic `text`), a field the builder port adds to that format,
-and the replay sends them as form data; `response` with `status`,
+`method`, `path`, `query`, `headers` and `body`, or `multipart` parts
+(`RecordedRequest::multipart`: each part's field `name`, `filename`, `type`
+and synthetic `text`), which the replay sends as the form data
+`multipart_body` builds; `response` with `status`,
 the kept headers and `body_json` or `body_bytes_b64`; `captured_from`,
 `captured_at` and `volatile_paths`. A capture whose request made upstream
 post to Slack carries `slack`: the JSON bodies upstream posted to Slack's
@@ -81,10 +80,9 @@ these rules, as the ledger test refuses such a capture.
 
 ## Parity ledger
 
-`parity.json` lists the operations of the pinned upstream that the builder
-port serves; the port's route ledger
-(`services/catalyst/builder/src/tests/upstream_routes.rs`) names each one
-`Routed` or `Todo`. Its schema is the social family's (`../social/parity.json`): each operation has
+`parity.json` lists every route of the route ledger
+(`services/catalyst/builder/src/tests/upstream_routes.rs`) that is `Routed`
+or `Todo`. Its schema is the social family's (`../social/parity.json`): each operation has
 `id` (`api_http:<METHOD>:/v1<path>`), `owner`, `status`, `result`,
 `evidence`, `gaps` and `remaining_verification`.
 
@@ -146,17 +144,42 @@ function in it, which the ledger test requires to be there.
 
 ## Tests
 
-Pending: the tests that hold the ledger to the captures and replay every
-capture against the node are `services/catalyst/tests/builder_conformance.rs`,
-which arrives with the builder port, and the ledger's evidence entries outside
-this folder name builder tests that arrive with the port too. Until then the
-statuses in `parity.json` record the review of the captures against the port,
-not a replay, and no test checks them against the node. What this file says
-the ledger test and the replay test refuse or require describes those tests.
-`node --test tooling/tests/builder-server-capture.test.cjs` checks this folder
-now: every capture parses into the shape the replay reads and is a case of the
-capture script, the seed holds only the fields both seeders apply, and every
-`source/` capture a gap lists is a case.
+The tests in `services/catalyst/tests/builder_conformance.rs` (test group
+`node_1`) hold the ledger to the captures and the route ledger.
+
+- `the_parity_ledger_names_every_in_scope_route` checks that the parity
+  ledger and the route ledger name the same in-scope operations, that every
+  status has its evidence or gaps, that every cited file exists, that every
+  JSON file in this folder other than `parity.json` and `seed.json` is a
+  capture directly in `source/` or `live/`, and that every capture is cited
+  by exactly one operation with its `replay` notes. The tests named
+  `a_..._is_refused` hold each of those rules against a ledger built in the
+  test.
+- `the_builder_captures_replay_against_the_mounted_router` seeds a scratch
+  database from `seed.json`, builds the builder routers as `serve` composes
+  them (at the root and under `/builder-api`), replays every capture in the
+  order of its number (`live/` first) and requires each one's notes to equal its `replay` list. A
+  `GET` or `HEAD` capture is also replayed under `/builder-api` and must
+  produce the same notes. A signed capture is signed again for the replay by
+  the same wallet, over the path it is sent to, with its recorded metadata,
+  a delegated key valid until 2099 and a timestamp of now, plus its `sign`
+  defect; one marked `"auth": "recorded"` is sent as recorded. It
+  needs `CATALYST_TEST_DATABASE_URL` and does nothing without it. The outer
+  layers `serve` adds around every service are not part of the replay.
+  The builder replay compares every key, `id` and `url` included (the
+  social replays keep the shared differ's list of keys it never compares).
+  Beyond the differ's notes, it adds `<path> volatile value is not a
+  timestamp` when the node answers anything but a string or a number at a
+  volatile path, and `<a> and <b> differ` when the node breaks a recorded
+  `volatile_equal` group. The node posts its curation notices to a loopback
+  Slack that takes the capture's bot token; after each capture the replay
+  waits for the node's notices and adds `slack: fixture=<recorded>
+  candidate=<sent>` when the messages differ from the capture's `slack`
+  (none when it has none). The node has the validator's secret and the
+  `builder-auto-curation` flag on; after each capture the replay claims every
+  validation request the node recorded through `POST /v1/validator/claims`
+  and compares each claim's `collectionId` and `items` with the capture's
+  `queue`, noting each difference under `queue`.
 
 `seed.json` accepts only the fields both seeders apply; any other field
 fails the replay test with its name. `collections` are the builder's rows,
@@ -205,6 +228,11 @@ JSON-RPC, so a collection is published, a wallet is on the committee and a
 rarity has its prices on both sides exactly when `chain` says so. The node's
 clock, which sets and compares a collection's lock, is the capture's fixed
 clock.
+
+```sh
+cd services/catalyst
+CATALYST_TEST_JOBS=4 cargo test --test node_1 -- builder_conformance::
+```
 
 ## Capturing the pinned upstream
 

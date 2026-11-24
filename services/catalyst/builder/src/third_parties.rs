@@ -54,6 +54,14 @@ impl ThirdParties {
     }
 }
 
+#[cfg(test)]
+impl ThirdParties {
+    /// Ages the kept read past every read-only decision's window.
+    pub(crate) fn outdate(&self) {
+        self.kept.backdate(crate::kept::READ_WINDOW);
+    }
+}
+
 fn unavailable() -> ApiError {
     ApiError::service_unavailable("The third party registry is not available. Try again later.")
 }

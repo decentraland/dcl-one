@@ -16,11 +16,14 @@ use uuid::Uuid;
 use crate::access::CurationGrant;
 use crate::http::ApiError;
 
+pub mod events;
 pub mod forum;
 pub mod forum_posts;
 pub mod forum_text;
 pub mod rows;
 pub mod slack;
+pub mod transitions;
+pub mod writes;
 
 /// A boolean over an item aliased `i`: the item was submitted for curation.
 /// A third-party item is published once this holds.
