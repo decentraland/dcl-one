@@ -609,6 +609,8 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   // idle wait for the engine's send: at most the poll's 1 ms, so what wakes no one (global updates,
   // the kill flag, the scene's own replies) is still seen within a poll interval
   const RELAY_IDLE_MS = 1;
+  // a wait that failed to start has been logged
+  let waitFailed = false;
   const step = () => {
     if (done) return;
     let killed = 0;
@@ -648,10 +650,22 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
       return;
     }
     // outside A (IN_RUST clear), so the engine may terminate the worker during the wait
-    const waited = relayWaitAsync(wakeView, 0, seen, RELAY_IDLE_MS);
-    if (waited.async) relayOnSettled(waited.value, step);
-    // "not-equal": the engine sent something since the load
-    else sleep(0, step);
+    try {
+      const waited = relayWaitAsync(wakeView, 0, seen, RELAY_IDLE_MS);
+      if (waited.async) relayOnSettled(waited.value, step);
+      // "not-equal": the engine sent something since the load
+      else sleep(0, step);
+    } catch (e) {
+      // Nothing scheduled the next step, so without this the relay would stop and its scene
+      // with it, silently. The step sleeps the poll's 1 ms instead, as a relay the engine does
+      // not wake; the next step tries the wait again. Logged once: a wait that fails, fails
+      // every millisecond.
+      if (!waitFailed) {
+        waitFailed = true;
+        relayLog.error(`[Relay] scene ${sceneId}: waiting for the engine's send failed; polling`, e);
+      }
+      sleep(1, step);
+    }
   };
   step();
 }
