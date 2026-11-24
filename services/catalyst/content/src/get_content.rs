@@ -191,7 +191,7 @@ pub async fn get_content(
 
 /// The worlds mount's GET and HEAD /contents/{hash}: worlds-content-server
 /// always sniffs the Content-Type and also answers a thumbnail's legacy
-/// SHA-256 hex key, read here as the raw-leaf CIDv1 with that digest. A miss
+/// SHA-256 hex key, resolved here to a raw-leaf CIDv1 or an imported alias. A miss
 /// is a 404 without a body (`content-file-handler.ts` `{ status: 404 }`).
 pub async fn get_world_content(
     State(state): State<SharedState>,
@@ -215,6 +215,9 @@ async fn serve(
     headers: HeaderMap,
     mount: Mount,
 ) -> AppResult<Response> {
+    if state.denylist.contains(&hash_id) {
+        return Err(missing(&hash_id));
+    }
     // `key` names the blob on disk; `hash_id` stays the client's ETag.
     let key = if crate::auth::is_canonical_cid(&hash_id) {
         hash_id.clone()
@@ -223,11 +226,24 @@ async fn serve(
         .then(|| crate::auth::raw_cid_v1_from_sha256_hex(&hash_id))
         .flatten()
     {
-        cid
+        if state.denylist.contains(&cid) {
+            return Err(missing(&hash_id));
+        }
+        if state.storage.exist(&cid).await? {
+            cid
+        } else {
+            sqlx::query_scalar(
+                "SELECT blob_cid FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
+            )
+            .bind(&hash_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .unwrap_or(cid)
+        }
     } else {
         return Err(missing(&hash_id));
     };
-    if state.denylist.contains(&hash_id) || state.denylist.contains(&key) {
+    if state.denylist.contains(&key) {
         return Err(missing(&hash_id));
     }
 
