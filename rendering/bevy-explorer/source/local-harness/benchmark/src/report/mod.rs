@@ -27,7 +27,9 @@ use crate::out;
 use exceptions::ExceptionKindCounts;
 pub use exceptions::{EXCEPTION_MARKER, EXIT_MARKER};
 use load_times::RunLoadTimes;
-pub use load_times::{ARRIVED_IN_WORLD_PREFIX, FIRST_RING_READY_PREFIX};
+pub use load_times::{
+    ARRIVED_IN_WORLD_PREFIX, AUTOPILOT_CATEGORY, FIRST_RING_READY_PREFIX, SCENE_TIMING_CATEGORY,
+};
 use perf_summary::ExplorerPerfSummary;
 use stats::{
     FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,

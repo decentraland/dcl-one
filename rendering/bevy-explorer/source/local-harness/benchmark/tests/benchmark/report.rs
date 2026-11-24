@@ -443,37 +443,49 @@ fn load_time_lines_add_rows_with_verdicts() {
 
 /// The load-time entries the log parser reads are the ones the explorer writes: the autopilot's
 /// phase line (the derived `Debug` of the unit variant `AutopilotPhase::Measuring` prints
-/// `Measuring`) and the scene load timing's arrival line.
+/// `Measuring`) and the scene load timing's arrival line, under their log targets.
 #[test]
 fn the_load_time_lines_are_the_explorers() {
     let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
     let read = |file: &str| std::fs::read_to_string(source.join(file)).unwrap();
+    let constant = |file: &str, name: &str| {
+        let source = read(file);
+        let line = source
+            .lines()
+            .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
+            .unwrap_or_else(|| panic!("{name} in {file}"));
+        line.split('"').nth(1).unwrap().to_string()
+    };
+    let load_timing = "crates/scene_runner/src/load_timing.rs";
+    assert_eq!(
+        report::AUTOPILOT_CATEGORY,
+        constant("crates/common/src/autopilot.rs", "LOG_TARGET")
+    );
+    assert_eq!(
+        report::SCENE_TIMING_CATEGORY,
+        constant(load_timing, "LOG_TARGET")
+    );
+    assert_eq!(
+        report::FIRST_RING_READY_PREFIX,
+        format!("{} ", constant(load_timing, "FIRST_RING_READY"))
+    );
+    assert!(read(load_timing).contains(r#""{FIRST_RING_READY} {} ms after the scene spawned""#));
+
     assert_eq!(report::ARRIVED_IN_WORLD_PREFIX, "phase Measuring at ");
     assert!(read("src/autopilot.rs").contains(r#""phase {:?} at {:.1} s""#));
     let phase = read("crates/common/src/autopilot.rs");
-    let phase = phase.split("pub enum AutopilotPhase {").collect::<Vec<_>>();
-    let [derives, variants] = phase[..] else {
-        panic!("AutopilotPhase in common/src/autopilot.rs");
-    };
-    let derive = derives
-        .lines()
-        .rev()
-        .find(|l| l.starts_with("#[derive("))
-        .unwrap();
-    assert!(
-        derive.contains(" Debug)") || derive.contains(" Debug,"),
-        "{derive}"
-    );
-    let variants = variants.split_once("\n}").unwrap().0;
+    let variants = phase
+        .split_once("pub enum AutopilotPhase {")
+        .and_then(|(derives, variants)| {
+            let derive = derives.lines().rev().find(|l| l.starts_with("#[derive("))?;
+            derive
+                .contains("Debug")
+                .then_some(variants.split_once("\n}")?.0)
+        })
+        .expect("AutopilotPhase derives Debug in common/src/autopilot.rs");
     assert!(
         variants.lines().any(|l| l.trim() == "Measuring,"),
         "{variants}"
-    );
-    assert!(
-        read("crates/scene_runner/src/load_timing.rs").contains(&format!(
-            "\"{}{{}} ms after the scene spawned\"",
-            report::FIRST_RING_READY_PREFIX
-        ))
     );
 }
 

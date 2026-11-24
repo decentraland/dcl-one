@@ -302,7 +302,7 @@ pub fn load_time_verdict(
         return FrameTimeVerdict::Withheld(incomparable.reason());
     }
     if min(change.median, base.median) <= 0.0 {
-        return FrameTimeVerdict::Withheld("implausibly small values");
+        return FrameTimeVerdict::Withheld("a zero load time");
     }
     match separated_shift(change, base, MIN_ABSOLUTE_LOAD_TIME_DELTA_MS) {
         Some(improvement) if improvement > 0.0 => FrameTimeVerdict::Faster(improvement),

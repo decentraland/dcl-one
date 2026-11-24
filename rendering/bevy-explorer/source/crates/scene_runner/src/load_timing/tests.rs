@@ -1,5 +1,5 @@
 use bevy::ecs::system::RunSystemOnce;
-use common::structs::PrimaryUser;
+use common::structs::{OutOfWorld, PrimaryUser};
 use dcl_types::SceneId;
 use scene_material::SceneBounds;
 use web_time::Instant;
@@ -134,6 +134,27 @@ fn a_failed_neighbour_does_not_hold_the_report() {
     set_tick(&mut world, home, 5);
     world.run_system_once(report_scene_load_times).unwrap();
 
+    assert!(world.resource::<FirstRingTiming>().reported);
+}
+
+#[test]
+fn landing_behind_the_loading_screen_times_the_destination_scene() {
+    let mut world = world();
+    let player = world
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(player).insert(OutOfWorld::default());
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
+
+    // the destination is still loading while the player waits for it
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().arrival.is_some());
+
+    // the player is let in once it is ready, and the arrival is reported
+    set_tick(&mut world, home, 6);
+    world.entity_mut(player).remove::<OutOfWorld>();
+    world.run_system_once(report_scene_load_times).unwrap();
     assert!(world.resource::<FirstRingTiming>().reported);
 }
 

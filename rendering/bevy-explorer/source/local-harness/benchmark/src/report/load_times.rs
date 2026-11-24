@@ -3,7 +3,8 @@
 //!   app's real time when the run arrived in world; on the web the page load and the wasm
 //!   download and compile come before the app starts and are not counted;
 //! - first ring ready: the first `player's scene and first ring ready <ms> ms after the scene
-//!   spawned` entry (category `scene_timing`), the arrival at spawn.
+//!   spawned` entry (category `scene_timing`), the arrival at spawn, timed from the spawn
+//!   scene's spawn while the player waits behind the loading screen.
 //!
 //! A log without an entry gives no value for it.
 
@@ -14,14 +15,15 @@ use std::path::Path;
 use super::exceptions::{entry_start, EXIT_MARKER};
 use super::Lines;
 
-/// The autopilot's log target.
-const AUTOPILOT_CATEGORY: &str = "autopilot";
-/// The scene load timing's log target (`scene_runner::load_timing`).
-const SCENE_TIMING_CATEGORY: &str = "scene_timing";
+/// The autopilot's log target (`common::autopilot::LOG_TARGET`).
+pub const AUTOPILOT_CATEGORY: &str = "autopilot";
+/// The scene load timing's log target (`scene_runner::load_timing::LOG_TARGET`).
+pub const SCENE_TIMING_CATEGORY: &str = "scene_timing";
 /// What the autopilot logs on entering the measured phase, before the seconds since launch.
 pub const ARRIVED_IN_WORLD_PREFIX: &str = "phase Measuring at ";
 /// What the scene load timing logs when an arrival's scene and first ring are ready, before the
-/// milliseconds since the scene spawned.
+/// milliseconds since the scene spawned (`scene_runner::load_timing::FIRST_RING_READY` and a
+/// space).
 pub const FIRST_RING_READY_PREFIX: &str = "player's scene and first ring ready ";
 
 /// One run's load times, in milliseconds, in the order of [`super::stats::LOAD_TIME_METRICS`].

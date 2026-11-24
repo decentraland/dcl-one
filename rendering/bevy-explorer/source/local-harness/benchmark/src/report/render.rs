@@ -189,10 +189,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     continue;
                 }
                 let delta = if change.run_count > 0 && base.run_count > 0 {
-                    format!(
-                        "{:.1} s",
-                        (change.value.median - base.value.median) / 1000.0
-                    )
+                    signed_seconds((change.value.median - base.value.median) / 1000.0)
                 } else {
                     "-".to_owned()
                 };
@@ -477,6 +474,14 @@ fn load_time_cell(runs: &MeasuredRuns) -> String {
         format!("{median:.1} s")
     } else {
         format!("{median:.1} s ({min:.1}–{max:.1})")
+    }
+}
+
+fn signed_seconds(delta: f32) -> String {
+    if (delta * 10.0).round() == 0.0 {
+        "0".to_owned()
+    } else {
+        format!("{delta:+.1} s")
     }
 }
 
