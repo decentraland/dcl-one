@@ -822,11 +822,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `justifyContent` and `alignItems` place it; `textAlign` acts only inside the text's own box, so
   an unstyled label stretched across a row is not centred. A label sized in px or % on an axis is
   a box its text aligns inside by `textAlign`. A label with no size draws over its entity and
-  takes no space. Every label's text box has the margin (top 4, right 4, bottom 2, left 2) and
-  padding (top 4, right 2, bottom 4, left 1) that the Unity client's default runtime UI theme gives
-  scene labels; CSS adds none. They are device pixels, as the Unity client's scene panel counts
-  them, so a scale factor of 2 halves them in logical pixels. Scenes are authored against the
-  Unity client, so its spacing is kept.
+  takes no space. Every label's text box has the margin (top 4, right 4, bottom 2, left 2 px)
+  and padding (top 4, right 2, bottom 4, left 1 px) that the Unity client's default runtime UI
+  theme gives scene labels; CSS adds none. They are logical pixels like every other scene size,
+  so on a display with a scale factor of 2 they are twice the size the Unity client draws, which
+  counts them in device pixels. A scene input's text is inset 12 px from its sides, the theme's
+  input padding and inner text padding. Scenes are authored against the Unity client, so its
+  spacing is kept. These are engine defaults that a scene cannot override; if react-ecs starts
+  sending default margin and padding for labels and inputs, both clients drop theirs at the same
+  time, or new scenes get the spacing twice.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.

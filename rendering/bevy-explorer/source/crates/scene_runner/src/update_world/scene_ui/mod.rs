@@ -25,9 +25,7 @@ use ui_dropdown::{set_ui_dropdown, UiDropdown};
 use ui_input::{set_ui_input, UiInput};
 use ui_layout_feedback::write_ui_layout_feedback;
 use ui_pointer::set_ui_pointer_events;
-use ui_text::{
-    check_text_links, refresh_ui_text_on_scale_change, retry_ui_text_fonts, set_ui_text, UiText,
-};
+use ui_text::{check_text_links, retry_ui_text_fonts, set_ui_text, UiText};
 
 use crate::{
     initialize_scene::{LiveScenes, PortableScenes, SuperUserScene},
@@ -536,7 +534,6 @@ impl Plugin for SceneUiPlugin {
                 create_ui_roots,
                 layout_scene_ui,
                 retry_ui_text_fonts,
-                refresh_ui_text_on_scale_change,
                 (
                     set_ui_text,       // text runs before background as both insert to position 0.
                     set_ui_background, // so text is actually in front of background, but "behind"/before children
