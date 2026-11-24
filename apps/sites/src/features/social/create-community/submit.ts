@@ -1,4 +1,4 @@
-import type { CommunityCreateInput } from "@dcl/one-ui/apps/sites/social/CommunityCreate";
+import type { CommunityCreateInput } from "@dcl/one-ui";
 
 import { toErrorMessage } from "@/core/lib/errors";
 import { track as defaultTrack, type TrackContext, type TrackFn } from "@/core/lib/telemetry/track";

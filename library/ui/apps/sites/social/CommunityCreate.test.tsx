@@ -59,6 +59,23 @@ describe('CommunityCreate', () => {
     })
   })
 
+  describe('when choosing membership', () => {
+    it('should keep the explanation outside the options and update it after selection', async () => {
+      setup()
+      const user = userEvent.setup()
+      const publicHint =
+        'Anyone can become a member, view Community details, and join your Voice Streams.'
+      expect(screen.getByText(publicHint)).toBeVisible()
+      await user.click(screen.getByRole('combobox', { name: 'Membership' }))
+      expect(screen.getByRole('option', { name: 'Public' })).toBeVisible()
+      await user.click(screen.getByRole('option', { name: 'Private' }))
+      expect(screen.queryByText(publicHint)).not.toBeInTheDocument()
+      expect(
+        screen.getByText('Members must be approved by an owner or moderator before they can join.')
+      ).toBeVisible()
+    })
+  })
+
   describe('when the membership is private and the community is hidden', () => {
     it('should send a private, unlisted community with its description', async () => {
       const { create } = setup()

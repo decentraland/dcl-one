@@ -9,15 +9,14 @@ import styles from './CommunityCreate.module.css'
 type Membership = 'public' | 'private'
 
 const MEMBERSHIP_OPTIONS: ReadonlyArray<{ value: Membership; label: string }> = [
-  {
-    value: 'public',
-    label: 'Public  Anyone can become a member, view Community details, and join your Voice Streams'
-  },
-  {
-    value: 'private',
-    label: 'Private  Members must be approved by an owner or moderator before they can join'
-  }
+  { value: 'public', label: 'Public' },
+  { value: 'private', label: 'Private' }
 ]
+
+const MEMBERSHIP_DESCRIPTIONS: Record<Membership, string> = {
+  public: 'Anyone can become a member, view Community details, and join your Voice Streams.',
+  private: 'Members must be approved by an owner or moderator before they can join.'
+}
 
 export type CommunityCreateInput = {
   name: string
@@ -249,6 +248,7 @@ export default function CommunityCreate<R>({
             value={membership}
             onChange={setMembership}
           />
+          <p className={styles.hint}>{MEMBERSHIP_DESCRIPTIONS[membership]}</p>
         </div>
 
         <div className={styles.group}>
