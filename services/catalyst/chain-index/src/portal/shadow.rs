@@ -56,8 +56,8 @@ pub const UNAVAILABLE: &str = "chain_logs_shadow_unavailable_total";
 pub const SENDS: &str = "chain_logs_portal_sends_total";
 
 fn skipped(net: &'static str, reason: &'static str) {
-    metrics::counter!(WINDOWS, "net" => net, "result" => "skipped").increment(1);
-    metrics::counter!(SKIPPED, "net" => net, "reason" => reason).increment(1);
+    dcl_metrics::counter!(WINDOWS, "net" => net, "result" => "skipped").increment(1);
+    dcl_metrics::counter!(SKIPPED, "net" => net, "reason" => reason).increment(1);
 }
 
 /// The walk's side of one network's shadow.
@@ -229,7 +229,8 @@ impl ShadowWorker {
         match &out.verdict {
             Verdict::Skipped { reason } => skipped(net, skip_reason(reason)),
             v => {
-                metrics::counter!(WINDOWS, "net" => net, "result" => verdict_label(v)).increment(1);
+                dcl_metrics::counter!(WINDOWS, "net" => net, "result" => verdict_label(v))
+                    .increment(1);
             }
         }
         for (kind, n) in [
@@ -242,15 +243,17 @@ impl ShadowWorker {
             ("arity", out.arity_filtered),
         ] {
             if n > 0 {
-                metrics::counter!(LOGS, "net" => net, "kind" => kind).increment(n as u64);
+                dcl_metrics::counter!(LOGS, "net" => net, "kind" => kind).increment(n as u64);
             }
         }
         for (field, n) in &out.unavailable {
-            metrics::counter!(UNAVAILABLE, "net" => net, "field" => *field).increment(*n as u64);
+            dcl_metrics::counter!(UNAVAILABLE, "net" => net, "field" => *field)
+                .increment(*n as u64);
         }
-        metrics::counter!(BLOCKS, "net" => net, "kind" => "compared")
+        dcl_metrics::counter!(BLOCKS, "net" => net, "kind" => "compared")
             .increment(out.compared_blocks);
-        metrics::counter!(BLOCKS, "net" => net, "kind" => "skipped").increment(out.skipped_blocks);
+        dcl_metrics::counter!(BLOCKS, "net" => net, "kind" => "skipped")
+            .increment(out.skipped_blocks);
         for (kind, n) in [
             ("admission", after.admission - before.admission),
             ("pages", after.pages - before.pages),
@@ -258,7 +261,7 @@ impl ShadowWorker {
             ("headers", after.headers - before.headers),
         ] {
             if n > 0 {
-                metrics::counter!(SENDS, "net" => net, "kind" => kind).increment(n as u64);
+                dcl_metrics::counter!(SENDS, "net" => net, "kind" => kind).increment(n as u64);
             }
         }
         match &out.verdict {

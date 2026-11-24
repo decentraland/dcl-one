@@ -354,7 +354,7 @@ mod tests {
         let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         for path in ["/profiles", "/profiles/metadata"] {
             assert_eq!(
                 call(
@@ -583,7 +583,7 @@ mod tests {
         let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let failed = format!("0x{:040x}", OWNERSHIP_CHUNK);
         let graph = Router::new().route(
             "/",

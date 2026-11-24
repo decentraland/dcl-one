@@ -120,7 +120,7 @@ def ports_free(base, public_udp=()):
     # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
     # (the Sites port) and ENet ports, LiveKit's media; behind a public origin Pulse's two, on every interface.
     return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
-                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
+                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7, base + 8, base + 9)),
                      *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
                      *((socket.SOCK_DGRAM, port, '0.0.0.0') for port in public_udp)])
 
@@ -570,6 +570,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
         # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
         # worktree) would otherwise fail to start its API.
+        'INDEX_METRICS_BIND': f'127.0.0.1:{base + 6}',
         'SERVE_METRICS_BIND': f'127.0.0.1:{base + 1}',
         'PG_POOL_SIZE': '12', 'SERVE_UNSYNCED': 'true',
         # The stack's own livekit-server (the `livekit` task) and its generated pair.

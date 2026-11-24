@@ -19,7 +19,7 @@ RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edi
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
-PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
+PostgreSQL +3, LiveKit +4..+6, index metrics on TCP +6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. Behind a [public origin](#serving-over-https) Pulse's ENet is UDP 7777 instead.
 The ingress takes the first free block 10000 above the base (`ingress_port`):
 Valkey +0, RTMP +1 (every interface), the ingress relay +2, health +3 and the message
