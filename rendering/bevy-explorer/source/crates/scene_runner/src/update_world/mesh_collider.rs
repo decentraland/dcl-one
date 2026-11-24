@@ -683,11 +683,12 @@ impl SceneColliderData {
         self.update_bvh();
 
         let centre = (origin + Vec3::Y * PLAYER_COLLIDER_RADIUS).as_dvec3();
-        let mut steep = Vec::new();
+        let mut steep = [ColliderHandle::invalid(); GROUND_STEEP_EXCLUSIONS + 1];
         let mut first_steep = None;
         let mut ground = None;
-        for _ in 0..=GROUND_STEEP_EXCLUSIONS {
-            let predicate = |h, _: &Collider| !self.disabled.contains(&h) && !steep.contains(&h);
+        for skipped in 0..steep.len() {
+            let predicate =
+                |h, _: &Collider| !self.disabled.contains(&h) && !steep[..skipped].contains(&h);
             let Some((handle, hit)) = self.cast_ground_ball(centre, &predicate) else {
                 break;
             };
@@ -696,7 +697,7 @@ impl SceneColliderData {
                 break;
             }
             first_steep.get_or_insert(hit.time_of_impact);
-            steep.push(handle);
+            steep[skipped] = handle;
         }
 
         if let Some(toi) = first_steep {
