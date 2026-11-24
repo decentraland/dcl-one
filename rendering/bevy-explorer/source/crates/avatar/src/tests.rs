@@ -139,6 +139,230 @@ fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
     );
 }
 
+const EQUIPPED_DANCE: &str = "urn:decentraland:matic:collections-v2:0xabc:0";
+const EQUIPPED_CLAP: &str = "urn:decentraland:matic:collections-v2:0xabc:1";
+const TEST_BODY_SHAPE: &str = "urn:decentraland:off-chain:base-avatars:basemale";
+
+/// An avatar on its idle pose with `emotes` equipped and their pointers resolved; the player
+/// when `primary`.
+fn spawn_equipped_avatar(world: &mut World, emotes: &[&str], primary: bool) -> Entity {
+    use crate::animate::{ActiveEmote, AvatarAnimPlayer};
+
+    for (urn, hash) in [(EQUIPPED_DANCE, "bafydance"), (EQUIPPED_CLAP, "bafyclap")] {
+        world
+            .resource_mut::<Collectibles<Emote>>()
+            .insert_inline(EmoteUrn::new(urn).unwrap(), hash.to_owned());
+    }
+    let shape = AvatarShape(PbAvatarShape {
+        emotes: emotes.iter().map(|urn| urn.to_string()).collect(),
+        ..default()
+    });
+    let avatar = world.spawn((ActiveEmote::default(), shape)).id();
+    world.entity_mut(avatar).insert(AvatarAnimPlayer(avatar));
+    if primary {
+        world.entity_mut(avatar).insert(PrimaryUser::default());
+    }
+    avatar
+}
+
+#[test]
+fn the_players_equipped_emotes_are_filed_under_the_player() {
+    use crate::animate::file_emote_downloads;
+
+    let mut app = app_with_emote_downloads();
+    let world = app.world_mut();
+    // an empty slot and a value that resolves to no emote add nothing
+    let player = spawn_equipped_avatar(
+        world,
+        &[EQUIPPED_DANCE, "", "not a urn:", EQUIPPED_CLAP],
+        true,
+    );
+
+    world.run_system_once(file_emote_downloads).unwrap();
+
+    assert_eq!(
+        world.get::<PartitionedEmoteDownloads>(player),
+        Some(&PartitionedEmoteDownloads(vec![
+            "bafyclap".to_owned(),
+            "bafydance".to_owned()
+        ]))
+    );
+}
+
+#[test]
+fn another_avatars_equipped_emotes_are_not_filed() {
+    use crate::animate::file_emote_downloads;
+
+    let mut app = app_with_emote_downloads();
+    let world = app.world_mut();
+    let other = spawn_equipped_avatar(world, &[EQUIPPED_DANCE, EQUIPPED_CLAP], false);
+
+    world.run_system_once(file_emote_downloads).unwrap();
+
+    assert!(
+        world.get::<PartitionedEmoteDownloads>(other).is_none(),
+        "only the player's equipped emotes download before they are played"
+    );
+}
+
+/// Register `urn` as a built-in emote for the test body shape, its clip loaded when `loaded`.
+fn register_test_emote(world: &mut World, urn: &str, loaded: bool) {
+    let gltf = if loaded {
+        let mut gltf = gltf_with_scene(None);
+        gltf.named_animations
+            .insert("_Avatar".into(), Handle::<AnimationClip>::default());
+        world.resource_mut::<Assets<Gltf>>().add(gltf)
+    } else {
+        // a handle with no asset behind it: the clip is still loading
+        Handle::default()
+    };
+    register_test_emote_gltf(world, urn, gltf);
+}
+
+/// Register `urn` as a built-in emote for the test body shape, its clip in `gltf`.
+fn register_test_emote_gltf(world: &mut World, urn: &str, gltf: Handle<Gltf>) {
+    let urn = EmoteUrn::new(urn).unwrap();
+    world
+        .run_system_once(move |mut emotes: CollectibleManager<Emote>| {
+            emotes.add_builtin(
+                urn.clone(),
+                Collectible {
+                    representations: HashMap::from_iter([(
+                        TEST_BODY_SHAPE.to_owned(),
+                        Emote {
+                            gltf: gltf.clone(),
+                            default_repeat: false,
+                            sound: Vec::new(),
+                        },
+                    )]),
+                    data: CollectibleData {
+                        hash: String::new(),
+                        urn: urn.as_str().to_owned(),
+                        thumbnail: String::new(),
+                        available_representations: HashSet::from_iter([TEST_BODY_SHAPE.to_owned()]),
+                        name: String::new(),
+                        description: String::new(),
+                        extra_data: collectibles::EmoteExtraData::default(),
+                    },
+                },
+            );
+        })
+        .unwrap();
+}
+
+/// The player with `emotes` equipped and a built avatar of `body_shape`.
+fn spawn_preloading_player(world: &mut World, emotes: &[&str], body_shape: &str) -> Entity {
+    let shape = AvatarShape(PbAvatarShape {
+        emotes: emotes.iter().map(|urn| urn.to_string()).collect(),
+        ..default()
+    });
+    let player = world.spawn((PrimaryUser::default(), shape)).id();
+    let mut render = render_definition(false, false);
+    render.body_shape = body_shape.to_owned();
+    world.spawn((
+        AvatarDefinition {
+            render,
+            emote: None,
+        },
+        ChildOf(player),
+    ));
+    player
+}
+
+fn set_equipped(world: &mut World, player: Entity, emotes: &[&str]) {
+    world.get_mut::<AvatarShape>(player).unwrap().0.emotes =
+        emotes.iter().map(|urn| urn.to_string()).collect();
+}
+
+#[test]
+fn the_preload_stops_asking_once_the_equipped_clips_have_loaded() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let world = app.world_mut();
+    register_test_emote(world, EQUIPPED_DANCE, true);
+    register_test_emote(world, EQUIPPED_CLAP, false);
+    let player = spawn_preloading_player(world, &[EQUIPPED_DANCE], TEST_BODY_SHAPE);
+
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert_eq!(
+        world.get::<EquippedEmotesLoaded>(player),
+        Some(&EquippedEmotesLoaded {
+            body_shape: TEST_BODY_SHAPE.to_owned(),
+            urns: vec![EQUIPPED_DANCE.to_owned()],
+        })
+    );
+
+    // the marker matches, so a clip that is still loading is not looked at again
+    world.insert_resource(Assets::<Gltf>::default());
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
+
+    // a player still waiting on a clip carries no marker
+    let waiting = spawn_preloading_player(world, &[EQUIPPED_CLAP], TEST_BODY_SHAPE);
+    world.entity_mut(player).despawn();
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(waiting).is_none());
+}
+
+#[test]
+fn the_preload_stops_asking_for_a_clip_whose_glb_failed_to_load() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let failed = broken_body_gltf(&mut app, BodyGltfFailure::FailedLoad);
+    let world = app.world_mut();
+    register_test_emote_gltf(world, EQUIPPED_CLAP, failed);
+    let player = spawn_preloading_player(world, &[EQUIPPED_CLAP], TEST_BODY_SHAPE);
+
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
+}
+
+#[test]
+fn the_preload_asks_again_when_the_equipped_set_or_body_shape_changes() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let world = app.world_mut();
+    register_test_emote(world, EQUIPPED_DANCE, true);
+    register_test_emote(world, EQUIPPED_CLAP, false);
+    let player = spawn_preloading_player(world, &[EQUIPPED_DANCE], TEST_BODY_SHAPE);
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
+
+    // a newly equipped emote whose clip is still loading drops the stale marker
+    set_equipped(world, player, &[EQUIPPED_DANCE, EQUIPPED_CLAP]);
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_none());
+
+    // back to a loaded set, the marker records it
+    set_equipped(world, player, &[EQUIPPED_DANCE]);
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert_eq!(
+        world
+            .get::<EquippedEmotesLoaded>(player)
+            .map(|l| l.urns.clone()),
+        Some(vec![EQUIPPED_DANCE.to_owned()])
+    );
+
+    // another body shape has no representation of the emote: asked again and recorded for it
+    let other_shape = "urn:decentraland:off-chain:base-avatars:basefemale";
+    let build = avatar_build(world, player);
+    world
+        .get_mut::<AvatarDefinition>(build)
+        .unwrap()
+        .render
+        .body_shape = other_shape.to_owned();
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert_eq!(
+        world
+            .get::<EquippedEmotesLoaded>(player)
+            .map(|l| l.body_shape.clone()),
+        Some(other_shape.to_owned())
+    );
+}
+
 fn urn(urn: &str) -> WearableUrn {
     WearableUrn::new(urn).unwrap()
 }

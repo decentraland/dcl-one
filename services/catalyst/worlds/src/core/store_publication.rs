@@ -415,6 +415,7 @@ pub async fn deploy_scene_with_on(
         }
     }
 
+    crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
     tx.commit().await?;
     Ok(Deployed {
         created_at_ms: created_ms,
@@ -515,6 +516,9 @@ async fn delete_scenes_locked(
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
     recompute_spawn(&mut tx, world).await?;
+    if affected > 0 {
+        crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
+    }
     tx.commit().await?;
     Ok(affected)
 }

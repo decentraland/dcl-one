@@ -810,8 +810,9 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - The thumbnail is held here (`mirrored_thumbnail`): a CID key is fetched from the source's
       `/contents` when not held; a SHA-256 hex key (an upload upstream, `logic/settings/component.ts:65`) is
       fetched, checked against its digest and kept under the CIDv1 of its bytes, so `/settings` names that CID and
-      Places' `image` and `/contents` serve it; worlds-compatibility.md, "Thumbnails". A key the source does not
-      serve, or whose bytes are not an image, leaves a new world without a thumbnail; a held row keeps its stored
+      Places' `image` and `/contents` serve it. The worlds mount also serves the saved hex key, including
+      verified images over 256 KiB. See worlds-compatibility.md, "Thumbnails". A key the source does not
+      serve, or whose bytes are not an image, leaves a new world without a thumbnail. A held row keeps its stored
       thumbnail when the fetch fails, and drops it when the bytes are not an image. Pinned by
       `tests/worlds_mirror.rs` `a_mirrored_world_holds_the_thumbnail_its_settings_name`.
     - Severity: none (closed).

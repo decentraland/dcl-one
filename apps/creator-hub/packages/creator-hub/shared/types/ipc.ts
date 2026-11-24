@@ -221,6 +221,11 @@ export interface Ipc {
   'sceneExport.cancel': (entityId: string) => Promise<void>;
   'landUnpublish.prepare': (parcel: string) => Promise<EmptySceneDraft>;
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
+  'electron.fetchAuthIdentity': (
+    url: string,
+    id: string,
+    verifier: string,
+  ) => Promise<{ status: number; body: string }>;
   'electron.openExternal': (url: string) => Promise<void>;
   'electron.openDeepLink': (url: string) => Promise<boolean>;
   'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;

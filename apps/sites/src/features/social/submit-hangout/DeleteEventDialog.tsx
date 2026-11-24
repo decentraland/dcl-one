@@ -1,7 +1,4 @@
-import { Dialog } from "@dcl/one-ui/apps/sites/events/Dialog";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { Dialog, Notice, useEventsCopy, SitesButton as Button } from "@dcl/one-ui";
 import { useEffect, useId, useRef, type MouseEvent } from "react";
 
 import styles from "./DeleteEventDialog.module.css";

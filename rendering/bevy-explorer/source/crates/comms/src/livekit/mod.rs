@@ -8,6 +8,8 @@ pub(crate) mod mic;
 pub mod participant;
 pub mod plugin;
 pub mod room;
+#[cfg(test)]
+pub(crate) use room::plugin::apply_scene_room_metadata;
 #[cfg(feature = "room_debug")]
 mod room_debug;
 mod runtime;

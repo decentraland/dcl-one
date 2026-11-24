@@ -1,10 +1,12 @@
-import { Button } from "@dcl/one-ui";
-import { AvatarBody, EquippedItems, ProfileOverview } from "@dcl/one-ui/apps/sites/profile/ProfileOverview";
 import {
+  AvatarBody,
+  EquippedItems,
+  ProfileOverview,
   CollectiblesItem,
   CollectiblesPanel,
   type CollectiblesState,
-} from "@dcl/one-ui/apps/sites/profile/collectibles";
+  Button,
+} from "@dcl/one-ui";
 
 import { playUrl } from "@/data/lib/catalyst/bases";
 import type { ProfileBadge } from "@/data/lib/catalyst/social/badges";

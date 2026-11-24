@@ -151,4 +151,4 @@ export const VEC3_UP = Vector3.Up();
 export const VEC3_DOWN = Vector3.Down();
 export const VEC3_FORWARD = Vector3.Forward();
 export const VEC3_RIGHT = Vector3.Right();
-export const VEC3_HORIZONTAL_MASK = Vector3.create(1, 0, 1);
+export const VEC3_HORIZONTAL_MASK = Vector3.create(1, 0, 1);

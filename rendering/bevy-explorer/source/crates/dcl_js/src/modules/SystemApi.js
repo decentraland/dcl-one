@@ -254,6 +254,7 @@ module.exports.liveSceneInfo = async function() {
 // { 
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,
+//   pinned: bool, // false = the signed-in account has no home
 // }
 module.exports.getHomeScene = async function() {
     return await Deno.core.ops.op_get_home_scene()
@@ -265,6 +266,10 @@ module.exports.getHomeScene = async function() {
 // }
 module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
+}
+
+module.exports.clearHomeScene = async function() {
+    await Deno.core.ops.op_clear_home_scene()
 }
 
 // { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview

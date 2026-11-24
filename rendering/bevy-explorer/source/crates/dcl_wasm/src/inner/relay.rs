@@ -23,7 +23,7 @@ use common::{
     structs::GlobalCrdtStateUpdate,
 };
 use dcl_js::KillFlag;
-use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender};
+use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender, SceneWake};
 use system_bridge::SystemApi;
 use tokio::sync::{broadcast, mpsc};
 use wasm_bindgen::prelude::*;
@@ -35,6 +35,7 @@ use super::{
 use crate::{
     relay_wake::{self, RelayWake},
     scene_loop_mode,
+    scene_replies::REPLIES,
     tick_limits::tick_limit_broken,
 };
 
@@ -93,7 +94,10 @@ struct Relay {
     testing: bool,
     // set when the scene broke a relay limit; the worker then tears the scene down
     ended: bool,
-    // registered on the engine channels when the scene loop mode wakes relays
+    // whether the engine wakes this scene, as it sets it each frame
+    scene_wake: SceneWake,
+    // registered on the engine channels when the scene loop mode wakes relays and the engine wakes
+    // this scene
     wake: Arc<RelayWake>,
     waker: Waker,
 }
@@ -111,14 +115,16 @@ impl Relay {
         count(|s| s.rejected += 1.0);
         if !self.ended {
             self.ended = true;
-            let _ = self.renderer_sender.try_send(SceneResponse::Error(format!(
-                "scene ended by the relay: {reason}"
-            )));
+            REPLIES.send(
+                &self.renderer_sender,
+                SceneResponse::Error(format!("scene ended by the relay: {reason}")),
+            );
         }
     }
 
     fn forward(&mut self, response: SceneResponse) -> bool {
-        let sent = self.renderer_sender.try_send(response).is_ok();
+        // wakes the engine's scene loop if it waits for a reply
+        let sent = REPLIES.send(&self.renderer_sender, response);
         if !sent {
             count(|s| s.failures += 1.0);
         }
@@ -268,6 +274,7 @@ pub fn relay_init() -> u32 {
         scene_origin,
         super_user,
         kill_flag,
+        wake: scene_wake,
         ipc_close,
         ..
     } = data;
@@ -310,6 +317,7 @@ pub fn relay_init() -> u32 {
         snapshot_requests: 0,
         allocation_requests: VecDeque::new(),
         ended: false,
+        scene_wake,
         wake: wake.clone(),
         waker: Waker::from(wake),
     };
@@ -353,17 +361,15 @@ pub fn relay_wake_ptr() -> u32 {
     with_relay(|relay| relay.wake.word() as *const AtomicI32 as usize as u32).unwrap_or(0)
 }
 
-/// 1 when the worker should wait for the engine's send between pumps, 0 to sleep as before: in a
-/// mode that wakes relays, for a scene the engine wakes. The worker asks before each pump, which
+/// 1 when the worker should wait for the engine's send between pumps, 0 to keep its 1 ms poll: in
+/// a mode that wakes relays, for a scene the engine wakes. The worker asks before each pump, which
 /// registers the waker only then.
 #[wasm_bindgen]
 pub fn relay_wake_mode() -> u32 {
     with_relay(|relay| {
-        let scene = relay.scene_id.0.to_bits();
-        let waits = relay.wake.update_waits(scene_loop_mode::get(), || {
-            scene_loop_mode::wakes_scene(scene)
-        });
-        waits as u32
+        relay
+            .wake
+            .update_waits(scene_loop_mode::get(), relay.scene_wake.get()) as u32
     })
     .unwrap_or(0)
 }

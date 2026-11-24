@@ -71,7 +71,7 @@ impl PulseServer {
                 // ENet resets immediately and emits no local Disconnect callback. WT keeps
                 // its slot until its worker emits Disconnect, so retain that reservation.
                 if disconnected.is_ok() && !transports.owns_wt(peer) {
-                    self.ip_limiter.release(peer);
+                    self.release_connection(peer);
                 }
                 let departure = self.notify_player_left(transports, peer, observers).await;
                 departures = departures.and(departure);
@@ -127,7 +127,8 @@ impl PulseServer {
                     .peers
                     .get(peer)
                     .is_some_and(|state| !state.is_listener());
-                transports.set_relay_timeout(*peer, relay.state.holds_scope(*peer), sends_input);
+                transports
+                    .watch_relay_silence(*peer, relay.state.holds_scope(*peer) && sends_input);
             }
         }
         transports.flush();
@@ -1240,23 +1241,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_connection_holding_a_relay_scope_has_a_flat_five_second_enet_timeout_until_its_last_scope_leaves()
-     {
+    async fn relay_scopes_do_not_change_the_five_second_enet_timeout() {
         let mut rig = Rig::connect(2).await;
         let (member, idle) = (rig.peers[SENDER], rig.peers[RECIPIENT]);
-        let (default, relay) = (Some((5000, 30000)), Some((5000, 5000)));
-        assert_eq!(rig.transports.enet_timeout(member), default);
+        let timeout = Some((5000, 5000));
+        assert_eq!(rig.transports.enet_timeout(member), timeout);
         let busy = rig.admit(member, "busy").await;
         let calm = rig.admit(member, "calm").await;
-        assert_eq!(rig.transports.enet_timeout(member), relay);
-        assert_eq!(rig.transports.enet_timeout(idle), default);
+        assert_eq!(rig.transports.enet_timeout(member), timeout);
+        assert_eq!(rig.transports.enet_timeout(idle), timeout);
         let leave =
             |room_id| client_message::Message::ApplicationLeave(ApplicationLeave { room_id });
         rig.apply(member, leave(busy)).await;
-        assert_eq!(rig.transports.enet_timeout(member), relay);
+        assert_eq!(rig.transports.enet_timeout(member), timeout);
         rig.apply(member, leave(calm)).await;
-        assert_eq!(rig.transports.enet_timeout(member), default);
-        assert_eq!(rig.transports.enet_timeout(idle), default);
+        assert_eq!(rig.transports.enet_timeout(member), timeout);
+        assert_eq!(rig.transports.enet_timeout(idle), timeout);
     }
 
     #[test]
@@ -1365,8 +1365,8 @@ mod tests {
         let sender_room = rig.admit(sender, "busy").await;
         rig.admit(dead, "busy").await;
         rig.slow_round_trips(&clock, &[RECIPIENT, BYSTANDER]).await;
-        // The server's clock steps 50 ms only once the sender has answered, so the sends to the
-        // dead member are the only ones it ever sees go unacknowledged.
+        // The server's clock steps 50 ms only after both live clients have answered. Only the
+        // packets to the dead member stay unacknowledged.
         let silent = clock.now();
         let mut disconnected = vec![];
         let removed_after = loop {
@@ -1376,8 +1376,8 @@ mod tests {
                 "a silent relay member is still on the roster after {elapsed:?}"
             );
             rig.send(sender, sender_room, vec![1]).await;
-            rig.probe(&[SENDER]).await;
-            disconnected.extend(rig.answer(&[SENDER]).await);
+            rig.probe(&[SENDER, BYSTANDER]).await;
+            disconnected.extend(rig.answer(&[SENDER, BYSTANDER]).await);
             if !rig.member(dead, "busy") {
                 break clock.now() - silent;
             }

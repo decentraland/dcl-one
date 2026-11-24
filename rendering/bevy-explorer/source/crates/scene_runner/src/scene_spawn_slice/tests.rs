@@ -122,7 +122,7 @@ fn the_spawner_leaves_the_end_of_the_slice_to_processing() {
 #[test]
 fn behind_the_loading_backdrop_scenes_spawn_and_process_whole() {
     let (mut world, player) = world_with_player();
-    world.entity_mut(player).insert(OutOfWorld);
+    world.entity_mut(player).insert(OutOfWorld::default());
 
     assert_eq!(deadlines_after_a_run(&mut world), (None, None));
 }
@@ -138,7 +138,7 @@ fn a_headless_app_spawns_and_processes_whole() {
 #[test]
 fn arriving_back_in_world_slices_again() {
     let (mut world, player) = world_with_player();
-    world.entity_mut(player).insert(OutOfWorld);
+    world.entity_mut(player).insert(OutOfWorld::default());
     deadlines_after_a_run(&mut world);
 
     world.entity_mut(player).remove::<OutOfWorld>();
@@ -202,7 +202,7 @@ fn an_item_over_the_rest_of_the_slice_waits() {
 #[test]
 fn behind_the_loading_backdrop_everything_is_admitted_uncharged() {
     let (mut world, player) = world_with_player();
-    world.entity_mut(player).insert(OutOfWorld);
+    world.entity_mut(player).insert(OutOfWorld::default());
 
     let admitted = admissions(&mut world, Duration::ZERO, &[ms(1); 1_000]);
 

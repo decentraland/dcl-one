@@ -606,7 +606,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   const alone = mockAlone()
   fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
   // Stateful so a home set from the map is the home the lobby and the map then show.
-  let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } }
+  const NO_MOCK_HOME = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false, pinnable: true }
+  let mockHome = NO_MOCK_HOME
   const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
@@ -1076,7 +1077,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
       setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
-    // ?mockpins=1 → two quest pins on both maps, one with a broken icon url to show the fallback.
+    // ?mockpins=1 → two quest pins on both maps.
     if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
@@ -1129,7 +1130,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'setHomeScene') {
-      mockHome = { realm: msg.realm, parcel: msg.parcel }
+      mockHome = { realm: msg.realm, parcel: msg.parcel, pinned: true, pinnable: true }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'clearHomeScene') {
+      mockHome = NO_MOCK_HOME
       reply({ kind: 'homeScene', ...mockHome })
       return
     }
@@ -1393,12 +1399,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'engineViewport') {
       // No engine in mock mode — nothing to render into the cutout.
+      if (msg.region === 'avatarPreview' && msg.rect != null) reply({ kind: 'avatarPreviewReady' })
       return
     }
     if (msg.kind === 'interactableArea') return
     if (msg.kind === 'minimapConfig') {
       // No engine in mock mode — the Camera style has nothing to render. The DOM styles
       // are unaffected: React draws those from map tiles without the scene's help.
+      if (msg.style === 'imposters') reply({ kind: 'minimapReady' })
       return
     }
     if (msg.kind === 'previewFocus') return
@@ -1417,7 +1425,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'teleport') {
       reply({ kind: 'mapState', x: msg.x, y: msg.y })
-      if (msg.realm != null) travelResult(msg.realm, msg.travelId)
+      // a teleport inside the realm answers too when it carries an id (chat's /goto)
+      travelResult(msg.realm ?? '', msg.travelId)
       return
     }
     if (msg.kind === 'changeRealm') {
