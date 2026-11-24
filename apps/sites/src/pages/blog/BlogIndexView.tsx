@@ -3,13 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogSearchForm, BlogUnavailable } from "@dcl/one-ui/apps/sites/blog";
+import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogSearchForm, BlogUnavailable } from "@dcl/one-ui";
 
 import type { BlogListPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 
 import { blogRouting, clickedPostSlug } from "@/features/blog/routing";
+
+import { blogListPageView } from "./page-view";
 
 import { useBlogSearchSuggestions } from "@/features/blog/useBlogSearchSuggestions";
 
@@ -36,6 +39,8 @@ export function BlogIndexView(data: BlogIndexData) {
     viewed.current = viewKey;
     track("lp_blog_viewed", { post_count: total }, { sid, story: STORY });
   }, [sid, viewKey, total]);
+
+  usePageView(blogListPageView(data));
 
   function onPostClick(e: React.MouseEvent<HTMLDivElement>) {
     const slug = clickedPostSlug(e);

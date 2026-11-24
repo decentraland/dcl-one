@@ -1,15 +1,32 @@
 # Sync metrics
 
 `catalyst serve` exports the series that the content network's dashboards and alerts read for peer
-sync. They keep the legacy name, type, label names, label values and buckets of these pinned sources:
+sync on its process scrape
+([shared service metrics ADR](../../../../docs/adr/2026-11-24-shared-service-metrics.md)). They keep
+the legacy name, type, label names, label values and buckets of these pinned sources, except where
+a family serve already declares measures the same thing:
 
 - `decentraland/snapshots-fetcher@53e9c07a`, `src/metrics.ts`;
 - `decentraland/deployments-to-sqs@8afab047`, `src/metrics.ts`;
 - `decentraland/catalyst@6c56f8a3`, `src/metrics.ts` (its sync series only).
 
-The series are defined in `content/src/sync/metrics.rs`. Fixed label sets render at 0 from start
-(`register_series`, called from `src/serve_lifecycle.rs`). The histogram buckets reach the exporter through
-`comms::metrics::prometheus_builder`, which applies `sync::metrics::HISTOGRAM_BUCKETS`.
+The families are declared in `content/src/sync/metrics.rs`
+(`catalyst_content::sync::metrics::FAMILIES`). `src/serve_lifecycle.rs` composes that list into
+the serve registry, which applies the declared buckets. A family is absent from the scrape until its
+first observation. Paths below are relative to `services/catalyst`.
+
+## Families serve already declares
+
+No family that serve already declares measures the same thing as one of the legacy sync series, so
+none is reported as "replaced by". These sync families sit beside them and measure something else:
+
+| Family | Why it does not replace a legacy series |
+| --- | --- |
+| `content_failed_deployments_undecided` (`content/src/metrics.rs`) | Counts only the records awaiting a validation verdict. `dcl_content_server_failed_deployments` counts every row. |
+| `content_sync_last_heartbeat_timestamp_seconds` (`content/src/metrics.rs`) | Time of the last persisted heartbeat. `dcl_content_server_sync_state` is the bootstrapping or syncing state. |
+| `content_sync_oversized_pointer_changes_total`, `content_sync_manifest_rejections_total` (`content/src/metrics.rs`) | Rejected peer input. No legacy series counted it. |
+| `content_sync_scene_parcels_differ_total` (`content/src/metrics.rs`) | Synced scenes whose parcels differ from their pointers. No legacy series counted it. |
+| `dcl_job_runs_total`, `dcl_job_duration_seconds`, `dcl_job_in_progress`, `dcl_job_last_success_timestamp_seconds`, `dcl_job_leases_held` (`jobs/src/instrumentation.rs`) | Periodic passes and leases of supervised jobs. A steady-state `/pointer-changes` stream is a task inside the leased `sync` job, so `dcl_deployments_stream_reconnection_count` and `dcl_deployments_stream_failure_count` count per-peer stream runs that these families do not see. |
 
 ## Labels
 

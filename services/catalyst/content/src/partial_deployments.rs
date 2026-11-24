@@ -739,8 +739,8 @@ async fn stage(
     }
 
     // Authenticated before anything is stored: at the entity's timestamp when
-    // the batch carries a readable entity file, else now (a resume, whose
-    // read-back needs a chain valid now).
+    // the batch carries a readable entity file, else now with contract wallets
+    // asked at latest (a resume, whose read-back needs a chain valid now).
     let uploaded_entity = batch
         .files
         .iter()
@@ -756,11 +756,20 @@ async fn stage(
         .filter(|bytes| bytes.len() <= MAX_ENTITY_FILE_SIZE_BYTES)
         .filter(|bytes| hash_bytes_v1(bytes) == entity_id)
         .and_then(|bytes| serde_json::from_slice::<Entity>(bytes).ok())
-        .map_or_else(now_ms, |entity| entity.timestamp);
-    deployer
-        .check_signature(entity_id, &auth_chain, signed_at)
-        .await
-        .map_err(Refusal::from_deploy)?;
+        .map(|entity| entity.timestamp);
+    match signed_at {
+        Some(signed_at) => {
+            deployer
+                .check_signature(entity_id, &auth_chain, signed_at)
+                .await
+        }
+        None => {
+            deployer
+                .check_signature_at_latest(entity_id, &auth_chain, now_ms())
+                .await
+        }
+    }
+    .map_err(Refusal::from_deploy)?;
 
     let prepared = prepare(
         deployer,
@@ -1016,7 +1025,7 @@ async fn read_back_entity_file(
     deployer_address: &str,
 ) -> Result<Bytes, Refusal> {
     if deployer
-        .check_signature(entity_id, auth_chain, now_ms())
+        .check_signature_at_latest(entity_id, auth_chain, now_ms())
         .await
         .is_err()
     {
@@ -1947,7 +1956,6 @@ pub async fn cleanup_expired(
     storage: &Storage,
     limits: &Limits,
 ) -> anyhow::Result<usize> {
-    let started = Instant::now();
     let mut run = Reclaim::default();
     let reclaimed = reclaim_expired(pool, storage, limits, &mut run).await;
     let recorded = record_run(pool).await;
@@ -1957,7 +1965,7 @@ pub async fn cleanup_expired(
         (Ok(()), Ok(())) if run.failed == 0 => "success",
         _ => "error",
     };
-    crate::series::partial_cleanup(started, outcome, run.removed);
+    crate::series::partial_cleanup(outcome, run.removed);
     recorded?;
     reclaimed?;
     run_result(run.removed, run.failed)

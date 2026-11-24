@@ -31,7 +31,7 @@ MACOS = ('tooling/dev*', 'tooling/catalyst-test*', 'tooling/tests/test_catalyst_
          '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
 # Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
 # source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
-LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**',
+LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'apps/creator-hub/packages/zip-extract/**',
               'tooling/*.py', 'tooling/tests/**', 'tooling/migration/**', 'services/catalyst/**', 'library/**', 'schemas/**')
 # What the Rust job reads besides the paths its Rust sources name: the crates it compiles, the SQL, protocol
 # and API contract they embed, the toolchain, the dev shell and stack, and the scripts and tests
@@ -251,6 +251,11 @@ def web_plan(event, base, head):
                    for path in paths for reference in references):
                 return {'run-web-unit-tests': True,
                         'reason': 'Frontend sources or helpers reference changed backend inputs'}
+        # Observation only: both suites still run. UI3 is not skippable for these paths yet, since
+        # apps/ui3/src/play/test/shellSitesKeys.test.ts reads Sites auth sources from disk.
+        if all(path.startswith('apps/sites/src/') for path in paths):
+            return {'run-web-unit-tests': True,
+                    'reason': 'Sites source only; both suites still run'}
         return {
             'run-web-unit-tests': not backend_only,
             'reason': ('Known backend implementation changes only; contracts and smoke still run'

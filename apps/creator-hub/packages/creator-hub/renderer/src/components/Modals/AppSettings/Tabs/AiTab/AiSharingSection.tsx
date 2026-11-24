@@ -3,7 +3,7 @@ import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import { ChevronRightIcon, DeleteOutlineIcon } from '@ui/atoms/icons-material';
 
 import { hasSharingConsent } from '/shared/types/ai-sharing';

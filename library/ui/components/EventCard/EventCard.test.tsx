@@ -493,6 +493,32 @@ const mediaOf = (query: string): string => {
   return css.slice(start, css.indexOf('\n  }\n', start))
 }
 
+describe('EventCard dimmed', () => {
+  describe.each(['small', 'day'] as const)('when a %s card is dimmed', variant => {
+    beforeEach(() => {
+      setup({ variant, dimmed: true })
+    })
+
+    it('should fade its cover alone, keeping the title, host and time at full contrast', () => {
+      const media = screen.getByRole('article').querySelector('[data-dimmed]')
+      expect(media?.querySelector('img')).toBeTruthy()
+      expect(media?.contains(screen.getByRole('link', { name: 'Poker Night' }))).toBe(false)
+      expect(blockOf(css, '.media[data-dimmed]')).toContain('opacity: 0.5')
+      expect(css).not.toMatch(/\.card[^{]*\{[^}]*opacity: 0\.5/)
+    })
+  })
+
+  describe('when a card is not dimmed', () => {
+    beforeEach(() => {
+      setup({ variant: 'day' })
+    })
+
+    it('should not fade its cover', () => {
+      expect(screen.getByRole('article').querySelector('[data-dimmed]')).toBeNull()
+    })
+  })
+})
+
 describe('EventCard motion', () => {
   const hover = mediaOf('(hover: hover) and (min-width: 768px)')
 
@@ -596,6 +622,24 @@ describe('EventCard motion', () => {
         .replace(mediaOf('(hover: hover) and (min-width: 768px)'), '')
         .replace(mediaOf('(prefers-reduced-motion: reduce)'), '')
       expect(outsideHover).not.toMatch(/\n\s*\.(showOnHover|reveal) \{/)
+    })
+  })
+
+  describe('when a day card is drawn', () => {
+    it('should draw no border, outline or inset line around it, at rest or on hover', () => {
+      const outsideForced = css.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n {2}\}\n/, '')
+      const dayRules = [...outsideForced.matchAll(/\n *([^\n{}@]*\.day[^\n{}]*) \{([^}]*)\}/g)]
+      expect(dayRules.length).toBeGreaterThan(0)
+      for (const [, selector, body] of dayRules) {
+        if (/\.day\s+\./.test(selector ?? '')) continue
+        expect(body, selector).not.toMatch(/(^|\s)(border|outline|box-shadow)\s*:/)
+      }
+    })
+
+    it('should give it a system-colour boundary only when forced colours drop its background', () => {
+      expect(blockOf(mediaOf('(forced-colors: active)'), '.day')).toMatch(
+        /outline: 1px solid CanvasText;\s*outline-offset: -1px/
+      )
     })
   })
 

@@ -436,7 +436,7 @@ async fn read_form(
             let file_name = field.file_name().unwrap_or("undefined").to_string();
             let mut part = match spool.part().await {
                 Ok(part) => part,
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e, "write_error"))),
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
             };
             // The files before it, this one and the request's directory.
             let charged = (files.len() as u64 + 2) * SPOOL_FILE_OVERHEAD_BYTES;
@@ -461,12 +461,12 @@ async fn read_form(
                     return Ok(Form::Refused(source_busy()));
                 }
                 if let Err(e) = part.write(&chunk).await {
-                    return Ok(Form::Refused(spool_unavailable(&e, "write_error")));
+                    return Ok(Form::Refused(spool_unavailable(&e)));
                 }
             }
             match part.finish(name).await {
                 Ok(spooled) => files.push(spooled),
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e, "write_error"))),
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
             }
         } else {
             if field_count >= max_fields {
@@ -499,12 +499,12 @@ async fn read_form(
 }
 
 /// Upstream's 503 for a spool the disk refuses (full, failing): the cause
-/// is logged, the client told to retry. `reason` is `folder`, `write_error`
-/// or `read_error`.
-fn spool_unavailable(e: &std::io::Error, reason: &'static str) -> Response {
+/// is logged, the client told to retry.
+fn spool_unavailable(e: &std::io::Error) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
-    metrics::counter!("upload_spool_failures_total", "route" => SPOOL_ROUTE).increment(1);
-    crate::series::upload_spool_failed(reason);
+    crate::metrics::SPOOL_FAILURES
+        .handle([SPOOL_ROUTE])
+        .increment(1);
     with_retry_after(
         super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, SPOOL_UNAVAILABLE_MESSAGE),
         header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
@@ -515,7 +515,7 @@ fn spool_unavailable(e: &std::io::Error, reason: &'static str) -> Response {
 /// the bytes it sent, which a retrying client sends again, are recorded in
 /// `upload_budget_refused_received_bytes`.
 fn budget_exhausted_after(received: u64) -> Response {
-    metrics::histogram!("upload_budget_refused_received_bytes", "route" => SPOOL_ROUTE)
+    dcl_metrics::histogram!(crate::metrics::REFUSED_BYTES, "route" => SPOOL_ROUTE)
         .record(received as f64);
     budget_exhausted()
 }
@@ -569,7 +569,7 @@ async fn uploads_of(
         }
         let bytes = Bytes::from(part.read().await.map_err(|e| {
             refused("error");
-            spool_unavailable(&e, "read_error")
+            spool_unavailable(&e)
         })?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
             .map(|parsed| {
@@ -1051,8 +1051,8 @@ async fn deploy_form(
     // Removed, with every file in it, when this request ends however it
     // ends, after the deploy stored what it keeps.
     let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE, true).await {
-        Ok(spool) => spool.on_cleanup_failure(crate::series::upload_spool_cleanup_failed),
-        Err(e) => return Ok(spool_unavailable(&e, "folder")),
+        Ok(spool) => spool,
+        Err(e) => return Ok(spool_unavailable(&e)),
     };
     let is_partial = |fields: &BTreeMap<String, String>| {
         fields.get("partial").map(String::as_str) == Some("true")
@@ -1333,9 +1333,10 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("catalyst-uploads-of-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        let thumbnail_hash = crate::auth::hash_bytes_v1(&[7; 3000]);
         let entity = serde_json::to_vec(&json!({
             "version": "v3", "type": "wearable", "pointers": ["urn:x"], "timestamp": 1,
-            "content": [{"file": "thumbnail.png", "hash": "bafythumb"}],
+            "content": [{"file": "thumbnail.png", "hash": thumbnail_hash}],
             "metadata": {"thumbnail": "thumbnail.png"}
         }))
         .unwrap();
@@ -1351,7 +1352,7 @@ mod tests {
         };
         let parts = vec![
             part("bafyentity", "bafyentity", &entity),
-            part("bafythumb", "bafythumb", &[7; 3000]),
+            part("thumbnail", &thumbnail_hash, &[7; 3000]),
             part("bafymodel", "bafymodel", &[9; 50_000]),
         ];
         let fields = fields(&[("entityId", "bafyentity")]);
@@ -1375,8 +1376,8 @@ mod tests {
 
         let small = super::super::upload_admission::UploadBudget::new("memory", most - 1);
         let mut memory = small.try_reserve(0).unwrap();
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let guard = metrics::set_default_local_recorder(&recorder);
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let guard = dcl_metrics::set_default_local_recorder(&recorder);
         let refused = uploads_of(&fields, parts.clone(), &mut memory)
             .await
             .unwrap_err();

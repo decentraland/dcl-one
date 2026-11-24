@@ -37,11 +37,6 @@ use crate::http::{Outbound, RetryDecision, retry_with_backoff};
 
 pub use items::v1_collection_contract;
 
-/// A collection URN naming no item the ownership check can ask about.
-pub(crate) fn is_malformed_item(urn: &str) -> bool {
-    matches!(items::item_ref(urn), items::ItemRef::Malformed)
-}
-
 sol! {
     interface Checker {
         function checkLAND(address _sender, address _land, address _estate, int256 _x, int256 _y) external view returns (bool);
@@ -358,8 +353,9 @@ impl Chain {
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }
 
-    /// The blocks of an entity timestamp, searched once per timestamp while
-    /// the memo holds them.
+    /// The blocks of an entity timestamp. Only final answers are memoized: a
+    /// timestamp whose bounds reach past the head (a fresh deploy) is searched
+    /// again, one `latest` read per access check.
     async fn blocks_for(&self, timestamp_ms: i64) -> Result<Blocks, ValidatorError> {
         if let Some((found, blocks)) = self.memo.lock().get(&timestamp_ms)
             && found.elapsed() < BLOCKS_MEMO_TTL
@@ -379,6 +375,10 @@ impl Chain {
                 at_deployment.map_or(n, |at| n.min(at))
             }),
         };
+        // A head-bound answer moves as blocks are mined: a retry must read the head again.
+        if !(self.search.is_final(upper, at) && self.search.is_final(lower, before)) {
+            return Ok(blocks);
+        }
         let mut memo = self.memo.lock();
         if memo.len() >= BLOCKS_MEMO_CAP {
             memo.clear();
@@ -751,14 +751,18 @@ impl OnChainAccess {
         Ok(())
     }
 
-    /// The last L1 block at or before `timestamp_ms`, from the same search the
-    /// access checks use; `None` before the first block.
-    pub async fn l1_block_at(&self, timestamp_ms: i64) -> Result<Option<u64>, ValidatorError> {
+    /// The L1 block `@dcl/crypto` asks a contract wallet at for `timestamp_ms`
+    /// (`Blocks.getDate(ts, false)`): the last block strictly before it, block 1 before the
+    /// first blocks. From the same search the access checks use.
+    pub async fn l1_verification_block(&self, timestamp_ms: i64) -> Result<u64, ValidatorError> {
         let chain = &self.l1()?.chain;
+        // Block timestamps are whole seconds: strictly before `ms / 1000` is at or before
+        // the second of `ms - 1`.
+        let before = timestamp_ms.saturating_sub(1).div_euclid(1000);
         let block = self
-            .within_deadline("L1 block", chain.block_at(timestamp_ms.div_euclid(1000)))
+            .within_deadline("L1 block", chain.block_at(before))
             .await?;
-        Ok(block.map(|b| b.number))
+        Ok(block.map_or(1, |b| b.number.max(1)))
     }
 
     /// Per parcel, whether `address` may deploy on it (owner, operator,

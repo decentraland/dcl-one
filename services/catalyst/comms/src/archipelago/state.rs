@@ -24,7 +24,6 @@ crate::shared::send_sync_once! {
         pub enforcement: Arc<Enforcement>,
         pub statistics: Arc<crate::stats::Reader>,
         pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
-        pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
         pub observations: super::observations::Observations,
         pub started_at: std::time::Instant,
         pub started: std::sync::atomic::AtomicBool,

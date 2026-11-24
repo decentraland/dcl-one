@@ -1,4 +1,6 @@
 //! Community voice admission, status and speaker moderation.
+use crate::metrics::declarations;
+
 use super::*;
 
 #[derive(Debug, Deserialize)]
@@ -146,7 +148,8 @@ pub async fn community_voice_credentials_for(
 
 /// Upstream answers inactive when the store fails; the counter keeps the outage visible.
 fn status_read_failed(route: &'static str, error: &dyn std::fmt::Display) {
-    metrics::counter!("comms_community_voice_status_read_failures_total", "route" => route)
+    declarations::COMMUNITY_VOICE_STATUS_READ_FAILURES
+        .handle([route])
         .increment(1);
     tracing::error!(route, error = %error, "community voice status unreadable; answering inactive");
 }
@@ -470,8 +473,9 @@ pub async fn community_kick_player(
     ))
 }
 
-/// Removes `target` from the community room: the LiveKit participant
-/// (best-effort, logged) and the presence row (the failure that counts).
+/// Removes `target` from the community room: the LiveKit participant and the
+/// presence row. The row is deleted even when the removal fails, and that
+/// failure is returned; an absent participant is not a failure.
 pub async fn kick_from_community_room(
     state: &CommsState,
     community_id: CommunityId,
@@ -485,6 +489,12 @@ pub async fn kick_from_community_room(
     );
     if let Err(e) = removed {
         tracing::warn!(error = %e, room = %room_name, addr = %target, "failed to remove community voice participant");
+        if let Err(db) = deleted {
+            tracing::warn!(error = %db, room = %room_name, addr = %target, "failed to delete community voice presence row");
+        }
+        return Err(ApiError::internal(format!(
+            "livekit remove participant: {e}"
+        )));
     }
     deleted?;
     Ok(())

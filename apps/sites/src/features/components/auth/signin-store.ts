@@ -2,13 +2,23 @@ import { loginPath } from "../../auth/login/redirect";
 
 let hostSignIn: (() => void) | undefined;
 
-const beforeBrowserSignIn = new Set<(returnTo: string) => boolean | void>();
+type BeforeBrowserSignIn = (returnTo: string, resume: () => void) => boolean | void;
+const beforeBrowserSignIn = new Set<BeforeBrowserSignIn>();
 
-export function onBeforeBrowserSignIn(listener: (returnTo: string) => boolean | void): () => void {
+export function onBeforeBrowserSignIn(listener: BeforeBrowserSignIn): () => void {
   beforeBrowserSignIn.add(listener);
   return () => {
     beforeBrowserSignIn.delete(listener);
   };
+}
+
+/** Gives pages a chance to save their drafts or ask before leaving for a new session. */
+export function navigateForAccountChange(returnTo: string, go: () => void): void {
+  const resume = () => navigateForAccountChange(returnTo, go);
+  for (const listener of beforeBrowserSignIn) {
+    if (listener(returnTo, resume) === false) return;
+  }
+  go();
 }
 
 export function installHostSignIn(signIn: () => void): () => void {
@@ -26,8 +36,5 @@ export function openSignIn(opts?: { redirectTo?: string }): void {
   if (typeof window === "undefined") return;
   const { pathname, search, hash } = window.location;
   const returnTo = opts?.redirectTo ?? pathname + search + hash;
-  for (const listener of beforeBrowserSignIn) {
-    if (listener(returnTo) === false) return;
-  }
-  window.location.assign(loginPath(returnTo));
+  navigateForAccountChange(returnTo, () => window.location.assign(loginPath(returnTo)));
 }

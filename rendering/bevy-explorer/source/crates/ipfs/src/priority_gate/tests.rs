@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -68,7 +69,7 @@ fn reader(
     let log = log.clone();
     tokio::spawn(async move {
         let permit = gate.acquire(ticket).await.unwrap();
-        log.lock().unwrap().push(name);
+        log.lock_ignore_poison().push(name);
         drop(permit);
     })
 }
@@ -95,7 +96,10 @@ async fn grants_the_nearest_in_front_scene_first() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["near", "near_behind", "far"]);
+    assert_eq!(
+        *log.lock_ignore_poison(),
+        vec!["near", "near_behind", "far"]
+    );
 }
 
 #[tokio::test]
@@ -117,7 +121,7 @@ async fn a_key_change_is_honoured_at_grant_time() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["a", "b"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["a", "b"]);
 }
 
 #[tokio::test]
@@ -135,7 +139,7 @@ async fn an_unregistered_hash_ranks_after_the_registered_ones() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["known", "unknown"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["known", "unknown"]);
 }
 
 #[tokio::test]
@@ -164,7 +168,7 @@ async fn requests_without_a_scene_rank_after_live_scenes_and_before_departed_one
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["live", "imposter", "left"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["live", "imposter", "left"]);
 }
 
 #[tokio::test]
@@ -180,7 +184,7 @@ async fn same_key_is_first_come_first_served() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["first", "second"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["first", "second"]);
 }
 
 #[tokio::test]
@@ -197,7 +201,7 @@ async fn one_scenes_requests_keep_their_order() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["s1", "s2", "s3"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["s1", "s2", "s3"]);
 }
 
 #[tokio::test]
@@ -222,7 +226,7 @@ async fn a_cancelled_waiter_does_not_hold_a_slot() {
     drop(holder);
     far.await.unwrap();
 
-    assert_eq!(*log.lock().unwrap(), vec!["far"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["far"]);
     assert_eq!(gate.waiting(), 0);
     assert!(gate.try_acquire().is_some(), "the slot came back");
 }
@@ -247,7 +251,7 @@ async fn a_ticket_nobody_awaits_does_not_hold_a_slot() {
     drop(holder);
     far.await.unwrap();
 
-    assert_eq!(*log.lock().unwrap(), vec!["far"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["far"]);
     assert_eq!(gate.waiting(), 0);
     assert!(gate.try_acquire().is_some(), "the slot came back");
 }
@@ -300,7 +304,10 @@ async fn a_joined_reader_raises_the_download() {
     }
 
     // granted once, as the near scene's; the far queue's copy is skipped, not granted again
-    assert_eq!(*log.lock().unwrap(), vec!["far-download", "mid-download"]);
+    assert_eq!(
+        *log.lock_ignore_poison(),
+        vec!["far-download", "mid-download"]
+    );
     assert_eq!(gate.waiting(), 0);
     assert!(gate.try_acquire().is_some());
 }
@@ -327,7 +334,7 @@ async fn a_departed_scenes_downloads_sink_to_the_bottom() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["ahead", "left"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["ahead", "left"]);
 }
 
 #[tokio::test]
@@ -355,7 +362,10 @@ async fn a_publish_updates_registered_keys_only() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["ahead", "unknown", "no-hash"]);
+    assert_eq!(
+        *log.lock_ignore_poison(),
+        vec!["ahead", "unknown", "no-hash"]
+    );
 }
 
 #[tokio::test]
@@ -381,7 +391,7 @@ async fn a_request_after_a_departed_queue_drained_ranks_with_the_unregistered_on
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["s-new", "no-hash"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["s-new", "no-hash"]);
 }
 
 #[test]
@@ -441,7 +451,7 @@ async fn a_hash_registered_again_ranks_by_its_key_while_its_old_requests_wait() 
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["s", "ahead"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["s", "ahead"]);
 }
 
 /// Per-frame and per-grant cost at a dense-area load: hundreds of distinct hashes queued
@@ -518,7 +528,7 @@ async fn late_join_keeps_the_shared_tickets_original_fifo_sequence() {
     drop(holder);
     a.await.unwrap();
     b.await.unwrap();
-    assert_eq!(*log.lock().unwrap(), vec!["older-shared", "later"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["older-shared", "later"]);
 }
 
 #[tokio::test]
@@ -604,7 +614,7 @@ async fn a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained() {
         let log = log.clone();
         tokio::spawn(async move {
             let permit = attempts.acquire().await.unwrap();
-            log.lock().unwrap().push("left-retry");
+            log.lock_ignore_poison().push("left-retry");
             drop(permit);
         })
     };
@@ -615,7 +625,7 @@ async fn a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained() {
     drop(blocker);
     retry.await.unwrap();
     other.await.unwrap();
-    assert_eq!(*log.lock().unwrap(), vec!["no-hash", "left-retry"]);
+    assert_eq!(*log.lock_ignore_poison(), vec!["no-hash", "left-retry"]);
 
     // the mark lasts only while a request of the hash is alive
     assert!(gate.state().departed.contains("left"));
@@ -628,7 +638,7 @@ async fn a_poisoned_gate_keeps_granting_and_releasing() {
     let gate = PriorityGate::new(1);
     let poisoner = gate.clone();
     let _ = std::thread::spawn(move || {
-        let _held = poisoner.state.lock().unwrap();
+        let _held = poisoner.state.lock_ignore_poison();
         panic!("poison the gate");
     })
     .join();

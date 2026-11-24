@@ -25,7 +25,8 @@
 //! one the mirror reports only after the walk passed its creation gets a
 //! backfill lane (`nft_contract.backfill_from_block`), walked before the
 //! main range and refolded whole when it completes. A network publishes only
-//! with no backfill owed.
+//! with no backfill owed, and a fold that still owes one clears the publish
+//! marker in the transaction that commits its rows.
 
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
@@ -516,17 +517,27 @@ ON CONFLICT (network, contract_address, token_id) DO UPDATE SET
     created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at,
     updated_block = EXCLUDED.updated_block, updated_log = EXCLUDED.updated_log";
 
+/// The contracts of a network (`$1`) whose backfill is not finished.
+const BACKFILLS_OWED_SQL: &str = "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
+     AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FoldCounts {
     pub nfts: u64,
     pub orders: u64,
     pub land_data: u64,
+    /// The contracts whose backfill the lane still owes, counted in the
+    /// fold's transaction.
+    pub backfills_owed: i64,
 }
 
 /// The three folds of `net` in one transaction: the keys an event past
 /// `since` touched (`None`: every key) and every token of a contract whose
 /// backfill completed since (`refold_owed`, cleared here), each over its
-/// whole history; `land_data` reads only the window.
+/// whole history; `land_data` reads only the window. While a contract
+/// still owes its backfill the fold is unpublishable, and the same
+/// transaction clears the network's publish marker, so no reader takes
+/// these rows for a complete index.
 pub async fn fold(
     pool: &PgPool,
     net: ChainNet,
@@ -591,12 +602,26 @@ pub async fn fold(
             .execute(&mut *tx)
             .await?;
     }
+    let backfills_owed: i64 = sqlx::query_scalar(BACKFILLS_OWED_SQL)
+        .bind(net.db_name())
+        .fetch_one(&mut *tx)
+        .await?;
+    if backfills_owed > 0 {
+        // At the end, beside the fence that locks the same row, so the
+        // cursor's row lock lasts only until the commit.
+        sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2")
+            .bind(INDEXER_NFT)
+            .bind(net.db_name())
+            .execute(&mut *tx)
+            .await?;
+    }
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
         orders,
         land_data,
+        backfills_owed,
     })
 }
 
@@ -993,14 +1018,7 @@ impl ChainIndex for NftIndex {
             land_data = counts.land_data,
             "nft index: folded"
         );
-        let owed: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1",
-        )
-        .bind(self.net.db_name())
-        .fetch_one(pool)
-        .await?;
-        Ok(owed == 0)
+        Ok(counts.backfills_owed == 0)
     }
 
     async fn lanes(
@@ -1012,7 +1030,7 @@ impl ChainIndex for NftIndex {
         chunk: &mut usize,
         owner: &chain_walk::Owner,
         cursor: Option<(u64, &str)>,
-    ) -> anyhow::Result<usize> {
+    ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
@@ -1023,7 +1041,7 @@ impl ChainIndex for NftIndex {
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
-        let mut used = 0usize;
+        let mut used = chain_walk::Spent::default();
         // The cursor block's header that closed the last lane window opens
         // the next one: one read a window, the bracket unbroken.
         let mut opened: Option<crate::chain_index::rpc::BlockHeader> = None;
@@ -1036,7 +1054,7 @@ impl ChainIndex for NftIndex {
                 topics: collection_topics(self.net),
             }];
             while next <= last {
-                if used >= budget {
+                if used.charge >= budget {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
@@ -1046,7 +1064,7 @@ impl ChainIndex for NftIndex {
                     (Some(_), Some(last)) => Some(last),
                     (Some((block, _)), None) => {
                         let h = source.header(block).await?;
-                        used += h.requests;
+                        used.read(h.requests);
                         Some(h.value)
                     }
                     (None, _) => None,
@@ -1057,14 +1075,14 @@ impl ChainIndex for NftIndex {
                     .with_context(|| {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
                     })?;
-                used += w.requests;
+                used.window(&w);
                 source.lane_read();
                 let times = source.block_times(&w.logs).await?;
-                used += times.requests;
+                used.read(times.requests);
                 let times = times.value;
                 if let (Some(before), Some((block, stored))) = (before, cursor) {
                     let after = source.header(block).await?;
-                    used += after.requests;
+                    used.read(after.requests);
                     anyhow::ensure!(
                         before == after.value,
                         "chain changed while backfilling {}",
@@ -1075,7 +1093,7 @@ impl ChainIndex for NftIndex {
                             block,
                             stored: stored.to_string(),
                             chain: after.value.hash,
-                            requests: used,
+                            requests: used.requests,
                         }
                         .into());
                     }

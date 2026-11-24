@@ -1865,6 +1865,24 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "No fresh LiveKit observation is available.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -2088,8 +2106,16 @@
               }
             }
           },
-          "500": {
-            "description": "",
+          "503": {
+            "description": "No fresh LiveKit observation is available.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

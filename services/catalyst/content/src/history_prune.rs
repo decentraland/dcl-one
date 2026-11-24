@@ -33,7 +33,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use metrics::counter;
+use dcl_metrics::counter;
 use serde::Serialize;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -303,7 +303,7 @@ async fn run(
         Err(e) if matches!(e.downcast_ref(), Some(gc::GcError::LockTimeout)) => "deferred",
         Err(_) => "error",
     };
-    crate::series::gc_run(started, outcome);
+    crate::series::gc_run(outcome);
     result
 }
 
@@ -352,7 +352,6 @@ async fn pass(
             &mut report,
         )
         .await?;
-        crate::series::gc_items(report.blobs - blobs_before);
         counter!(DEPLOYMENTS_PRUNED).increment(pruned.deployments);
         counter!(CONTENT_FILES_PRUNED).increment(pruned.content_files);
         tracing::debug!(
@@ -617,7 +616,7 @@ mod tests {
 
         let grace = Duration::from_secs(86_400);
         let recorder = crate::series::test_support::recorder();
-        let metrics_guard = metrics::set_default_local_recorder(&recorder);
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
         let off = run_once(
             &pool,
             &storage,
@@ -653,17 +652,21 @@ mod tests {
         );
         drop(metrics_guard);
         {
-            use crate::series::{GC_ITEMS, GC_RUNS, GC_TIME, test_support::sample};
+            use crate::series::{GC_RUNS, test_support::sample};
             let rendered = recorder.handle().render();
-            assert_eq!(sample(&rendered, GC_ITEMS, &[]), Some(4.0), "{rendered}");
             assert_eq!(
-                sample(&rendered, GC_RUNS, &[("outcome", "success")]),
-                Some(1.0),
-                "the refused pass is not a run"
+                sample(&rendered, BLOBS_UNLINKED, &[]),
+                Some(4.0),
+                "{rendered}"
             );
             assert_eq!(
-                sample(&rendered, &format!("{GC_TIME}_count"), &[]),
-                Some(1.0)
+                sample(
+                    &rendered,
+                    GC_RUNS.descriptor.name,
+                    &[("outcome", "success")]
+                ),
+                Some(1.0),
+                "the refused pass is not a run"
             );
         }
         let freed = [&exclusive, &orphan_file, &superseded_entity, &orphan_entity];

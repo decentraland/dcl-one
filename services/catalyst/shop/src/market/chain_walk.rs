@@ -16,7 +16,9 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock. Accepting work that waits on
+//! [`READY_WINDOW`] old at the caller's clock. The `nft` index's readers use
+//! the publish marker alone (`owned_items::Rule`): every pass advances
+//! `last_block` before it folds and publishes. Accepting work that waits on
 //! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
 //! or a full-history walk advancing near the head, bound to its chain and out
 //! of quarantine.
@@ -48,6 +50,7 @@ pub const INDEXER_COMMITTEE: &str = "committee";
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
+pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
 
 /// How old a publish may be before readers stop trusting it (a stopped job).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
@@ -137,6 +140,8 @@ pub struct IndexSettings {
     pub sales_enabled: bool,
     /// `MARKETPLACE_COMMITTEE_INDEX_ENABLED`: the Polygon curation committee.
     pub committee_enabled: bool,
+    /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
+    pub third_party_registry_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -174,6 +179,7 @@ impl Default for IndexSettings {
             trade_events_enabled: false,
             sales_enabled: false,
             committee_enabled: false,
+            third_party_registry_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -271,7 +277,7 @@ pub struct Cursor {
     pub diverged_at: Option<NaiveDateTime>,
 }
 
-const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
+pub(crate) const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
 
 /// Runs `ANALYZE <table>` in the fold's transaction only when the fold needs
 /// statistics the table does not have yet: a rebuild (`since` -1), a table
@@ -457,6 +463,32 @@ pub struct Diverged {
     pub stored: String,
     pub chain: String,
     pub requests: usize,
+}
+
+/// What lanes spent: what they charged the walk's log budget (a window's
+/// [`Window::charge`], at least its requests, plus the headers and times
+/// they read) and the
+/// requests they sent (its `requests`, plus the same reads). Both are equal
+/// over an RPC source.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Spent {
+    pub charge: usize,
+    pub requests: usize,
+}
+
+impl Spent {
+    /// A read that charges what it sends (a header, the block times).
+    pub fn read(&mut self, requests: usize) {
+        self.charge += requests;
+        self.requests += requests;
+    }
+
+    /// A window: its charge, and never less than the requests it sent (a
+    /// lane pays the headers it reads, an anchor included), and its requests.
+    pub fn window(&mut self, w: &Window) {
+        self.charge += w.charge.max(w.requests);
+        self.requests += w.requests;
+    }
 }
 
 impl Owner {
@@ -1096,8 +1128,11 @@ pub trait ChainIndex: Send + Sync {
         self.rewind(conn, to).await
     }
     /// Folds the keys touched past `since` (`None`: rebuild) up to `upto`;
-    /// whether the result may be published (nothing still owed). Every
-    /// transaction it commits ends with `owner.check`.
+    /// whether the result may be published (nothing still owed). A fold
+    /// that may not be published clears its cursor's `folded_block` in the
+    /// transaction that commits its rows: the pass clears it only after it
+    /// reads the head again, and that read can fail. Every transaction it
+    /// commits ends with `owner.check`.
     async fn fold(
         &self,
         pool: &PgPool,
@@ -1106,7 +1141,8 @@ pub trait ChainIndex: Send + Sync {
         owner: &Owner,
     ) -> anyhow::Result<bool>;
     /// Work walked before the main range under the same budget (the nft
-    /// backfill lane), read from the pass's source; the requests it spent.
+    /// backfill lane), read from the pass's source: what it charged the
+    /// budget and the requests it sent ([`Spent`]).
     /// Every transaction it commits ends with `owner.check`. With the
     /// cursor's block and stored hash (`cursor`), each read is bracketed by
     /// that block's header, which must stay that hash: a stable bracket on
@@ -1124,8 +1160,8 @@ pub trait ChainIndex: Send + Sync {
         _chunk: &mut usize,
         _owner: &Owner,
         _cursor: Option<(u64, &str)>,
-    ) -> anyhow::Result<usize> {
-        Ok(0)
+    ) -> anyhow::Result<Spent> {
+        Ok(Spent::default())
     }
     /// Forgets what the index keeps in memory between its calls (the nft
     /// walk's collection set and pending contracts) after a pass failed past
@@ -1913,11 +1949,11 @@ async fn walk(
         .as_deref()
         .filter(|_| cur.last_block >= cur.start_block)
         .map(|h| (cur.last_block as u64, h));
-    let mut log_requests = match ix
+    let spent = match ix
         .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
         .await
     {
-        Ok(used) => used,
+        Ok(spent) => spent,
         Err(e) if e.downcast_ref::<Diverged>().is_some() => {
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
             // Lanes bracket only a cursor with a hash (`durable`).
@@ -1927,7 +1963,9 @@ async fn walk(
         }
         Err(e) => return Err(e),
     };
-    out.requests += log_requests;
+    // The budget pays what the lanes charged; the pass reports what they sent.
+    let mut log_requests = spent.charge;
+    out.requests += spent.requests;
     let mut next = (cur.last_block + 1) as u64;
     let mut expected = (cur.last_block, cur.last_block_hash.clone());
     while next <= target {
@@ -1955,7 +1993,7 @@ async fn walk(
             .await
             .with_context(|| format!("eth_getLogs [{next}, {to}]"))?;
         out.requests += window.requests;
-        log_requests += window.requests;
+        log_requests += window.charge;
         let times = source
             .block_times(&window.logs)
             .await

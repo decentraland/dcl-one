@@ -13,15 +13,19 @@ type Rect = { x: number; y: number; width: number; height: number }
 export function EngineViewport({
   region,
   report,
-  focus
+  focus,
+  clip
 }: {
   region: EngineViewportRegion
   /** Stable callback (useCallback) — reports the rect (in CSS pixels) and the current
    *  `devicePixelRatio`, or null to clear. */
-  report: (region: EngineViewportRegion, rect: Rect | null, dpr?: number, focus?: Rect) => void
+  report: (region: EngineViewportRegion, rect: Rect | null, dpr?: number, focus?: Rect, clip?: Rect) => void
   /** An element whose box, inside the region, is where the engine frames its subject (the avatar
    *  preview's avatar): reported with the rect. */
   focus?: React.RefObject<HTMLElement | null>
+  /** An element whose box bounds what the engine may draw of the region (a modal the region runs
+   *  past): reported with the rect. */
+  clip?: React.RefObject<HTMLElement | null>
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -32,9 +36,13 @@ export function EngineViewport({
       const r = el.getBoundingClientRect()
       const rect = { x: r.left, y: r.top, width: r.width, height: r.height }
       const f = focus?.current?.getBoundingClientRect()
+      const c = clip?.current?.getBoundingClientRect()
+      const box = (b: DOMRect): Rect => ({ x: b.left, y: b.top, width: b.width, height: b.height })
       // Re-read the ratio on every push rather than once: dragging the window to a display with
       // a different density changes it.
-      if (f != null && f.height > 0) report(region, rect, window.devicePixelRatio, { x: f.left, y: f.top, width: f.width, height: f.height })
+      const framed = f != null && f.height > 0 ? box(f) : undefined
+      if (c != null && c.width > 0 && c.height > 0) report(region, rect, window.devicePixelRatio, framed, box(c))
+      else if (framed != null) report(region, rect, window.devicePixelRatio, framed)
       else report(region, rect, window.devicePixelRatio)
     }
     push()
@@ -60,7 +68,7 @@ export function EngineViewport({
       window.removeEventListener('scroll', onScroll, true)
       report(region, null)
     }
-  }, [region, report, focus])
+  }, [region, report, focus, clip])
 
   return <div ref={ref} className={styles.viewport} aria-hidden="true" />
 }

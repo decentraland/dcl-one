@@ -1,18 +1,16 @@
 # Content server metrics
 
-`catalyst serve` exports the content server's Prometheus series on its loopback
-`/metrics` (`SERVE_METRICS_BIND`), with the names, types, label names, label values and
-histogram buckets of the content server's `src/metrics.ts` at
-`decentraland/catalyst@6c56f8a3eaff631cb7be0dc01ef92a24333bbc93`, so its dashboards and
-alerts read them unchanged.
+`catalyst serve` exports the content server's series on its process scrape
+([shared service metrics ADR](../../../../docs/adr/2026-11-24-shared-service-metrics.md)). They keep
+the names, types, label names, label values and histogram buckets of the content server's
+`src/metrics.ts` at `decentraland/catalyst@6c56f8a3eaff631cb7be0dc01ef92a24333bbc93`,
+except where a family serve already declares measures the same thing ("replaced by" below).
 
-The names, buckets and emit helpers live in `content/src/series.rs`
-(`catalyst_content::series`). `register_series` runs when the exporter is installed
-(`src/serve_lifecycle.rs`) and renders every counter of a closed label set, and the two
-`*_last_success_timestamp_seconds` gauges at 0.
-`comms::metrics::prometheus_builder` applies `series::BUCKETS`, so every histogram below is
-exported as a histogram. A histogram declared without buckets uses the Prometheus client's
-default buckets (0.005 to 10 s).
+The families are declared in `content/src/series.rs` (`catalyst_content::series::FAMILIES`)
+and `storage/src/gc.rs` (in `catalyst_storage::FAMILIES`), and both lists are composed into
+the serve registry in `src/serve_lifecycle.rs`, which applies the declared buckets. A
+histogram declared without buckets uses the Prometheus client's default buckets (0.005 to
+10 s). A family is absent from the scrape until its first observation.
 
 Every label value comes from a closed set. An entity type a client or a peer names is one
 of `scene`, `profile`, `wearable`, `store`, `emote`, `outfits`, else `unknown`.
@@ -50,8 +48,8 @@ Paths below are relative to `services/catalyst`.
 | `dcl_pending_deployments_expired_total` | counter | emitted | `content/src/partial_deployments.rs` `cleanup_expired` | Expired uploads a cleanup run reclaimed. |
 | `dcl_partial_upload_cleanup_runs_total` | counter `outcome` = `success`, `deferred`, `error` | emitted | `content/src/partial_deployments.rs` `cleanup_expired` | `deferred`: the exclusive store lock stayed busy. A run with a failed upload is `error`. |
 | `dcl_partial_upload_cleanup_failures_total` | counter `reason` = `storage`, `database` | emitted | `content/src/partial_deployments.rs` `reclaim_expired` | Uploads a run could not reclaim: a blob that could not be unlinked, or a database failure that ended the run (every upload of that batch). |
-| `dcl_partial_upload_cleanup_duration_seconds` | histogram; 0.1 to 300 s | emitted | `content/src/partial_deployments.rs` `cleanup_expired` | |
-| `dcl_partial_upload_cleanup_last_success_timestamp_seconds` | gauge | emitted | `content/src/partial_deployments.rs` `cleanup_expired` | Unix seconds; 0 until a run succeeds in this process. The job is leased, so one replica sets it. |
+| `dcl_partial_upload_cleanup_duration_seconds` | histogram; 0.1 to 300 s | replaced by `dcl_job_duration_seconds{worker="content-partial-uploads-cleanup"}` | `jobs/src/instrumentation.rs` | The cleanup job's pass duration, with the job buckets (0.01 to 1800 s). |
+| `dcl_partial_upload_cleanup_last_success_timestamp_seconds` | gauge | emitted | `content/src/partial_deployments.rs` `cleanup_expired` | Unix seconds of the last run that reclaimed every expired upload it listed, in this process. The job is leased, so one replica sets it. A deferred run counts as a success in `dcl_job_last_success_timestamp_seconds` but not here. |
 
 ## Upload budgets and spool
 
@@ -61,7 +59,7 @@ Paths below are relative to `services/catalyst`.
 | `dcl_upload_budget_reserved_bytes` | gauge `budget` = `memory`, `disk` | emitted | `content/src/upload_admission.rs` `UploadBudget`, `Reservation` | Set on every admission, growth and release. |
 | `dcl_upload_budget_active` | gauge `budget` = `memory`, `disk` | emitted | `content/src/upload_admission.rs` `UploadBudget`, `Reservation` | Requests holding a share. |
 | `dcl_upload_budget_rejections_total` | counter `budget`, `reason`: `memory`/`disk` with `bytes`, `source` with `source_bytes`, `source_concurrency` | emitted | `content/src/upload_admission.rs` `try_admit`, `Reservation::grow`, `SourceUploads::try_acquire`, `SourceLease::grow` | |
-| `dcl_upload_spool_failures_total` | counter `reason` = `write_error`, `read_error`, `flush_timeout`, `cleanup`, `folder` | emitted | `content/src/create_entity.rs` `spool_unavailable`; `storage/src/upload_spool.rs` `UploadSpool` drop | `folder`: the request directory could not be made; `write_error`: a part could not be created, written or flushed; `read_error`: a spooled part could not be read back; `cleanup`: the directory could not be removed. Parts are flushed inline, so `flush_timeout` stays at 0. |
+| `dcl_upload_spool_failures_total` | counter `reason` | replaced by `upload_spool_failures_total{route="content-entities"}` and `multipart_upload_cleanup_failures{route="content-entities"}` | `content/src/create_entity.rs` `spool_unavailable`; `storage/src/upload_spool.rs` `UploadSpool` drop | The first counts every spool failure that answers 503 (directory, part write or flush, read-back), without the reason; the second counts directories that could not be removed. |
 | `dcl_upload_spool_reclaimed_folders_total` | counter | emitted | `src/serve.rs` `serve` | Spool directories of exited processes removed at startup. |
 | `dcl_multipart_upload_timeouts_total` | counter | emitted | `content/src/create_entity.rs` `deploy_form` | Bodies past `MULTIPART_UPLOAD_TIMEOUT_MS` (408). |
 | `dcl_multipart_upload_aborts_total` | counter `reason` = `client_closed` | emitted | `content/src/create_entity.rs` `counting_body`; `content/src/series.rs` `ReceivingBody` | The client closed or broke the connection while its body was received: the body stream failed, or the request was dropped mid-read. Counted once per request. |
@@ -85,10 +83,10 @@ command outside `serve` and exports nothing.
 
 | Legacy series | Type and labels | Status | Observed at | Notes |
 |---|---|---|---|---|
-| `dcl_content_garbage_collection_items_total` | counter | emitted | `content/src/history_prune.rs` `pass` | Blobs unlinked, per batch. |
-| `dcl_content_garbage_collection_time` | histogram; default buckets | emitted | `content/src/history_prune.rs` `run` | A pass, from start to end. |
+| `dcl_content_garbage_collection_items_total` | counter | replaced by `content_history_prune_blobs_total` | `content/src/history_prune.rs` `pass` | Blobs the prune unlinked. |
+| `dcl_content_garbage_collection_time` | histogram | replaced by `dcl_job_duration_seconds{worker="content-history-prune"}` | `jobs/src/instrumentation.rs` | The prune job's pass duration, with the job buckets (0.01 to 1800 s). |
 | `dcl_content_garbage_collection_runs_total` | counter `outcome` = `success`, `deferred`, `error` | emitted | `content/src/history_prune.rs` `run` | `deferred`: the exclusive store lock stayed busy. A pass the flag refuses is not a run. |
-| `dcl_content_garbage_collection_last_success_timestamp_seconds` | gauge | emitted | `content/src/history_prune.rs` `run` | Unix seconds; 0 until a pass succeeds in this process. The job is leased, so one replica sets it. |
+| `dcl_content_garbage_collection_last_success_timestamp_seconds` | gauge | replaced by `dcl_job_last_success_timestamp_seconds{worker="content-history-prune"}` | `jobs/src/instrumentation.rs` | A deferred pass fails the job, as it fails the legacy run. The job is leased, so one replica sets it. |
 
 ## Server state and snapshots
 

@@ -20,8 +20,6 @@ pub struct UploadSpool {
     cid_v0: bool,
     /// The route label of the cleanup-failure counter.
     route: &'static str,
-    /// Also called when the directory cannot be removed ([`Self::on_cleanup_failure`]).
-    cleanup_failed: Option<fn()>,
 }
 
 /// A spooled file part: its form name, the CIDv1 of its bytes and, when its
@@ -75,14 +73,7 @@ impl UploadSpool {
             next: 0,
             cid_v0,
             route,
-            cleanup_failed: None,
         })
-    }
-
-    /// Calls `hook` too when the directory cannot be removed: a route's own failure series.
-    pub fn on_cleanup_failure(mut self, hook: fn()) -> Self {
-        self.cleanup_failed = Some(hook);
-        self
     }
 
     pub fn dir(&self) -> &Path {
@@ -112,16 +103,11 @@ impl Drop for UploadSpool {
     fn drop(&mut self) {
         let dir = std::mem::take(&mut self.dir);
         let route = self.route;
-        let cleanup_failed = self.cleanup_failed;
         let remove = move || {
             if let Err(e) = std::fs::remove_dir_all(&dir)
                 && e.kind() != std::io::ErrorKind::NotFound
             {
-                metrics::counter!("multipart_upload_cleanup_failures", "route" => route)
-                    .increment(1);
-                if let Some(hook) = cleanup_failed {
-                    hook();
-                }
+                crate::SPOOL_CLEANUP_FAILURES.handle([route]).increment(1);
                 tracing::warn!(dir = %dir.display(), error = %e, "could not remove an upload spool directory");
             }
         };

@@ -27,36 +27,6 @@ fn assert_types(rendered: &str, expected: &[(&str, &str)]) {
 }
 
 #[test]
-fn the_fixed_series_render_at_zero_from_start() {
-    let rendered = render(register_series);
-    assert_samples(
-        &rendered,
-        &[
-            ("dcl_ignored_sync_deployments", 0.0),
-            ("dcl_corrupt_entity_files_evicted_total", 0.0),
-            ("dcl_processed_snapshots_total{state=\"stream_end\"}", 0.0),
-            ("dcl_processed_snapshots_total{state=\"saved\"}", 0.0),
-            ("dcl_processed_snapshots_total{state=\"incomplete\"}", 0.0),
-            ("dcl_bootstrapping_servers{from=\"snapshots\"}", 0.0),
-            ("dcl_bootstrapping_servers{from=\"pointer-changes\"}", 0.0),
-            ("dcl_syncing_servers", 0.0),
-            ("download_queue_pending", 0.0),
-        ],
-    );
-    assert_types(
-        &rendered,
-        &[
-            ("dcl_ignored_sync_deployments", "counter"),
-            ("dcl_corrupt_entity_files_evicted_total", "counter"),
-            ("dcl_processed_snapshots_total", "counter"),
-            ("dcl_bootstrapping_servers", "gauge"),
-            ("dcl_syncing_servers", "gauge"),
-            ("download_queue_pending", "gauge"),
-        ],
-    );
-}
-
-#[test]
 fn labels_are_the_peer_origin_and_a_known_entity_type() {
     assert_eq!(
         remote_server("https://peer.example/content"),

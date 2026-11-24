@@ -957,6 +957,10 @@
           "kind": "directory"
         },
         {
+          "name": "assets",
+          "kind": "directory"
+        },
+        {
           "name": "components",
           "kind": "directory"
         },
@@ -1427,6 +1431,10 @@
         },
         {
           "name": "download.png",
+          "kind": "regular"
+        },
+        {
+          "name": "hide-show.png",
           "kind": "regular"
         },
         {
@@ -3708,6 +3716,14 @@
           "kind": "regular"
         },
         {
+          "name": "chatLinkPrompts.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "chatLinkPrompts.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "chatText.tsx",
           "kind": "regular"
         },
@@ -4094,7 +4110,15 @@
           "kind": "regular"
         },
         {
+          "name": "PhotoDetail.module.css",
+          "kind": "regular"
+        },
+        {
           "name": "PhotoDetail.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "PhotoPersonRow.tsx",
           "kind": "regular"
         },
         {
@@ -4115,6 +4139,10 @@
         },
         {
           "name": "useOwnReelActions.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "usePhotoViewer.tsx",
           "kind": "regular"
         },
         {
@@ -4345,14 +4373,6 @@
         },
         {
           "name": "MapToolbar.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "QuestPinIcon.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "QuestPinIcon.tsx",
           "kind": "regular"
         },
         {
@@ -5110,6 +5130,10 @@
           "kind": "regular"
         },
         {
+          "name": "chatMessageText.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "chatText.test.ts",
           "kind": "regular"
         },
@@ -5199,6 +5223,10 @@
         },
         {
           "name": "pageWindow.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "photoDetail.test.tsx",
           "kind": "regular"
         },
         {
@@ -5335,6 +5363,10 @@
           "kind": "regular"
         },
         {
+          "name": "backpackPreviewHole.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "backpackRandomize.test.tsx",
           "kind": "regular"
         },
@@ -5368,6 +5400,14 @@
         },
         {
           "name": "chat.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "chatGoto.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "chatLinkPrompts.test.tsx",
           "kind": "regular"
         },
         {
@@ -5568,6 +5608,10 @@
         },
         {
           "name": "minimap.render.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "minimapCamera.session.test.tsx",
           "kind": "regular"
         },
         {
@@ -5914,7 +5958,7 @@
     },
     {
       "path": "library/ui/package.json",
-      "sha256": "fe47d4b95a6c3ca134c3220fffa448966c7cb58b200b29115aab21e36651088b"
+      "sha256": "3aee31cb53bda68828bc5f4ed966a564c72893dec9e24b006ff26af84b261705"
     },
     {
       "path": "library/ui/tsconfig.json",
@@ -5922,7 +5966,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "b014219d7251931e4a6659010ef816f433c63f88b7af990d8d69d54e01a884d7"
+      "sha256": "6f7be71f11d0491c7a88e57766ab630818d79d56c970a5180226648249b46287"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
@@ -5930,7 +5974,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "40369ceb89f585c96deef8ad73df920a7dba31acf1f07d9f1773646e7977ecba"
+      "sha256": "bec668fef4b9bb4e5e5fb9895a76c2cab8f13de45cdefdc9d4843be3130a02ab"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -5958,15 +6002,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "8ce84e6da787401a836d4b986d60b7fcc9c3232d121fad20a15661ef73e1dcc4"
+      "sha256": "82e486933057ff16606cdc07695d41d793d31f40d6d2530d7b32625d9820bd55"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "e47a4ccc61da3109524bf3d94f4e83d24b927ccbba78d14c4c1ad862620e55af"
+      "sha256": "8347d7e5ecb514f0cca00362e395b0dcaee78eaa80170b309a9b4de5bec3480c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
-      "sha256": "e4096974a2b2aed1bc2587d866cd451ab0cb7e9aca5a7c8564d7f6a9035422c7"
+      "sha256": "f91ff006604082860d2996e690a13898ea9e73f9d66af9fc299bc21d37616cfe"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
@@ -5974,11 +6018,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
-      "sha256": "f7bd876f153075954844844d8ba045510c9d77179928430847a6e772a6425ac3"
+      "sha256": "b69ef1d6e4964d7cb0bb7969859cd305c0fdab61ef84de7aacb33fac8da71c43"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "1aef19308938648fc2a1482e3962b560a9d719c02d0f661fdb04e334e8297af8"
+      "sha256": "9e434066424a3c1c13b4aeb99841773c0558316a7b6aeafd205af16c882bd49c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -5986,7 +6030,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
-      "sha256": "d3728031ffad6b1dcfa5756f041027865cb5dfb5de655af1e067a614a869cf64"
+      "sha256": "04274a2baede2329a3020626623fca8a06624339fa3d63d672d8cf71f696b6c2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
@@ -6018,7 +6062,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gallery.ts",
-      "sha256": "5003b68f51d959b4173131e6565ee73843493079367998bea4a76a4fa3871d5a"
+      "sha256": "7599f5a68b718a466a4e0dfacdc737c5a9ec4f918491fbb6994b7195baea1f75"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gifting.ts",
@@ -6037,6 +6081,10 @@
       "sha256": "0f03d1ecb090d06c1c0a1bb5d7939677d22aa9e0f1d4be67ffccbf81818b8807"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/minimap.tsx",
+      "sha256": "5acba1432e2387df7aeef90905c9cf2a5facd0b81f7688384c445059832780e7"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/nearbyMutes.ts",
       "sha256": "0c9428fa69132963f410abe4e9920d4a835ad241cdc9ef1991f82b9d8fddf3d3"
     },
@@ -6050,11 +6098,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
-      "sha256": "74d17cd39674e65fa7e3a98708738f3cfd40f8c77a8424ba0eaa145bea182007"
+      "sha256": "d280e0bf5fd6fec2d5f9440d84600aad455c7d63ca40557ea85062c66213096f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "638e9603462e60efc67992c8e135c04384e38d24907c10041c3b87d3c3dfb07d"
+      "sha256": "d1f5520ec7b78ec30bb91ea88bde52a70c4281cd1d4d2b6075100c1fdbf9a7fa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -6062,7 +6110,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
-      "sha256": "c4a8eaa94177021bf9905c75d3cab9eea51d90323735a8d8c02899ec63a9e90a"
+      "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
@@ -6082,7 +6130,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
-      "sha256": "1173e8bb8edc527060ec7417283d8ba00ada7f9deffaf9cd0d3e86cb7239c0ae"
+      "sha256": "17499545bfb507b1b93394da8607e8fb0b252a8043dd2694cae36f46125d9697"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/welcome.ts",
+      "sha256": "83bde31330e686dca7e6e64f36141c47c22ece3a0051d0176ba044e6c810fd83"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/world.ts",
+      "sha256": "e6408bbe0f36442e1fa3d8873cd02b8500c999a7e668cb417d814b7b99761493"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/http.ts",
@@ -6090,7 +6146,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/identity.ts",
-      "sha256": "d8d6433304a3bd66c931a76c2f4a425c7beb8834deb22f62185fa62931180d97"
+      "sha256": "812e73f013f939640ebe393190f6b8d4abae41fb9f06c908d0e598006e25c21a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/relay.ts",
@@ -6158,7 +6214,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "4e61c6e08d78b26defbaeba27701b1e5ffe70968a3f0223cac6d717a6bcff3fb"
+      "sha256": "87fc68b55efbbabab2111cbbb2e1b05e7709ddc588ac6df22571340c3c90d61f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
@@ -6209,6 +6265,10 @@
       "sha256": "8168f024b4c98a6a13219b6f748a0aa267a1598f625e9b3eff5cce828d718143"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/avatarSaveApi.test.ts",
+      "sha256": "40be313455ce471e2dd8849fa1501ecf20841aaa208f255cf7ae95b7ea3b70cb"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
       "sha256": "638f726eb0d4ca75d3ce8db9f7584516fe918b8c602b2a30c3a1f6cacd15b02a"
     },
@@ -6222,7 +6282,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
-      "sha256": "02d834ceb539309241f6758b3ec4f0b9b525572606e18172a4eae5015e5fb5d9"
+      "sha256": "4377aea1a5e3763e78ddcfe16cb43b6153effd85c19a91e572ca81a78837e995"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
@@ -6254,7 +6314,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
-      "sha256": "e537bdf69eae99b6293066842b9efbfa57a7b66e8c560886110555ff0f2447fc"
+      "sha256": "041f16e3f2cc33c28b014a7d2c85921217582a00f85d2e40570137182251e993"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeGifting.test.ts",
@@ -6273,6 +6333,10 @@
       "sha256": "3b9c665ddb1f9a2920b2a3ebd0a367af94b98147b18562aa2088ed85e167bdf8"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeMinimap.test.ts",
+      "sha256": "5c133aeda45e342b823dc4c673f6b828a8bdb206ddf80badf560e694976fab46"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
       "sha256": "a9ed65f189907d37250eb611c61332c8b3cdd92fcf452d9889a9862ffb8a88c4"
     },
@@ -6286,11 +6350,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
-      "sha256": "6445a90de94e25b7801cfabf86bce94022ae27551f7d99b09f80d255b1827040"
+      "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
-      "sha256": "870ec86f470b8f0bb9bfd848b24991fd37944438c99b93114f1a85b20c9a0ec9"
+      "sha256": "286b2341add50a03e783664ea3fe35bf55021223d0830169c9b5e986314e20a7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -6305,6 +6369,10 @@
       "sha256": "55177f95b90192c46d655391140a9f4678ddb9847e84163ff7da76bfd2acf980"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
+      "sha256": "5b5d5405163c10ffe4215a45e8e6f25846bffe6049e0c78629977ae276910be1"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
       "sha256": "48c81a65c30bd3ef01ac099db7f074a7371964711a001c41adcbfc9e0369a265"
     },
@@ -6314,11 +6382,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "27b3090e53557703543d02cd147a6c9c90ea029ccb699f833193acacc17e9ca8"
+      "sha256": "1b9dd9725cf6e07f62be872b8a046a36613fabe0c48adc7fa31a103ae96900dc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
       "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
+      "sha256": "1f79b585bb07614b4a3fd94f315dd66781bf0e5926411ba0b9712dbee5b8c972"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
@@ -6366,7 +6438,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/lobbySession.test.tsx",
-      "sha256": "c4f420ab330a859aa1dfe7089d3bc8aea6793669d5390ff383f94c56a42bbab6"
+      "sha256": "406a6ef914e598ff4b40dbbbb5c72eabbd5089584cfd59ec624220b65fbeed00"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/localGuest.test.ts",
@@ -6386,7 +6458,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
-      "sha256": "e16dc3f88748d06173160d70b18eb950146d37c292c85b53ecbff0021a295525"
+      "sha256": "f1742b3070446f8c02d8a76925c0b9f05a1dcc4e562eda3d44d70c6c2b1a7d1f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
@@ -6450,7 +6522,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "3bf754deaff86ccc895d025f3b9579d399c09e8243749cb1e7921763b6bcee87"
+      "sha256": "ea5699c93130195ebfada2bd4b89ef6ec56277729e4a6a4f092c33f6ad55b863"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6488,6 +6560,7 @@
     "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
     "rendering/bevy-explorer/source/react-web/src/styles/global.css",
     "rendering/bevy-explorer/source/react-web/src/test/autopilotDrivers.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/avatarSaveApi.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
@@ -6504,6 +6577,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeItemPurchase.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeMinimap.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
@@ -6512,10 +6586,12 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
@@ -6556,11 +6632,11 @@
     },
     {
       "path": "library/explorer-core/engine/EngineDriver.ts",
-      "sha256": "9d47fca759f1b76b5dc762c5ec28b3c06342f87d4bad91193d0c1637634240d3"
+      "sha256": "a442ca7068494b12b855a3b598d1afb5d53545522e3cdf7aa885fac57d19a56d"
     },
     {
       "path": "library/explorer-core/engine/avatarEquip.ts",
-      "sha256": "e0e160a908315b03d8d8be1dc9b3cc8e6fa339a430ee8c3f4db53d52fb1547d6"
+      "sha256": "4c6887eb088213299115b911e2c51251cc929899dd6375e7257039305ed717ce"
     },
     {
       "path": "library/explorer-core/engine/avatarHides.ts",
@@ -6584,11 +6660,11 @@
     },
     {
       "path": "library/explorer-core/engine/driver.ts",
-      "sha256": "84d326628a65abd9b9c9dc105df18ef45d3dae1ea19d066b0ac1a84f18bfd4dc"
+      "sha256": "b9afc2cfd0ee00dcfa63fc3df262b3296e5d4fbda098853049ef03b28c30b600"
     },
     {
       "path": "library/explorer-core/engine/engineRpc.ts",
-      "sha256": "df30e26bfa14f4a1509b23ed82d7b7fb60cc963af45b88905212bfc8a42c29ed"
+      "sha256": "57584c0c98a8ee4cee0c64c4ae0d62fd11086b962efb2119632c2ca0f3bca9a2"
     },
     {
       "path": "library/explorer-core/engine/lobbyStage.ts",
@@ -6596,11 +6672,11 @@
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
-      "sha256": "528f3d3d9b5fb782901ae6f89f7bf9c09440e17ae4dde702fc17012c772a8d55"
+      "sha256": "11cf5a47f8b4ad82c18fbc58fffb0a9306c3b44e9febf567a4443eb52f24c781"
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "2ae387c2ecb344a766518b3ea65158b654f65b6ccbc9fcf57dc666a4c9a11dbe"
+      "sha256": "13f8c51863da335df8dc36e784c908dd1aac98c67a374473f52a434424331e4b"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6608,7 +6684,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockMap.ts",
-      "sha256": "cd1df709918b5b250275168845cbc86ea45254109f33c239d48ac0ba659eb2a1"
+      "sha256": "ccaf92074ef1a577c8e379b732f5d7529981ad24a8439a540b5698c609ab0324"
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
@@ -6636,11 +6712,11 @@
     },
     {
       "path": "library/explorer-core/engine/profileEdit.ts",
-      "sha256": "b2a0fa8867cfb9d298eeef1f3514a64c20cc13d20b7e36c6063dd36ce92a0a7a"
+      "sha256": "e71a8a4945fd04effefb30dd9b2cb73399ea3c50ecb19dcceab96923d176945d"
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "83b679f1a279f3c4f2f943578ea3717a2e10a539feea34bfd1b6d4d93a1380ac"
+      "sha256": "b5305a8fcae8da728e51384cefe4a588acd923521479ad85ac50941b6c6908c0"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6684,15 +6760,15 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "0ee3a04d94599146a48f751ed5310ee3bc4c4b0f729471e0669238d5dd1a8bc4"
+      "sha256": "6a71c142ca7e7da6adb1e4021cf5ac74062badadf31f702ae573ed4ced24d530"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "6f7d02de3dbac514f1b2ac2d937747a92d44261f464246644c876aa13d660c35"
+      "sha256": "3ed4363ce6c915ad4a34012881161ce69ee38f8bb1fe9059dfa211dc21c33515"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
-      "sha256": "f0cd01b6242a1f3a2d85744b4d7427b8b8508e769291f3b416b20e31ab4cd5c3"
+      "sha256": "fa145fec763af48e16b421b693e57b0be54dcd0eee2f381e9f55ef2994a76d0e"
     },
     {
       "path": "library/explorer-core/features/chat/lineIds.test.ts",
@@ -6704,7 +6780,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/translation.ts",
-      "sha256": "5f4da4df1edf9d67725224847b779c9ba9e96ea93c0b43fa45f399da0cdba275"
+      "sha256": "f7f05666183b6fbc2c5fea7a1344928256d6ddcff3795b8ffb7c9a0620c250aa"
     },
     {
       "path": "library/explorer-core/features/communities/notifications.ts",
@@ -6784,7 +6860,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/goto.ts",
-      "sha256": "73c010d1fd3c82b072d71f5cab0a4412820d712476af4aa0d5fcaf063daf96d3"
+      "sha256": "9e1f58fca3ded358fe64eae55538a81ee561a0a2f74d964e23034195243b24a6"
     },
     {
       "path": "library/explorer-core/features/lobby/layout.ts",
@@ -6824,7 +6900,7 @@
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
-      "sha256": "323550de0c24a4cfa82b6dc586a2b95d8ab6597fd3abcd3276832e3dbb482cea"
+      "sha256": "cfbd18f3d2d74cb6388ecb070ddef4eb25976d0b318f72ddbbf1a9b8e05f0dfd"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
@@ -6852,7 +6928,7 @@
     },
     {
       "path": "library/explorer-core/features/map/mapPins.ts",
-      "sha256": "9509bafed11fe5b15c348f67933642875dc46c97b3c2229968fa9ab2196cf538"
+      "sha256": "45cb1c03cb54410778bff82aea549731622b8d674d2863dcc1df4f58c7172a0d"
     },
     {
       "path": "library/explorer-core/features/map/mapZoom.ts",
@@ -6880,7 +6956,7 @@
     },
     {
       "path": "library/explorer-core/features/minimap/minimapHome.ts",
-      "sha256": "bcc0dff9298b1740491c7d08d2aeba5cece9c399307cb438a8e4e4fb71620936"
+      "sha256": "3d2984c430e2eabda9cafad4e2887914e0a69f87a936703aa4ecffae4439c4ae"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapLayers.ts",
@@ -7088,7 +7164,7 @@
     },
     {
       "path": "library/explorer-core/test/avatarEquip.test.ts",
-      "sha256": "a50e45be621737a22554856ced6e0eb91c32856190f845e47606fd8d43f25e40"
+      "sha256": "fb30e5b6f01b4bcc49f55a631759a764395f31ada5a2337187854d042665bbb1"
     },
     {
       "path": "library/explorer-core/test/avatarHides.test.ts",
@@ -7164,7 +7240,7 @@
     },
     {
       "path": "library/explorer-core/test/lobbyGoto.test.ts",
-      "sha256": "67cd0379c181f064e4beabed6dffb23c8822b01074ece3d957684fea931ed9c4"
+      "sha256": "21e2c78fda82d2a00fe043bcf28a85185500302640e961a5a6c43db405fab9c2"
     },
     {
       "path": "library/explorer-core/test/lobbyLayout.test.ts",
@@ -7172,7 +7248,7 @@
     },
     {
       "path": "library/explorer-core/test/mapCore.test.ts",
-      "sha256": "604b9a2bb05df7d5753dd2a433ba5700419c3fd7579de4d6cdb51a7c94d69e40"
+      "sha256": "a64a86aae02fc17817c8b6fc67c6cdeb32331835e9c319e12fc39f8e994cd5e7"
     },
     {
       "path": "library/explorer-core/test/mapFixtures.ts",
@@ -7184,11 +7260,11 @@
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "d895a0e3138fce1ea568b6a1ff028536dc7771d20a4c1a1a553bccd45ca7a100"
+      "sha256": "5cb7f04ca361dc39b8cec794f5b92a5a4937ee84098cb3a486f0b0ff2a0a5f4b"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
-      "sha256": "8acfddb3c427f039d4dfdadddd8eff3be6ac0102acd567132ecf8fd91ac6260e"
+      "sha256": "97dbc7a325f7eae063b79cc0a0de4e4581f4746e567b586d9519ede8c8d41c96"
     },
     {
       "path": "library/explorer-core/test/outfitRandomizer.test.ts",
@@ -7228,7 +7304,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "7895517f09780dbdd1694d3ba271d91fb2092daa06e4be4abe42a600df0c716c"
+      "sha256": "87ee9e602065d8156bf283ea36fe5009d7424b38bd6285600c3fa63faec42af0"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -7453,6 +7529,10 @@
     {
       "path": "library/ui/apps/hud/assets/camera-reel/download.png",
       "sha256": "473c78dd4e392b061c4c0996d9f3ad2b6f05bf3c954ebf024aa5df7b65ce44c8"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
+      "sha256": "0acc7a86f2cdf40e4c65d06c560ca239f5bd22edd6da3745fd4932cfc690166c"
     },
     {
       "path": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
@@ -8856,7 +8936,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Checkbox.tsx",
-      "sha256": "42ca5785863afff3c3febe9c00341dd60b8d04285c3af7e7110208a8375c7972"
+      "sha256": "1ebfa460cc1d570fad1ccf414931be3b1de033dd77ec87829d4e8e99d56c7d0a"
     },
     {
       "path": "library/ui/apps/hud/design/Chip.module.css",
@@ -8920,11 +9000,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/DiscoverCard.module.css",
-      "sha256": "b2ef1a0c9edd64025a18729a242d7390178dfeee9b7e5877952e269b1a85b85b"
+      "sha256": "63f79542083602fbac7f2c9cb9971b4f57cff88ecc41b4110450499eed433a70"
     },
     {
       "path": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "sha256": "f39e21ebf036b612bb822be71c1596a34be8fc4db18538f3f3435826d4b7b8cd"
+      "sha256": "2f8cde2c75181d71d79c39b125f161c08455194964bb8524c2433185085d4fd4"
     },
     {
       "path": "library/ui/apps/hud/design/Dropdown.module.css",
@@ -9072,15 +9152,15 @@
     },
     {
       "path": "library/ui/apps/hud/design/ScrollThumb.module.css",
-      "sha256": "b8b47ee2f1850050054e20aa0f8b35336bfd32837cc7d1d806aab1b82f830d90"
+      "sha256": "54528d30eeaeb19cfb163cd473128f0d4c12a1bef2d5fe46ade622e37bd10a31"
     },
     {
       "path": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "sha256": "fdc5f9fe9bc9ce82b8bb9c79dd2359eeb337feb82c45d594ce02ea4349e63575"
+      "sha256": "74be17a15f971de4f70204805368358e4bade69fd1243a17246c8e730787b9e2"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.module.css",
-      "sha256": "b0a97ea018712f30ea60565dfda2155085e050ce865b02fe13aaf4440df2fddf"
+      "sha256": "b4963829aac8b2c95b4664abdb03537c6aed991e1f26b7c914d94d9d58e988e8"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.tsx",
@@ -9092,11 +9172,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Select.tsx",
-      "sha256": "9707b850d4a3aa9c0b51846e50ed4e001f202557570667b021acefc745287daa"
+      "sha256": "11943a5be834aab97ebc6fd97abeb5bad376a62eb7653bed4d3d1a7cc6b74a58"
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "9dd8e4bd0874257710125b7dcaafb802db7fcd0bf9c715e4faad10a2e85c9309"
+      "sha256": "8395731dba46f8e1294d4472be20a446ecbef3a05559a5adf189ac576bed336a"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
@@ -9116,7 +9196,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Slider.tsx",
-      "sha256": "f2903668f8de1465409107720b84e8a43b9b2bd9cf4acfa51ddd7a2b32523359"
+      "sha256": "6dc5cb0754485f86797ef9ab218cb289c50271ffe688b0b7d2f6e361e1d3a7ab"
     },
     {
       "path": "library/ui/apps/hud/design/Spinner.module.css",
@@ -9188,7 +9268,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Toggle.tsx",
-      "sha256": "f402f7ab1afb9ca4a71f641308834390582be6b4ee25f7e8c06c057421317df1"
+      "sha256": "b8f22e32051d49dfb1529860d0eb0dcdc5ab9e3d04ed9ac2a639908ee931a192"
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.module.css",
@@ -9240,15 +9320,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.tsx",
-      "sha256": "8ddbf27111539d6509386517667423d79be61e8537c028311c19bbd1dff62670"
+      "sha256": "073470b81339a9797f5ea5a20a02be0bddc64cd37549fa787a2511a161909f59"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "4f07411301223b9f7b4ec9d121f84ec524f851c4547074762f2827d54b4ac23d"
+      "sha256": "f72fa40d72eaaf93d736e4ef43cf9cd5b2876c765731686d143b6f4bd2cc172a"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "d9123c6fcfccdb6bd793681d23d4d12ae15a9408f102e35e00fea9a9f28f78b6"
+      "sha256": "b0254650c3b4b108f47a360695704dadce234df7e7059d1bd8b2ab157d979e50"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -9256,11 +9336,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "369daae42ab3bd746baa8465d919db92f1aa7d78a5b594e62454846b434361a2"
+      "sha256": "fb4f866451de489a1a5ed311928098ce24ecb29a33f7f894d6cbeb9cc0be70a2"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "976a5b141846355ad51ed4545bb02cb406c80f43acfaeb5d77b98a7d24d8ac25"
+      "sha256": "10be41a2e8e5cc2713221a6e27a836fc246f1167af0c8bd309e6ded5bc955d5e"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9327,8 +9407,16 @@
       "sha256": "4658b1f69737ac86daf89267ad1f42612b5acba2bb588ad21dfedf7f4d1b81b3"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "sha256": "8cef6c46ce44cd86d0580e9088c936063fc3ef1a93cdbdd87655745d44742b04"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "sha256": "df81758006cbf6716a3acb0f13b90fb2d80ee98781c15467d2279764052cbaff"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/chatText.tsx",
-      "sha256": "d36b255137604cc2c16a4b74e8ba9aec3b4236836b7acc9175aecafef5bfdce2"
+      "sha256": "726139f4604c7521b4ad894429a74f671920b8b70614a7db89556a5f75a0e7c8"
     },
     {
       "path": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
@@ -9364,7 +9452,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "84f31372228f69805fbccd06f8f9f8d210547c8762c87fdfc408751dce6b0ba7"
+      "sha256": "9a1dd7aeaf753f3edc8a5c18aaaf809d31532581d9b8239c985f400557ed90e5"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
@@ -9504,7 +9592,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
-      "sha256": "363b2c745f0bbed1b1f8ae4ea97aabf896069061df8de42c3bba5c2e56e2cae8"
+      "sha256": "db441849d9a9e8c3e6c75e2a1e2269e0fc0bc1711d26023aa2a36acd605e1428"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
@@ -9640,7 +9728,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
-      "sha256": "19e79b9238b2c6fec6c74c34485fc9bcbb8c45a3425c8073b9ef2af2073eb8b3"
+      "sha256": "7464132b7aecdb6ce7730d8116404d83b1d183aafa25695c809c599cc391eed2"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
@@ -9648,11 +9736,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
-      "sha256": "93ac13e487708c41dd53d94d03de68928cdfe11239d45617aa3e71c887269976"
+      "sha256": "4486afded89db5c25e04bdd5f741133e2ad8c0f39aaf54e6b54830218dc08ab9"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "sha256": "357d3e3e271048d917fe6b446682ce155489c5dc11fef36df971cc82f4578a98"
+      "sha256": "54e174dd776b965863ee19b8ded7d90aefedc0f5bf5d7a38ade189f551e6f551"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
@@ -9660,11 +9748,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "sha256": "25ed283fb0ed24ac6c8f1868c4b3653c4f48b29744287c946e3f9dec7e48cc22"
+      "sha256": "ac6ea20693d56b600a4cf7d069e9b509166e8b21453caf9a5b7e81c41fc4c020"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "sha256": "1bb017fa39cf46e4f778b8f5393329d5cd8f09fbcf3c818cf74e08de443d53d2"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "7dd567a3e6f1bcf158a281676b52965fed876787cf39850820ae22d4fd8dcdbe"
+      "sha256": "9154cd6eddeb07f88e3074a1b08714c7fbdf245455f203487cb6807ffbd47ccb"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "sha256": "e2493969d981e0e6cecdc875971ef05611bdb21ca133ca6becb949a5b2cafa49"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
@@ -9672,7 +9768,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
-      "sha256": "03952873ede9ec0dbf4f76d806653cf549e60418ae9a295ad0ec1e4d377bd024"
+      "sha256": "2cbb7bc0b82e4f8b2bf3ed4927a92f683fbbb07ec0656875197b71c159d2413e"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/publicReels.ts",
@@ -9680,11 +9776,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/reelActions.ts",
-      "sha256": "bcf50ee56954cef67a32dc4fdfdd9c90fcf129f040d6b82a3de2ff9ab3059aa6"
+      "sha256": "aa29bdd4be43a6d2584dbb8b49af6110676f612ba546b207d19c267eacf3d96b"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
-      "sha256": "257f38df47dc370db4cc45f0f83ff9ff79011ef9fea73b541c7c96f947f0a4ff"
+      "sha256": "024e28877e9b53db2db4617107b7ff3eeab8dfacb7f4aea5098c0d128315f1e7"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "sha256": "a21fd2343d77be061d4a7560e7379f133c7fa10aa0c81d4d27aa5476757b0358"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/useReelList.ts",
@@ -9772,11 +9872,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/ExploreSectionModal.module.css",
-      "sha256": "b4ffde1b1bed82c478ce3f1e6f416b94f2e2ef54fb0829c2f83925a8b585a2e6"
+      "sha256": "938ffa605fbd48b4053e6750149bbb14b4ea174f02a4dbc58cb176b13891dbdb"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
-      "sha256": "72cddd0fb9ba6514e56353a81c3537cc4b54ce416221458fc99abb6aa09edbcd"
+      "sha256": "701c8310bec8dfcdd67fb0c476e6e23e213741f76d8142c7de75c79a635c1ee0"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
@@ -9796,11 +9896,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "885866d44eac6ada7820031a41d1d9c2f8000148f44b1d45a4ea8014b2135e9a"
+      "sha256": "1e7fbb30d7ad846226b103292a9e354b60660e26302edc376f042d6e4132a4d2"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "efc57770e26561393043a4a50179f8247cd1c0fca597763d9e7797490a56b457"
+      "sha256": "2e7ced71be47565c0c51f44a5eec4eb332fee273f0f5848aaa0844f8866e9581"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -9840,7 +9940,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
-      "sha256": "4ed10e7e144255e5ea94d236056cd9824c9773df690c8e67db1989cc354e2781"
+      "sha256": "29ad14ed436e314f3d8590ba87573c75bc39feaa0375b9d5dfa1056e0ec3b852"
     },
     {
       "path": "library/ui/apps/hud/features/login/useStoredProfile.ts",
@@ -9848,7 +9948,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/CategoryStrip.tsx",
-      "sha256": "a2954a4924ebd85ceb456acc932e019885b7a4145f1bcd915159947d90e6c762"
+      "sha256": "0251dd91800d17761dd72fb3811f10d8ed2d0314ebc55db04d0ffd813b210a8b"
     },
     {
       "path": "library/ui/apps/hud/features/map/DestinationBanner.tsx",
@@ -9864,11 +9964,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "sha256": "8d6084c92c4061359990bc9b70ef3b4c72d457db440da254e02c8e608f2206b2"
+      "sha256": "4da4eb5b3ba6f79f8ab205acb4d765cef390778c9d3ceade0edaa4f794d863b4"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapChrome.module.css",
-      "sha256": "b7564921c2b31787b3c796da8c5de6151ff046a22bd864229e4d1faaf4626527"
+      "sha256": "789f786e0061e51687f7133c8ec63dc8bbcf85c668f051403a29e0c026715fc1"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
@@ -9880,19 +9980,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "e9491584ce93be283cea3076c5cfff088ab741d28c7156d831a02e737f075f71"
+      "sha256": "15aa558665dcacebc58dbdea56f36c8aee9bb41310af4c7aa3d094e419a4adce"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
       "sha256": "1a607389eee71063db4119d76b3855698907a4652fbe5514063fb4ad32d778d4"
-    },
-    {
-      "path": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "sha256": "3bb5ebce50e4292989f98fe3d4e2719d6927889cc64f6ce1cdb2ff293ca70cee"
-    },
-    {
-      "path": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "sha256": "35d378f5bdc82bba0e5b7f20b6a5c28db93005e1e9f131c45ccd460132e0c6e5"
     },
     {
       "path": "library/ui/apps/hud/features/map/RouteLayer.tsx",
@@ -9920,7 +10012,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
-      "sha256": "f4a8bb55f41f7a141e530c128e2190bd4e0c90156d71775b41455b5bdc8d8b97"
+      "sha256": "96e1e5341d09fec4c539cc88cbacb7577c969903c2bf20f69d39b4be5a53f4c7"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
@@ -9952,11 +10044,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
-      "sha256": "14888f01c31c6675d0a878baa442d884dc8b7f599d97c5c662f7acce83a64633"
+      "sha256": "fe16577703a531c43772f892ff83203260e7a1af20ed4a5cb9f868c1ca0981fa"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
-      "sha256": "a2d757288bddb3f94d58ff88ea55478db1019beade58b3ede9291869ece054ff"
+      "sha256": "164be1018c56a9638c3e8f0259038289549f39fc8bd24b49a931de4715f60bb4"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MenuBackdrop.module.css",
@@ -9980,11 +10072,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.module.css",
-      "sha256": "ef1df51ad3fab930e290a09ea6aefaf1e19132e78d9600b2bbe93d1692e50998"
+      "sha256": "dd9b98b6fb7850844b25709a3335ba2dbddd93d74249b29c9487fa344f3e93ee"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "d81918456d60c5cbe653c8d3aaac4191300da491c94a780b4f3e5681c10c36ca"
+      "sha256": "b05142fce771fe041ab16e8c5e144d342788659dcbb678625c2ed24f47ada05b"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -9992,7 +10084,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
-      "sha256": "6376c079653fb15a836b9ea2bf55cc4082348c087b0d3935a857385e0f54ca3a"
+      "sha256": "058d6221728c5086d59bf0c8218bbd7b4db230f6153201134cadc3ef14177b3c"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
@@ -10056,7 +10148,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceActions.tsx",
-      "sha256": "a5b8119cf9aa3489d0bbf731809310359b805acd50c62486ddc3f4d9577217a2"
+      "sha256": "a8dd4968188d565abe4fee510d55101b2f9c6b9b0cb20b229fe6619ff238f64a"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceCard.module.css",
@@ -10136,11 +10228,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
-      "sha256": "145a385773f2979acf63cc5dfce6409b4b685d5b66503bf3fd33f726bdf109d4"
+      "sha256": "c383c22da9fd21d130bb8e23f1423247f478d3cca547d20cc306aa3e406ec82a"
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "247b872acc380b3170c3c82231606573e79625e83b5a1231b8eeb09c5ce6deee"
+      "sha256": "55e5436297185f114c2c065a36ff42d9752aa34efb20ba41074d8d4fb9530c6c"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -10148,7 +10240,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.tsx",
-      "sha256": "a1c747e9cb7254c519e4ce396a2ca34f3ff55e94e0c062e04bf8f1a09ad51a9c"
+      "sha256": "9bc3a413a436d5dd1e01af4548a71bd954d7244b7c340641376907d16769282f"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePanel.module.css",
@@ -10160,11 +10252,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "255f7160fadf3c3b6c86b157de8be9926bb2a527ff409ecc8f466b614a081f44"
+      "sha256": "3f05d9af79db63e9365fc50958ad63bc60b5ef5530680b72f3ba57bf4a1ff4a4"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "908a76718781a706d6fe7641e2a2f04dbf1dbeea2d80f7d0949e9ca6bd7e0032"
+      "sha256": "feee5edfd4dfa8c313719c21970b3d2a7fc81d24940af9436c84e71aedbf964b"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -10204,7 +10296,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/profileStore.ts",
-      "sha256": "6d38368c702b5da86982717763f6b0e4998777c61b053bb9983dfde5ebe356e3"
+      "sha256": "77b9829f7c00dd43376d202e7a29e4fa9991e2477676557f0b5f9ef974edd034"
     },
     {
       "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
@@ -10212,7 +10304,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "a5238527e4b5a19eb561960433c69b52007823d80f4b9c46eb1fef287c4dd548"
+      "sha256": "cd4eb339fe2692d243e1c80bbe0de3f7542d494ab75984a12b3d23a683a4121d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10232,11 +10324,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
-      "sha256": "1bdcf550666e71ebdaddb18e8deb44b67b660786849b1dd784aed0fb0d910893"
+      "sha256": "32cbe604ee4160b7cef69d41ed69a23bf575eb3d943ae22159ab09bee6443b2e"
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "49f1b7a403f8ee3da95f0c04d934bc2fcd8ad0ff90591789050fd98489d309b6"
+      "sha256": "128e7eeefbb2fa2019f20cdd70864c64a8558fd4c14c6b86e1493a4ea05777e5"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -10340,11 +10432,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.module.css",
-      "sha256": "4c973143c2e1d3cba32181cbe52bd12daf636806176949278f9f554b46ddf19f"
+      "sha256": "059a458d495e8c832c94d8833913d692075cf14de11c98b350a232408f1be5e6"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.tsx",
-      "sha256": "404d049a77d32a0a4914b50dea937e2402000522e89ca049029fa2cab76e3094"
+      "sha256": "a18df8c45bda8ba4ae81c762a99e1e42145b0b26212d2043448ada8379efdd96"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
@@ -10488,7 +10580,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "6db5d8eda817cb9e7c1530a5d5263c1747d9daefc9f16c089c7823d4b4a273eb"
+      "sha256": "a3a01ef22ddaabed51a1a4659b992b410d4b485ebdc72ba189bebc8edc3e2e2e"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10511,8 +10603,12 @@
       "sha256": "0ff4076d5e415178ab088270681186aeb6ae90979fb6756f0bbaac62256e3de5"
     },
     {
+      "path": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "sha256": "522bb35c14d8e7f3f591f35c95cfaff3434aa4d8f894d14e96ae308da3886c97"
+    },
+    {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "94b66c992600523352309fbe97b89a54c36148d6b112b6c30665ef9beb60bbee"
+      "sha256": "23e9d1606174f80044818121afb38d39e3d69c29b3ed0225677c54708c64bd25"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
@@ -10556,7 +10652,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "c5800ac7dfb47e518d96d873fc94970c9f5eab9bf3795473402764457441f950"
+      "sha256": "801eba4d40de565112c04a21349b82570148e5947bde5b6f968b71e68efa9314"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10568,7 +10664,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/avatarPreview.test.tsx",
-      "sha256": "4369c86053c65684ee82762fde4e598a40228e52f58793c35eaea60ce2f68b83"
+      "sha256": "1953608ff00aa1ca68e2f632c3a937a297348af818656905b4195af1dd8f5579"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
@@ -10607,6 +10703,10 @@
       "sha256": "366a04782e717368b93a5050c2e33509ae6885bf3fecdb22deb1843e0f6099ea"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "sha256": "8f285fd0c194cc8e1a93a7fc0c9ed17dda353aef7f598502b23c94bd3f5a883d"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",
       "sha256": "eb04a302b28fbb0015e8305e563c39986b46cf8956392f73af1f6d4ee48d5544"
     },
@@ -10636,15 +10736,23 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.rich.test.tsx",
-      "sha256": "daf1082b67d72904db860f5142602989df7a38e68e8e1a2f2ac1cb29a9d8413e"
+      "sha256": "4e028945b78749d2fc1713c37f3f6ebc71c36e0f63c5f3c35a96fa7be9b4b262"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.test.tsx",
       "sha256": "6af91e8fd265f7c714534fb93dbf63a92401a6b5954a22c90b9bcd7c01f3cff4"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "sha256": "2fc80074fd409694ec352e01e79cb2d3710f9442e51e071dd3e02576e8fa2c11"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "sha256": "c3c3c2996587f9a125a58fce83af95022729aca12e1cc7ec4ed1cb12ee97f109"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "2442b196641ec0d749600aebbf732e84aa3605d0f613fd94f898c9a0791f8689"
+      "sha256": "f49c2eb9ed7b04a49d36450abcdd322ed7b18db40880b5451c281765c38d96c2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -10744,11 +10852,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
-      "sha256": "d2aec385234127d841196513ed2accbbce48c277c14d1fb409084f94e007173b"
+      "sha256": "7d52b44b3936c46af06c3f49cd29e909aeaf17caf403652a03924fcd7623d0a2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
-      "sha256": "8c2d3e3b4dbb184947b0c9e6d28ec598452679126235c9d817e0861ce3e5850c"
+      "sha256": "f430e679991a8cf3bf62f27e0d6f37ef99966252945aca75d92dc278eccfcdaa"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
@@ -10772,7 +10880,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/home.session.test.tsx",
-      "sha256": "c597526f04631006eadf015f96f25038dca48866d2d33e83dbae808fc4a8a8b9"
+      "sha256": "49d0e9f6133fc9e6907052cd6bd118d76a9484f9292b75d3400cfff0ac4b0a07"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
@@ -10804,7 +10912,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "ca5a03337c402925323a9b0cf2e2e0d7241a7390074b772718045afb044502a7"
+      "sha256": "16b7af853a4acfc216ef3a08fb15d6280ed5b5f7bc38bd1d68a1034b3afd5e95"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
@@ -10828,7 +10936,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "217f5fc674d5ec641c73cc13672b45b45992fc159ac46fea9a0231840e98202d"
+      "sha256": "436e78801c2e40d4cb8bf7afd79d8379bd2f5f9ead35ff29ad37c5714770fa56"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -10840,11 +10948,15 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "f921c6b752db08d5acd3db27c2f8c2ef3eccc895e88f5fb79e4c76e5dfe6ba69"
+      "sha256": "ade044372f6f984e81efb58901b23fefc4802633a5c5e45223265775391e94c5"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "sha256": "928308c3660ff704eacd12bd0fd1877287bfa5463031da0bf13e29aa26a1d375"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
-      "sha256": "d1b651a7b187d3e3ae09d58b63f540b4a7972487f77aed98326518e4bbf63d74"
+      "sha256": "296f56c04728475992089a4f69f12b47e96bb14fc0b80848354e438da066c235"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nametags.test.tsx",
@@ -10856,7 +10968,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
-      "sha256": "b3d6cb97ac3bb1abe747ecb1ba2bb01b12afe367e7508bd3f755b9ace0549b64"
+      "sha256": "f785b521895e0100e5e56bd8d3347ed94007b2b2c871cac8096c118e6a0e1d66"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
@@ -10864,7 +10976,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
-      "sha256": "88a374493a6eeed1f50a4ad4b119f741a0227433ddd9de62a84cb413a16a9ca2"
+      "sha256": "cce37d087f9d8fad18074562a06ae5245bacee4d6273e591d5b00aee82604937"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -10884,7 +10996,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "74954fd0f3761c120a041ce0bd2bfc1cfd38a3d634c4b20be3bf31dcef274790"
+      "sha256": "cc3dd2f0e5644163be60af22f30163e11159d4786493919625dd55e2fc71b4ec"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -10900,7 +11012,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "f13c9a8c3496ce575830e6d14ebe89ccb7eba479187278ba119f2895f684f6cf"
+      "sha256": "fd680a4191fcf3a9d4fb6a06372cd66abfdb6be9ef1a0ba7e811dec1709ecb4b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
@@ -10924,7 +11036,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profile.test.tsx",
-      "sha256": "5371f1db2b4d164739609f6d7f9053641450ef890082bf0d5d89e16e94ada682"
+      "sha256": "989b64bf78970a6c82a1cfd46bdcf3991f920b2ef6b702ed6fa2b024b77e4b86"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profileCardContainer.test.tsx",
@@ -10940,11 +11052,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "aee6ec81ac2bf8da0ac22c012c1efd025d1eb0b7f484378c614bdff12ec8f9a3"
+      "sha256": "1ccbf22c8d138116dd72039a50241c0aa33cca38b697a740b88d7258361be1ed"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
-      "sha256": "97c4f2ea42d7b00b02e5bc295a56adf8dfc4b524b6db9b2e9e850a0d4ba812ad"
+      "sha256": "0c06ee379654478897edb12e313b1a81715e99bc84585de88da73a0977bc4add"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/shop.test.tsx",
@@ -10952,7 +11064,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "143e3ac749c222a85f4b766223443b4f8328760cc3c494e4ba2dd5ff179871e9"
+      "sha256": "473241e0e75f7dfd75f04abf4e54226fef2380112cc04d4e1546c75b10664b84"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -11024,15 +11136,19 @@
     },
     {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",
-      "sha256": "589c2ee53f74423b20086a011f1de47526562be7539cf8f7ced7b9dcd1629b04"
+      "sha256": "f202cf95d71538789f66193bccf6739eb42ca4900e166d4cb47524e8bd2e2e92"
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
-      "sha256": "c793f5858e5293ab1331026a802ef64c841c99a77fad985920949e4178e695db"
+      "sha256": "08d593d3686cd7e9da76821284db320f32e5cfa4632be60a132f126e9840a131"
     },
     {
       "path": "library/ui/apps/hud/test/pageWindow.test.ts",
       "sha256": "cf5cd9e9e4653e9b72e4ca7908194e4708d3a39ffa6c3bb3a715a230192e6293"
+    },
+    {
+      "path": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "sha256": "f2295aa4dd6499ecb66935fab105666beeb1f0ea6f542c94b1411f4813922b19"
     },
     {
       "path": "library/ui/apps/hud/test/placesBrowser.test.tsx",
@@ -11048,11 +11164,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.edit.test.tsx",
-      "sha256": "1e4f9debaa86c6cb04c0acb03efd83df9f1275e5a6d36e9f7475eca76cc0da0d"
+      "sha256": "97f59c8e09b8d2ceecdb8f7e42b2eb51819aadf2bfc6c5b3663a09877b13853c"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "748d05030106c3b03219966e0718a817622b8d2a143e0923a31778ab1b4c87be"
+      "sha256": "4addb7f32c6b4d09223f07140843f8057c2ca1fc0ebdbf04c18bc0a210948ffe"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -11072,11 +11188,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
-      "sha256": "d9e21751a0f85eb6742e4dd18e2793379844217e3f2ad7a3295c2affad4cb2a0"
+      "sha256": "b3f59c03fdc4247306de2cb91df9f99a9c9932f5cf4132cf2859b71fc9c8725d"
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
-      "sha256": "9dddc507f001ea71379ada1a403a6daaee9c485122211dea6ccbab9eb8afdec6"
+      "sha256": "eabe4ef5ced59f26e57cc3b6b987b76a1bf787b60f8c88e41863efbdd55a5c11"
     },
     {
       "path": "library/ui/apps/hud/test/referral.test.ts",
@@ -11709,6 +11825,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.test.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/chatCommands.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/chat/chatParse.ts",
       "to": "library/explorer-core/engine/mention.ts",
       "kind": "native:runtime"
@@ -11736,6 +11882,21 @@
     {
       "from": "library/explorer-core/features/chat/lineIds.test.ts",
       "to": "library/explorer-core/features/chat/lineIds.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
       "kind": "test:runtime"
     },
     {
@@ -14155,6 +14316,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "kind": "native:runtime"
     },
@@ -14436,6 +14612,21 @@
     {
       "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "test:runtime"
     },
     {
@@ -20469,6 +20660,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/chatText.tsx",
       "to": "library/explorer-core/features/chat/chatParse.ts",
       "kind": "native:runtime"
@@ -23635,21 +23871,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
       "kind": "native:runtime"
     },
@@ -23676,6 +23897,21 @@
     {
       "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
       "kind": "test:runtime"
     },
     {
@@ -23755,21 +23991,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
       "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
       "kind": "native:runtime"
     },
@@ -23815,6 +24036,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
       "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
       "kind": "native:runtime"
     },
@@ -23830,17 +24066,167 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/pin-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/pin-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/pin-outline.png",
       "kind": "test:runtime"
     },
     {
@@ -23860,17 +24246,32 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "to": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "to": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "to": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
       "kind": "test:runtime"
     },
     {
@@ -23931,6 +24332,126 @@
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
       "to": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/assets/events/arrow-down.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "test:runtime"
     },
     {
@@ -24085,6 +24606,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "to": "library/explorer-core/lib/cefNativeBridge.ts",
       "kind": "native:runtime"
     },
@@ -24096,6 +24632,36 @@
     {
       "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/assets/lobby/checkmark-icn-thin.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/assets/lobby/checkmark-icn-thin.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/assets/lobby/checkmark-icn-thin.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/assets/startup/warning.png",
       "kind": "test:runtime"
     },
     {
@@ -24141,6 +24707,51 @@
     {
       "from": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
       "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
       "kind": "test:runtime"
     },
     {
@@ -24786,6 +25397,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
       "to": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "test:runtime"
     },
     {
@@ -25930,17 +26556,17 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "test:runtime"
     },
     {
@@ -25956,6 +26582,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
       "kind": "test:runtime"
     },
     {
@@ -27070,21 +27711,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/MapCanvas.tsx",
       "to": "library/ui/apps/hud/features/map/SatelliteDetailLayer.tsx",
       "kind": "native:runtime"
     },
@@ -27250,17 +27876,32 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
       "kind": "test:runtime"
     },
     {
@@ -27520,6 +28161,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "native:runtime"
     },
@@ -27590,36 +28246,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapToolbar.tsx",
-      "to": "library/ui/apps/hud/features/map/mapArt.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/mapArt.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "to": "library/ui/apps/hud/features/map/mapArt.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "test:runtime"
     },
@@ -29935,21 +30561,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "native:runtime"
     },
@@ -31885,6 +32496,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/explorer-core/lib/color.ts",
       "kind": "native:runtime"
     },
@@ -32005,6 +32631,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
       "kind": "native:runtime"
     },
@@ -32046,6 +32687,21 @@
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
       "kind": "test:runtime"
     },
     {
@@ -33145,6 +33801,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/requestIds.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/features/auth/sso.ts",
       "kind": "native:runtime"
     },
@@ -33291,6 +33962,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/features/friends/friendEvents.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
       "kind": "test:runtime"
     },
     {
@@ -37749,6 +38435,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/chatText.test.ts",
       "to": "library/explorer-core/features/chat/chatParse.ts",
       "kind": "native:runtime"
@@ -38469,6 +39170,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",
       "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
       "kind": "native:runtime"
@@ -38826,6 +39572,96 @@
     {
       "from": "library/ui/apps/hud/test/hosted/chat.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
       "kind": "test:runtime"
     },
     {
@@ -41065,6 +41901,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
       "to": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "kind": "native:runtime"
     },
@@ -41545,6 +42396,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
+      "to": "library/ui/apps/hud/features/map/MapChrome.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
+      "to": "library/ui/apps/hud/features/map/MapChrome.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
+      "to": "library/ui/apps/hud/features/map/MapChrome.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
       "to": "library/ui/apps/hud/features/map/MapPage.tsx",
       "kind": "native:runtime"
     },
@@ -41725,6 +42591,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
     },
@@ -41736,6 +42617,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/features/map/mapArt.ts",
       "kind": "test:runtime"
     },
     {
@@ -41765,6 +42661,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -42175,6 +43086,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -42216,6 +43142,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
       "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
       "kind": "test:runtime"
     },
     {
@@ -43885,6 +44826,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "native:runtime"
     },
@@ -43926,6 +44882,81 @@
     {
       "from": "library/ui/apps/hud/test/pageWindow.test.ts",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "test:runtime"
     },
     {
@@ -44286,6 +45317,21 @@
     {
       "from": "library/ui/apps/hud/test/reelActions.test.ts",
       "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
       "kind": "test:dynamic"
     },
     {
@@ -46890,6 +47936,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/chatText.tsx",
       "kind": "type"
     },
@@ -47165,6 +48216,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
       "kind": "type"
     },
@@ -47181,6 +48237,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
       "kind": "type"
     },
     {
@@ -47336,11 +48397,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/map/MapToolbar.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/features/map/QuestPinIcon.tsx",
       "kind": "type"
     },
     {
@@ -47875,6 +48931,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/chatText.test.ts",
       "kind": "type"
     },
@@ -47995,6 +49056,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",
       "kind": "type"
     },
@@ -48036,6 +49102,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/chat.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
       "kind": "type"
     },
     {
@@ -48290,6 +49366,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
       "kind": "type"
     },
@@ -48526,6 +49607,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/pageWindow.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/photoDetail.test.tsx",
       "kind": "type"
     },
     {
@@ -49581,6 +50667,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/hide-show.png",
       "kind": "test:asset"
     },
     {
