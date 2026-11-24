@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import type { Item } from '@/data/lib/creators/items'
 import type { LinkedItemStatus } from '@/data/lib/creators/linkedItemStatus'
 import { areMappingsEqual, buildItemMappings, getItemMapping, type Mapping, type Mappings } from '@/data/lib/creators/mappings'
 import { decodeLinkedUrn, type LinkedContract } from '@/data/lib/creators/thirdParty'
 import { CategoryIcon } from '../../ItemIcons'
-import { ItemThumbnail } from '../../ItemThumbnail'
+import { ItemFileThumbnail } from '../../ItemThumbnail'
 import { MappingEditor } from '../../MappingEditor'
 import pill from '../../CollectionStatusPill/CollectionStatusPill.module.css'
 import linked from './LinkedCollectionView.module.css'
@@ -182,7 +181,7 @@ export function LinkedItemRow({
         />
       </div>
       <div className={row.thumb}>
-        <ItemThumbnail src={thumbnailHash ? getContentsStorageUrl(thumbnailHash) : null} rarity={item.rarity} />
+        <ItemFileThumbnail item={item} hash={thumbnailHash} rarity={item.rarity} />
       </div>
       <div className={linked.nameCell}>
         <span className={row.nameText} data-testid="item-row-name" title={item.name}>

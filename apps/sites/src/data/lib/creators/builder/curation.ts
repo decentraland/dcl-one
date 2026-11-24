@@ -168,15 +168,16 @@ export async function pushItemCuration(address: string, itemId: string): Promise
 
 /**
  * Sets a linked item curation's status: PATCH /items/{id}/curation. Creators send `pending` to refresh a pending
- * request with the item's current hash; committee members approve or reject.
+ * request with the item's current hash; committee members approve, naming the content hash they approve, or reject.
  */
 export async function updateItemCuration(
   address: string,
   itemId: string,
-  status: CurationRequestStatus
+  status: CurationRequestStatus,
+  contentHash?: string
 ): Promise<ItemCuration> {
   const remote = await request<RemoteItemCuration>(address, 'PATCH', `/items/${itemId}/curation`, '', {
-    curation: { status }
+    curation: contentHash ? { status, contentHash } : { status }
   } satisfies RemoteItemCurationBody)
   return fromRemoteItemCuration(remote)
 }

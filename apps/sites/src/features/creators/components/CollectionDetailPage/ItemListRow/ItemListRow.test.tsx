@@ -3,6 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi } from 'vitest'
 import type { ComponentProps, ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { ItemType, type Item } from '@/data/lib/creators/items'
@@ -42,7 +43,11 @@ type RowProps = Omit<ComponentProps<typeof ItemListRow>, 'item'>
 
 function renderRow(overrides: Partial<Item> = {}, props: RowProps | boolean = {}) {
   const rowProps = typeof props === 'boolean' ? { withPlayMode: props } : props
-  const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
+  const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <TranslationProvider>{children}</TranslationProvider>
+  </QueryClientProvider>
+)
   return render(<ItemListRow item={{ ...item, ...overrides }} {...rowProps} />, { wrapper })
 }
 

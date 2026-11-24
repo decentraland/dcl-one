@@ -1,7 +1,6 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib/creators/itemFactory'
 import { ItemType, getItemBodyShapeType, getItemSales, isSmartWearable, type Item } from '@/data/lib/creators/items'
 import { EmotePlayMode } from '@/data/lib/creators/itemFactory'
@@ -22,7 +21,7 @@ import {
 } from '../../Icons'
 import { Tooltip } from '../../Tooltip'
 import { BodyShapeIcon, CategoryIcon, PlayModeIcon } from '../../ItemIcons'
-import { ItemThumbnail } from '../../ItemThumbnail'
+import { ItemFileThumbnail } from '../../ItemThumbnail'
 import { RarityPill } from '../../RarityPill'
 import { ItemSaleStatus } from '../ItemSaleStatus'
 import { ItemSyncPill } from '../ItemSyncPill'
@@ -216,7 +215,7 @@ export function ItemListRow({
   }
 
   const thumbnail = (
-    <ItemThumbnail src={thumbnailHash ? getContentsStorageUrl(thumbnailHash) : null} rarity={item.rarity} />
+    <ItemFileThumbnail item={item} hash={thumbnailHash} rarity={item.rarity} />
   )
 
   const validationChip = flagged && validationCopy && (

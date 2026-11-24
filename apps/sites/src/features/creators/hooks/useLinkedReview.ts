@@ -224,7 +224,7 @@ export function useLinkedApprovalFlow(
           fetchAvailableContent,
           deployEntity,
           fetchItem: itemId => fetchItem(address, itemId),
-          approveItem: itemId => updateItemCuration(address, itemId, 'approved'),
+          approveItem: (itemId, contentHash) => updateItemCuration(address, itemId, 'approved', contentHash),
           rejectItem: itemId => updateItemCuration(address, itemId, 'rejected')
         },
         uploading

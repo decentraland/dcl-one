@@ -38,8 +38,8 @@ describe('fetchCollectionListings', () => {
 
     const urls = fetchMock.mock.calls.map(call => new URL(call[0] as string))
     expect(urls.map(url => url.origin + url.pathname).sort()).toEqual([
-      'https://marketplace-api.decentraland.zone/v1/items',
-      'https://marketplace-api.decentraland.zone/v3/catalog/unified'
+      `${window.location.origin}/marketplace-api/v1/items`,
+      `${window.location.origin}/marketplace-api/v3/catalog/unified`
     ])
     expect(urls.every(url => url.searchParams.get('contractAddress') === CONTRACT)).toBe(true)
 
@@ -83,7 +83,7 @@ describe('fetchItemTradeId', () => {
     )
     await expect(fetchItemTradeId(CONTRACT, '3')).resolves.toBe('trade-9')
     const url = new URL(fetchMock.mock.calls[0][0] as string)
-    expect(url.pathname).toBe('/v3/catalog/unified')
+    expect(url.pathname).toBe('/marketplace-api/v3/catalog/unified')
     expect(url.searchParams.get('itemId')).toBe('3')
     expect(url.searchParams.get('listingType')).toBe('primary')
     fetchMock.mockResolvedValueOnce(jsonResponse({ data: [] }))

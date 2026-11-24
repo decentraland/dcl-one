@@ -13,6 +13,8 @@ import { useCampaign } from '../../hooks/useCampaign'
 import { useCommittee } from '../../hooks/useCommittee'
 import { useCurationCollections, useCurationsByCollection, useCuratorOptions } from '../../hooks/useCuration'
 import { useFeatureFlag } from '../../hooks/useFeatureFlag'
+import { useRefusalText } from '../../hooks/useRefusalText'
+import { boundRefusal } from '@/data/lib/creators/builder'
 import { shortenAddress } from '@/data/lib/creators/address'
 import { track } from '@/data/lib/creators/analytics'
 import type { Collection } from '@/data/lib/creators/collections'
@@ -48,6 +50,7 @@ type Assigning = { collection: Collection; curation: CollectionCuration | null; 
 
 const CurationPage = () => {
   const { t } = useTranslation()
+  const refusalText = useRefusalText()
   const { session, restored, signIn } = useWallet()
   const address = session?.address
   const committee = useCommittee(address)
@@ -287,7 +290,9 @@ const CurationPage = () => {
       ) : isError ? (
         <section className={shared.panel} data-testid="curation-error">
           <h2 className={shared.panelTitle}>{t('curation_page.error.title')}</h2>
-          <p className={shared.panelText}>{t('curation_page.error.description')}</p>
+          <p className={shared.panelText}>
+            {refusalText(boundRefusal(collections.error ?? curations.error)) ?? t('curation_page.error.description')}
+          </p>
           <Button
             data-testid="curation-retry"
             type="button"

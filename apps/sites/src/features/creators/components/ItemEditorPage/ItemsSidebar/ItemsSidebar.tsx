@@ -19,12 +19,11 @@ import {
   VisibilityIcon as DressedIcon,
   VisibilityOffIcon as UndressedIcon
 } from '../../Icons'
-import { ItemThumbnail } from '../../ItemThumbnail'
+import { ItemFileThumbnail } from '../../ItemThumbnail'
 import { Tooltip } from '../../Tooltip'
 import { useScrollFades } from '../../../hooks/useScrollFades'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { isLinkedCollection, type Collection, type CollectionDisplayStatus } from '@/data/lib/creators/collections'
 import { groupItemsByType, hasRepresentationFor, type EditorMode } from '@/data/lib/creators/itemEditor'
 import { BodyShapeType, ItemType, getItemBodyShapeType, isSmartWearable, type Item } from '@/data/lib/creators/items'
@@ -165,7 +164,7 @@ export function ItemsSidebar({
           onClick={() => onRowClick(item)}
         >
           <span className={styles.thumb} data-dressed={dressed || undefined}>
-            <ItemThumbnail src={thumbnail ? getContentsStorageUrl(thumbnail) : null} rarity={item.rarity} />
+            <ItemFileThumbnail item={item} hash={thumbnail} rarity={item.rarity} />
           </span>
           <span className={styles.rowName} title={item.name}>
             {item.name}

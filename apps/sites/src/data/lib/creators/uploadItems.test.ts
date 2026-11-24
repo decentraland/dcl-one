@@ -92,7 +92,7 @@ describe('executeUpload', () => {
   it('reports every draft as saved on success', async () => {
     const operations = await planUpload([draft('a'), draft('b')], [])
     const result = await executeUpload('0xowner', operations)
-    expect(result).toEqual({ savedDraftIds: ['a', 'b'], failedDraftIds: [], failureReason: null })
+    expect(result).toEqual({ savedDraftIds: ['a', 'b'], failedDraftIds: [], failureReason: null, refusal: null })
     expect(saveItemMock).toHaveBeenCalledTimes(2)
   })
 
@@ -175,6 +175,27 @@ describe('executeUpload', () => {
     const operations = await planUpload([draft('a')], [])
     const result = await executeUpload('0xowner', operations)
     expect(result.failureReason).toBe('published')
+  })
+
+  it("carries the node's own words, and the wait it asked for, for a refusal at one of its bounds", async () => {
+    const reason = 'Too many file uploads of this wallet in progress'
+    saveItemMock.mockRejectedValueOnce(new BuilderServerError(reason, 429, {}, { reason, retryAfterSecs: 30 }))
+    const result = await executeUpload('0xowner', await planUpload([draft('a'), draft('b')], []))
+    expect(result).toEqual({
+      savedDraftIds: ['b'],
+      failedDraftIds: ['a'],
+      failureReason: 'generic',
+      refusal: { message: reason, retryAfterSecs: 30 }
+    })
+  })
+
+  it("keeps the node's words of the failure it shows when a later operation fails for another reason", async () => {
+    const reason = 'The upload is too large'
+    saveItemMock
+      .mockRejectedValueOnce(new BuilderServerError(reason, 413, {}, { reason }))
+      .mockRejectedValueOnce(new BuilderServerError('boom', 500))
+    const result = await executeUpload('0xowner', await planUpload([draft('a'), draft('b')], []))
+    expect(result.refusal).toEqual({ message: reason })
   })
 
   it("tells a URN another item holds apart from a published collection, even when the message says 'return'", async () => {

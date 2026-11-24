@@ -1,6 +1,6 @@
 import { useState } from 'react'
+import { useItemFileSrc } from '../../../hooks/useItemFileSrc'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { ItemThumbnail } from '../../ItemThumbnail'
 import { ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib/creators/itemFactory'
 import { getItemBodyShapeType, type Item } from '@/data/lib/creators/items'
@@ -59,7 +59,8 @@ export function PublishItemRow({
   const [rarity, setRarity] = useState<RarityName>(isRarity(item.rarity) ? item.rarity : DEFAULT_RARITY)
 
   const thumbnailHash = item.contents[item.thumbnail]
-  const thumbnailUrl = pendingThumbnail ?? (thumbnailHash ? getContentsStorageUrl(thumbnailHash) : null)
+  const storedThumbnailUrl = useItemFileSrc(item, thumbnailHash)
+  const thumbnailUrl = pendingThumbnail ?? storedThumbnailUrl
   const bodyShape = getItemBodyShapeType(item)
   const nameValid = isValidItemName(name)
 

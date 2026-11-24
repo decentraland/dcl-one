@@ -13,7 +13,6 @@ import type { Item } from '../items'
 import type { ItemCuration, LinkedItemsQuery } from '../linkedItemStatus'
 import type { ThirdParty } from '../thirdParty'
 import type { CollectionItemPreview } from './collections'
-import { getContentsStorageUrl } from './contents'
 import type { LinkedApprovalData } from './linked'
 import type {
   RemoteCollection,
@@ -164,7 +163,8 @@ export function toCollectionItemPreviews(items: RemoteItem[]): CollectionItemPre
     .map(item => ({
       id: item.id,
       name: item.name,
-      thumbnailUrl: getContentsStorageUrl(item.contents[item.thumbnail]),
+      thumbnailHash: item.contents[item.thumbnail],
+      isPublished: item.is_published,
       rarity: item.rarity ?? undefined
     }))
 }

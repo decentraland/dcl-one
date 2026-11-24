@@ -14,7 +14,9 @@ import {
   type PublicClient
 } from 'viem'
 import { estimateGas, getTransaction } from 'viem/actions'
+import { catalystUrl } from '../../catalyst/bases'
 import { config } from '../config'
+import { isDecentralandHost } from '../config/env'
 import { encodeContractCall, type ContractCall, type ContractData } from '../chain/contracts'
 import { sendMetaTransaction, type MetaTransactionWallet } from '../chain/metaTransaction'
 import { WrongAccountError, WrongChainError } from '../walletErrors'
@@ -63,6 +65,10 @@ export async function readContract<T>(contract: ContractData, method: string, ar
   return result as T
 }
 
+/** The meta-transaction relay: the environment's on a Decentraland host, else that of the node serving the page. */
+export const relayUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host) ? config.get('TRANSACTIONS_API_URL') : `${catalystUrl()}/transactions-api/v1`
+
 /** Sends the call and resolves with the transaction hash (not the receipt). */
 export async function sendContractTransaction(session: Session, call: ContractCall): Promise<string> {
   // The in-app signer of email and social accounts only signs typed data, so it always goes through the relayer.
@@ -85,7 +91,7 @@ export async function sendContractTransaction(session: Session, call: ContractCa
     callContract,
     encodeContractCall(call),
     call.contract,
-    config.get('TRANSACTIONS_API_URL')
+    relayUrl()
   )
 }
 

@@ -12,7 +12,7 @@ import { COUPON_MANAGER_ABI, COUPON_MANAGERS, MARKETPLACE_ABI, latestOffChainMar
 import type { MyAsset } from "../../market/lib/api";
 import { createPrimaryUsdPeggedListing, TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { fakeChain, fakeShop, fakeWallet, noWait } from "../../market/testing";
-import { fetchPublishableItems, isPublishable, RARITY_MAX_SUPPLY } from "./builder";
+import { fetchCreatorCollections, fetchPublishableItems, isPublishable, RARITY_MAX_SUPPLY } from "./builder";
 import { fetchCreatorSaleState, sanitizeCollectionName } from "./collections";
 import {
   collectionsRoot,
@@ -384,7 +384,7 @@ describe("creations and sale state", () => {
             rarity: "common",
             total_supply: 2,
             is_published: true,
-            createdAt: 1_700_000_000_000,
+            createdAt: "2023-11-14T22:13:20.000Z",
             image: "https://peer.test/thumbnail",
           },
         ],
@@ -394,6 +394,41 @@ describe("creations and sale state", () => {
     expect(rest).toHaveLength(0);
     expect(item).toMatchObject({ contractAddress: contract, blockchainItemId: "0", isApproved: true, createdAt: 1_700_000_000_000, thumbnail: "https://peer.test/thumbnail" });
     expect(isPublishable(item!)).toBe(true);
+  });
+
+  it("matches the node's on-chain item rows, keyed by contract, to its collection rows, keyed by the builder id", async () => {
+    const signer = { address: BOOK.creator, sign: async () => ({}) };
+    const contract = BOOK.collection.toLowerCase();
+    const fetchImpl = (async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/collections"))
+        return Response.json({ ok: true, data: [{ id: "c011ec71-0000-4000-8000-000000000103", name: "Neon", eth_address: BOOK.creator, contract_address: contract, is_published: true, is_approved: true, item_count: "1", minters: [] }] });
+      return Response.json({
+        ok: true,
+        data: [{ id: `${contract}-0`, collection_id: contract, contract_address: contract, blockchain_item_id: "0", name: "Jacket", rarity: "common", total_supply: 2, is_published: true }],
+      });
+    }) as typeof fetch;
+    const items = await fetchPublishableItems(BOOK.creator, { signer, base: "https://node.test", fetchImpl, includeSoldOut: true });
+    expect(items.map((i) => [i.name, i.collectionId, i.contractAddress])).toEqual([["Jacket", "c011ec71-0000-4000-8000-000000000103", contract]]);
+  });
+
+  it("asks the node for the published collections only and keeps the ones with a contract", async () => {
+    const signer = { address: BOOK.creator, sign: async () => ({}) };
+    const contract = BOOK.collection.toLowerCase();
+    const asked: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      asked.push(new URL(url).search);
+      return Response.json({
+        ok: true,
+        data: [
+          { id: "c011ec71-0000-4000-8000-000000000103", name: "Neon", eth_address: BOOK.creator, contract_address: contract, is_published: true, is_approved: true, item_count: "1", minters: [] },
+          { id: "c011ec71-0000-4000-8000-000000000105", name: "Linked", eth_address: "", contract_address: null, is_published: true, is_approved: false, item_count: "1", minters: [] },
+        ],
+      });
+    }) as typeof fetch;
+    const collections = await fetchCreatorCollections(BOOK.creator, { signer, base: "https://node.test", fetchImpl });
+    expect(asked).toEqual(["?is_published=true"]);
+    expect(collections.map((c) => c.name)).toEqual(["Neon"]);
   });
 
   it("marks USD-pegged primary listings by their exact credits and classic ones by their MANA", async () => {
