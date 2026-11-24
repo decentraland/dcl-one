@@ -15,6 +15,7 @@ import reminderOn from '../../assets/map/panel/reminder-on.png'
 import shareIcon from '../../assets/map/panel/share.png'
 import timeIcon from '../../assets/lobby/time-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
+import { CardActionButton } from '@dcl/one-ui'
 import { MaskIcon } from '../../design'
 import { useCreatorName } from '../places/useCreatorName'
 import styles from './LobbyCards.module.css'
@@ -269,15 +270,25 @@ export function UpcomingEventCard({
         </span>
       </span>
       <span className={styles.actions}>
-        <button type="button" className={styles.action} aria-label={interested ? 'Not interested' : 'Interested'} aria-pressed={interested} onClick={onInterested}>
-          <img src={interested ? reminderOn : reminderOff} alt="" width={24} height={24} />
-        </button>
-        <button type="button" className={styles.action} aria-label="Add to calendar" onClick={onCalendar}>
-          <img src={addToCalendar} alt="" width={24} height={24} />
-        </button>
-        <button type="button" className={styles.action} aria-label="Share" onClick={(e) => onShare(e.currentTarget)}>
-          <img src={shareIcon} alt="" width={24} height={24} />
-        </button>
+        <CardActionButton
+          size="sm"
+          aria-label={interested ? 'Not interested' : 'Interested'}
+          aria-pressed={interested}
+          onClick={onInterested}
+          icon={<img src={interested ? reminderOn : reminderOff} alt="" width={24} height={24} />}
+        />
+        <CardActionButton
+          size="sm"
+          aria-label="Add to calendar"
+          onClick={onCalendar}
+          icon={<img src={addToCalendar} alt="" width={24} height={24} />}
+        />
+        <CardActionButton
+          size="sm"
+          aria-label="Share"
+          onClick={(e) => onShare(e.currentTarget)}
+          icon={<img src={shareIcon} alt="" width={24} height={24} />}
+        />
       </span>
     </div>
   )

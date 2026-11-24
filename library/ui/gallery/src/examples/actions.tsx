@@ -163,12 +163,13 @@ export const actionEntries: GalleryEntry[] = [
     examples: [
       {
         id: 'states',
-        title: 'Default glyph, custom glyph and disabled',
+        title: 'Default glyph, custom glyph, disabled and small',
         render: () => (
           <div className={layout.row}>
             <CardActionButton aria-label="Like" />
             <CardActionButton aria-label="Share" icon={<MenusShare size={24} />} />
             <CardActionButton aria-label="Like" disabled />
+            <CardActionButton aria-label="Share" size="sm" icon={<MenusShare size={24} />} />
           </div>
         )
       }

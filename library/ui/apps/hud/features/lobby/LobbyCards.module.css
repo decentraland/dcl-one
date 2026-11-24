@@ -11,7 +11,6 @@
 }
 .cover:focus-visible,
 .jumpIn:focus-visible,
-.action:focus-visible,
 .join:focus-visible,
 .view:focus-visible {
   outline: 2px solid var(--lobby-snow);
@@ -556,22 +555,6 @@
 .actions:focus-within {
   opacity: 1;
 }
-.action {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-control);
-  background: var(--lobby-white-10);
-  cursor: pointer;
-  transition: background-color var(--lobby-dur-press);
-}
-.action:hover {
-  background: var(--lobby-white-20);
-}
-
 .friend {
   position: relative;
   width: 103px;
