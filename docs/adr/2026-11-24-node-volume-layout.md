@@ -72,8 +72,9 @@ Three problems follow:
   | `files/replay-journal` | Pulse's handshake replay journal | `PULSE_REPLAY_STATE_PATH` |
 
 - **A new blob tree needs a reason the shared one cannot meet.**
-  `blobs/contents` stays one flat tree, with ownership recorded only in the
-  database columns the collector reads, so identical bytes are stored once.
+  `blobs/contents` stays one shared, sharded tree that keeps its
+  `<shard>/<cid>` layout, with ownership recorded only in the database
+  columns the collector reads, so identical bytes are stored once.
   A separate tree exists only where files must not be reachable by the
   routes and the gateway alias that serve `contents`, as item files must
   not be.
@@ -94,9 +95,9 @@ Three problems follow:
     it received and stores them under that hash; a name a client sent is
     only compared with it. Two writers that store the same name therefore
     store the same bytes, and neither can replace the other's.
-  - *A stored file never changes.* Nothing writes into, truncates or
-    replaces a file under its final name. A changed model or image is a new
-    file under a new name, and the old one stays until no row names it.
+  - *A blob never changes.* Under `blobs/`, nothing writes into, truncates
+    or replaces a file under its final name. A changed model or image is a
+    new file under a new name, and the old one stays until no row names it.
   - *A row gives a file its meaning.* A writer stores the bytes, then
     commits the row that names them, holding the store's shared lock so
     the collector can't remove them in between. Every column that names a
@@ -111,10 +112,16 @@ Three problems follow:
     from one namespace to another only as an upload to the destination,
     which hashes, validates and bounds it as any other. No namespace links
     to, renames from or reads another's files.
-  - *A path-keyed file has one owner and a built key.* One area writes a
-    path-keyed namespace. The storage crate builds each path from validated
-    parts; no request supplies a path segment. A write lands under a
-    temporary name and is renamed into place.
+  - *A path-keyed file has one owner and a checked key.* One area writes a
+    `files/` or `cache/` namespace. The storage crate builds each path, and
+    a segment that comes from a request, as a badge art path does, is
+    validated by it before it is joined.
+  - *A path-keyed file is replaced whole.* A write under `files/` or
+    `cache/` lands under a temporary name and is renamed over its target,
+    so a reader sees the old file or the new one, never part of either.
+    `cache/` entries are also evicted. The replay journal is the one file
+    written in place: its owner appends to it, and compacts it by renaming
+    a replacement over it.
   - *Every writer is bounded.* A write is charged to a bound on its caller
     before its body is read. A `cache/` namespace has a size bound and
     evicts; a `tmp/` entry belongs to one request or job and is swept once
