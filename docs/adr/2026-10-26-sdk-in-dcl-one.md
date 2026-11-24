@@ -54,7 +54,7 @@ It installs with pnpm as one workspace with a single lockfile
   `.github/workflows/sdk-release.yml` calls the same jobs on a push to `main` and, when the push
   changed `library/js-sdk-toolchain` or `library/protocol`, publishes `ecs`,
   `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` (`playground-assets` is built and tested, not
-  published) as `@dcl/*` under the `next` dist-tag, as `<latest patch+1>-<run>.commit-<sha>`
+  published) as `@dcl/*` under the `dcl-one` dist-tag, as `<latest patch+1>-<run>.commit-<sha>`
   (oddish derives the version from the registry's `latest`; the manifests keep `7.0.0` as upstream
   does, and `npm publish` ships the tarballs through trusted publishing).
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
@@ -82,10 +82,12 @@ It installs with pnpm as one workspace with a single lockfile
 
 ## Follow-ups
 
-1. PR previews publish from here. Releases and `next` are wired in `sdk-release.yml` and still
-   need: the `npm-release` environment, a trusted publisher on each `@dcl` package naming that
-   workflow and environment, and `decentraland/js-sdk-toolchain` to stop publishing. Then the rest of the PR tooling (the e2e realm, the playground). The first
-   release notes carry the narrowed types above.
+1. PR previews and `main`'s snapshots publish from here, the snapshots under `dcl-one`, not `next`:
+   this SDK lacks `AvatarEquippedData.wearables` and the commits `decentraland/js-sdk-toolchain`
+   landed after the snapshot, and moving the tag before they are here would take them from
+   creators. Releases are refused until the tag moves. Moving it needs that parity and
+   `decentraland/js-sdk-toolchain` to stop publishing. Then the rest of the PR tooling (the e2e
+   realm, the playground). The first release notes carry the narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.
