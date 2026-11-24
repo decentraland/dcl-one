@@ -15,9 +15,8 @@ from test_routing import route
 HUD = """
     import { registerHooks } from 'node:module';
     import { pathToFileURL } from 'node:url';
-    import { resolve } from 'node:path';
-    const [root, page, sites] = process.argv.slice(1);
-    const play = resolve(root, 'apps/ui3/src/play');
+    import { extname, resolve } from 'node:path';
+    const [root, page, sites, host] = process.argv.slice(1);
     const core = resolve(root, 'library/explorer-core');
     registerHooks({ resolve(specifier, context, next) {
         if (specifier === '@explorer-core/engine/generated') {
@@ -27,21 +26,29 @@ HUD = """
             const path = resolve(core, specifier.slice('@explorer-core/'.length) + '.ts');
             return { url: pathToFileURL(path).href, shortCircuit: true };
         }
+        if (specifier.startsWith('.') && extname(specifier) === '') {
+            return next(specifier + '.ts', context);
+        }
         return next(specifier, context);
     }});
     globalThis.window = { location: new URL(page), ...(sites === 'sites' ? { __DCL_PUBLIC__: {} } : {}) };
-    const hud = await import(pathToFileURL(resolve(play, 'lib/baseDomain.ts')));
+    globalThis.location = globalThis.window.location;
+    const module = host === 'react-web'
+        ? resolve(root, 'rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts')
+        : resolve(root, 'apps/ui3/src/play/lib/baseDomain.ts');
+    const hud = await import(pathToFileURL(module));
     const { SERVICES } = await import(pathToFileURL(resolve(core, 'engine/generated/serviceTable.ts')));
     const urls = Object.fromEntries(SERVICES.map((s) => [s.name, hud.serviceUrl(s.name)]));
-    console.log(JSON.stringify({ services: SERVICES, options: hud.engineServiceOptions(), urls }));
+    const options = hud.engineServiceOptions?.() ?? null;
+    console.log(JSON.stringify({ services: SERVICES, options, urls }));
 """
 
 
-def run_hud(root, page, sites):
-    # Only the browser location and the generated barrel import need a harness. Both the
-    # service table and serviceUrl/engineServiceOptions execute their production source.
+def run_hud(root, page, sites, host="play"):
+    # Only the browser location and the module specifiers need a harness. The service table and
+    # each host's serviceUrl (and /play's engineServiceOptions) execute their production source.
     result = subprocess.run(
-        ["node", "--input-type=module", "-e", HUD, str(root), page, "sites" if sites else ""],
+        ["node", "--input-type=module", "-e", HUD, str(root), page, "sites" if sites else "", host],
         text=True,
         capture_output=True,
     )
@@ -54,12 +61,17 @@ def check_gateway_option(rows, root):
     the gateway itself; a service the gateway leaves keeps the page's own destination, which a
     dcl-one page hands its engine explicitly."""
     for gateway, key in (("https://gateway.example.test", "vhost"), ("https://example.test", "direct")):
-        hud = run_hud(root, f"https://play.decentraland.org/play?gateway={gateway}", False)
+        page = f"https://play.decentraland.org/play?gateway={gateway}"
+        hud = run_hud(root, page, False)
         assert hud["options"] == {"gateway": gateway, "baseDomain": "decentraland.org"}, hud["options"]
+        # react-web, the engine's own web page, resolves the same way (it hands the engine the
+        # gateway in engineLaunch)
+        react_web = run_hud(root, page, False, "react-web")
         for row in rows:
             if row["web"]:
                 expected = row[key] if row[key] is not None else row["fallback"]
-                assert hud["urls"][row["name"]] == expected, (gateway, row["name"], hud["urls"][row["name"]], expected)
+                for name, urls in (("play", hud["urls"]), ("react-web", react_web["urls"])):
+                    assert urls[row["name"]] == expected, (name, gateway, row["name"], urls[row["name"]], expected)
 
         node = run_hud(root, f"https://node.example.test/play?gateway={gateway}", True)
         assert node["options"]["gateway"] == gateway, node["options"]

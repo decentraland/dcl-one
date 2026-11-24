@@ -1,6 +1,6 @@
 // The `?gateway=` launch option as both HUD hosts resolve it for their own fetches: the engine's
-// `common::gateway::Gateway` (crates/common/src/gateway.rs), the same parse and the same service
-// mapping, so the page and its engine reach the same endpoints. The engine takes the gateway as
+// `common::gateway::Gateway` (crates/common/src/gateway.rs), the same parse and the service
+// mapping its generated service table carries, so the page and its engine reach the same endpoints. The engine takes the gateway as
 // its `gateway` launch option and signs the paths the gateway forwards.
 
 import type { ServiceDef } from '../engine/generated/index'
@@ -31,17 +31,13 @@ export function parseGateway(raw: string | null): Gateway | null {
   return { prefix: url.href.replace(/\/+$/, ''), virtualHost: url.hostname.startsWith('gateway.') }
 }
 
-// Kept out of the gateway: site links and storage delegations use their own public destinations;
-// abgen's CDN is refused by the gateway's `/ab-cdn` route.
-const OWN_DESTINATION: ReadonlySet<string> = new Set(['authPage', 'reels', 'storage', 'abgenCdn'])
-
-/** The service's base url through the gateway (`Gateway::service`), or null when it keeps its own destination. */
+/**
+ * The service's base url through the gateway (`Gateway::service`), or null when it keeps its own
+ * destination. The segments come from the engine's service table (`Service::gateway_segment`).
+ */
 export function gatewayServiceUrl(gateway: Gateway, s: ServiceDef): string | null {
-  if (s.value !== 'http' || OWN_DESTINATION.has(s.name)) return null
-  // a direct origin serves the peer at its root, preview on the main gatekeeper and community
-  // thumbnails through social
-  const direct: Record<string, string> = { catalyst: '', previewGatekeeper: 'comms-gatekeeper', assetsCdn: 'social-api' }
-  const segment = !gateway.virtualHost && s.name in direct ? direct[s.name] : s.sub
+  const segment = gateway.virtualHost ? s.gatewayVirtualHost : s.gatewayDirect
+  if (segment == null) return null
   return segment === '' ? gateway.prefix : `${gateway.prefix}/${segment}`
 }
 

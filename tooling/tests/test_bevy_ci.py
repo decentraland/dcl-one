@@ -969,6 +969,7 @@ class SelectionTest(unittest.TestCase):
     def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
         for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
                      'apps/ui3/src/play/lib/baseDomain.ts',
+                     'library/explorer-core/lib/gateway.ts',
                      'library/explorer-core/engine/generated/serviceTable.ts'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -976,6 +977,14 @@ class SelectionTest(unittest.TestCase):
                 selected = ci.plan('pull_request', before, self.commit(), '')
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'test'})
+
+    def test_the_web_hud_gateway_resolver_selects_the_route_contract_and_the_web_lane(self):
+        name = 'rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts'
+        before = self.git('rev-parse', 'HEAD')
+        self.write(name, 'changed')
+        selected = ci.plan('pull_request', before, self.commit(), '')
+        self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]},
+                         {'test', 'web'})
 
     def test_upstream_watch_and_manual_packaging_are_not_ci_build_inputs(self):
         for name in ('upstream', 'desktop', 'rollout-manual'):

@@ -7,181 +7,233 @@ export const SERVICES: ServiceDef[] = [
     "value": "http",
     "scheme": "https",
     "sub": "realm-provider-ea",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "realm-provider-ea",
+    "gatewayDirect": "realm-provider-ea"
   },
   {
     "name": "catalyst",
     "value": "http",
     "scheme": "https",
     "sub": "peer",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "peer",
+    "gatewayDirect": ""
   },
   {
     "name": "worldsServer",
     "value": "http",
     "scheme": "https",
     "sub": "worlds-content-server",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "worlds-content-server",
+    "gatewayDirect": "worlds-content-server"
   },
   {
     "name": "places",
     "value": "http",
     "scheme": "https",
     "sub": "places",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "places",
+    "gatewayDirect": "places"
   },
   {
     "name": "commsGatekeeper",
     "value": "http",
     "scheme": "https",
     "sub": "comms-gatekeeper",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "comms-gatekeeper",
+    "gatewayDirect": "comms-gatekeeper"
   },
   {
     "name": "previewGatekeeper",
     "value": "http",
     "scheme": "https",
     "sub": "comms-gatekeeper-local",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "comms-gatekeeper-local",
+    "gatewayDirect": "comms-gatekeeper"
   },
   {
     "name": "abgenCdn",
     "value": "http",
     "scheme": "https",
     "sub": "abgen-cdn",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": null,
+    "gatewayDirect": null
   },
   {
     "name": "storage",
     "value": "http",
     "scheme": "https",
     "sub": "storage",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": null,
+    "gatewayDirect": null
   },
   {
     "name": "ethereumRpc",
     "value": "websocket",
     "scheme": "wss",
     "sub": "rpc",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": null,
+    "gatewayDirect": null
   },
   {
     "name": "socialRpc",
     "value": "websocket",
     "scheme": "wss",
     "sub": "rpc-social-service-ea",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": null,
+    "gatewayDirect": null
   },
   {
     "name": "socialApi",
     "value": "http",
     "scheme": "https",
     "sub": "social-api",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "social-api",
+    "gatewayDirect": "social-api"
   },
   {
     "name": "opensea",
     "value": "http",
     "scheme": "https",
     "sub": "opensea",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "opensea",
+    "gatewayDirect": "opensea"
   },
   {
     "name": "reels",
     "value": "http",
     "scheme": "https",
     "sub": "",
-    "path": "/reels"
+    "path": "/reels",
+    "gatewayVirtualHost": null,
+    "gatewayDirect": null
   },
   {
     "name": "mapApi",
     "value": "http",
     "scheme": "https",
     "sub": "api",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "api",
+    "gatewayDirect": "api"
   },
   {
     "name": "cameraReel",
     "value": "http",
     "scheme": "https",
     "sub": "camera-reel-service",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "camera-reel-service",
+    "gatewayDirect": "camera-reel-service"
   },
   {
     "name": "events",
     "value": "http",
     "scheme": "https",
     "sub": "events",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "events",
+    "gatewayDirect": "events"
   },
   {
     "name": "badges",
     "value": "http",
     "scheme": "https",
     "sub": "badges",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "badges",
+    "gatewayDirect": "badges"
   },
   {
     "name": "notifications",
     "value": "http",
     "scheme": "https",
     "sub": "notifications",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "notifications",
+    "gatewayDirect": "notifications"
   },
   {
     "name": "assetsCdn",
     "value": "http",
     "scheme": "https",
     "sub": "assets-cdn",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "assets-cdn",
+    "gatewayDirect": "social-api"
   },
   {
     "name": "marketplaceApi",
     "value": "http",
     "scheme": "https",
     "sub": "marketplace-api",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "marketplace-api",
+    "gatewayDirect": "marketplace-api"
   },
   {
     "name": "autotranslate",
     "value": "http",
     "scheme": "https",
     "sub": "autotranslate-server",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "autotranslate-server",
+    "gatewayDirect": "autotranslate-server"
   },
   {
     "name": "dclLists",
     "value": "http",
     "scheme": "https",
     "sub": "dcl-lists",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "dcl-lists",
+    "gatewayDirect": "dcl-lists"
   },
   {
     "name": "archipelagoStats",
     "value": "http",
     "scheme": "https",
     "sub": "archipelago-ea-stats",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "archipelago-ea-stats",
+    "gatewayDirect": "archipelago-ea-stats"
   },
   {
     "name": "builderApi",
     "value": "http",
     "scheme": "https",
     "sub": "builder-api",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "builder-api",
+    "gatewayDirect": "builder-api"
   },
   {
     "name": "featureFlags",
     "value": "http",
     "scheme": "https",
     "sub": "feature-flags",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": "feature-flags",
+    "gatewayDirect": "feature-flags"
   },
   {
     "name": "pulseServer",
     "value": "authority",
     "scheme": "",
     "sub": "pulse-server",
-    "path": ""
+    "path": "",
+    "gatewayVirtualHost": null,
+    "gatewayDirect": null
   }
 ]

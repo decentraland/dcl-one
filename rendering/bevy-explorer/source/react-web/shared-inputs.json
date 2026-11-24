@@ -658,6 +658,10 @@
           "kind": "regular"
         },
         {
+          "name": "gateway.ts",
+          "kind": "regular"
+        },
+        {
           "name": "gpu.test.ts",
           "kind": "regular"
         },
@@ -825,6 +829,10 @@
         },
         {
           "name": "friendLocation.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "gateway.test.ts",
           "kind": "regular"
         },
         {
@@ -6182,7 +6190,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
-      "sha256": "8ed3436c664504fe1b3013d8c3d125e706b5f7f41c65791f42d47e5acc96548e"
+      "sha256": "d3b4c2ffdf256e8e97525b09f189da5436a54054aa3f999a3c37786ab6071bdf"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
@@ -6190,7 +6198,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/engineLaunch.ts",
-      "sha256": "3ac514c6e866a99955bae55a3b5b4e59205feec33bb8a2ef41552b6db17dd3e7"
+      "sha256": "176410ad30ab1550a8b0f1aa502de61a2eff51408064fc404789b152c8f7d30c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
@@ -6202,7 +6210,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "6dc5381a4441ebd546fae46a020222da03c48f9bf5304f16660abb67e2cd515c"
+      "sha256": "34e391873af0c24afede610fe1767204d7ec62b309bad6fec585b3d743e16b89"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
@@ -6250,7 +6258,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "638f726eb0d4ca75d3ce8db9f7584516fe918b8c602b2a30c3a1f6cacd15b02a"
+      "sha256": "606993499ee7d14b38e7063d023e7b14921c6f49fc2dbaaafbe52dd430854e38"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
@@ -7014,6 +7022,10 @@
       "sha256": "ee0e0a9c62e867993505d3390bc49b1fdaf4a03bdb2c7942036ba89dfaf37f95"
     },
     {
+      "path": "library/explorer-core/lib/gateway.ts",
+      "sha256": "ed117feba155395fe0b9c48aa84025560a4a64aff83ad9ee5be950bf5efd9c18"
+    },
+    {
       "path": "library/explorer-core/lib/gpu.test.ts",
       "sha256": "74bd1e89d9adbb69d3161431f008f927aaede96034ecf1935ba0d13f9e22437c"
     },
@@ -7172,6 +7184,10 @@
     {
       "path": "library/explorer-core/test/friendLocation.test.ts",
       "sha256": "765c89962851ec95ecf78507a1943e98c90a6665ee141da57d639eec198b9866"
+    },
+    {
+      "path": "library/explorer-core/test/gateway.test.ts",
+      "sha256": "f4ba61d85dd0cd7348a6c0c867ee2b1b527da76bf254f2562208b7eae5f3f224"
     },
     {
       "path": "library/explorer-core/test/giftItem.test.ts",
@@ -13232,6 +13248,21 @@
     {
       "from": "library/explorer-core/test/friendLocation.test.ts",
       "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gateway.test.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gateway.test.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gateway.test.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
       "kind": "test:runtime"
     },
     {
@@ -45450,6 +45481,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/lib/engineLaunch.ts",
       "to": "library/explorer-core/lib/webParams.ts",
       "kind": "native:runtime"
@@ -46596,6 +46642,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/gateway.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/gpu.test.ts",
       "kind": "type"
     },
@@ -46792,6 +46843,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/friendLocation.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/gateway.test.ts",
       "kind": "type"
     },
     {

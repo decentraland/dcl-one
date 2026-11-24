@@ -71,7 +71,9 @@ describe('the gateway option', () => {
       const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)
       expect(m.untrustedLaunchParams({ native: false }), gateway).toEqual([])
     }
-    const plain = await load(false, '/?gateway=http://gateway.decentraland.org')
-    expect(plain.untrustedLaunchParams({ native: false }).map((p) => p.name)).toEqual(['gateway'])
+    for (const gateway of ['http://gateway.decentraland.org', `${window.location.origin}/_scene/game.example`]) {
+      const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)
+      expect(m.untrustedLaunchParams({ native: false }).map((p) => p.name), gateway).toEqual(['gateway'])
+    }
   })
 })

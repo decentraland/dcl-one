@@ -184,6 +184,26 @@ impl Service {
             _ => ServiceValue::Http,
         }
     }
+
+    /// The path segment under a gateway base url that serves this service (empty = the base
+    /// itself), or None when the service keeps its own destination. A `gateway.` virtual host
+    /// serves every HTTP API under its host label; a direct origin exposes the peer at the root,
+    /// preview on the main gatekeeper and community thumbnails through social.
+    pub fn gateway_segment(self, virtual_host: bool) -> Option<&'static str> {
+        match self {
+            Service::Catalyst if !virtual_host => Some(""),
+            Service::PreviewGatekeeper if !virtual_host => Some("comms-gatekeeper"),
+            Service::AssetsCdn if !virtual_host => Some("social-api"),
+            // Site links and storage delegations use their own public destinations.
+            Service::AuthPage | Service::Reels | Service::Storage => None,
+            // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
+            // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
+            // route.
+            Service::AbgenCdn => None,
+            service if service.value() == ServiceValue::Http => Some(service.composition().1),
+            _ => None,
+        }
+    }
 }
 
 use crate::launch_options::help_heading::SERVICES as HELP_HEADING;
@@ -369,6 +389,10 @@ pub struct ServiceDef {
     /// Empty = the apex domain
     pub sub: String,
     pub path: String,
+    /// Its segment under a `gateway.` virtual host; null = not through a gateway
+    pub gateway_virtual_host: Option<String>,
+    /// Its segment under a gateway's direct origin; null = not through a gateway
+    pub gateway_direct: Option<String>,
 }
 
 pub fn service_table() -> Vec<ServiceDef> {
@@ -382,6 +406,8 @@ pub fn service_table() -> Vec<ServiceDef> {
                 scheme: scheme.to_owned(),
                 sub: sub.to_owned(),
                 path: path.to_owned(),
+                gateway_virtual_host: service.gateway_segment(true).map(str::to_owned),
+                gateway_direct: service.gateway_segment(false).map(str::to_owned),
             }
         })
         .collect()

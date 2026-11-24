@@ -42,7 +42,7 @@ const GATES: Record<string, Gate> = {
   },
   // Routes every first-party API, signed requests included, through one server. Read normalised,
   // like the base domain; native is exempt the same way (its link may name only a Decentraland
-  // gateway). Trusted: an https gateway under Decentraland's own deployments, or this page's host.
+  // gateway). Trusted: an https gateway under Decentraland's own deployments, or this page's origin.
   gateway: {
     warning:
       'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.',
@@ -69,10 +69,11 @@ const GATES: Record<string, Gate> = {
   }
 }
 
-/** An https gateway under one of Decentraland's own deployments, or one on this page's own host. */
+/** An https gateway under one of Decentraland's own deployments, or this page's own origin. A path
+ *  under the origin is not trusted: the node proxies other hosts there (`/_scene/<host>`). */
 function isTrustedGateway(prefix: string): boolean {
   const url = new URL(prefix)
-  return url.host === location.host || (url.protocol === 'https:' && hostBaseDomain(url.hostname) != null)
+  return prefix === location.origin || (url.protocol === 'https:' && hostBaseDomain(url.hostname) != null)
 }
 
 /** A content server under one of Decentraland's own deployments. */

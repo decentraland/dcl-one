@@ -247,21 +247,13 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
     };
 
     if let Some(link) = &args.client.deep_link {
-        let place = platform::deeplink::parse_place_link(link).map_err(|e| {
-            error!("{link}: {e}");
-            UserError(USAGE_ERROR)
-        })?;
-        // explicit flags win over the link
-        args.launch.realm = args.launch.realm.take().or(place.realm);
-        args.launch.position = args.launch.position.take().or(place.position);
-        args.launch.base_domain = args.launch.base_domain.take().or(place.base_domain);
-        if let Some(gateway) = &place.gateway {
-            common::gateway::Gateway::parse_link(gateway).map_err(|e| {
+        platform::deeplink::parse_place_link(link)
+            .map_err(|e| e.to_string())
+            .and_then(|place| apply_place_link(&mut args.launch, place))
+            .map_err(|e| {
                 error!("{link}: {e}");
                 UserError(USAGE_ERROR)
             })?;
-        }
-        args.launch.gateway = args.launch.gateway.take().or(place.gateway);
     }
 
     webgpu_build::launch::latch(&args.launch).map_err(|e| {
@@ -284,6 +276,24 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
         args.client.system_scene = default_ui_scene();
     }
     Ok(args)
+}
+
+/// A place link's launch options, under the explicit flags, which win. The link's gateway must be
+/// one a link may select ([`common::gateway::Gateway::parse_link`]) only when it applies.
+fn apply_place_link(
+    launch: &mut system_api_types::launch_options::LaunchOptions,
+    place: platform::deeplink::PlaceLink,
+) -> Result<(), String> {
+    launch.realm = launch.realm.take().or(place.realm);
+    launch.position = launch.position.take().or(place.position);
+    launch.base_domain = launch.base_domain.take().or(place.base_domain);
+    if launch.gateway.is_none() {
+        if let Some(gateway) = place.gateway {
+            common::gateway::Gateway::parse_link(&gateway)?;
+            launch.gateway = Some(gateway);
+        }
+    }
+    Ok(())
 }
 
 /// react HUD builds default to the bundled bridge-scene static export (a file realm, loaded with
@@ -476,6 +486,40 @@ mod tests {
         assert_eq!(
             args.launch.services.places.as_deref(),
             Some("https://custom.test/base")
+        );
+    }
+
+    #[test]
+    fn a_link_selects_only_a_decentraland_gateway_and_the_flag_wins() {
+        use system_api_types::launch_options::LaunchOptions;
+        let link = |raw: &str| platform::deeplink::parse_place_link(raw).unwrap();
+
+        let mut launch = LaunchOptions::default();
+        apply_place_link(
+            &mut launch,
+            link("decentraland://open?position=1,2&gateway=https://gateway.decentraland.org"),
+        )
+        .unwrap();
+        assert_eq!(
+            launch.gateway.as_deref(),
+            Some("https://gateway.decentraland.org")
+        );
+        assert_eq!(launch.position.as_deref(), Some("1,2"));
+
+        let foreign = link("decentraland://open?gateway=https://gateway.example.test");
+        let refused = apply_place_link(&mut LaunchOptions::default(), foreign).unwrap_err();
+        assert!(refused.contains("--gateway"), "{refused}");
+
+        // the flag wins, so the link's gateway is never applied nor refused
+        let mut flagged = LaunchOptions {
+            gateway: Some("https://gateway.example.test".to_owned()),
+            ..Default::default()
+        };
+        let foreign = link("decentraland://open?gateway=https://other.example.test");
+        apply_place_link(&mut flagged, foreign).unwrap();
+        assert_eq!(
+            flagged.gateway.as_deref(),
+            Some("https://gateway.example.test")
         );
     }
 

@@ -1,6 +1,7 @@
-//! Trusted native gateway configuration. The deployment's gateway virtual host
-//! preserves service identities. Its apex serves the same APIs at canonical paths.
-use system_api_types::services::{Service, ServiceValue};
+//! The gateway launch option (`--gateway`, `?gateway=`, a link's `gateway=`). The deployment's
+//! gateway virtual host preserves service identities. Its apex serves the same APIs at
+//! canonical paths.
+use system_api_types::services::Service;
 use url::Url;
 
 #[derive(Debug, PartialEq)]
@@ -54,22 +55,8 @@ impl Gateway {
         &self.prefix
     }
 
-    // API vhosts use their service host label. Direct origins expose the peer at
-    // the root, preview on the main gatekeeper, and community thumbnails through social.
     fn segment(&self, service: Service) -> Option<&'static str> {
-        match service {
-            Service::Catalyst if !self.virtual_host => Some(""),
-            Service::PreviewGatekeeper if !self.virtual_host => Some("comms-gatekeeper"),
-            Service::AssetsCdn if !self.virtual_host => Some("social-api"),
-            // Site links and storage delegations use their own public destinations.
-            Service::AuthPage | Service::Reels | Service::Storage => None,
-            // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
-            // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
-            // route.
-            Service::AbgenCdn => None,
-            service if service.value() == ServiceValue::Http => Some(service.composition().1),
-            _ => None,
-        }
+        service.gateway_segment(self.virtual_host)
     }
 
     pub fn service(&self, service: Service) -> Option<String> {
