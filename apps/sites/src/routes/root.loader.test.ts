@@ -33,6 +33,44 @@ it("hands the page no Pulse host when the deployment sets none", async () => {
   expect((await load()).pulseServer).toBe("");
 });
 
+describe("when the root loader reads the node's network", () => {
+  const loadFrom = (url: string) => {
+    const context = new RouterContextProvider();
+    markPublicResponse(context);
+    return loader({ request: new Request(url), params: {}, context } as never);
+  };
+  let reads: string[];
+
+  beforeEach(() => {
+    reads = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        reads.push(String(input instanceof Request ? input.url : input));
+        return new Response(JSON.stringify({ configurations: { networkId: 11155111 } }), {
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(["https://example.test/create", "https://decentraland.org/create", "http://localhost:5212/create"])(
+    "should neither ask the node nor hand a network to a page on %s",
+    async (url) => {
+      expect((await loadFrom(url)).nodeNetworkId).toBeUndefined();
+      expect(reads).toEqual([]);
+    },
+  );
+
+  it.each(["https://dcl.dev/create", "https://dcl.live/", "https://create.dcl.dev/"])(
+    "should hand the page the network id of the node's about answer on %s",
+    async (url) => {
+      expect((await loadFrom(url)).nodeNetworkId).toBe(11155111);
+    },
+  );
+});
+
 describe("when the shared locale is read for an Events request", () => {
   let context: RouterContextProvider;
   beforeEach(() => { context = new RouterContextProvider(); });
