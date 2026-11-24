@@ -1197,7 +1197,14 @@ async fn variants_turned_off_during_a_manifest_wait_serve_nothing() {
         let ipfs_path = IpfsPath::new_from_path(&path2).unwrap().unwrap();
         io2.read_bevy_variant(&ipfs_path, &path2).await.is_none()
     });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // the reader holds its own receiver once it waits on the pending manifest
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while sender.receiver_count() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the reader never waited on the manifest");
     io.set_bevy_variants_base(None);
     sender.send_replace(loaded);
     assert!(reading.await.unwrap());
@@ -1318,8 +1325,9 @@ fn the_flag_routes_the_variants_once_the_flags_settle() {
     }
 }
 
-/// End to end from the flags service: its answer names a base that is not an https
-/// Decentraland url, which is never asked for; the entity's manifest comes from the default.
+/// End to end from the flags service: its answer names a plain `http` loopback base, which the
+/// scheme check refuses (other hosts are `flagged_base`'s table) and which is never asked for;
+/// the entity's manifest comes from the default.
 #[tokio::test]
 async fn a_flagged_base_outside_decentraland_is_never_requested() {
     let manifest_route = format!("/bevy/manifest/{SCENE}.json");

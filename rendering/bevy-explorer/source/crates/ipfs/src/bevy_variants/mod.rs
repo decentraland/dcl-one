@@ -569,8 +569,8 @@ struct Bases {
     source: String,
 }
 
-/// Lock order: `base` before `manifests`, `session` and `far_lods`; none of those is held while
-/// `base` is taken.
+/// Lock order: `base` before `manifests`, `session` and `far_lods`, and `manifests` before
+/// `requested_at`; none of those is held while `base` is taken.
 #[derive(Default)]
 pub struct BevyVariants {
     base: Mutex<Bases>,
@@ -650,8 +650,12 @@ impl BevyVariants {
         self.far_lods.lock_ignore_poison().new_base();
     }
 
-    /// A new pending manifest for `entity`, or None when one was already requested.
-    fn begin(&self, entity: &str) -> Option<watch::Sender<ManifestState>> {
+    /// A new pending manifest for `entity` and the base to ask it from, or None when one was
+    /// already requested or variants are off. The base is read under the base lock, so a switch
+    /// cannot fall between the two.
+    fn begin(&self, entity: &str) -> Option<(String, watch::Sender<ManifestState>)> {
+        let bases = self.base.lock_ignore_poison();
+        let base = bases.current.clone()?;
         let mut manifests = self.manifests.lock_ignore_poison();
         if manifests.contains_key(entity) {
             return None;
@@ -661,7 +665,7 @@ impl BevyVariants {
         self.requested_at
             .lock_ignore_poison()
             .insert(entity.to_owned(), web_time::Instant::now());
-        Some(sender)
+        Some((base, sender))
     }
 
     /// How much of [`MANIFEST_DEADLINE`] an entity's files may still wait for its manifest.
@@ -984,10 +988,7 @@ impl IpfsIo {
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
     /// no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
-        let Some(base) = self.bevy_variants.base() else {
-            return;
-        };
-        let Some(sender) = self.bevy_variants.begin(entity) else {
+        let Some((base, sender)) = self.bevy_variants.begin(entity) else {
             return;
         };
         let io = self.clone();
