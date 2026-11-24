@@ -560,6 +560,17 @@ fn api_routes() -> Router<SharedState> {
             "/v1/{address}/items",
             get(handlers::collections::get_address_items),
         )
+        .route("/v1/thirdParties", get(handlers::third_parties::list))
+        .route(
+            "/v1/thirdParties/{id}",
+            get(handlers::third_parties::get)
+                .delete(handlers::third_parties::delete)
+                .patch(handlers::third_parties::update),
+        )
+        .route(
+            "/v1/thirdParties/{id}/slots",
+            get(handlers::third_parties::slots),
+        )
         .route_layer(axum::middleware::map_response(http::private_response))
         .route(
             "/v1/collections",
