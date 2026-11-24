@@ -138,18 +138,115 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
         "{err}"
     );
-    let err = check_of(&[
+    // The collections subgraphs are no profile ownership source, but they
+    // are the catalogue the nft walk takes its contracts from: a node that
+    // fills its own catalogue may blank neither, one whose catalogue another
+    // node fills may.
+    for (key, blank) in [
+        ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ] {
+        let err = check_of(&[db, (ENV, "mirror"), (key, blank)])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("{key} is empty")) && err.contains("never publishes"),
+            "{err}"
+        );
+    }
+    check_of(&[
         db,
         (ENV, "mirror"),
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+        ("MARKETPLACE_MIRRORS_ENABLED", "false"),
+    ])
+    .unwrap();
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
     ])
     .unwrap_err()
     .to_string();
     assert!(
-        err.contains("ETH_COLLECTIONS_SUBGRAPH_URL, MATIC_COLLECTIONS_SUBGRAPH_URL are empty"),
+        err.contains("MARKETPLACE_NFT_INDEX_ENABLED is off"),
         "{err}"
     );
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("TRADE_RPC_URLS", "1=https://eth.example"),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("names no 137= endpoint"), "{err}");
+    let err = check_of(&[db, (ENV, "mirror"), ("TRADE_RPC_URLS", "")])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("names no 137= endpoint"), "{err}");
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("TRADE_RPC_URLS", "137=https://polygon.example"),
+    ])
+    .unwrap();
+    // A file is read after the check, and the list it held is checked
+    // once the secrets are resolved (`refuse_remote_secrets`, the last step
+    // of `Config::resolve_secret_files`).
+    let with_file = [
+        db,
+        (ENV, "mirror"),
+        ("TRADE_RPC_URLS_FILE", "/run/credentials/trade"),
+    ];
+    check(&parsed_with_files(&with_file), &lookup(&env(&with_file))).unwrap();
+    for (held, refused) in [
+        ("1=https://eth.example", true),
+        ("1=https://eth.example,137=", true),
+        ("1=https://eth.example,137=https://polygon.example", false),
+    ] {
+        let mut c = parsed_with_files(&with_file);
+        // What `resolve_secret_files` reads from the file, then the defaults.
+        c.marketplace.trade_rpc_urls = Some(held.into());
+        c.default_rpc_urls();
+        c.derive_trade_rpc_urls();
+        let result = refuse_remote_secrets(&mut c);
+        assert_eq!(result.is_err(), refused, "{held}: {result:?}");
+        if let Err(e) = result {
+            assert!(e.to_string().contains("names no 137= endpoint"), "{e}");
+        }
+    }
+    // ETH_NETWORK and NODE_POSTURE are read trimmed everywhere: padded
+    // values still derive the node's own 1= and 137= list, which passes; a
+    // list that never derived is refused, as an empty one is.
+    for padded in [("ETH_NETWORK", "mainnet "), (ENV, "mirror ")] {
+        let mut c = parsed(&[db, (ENV, "mirror"), padded]);
+        c.default_rpc_urls();
+        c.derive_trade_rpc_urls();
+        assert!(
+            c.marketplace
+                .trade_rpc_urls
+                .as_deref()
+                .is_some_and(|l| l.contains("137=")),
+            "{padded:?}: {:?}",
+            c.marketplace.trade_rpc_urls
+        );
+        refuse_remote_secrets(&mut c).unwrap();
+    }
+    let mut c = parsed(&[db, (ENV, "mirror"), ("ETH_NETWORK", "mainnet ")]);
+    c.default_rpc_urls();
+    c.derive_trade_rpc_urls();
+    c.marketplace.trade_rpc_urls = None;
+    let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
+    assert!(err.contains("names no 137= endpoint"), "{err}");
+    // A testnet mirror serves the items as deployed until its chains are walked.
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("ETH_NETWORK", "sepolia"),
+        ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+    ])
+    .unwrap();
     check_of(&[db, (ENV, "island")]).unwrap();
 }
 
@@ -244,6 +341,10 @@ fn a_mirror_indexes_the_third_party_registry_without_a_subgraph() {
     ];
     let mut c = parsed_with_files(&pairs);
     assert_eq!(c.validator.third_party_registry_l2_subgraph_url, None);
+    // `resolve_secret_files`'s steps before its last one: a mirror's
+    // effective TRADE_RPC_URLS must name chain 137 (`refuse_unwalkable_polygon`).
+    c.default_rpc_urls();
+    c.derive_trade_rpc_urls();
     refuse_remote_secrets(&mut c).unwrap();
 }
 
@@ -1043,6 +1144,8 @@ fn a_secret_file_naming_an_outside_host_is_refused_off_mirror() {
     refuse_remote_secrets(&mut c).unwrap();
     let mut c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
     c.economy.rpc_endpoint_polygon = Some("https://polygon.example.org/key".into());
+    c.default_rpc_urls();
+    c.derive_trade_rpc_urls();
     refuse_remote_secrets(&mut c).unwrap();
 }
 
@@ -1230,6 +1333,37 @@ fn about_resource_check_is_off_unless_set() {
         assert!(!parsed(&[db, (ENV, posture)]).node.about_resource_check);
         let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
         assert!(on.node.about_resource_check, "{posture}");
+    }
+}
+
+#[test]
+fn a_collections_subgraph_without_the_nft_walk_is_warned_about() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let eth = ("ETH_COLLECTIONS_SUBGRAPH_URL", "https://reader.example/l1");
+    let matic = (
+        "MATIC_COLLECTIONS_SUBGRAPH_URL",
+        "https://reader.example/l2",
+    );
+    let index = ("MARKETPLACE_NFT_INDEX_ENABLED", "true");
+    let sepolia = ("ETH_NETWORK", "sepolia");
+    let run = |pairs: &[(&str, &str)]| unchecked_profile_items(&parsed(pairs));
+
+    for pairs in [
+        &[db, eth][..],
+        &[db, matic][..],
+        &[db, eth, matic, index, sepolia][..],
+    ] {
+        let warning = run(pairs).unwrap_or_else(|| panic!("{pairs:?}"));
+        assert!(warning.contains("served as deployed"), "{warning}");
+        assert!(!warning.contains("reader.example"), "{warning}");
+    }
+    for pairs in [
+        &[db][..],
+        &[db, index][..],
+        &[db, eth, matic, index][..],
+        &[db, ("ETH_COLLECTIONS_SUBGRAPH_URL", " ")][..],
+    ] {
+        assert_eq!(run(pairs), None, "{pairs:?}");
     }
 }
 
