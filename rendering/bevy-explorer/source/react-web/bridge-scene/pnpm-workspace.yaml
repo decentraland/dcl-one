@@ -12,14 +12,14 @@ overrides:
   extract-zip: file:../../../../../apps/creator-hub/packages/zip-extract
 minimumReleaseAge: 1440
 # The SDK snapshot this scene pins, published from decentraland/js-sdk-toolchain's experimental-bevy,
-# and the protocol it depends on.
+# and the protocol it depends on. Drop each entry once the version is a day old.
 minimumReleaseAgeExclude:
-  - '@dcl/ecs'
-  - '@dcl/js-runtime'
-  - '@dcl/protocol'
-  - '@dcl/react-ecs'
-  - '@dcl/sdk'
-  - '@dcl/sdk-commands'
+  - '@dcl/ecs@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/js-runtime@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/protocol@1.0.0-45443187908.commit-ad382e2'
+  - '@dcl/react-ecs@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/sdk@7.33.1-45449076924.commit-76c9960'
+  - '@dcl/sdk-commands@7.33.1-45449076924.commit-76c9960'
 allowBuilds:
   '@dcl/sdk-commands': false
   esbuild: false
