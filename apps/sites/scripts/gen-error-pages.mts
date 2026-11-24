@@ -24,11 +24,12 @@ import { build, createServer, type ModuleNode, type Rollup } from "vite";
 
 const sites = fileURLToPath(new URL("../", import.meta.url));
 const oneUi = fileURLToPath(new URL("../../../library/ui/", import.meta.url));
+const webCore = fileURLToPath(new URL("../../../library/web-core/", import.meta.url));
 const status = join(oneUi, "apps/sites/status");
 const artDir = join(oneUi, "apps/sites/assets/errors");
 const notFoundEntry = join(sites, "src/features/not-found/NotFoundPage.tsx");
 const foundations = join(oneUi, "foundations");
-const animatedBackground = join(oneUi, "apps/sites/shared/AnimatedBackground");
+const animatedBackground = join(oneUi, "components/AnimatedBackground");
 // The shared Inter faces (variable Inter, one face per script spanning every weight) and their files.
 const interCss = join(foundations, "typography/inter.css");
 const outDir = process.env.ERROR_PAGES_OUT || join(sites, "public/errors");
@@ -42,28 +43,31 @@ const vite = await createServer({
   logLevel: "silent",
   appType: "custom",
   server: { middlewareMode: true, hmr: false, watch: null },
-  // The @dcl/one-ui aliases of vite.config.ts, which NotFoundPage imports through.
+  // The @dcl/one-ui and @web-core aliases of vite.config.ts, which NotFoundPage and the copy import through.
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: [
+      { find: /^@web-core\//, replacement: webCore },
       { find: /^@dcl\/one-ui$/, replacement: join(oneUi, "index.ts") },
+      { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations/typography/text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: oneUi },
     ],
   },
   optimizeDeps: { noDiscovery: true, include: [] },
 });
-let copyModule: typeof import("../../../library/ui/apps/sites/status/statusCopy.ts");
+let copyModule: typeof import("@web-core/status-copy");
 let styles: Record<string, string>;
 let moduleCss: string;
-let icons: typeof import("../../../library/ui/foundations/icons/index.ts");
+// Typed by the one icon it reads: the entry's own types pull in its CSS and media imports, which this config does not declare.
+let ui: { GeneralDecentraland: ComponentType<Record<string, unknown>> };
 let notFoundMarkup: string;
 let notFoundCss: string;
 let backgroundStyles: Record<string, string>;
 try {
-  copyModule = await vite.ssrLoadModule(join(status, "statusCopy.ts")) as typeof copyModule;
+  copyModule = await vite.ssrLoadModule("@web-core/status-copy") as typeof copyModule;
   styles = (await vite.ssrLoadModule(join(status, "StatusPage.module.css"))).default as Record<string, string>;
   moduleCss = (await vite.ssrLoadModule(`${join(status, "StatusPage.module.css")}?inline`)).default as string;
-  icons = await vite.ssrLoadModule(join(foundations, "icons/index.ts")) as typeof icons;
+  ui = await vite.ssrLoadModule("@dcl/one-ui") as typeof ui;
   const NotFoundPage = (await vite.ssrLoadModule(notFoundEntry)).default as ComponentType;
   // React hoists a preload for each <img>; the page inlines the image, so the preload would only repeat its bytes.
   notFoundMarkup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(NotFoundPage)))
@@ -162,7 +166,7 @@ const webpUri = (path: string) => {
     const bytes = readFileSync(path);
     if (bytes.subarray(0, LFS_POINTER.length).toString("latin1") === LFS_POINTER) {
       throw new Error(
-        `gen-error-pages: ${file} is a Git LFS pointer, not the image. From the repository root run: git lfs pull --include="library/ui/apps/sites/assets/**"`,
+        `gen-error-pages: ${file} is a Git LFS pointer, not the image. From the repository root run: git lfs pull --include="${file.startsWith("library/ui/assets/") ? "library/ui/assets" : "library/ui/apps/sites/assets"}/**"`,
       );
     }
     if (bytes.subarray(0, 4).toString("latin1") !== "RIFF" || bytes.subarray(8, 12).toString("latin1") !== "WEBP") {
@@ -270,7 +274,7 @@ const notFoundStyleCss = minify(notFoundCss).replace(/url\(\s*(['"]?)(\/[^'")]+)
 const notFoundStyle = `${interFaces(notFoundStyleCss, notFoundMarkup)}${tokenBlock(notFoundStyleCss)}${SHELL_CSS}${notFoundStyleCss}`;
 const notFoundBody = `${notFoundMarkup.replace(/ src="(\/[^"]+)"/g, (_, url: string) => ` src="${assetUri(url)}"`)}\n<script>${await backgroundScript(notFoundMarkup)}</script>`;
 const logo = renderToStaticMarkup(
-  createElement(icons.GeneralDecentraland, { className: styles.logoMark, size: 28, viewBox: LOGOMARK_VIEW_BOX, "aria-hidden": "true" }),
+  createElement(ui.GeneralDecentraland, { className: styles.logoMark, size: 28, viewBox: LOGOMARK_VIEW_BOX, "aria-hidden": "true" }),
 );
 
 function head(code: number, source: string, css: string): string {

@@ -423,10 +423,6 @@
     "primitives": 0,
     "tokens": 10
   },
-  "apps/sites/src/features/explorer/event-management/PendingEventsPage.module.css": {
-    "primitives": 0,
-    "tokens": 3
-  },
   "apps/sites/src/features/not-found/NotFoundPage.module.css": {
     "primitives": 0,
     "tokens": 14
@@ -449,11 +445,15 @@
   },
   "apps/sites/src/features/social/submit-hangout/SubmitHangout.module.css": {
     "primitives": 0,
-    "tokens": 60
+    "tokens": 55
   },
   "apps/sites/src/features/social/submit-hangout/SubmitSuccess.module.css": {
     "primitives": 0,
-    "tokens": 12
+    "tokens": 17
+  },
+  "apps/sites/src/pages/events/PendingEventsPage.module.css": {
+    "primitives": 0,
+    "tokens": 3
   },
   "apps/ui3/src/explorer/pages/passport.css": {
     "primitives": 25,
@@ -541,7 +541,7 @@
   },
   "library/ui/apps/sites/profile/PhotoViewer.module.css": {
     "primitives": 0,
-    "tokens": 48
+    "tokens": 67
   },
   "library/ui/apps/sites/profile/ProfileBadges.module.css": {
     "primitives": 0,
@@ -613,7 +613,7 @@
   },
   "library/ui/components/BlogCard/BlogCard.module.css": {
     "primitives": 0,
-    "tokens": 23
+    "tokens": 24
   },
   "library/ui/components/BlogCard/BlogCardLink.module.css": {
     "primitives": 0,
@@ -621,7 +621,7 @@
   },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
-    "tokens": 50
+    "tokens": 56
   },
   "library/ui/components/CardActionButton/CardActionButton.module.css": {
     "primitives": 0,
@@ -749,7 +749,7 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 31
+    "tokens": 33
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,

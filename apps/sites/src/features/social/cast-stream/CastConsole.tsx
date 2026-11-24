@@ -3,7 +3,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { useMachine } from "@xstate/react";
 import { useSearchParams } from "react-router";
 
-import CastStreamerView from "@dcl/one-ui/apps/sites/cast/StCastStreamer";
+import { StCastStreamer as CastStreamerView } from "@dcl/one-ui";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
 import SitesLayout from "../../components/chrome/SitesLayout";

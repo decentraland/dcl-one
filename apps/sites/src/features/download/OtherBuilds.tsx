@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 
 import Tooltip from "@ui/atoms/Tooltip";
-import { GeneralApple, GeneralWindows } from "@dcl/one-ui/foundations/icons";
+import { GeneralApple, GeneralWindows } from "@dcl/one-ui";
 
 import type { DownloadOption } from "@/data/lib/download/creator-hub.server";
 

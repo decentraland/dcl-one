@@ -9,6 +9,7 @@ use crate::{AVPlayer, AVSinks};
 use {
     crate::audio_sink::AudioSink,
     common::structs::AudioDecoderError,
+    common::sync::MutexExt,
     kira::sound::streaming::StreamingSoundData,
     media::{ffmpeg_worker, AudioHandle},
 };
@@ -134,9 +135,7 @@ pub fn spawn_av_thread(
     hash: String,
 ) {
     let thread = std::thread::spawn(move || av_thread(ipfs, senders_and_receivers, path, hash));
-    let mut threads = AV_THREADS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut threads = AV_THREADS.lock_ignore_poison();
     threads.retain(|thread| !thread.is_finished());
     threads.push(thread);
 }
@@ -146,11 +145,7 @@ pub fn spawn_av_thread(
 /// once the command sender is dropped.
 #[cfg(feature = "ffmpeg")]
 pub fn join_av_threads(timeout: std::time::Duration) -> bool {
-    let mut threads = std::mem::take(
-        &mut *AV_THREADS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    );
+    let mut threads = std::mem::take(&mut *AV_THREADS.lock_ignore_poison());
     let deadline = std::time::Instant::now() + timeout;
     loop {
         // `is_finished` only says the thread's body returned; join it so its teardown is over too

@@ -24,6 +24,7 @@ use std::time::Duration;
 use alloy_core::primitives::Address;
 use bevy::math::{IVec2, Vec3};
 use bevy::platform::time::Instant;
+use common::sync::MutexExt;
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
 pub(crate) mod movement_pacing;
@@ -602,8 +603,9 @@ impl PulseDecoder {
         };
 
         // The server has handed the id to another wallet: the subject that held it is gone.
-        let mut events = match self.subjects.get(&full.subject_id) {
-            Some(held) if held.wallet != address => self.on_left(full.subject_id),
+        let held_wallet = self.subjects.get(&full.subject_id).map(|held| held.wallet);
+        let mut events = match held_wallet {
+            Some(wallet) if wallet != address => self.on_left(full.subject_id),
             _ => Vec::new(),
         };
         // A newer session of a wallet held under another id: that subject's session is already
@@ -661,8 +663,9 @@ impl PulseDecoder {
                 address,
                 movement: Box::new(movement),
                 realm: realm.clone(),
-                // the avatar jumps from wherever the subject it replaces left it
-                teleport: replaced.is_some(),
+                // A newly observed subject starts a fresh pose even if a room kept this
+                // wallet's avatar entity through the Pulse departure.
+                teleport: held_wallet != Some(address),
                 timestamp: joined_at,
             },
         ]);
@@ -1252,9 +1255,7 @@ impl OutOfGridLog {
 /// [`OUT_OF_GRID_LOG_INTERVAL`] for each kind: a player standing outside skips one every tick.
 pub(crate) fn warn_out_of_grid(kind: OutOfGrid, world: Vec3) {
     static LOG: std::sync::Mutex<OutOfGridLog> = std::sync::Mutex::new(OutOfGridLog([None; 2]));
-    let Ok(mut log) = LOG.lock() else {
-        return;
-    };
+    let mut log = LOG.lock_ignore_poison();
     if log.should_log(kind, Instant::now()) {
         bevy::log::warn!("pulse: {kind:?} at {world} is outside the parcel grid; not sent as is");
     }

@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { PlaceDetailCreator, SceneChatView } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
+import type { PlaceDetailCreator, SceneChatView } from "@dcl/one-ui";
 import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@web-core/profile/avatarColor";
 
 import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
