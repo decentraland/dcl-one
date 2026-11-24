@@ -8,7 +8,6 @@ Pinned at `452af1e06cf103ffa4e5b115b002120e98d375c7` (migrations through
 | `collection` | `collections` | `builder.collections` |
 | `item` | `items` + newest `item_curations` + parent `collections` | `builder.items` |
 | `item_content` | `items.contents` (file -> hash) | `builder.uploaded_contents`, `builder.item_contents` |
-| `project` | `projects` | `builder.projects` |
 
 ## Derived columns
 
@@ -32,12 +31,8 @@ Pinned at `452af1e06cf103ffa4e5b115b002120e98d375c7` (migrations through
   NULL; addresses are lowercased. An item whose collection is missing
   upstream becomes a loose draft (`collection_id` NULL).
 - Timestamps: upstream `timestamp without time zone`, read as UTC.
-- A collection, item or project the node wrote after upstream's last save
-  (its `updated_at` is newer) is kept on re-runs.
-- `projects`: rows without `eth_address` (ownerless legacy rows) are skipped;
-  NULL statistics become 0, NULL description `''`; `thumbnail` is not carried
-  (upstream holds a file name in the project's S3 folder, the node an upload
-  hash). `files_version`/`manifest_revision` keep the node's values.
+- A collection or item the node wrote after upstream's last save (its
+  `updated_at` is newer) is kept on re-runs.
 
 ## Blobs
 
@@ -49,17 +44,14 @@ stops the batch on any missing hash. `uploaded_by` is the item owner.
 
 ## Not migrated
 
-- `asset_packs`, `assets`: upstream packs belong to a wallet, the node's to a
-  project (`asset_packs.project_id NOT NULL`); the default packs are
-  `builder.asset_catalog`, built by the operator command.
-- Project manifests and files: S3 objects, not rows (`project_manifests`,
-  `project_files` stay empty for imported projects).
-- `collection_curations`, `slot_usage_cheques`, `virtual_third_parties`,
-  `deployments`, `pools`, `pool_groups`, `pool_likes`: no target.
+- `projects`, `asset_packs`, `assets`, `collection_curations`,
+  `collection_events`, `slot_usage_cheques`, `virtual_third_parties`,
+  `deployments`, `pools`, `pool_groups`, `pool_likes`: no target. The node
+  keeps no scenes.
 - `collections.managers`, `minters`, `reviewed_at`, `forum_link`, `forum_id`,
   `lock`, `linked_contract_address`, `linked_contract_network`: no target column.
 - Left to the node: `collection_publications`, `linked_collection_publications`,
-  `items.in_catalyst`, `items.catalyst_content_hash`, `asset_catalog`,
+  `items.in_catalyst`, `items.catalyst_content_hash`,
   `newsletter_subscriptions` (upstream forwards opt-ins and stores none).
 
 No watermarks (state is derived across tables); every run re-scans. Upstream

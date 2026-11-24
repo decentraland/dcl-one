@@ -18,7 +18,9 @@
   engine converts them into its own components.
 - **System scene / super-user scene**: the one scene the engine trusts, launched with
   `--system-scene`, holding the `SystemApi` sender. On web this is the **bridge scene**, which
-  sits between the HUD page and the engine and signs requests.
+  sits between the HUD page and the engine and signs requests. Because it skips every permission
+  check, a `?systemScene=` entry link that names a scene the host's `lib/systemScene.ts` doesn't
+  trust shows the untrusted-launch gate before the engine starts.
 - **`SystemApi`**: the privileged message channel from the system scene to the engine.
   **`RpcCall`**: the ordinary scene-to-engine request channel every scene has.
 - **Restricted actions**: scene requests that may act on the player or the client (move,

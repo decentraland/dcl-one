@@ -416,11 +416,6 @@ fn blob_routes(corpus: &Corpus) -> Vec<(&'static str, &'static str, String)> {
             format!("/builder-api/v1/storage/contents/{hash}"),
         ),
         (
-            "builder",
-            "/builder-api",
-            format!("/builder-api/contents/{hash}"),
-        ),
-        (
             "camera_reel",
             "/camera-reel-service",
             format!("/camera-reel-service/api/images/{hash}"),

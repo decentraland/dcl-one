@@ -134,17 +134,6 @@ pub(super) fn page(st: &AppState, headers: &HeaderMap, query: Option<&str>) -> R
     ))
 }
 
-/// The Creator Hub link, with the run's token in its fragment when this
-/// page carries the token at all: the create route reads `#token=` and
-/// sends it back as the bearer on every write.
-fn creator_link(realm: &str, token: Option<&str>) -> Option<String> {
-    let url = super::project_bridge::creator_url(realm)?;
-    Some(match token {
-        Some(token) => super::with_token_fragment(&url, token),
-        None => url,
-    })
-}
-
 fn thumbnail(project: Option<&Project>, machine: &str, prefix: &str) -> Option<String> {
     let project = project?;
     let rel = project
@@ -530,7 +519,6 @@ fn render_for(
     let sections = format!(
         r##"  <section id="join" class="sec">
     {join_control}
-    {creator_link}
   </section>
 
   <section id="requests" class="sec">
@@ -548,10 +536,6 @@ fn render_for(
             prefix
         ),
         route_links = route_links(st, prefix, lan_realm.is_some()),
-        creator_link = creator_link(realm, token).map_or_else(String::new, |url| format!(
-            r#"<p><a class="btn btn--secondary btn--md" href="{}">Edit in Creator Hub</a></p>"#,
-            esc(&url)
-        )),
     );
     shell(
         st,

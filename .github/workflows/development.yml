@@ -21,8 +21,6 @@ on:
       - '.cargo/**'
       - 'apps/sites/**'
       - 'apps/ui3/**'
-      # the editor scene's install copies it (apps/ui3/editor-scene/pnpm-workspace.yaml)
-      - 'apps/creator-hub/packages/zip-extract/**'
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
@@ -438,12 +436,6 @@ jobs:
         if: ${{ failure() && steps.sites-tests.outcome == 'failure' && steps.sites-tests.outputs.capture-missing-port == 'true' }}
         timeout-minutes: 4
         run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts
-      - name: Run editor scene unit tests
-        if: matrix.app == 'ui3' && needs.changes.outputs.web-units != 'false'
-        timeout-minutes: 20
-        run: |
-          nix develop --command pnpm --dir apps/ui3/editor-scene install --frozen-lockfile
-          nix develop --command pnpm --dir apps/ui3/editor-scene test
       - name: Check UI3 types
         if: matrix.app == 'ui3'
         timeout-minutes: 15

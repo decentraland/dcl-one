@@ -244,11 +244,6 @@ pub fn is_relevant(root: &Path, path: &Path) -> bool {
     if first.is_some_and(ignored_at_root) {
         return false;
     }
-    // Agent CLI configuration at the root is not scene input; the scene assistant writes and
-    // restores `opencode.json` around each OpenCode turn, which must not rebuild the scene.
-    if matches!(rel.to_str(), Some("opencode.json" | "opencode.jsonc")) {
-        return false;
-    }
     matches!(
         rel.to_str(),
         Some("package.json" | "scene.json" | "tsconfig.json")
@@ -1014,9 +1009,7 @@ mod tests {
         assert!(!under_root("node_modules/foo/bar.js"));
         assert!(!under_root(".dcl-one/all-composites.js"));
         assert!(!under_root(".git/hooks/pre-commit.ts"));
-        assert!(!under_root("opencode.json"));
         assert!(!under_root(".cursor/mcp.json"));
-        assert!(under_root("src/opencode.json"));
         assert!(!under_root(".dcl-optimized-assets/out/b64-x/mac/model.glb"));
         assert!(!under_root(
             ".dcl-optimized-assets/cache/content/deadbeef.gltf"

@@ -191,9 +191,8 @@ world's current thumbnail also has its own reference. Once an alias
 expires, the blob is collectable if no other reference keeps it. The
 hash-to-CID mapping remains, and the content denylist can withhold the bytes.
 
-Read-through copies (explore's satellite, manifest and poster mirrors, the
-asset catalogue pull) take no lock: a removed blob is fetched again on its
-next read.
+Read-through copies (explore's satellite, manifest and poster mirrors) take
+no lock: a removed blob is fetched again on its next read.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
@@ -957,8 +956,69 @@ fails its bootstrap on the missing relations and stays down.
 The drop is not reversible without the matching backup. Do not reset a
 database.
 
-Peer sync is not a backup of local state: a node taking local writes holds the only copy of that data. Before turning a write switch on, the operator backs up the database, the blob store (`STORAGE_ROOT_FOLDER`) and the credentials (`ENCRYPTION_KEY` among them) and tests a restore; the application does not enforce this. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
+### Retired builder scenes
 
+The node keeps no scenes: the builder serves no project, manifest, project
+file, asset pack or asset catalogue, and `schemas/50_create.sql` declares none
+of their tables. A database bootstrapped before the removal keeps
+`builder.projects`, `project_manifests`, `project_files`, `asset_packs`,
+`assets`, `asset_contents` and `asset_catalog` until the release script
+`schemas/releases/builder-scenes-retired.sql` drops them. The bootstrap and
+the object pass neither create nor drop them, so until then they are inert.
+
+What the release destroys:
+
+- Every row of the seven tables and their three indexes
+  (`projects_owner_updated_idx`, `asset_packs_project_idx`,
+  `assets_pack_ordinal_idx`).
+- Each `builder.uploaded_contents` row whose hash only a scene row names: a
+  project file, a project, pack or asset thumbnail, or an asset file, that no
+  `builder.item_contents` row and no `builder.items` hash column (`thumbnail`,
+  `video`, `local_content_hash`, `content_hash`, `catalyst_content_hash`)
+  names. Those hashes stop answering on `/v1/storage/contents/{hash}`.
+
+It keeps every item, collection and publication row, and every
+`uploaded_contents` row an item names or no row names. A row no row names is
+an item file that was replaced or whose item was deleted, an imported row
+whose item is gone, or a project blob that never entered a file set. The last
+kind cannot be told apart from the others, so it stays: its uploader alone
+reads it on `/v1/storage/contents/{hash}` ("Builder item files workload"),
+and it keeps its blob from the collector. Blob bytes are never deleted by the release; they stay in the
+store (`STORAGE_ROOT_FOLDER`) until the collector unlinks them.
+
+Rollout, in order:
+
+1. Deploy the binary without the scene routes on every replica and run its
+   `catalyst schema migrate`, which records step
+   `0063_builder_scenes_retired`. Confirm no `serve` of the old build is
+   left. From this point the new binary's collector no longer counts
+   `builder.asset_catalog`, so the asset-pack files the catalogue pulled into
+   the store become collectable; the other scene blobs stay protected by
+   their `uploaded_contents` rows.
+2. Take a restore point: back up the database and the blob store, and test
+   the restore. The drop is not reversible without that backup.
+3. Run the release once, with the administrative role:
+
+   ```sh
+   psql "$DATABASE_URL" -X -f schemas/releases/builder-scenes-retired.sql
+   ```
+
+4. Run `catalyst storage gc` (a dry run) to see the aged blobs no domain
+   names, then `catalyst storage gc --delete` to unlink them.
+
+The release refuses, changing nothing, a database without
+`meta.schema_steps`, one where step `0063_builder_scenes_retired` is not
+recorded (the new binary has not migrated it), one that holds only some of
+the seven tables, and one whose `builder.projects` or `builder.asset_packs`
+changed in the last ten minutes (an old `serve` still editing). It runs in
+one transaction and waits at most 10 s for its locks. Dropping the tables
+takes an exclusive lock on `builder.uploaded_contents`, because their foreign
+keys point at it, so while the release waits and runs, item file uploads and
+the `/v1/storage/contents/{hash}` routes queue behind it; past 10 s it fails
+and rolls back. A second run notes the tables are gone. An old `serve`
+started after the drop fails its bootstrap on the missing relations; an old
+build's `catalyst schema migrate` re-creates the seven tables empty, and the
+release drops them again. Do not reset a database.
 
 ## Notification writer
 

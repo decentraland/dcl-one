@@ -1247,38 +1247,20 @@ fn the_rebuilds_after_a_failed_first_build_name_the_main_file() {
 }
 
 /// The token of the run is in the `ready` event only: stderr, where the text
-/// of the terminal form goes, does not have it, with `--talk` too. A stop on
-/// request ends the run with exit code 0 and no `error` event.
+/// of the terminal form goes, does not have it. A stop on request ends the
+/// run with exit code 0 and no `error` event.
 #[cfg(unix)]
 #[test]
 fn the_token_of_a_json_run_is_not_on_stderr() {
     let f = Fixture::new("start-token");
-    let preview = Preview::spawn(
-        &f,
-        &[
-            "--json",
-            "--skip-build",
-            "--no-watch",
-            "--talk",
-            "--no-browser",
-            "--player",
-            "http://player.example/",
-        ],
-    );
+    let preview = Preview::spawn(&f, &["--json", "--skip-build", "--no-watch"]);
     let ready = preview.event("ready");
     let token = ready["token"].as_str().unwrap();
     assert!(token.len() >= 16, "{ready}");
     assert!(
-        preview.stderr.wait_for("Talk: ", common::wait::HANG_GUARD),
-        "{}",
-        preview.stderr.text()
-    );
-    let port = ready["port"].as_u64().unwrap();
-    assert!(
-        preview.stderr.wait_for(
-            &format!("Talk: http://127.0.0.1:{port}/talk\n"),
-            common::wait::HANG_GUARD
-        ),
+        preview
+            .stderr
+            .wait_for("desktop:  decentraland://", common::wait::HANG_GUARD),
         "{}",
         preview.stderr.text()
     );

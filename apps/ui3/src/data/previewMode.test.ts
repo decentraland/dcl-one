@@ -6,18 +6,15 @@ afterEach(() => { forgetPreviewToken(); window.history.replaceState(null, "", "/
 describe("preview launch", () => {
   it("recognises the SDK launch URL and derives the preview server origin", () => {
     const launch = previewLaunch("?position=3%2C12&preview=true&realm=http%3A%2F%2Flocalhost%3A8002");
-    expect(launch).toEqual({ preview: true, realm: "http://localhost:8002", origin: "http://localhost:8002", assistant: false });
-    expect(previewLaunch("?preview=true&realm=http://localhost:8002&assistant=1").assistant).toBe(true);
-    expect(previewLaunch("?preview=true&realm=tophub.dcl.eth&assistant=1").assistant).toBe(false);
+    expect(launch).toEqual({ preview: true, realm: "http://localhost:8002", origin: "http://localhost:8002" });
+    expect(previewLaunch("?preview=true&realm=http://localhost:8002&assistant=1")).toEqual({ preview: true, realm: "http://localhost:8002", origin: "http://localhost:8002" });
     expect(previewHost(launch.origin)).toBe("localhost:8002");
     expect(previewSocketUrl(launch.origin!)).toBe("ws://localhost:8002/");
     expect(previewLaunch("?realm=http://localhost:8002/about&preview=1").origin).toBe("http://localhost:8002");
     expect(previewLaunch("?realm=main").preview).toBe(false);
     expect(previewLaunch("?preview=true&editorUi=1").preview).toBe(false);
-    expect(previewLaunch("?preview=true&realm=tophub.dcl.eth")).toEqual({ preview: true, realm: "tophub.dcl.eth", origin: null, assistant: false });
-    // The engine drops `realm` from the address bar when it is the bundle's default, the page's
-    // own origin: the player dcl-scene-cli embeds previews the SDK that serves it.
-    expect(previewLaunch("?preview=true&position=2%2C12&assistant=1")).toEqual({ preview: true, realm: window.location.origin, origin: window.location.origin, assistant: true });
+    expect(previewLaunch("?preview=true&realm=tophub.dcl.eth")).toEqual({ preview: true, realm: "tophub.dcl.eth", origin: null });
+    expect(previewLaunch("?preview=true&position=2%2C12")).toEqual({ preview: true, realm: window.location.origin, origin: window.location.origin });
   });
 
   it("claims the SDK's capability token from the launch fragment, keeps it in memory and off the URL", () => {
@@ -27,7 +24,7 @@ describe("preview launch", () => {
     expect(previewToken()).toBeNull();
     window.history.replaceState(null, "", "/?preview=true&realm=http://localhost:8002#mcptoken=m1&token=abc-DEF_123");
     const launch = previewLaunch(window.location.search);
-    expect(launch).toEqual({ preview: true, realm: "http://localhost:8002", origin: "http://localhost:8002", assistant: false });
+    expect(launch).toEqual({ preview: true, realm: "http://localhost:8002", origin: "http://localhost:8002" });
     expect(previewToken()).toBe("abc-DEF_123");
     expect(window.location.hash).toBe("#mcptoken=m1");
     expect(window.location.search).toBe("?preview=true&realm=http://localhost:8002");

@@ -57,6 +57,34 @@ describe("Sites paths", () => {
     });
   });
 
+  describe("when a visitor opens a scene authoring path under /create", () => {
+    it.each([
+      "/create/not-a-page",
+      "/create/scene-editor",
+      "/create/publish",
+      "/create/deploy-world",
+      "/create/deploy-alternative",
+      "/create/templates",
+      "/create/create-project",
+      "/create/delete-project",
+      "/create/drafts/d-1",
+    ])("should serve only the /create redirect for %s", (path) => {
+      expect(served(path)).toBe("routes/create.$.tsx");
+    });
+
+    it.each([
+      "/editor-scene/EditorScene/about",
+      "/api/creator-hub/asset-catalog",
+      "/api/creator-hub/drafts/d-1",
+    ])("should serve no route for %s, so it answers 404", (path) => {
+      expect(served(path)).toBeNull();
+    });
+
+    it("should keep serving the wearable and emote collections at /create/collections", () => {
+      expect(served("/create/collections")).toBe("routes/create.collections._index.tsx");
+    });
+  });
+
   describe("when a visitor opens a canonical path", () => {
     it.each([
       ["/download", "routes/download.tsx"],

@@ -51,8 +51,8 @@
 //! row is omitted from public galleries and its metadata answers 404.
 //! Its blobs answer 404 on the protected byte routes of the ONE store:
 //! the reel's `GET /api/files/{name}` (from `review_status`), the content server's
-//! `/contents/{hash}` at the root and under the worlds nest and the
-//! builder's `/contents/{hash}` (from `camera_reel.withheld_blobs`, written
+//! `/contents/{hash}` at the root and under the worlds nest (from
+//! `camera_reel.withheld_blobs`, written
 //! in the review's and the delete's transaction and mirrored into the shared
 //! in-memory `content::Denylist`, refilled at boot by
 //! [`State::load_withheld`]). A rejection withholds the row's hashes whatever
@@ -100,9 +100,6 @@
 //! Request counts and latency are exposed by the host process under the camera-reel component.
 //! Documentation and Swagger UI assets are served locally under `/api/docs`.
 
-// The crates this one builds on, under their module names (AGENTS.md).
-#[cfg(test)]
-pub(crate) use catalyst_builder as builder;
 pub(crate) use catalyst_content as content;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_shared as shared;

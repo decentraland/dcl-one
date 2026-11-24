@@ -150,14 +150,6 @@ pub async fn state_without_db(
     state_over(lazy_pool(), market).await
 }
 
-/// `None` (skip) without `CATALYST_TEST_DATABASE_URL`.
-pub async fn state_with_db(
-    market: Option<Arc<crate::chain_index::ChainIndex>>,
-) -> Option<crate::SharedState> {
-    let pool = crate::db::scratch::pool(4).await?;
-    Some(state_over(pool, market).await)
-}
-
 /// A chain index with `settings` (no subgraph configured by default).
 pub fn market_without_db(
     settings: crate::chain_index::IndexSettings,

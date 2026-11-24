@@ -27,7 +27,6 @@ function injectEngine(): void {
   // is opt-in per host page — engine.js never generates one — so this call is what turns it on.
   // Above the guard so a host page that pre-set __bevyBootConfig (and bails below) still seeds
   // the id the page-side channel constructors will use.
-  // The host's own bridge session (/play's editor embed), if it has one.
   seedBridgeSession()
   bridgeChannelName()
 
