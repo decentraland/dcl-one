@@ -836,7 +836,27 @@ pub(super) async fn rent_evidence(
         .as_ref()
         .filter(|cursor| chain_walk::is_ready_on(cursor, chain.id(), now))
         .and_then(|cursor| cursor.folded_block);
+    let evidence = rent_evidence_at(
+        &mut tx,
+        chain,
+        venue,
+        contract_address,
+        token_id,
+        published_through,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(evidence)
+}
 
+pub(super) async fn rent_evidence_at(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+    venue: &str,
+    contract_address: &str,
+    token_id: &str,
+    published_through: Option<i64>,
+) -> sqlx::Result<RentEvidence> {
     #[derive(sqlx::FromRow)]
     struct EvidenceRows {
         has_unpublished_rent: bool,
@@ -875,9 +895,8 @@ pub(super) async fn rent_evidence(
     .bind(contract_address.to_ascii_lowercase())
     .bind(token_id)
     .bind(published_through)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
-    tx.commit().await?;
     Ok(RentEvidence {
         published_through,
         has_unpublished_rent: rows.has_unpublished_rent,

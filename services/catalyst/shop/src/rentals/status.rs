@@ -94,18 +94,6 @@ macro_rules! latest_rent_sql {
     };
 }
 
-async fn cancel(
-    pool: &PgPool,
-    cancels: &[(Uuid, &'static str)],
-    membership: Option<(i64, i64)>,
-    now: NaiveDateTime,
-) -> Result<u64, sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    let written = cancel_on(&mut tx, cancels, membership, now).await?;
-    tx.commit().await?;
-    Ok(written)
-}
-
 async fn cancel_on(
     conn: &mut PgConnection,
     cancels: &[(Uuid, &'static str)],
@@ -421,13 +409,55 @@ pub async fn sync_listing(
     let Some(_) = index::fold_listing(pool, chain, &venue, id, now).await? else {
         return Ok(false);
     };
+    let mut tx = pool.begin().await?;
+    let Some(rentals_cursor) = index::lock_cursor(&mut tx, chain).await? else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    if !crate::market::chain_walk::is_ready_on(&rentals_cursor, chain.id(), now) {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    if let Some(expected_updated_at) = nft.and_then(|n| n.land_cursor_updated_at) {
+        let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
+            "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
+             FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
+        )
+        .bind(match chain {
+            index::RentalsChain::Mainnet => crate::land_authz::LAND_MAINNET.network,
+            index::RentalsChain::Sepolia => crate::land_authz::LAND_SEPOLIA.network,
+        })
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (expected_land, expected_estate) = match chain {
+            index::RentalsChain::Mainnet => (
+                crate::land_authz::LAND_MAINNET.land_registry,
+                crate::land_authz::LAND_MAINNET.estate_registry,
+            ),
+            index::RentalsChain::Sepolia => (
+                crate::land_authz::LAND_SEPOLIA.land_registry,
+                crate::land_authz::LAND_SEPOLIA.estate_registry,
+            ),
+        };
+        let current_matches = current_land.is_some_and(|cursor| {
+            cursor.updated_at == expected_updated_at
+                && cursor.land_registry.eq_ignore_ascii_case(expected_land)
+                && cursor.estate_registry.eq_ignore_ascii_case(expected_estate)
+                && crate::land_authz::indexer::index_ready(&cursor, now)
+        });
+        if !current_matches {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+    }
     let still_open: bool =
         sqlx::query_scalar("SELECT status = 'open' FROM signatures.rentals WHERE id = $1")
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?
             .unwrap_or(false);
     if !still_open {
+        tx.rollback().await?;
         return Ok(true);
     }
     let lessor: String = row.get("lessor");
@@ -445,13 +475,13 @@ pub async fn sync_listing(
     let owner = transfer.map(|n| n.owner_address.as_str());
     let custody: Option<String> = match transfer {
         Some(n) if n.owner_address.eq_ignore_ascii_case(&venue) => {
-            let evidence = index::rent_evidence(
-                pool,
+            let evidence = index::rent_evidence_at(
+                &mut tx,
                 chain,
                 &venue,
                 row.get("contract_address"),
                 row.get("token_id"),
-                now,
+                rentals_cursor.folded_block,
             )
             .await?;
             match evidence.coverage(n.transfer_block, Some(n.metadata_block), n.transferred_at) {
@@ -477,14 +507,15 @@ pub async fn sync_listing(
         &venue,
         custody.as_deref(),
     ) {
-        cancel(
-            pool,
+        cancel_on(
+            &mut tx,
             &[(id, reason)],
             nft.and_then(|n| Some((n.membership_block, n.membership_checked_at?))),
             now.naive_utc(),
         )
         .await?;
     }
+    tx.commit().await?;
     Ok(true)
 }
 
@@ -735,6 +766,7 @@ mod tests {
             membership_block: 1,
             metadata_block: 1,
             membership_checked_at: Some(Utc::now().timestamp() + 60),
+            land_cursor_updated_at: None,
         };
         let now = Utc::now();
 
@@ -944,6 +976,27 @@ mod tests {
         .expect("decision waits for the published cursor lock");
     }
 
+    async fn wait_for_land_cursor_lock(pool: &PgPool) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                     WHERE datname=current_database() AND wait_event_type='Lock' \
+                       AND query ILIKE '%land_authz.index_cursor%' AND query ILIKE '%FOR SHARE%')",
+                )
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("PATCH waits for the observed LAND cursor lock");
+    }
+
     #[tokio::test]
     async fn refresh_revalidates_the_rentals_cursor_before_folding_events() {
         let Some(db) = OwnedDatabase::new("rental_refresh_cursor_rewind", Schema::Full, 4).await
@@ -1053,6 +1106,72 @@ mod tests {
         lock.commit().await.unwrap();
 
         assert_eq!(pass.await.unwrap().unwrap(), None);
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn refresh_discards_land_cancellation_after_a_rewind() {
+        let Some(db) = OwnedDatabase::new("rental_patch_land_rewind", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "35", 35).await;
+        publish_rentals_index(pool).await;
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, 5, 5, timezone('UTC', now()), true)",
+        )
+        .bind(LAND_MAINNET.network)
+        .bind(LAND_MAINNET.land_registry)
+        .bind(LAND_MAINNET.estate_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        let land_cursor_updated_at: chrono::NaiveDateTime =
+            sqlx::query_scalar("SELECT updated_at FROM land_authz.index_cursor WHERE network=$1")
+                .bind(LAND_MAINNET.network)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let nft = LandNft {
+            nft_id: "test".into(),
+            category: "parcel".into(),
+            owner_address: OTHER.into(),
+            search_text: String::new(),
+            distance_to_plaza: None,
+            adjacent_to_road: None,
+            estate_size: None,
+            created_at: 1,
+            updated_at: Utc::now().timestamp() + 3600,
+            transferred_at: Utc::now().timestamp() + 3600,
+            transfer_block: Some(5),
+            membership_block: 0,
+            metadata_block: 5,
+            membership_checked_at: None,
+            land_cursor_updated_at: Some(land_cursor_updated_at),
+        };
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM land_authz.index_cursor WHERE network=$1 FOR UPDATE")
+            .bind(LAND_MAINNET.network)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let route_pool = pool.clone();
+        let refresh =
+            tokio::spawn(
+                async move { sync_listing(&route_pool, id, Some(&nft), Utc::now()).await },
+            );
+        wait_for_land_cursor_lock(pool).await;
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_block=NULL WHERE network=$1")
+            .bind(LAND_MAINNET.network)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        lock.commit().await.unwrap();
+
+        assert!(!refresh.await.unwrap().unwrap());
         assert_eq!(state_of(pool, id).await, open());
         db.drop().await;
     }
@@ -1342,6 +1461,7 @@ mod tests {
             membership_block: 0,
             metadata_block: 1,
             membership_checked_at: None,
+            land_cursor_updated_at: None,
         };
         publish_rentals_index(pool).await;
 

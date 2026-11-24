@@ -25,6 +25,8 @@ pub struct LandNft {
     pub membership_block: i64,
     pub metadata_block: i64,
     pub membership_checked_at: Option<i64>,
+    /// Update timestamp of the LAND publication snapshot, absent on graph rows.
+    pub land_cursor_updated_at: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -108,6 +110,7 @@ pub(super) async fn nft_by_contract_token(
                 ) END AS membership_checked_at,
                 CASE WHEN tr.token_address = $4 THEN $5::bigint ELSE 0 END AS membership_block,
                 LEAST($5::bigint, $6::bigint) AS metadata_block,
+                $7::timestamp AS land_cursor_updated_at,
                 coalesce(transfer.block_number, 0) AS transfer_block, d.updated_block AS data_block
          FROM land_authz.token_right tr
          LEFT JOIN shop.land_data d ON d.token_address = tr.token_address AND d.token_id = tr.token_id
@@ -141,6 +144,7 @@ pub(super) async fn nft_by_contract_token(
     .bind(net.estate_registry)
     .bind(land_head)
     .bind(metadata_head)
+    .bind(snapshot.cursor.updated_at)
     .fetch_optional(&mut *snapshot.tx)
     .await?;
     let Some(row) = row else { return Ok(None) };

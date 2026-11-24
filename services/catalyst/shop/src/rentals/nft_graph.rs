@@ -78,6 +78,7 @@ fn parse(
         } else {
             None
         },
+        land_cursor_updated_at: None,
     }))
 }
 
