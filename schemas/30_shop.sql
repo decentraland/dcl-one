@@ -79,6 +79,10 @@ CREATE TABLE shop.trade_assets_erc721 (
     asset_id uuid NOT NULL UNIQUE REFERENCES shop.trade_assets(id) ON DELETE CASCADE,
     token_id text NOT NULL
 );
+-- The open listing of one token: /v1/nfts looks up each candidate row's v3
+-- listing by token id (then its contract, signer and trade), instead of
+-- reading every open listing for every row.
+CREATE INDEX trade_assets_erc721_token_idx ON shop.trade_assets_erc721 (token_id);
 
 CREATE TABLE shop.trade_assets_erc20 (
     asset_id uuid NOT NULL UNIQUE REFERENCES shop.trade_assets(id) ON DELETE CASCADE,
@@ -395,7 +399,7 @@ CREATE TABLE shop.chain_cursor (
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -506,6 +510,14 @@ CREATE INDEX nft_owner_idx ON shop.nft (owner) WHERE owner IS NOT NULL;
 -- The copies of an item: WHERE (network, contract_address, item_id) = ...
 -- (the index-served /v1/nfts over a matched item set, ?itemId=).
 CREATE INDEX nft_item_idx ON shop.nft (network, contract_address, item_id) WHERE item_id IS NOT NULL;
+-- The newest-first browse of /v1/nfts: each source's first `first + skip`
+-- held tokens by minted_at DESC, walked per network (an incremental sort
+-- orders the ties by contract and token) instead of sorting every candidate.
+CREATE INDEX nft_mint_order_idx ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
+-- A DCL NAME's holders by label, compared lowercased (the NAME source's owner
+-- read: worlds' owner and admission, the Admin Toolkit, the lambdas name
+-- owner): WHERE lower(ens_subdomain) = ANY($1).
+CREATE INDEX nft_ens_label_idx ON shop.nft (lower(ens_subdomain)) WHERE ens_subdomain IS NOT NULL;
 
 -- The legacy Marketplace order per token, folded: the latest order event
 -- decides (created = open, successful = sold, cancelled = cancelled); a
@@ -16186,7 +16198,7 @@ CREATE TABLE shop.rental_event (
     new_index numeric(78,0),
     tx_hash text NOT NULL,
     PRIMARY KEY (network, block_number, log_index),
-    CONSTRAINT rental_event_network_known CHECK (network IN ('ethereum')),
+    CONSTRAINT rental_event_network_known CHECK (network IN ('ethereum', 'sepolia')),
     CONSTRAINT rental_event_kind_known CHECK (kind IN ('rented', 'claimed', 'asset_index_updated', 'signer_index_updated', 'contract_index_updated')),
     CONSTRAINT rental_event_asset_kinds CHECK ((kind IN ('rented', 'claimed', 'asset_index_updated')) = (contract_address IS NOT NULL AND token_id IS NOT NULL)),
     CONSTRAINT rental_event_rented_fields CHECK ((kind = 'rented') = (signature IS NOT NULL AND tenant IS NOT NULL AND rental_days IS NOT NULL AND price_per_day IS NOT NULL)),
@@ -16197,6 +16209,9 @@ CREATE TABLE shop.rental_event (
 -- The fold's per-asset legs: a listing's rent and claim, and the lessor's
 -- asset bump (WHERE rentals_address = $2 AND contract_address, token_id = ...).
 CREATE INDEX rental_event_asset_idx ON shop.rental_event (rentals_address, contract_address, token_id, block_number, log_index) WHERE contract_address IS NOT NULL;
+-- Discover candidate assets by either participant in the wallet rentals route.
+CREATE INDEX rental_event_lessor_idx ON shop.rental_event (network, rentals_address, signer) INCLUDE (contract_address, token_id, block_number) WHERE kind = 'rented';
+CREATE INDEX rental_event_tenant_idx ON shop.rental_event (network, rentals_address, tenant) INCLUDE (contract_address, token_id, block_number) WHERE kind = 'rented';
 -- The rent that consumed a listing: WHERE kind = 'rented' AND signature = lower(r.signature).
 CREATE INDEX rental_event_signature_idx ON shop.rental_event (signature) WHERE kind = 'rented';
 -- The lessor's signer index: WHERE kind = 'signer_index_updated' AND signer = l.lessor.
@@ -16975,3 +16990,35 @@ INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) 
     ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
     ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
     ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);
+
+-- Bounded sweeps retain unresolved work; ceilings freeze each cohort so new
+-- arrivals cannot indefinitely defer retry. Scope is the chain id, or zero
+-- for chain-independent workers. Keys refer to obligations, not owned rows:
+-- deletion/completion is allowed and a later sweep discovers delayed inserts.
+CREATE TABLE shop.worker_progress (
+    worker text NOT NULL,
+    scope bigint NOT NULL,
+    started_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    position bigint NOT NULL DEFAULT 0,
+    ceiling bigint NOT NULL DEFAULT 0,
+    key_position text[] NOT NULL DEFAULT '{}',
+    key_ceiling text[] NOT NULL DEFAULT '{}',
+    PRIMARY KEY (worker, scope),
+    CHECK (position >= 0 AND ceiling >= position),
+    CHECK (cardinality(key_position) <= 2 AND cardinality(key_ceiling) <= 2)
+);
+
+-- Provider state after each Polygon registry event. Keep previous versions
+-- for readers on the published cursor and for rewind.
+CREATE TABLE shop.third_party_registry_event (
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    provider_id text NOT NULL,
+    state jsonb NOT NULL,
+    receipt jsonb,
+    PRIMARY KEY (block_number, log_index)
+);
+
+CREATE INDEX third_party_registry_provider_version_idx ON shop.third_party_registry_event
+    (provider_id, block_number DESC, log_index DESC);

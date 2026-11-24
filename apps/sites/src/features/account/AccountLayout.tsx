@@ -3,8 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 
 import SitesLayout from "../components/chrome/SitesLayout";
 
-import { Button, Spinner } from "@dcl/one-ui";
-import { GeneralClose, GeneralLeftArrow } from "@dcl/one-ui/foundations/icons";
+import { GeneralClose, GeneralLeftArrow, Button, Spinner } from "@dcl/one-ui";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { openSignIn } from "../components/auth/signin-store";

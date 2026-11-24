@@ -880,26 +880,31 @@ impl WriteDeployer {
     }
 
     /// The chain checked against `entity_id` at `at_ms`, as the deploy
-    /// validator checks it: `Unverifiable` for a contract wallet this node
-    /// cannot ask about, `Rejected` with upstream's text otherwise.
+    /// validator checks it (a contract wallet refused at latest is asked at
+    /// the block before `at_ms`): `Unverifiable` for a contract wallet this
+    /// node cannot ask about, `Rejected` with upstream's text otherwise.
     pub(crate) async fn check_signature(
         &self,
         entity_id: &str,
         auth_chain: &AuthChain,
         at_ms: i64,
     ) -> Result<(), DeployFailure> {
-        match self.validate_signature(entity_id, auth_chain, at_ms).await {
-            Ok(()) => Ok(()),
-            Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => {
-                Err(DeployFailure::Unverifiable(vec![format!(
-                    "The signature is invalid. {e}"
-                )]))
-            }
-            Err(e) => Err(DeployFailure::Rejected(
-                RejectionKind::Validation,
-                vec![format!("The signature is invalid. {e}")],
-            )),
-        }
+        signature_verdict(self.validate_signature(entity_id, auth_chain, at_ms).await)
+    }
+
+    /// [`Self::check_signature`] with contract-wallet links asked at the latest block only:
+    /// for a check at now, and for a partial upload published past `REQUEST_TTL_BACKWARDS`,
+    /// so a key removed from the wallet does not keep deploying.
+    pub(crate) async fn check_signature_at_latest(
+        &self,
+        entity_id: &str,
+        auth_chain: &AuthChain,
+        at_ms: i64,
+    ) -> Result<(), DeployFailure> {
+        signature_verdict(
+            verify_auth_chain_async(auth_chain, entity_id, Some(at_ms), self.eip1654.as_deref())
+                .await,
+        )
     }
 
     /// The validation of one partial-upload batch: the content validator's
@@ -1023,11 +1028,17 @@ impl WriteDeployer {
         auth_chain: &AuthChain,
         timestamp: i64,
     ) -> Result<(), AuthError> {
-        verify_auth_chain_async(
+        let access = match &self.validator {
+            LocalValidation::Content(sources) => Some(sources.access()),
+            #[cfg(any(test, feature = "test-support"))]
+            LocalValidation::PartialChecks => None,
+        };
+        super::validator::verify_local_entity_chain(
             auth_chain,
             entity_id,
-            Some(timestamp),
+            timestamp,
             self.eip1654.as_deref(),
+            access.as_deref(),
         )
         .await
     }
@@ -1154,6 +1165,21 @@ fn held_of(held: &HashSet<String>, pointers: &[String]) -> Vec<String> {
         .filter(|p| held.contains(*p))
         .cloned()
         .collect()
+}
+
+/// A chain check's deploy verdict: `Unverifiable` for a contract wallet this node cannot
+/// ask about, `Rejected` with upstream's text otherwise.
+fn signature_verdict(result: Result<(), AuthError>) -> Result<(), DeployFailure> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => Err(
+            DeployFailure::Unverifiable(vec![format!("The signature is invalid. {e}")]),
+        ),
+        Err(e) => Err(DeployFailure::Rejected(
+            RejectionKind::Validation,
+            vec![format!("The signature is invalid. {e}")],
+        )),
+    }
 }
 
 /// `REQUEST_TTL_BACKWARDS`'s default.
@@ -1331,11 +1357,22 @@ impl WriteDeployer {
         self.refuse_denylisted(&entity)?;
 
         let auth_chain = auth_chain_of(auth_chain)?;
+        // A partial upload's scene published past `REQUEST_TTL_BACKWARDS`: its
+        // contract wallet and access are asked of the current chain.
+        let past_request_ttl = context == "LOCAL"
+            && ttl_anchor_ms.is_some()
+            && chrono::Utc::now().timestamp_millis() - entity.timestamp
+                > self.request_ttl_backwards_ms();
         // The signature at the entity's timestamp, the pointers and the
         // server checks (newer entity, rate limit, request TTLs), then the
         // validator; the in-flight claim follows validation.
-        self.check_signature(entity_id, &auth_chain, entity.timestamp)
-            .await?;
+        if past_request_ttl {
+            self.check_signature_at_latest(entity_id, &auth_chain, entity.timestamp)
+                .await?;
+        } else {
+            self.check_signature(entity_id, &auth_chain, entity.timestamp)
+                .await?;
+        }
         if entity.pointers.is_empty() {
             return Err(vec!["The entity does not have any pointer.".to_string()].into());
         }
@@ -1484,10 +1521,8 @@ impl WriteDeployer {
             }
         }
 
-        if context == "LOCAL"
-            && ttl_anchor_ms.is_some()
+        if past_request_ttl
             && entity.entity_type == EntityType::Scene
-            && now_ms - entity.timestamp > self.request_ttl_backwards_ms()
             && let Err(failure) = self.validate_current_access(&entity, &auth_chain).await
         {
             warn!(entity_id, errors = ?failure, "deployment refused: no current access");

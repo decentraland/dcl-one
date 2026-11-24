@@ -24,7 +24,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-RLpBnTbtZwL9R6fc+bnOlVOwZC4InF9ATdj+NPLyV74=";
+    hash = "sha256-SLNUX8keBkVq448n5Z6DoK9slEPVfsQCiqwEFfRtwks=";
   };
   pnpmDepsKey = builtins.substring 0 12
     (builtins.hashString "sha256" (fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-sites"; })).drvPath);
@@ -70,6 +70,7 @@ let
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
       (root + /library/ui/foundations)
+      (root + /library/ui/assets)
       (root + /library/ui/apps/sites)
       (root + /library/ui/apps/hud) (root + /library/ui/apps/shop) (root + /library/explorer-core)
       (root + /library/ui/text-styles.ts)
@@ -105,7 +106,7 @@ let
       runHook preBuild
       chmod -R u+w ..
       ln -s "$PWD/node_modules" ../node_modules
-      if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/foundations/typography/fonts ../ui3/public/assets/invite; then
+      if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/assets ../../library/ui/foundations/typography/fonts ../ui3/public/assets/invite; then
         echo "Sites media, the invite clip or shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
         exit 1
       else

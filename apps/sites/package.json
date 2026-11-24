@@ -51,7 +51,7 @@
     "@stripe/react-stripe-js": "7.0.0",
     "@stripe/stripe-js": "10.1.0",
     "@tanstack/react-query": "5.104.3",
-    "@walletconnect/sign-client": "2.21.0",
+    "@walletconnect/sign-client": "2.26.0",
     "@xstate/react": "6.1.0",
     "buffer": "6.0.3",
     "date-fns": "4.4.0",

@@ -1531,7 +1531,7 @@ async fn a_profile_with_nul_metadata_preserves_the_write_error_and_active_profil
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(4).await);
     let recorder = crate::series::test_support::recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let (alice, bob) = (PrivateKeySigner::random(), PrivateKeySigner::random());
     let contract =
         format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]).to_string() + "00000000";
@@ -2129,7 +2129,7 @@ async fn the_upload_limits_follow_their_configuration() {
 #[tokio::test]
 async fn an_unwritable_spool_answers_503() {
     let recorder = crate::series::test_support::recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let blocker =
         std::env::temp_dir().join(format!("catalyst-spool-blocker-{}", uuid::Uuid::new_v4()));
     std::fs::write(&blocker, b"a file, not a folder").unwrap();
@@ -2291,7 +2291,7 @@ async fn a_spent_quota_is_answered_before_the_upload_budget() {
 #[tokio::test]
 async fn a_source_past_its_uploads_in_flight_is_turned_away() {
     let recorder = crate::series::test_support::recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let settings = Settings {
         max_concurrent_uploads_per_source: 1,
         ..Settings::for_tests()
@@ -2337,7 +2337,7 @@ async fn a_source_past_its_uploads_in_flight_is_turned_away() {
 async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
     use futures::StreamExt;
     let recorder = crate::series::test_support::recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let settings = Settings {
         multipart_upload_timeout: std::time::Duration::from_millis(50),
         ..Settings::for_tests()
@@ -2395,7 +2395,7 @@ async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
 async fn a_client_closing_mid_body_counts_one_abort() {
     use tokio::io::AsyncWriteExt;
     let recorder = crate::series::test_support::recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let node = deploying_node("client-abort", Settings::for_tests()).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -2628,8 +2628,8 @@ async fn an_entity_named_by_its_cid_v0_is_found_through_the_spool() {
 /// the bytes it had sent recorded (a declared body refused unread is not).
 #[tokio::test]
 async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let refused_after = || {
         recorder.handle().render().lines().find_map(|line| {
             line.strip_prefix(

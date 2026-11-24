@@ -68,8 +68,8 @@ impl From<reqwest::Error> for Failure {
     }
 }
 
-impl From<zip06::result::ZipError> for Failure {
-    fn from(error: zip06::result::ZipError) -> Self {
+impl From<zip::result::ZipError> for Failure {
+    fn from(error: zip::result::ZipError) -> Self {
         Self::Usage(format!(
             "the archive cannot be read as a zip ({})",
             out::safe(&error.to_string())

@@ -23,7 +23,8 @@ numbers.
   spans the pause.
 - **Snapshots.** Every 15 s of sampled time one `PerformanceSnapshot` is taken: the CPU frame
   times (`Time<Real>` deltas, unclamped) and the GPU frame times (`gpu/frame_time`, where the
-  adapter has timestamp queries) as a summary each: count, min, mean, p1 to p99, max, and the
+  adapter has timestamp queries and its readings are reliable: not in a browser on macOS, see
+  `benchmark.md`, *GPU time*) as a summary each: count, min, mean, p1 to p99, max, and the
   frames over the hiccup threshold with their time sum and their excess over the threshold.
   `inProgressSample.sampledSeconds` counts up to the next one. The GPU readings of the first four
   sampled frames after a resume are dropped too: a frame's GPU time is read back frames later,
@@ -62,7 +63,7 @@ numbers.
   `perf/swapchain_present_wait_ms` and `gpu/frame_time`.
 - **Bottleneck.** Which stage bounds the frame rate, from the smoothed values with a 20 %
   margin: `frame_rate_limiter` when the frame's pacing wait is a fifth of the frame or more (the
-  limiter's sleep natively; on the web, where the scene loop never sleeps, the app loop's time
+  limiter's sleep natively; on the web, where there is no limiter sleep, the app loop's time
   outside the app's update, `pipelined/main_update` minus the main world's schedules: its frame
   timer, the cap, then the animation frame that runs the next update);
   `swapchain_present_wait` when the present wait takes a fifth of the frame or more (vsync; on
@@ -73,7 +74,8 @@ numbers.
   its pacing wait and, on the web, without the handoff wait, `pipelined/wait_handoff`, the app
   blocked until the render worker takes the frame) and the render world's CPU time; a CPU-bound
   frame is `render_thread_cpu` when the render world's CPU time is the longer, by the margin, of
-  it and the main world's schedules. Null until a GPU time exists.
+  it and the main world's schedules. Null until a GPU time exists, and always where the GPU
+  frame time is unreliable (a browser on macOS).
 - **System.** On Linux and Windows in a `performance-profiler` build, Bevy's system information:
   system and process CPU usage, the OS, the CPU, its cores and the RAM.
 

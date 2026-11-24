@@ -54,6 +54,22 @@ describe('which transaction is an in-world split purchase', () => {
     expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, dispatched, '0xabc')).toBe('bought')
   })
 
+  it('a group paid by its credits: its credit at its own value under the signed cap, and nothing from the wallet', async () => {
+    // The node's credit carries headroom over the cap it signed; the call pulls no MANA.
+    const V = 1_200_000_000_000_000_000n
+    const held: SpendableCredit = { ...credit, amount: V.toString(), availableAmount: V.toString() }
+    const built = buildStoreUseCreditsArgs(STORE, [item], BUYER, [held], C.toString())
+    expect(built.maxUncreditedValue).toBe(0n)
+    const input = encodeExecuteMetaTransaction('functionData', BUYER, encodeUseCredits(built), ('0x' + '11'.repeat(65)) as Hex)
+    const group: SplitSale = { ...sale, creditWei: C.toString(), creditValueWei: V.toString(), gapWei: '0' }
+    expect(isSplitSale(group)).toBe(true)
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, group, '0xabc')).toBe('bought')
+    // Read with the cap as the credit's value, the same call carries other terms.
+    const { creditValueWei: _, ...capped } = group
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, capped, '0xabc')).toBe('other')
+    expect(isSplitSale({ ...group, creditValueWei: '1.5' })).toBe(false)
+  })
+
   it('with no envelope kept, no revert is its own', async () => {
     expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, 'reverted') as never, sale, '0xabc')).toBe('unknown')
     expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('bought')
@@ -95,8 +111,11 @@ describe('which transaction is an in-world split purchase', () => {
   })
 
   it('says nothing of a transaction to another contract, or one it can\'t read: its destination alone isn\'t where the credit went', async () => {
-    expect(await splitExecution(evidenceOf({ to: STORE, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('unknown')
-    expect(await splitExecution(evidenceOf({ to: MANAGER, input: '0xdeadbeef' }, 'success') as never, sale, '0xabc')).toBe('unknown')
+    // Read, but not as a useCredits at the manager: unreadable, which is no answer either way (never bought, never other).
+    expect(await splitExecution(evidenceOf({ to: STORE, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('unreadable')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input: '0xdeadbeef' }, 'success') as never, sale, '0xabc')).toBe('unreadable')
+    // Nothing read at all is unknown.
+    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc', { sleep: async () => {} })).toBe('unknown')
   })
 
   it('reads a useCredits the buyer\'s own wallet sent (the web Shop\'s fallback) by the transaction\'s sender', async () => {
@@ -112,8 +131,8 @@ describe('which transaction is an in-world split purchase', () => {
     expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(relayed()) }, '0xabc')).toBe('unknown')
     // Sent by another account: it doesn't spend this buyer's credit.
     expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('foreign')
-    // A reader that doesn't give the sender can't tell whose it is.
-    expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unknown')
+    // A reader that doesn't give the sender can't tell whose it is: unreadable, no answer either way.
+    expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unreadable')
   })
 
   it('gives a transaction its receipt ran ahead of one more look, a moment later: a mined purchase reads as bought', async () => {

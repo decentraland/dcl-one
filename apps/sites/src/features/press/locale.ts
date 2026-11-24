@@ -1,4 +1,4 @@
-import type { SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import type { SitesLocale } from "@dcl/one-ui";
 
 export const pressCopy = {
   en: {

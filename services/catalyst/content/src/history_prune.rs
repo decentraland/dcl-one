@@ -33,7 +33,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use metrics::counter;
+use dcl_metrics::counter;
 use serde::Serialize;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -617,7 +617,7 @@ mod tests {
 
         let grace = Duration::from_secs(86_400);
         let recorder = crate::series::test_support::recorder();
-        let metrics_guard = metrics::set_default_local_recorder(&recorder);
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
         let off = run_once(
             &pool,
             &storage,

@@ -41,11 +41,18 @@ use crate::chain_index::rpc::Rpc;
 tokio::task_local! {
     /// The shadow a test's walks offer their accepted windows to.
     static TEST_SHADOW: Option<Arc<crate::chain_index::portal::shadow::Shadow>>;
+    /// The portal a test's walks read the windows it admits from.
+    static TEST_PORTAL: Option<Arc<crate::chain_index::portal::admit::Admission>>;
 }
 
 /// The shadow of the running test, if it set one.
 fn test_shadow() -> Option<Arc<crate::chain_index::portal::shadow::Shadow>> {
     TEST_SHADOW.try_with(Clone::clone).ok().flatten()
+}
+
+/// The portal of the running test, if it set one.
+fn test_portal() -> Option<Arc<crate::chain_index::portal::admit::Admission>> {
+    TEST_PORTAL.try_with(Clone::clone).ok().flatten()
 }
 
 /// A Polygon shadow over a portal that accepts connections and never
@@ -158,6 +165,9 @@ struct FakeChain {
     echo: Mutex<String>,
     batches: AtomicUsize,
     drop_in_batch: Mutex<Vec<u64>>,
+    /// The `eth_blockNumber` calls still answered; the ones after are
+    /// refused (an endpoint that fails in the middle of a pass).
+    head_reads_left: std::sync::atomic::AtomicI64,
     /// Every request in arrival order, as [`call_tag`] names it.
     calls: Mutex<Vec<String>>,
     /// What `eth_chainId` answers (137 unless a test moves it).
@@ -198,6 +208,8 @@ struct FakeChain {
     /// Header reads of exactly this block wait for this gate (counted in
     /// `probes_waiting`): one projection's probe, not another's.
     gate_at: Mutex<Option<(u64, Arc<tokio::sync::Semaphore>)>>,
+    /// Requests that carried an `x-api-key` header (a portal's credential).
+    api_keys: AtomicUsize,
 }
 
 /// The logs and the fork a fork lasting one log read restores.
@@ -244,6 +256,7 @@ impl FakeChain {
             echo: Mutex::new(String::new()),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
+            head_reads_left: std::sync::atomic::AtomicI64::new(i64::MAX),
             calls: Mutex::new(Vec::new()),
             chain_id: std::sync::atomic::AtomicU64::new(137),
             fail_headers: std::sync::atomic::AtomicBool::new(false),
@@ -261,6 +274,7 @@ impl FakeChain {
             revert_after_logs: Mutex::new(None),
             gate_after: Mutex::new(None),
             gate_at: Mutex::new(None),
+            api_keys: AtomicUsize::new(0),
         })
     }
 
@@ -333,9 +347,13 @@ fn call_tag(body: &Value) -> String {
 
 async fn rpc(
     State(chain): State<Arc<FakeChain>>,
+    headers: axum::http::HeaderMap,
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     chain.requests.fetch_add(1, Ordering::SeqCst);
+    if headers.contains_key("x-api-key") {
+        chain.api_keys.fetch_add(1, Ordering::SeqCst);
+    }
     let tag = match &body {
         Value::Array(calls) => format!(
             "batch [{}]",
@@ -412,7 +430,12 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
     let reply = |result: Value| json!({ "jsonrpc": "2.0", "id": id, "result": result });
     let refuse = |message: String| json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": message } });
     match body["method"].as_str() {
-        Some("eth_blockNumber") => reply(json!(format!("0x{:x}", *chain.head.lock()))),
+        Some("eth_blockNumber") => {
+            if chain.head_reads_left.fetch_sub(1, Ordering::SeqCst) <= 0 {
+                return refuse("the head is unavailable".into());
+            }
+            reply(json!(format!("0x{:x}", *chain.head.lock())))
+        }
         Some("eth_chainId") if chain.fail_chain_id.load(Ordering::SeqCst) => {
             json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": format!("upstream refused {}", chain.echo.lock()) } })
         }
@@ -646,13 +669,24 @@ async fn try_pass(
     url: &str,
     ix: &dyn ChainIndex,
 ) -> anyhow::Result<PassOutcome> {
-    let shadow = test_shadow();
+    let (shadow, portal) = (test_shadow(), test_portal());
     let source = crate::chain_index::portal::shadow::Shadowed::new(
-        chain_walk::RpcSource::new(Rpc::at(&state.http, url)),
+        crate::chain_index::portal::admit::AdmittedPortal::new(
+            chain_walk::RpcSource::new(Rpc::at(&state.http, url)),
+            portal.as_deref(),
+        ),
         shadow.as_deref(),
     );
+    // With a portal the pass checks the chain through its source first, as
+    // a job's pass does (and counts it): the portal admits only that chain.
+    let checked = if portal.is_some() {
+        super::ensure_chain(&source, ix.chain_id()).await?;
+        1
+    } else {
+        0
+    };
     let owner = chain_walk::test_owner(&state.pool, ix, &state.settings.market.indexes).await;
-    chain_walk::run_pass(
+    let mut out = chain_walk::run_pass(
         &state.pool,
         &source,
         ix,
@@ -661,7 +695,9 @@ async fn try_pass(
         None,
         &|_| {},
     )
-    .await
+    .await?;
+    out.requests += checked;
+    Ok(out)
 }
 
 /// Whether `e` is a write refused because its job no longer owns the projection.
@@ -1291,6 +1327,15 @@ async fn seed_item(
     .execute(pool)
     .await
     .unwrap();
+    // The items mirror's pass, which the owned-items reads need.
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         VALUES ('items', $1, 'https://items.example', timezone('UTC', now())) ON CONFLICT (mirror, network) DO NOTHING",
+    )
+    .bind(network)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 async fn owner_of(
@@ -1526,6 +1571,44 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
         (StatusCode::OK, json!({ "5000": 1 })),
         "{body}"
     );
+    // The ownership readers over the walked index: the emotes (Polygon
+    // only) list CARL's dance, and a profile naming BOB's hat and ALICE's
+    // parrot resolves each to its holder's token.
+    let (code, body) = get_json(
+        &super::router(st.clone()),
+        &format!("/lambdas/users/{CARL}/emotes"),
+    )
+    .await;
+    assert_eq!(
+        (
+            code,
+            body["elements"][0]["urn"].as_str(),
+            body["elements"][0]["name"].as_str()
+        ),
+        (
+            StatusCode::OK,
+            Some("urn:decentraland:matic:collections-v2:0xc2:0"),
+            Some("Moonwalk")
+        ),
+        "{body}"
+    );
+    let hat = "urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:0";
+    let parrot =
+        "urn:decentraland:matic:collections-v2:0x00000000000000000000000000000000000000c1:1";
+    let requested: std::collections::HashSet<(String, String)> = [
+        (BOB.to_string(), hat.to_string()),
+        (ALICE.to_string(), hat.to_string()),
+        (ALICE.to_string(), parrot.to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let owned =
+        super::owned_items::owned_tokens(&db.pool, &requested, super::owned_items::Rule::Complete)
+            .await
+            .unwrap();
+    assert_eq!(owned[BOB][hat], vec![t1.to_string()]);
+    assert_eq!(owned[ALICE][parrot], vec![t2.to_string()]);
+    assert!(!owned[ALICE].contains_key(hat), "ALICE sold the hat to BOB");
 
     // A late collection: the mirror learns c3 after the walk passed its
     // creation; the backfill lane reads it before the network republishes.
@@ -1918,6 +2001,215 @@ const PINNED_CALLS: &[&str] = &[
     "head",
     "finalized",
 ];
+
+/// A rewind deletes the log and the fold back to the start; the refill then
+/// takes several passes. Profile ownership (the relaxed rule, no clock)
+/// fails on every one of them instead of answering the half-walked table,
+/// which would strip items their owners hold: the publish marker stays
+/// cleared until a pass reaches the head, folds and publishes.
+#[tokio::test]
+async fn a_rewind_fails_profile_ownership_until_the_refill_publishes() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = nft_index::start_block(ChainNet::Matic);
+    let c1 = "0x00000000000000000000000000000000000000c1";
+    seed_collection(
+        &db.pool,
+        "matic",
+        c1,
+        s + 10,
+        "urn:decentraland:matic:collections-v2:0xc1",
+        "Pirates",
+    )
+    .await;
+    let t1 = v2_token(0, 1);
+    let chain = FakeChain::new(
+        s + 3_000,
+        vec![transfer(c1, ZERO, ALICE, t1, s + 100, 0)],
+        1_000_000,
+        100,
+    );
+    let url = serve(chain.clone()).await;
+    // Four 200-block windows a pass: the refill of 3,000 blocks is several passes.
+    let st = state_over(db.pool.clone(), &url, index_settings(4, 200), false);
+    assert!(
+        publish_nft(&st, &url, &NftIndex::new(ChainNet::Matic))
+            .await
+            .published
+    );
+    let urn = format!("urn:decentraland:matic:collections-v2:{c1}:0");
+    let requested: std::collections::HashSet<(String, String)> =
+        [(ALICE.to_string(), urn.clone())].into_iter().collect();
+    let read = || {
+        super::owned_items::owned_tokens(&db.pool, &requested, super::owned_items::Rule::Complete)
+    };
+    assert_eq!(read().await.unwrap()[ALICE][&urn], vec![t1.to_string()]);
+
+    // The chain reorganizes from just past the start block, the transfer
+    // kept: no recovery point below the cursor is still on the chain, so the
+    // rewind goes back to the start and the refill walks the whole history
+    // again on the new branch.
+    chain.fork(s + 1, 0xee, vec![transfer(c1, ZERO, ALICE, t1, s + 100, 0)]);
+    let rewound = pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await;
+    assert!(rewound.reorg_rewound_to.is_some(), "{rewound:?}");
+    let mut refill_passes = 0;
+    loop {
+        let c = chain_walk::cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.folded_block, None, "no publish mid-refill: {c:?}");
+        assert!(
+            matches!(
+                read().await,
+                Err(super::owned_items::ReadError::NotReady(..))
+            ),
+            "pass {refill_passes}: a profile read fails, never an empty inventory"
+        );
+        let outcome = pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await;
+        refill_passes += 1;
+        if outcome.published {
+            break;
+        }
+        assert!(refill_passes < 40, "the refill never published");
+    }
+    assert!(
+        refill_passes > 2,
+        "the refill spans passes: {refill_passes}"
+    );
+    assert_eq!(read().await.unwrap()[ALICE][&urn], vec![t1.to_string()]);
+    db.drop().await;
+}
+
+/// A pass that takes in a late collection folds while that collection's
+/// backfill is still owed. When the head read after that fold fails, the
+/// pass ends before its own marker update: the fold's transaction has
+/// already cleared the marker, so profile ownership fails instead of
+/// answering the collection's tokens transferred since the walk took it in
+/// without its earlier ones. The next passes backfill and publish.
+#[tokio::test]
+async fn a_fold_that_owes_a_backfill_clears_the_marker_when_the_pass_fails_after_it() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = nft_index::start_block(ChainNet::Matic);
+    let c1 = "0x00000000000000000000000000000000000000c1";
+    let late = "0x00000000000000000000000000000000000000c3";
+    seed_collection(
+        &db.pool,
+        "matic",
+        c1,
+        s + 10,
+        "urn:decentraland:matic:collections-v2:0xc1",
+        "Pirates",
+    )
+    .await;
+    let (t1, early, recent) = (v2_token(0, 1), v2_token(0, 7), v2_token(0, 8));
+    let head = s + 2_000;
+    let chain = FakeChain::new(
+        head,
+        vec![
+            transfer(c1, ZERO, ALICE, t1, s + 100, 0),
+            transfer(late, ZERO, ALICE, early, s + 500, 0),
+            transfer(late, ZERO, ALICE, recent, head + 10, 0),
+        ],
+        1_000_000,
+        100,
+    );
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(64, 1_000), false);
+    let ix = NftIndex::new(ChainNet::Matic);
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    let c1_urn = format!("urn:decentraland:matic:collections-v2:{c1}:0");
+    let late_urn = format!("urn:decentraland:matic:collections-v2:{late}:0");
+    let requested: std::collections::HashSet<(String, String)> = [
+        (ALICE.to_string(), c1_urn.clone()),
+        (ALICE.to_string(), late_urn.clone()),
+    ]
+    .into_iter()
+    .collect();
+    let read = || {
+        super::owned_items::owned_tokens(&db.pool, &requested, super::owned_items::Rule::Complete)
+    };
+    assert_eq!(read().await.unwrap()[ALICE][&c1_urn], vec![t1.to_string()]);
+    let cursor = || async {
+        chain_walk::cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let published = cursor().await;
+    assert!(published.folded_block.is_some(), "{published:?}");
+
+    // The mirror learns the late collection after the walk passed its
+    // creation; the pass reads the head once, then the endpoint fails.
+    seed_collection(
+        &db.pool,
+        "matic",
+        late,
+        s + 400,
+        "urn:decentraland:matic:collections-v2:0xc3",
+        "Late",
+    )
+    .await;
+    *chain.head.lock() = head + 100;
+    chain.head_reads_left.store(1, Ordering::SeqCst);
+    let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+    let owner = chain_walk::test_owner(&db.pool, &ix, &st.settings.market.indexes).await;
+    let failed = chain_walk::run_pass(
+        &db.pool,
+        &source,
+        &ix,
+        &st.settings.market.indexes,
+        &owner,
+        None,
+        &|_| {},
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{failed:#}").contains("eth_blockNumber after the fold"),
+        "{failed:#}"
+    );
+    chain.head_reads_left.store(i64::MAX, Ordering::SeqCst);
+    let c = cursor().await;
+    assert!(
+        c.last_block > published.last_block && c.fold_through == Some(c.last_block),
+        "the pass walked and folded before it failed: {c:?}"
+    );
+    assert_eq!(
+        owner_of(&db.pool, "matic", late, recent).await,
+        Some(Some(ALICE.to_string())),
+        "the fold committed the late collection's recent token"
+    );
+    assert_eq!(owner_of(&db.pool, "matic", late, early).await, None);
+    let owed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM shop.nft_contract WHERE contract_address = $1 AND backfill_from_block IS NOT NULL AND backfilled_to_block IS NULL",
+    )
+    .bind(late)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(owed, 1, "the backfill is still owed");
+    assert_eq!(c.folded_block, None, "the fold cleared the marker: {c:?}");
+    assert!(
+        matches!(
+            read().await,
+            Err(super::owned_items::ReadError::NotReady(..))
+        ),
+        "a profile read fails under a fold that owes a backfill"
+    );
+
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    let owned = read().await.unwrap();
+    assert_eq!(owned[ALICE][&c1_urn], vec![t1.to_string()]);
+    assert_eq!(
+        owned[ALICE][&late_urn],
+        vec![recent.to_string(), early.to_string()]
+    );
+    db.drop().await;
+}
 
 /// After a reorg rewind and the refold it owes, `land_data` equals a
 /// truncate-and-rebuild of the remaining log: a token whose only Update was
@@ -2442,6 +2734,120 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         ),
         (StatusCode::OK, Some("Jester Feet"), Some("1")),
         "{body}"
+    );
+    // A v1 token's wearable id is its Issue log's, not a tokenURI.
+    let (wearable, issued): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT wearable_id, issued_id::text FROM shop.nft WHERE network = 'ethereum' AND contract_address = $1 AND token_id = 0",
+    )
+    .bind(v1)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (wearable.as_deref(), issued.as_deref()),
+        (Some("jester_feet"), Some("1"))
+    );
+    // A read naming no category also answers the owner's names and LAND,
+    // their indexes being published.
+    let (code, body) = get_json(&app, &format!("/v1/nfts?owner={ALICE}&network=ETHEREUM")).await;
+    let mut held: Vec<(String, String)> = body["data"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|r| {
+                    (
+                        r["nft"]["category"].as_str().unwrap_or("").to_string(),
+                        r["nft"]["name"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    held.sort();
+    assert_eq!(
+        (code, held),
+        (
+            StatusCode::OK,
+            vec![
+                ("estate".to_string(), "Fashion Street".to_string()),
+                ("wearable".to_string(), "Jester Feet".to_string())
+            ]
+        ),
+        "{body}"
+    );
+    let (code, body) = get_json(&app, &format!("/v1/nfts?owner={BOB}&network=ETHEREUM")).await;
+    assert_eq!(
+        (
+            code,
+            body["data"][0]["nft"]["name"].as_str(),
+            body["total"].as_i64()
+        ),
+        (StatusCode::OK, Some("PixelGolf"), Some(1)),
+        "{body}"
+    );
+    // A collection filter keeps the collections alone.
+    let (code, body) = get_json(
+        &app,
+        &format!("/v1/nfts?owner={ALICE}&network=ETHEREUM&category=wearable"),
+    )
+    .await;
+    assert_eq!(
+        (code, body["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+    // The wardrobe reads both networks: Polygon not published yet is the
+    // envelope naming it; published, ALICE's v1 copy is listed by the URN
+    // its Issue log names.
+    let lambdas = super::router(st.clone());
+    let wardrobe = format!("/lambdas/users/{ALICE}/wearables");
+    let (code, body) = get_json(&lambdas, &wardrobe).await;
+    assert_eq!(
+        (code, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    assert!(
+        body["message"].as_str().unwrap().contains("matic"),
+        "{body}"
+    );
+    super::owned_items::test_support::publish(
+        &db.pool,
+        &[ChainNet::Matic],
+        true,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    let (code, body) = get_json(&lambdas, &wardrobe).await;
+    assert_eq!(
+        (
+            code,
+            body["elements"][0]["urn"].as_str(),
+            body["elements"][0]["individualData"][0]["tokenId"].as_str(),
+            body["totalAmount"].as_i64()
+        ),
+        (
+            StatusCode::OK,
+            Some("urn:decentraland:ethereum:collections-v1:halloween_2019:jester_feet"),
+            Some("0"),
+            Some(1)
+        ),
+        "{body}"
+    );
+    let requested = [(
+        ALICE.to_string(),
+        "urn:decentraland:ethereum:collections-v1:halloween_2019:jester_feet".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let owned =
+        super::owned_items::owned_tokens(&db.pool, &requested, super::owned_items::Rule::Complete)
+            .await
+            .unwrap();
+    assert_eq!(
+        owned[ALICE]["urn:decentraland:ethereum:collections-v1:halloween_2019:jester_feet"],
+        vec!["0".to_string()],
+        "the profile reader resolves the v1 URN by the Issue log's wearable id"
     );
     let (code, body) = get_json(&app, "/v1/nfts?category=parcel&search=37,55").await;
     assert_eq!(code, StatusCode::OK, "{body}");
@@ -3979,10 +4385,10 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     db.drop().await;
 }
 
-/// `catalyst index` walks `rentals-index-ethereum` whenever a chain-1
-/// endpoint is configured, unless switched off.
+/// `catalyst index` walks rentals on each configured Ethereum chain,
+/// unless switched off.
 #[tokio::test]
-async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint() {
+async fn the_rentals_index_attaches_behind_its_switch_and_chain_endpoints() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -4011,11 +4417,51 @@ async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint()
     assert!(!attached(&with_rpc, Some(false)));
     assert!(attached(&with_rpc, Some(true)) && attached(&with_rpc, None));
     assert!(!attached(&no_rpc, Some(true)) && !attached(&no_rpc, None));
+    let expected = |state: &SharedState, enabled| {
+        super::chain_jobs::expected_cursors(state, ChainNet::Ethereum, enabled)
+            .into_iter()
+            .map(|(index, url)| (index.indexer(), url.is_some()))
+            .collect::<Vec<_>>()
+    };
+    assert!(expected(&no_rpc, None).is_empty());
+    assert_eq!(expected(&no_rpc, Some(true)), [("rentals", false)]);
     assert!(
         super::chain_jobs::projections(&with_rpc, ChainNet::Matic, None)
             .iter()
             .all(|p| !p.lease.starts_with("rentals-index")),
         "the rentals venue is mainnet's"
+    );
+    let mut with_sepolia = with_rpc;
+    Arc::get_mut(&mut with_sepolia)
+        .unwrap()
+        .settings
+        .market
+        .trade_rpc_urls = RpcEndpoints::from_env(Some(
+        "1=https://rpc.example.org/,11155111=https://sepolia.example.org/",
+    ));
+    assert_eq!(
+        expected(&with_sepolia, None),
+        [("rentals", true), ("rentals_sepolia", true)]
+    );
+    assert!(expected(&with_sepolia, Some(false)).is_empty());
+    let both = super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, None);
+    let sepolia = both
+        .iter()
+        .find(|projection| projection.lease == "rentals-index-sepolia-ethereum")
+        .unwrap();
+    assert_eq!(sepolia.url, "https://sepolia.example.org/");
+    let index = (sepolia.make)();
+    assert_eq!(index.indexer(), "rentals_sepolia");
+    assert_eq!(index.chain_id(), 11_155_111);
+    assert_eq!(index.start_block(), 3_831_254);
+    assert!(
+        both.iter()
+            .any(|projection| projection.lease == "rentals-index-ethereum")
+    );
+    assert!(
+        super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, Some(false))
+            .iter()
+            .all(|projection| !projection.lease.starts_with("rentals-index"))
     );
     db.drop().await;
 }
@@ -5334,6 +5780,7 @@ mod supervisor {
             member_deadline: Duration::from_secs(60),
             stats: Arc::default(),
             shadow: None,
+            portal: test_portal(),
         }
     }
 
@@ -5761,7 +6208,15 @@ mod supervisor {
     /// the pinned order (the finalized header serves as the window's before).
     #[tokio::test]
     async fn two_projections_at_one_checkpoint_read_their_windows_once() {
-        windows_once().await;
+        windows_once(false).await;
+    }
+
+    /// The same shared walk with a portal whose coverage lists every address
+    /// both read: the same rows as the two RPC walks alone, and no
+    /// eth_getLogs.
+    #[tokio::test]
+    async fn a_shared_walk_from_the_portal_writes_the_rows_of_two_rpc_walks() {
+        windows_once(true).await;
     }
 
     /// The same requests and rows with a shadow whose portal never answers:
@@ -5770,14 +6225,19 @@ mod supervisor {
     #[tokio::test]
     async fn the_shared_trace_holds_with_a_stalled_shadow() {
         let (shadow, stop, accepted) = super::stalled_shadow().await;
-        if super::TEST_SHADOW.scope(Some(shadow), windows_once()).await {
+        if super::TEST_SHADOW
+            .scope(Some(shadow), windows_once(false))
+            .await
+        {
             assert!(accepted.load(Ordering::SeqCst) >= 1);
         }
         drop(stop);
     }
 
-    /// Runs the comparison; false when no test database is configured.
-    async fn windows_once() -> bool {
+    /// Runs the comparison, the shared walk reading from a portal that covers
+    /// every address when `portal`; false when no test database is
+    /// configured.
+    async fn windows_once(portal: bool) -> bool {
         let (Some(alone), Some(together)) = (ScratchDb::create().await, ScratchDb::create().await)
         else {
             return false;
@@ -5854,6 +6314,39 @@ mod supervisor {
                 .unwrap(),
         )
         .unwrap();
+        let admission = if portal {
+            // Each address once, as a coverage answer lists it.
+            let mut every = std::collections::BTreeMap::new();
+            let nft = NftIndex::new(ChainNet::Matic);
+            for ix in [&nft as &dyn ChainIndex, &SalesIndex] {
+                let anchor = (s + 498, time_of(s + 498));
+                for g in ix
+                    .groups(&together.pool, s + 499, s + 1_498, anchor)
+                    .await
+                    .unwrap()
+                {
+                    every.extend(g.addresses.into_iter().map(|a| (a.to_ascii_lowercase(), 0)));
+                }
+            }
+            let (origin, _) = super::compare_sources_tests::covering_portal(
+                chain.clone(),
+                every.into_iter().collect(),
+            )
+            .await;
+            Some(Arc::new(crate::chain_index::portal::admit::Admission::new(
+                crate::chain_index::portal::PortalReader::new(
+                    &origin,
+                    "polygon-mainnet",
+                    None,
+                    1_000.0,
+                )
+                .unwrap(),
+                "matic",
+                Duration::from_secs(5),
+            )))
+        } else {
+            super::test_portal()
+        };
         let mark = chain.calls.lock().len();
         let members: Vec<chain_group::Member> = vec![
             Arc::new(NftIndex::new(ChainNet::Matic)) as Arc<dyn ChainIndex>,
@@ -5884,6 +6377,7 @@ mod supervisor {
             Duration::from_secs(60),
             &counted,
             super::test_shadow().as_deref(),
+            admission.as_deref(),
         )
         .await;
         let sent = counted.load(Ordering::SeqCst);
@@ -5916,6 +6410,22 @@ mod supervisor {
             assert!(out.published, "{out:?}");
         }
         let together_calls = chain.calls.lock()[mark..].to_vec();
+        if portal {
+            assert!(
+                together_calls.iter().all(|c| !c.starts_with("logs")),
+                "{together_calls:#?}"
+            );
+            for table in PROJECTION_TABLES {
+                assert_eq!(
+                    table_rows(&together.pool, table).await,
+                    table_rows(&alone.pool, table).await,
+                    "{table}"
+                );
+            }
+            alone.drop().await;
+            together.drop().await;
+            return true;
+        }
         let logs = format!("logs {}..{} x1", s + 499, s + 1_498);
         let expected: Vec<String> = [
             "chain id".to_string(),
@@ -6029,6 +6539,7 @@ mod supervisor {
                 Duration::from_millis(800),
                 &counted,
                 None,
+                super::test_portal().as_deref(),
             ),
         )
         .await
@@ -6297,9 +6808,16 @@ mod supervisor {
         let url = serve(chain.clone()).await;
         let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
         let namespace = format!("shared-lease-loss-{}", std::process::id());
+        // Only sales' lease is meant to go, and on `second`, whose short
+        // keepalive notices it. The walk and nft's lease are on `first`: a
+        // lease statement that outlasts 200 ms on a loaded runner would end
+        // nft's acquisition too, and sales would walk the window alone.
         let first = Jobs::with_leases(
             db.pool.clone(),
-            lease_settings(&namespace, Duration::from_millis(100)),
+            LeaseSettings {
+                keepalive: Duration::from_secs(30),
+                ..lease_settings(&namespace, Duration::from_millis(100))
+            },
         )
         .with_first_pass_now(true);
         let second = Jobs::with_leases(
@@ -6317,17 +6835,28 @@ mod supervisor {
         });
         let mut projections = nft_and_sales(&url);
         projections[1].make = hooked_sales(&hooks);
-        chain_jobs::spawn_with(
-            &first,
-            supervisor(&st, ChainNet::Matic, projections),
-            Some(leases),
-        );
+        // As in `a_commit_past_the_deadline_recovers_from_wherever_the_cursor_is`:
+        // on a short cadence one projection's close can outlast the other's
+        // interval on a slow machine, and sales then walks the new window
+        // alone. On this one each stands idle when the other comes due.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
+        let sup = supervisor(&st, ChainNet::Matic, projections);
+        let stats = sup.stats.clone();
+        chain_jobs::spawn_with(&first, sup, Some(leases));
         for indexer in [INDEXER_NFT, INDEXER_SALES] {
             eventually("each walked alone to the head", || async {
                 published(&db.pool, indexer, ChainNet::Matic).await
             })
             .await;
         }
+        let walks = stats.walks.load(Ordering::SeqCst);
+        eventually("nft and sales walk together", || async {
+            stats.walks.load(Ordering::SeqCst) > walks
+        })
+        .await;
         let before = cursor(&db.pool, INDEXER_SALES, ChainNet::Matic)
             .await
             .unwrap()
@@ -6506,6 +7035,16 @@ mod supervisor {
                 }) as Arc<dyn ChainIndex>
             })
         };
+        // Only a shared walk holds a member to its deadline: sales walking
+        // the window alone would wait in its commit for good. On a short
+        // cadence, one projection's close can outlast the other's interval
+        // on a slow machine, and the other then walks alone. On this one,
+        // each stands idle when the other comes due, and the two walk each
+        // window together.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
         let mut sup = supervisor(&st, ChainNet::Matic, projections);
         sup.member_deadline = Duration::from_millis(300);
         let stats = sup.stats.clone();
@@ -6518,6 +7057,11 @@ mod supervisor {
             .await;
         }
         for (round, landed) in [(1u64, false), (2, true)] {
+            let walks = stats.walks.load(Ordering::SeqCst);
+            eventually("nft and sales walk together again", || async {
+                stats.walks.load(Ordering::SeqCst) > walks
+            })
+            .await;
             let start = last_block(&db.pool, INDEXER_SALES).await;
             let sales = sale_events(&db.pool).await;
             let entered = hooks.write_entered.load(Ordering::SeqCst);
@@ -6748,6 +7292,7 @@ mod supervisor {
                     Duration::from_secs(60),
                     &AtomicUsize::new(0),
                     None,
+                    super::test_portal().as_deref(),
                 )
                 .await;
                 for (slot, end) in ends {
@@ -7142,6 +7687,7 @@ mod supervisor {
             Duration::from_secs(60),
             &counted,
             None,
+            super::test_portal().as_deref(),
         )
         .await;
         assert_eq!(
@@ -9947,6 +10493,7 @@ async fn a_started_walk_touch_is_fenced_by_its_owner() {
 /// serves the same chain's logs and headers.
 mod compare_sources_tests {
     use super::*;
+    use crate::chain_index::portal::admit::{Admission, AdmittedPortal};
     use crate::chain_index::portal::{AddressHistory, PortalReader};
     use crate::market::compare_sources::{self, Request};
     use axum::routing::get;
@@ -9963,11 +10510,22 @@ mod compare_sources_tests {
         /// After this many pages, the RPC's headers start failing.
         rpc_fails_after_pages: Option<usize>,
         pages: usize,
+        /// The addresses its coverage answer lists, with their first block:
+        /// it then answers `/contracts` up to its finalized block, and names
+        /// [`REVISION`] on every page; without it, `/contracts` is a 404.
+        coverage: Option<Vec<(String, u64)>>,
     }
+
+    /// The one manifest the fake lake serves from.
+    const REVISION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 
     struct Portal {
         chain: Arc<FakeChain>,
         quirks: Mutex<Quirks>,
+        /// Every request it answered.
+        hits: Arc<AtomicUsize>,
+        /// The coverage reads and pages that carried an `x-api-key`.
+        keyed: Arc<AtomicUsize>,
     }
 
     fn finalized(chain: &FakeChain) -> u64 {
@@ -9981,7 +10539,15 @@ mod compare_sources_tests {
         json!({"number": n, "hash": chain.hash_of(n), "parentHash": chain.hash_of(n.saturating_sub(1)), "timestamp": time_of(n)})
     }
 
-    async fn stream(State(p): State<Arc<Portal>>, body: String) -> axum::response::Response {
+    async fn stream(
+        State(p): State<Arc<Portal>>,
+        headers: axum::http::HeaderMap,
+        body: String,
+    ) -> axum::response::Response {
+        p.hits.fetch_add(1, Ordering::SeqCst);
+        if headers.contains_key("x-api-key") {
+            p.keyed.fetch_add(1, Ordering::SeqCst);
+        }
         let q: Value = serde_json::from_str(&body).unwrap();
         let from = q["fromBlock"].as_u64().unwrap();
         let fin = finalized(&p.chain);
@@ -10044,10 +10610,76 @@ mod compare_sources_tests {
                 format!("{line}\n")
             })
             .collect();
-        ([("content-type", "application/x-ndjson")], body).into_response()
+        let mut response = ([("content-type", "application/x-ndjson")], body).into_response();
+        if quirks.coverage.is_some() {
+            response.headers_mut().insert(
+                "x-lake-coverage-revision",
+                axum::http::HeaderValue::from_static(REVISION),
+            );
+        }
+        response
+    }
+
+    /// A portal over `chain` whose coverage lists `every` address, and how
+    /// many requests it answered.
+    pub(super) async fn covering_portal(
+        chain: Arc<FakeChain>,
+        every: Vec<(String, u64)>,
+    ) -> (String, Arc<AtomicUsize>) {
+        let portal = Arc::new(Portal {
+            chain,
+            quirks: Mutex::new(Quirks {
+                coverage: Some(every),
+                ..Default::default()
+            }),
+            hits: Arc::default(),
+            keyed: Arc::default(),
+        });
+        let hits = portal.hits.clone();
+        (portal_at(portal).await, hits)
+    }
+
+    /// The same, and how many of its requests carried a key.
+    async fn keyed_portal(
+        chain: Arc<FakeChain>,
+        every: Vec<(String, u64)>,
+    ) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let portal = Arc::new(Portal {
+            chain,
+            quirks: Mutex::new(Quirks {
+                coverage: Some(every),
+                ..Default::default()
+            }),
+            hits: Arc::default(),
+            keyed: Arc::default(),
+        });
+        let (hits, keyed) = (portal.hits.clone(), portal.keyed.clone());
+        (portal_at(portal).await, hits, keyed)
+    }
+
+    async fn contracts(
+        State(p): State<Arc<Portal>>,
+        headers: axum::http::HeaderMap,
+    ) -> axum::response::Response {
+        p.hits.fetch_add(1, Ordering::SeqCst);
+        if headers.contains_key("x-api-key") {
+            p.keyed.fetch_add(1, Ordering::SeqCst);
+        }
+        let Some(coverage) = p.quirks.lock().coverage.clone() else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let fin = finalized(&p.chain);
+        axum::Json(json!({
+            "schemaVersion": 1, "dataset": "polygon-mainnet", "chainId": 137,
+            "coverageRevision": REVISION,
+            "finalized": {"number": fin, "hash": p.chain.hash_of(fin)},
+            "contracts": coverage.iter().map(|(a, f)| json!({"address": a, "from": f})).collect::<Vec<_>>(),
+        }))
+        .into_response()
     }
 
     async fn heads(State(p): State<Arc<Portal>>, uri: axum::http::Uri) -> axum::response::Response {
+        p.hits.fetch_add(1, Ordering::SeqCst);
         if p.quirks.lock().heads_down {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
@@ -10060,16 +10692,23 @@ mod compare_sources_tests {
     }
 
     async fn serve_portal(chain: Arc<FakeChain>, quirks: Quirks) -> String {
-        let portal = Arc::new(Portal {
+        portal_at(Arc::new(Portal {
             chain,
             quirks: Mutex::new(quirks),
-        });
+            hits: Arc::default(),
+            keyed: Arc::default(),
+        }))
+        .await
+    }
+
+    async fn portal_at(portal: Arc<Portal>) -> String {
         let mut app = Router::new();
         for ds in ["polygon-mainnet", "ethereum-mainnet"] {
             app = app
                 .route(&format!("/datasets/{ds}/finalized-stream"), post(stream))
                 .route(&format!("/datasets/{ds}/head"), get(heads))
-                .route(&format!("/datasets/{ds}/finalized-head"), get(heads));
+                .route(&format!("/datasets/{ds}/finalized-head"), get(heads))
+                .route(&format!("/datasets/{ds}/contracts"), get(contracts));
         }
         let app = app.with_state(portal);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -10172,6 +10811,15 @@ mod compare_sources_tests {
         assert_eq!(r.compared, [(101, 200), (201, 300), (301, 400)]);
         assert!(r.uncovered.is_empty());
         assert_eq!(r.totals.missing + r.totals.extra + r.totals.mismatch, 0);
+        // The fixture's three logs, one per window, on both sides.
+        assert_eq!((r.totals.rpc_logs, r.totals.portal_logs), (3, 3));
+        assert_eq!(
+            r.windows
+                .iter()
+                .map(|w| (w.outcome.rpc_logs, w.outcome.portal_logs))
+                .collect::<Vec<_>>(),
+            [(1, 1), (1, 1), (1, 1)]
+        );
         assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages >= 3);
         assert_eq!(r.windows[0].filter_fingerprint.len(), 64);
         db.drop().await;
@@ -10223,6 +10871,7 @@ mod compare_sources_tests {
         let r = compare(&db, &rpc, &portal, 101, 400).await;
         assert_eq!((r.outcome, r.exit_code()), ("different", 1));
         assert_eq!(r.totals.missing, 1);
+        assert_eq!((r.totals.rpc_logs, r.totals.portal_logs), (3, 2));
         assert!(r.different && !r.incomplete);
         db.drop().await;
     }
@@ -10531,5 +11180,333 @@ mod compare_sources_tests {
         let r = compare(&db, &rpc, &portal, 101, 400).await;
         assert_eq!((r.outcome, r.database_chain), ("equal", Some(137)));
         db.drop().await;
+    }
+
+    /// The nft walk of seven collections, one address a request (seven
+    /// chunks a window) under a budget of ten, then a collection learned
+    /// late and backfilled by its lane: read from the RPC, or with a portal
+    /// whose coverage lists every address. Returns each pass's outcome
+    /// without its requests (and whether the requests it reported are the
+    /// ones the RPC saw), the events written, and the eth_getLogs sent.
+    async fn nft_walk(portal: bool) -> Option<(Vec<String>, Vec<(i64, i64, String)>, usize)> {
+        let db = ScratchDb::create().await?;
+        let s = nft_index::start_block(ChainNet::Matic);
+        let contracts: Vec<String> = (1..=7).map(|i| format!("0x{:040x}", 0xd0 + i)).collect();
+        for (i, c) in contracts.iter().enumerate() {
+            let urn = format!("urn:decentraland:matic:collections-v2:{c}");
+            seed_collection(&db.pool, "matic", c, s + 100, &urn, &format!("C{i}")).await;
+        }
+        let late = "0x00000000000000000000000000000000000000e8";
+        let head = s + 30_000;
+        let chain = FakeChain::new(
+            head,
+            vec![
+                transfer(&contracts[0], ZERO, ALICE, v2_token(0, 1), s + 200, 0),
+                transfer(&contracts[3], ZERO, BOB, v2_token(0, 1), s + 5_000, 0),
+                transfer(&contracts[6], ZERO, CARL, v2_token(0, 1), s + 15_000, 1),
+                transfer(late, ZERO, ALICE, v2_token(0, 7), s + 1_500, 0),
+            ],
+            10_000,
+            1_000,
+        );
+        let url = serve(chain.clone()).await;
+        let settings = IndexSettings {
+            address_chunk: 1,
+            ..index_settings(10, 10_000)
+        };
+        let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+        let admission = if portal {
+            // Every address the walk reads: the collections, the late one
+            // and the index's fixed contracts.
+            let mut every: Vec<(String, u64)> = contracts.iter().map(|c| (c.clone(), 0)).collect();
+            every.push((late.to_string(), 0));
+            every.extend(
+                nft_index::fixed_contracts(ChainNet::Matic)
+                    .into_iter()
+                    .map(|(a, _)| (a.to_ascii_lowercase(), 0)),
+            );
+            let (origin, hits, keyed) = keyed_portal(chain.clone(), every).await;
+            let key = crate::chain_index::portal::Secret::new("sk-example123");
+            Some((
+                Arc::new(Admission::new(
+                    PortalReader::new(&origin, "polygon-mainnet", key, 1_000.0).unwrap(),
+                    "matic",
+                    std::time::Duration::from_secs(5),
+                )),
+                hits,
+                keyed,
+            ))
+        } else {
+            None
+        };
+        let walk = async {
+            let mut outcomes = Vec::new();
+            let until_published = async |outcomes: &mut Vec<String>| {
+                for _ in 0..40 {
+                    let before = chain.requests.load(Ordering::SeqCst);
+                    let o = pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await;
+                    let sent = chain.requests.load(Ordering::SeqCst) - before;
+                    outcomes.push(format!(
+                        "logs {} rows {} to +{} paused {} published {} reported {}",
+                        o.logs,
+                        o.rows_written,
+                        o.indexed_to - s as i64,
+                        o.paused,
+                        o.published,
+                        sent == o.requests
+                    ));
+                    if o.published {
+                        return;
+                    }
+                }
+                panic!("never published: {outcomes:?}");
+            };
+            until_published(&mut outcomes).await;
+            seed_collection(
+                &db.pool,
+                "matic",
+                late,
+                s + 1_000,
+                "urn:decentraland:matic:collections-v2:0xe8",
+                "Late",
+            )
+            .await;
+            *chain.head.lock() = head + 100;
+            until_published(&mut outcomes).await;
+            outcomes
+        };
+        let outcomes = TEST_PORTAL
+            .scope(admission.as_ref().map(|(a, ..)| a.clone()), walk)
+            .await;
+        if let Some((admission, hits, keyed)) = &admission {
+            // The key went to the portal and never to the RPC.
+            assert!(keyed.load(Ordering::SeqCst) > 0);
+            assert_eq!(chain.api_keys.load(Ordering::SeqCst), 0);
+            // A carried fallback with nothing left reads nothing from either
+            // source: it pauses before its first window.
+            *chain.head.lock() = head + 20_000;
+            let source = AdmittedPortal::new(
+                chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
+                Some(admission.as_ref()),
+            );
+            let (logs, asked) = (
+                chain.get_logs.load(Ordering::SeqCst),
+                hits.load(Ordering::SeqCst),
+            );
+            let out = chain_walk::job_pass_with(
+                &db.pool,
+                &source,
+                &NftIndex::new(ChainNet::Matic),
+                &settings,
+                &Arc::default(),
+                None,
+                chain_walk::Budget {
+                    remaining: 0,
+                    first_window_used: true,
+                },
+                None,
+                &|_| {},
+            )
+            .await
+            .unwrap();
+            assert!(out.paused, "{out:?}");
+            assert_eq!(chain.get_logs.load(Ordering::SeqCst), logs);
+            assert_eq!(hits.load(Ordering::SeqCst), asked, "no portal request");
+        }
+        let events: Vec<(i64, i64, String)> = sqlx::query_as(
+            "SELECT block_number, log_index::bigint, contract_address FROM shop.nft_event \
+             WHERE network = 'matic' ORDER BY block_number, log_index",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        let get_logs = chain.get_logs.load(Ordering::SeqCst);
+        db.drop().await;
+        Some((outcomes, events, get_logs))
+    }
+
+    /// With a portal that covers every address, the walk pauses where the
+    /// RPC walk pauses (seven chunks a window, a budget of ten), its lane
+    /// backfills the late collection, it writes the same events, it reports
+    /// the RPC requests it sent, and it sends no eth_getLogs.
+    #[tokio::test]
+    async fn a_portal_walk_pauses_and_indexes_where_the_rpc_walk_does() {
+        let Some((rpc_outcomes, rpc_events, rpc_get_logs)) = nft_walk(false).await else {
+            return;
+        };
+        let (outcomes, events, get_logs) = nft_walk(true).await.unwrap();
+        assert_eq!(outcomes, rpc_outcomes);
+        assert!(
+            rpc_outcomes.iter().any(|o| o.contains("paused true")),
+            "{rpc_outcomes:?}"
+        );
+        assert!(rpc_outcomes.iter().all(|o| o.ends_with("reported true")));
+        assert_eq!(events, rpc_events);
+        assert!(
+            events
+                .iter()
+                .any(|(_, _, c)| c == "0x00000000000000000000000000000000000000e8")
+        );
+        assert!(rpc_get_logs > 0);
+        assert_eq!(get_logs, 0, "every window and lane read from the portal");
+    }
+
+    /// A source whose windows charge `.1` times the requests they send: a
+    /// portal's logical charge, apart from its sends.
+    struct Charging<S>(S, usize);
+
+    #[async_trait::async_trait]
+    impl<S: chain_walk::LogSource> chain_walk::LogSource for Charging<S> {
+        async fn chain_id(
+            &self,
+        ) -> Result<chain_walk::Read<u64>, crate::chain_index::rpc::RpcError> {
+            self.0.chain_id().await
+        }
+        async fn head(&self) -> Result<chain_walk::Read<u64>, crate::chain_index::rpc::RpcError> {
+            self.0.head().await
+        }
+        async fn finalized(
+            &self,
+        ) -> Result<
+            chain_walk::Read<crate::chain_index::rpc::BlockHeader>,
+            crate::chain_index::rpc::RpcError,
+        > {
+            self.0.finalized().await
+        }
+        async fn header(
+            &self,
+            number: u64,
+        ) -> Result<
+            chain_walk::Read<crate::chain_index::rpc::BlockHeader>,
+            crate::chain_index::rpc::RpcError,
+        > {
+            self.0.header(number).await
+        }
+        async fn window(
+            &self,
+            from: u64,
+            to: u64,
+            groups: &[chain_walk::LogGroup],
+            chunk: &mut usize,
+        ) -> Result<chain_walk::Window, crate::chain_index::rpc::RpcError> {
+            let mut w = self.0.window(from, to, groups, chunk).await?;
+            w.charge = w.requests * self.1;
+            Ok(w)
+        }
+        async fn block_times(
+            &self,
+            logs: &[crate::chain_index::rpc::RpcLog],
+        ) -> Result<chain_walk::Read<HashMap<i64, i64>>, crate::chain_index::rpc::RpcError>
+        {
+            self.0.block_times(logs).await
+        }
+    }
+
+    /// A lane pays its windows' charge, never less than their sends, and
+    /// reports their sends: with each window charging three, a budget of
+    /// four backfills one window a pass where one charging what it sends
+    /// backfills two, as does one charging nothing; and each pass reports the
+    /// requests the RPC saw.
+    #[tokio::test]
+    async fn a_lane_pays_its_windows_charge_and_reports_their_sends() {
+        let mut reached = Vec::new();
+        for charging in [None, Some(3), Some(0)] {
+            let Some(db) = ScratchDb::create().await else {
+                return;
+            };
+            let s = nft_index::start_block(ChainNet::Matic);
+            let c1 = "0x00000000000000000000000000000000000000c1";
+            let late = "0x00000000000000000000000000000000000000c3";
+            seed_collection(
+                &db.pool,
+                "matic",
+                c1,
+                s + 100,
+                "urn:decentraland:matic:collections-v2:0xc1",
+                "Pirates",
+            )
+            .await;
+            let chain = FakeChain::new(
+                s + 30_000,
+                vec![
+                    transfer(c1, ZERO, ALICE, v2_token(0, 1), s + 200, 0),
+                    transfer(late, ZERO, ALICE, v2_token(0, 7), s + 1_500, 0),
+                ],
+                10_000,
+                1_000,
+            );
+            let url = serve(chain.clone()).await;
+            let st = state_over(db.pool.clone(), &url, index_settings(4, 10_000), false);
+            for _ in 0..40 {
+                if pass(&st, &url, &NftIndex::new(ChainNet::Matic))
+                    .await
+                    .published
+                {
+                    break;
+                }
+            }
+            seed_collection(
+                &db.pool,
+                "matic",
+                late,
+                s + 1_000,
+                "urn:decentraland:matic:collections-v2:0xc3",
+                "Late",
+            )
+            .await;
+            // The pass that walks the new blocks learns the late
+            // collection; the next one runs its lane.
+            *chain.head.lock() = s + 30_100;
+            pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await;
+            let ix = NftIndex::new(ChainNet::Matic);
+            let rpc = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+            let owner = chain_walk::test_owner(&st.pool, &ix, &st.settings.market.indexes).await;
+            let before = chain.requests.load(Ordering::SeqCst);
+            let out = if let Some(factor) = charging {
+                let source = Charging(rpc, factor);
+                chain_walk::run_pass(
+                    &st.pool,
+                    &source,
+                    &ix,
+                    &st.settings.market.indexes,
+                    &owner,
+                    None,
+                    &|_| {},
+                )
+                .await
+                .unwrap()
+            } else {
+                chain_walk::run_pass(
+                    &st.pool,
+                    &rpc,
+                    &ix,
+                    &st.settings.market.indexes,
+                    &owner,
+                    None,
+                    &|_| {},
+                )
+                .await
+                .unwrap()
+            };
+            assert_eq!(
+                out.requests,
+                chain.requests.load(Ordering::SeqCst) - before,
+                "the pass reports the requests the RPC saw"
+            );
+            let to: Option<i64> = sqlx::query_scalar(
+                "SELECT backfilled_to_block FROM shop.nft_contract WHERE contract_address = $1",
+            )
+            .bind(late)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+            reached.push(to.map(|b| b - s as i64));
+            db.drop().await;
+        }
+        assert_eq!(
+            reached,
+            [Some(19_999), Some(9_999), Some(19_999)],
+            "two windows on the RPC's charge, one on three times it, two on none"
+        );
     }
 }

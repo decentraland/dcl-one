@@ -37,6 +37,7 @@ export const STATIC_PAGE_CARDS = {
     title: "Report submitted",
     description: "Your report has been submitted. Thanks for helping keep Decentraland safe.",
   },
+  "/press": { title: "Press Kit", description: "Decentraland brand assets, screenshots and media resources for press and partners." },
   "/brand": { title: "Brand Guidelines", description: "Logos, colors and usage rules for the Decentraland brand." },
   "/security": { title: "Security", description: "How Decentraland protects your wallet, identity and content." },
   "/privacy": { title: "Privacy Policy", description: "How Decentraland handles your personal data." },
@@ -57,12 +58,17 @@ export function isStaticPagePath(path: string): path is StaticPagePath {
 }
 
 /** The head of a static page: its card, with the canonical at `base + path` when the base is known. */
-export function staticPageMeta(path: StaticPagePath, base: string | undefined, opts: { noindex?: boolean } = {}): MetaDescriptor[] {
+export function staticPageMeta(
+  path: StaticPagePath,
+  base: string | undefined,
+  opts: { noindex?: boolean; extra?: readonly MetaDescriptor[] } = {},
+): MetaDescriptor[] {
   const card = STATIC_PAGE_CARDS[path];
   return socialMeta({
     title: `${card.title} | Decentraland`,
     description: card.description,
     url: absoluteUrl(base, path),
     noindex: opts.noindex,
+    extra: opts.extra,
   });
 }

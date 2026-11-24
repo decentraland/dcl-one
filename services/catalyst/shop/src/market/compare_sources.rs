@@ -131,6 +131,10 @@ pub struct WindowReport {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Totals {
+    /// The RPC's logs in the compared prefixes.
+    pub rpc_logs: usize,
+    /// The portal's logs in the compared prefixes that the exact filters keep.
+    pub portal_logs: usize,
     pub missing: usize,
     pub extra: usize,
     pub mismatch: usize,
@@ -247,6 +251,9 @@ pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIn
         }),
         (chain_walk::INDEXER_COMMITTEE, ChainNet::Matic) => {
             Box::new(super::committee_index::CommitteeIndex)
+        }
+        (chain_walk::INDEXER_THIRD_PARTY_REGISTRY, ChainNet::Matic) => {
+            Box::new(super::third_party_registry::ThirdPartyRegistryIndex)
         }
         (chain_walk::INDEXER_MANA, _) => {
             Box::new(super::mana_transfers::ManaTransfersIndex { net })
@@ -637,6 +644,8 @@ async fn compare_range(
             return Ok(());
         };
         let t = &mut out.totals;
+        t.rpc_logs += outcome.rpc_logs;
+        t.portal_logs += outcome.portal_logs;
         t.missing += outcome.missing;
         t.extra += outcome.extra;
         t.mismatch += outcome.mismatch;

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useSyncExternalStore, type ReactNode } from 'react'
-import SitesChrome from '@ui/web/frames/SitesChrome'
+import SitesLayout from '../components/chrome/SitesLayout'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { MaintenancePage } from './components/MaintenancePage'
 import { SubNav } from './components/SubNav'
@@ -83,5 +83,5 @@ export default function CreatorsShell({ page, sid }: { page: CreatorsPage; sid: 
     </div>
   )
 
-  return fullscreen ? body : <SitesChrome active="create">{body}</SitesChrome>
+  return fullscreen ? body : <SitesLayout active="create">{body}</SitesLayout>
 }

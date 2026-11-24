@@ -1,11 +1,19 @@
 import {
+  useChromeAuth,
+  useChromeNav,
+  type ChromeTopBarProps,
+  ChromeLink,
+  useSiteLayout,
   decentralandNavigation,
   decentralandNavigationSection,
   type DecentralandNavigationArea,
   type DecentralandNavigationEntry,
+  NavMenuItem,
+  NavMenuTab,
+  NavNotificationsButton,
+  NavProfileButton,
 } from "@dcl/one-ui";
 import { useEffect, useId, useRef, useState } from "react";
-import { NavMenuItem, NavMenuTab, NavNotificationsButton, NavProfileButton } from "@dcl/one-ui";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
 import { catalystBase, getJSON } from "../../data/catalyst/client";
 import { sameOriginContentUrl } from "../../data/catalyst/profile";
@@ -17,14 +25,10 @@ import {
   relativeTime,
   type Notification,
 } from "@web-core/notifications/notificationsView";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-import { useChromeNav, type ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
-import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import AccountMenu from "./AccountMenu";
 import "../../atoms/maskicon.css";
 import "../../components/site-navigation.css";
 import "./dcltopbar.css";
-import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 

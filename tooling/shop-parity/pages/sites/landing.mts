@@ -43,7 +43,7 @@ const keys: KeyElement[] = [
  * mounts its lower sections on the first scroll, dcl-one's Carousel starts once half of it is on screen; either way after this
  * setup, so the slide a capture lands on is not a race: both sides hold their first slide.
  * The section backgrounds of Jump Into What's Happening and Come Hang Out are a WebGL <canvas> animated over a
- * static picture (sites: decentraland-ui2 AnimatedBackground; dcl-one: shop/discovery/components/animated-background): both sides hide
+ * static picture (sites: decentraland-ui2 AnimatedBackground; dcl-one: library/ui/components/AnimatedBackground): both sides hide
  * the canvas, so the static fallback and the headings, cards and CTAs over it are compared. The Catch the Vibe
  * clips are preload=metadata posters that play only on hover: they are compared as they are.
  * The lower sections' slides are lazy images (sites: WeeklyRituals.tsx loading="lazy", mounted on the first

@@ -5,12 +5,14 @@
 //! player back in (`ReturnedToWorld`, restricted_actions' `handle_out_of_world`).
 
 use bevy::prelude::*;
-use common::structs::{OutOfWorld, PrimaryUser, ReturnedToWorld, WorldHold};
+use common::{
+    partition::vec3_to_parcel,
+    structs::{OutOfWorld, PrimaryUser, ReturnedToWorld, WorldHold},
+};
 use wallet::Wallet;
 
 use crate::{
     data_definition::{SegmentEvent, SegmentEventScreenViewed},
-    primary_player_parcel_position::parcel_of,
     segment_system::SegmentMetricsEvents,
 };
 
@@ -104,7 +106,7 @@ pub fn report_loading_screen(
     let signed_in = wallet.as_ref().is_some_and(|w| w.address().is_some());
     let (position, oow) = match player.single() {
         Ok((transform, oow)) => {
-            let parcel = parcel_of(transform.translation);
+            let parcel = vec3_to_parcel(transform.translation);
             (format!("{},{}", parcel.x, parcel.y), oow)
         }
         Err(_) => ("no-position".to_owned(), false),

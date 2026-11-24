@@ -55,14 +55,26 @@ use tokio_util::sync::CancellationToken;
 use super::MarketplaceState;
 use super::chain_group::{self, Checkpoint, Member, MemberEnd};
 use super::chain_walk::{self, Budget, ChainIndex, ChainNet, Holdings, IndexSettings, PassOutcome};
+use crate::chain_index::portal::admit::{Admission, AdmittedPortal};
 use crate::chain_index::portal::shadow::{self, Shadow, Shadowed};
 use crate::chain_index::portal::{AddressHistory, PortalReader, Secret};
 use crate::jobs::{JobContext, JobState, Jobs, LeaseGuard, Leases, PeriodicCfg};
 
-/// `CHAIN_LOGS_SOURCE=shadow`: the portal the accepted windows are compared
-/// with. `None` (`rpc`) compares nothing.
+/// How the walks use the portal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortalMode {
+    /// `CHAIN_LOGS_SOURCE=shadow`: accepted windows are compared with it.
+    Shadow,
+    /// `CHAIN_LOGS_SOURCE=portal`: windows it admits are read from it
+    /// ([`Admission`]), each admission and portal phase within `deadline`.
+    Source { deadline: Duration },
+}
+
+/// `CHAIN_LOGS_SOURCE=shadow|portal`: the portal and how the walks use it.
+/// `None` (`rpc`) reads everything from the RPC.
 #[derive(Clone, Debug)]
-pub struct ShadowSettings {
+pub struct PortalSettings {
+    pub mode: PortalMode,
     pub origin: String,
     pub dataset_ethereum: String,
     pub dataset_matic: String,
@@ -71,10 +83,10 @@ pub struct ShadowSettings {
     pub history: AddressHistory,
 }
 
-impl ShadowSettings {
+impl PortalSettings {
     /// The settings as the environment spells them: `None` for `rpc`; for
-    /// `shadow`, a portal origin and two known datasets, refused at startup
-    /// otherwise.
+    /// `shadow` or `portal`, a portal origin and two known datasets, refused
+    /// at startup otherwise.
     #[allow(
         clippy::too_many_arguments,
         reason = "one argument per environment variable it validates"
@@ -87,20 +99,31 @@ impl ShadowSettings {
         key: Option<String>,
         max_rps: f64,
         assert_full_history: bool,
+        deadline_secs: u64,
     ) -> anyhow::Result<Option<Self>> {
-        match source {
+        let mode = match source {
             "rpc" => return Ok(None),
-            "shadow" => {}
-            other => anyhow::bail!("CHAIN_LOGS_SOURCE={other}: rpc or shadow"),
-        }
+            "shadow" => PortalMode::Shadow,
+            "portal" => {
+                anyhow::ensure!(
+                    (1..=600).contains(&deadline_secs),
+                    "CHAIN_LOGS_PORTAL_DEADLINE_SECS must be between 1 and 600"
+                );
+                PortalMode::Source {
+                    deadline: Duration::from_secs(deadline_secs),
+                }
+            }
+            other => anyhow::bail!("CHAIN_LOGS_SOURCE={other}: rpc, shadow or portal"),
+        };
         let Some(origin) = origin.map(str::trim).filter(|o| !o.is_empty()) else {
-            anyhow::bail!("CHAIN_LOGS_SOURCE=shadow needs CHAIN_LOGS_PORTAL_URL");
+            anyhow::bail!("CHAIN_LOGS_SOURCE={source} needs CHAIN_LOGS_PORTAL_URL");
         };
         anyhow::ensure!(
             max_rps.is_finite() && max_rps > 0.0,
             "CHAIN_LOGS_PORTAL_MAX_RPS must be above 0"
         );
         let settings = Self {
+            mode,
             origin: origin.to_string(),
             dataset_ethereum: dataset_ethereum.trim().to_string(),
             dataset_matic: dataset_matic.trim().to_string(),
@@ -170,6 +193,9 @@ pub struct Supervisor {
     pub stats: Arc<SharedStats>,
     /// Where accepted windows are compared (`CHAIN_LOGS_SOURCE=shadow`).
     pub shadow: Option<Arc<Shadow>>,
+    /// The portal windows are read from where it admits them
+    /// (`CHAIN_LOGS_SOURCE=portal`).
+    pub portal: Option<Arc<Admission>>,
 }
 
 /// The shared walks of a supervisor, summed: how many ran, the requests they
@@ -641,6 +667,7 @@ fn dispatch_group(
             sup.member_deadline,
             &counted,
             sup.shadow.as_deref(),
+            sup.portal.as_deref(),
         );
         tokio::select! {
             biased;
@@ -1304,10 +1331,13 @@ async fn attempt(
             }
         }
         let source = Shadowed::new(
-            chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-                &supervisor.http,
-                &projection.url,
-            )),
+            AdmittedPortal::new(
+                chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                    &supervisor.http,
+                    &projection.url,
+                )),
+                supervisor.portal.as_deref(),
+            ),
             supervisor.shadow.as_deref(),
         );
         let progress = |m: String| ctx.progress(format!("{}: {m}", projection.lease));
@@ -1365,31 +1395,52 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// The projections `state` enables on `net`, each with its endpoint, as the
 /// switches and endpoints configure them; `rentals` is the rentals index's
-/// switch (`None`: on wherever a chain-1 endpoint is configured).
+/// switch (`None`: on for each configured Ethereum endpoint).
 pub fn projections(
     state: &Arc<MarketplaceState>,
     net: ChainNet,
     rentals: Option<bool>,
 ) -> Vec<Projection> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |job, url, make, gate, cfg| {
+        if let Some(url) = url {
+            out.push(Projection {
+                lease: lease_name(job, net),
+                url,
+                cfg,
+                make,
+                gate,
+            });
+        }
+    });
+    out
+}
+
+/// Includes explicitly enabled projections even when their RPC is missing.
+pub fn expected_cursors(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+) -> Vec<(Arc<dyn ChainIndex>, Option<String>)> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |_, url, make, _, _| {
+        out.push((make(), url))
+    });
+    out
+}
+
+fn visit_projections(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+    mut add: impl FnMut(&str, Option<String>, MakeIndex, Option<Gate>, PeriodicCfg),
+) {
     let settings = &state.settings.market.indexes;
     let market_cfg = || {
         PeriodicCfg::every(settings.interval)
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30))
     };
-    let mut out = Vec::new();
-    let mut add =
-        |job: &str, url: Option<String>, make: MakeIndex, gate: Option<Gate>, cfg: PeriodicCfg| {
-            if let Some(url) = url {
-                out.push(Projection {
-                    lease: lease_name(job, net),
-                    url,
-                    cfg,
-                    make,
-                    gate,
-                });
-            }
-        };
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1455,11 +1506,20 @@ pub fn projections(
             market_cfg(),
         );
     }
-    if settings.committee_enabled {
+    if settings.committee_enabled && net == ChainNet::Matic {
         add(
             "committee-index",
-            state.committee_rpc_url(net),
+            state.polygon_mainnet_rpc_url(),
             Arc::new(|| Arc::new(super::committee_index::CommitteeIndex)),
+            None,
+            market_cfg(),
+        );
+    }
+    if settings.third_party_registry_enabled && net == ChainNet::Matic {
+        add(
+            "third-party-registry-index",
+            state.polygon_mainnet_rpc_url(),
+            Arc::new(|| Arc::new(super::third_party_registry::ThirdPartyRegistryIndex)),
             None,
             market_cfg(),
         );
@@ -1473,19 +1533,34 @@ pub fn projections(
             market_cfg(),
         );
     }
-    // The rentals venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
     if net == ChainNet::Ethereum && rentals != Some(false) {
-        add(
-            "rentals-index",
-            state.venue_rpc_url(1),
-            Arc::new(|| Arc::new(crate::rentals::index::RentalsIndex::mainnet())),
-            None,
+        use crate::rentals::index::RentalsIndex;
+        let rentals_cfg = || {
             PeriodicCfg::every(settings.interval)
                 .with_jitter(Duration::from_secs(20))
-                .with_error_backoff(Duration::from_secs(1800)),
-        );
+                .with_error_backoff(Duration::from_secs(1800))
+        };
+        let mainnet_url = state.venue_rpc_url(1);
+        if rentals.unwrap_or(mainnet_url.is_some()) {
+            add(
+                "rentals-index",
+                mainnet_url,
+                Arc::new(|| Arc::new(RentalsIndex::mainnet())),
+                None,
+                rentals_cfg(),
+            );
+        }
+        // A Sepolia endpoint opts the worker into the separate testnet history.
+        if let Some(url) = state.sepolia_rentals_rpc_url() {
+            add(
+                "rentals-index-sepolia",
+                Some(url),
+                Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+                None,
+                rentals_cfg(),
+            );
+        }
     }
-    out
 }
 
 /// Spawns `chain-walk-ethereum` and `chain-walk-matic` for the projections
@@ -1502,12 +1577,14 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
             leases = ?projections.iter().map(|p| p.lease.as_str()).collect::<Vec<_>>(),
             "marketplace chain index supervisor"
         );
-        let shadow = state
-            .settings
-            .market
-            .shadow
-            .as_ref()
-            .and_then(|s| spawn_shadow(jobs, s, net));
+        let portal = state.settings.market.portal.as_ref();
+        let shadow = portal
+            .filter(|p| p.mode == PortalMode::Shadow)
+            .and_then(|p| spawn_shadow(jobs, p, net));
+        let admission = portal.and_then(|p| match p.mode {
+            PortalMode::Source { deadline } => admission(p, net, deadline),
+            PortalMode::Shadow => None,
+        });
         spawn(
             jobs,
             Supervisor {
@@ -1519,14 +1596,38 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
                 member_deadline: Duration::from_secs(60),
                 stats: Arc::default(),
                 shadow,
+                portal: admission,
             },
         );
     }
 }
 
+/// `net`'s portal as a source; `None` when its reader cannot be built
+/// (startup already checked it).
+fn admission(
+    settings: &PortalSettings,
+    net: ChainNet,
+    deadline: Duration,
+) -> Option<Arc<Admission>> {
+    let reader = match settings.reader(net) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(network = net.db_name(), error = %e, "chain logs portal off for this network");
+            return None;
+        }
+    };
+    tracing::info!(
+        network = net.db_name(),
+        dataset = reader.dataset(),
+        deadline_secs = deadline.as_secs(),
+        "chain logs portal: windows its coverage admits are read from the portal"
+    );
+    Some(Arc::new(Admission::new(reader, net.db_name(), deadline)))
+}
+
 /// `net`'s shadow worker, as a job of its own that ends with the process;
 /// `None` when its reader cannot be built (startup already checked it).
-fn spawn_shadow(jobs: &Jobs, settings: &ShadowSettings, net: ChainNet) -> Option<Arc<Shadow>> {
+fn spawn_shadow(jobs: &Jobs, settings: &PortalSettings, net: ChainNet) -> Option<Arc<Shadow>> {
     let reader = match settings.reader(net) {
         Ok(r) => r,
         Err(e) => {
@@ -1601,10 +1702,16 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "committee-index",
             "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
         );
-    } else if state.committee_rpc_url(ChainNet::Matic).is_none() {
+    } else if state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+        );
+    }
+    if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {
+        tracing::warn!(
+            job = "third-party-registry-index",
+            "third-party registry index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
     if rentals == Some(false) {
@@ -1624,6 +1731,43 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_portal_settings_are_read_as_the_environment_spells_them() {
+        let parse = |source: &str, origin: Option<&str>, deadline: u64| {
+            PortalSettings::parse(
+                source,
+                origin,
+                "ethereum-mainnet",
+                "polygon-mainnet",
+                None,
+                1.0,
+                false,
+                deadline,
+            )
+        };
+        let portal = Some("https://portal.example");
+        assert!(
+            parse("rpc", portal, 0).unwrap().is_none(),
+            "rpc reads nothing"
+        );
+        assert_eq!(
+            parse("portal", portal, 20).unwrap().unwrap().mode,
+            PortalMode::Source {
+                deadline: Duration::from_secs(20)
+            }
+        );
+        for deadline in [0, 601] {
+            assert!(parse("portal", portal, deadline).is_err(), "{deadline}");
+        }
+        // The deadline is only the portal mode's.
+        assert_eq!(
+            parse("shadow", portal, 0).unwrap().unwrap().mode,
+            PortalMode::Shadow
+        );
+        assert!(parse("portal", None, 20).is_err(), "portal needs a URL");
+        assert!(parse("lake", portal, 20).is_err());
+    }
 
     fn checkpoint(block: i64) -> Checkpoint {
         Checkpoint {
@@ -1674,6 +1818,7 @@ mod tests {
             member_deadline: Duration::from_secs(60),
             stats: Arc::default(),
             shadow: None,
+            portal: None,
         }
     }
 

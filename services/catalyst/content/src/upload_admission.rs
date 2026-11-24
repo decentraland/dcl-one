@@ -403,7 +403,7 @@ mod tests {
             UPLOAD_BUDGET_RESERVED, test_support::sample,
         };
         let recorder = crate::series::test_support::recorder();
-        metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::with_local_recorder(&recorder, || {
             let disk = UploadBudget::new("disk", 100);
             let mut held = disk.try_admit(60, 10).unwrap();
             assert!(disk.try_admit(91, 0).is_none());

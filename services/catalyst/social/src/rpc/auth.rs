@@ -29,6 +29,15 @@ impl SocketAuthError {
     pub fn is_unavailable(&self) -> bool {
         matches!(self, Self::Refused(RequestAuthError::Unavailable))
     }
+
+    /// Canonical admission reason and Social's existing authentication error type.
+    pub(super) fn rejection_labels(&self) -> (&'static str, &'static str) {
+        if self.is_unavailable() {
+            ("unavailable", "server_error")
+        } else {
+            ("authentication", "client_rejected")
+        }
+    }
 }
 
 fn options(state: &State) -> VerifyOptions {
@@ -83,4 +92,20 @@ pub async fn verify_headers(
         parts
     })
     .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifier_outages_and_invalid_credentials_have_distinct_admission_reasons() {
+        let outage = SocketAuthError::Refused(RequestAuthError::Unavailable);
+        let refusal = SocketAuthError::Refused(RequestAuthError::Unauthorized("signature".into()));
+        assert_eq!(outage.rejection_labels(), ("unavailable", "server_error"));
+        assert_eq!(
+            refusal.rejection_labels(),
+            ("authentication", "client_rejected")
+        );
+    }
 }

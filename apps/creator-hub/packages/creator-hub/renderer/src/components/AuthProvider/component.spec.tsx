@@ -12,7 +12,10 @@ import { useAuth } from '/@/hooks/useAuth';
 import { AuthServerProvider } from '/@/lib/auth';
 import * as creatorFundApi from '/@/lib/creatorFundApi';
 import { LandType, RoleType, type Land } from '/@/lib/land';
-import { initialState as creatorFundInitialState } from '/@/modules/store/creatorFund';
+import {
+  actions as creatorFundActions,
+  initialState as creatorFundInitialState,
+} from '/@/modules/store/creatorFund';
 import { fetchENSList } from '/@/modules/store/ens';
 import type { ENS } from '/@/modules/store/ens/types';
 import { fetchLandList } from '/@/modules/store/land';
@@ -30,6 +33,7 @@ vi.mock('/@/lib/auth', () => ({
   SignInError: class extends Error {},
   AuthServerProvider: class {
     static setAuthServerUrl = vi.fn();
+    static setIdentityFetcher = vi.fn();
     static setAuthDappUrl = vi.fn();
     static hasValidIdentity = vi.fn();
     static getAccount = vi.fn();
@@ -43,7 +47,11 @@ vi.mock('/@/lib/auth', () => ({
 
 const profileRequests: Array<{ address: string; answer: (avatar: Avatar) => void }> = [];
 
-vi.mock('/@/lib/creatorFundApi', () => ({ getEnrollment: vi.fn() }));
+vi.mock('/@/lib/creatorFundApi', () => ({
+  getEnrollment: vi.fn(),
+  getPayoutWallet: vi.fn(),
+  getPlaces: vi.fn(),
+}));
 
 const ENROLLED = {
   status: 'active' as const,
@@ -239,6 +247,52 @@ describe('AuthProvider', () => {
 
       it("should keep B's avatar", () => {
         expect(session.avatar).toEqual(avatarOf(ACCOUNT_B));
+      });
+    });
+  });
+
+  describe('when loading what the EARN dot needs', () => {
+    beforeEach(() => {
+      vi.mocked(creatorFundApi.getPayoutWallet).mockResolvedValue({
+        ok: false,
+        status: 404,
+        error: 'Not Found',
+      });
+      vi.mocked(creatorFundApi.getPlaces).mockReturnValue(new Promise(() => {}));
+    });
+
+    it('should not read the payout setup while the Payouts flag is off', () => {
+      expect(creatorFundApi.getPayoutWallet).not.toHaveBeenCalled();
+      expect(creatorFundApi.getPlaces).not.toHaveBeenCalled();
+    });
+
+    describe('and the Payouts flag turns on for the enrolled creator', () => {
+      beforeEach(async () => {
+        act(() => {
+          store.dispatch({
+            type: 'featureFlags/fetch/fulfilled',
+            payload: {
+              flags: {
+                'creatorhub-creator-fund': true,
+                'creatorhub-creator-fund-payout': true,
+              },
+              variants: {},
+            },
+          });
+        });
+        await vi.waitFor(() => expect(creatorFundApi.getPlaces).toHaveBeenCalled());
+      });
+
+      it('should read the payout wallet and the places once each', () => {
+        expect(creatorFundApi.getPayoutWallet).toHaveBeenCalledTimes(1);
+        expect(creatorFundApi.getPlaces).toHaveBeenCalledTimes(1);
+      });
+
+      it('should not read them again when the enrollment reloads', async () => {
+        await act(() => store.dispatch(creatorFundActions.fetchEnrollment()));
+
+        expect(creatorFundApi.getPayoutWallet).toHaveBeenCalledTimes(1);
+        expect(creatorFundApi.getPlaces).toHaveBeenCalledTimes(1);
       });
     });
   });

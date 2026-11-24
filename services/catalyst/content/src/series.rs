@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use metrics::{counter, gauge, histogram};
+use dcl_metrics::{counter, gauge, histogram};
 
 pub const BUILD_INFO: &str = "dcl_content_server_build_info";
 pub const SNAPSHOT_GENERATION_TIME: &str = "dcl_content_server_snapshot_generation_time";
@@ -450,17 +450,8 @@ impl Drop for ReceivingBody {
 #[cfg(test)]
 pub(crate) mod test_support {
     /// A recorder with this module's buckets, as the serve exporter has them.
-    pub fn recorder() -> metrics_exporter_prometheus::PrometheusRecorder {
-        let mut builder = metrics_exporter_prometheus::PrometheusBuilder::new();
-        for (name, buckets) in super::BUCKETS {
-            builder = builder
-                .set_buckets_for_metric(
-                    metrics_exporter_prometheus::Matcher::Full(name.into()),
-                    buckets,
-                )
-                .unwrap();
-        }
-        builder.build_recorder()
+    pub fn recorder() -> dcl_metrics::PrometheusRecorder {
+        dcl_metrics::PrometheusBuilder::new().build_recorder()
     }
 
     /// The rendered sample of `name` with exactly `labels`, if any.
@@ -498,7 +489,7 @@ mod tests {
     fn render(record: impl FnOnce()) -> String {
         let recorder = recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, record);
+        dcl_metrics::with_local_recorder(&recorder, record);
         handle.render()
     }
 
