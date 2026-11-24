@@ -29,7 +29,7 @@
     "chokidar": "^4.0.3",
     "dcl-catalyst-client": "^23.0.0",
     "esbuild": "^0.18.17",
-    "i18next": "^25.8.4",
+    "i18next": "^26.3.4",
     "i18next-fs-backend": "^2.6.1",
     "ignore": "^5.2.4",
     "qrcode": "^1.5.4",
