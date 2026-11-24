@@ -16,6 +16,7 @@ serves, under the digest gallery/scripts/hosted-digest.mjs and tooling/ui-galler
   probe    waits until the preview answers 200 through $UI_GALLERY_BASE_URL
   comment  creates or updates the one gallery comment on the pull request
   check    checks the hosted gallery in $SITE_DIR as upload would, for ui-library.yml on the pull request's build
+  csp      prints the Content-Security-Policy a preview is served with, which ui-library.yml opens that build under
 
 A run that is not eligible (publication not configured, a fork, a closed or moved-on pull request, a scan that read no
 Review artifact) ends with a notice and publishes nothing. Evidence that does not match fails the command.
@@ -109,6 +110,13 @@ HASHED = re.compile(r'assets/[\w.-]+-[\w-]{8}\.[a-z0-9]+')
 # The key guard's limits for an unpacked artifact, applied to ui-gallery/; the download itself is capped too.
 LIMITS = {'files': 5000, 'total_bytes': 256 * 1024 * 1024, 'file_bytes': 16 * 1024 * 1024, 'depth': 32}
 ARCHIVE_BYTES = 512 * 1024 * 1024
+# The Content-Security-Policy dcl-one-infra's distribution adds to every preview response. ui-library.yml opens the pull
+# request's build under it, and the probe links no preview served with other directives.
+PREVIEW_CSP = (
+    "default-src 'none'", "script-src 'self'", "style-src 'self'", "style-src-attr 'unsafe-inline'",
+    "img-src 'self' data:", "font-src 'self'", "media-src 'self'", "connect-src 'self'", "frame-src 'self'",
+    "frame-ancestors 'self'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
+)
 PROBE_DELAYS = (5, 10, 15, 20, 20, 20, 20)
 USER_AGENT = 'dcl-one-ui-gallery-publish'
 
@@ -233,8 +241,8 @@ def preview_url(base, pull, head):
 # --- verify ---------------------------------------------------------------------------------------------------------
 
 def environment_ready(github, repository, default_branch):
-    """The environment the writer role trusts exists and deploys from the default branch only. A job naming an
-    environment that does not exist would create it without that rule."""
+    """The environment the writer role trusts exists and deploys from the default branch only, administrators
+    included. A job naming an environment that does not exist would create it without that rule."""
     try:
         environment = github.get(f'repos/{repository}/environments/{ENVIRONMENT}')
     except ApiError as error:
@@ -242,6 +250,8 @@ def environment_ready(github, repository, default_branch):
             raise Skip(f'the {ENVIRONMENT} environment does not exist yet; create it with {default_branch} as its '
                        'only deployment branch') from None
         raise
+    if environment.get('can_admins_bypass') is not False:
+        raise Skip(f'the {ENVIRONMENT} environment must not let administrators bypass its rules')
     policy = environment.get('deployment_branch_policy') or {}
     if policy.get('custom_branch_policies') is not True or policy.get('protected_branches') is not False:
         raise Skip(f'the {ENVIRONMENT} environment must allow {default_branch} only')
@@ -399,9 +409,20 @@ def changes_library(github, repository, pull):
     raise Skip(f'pull request #{pull} changes no file under {LIBRARY}: only a library/ui change gets a preview')
 
 
+def artifact_record(github, repository, artifact_id):
+    """The artifact API's answer for an artifact. A re-run of the Shared UI library run replaces its artifact, and
+    that run's own key scan publishes the new one."""
+    try:
+        return github.get(f'repos/{repository}/actions/artifacts/{artifact_id}')
+    except ApiError as error:
+        if error.status == 404:
+            raise Skip(f'artifact {artifact_id} no longer exists; a newer run replaced it') from None
+        raise
+
+
 def check_artifact(github, repository, repository_id, scanned):
     name = f'ui-review-{scanned["head"]}'
-    artifact = github.get(f'repos/{repository}/actions/artifacts/{scanned["artifact"]}')
+    artifact = artifact_record(github, repository, scanned['artifact'])
     origin = artifact.get('workflow_run') or {}
     if (artifact.get('name') != name or origin.get('id') != scanned['run'] or origin.get('head_sha') != scanned['head']
             or origin.get('repository_id') != repository_id or origin.get('head_repository_id') != repository_id):
@@ -566,13 +587,7 @@ def fetch(env, github=None):
     expected = env.get('ARTIFACT_DIGEST') or ''
     if not DIGEST.fullmatch(expected):
         raise Reject(f'ARTIFACT_DIGEST is not a sha256 digest: {expected!r}')
-    try:
-        artifact = github.get(f'repos/{repository}/actions/artifacts/{artifact_id}')
-    except ApiError as error:
-        if error.status == 404:
-            # A re-run of the Shared UI library run replaced it: that run's own key scan publishes.
-            raise Skip(f'artifact {artifact_id} no longer exists; a newer run of {head} replaced it') from None
-        raise
+    artifact = artifact_record(github, repository, artifact_id)
     if artifact.get('expired'):
         raise Skip(f'artifact {artifact_id} has expired')
     if artifact.get('name') != f'ui-review-{head}' or (artifact.get('workflow_run') or {}).get('id') != run:
@@ -626,6 +641,11 @@ def check(env):
     return {}
 
 
+def csp(env):
+    print('; '.join(PREVIEW_CSP))
+    return {}
+
+
 def utc_today():
     return datetime.datetime.now(datetime.timezone.utc).date()
 
@@ -668,8 +688,20 @@ def upload(env, run=subprocess.run, today=utc_today):
 
 
 # The headers dcl-one-infra's distribution adds to every response; a missing one means the distribution drifted.
-EXPECTED_HEADERS = {'X-Robots-Tag': 'noindex', 'Content-Security-Policy': "default-src 'none'",
+EXPECTED_HEADERS = {'X-Robots-Tag': 'noindex', 'Content-Security-Policy': '; '.join(PREVIEW_CSP),
                     'X-Content-Type-Options': 'nosniff'}
+
+
+def directives(policy):
+    return sorted(' '.join(directive.split()) for directive in policy.split(';') if directive.strip())
+
+
+def carries(name, expected, value):
+    """Whether a response header holds what the distribution must add: the policy's exact directives, in any order,
+    since the pull request's build was checked under those and no others."""
+    if name == 'Content-Security-Policy':
+        return directives(value) == directives(expected)
+    return expected.lower() in value.lower()
 
 
 def answer(url):
@@ -699,7 +731,7 @@ def probe(env, request=answer, sleep=time.sleep):
         if all(status == 200 for status, _ in answers):
             headers = answers[0][1]
             missing = [f'{name}: {expected}' for name, expected in EXPECTED_HEADERS.items()
-                       if expected.lower() not in headers.get(name, '').lower()]
+                       if not carries(name, expected, headers.get(name, ''))]
             if missing:
                 # The preview runs pull request scripts: no link to it without the distribution's protections.
                 raise Reject(f'{page} is served without {", ".join(missing)}: the distribution\'s headers policy '
@@ -762,7 +794,8 @@ def write_outputs(env, outputs):
         sink.writelines(lines)
 
 
-COMMANDS = {'verify': verify, 'fetch': fetch, 'upload': upload, 'probe': probe, 'comment': comment, 'check': check}
+COMMANDS = {'verify': verify, 'fetch': fetch, 'upload': upload, 'probe': probe, 'comment': comment, 'check': check,
+            'csp': csp}
 
 
 def main(argv=None, env=None):

@@ -84,7 +84,8 @@ def world():
     runs = f'repos/{REPO}/actions/runs'
     return {
         f'repos/{REPO}/environments/ui-gallery':
-            {'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}},
+            {'can_admins_bypass': False,
+             'deployment_branch_policy': {'protected_branches': False, 'custom_branch_policies': True}},
         f'repos/{REPO}/environments/ui-gallery/deployment-branch-policies':
             {'branch_policies': [{'name': 'main', 'type': 'branch'}]},
         f'repos/{REPO}/actions/workflows/ui-library-key-scan.yml': {'id': 11},
@@ -184,6 +185,8 @@ class VerifyTest(unittest.TestCase):
         environment_path = f'repos/{REPO}/environments/ui-gallery'
         cases = {
             'missing': lambda r: r.pop(environment_path),
+            'administrators bypass': lambda r: r[environment_path].update(can_admins_bypass=True),
+            'bypass not reported': lambda r: r[environment_path].pop('can_admins_bypass'),
             'every branch': lambda r: r[environment_path].update(deployment_branch_policy=None),
             'protected branches': lambda r: r[environment_path].update(
                 deployment_branch_policy={'protected_branches': True, 'custom_branch_policies': False}),
@@ -276,6 +279,14 @@ class VerifyTest(unittest.TestCase):
         }
         for case, change in cases.items():
             with self.subTest(case=case), self.assertRaisesRegex(publish.Reject, 'artifact ID mismatch'):
+                self.verify(change)
+
+    def test_skips_an_artifact_a_rerun_replaced_or_that_expired(self):
+        path = f'repos/{REPO}/actions/artifacts/{ARTIFACT}'
+        cases = {'no longer exists': lambda r: r.pop(path),
+                 'has expired': lambda r: r.update({path: artifact(expired=True)})}
+        for reason, change in cases.items():
+            with self.subTest(reason=reason), self.assertRaisesRegex(publish.Skip, reason):
                 self.verify(change)
 
     def test_refuses_a_digest_that_differs_from_what_the_scan_downloaded(self):
@@ -503,7 +514,7 @@ class UploadTest(unittest.TestCase):
 
 
 SERVED = {'X-Robots-Tag': 'noindex, nofollow', 'X-Content-Type-Options': 'nosniff',
-          'Content-Security-Policy': "default-src 'none'; script-src 'self'"}
+          'Content-Security-Policy': '; '.join(publish.PREVIEW_CSP)}
 
 
 class ProbeTest(unittest.TestCase):
@@ -538,6 +549,17 @@ class ProbeTest(unittest.TestCase):
         for name in publish.EXPECTED_HEADERS:
             with self.subTest(name=name), self.assertRaisesRegex(publish.Reject, f'without {name}.*drifted'):
                 headers = {**SERVED, name: ''}
+                self.probe([(200, headers), (200, headers)])
+
+    def test_accepts_only_the_policy_the_pull_request_build_was_checked_under(self):
+        reordered = {**SERVED, 'Content-Security-Policy': ';  '.join(reversed(publish.PREVIEW_CSP)) + ';'}
+        self.probe([(200, reordered), (200, reordered)])
+        policy = SERVED['Content-Security-Policy']
+        for case, served in {'a looser directive': policy.replace("script-src 'self'", "script-src 'self' https:"),
+                             'a missing directive': policy.replace("; object-src 'none'", ''),
+                             'another directive': policy + '; worker-src blob:'}.items():
+            with self.subTest(case=case), self.assertRaisesRegex(publish.Reject, 'Content-Security-Policy.*drifted'):
+                headers = {**SERVED, 'Content-Security-Policy': served}
                 self.probe([(200, headers), (200, headers)])
 
 
@@ -674,6 +696,20 @@ class MainTest(unittest.TestCase):
         self.assertEqual((code, outputs), (0, 'publish=false\n'))
         self.assertIn('::notice title=UI gallery::No UI gallery preview: publication is not configured', printed)
 
+    def test_a_fetch_that_skips_names_no_gallery_for_the_later_steps(self):
+        def skip(env):
+            raise publish.Skip('artifact 1 has expired')
+        with patch.dict(publish.COMMANDS, fetch=skip):
+            code, outputs, printed = self.run_main({}, 'fetch')
+        self.assertEqual((code, outputs), (0, ''))
+        self.assertIn('::notice title=UI gallery::No UI gallery preview: artifact 1 has expired', printed)
+
+    def test_prints_the_policy_the_hosted_check_opens_the_build_under(self):
+        code, outputs, printed = self.run_main({}, 'csp')
+        self.assertEqual((code, outputs), (0, ''))
+        self.assertEqual(printed, '; '.join(publish.PREVIEW_CSP) + '\n')
+        self.assertIn("default-src 'none'", publish.PREVIEW_CSP)
+
     def test_an_unexpected_answer_fails_with_the_error_annotation(self):
         def broken(env):
             answer = None
@@ -776,6 +812,20 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('id: fetch\n', publish_job)
         upload = publish_job[publish_job.index('id: upload'):publish_job.index('ui-gallery-publish.py upload')]
         self.assertIn('GALLERY_DIGEST: ${{ steps.fetch.outputs.gallery }}', upload)
+
+    def test_takes_no_credential_and_writes_no_comment_after_a_fetch_that_unpacked_nothing(self):
+        jobs = self.jobs()
+        after = jobs['publish'].split('ui-gallery-publish.py fetch\n', 1)[1]
+        steps = re.split(r'(?m)^      - ', after)[1:]
+        self.assertEqual(len(steps), 3)
+        for step in steps:
+            self.assertIn("\n        if: steps.fetch.outputs.gallery != ''\n", step)
+        self.assertIn("\n    if: needs.publish.outputs.expires != ''\n", jobs['comment'])
+
+    def test_the_pull_request_build_is_opened_under_the_preview_policy(self):
+        library = (ROOT / '.github/workflows/ui-library.yml').read_text()
+        self.assertIn('csp=$(python3 -I ../../tooling/ui-gallery-publish.py csp)\n', library)
+        self.assertRegex(library, r'check-build\.mjs gallery/dist --hosted --prefix \S+ --csp "\$csp"\n')
 
     def test_reads_the_repository_variables_in_verify_only(self):
         jobs = self.jobs()

@@ -14,7 +14,7 @@ name: UI gallery publish
 #            Sites serves) before any credential exists, then assumes the writer role through OIDC (environment
 #            ui-gallery, main only), copies the files, still at the gallery digest of the scanned bytes, to
 #            ui-gallery/pr/<n>/<sha>/ and waits until the preview answers.
-#   comment  creates or updates the pull request's one gallery comment.
+#   comment  creates or updates the pull request's one gallery comment, once a preview was uploaded.
 on:
   workflow_run:
     workflows: ["Shared UI library key scan"]
@@ -101,13 +101,16 @@ jobs:
           ARTIFACT_DIGEST: ${{ needs.verify.outputs.digest }}
           WORK_DIR: ${{ runner.temp }}/ui-gallery
         run: python3 -I tooling/ui-gallery-publish.py fetch
+      # A fetch that ends with a notice (the artifact was replaced or expired) unpacks nothing: no credential, no upload.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: steps.fetch.outputs.gallery != ''
         with:
           role-to-assume: ${{ needs.verify.outputs.role }}
           aws-region: ${{ needs.verify.outputs.region }}
           role-duration-seconds: 900
       - name: Upload the hosted gallery
         id: upload
+        if: steps.fetch.outputs.gallery != ''
         env:
           PR_NUMBER: ${{ needs.verify.outputs.pr }}
           HEAD_SHA: ${{ needs.verify.outputs.head }}
@@ -117,6 +120,7 @@ jobs:
           UI_GALLERY_AWS_REGION: ${{ needs.verify.outputs.region }}
         run: python3 -I tooling/ui-gallery-publish.py upload
       - name: Wait until the preview answers
+        if: steps.fetch.outputs.gallery != ''
         env:
           PR_NUMBER: ${{ needs.verify.outputs.pr }}
           HEAD_SHA: ${{ needs.verify.outputs.head }}
@@ -126,6 +130,7 @@ jobs:
 
   comment:
     needs: [verify, publish]
+    if: needs.publish.outputs.expires != ''
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     concurrency:
