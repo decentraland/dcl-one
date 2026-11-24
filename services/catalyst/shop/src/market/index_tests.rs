@@ -4385,10 +4385,10 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     db.drop().await;
 }
 
-/// `catalyst index` walks `rentals-index-ethereum` whenever a chain-1
-/// endpoint is configured, unless switched off.
+/// `catalyst index` walks rentals on each configured Ethereum chain,
+/// unless switched off.
 #[tokio::test]
-async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint() {
+async fn the_rentals_index_attaches_behind_its_switch_and_chain_endpoints() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -4417,11 +4417,51 @@ async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint()
     assert!(!attached(&with_rpc, Some(false)));
     assert!(attached(&with_rpc, Some(true)) && attached(&with_rpc, None));
     assert!(!attached(&no_rpc, Some(true)) && !attached(&no_rpc, None));
+    let expected = |state: &SharedState, enabled| {
+        super::chain_jobs::expected_cursors(state, ChainNet::Ethereum, enabled)
+            .into_iter()
+            .map(|(index, url)| (index.indexer(), url.is_some()))
+            .collect::<Vec<_>>()
+    };
+    assert!(expected(&no_rpc, None).is_empty());
+    assert_eq!(expected(&no_rpc, Some(true)), [("rentals", false)]);
     assert!(
         super::chain_jobs::projections(&with_rpc, ChainNet::Matic, None)
             .iter()
             .all(|p| !p.lease.starts_with("rentals-index")),
         "the rentals venue is mainnet's"
+    );
+    let mut with_sepolia = with_rpc;
+    Arc::get_mut(&mut with_sepolia)
+        .unwrap()
+        .settings
+        .market
+        .trade_rpc_urls = RpcEndpoints::from_env(Some(
+        "1=https://rpc.example.org/,11155111=https://sepolia.example.org/",
+    ));
+    assert_eq!(
+        expected(&with_sepolia, None),
+        [("rentals", true), ("rentals_sepolia", true)]
+    );
+    assert!(expected(&with_sepolia, Some(false)).is_empty());
+    let both = super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, None);
+    let sepolia = both
+        .iter()
+        .find(|projection| projection.lease == "rentals-index-sepolia-ethereum")
+        .unwrap();
+    assert_eq!(sepolia.url, "https://sepolia.example.org/");
+    let index = (sepolia.make)();
+    assert_eq!(index.indexer(), "rentals_sepolia");
+    assert_eq!(index.chain_id(), 11_155_111);
+    assert_eq!(index.start_block(), 3_831_254);
+    assert!(
+        both.iter()
+            .any(|projection| projection.lease == "rentals-index-ethereum")
+    );
+    assert!(
+        super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, Some(false))
+            .iter()
+            .all(|projection| !projection.lease.starts_with("rentals-index"))
     );
     db.drop().await;
 }

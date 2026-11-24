@@ -1395,7 +1395,7 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// The projections `state` enables on `net`, each with its endpoint, as the
 /// switches and endpoints configure them; `rentals` is the rentals index's
-/// switch (`None`: on wherever a chain-1 endpoint is configured).
+/// switch (`None`: on for each configured Ethereum endpoint).
 pub fn projections(
     state: &Arc<MarketplaceState>,
     net: ChainNet,
@@ -1533,18 +1533,33 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    // The rentals venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
-    let rentals_url = state.venue_rpc_url(1);
-    if net == ChainNet::Ethereum && rentals.unwrap_or(rentals_url.is_some()) {
-        add(
-            "rentals-index",
-            rentals_url,
-            Arc::new(|| Arc::new(crate::rentals::index::RentalsIndex::mainnet())),
-            None,
+    if net == ChainNet::Ethereum && rentals != Some(false) {
+        use crate::rentals::index::RentalsIndex;
+        let rentals_cfg = || {
             PeriodicCfg::every(settings.interval)
                 .with_jitter(Duration::from_secs(20))
-                .with_error_backoff(Duration::from_secs(1800)),
-        );
+                .with_error_backoff(Duration::from_secs(1800))
+        };
+        let mainnet_url = state.venue_rpc_url(1);
+        if rentals.unwrap_or(mainnet_url.is_some()) {
+            add(
+                "rentals-index",
+                mainnet_url,
+                Arc::new(|| Arc::new(RentalsIndex::mainnet())),
+                None,
+                rentals_cfg(),
+            );
+        }
+        // A Sepolia endpoint opts the worker into the separate testnet history.
+        if let Some(url) = state.sepolia_rentals_rpc_url() {
+            add(
+                "rentals-index-sepolia",
+                Some(url),
+                Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+                None,
+                rentals_cfg(),
+            );
+        }
     }
 }
 
