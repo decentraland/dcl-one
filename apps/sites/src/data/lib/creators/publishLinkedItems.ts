@@ -178,13 +178,15 @@ export type LinkedSlots = {
 export function getLinkedSlots(
   serverAvailable: number,
   indexedMaxItems: number,
-  registry: Pick<RegisteredThirdParty, 'registered' | 'maxItems' | 'consumedSlots'>,
-  indexedRegistry?: IndexedThirdPartySlots
+  registry: Pick<RegisteredThirdParty, 'registered' | 'maxItems'>,
+  chainCapacity?: { consumedSlots: number; indexed?: IndexedThirdPartySlots }
 ): LinkedSlots {
-  const maxItems = Math.max(registry.maxItems, indexedRegistry?.maxItems ?? 0)
+  const indexed = chainCapacity?.indexed
+  const maxItems = Math.max(registry.maxItems, indexed?.maxItems ?? 0)
   const builderAvailable = serverAvailable + Math.max(0, maxItems - indexedMaxItems)
-  const registryAvailable = indexedRegistry
-    ? Math.max(0, maxItems - Math.max(registry.consumedSlots, indexedRegistry.maxItems - indexedRegistry.availableSlots))
+  const indexedConsumed = indexed ? indexed.maxItems - indexed.availableSlots : 0
+  const registryAvailable = chainCapacity
+    ? Math.max(0, maxItems - Math.max(chainCapacity.consumedSlots, indexedConsumed))
     : builderAvailable
   return {
     available: Math.min(builderAvailable, registryAvailable),

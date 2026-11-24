@@ -77,7 +77,10 @@ impl Provider {
         let (name, description, contracts) = match parts.as_slice() {
             ["tp", _, name, description] => (name, description, None),
             ["tp", _, name, description, contracts] => (name, description, Some(*contracts)),
-            _ => return,
+            _ => {
+                self.metadata = None;
+                return;
+            }
         };
         // The optional contract field replaces the previous linked list when supplied.
         let contracts = match contracts {
@@ -129,6 +132,7 @@ enum Change {
     Added {
         metadata: String,
         resolver: String,
+        approved: bool,
         managers: Vec<Address>,
         slots: U256,
         programmatic: bool,
@@ -180,6 +184,7 @@ fn decode(log: &RpcLog) -> anyhow::Result<Event> {
                 Change::Added {
                     metadata: event.metadata,
                     resolver: event.resolver,
+                    approved: event.approved,
                     managers: event.managers,
                     slots: event.slots,
                     programmatic: event.programmatic,
@@ -193,6 +198,7 @@ fn decode(log: &RpcLog) -> anyhow::Result<Event> {
                 Change::Added {
                     metadata: event.metadata,
                     resolver: event.resolver,
+                    approved: event.approved,
                     managers: event.managers,
                     slots: event.slots,
                     programmatic: false,
@@ -282,13 +288,14 @@ fn apply(
         Change::Added {
             metadata,
             resolver,
+            approved,
             managers,
             slots,
             programmatic,
         } => {
             let mut provider = Provider {
                 id,
-                approved: false,
+                approved,
                 root: None,
                 resolver: None,
                 raw_metadata: String::new(),
@@ -330,7 +337,7 @@ fn apply(
             if let Some(root) = root {
                 provider.root = Some(format!("{root:#x}"));
             }
-            provider.approved = approved && provider.root.is_some();
+            provider.approved = approved;
         }
         Change::Consumed(event) => {
             add_slots(&mut provider.consumed_slots, event.slots)?;
@@ -636,6 +643,43 @@ mod tests {
         assert!(decode(&log).is_err());
     }
 
+    #[test]
+    fn registry_approval_is_independent_of_a_merkle_root() {
+        let add = log(
+            Registry::ThirdPartyAdded {
+                id: ID.into(),
+                metadata: "tp:1:Provider:Example".into(),
+                resolver: String::new(),
+                approved: true,
+                managers: vec![MANAGER],
+                slots: U256::ZERO,
+                programmatic: false,
+                sender: MANAGER,
+            },
+            START,
+            0,
+        );
+        let event = decode(&add).unwrap();
+        let (mut provider, _) = apply(event.id, event.change, None).unwrap().unwrap();
+        assert!(provider.approved && provider.root.is_none());
+
+        provider.approved = false;
+        let review = log(
+            Registry::ThirdPartyReviewed {
+                id: ID.into(),
+                approved: true,
+                sender: MANAGER,
+            },
+            START,
+            1,
+        );
+        let event = decode(&review).unwrap();
+        let (provider, _) = apply(event.id, event.change, Some(provider))
+            .unwrap()
+            .unwrap();
+        assert!(provider.approved && provider.root.is_none());
+    }
+
     #[tokio::test]
     async fn provider_publication_is_versioned_and_rewindable() {
         let Some(db) = OwnDb::create("third_party_registry").await else {
@@ -649,6 +693,23 @@ mod tests {
             crate::http::Outbound::for_tests(),
             settings,
         ));
+        let mut fallback_settings = Settings::for_tests();
+        fallback_settings.eth_network = "sepolia".into();
+        fallback_settings
+            .market
+            .indexes
+            .third_party_registry_enabled = true;
+        fallback_settings.third_party_registry_subgraph_url =
+            Some(crate::market::tests::support::serve_empty_graph().await);
+        let fallback_state = Arc::new(MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            fallback_settings,
+        ));
+        fallback_state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(fallback_state.polygon_mainnet_rpc_url().is_none());
         let path = format!("/lambdas/third-party-integrations/providers/{ID}");
         let manager = format!("{MANAGER:#x}");
         let managers_path = format!(
@@ -658,12 +719,20 @@ mod tests {
         let integrations = "/lambdas/third-party-integrations";
         assert_eq!(get(&state, &path).await.0, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(get(&state, integrations).await.0, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            get(&fallback_state, integrations).await,
+            (StatusCode::OK, json!({"data": []}))
+        );
+        assert_eq!(
+            get(&fallback_state, &path).await.0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
 
         let logs = [
             log(
                 LegacyRegistry::ThirdPartyAdded {
                     id: LEGACY_ID.into(),
-                    metadata: "tp:1:Legacy:Old".into(),
+                    metadata: "tp:1:Legacy:Old:matic-0xabc".into(),
                     resolver: "ignored".into(),
                     approved: true,
                     managers: vec![MANAGER],
@@ -740,12 +809,25 @@ mod tests {
                 START + 1,
                 3,
             ),
+            log(
+                Registry::ThirdPartyUpdated {
+                    id: LEGACY_ID.into(),
+                    metadata: "invalid metadata".into(),
+                    resolver: String::new(),
+                    managers: vec![],
+                    managerValues: vec![],
+                    slots: U256::ZERO,
+                    sender: MANAGER,
+                },
+                START + 1,
+                4,
+            ),
         ];
 
         let indexer = ThirdPartyRegistryIndex;
         let times = HashMap::from([(START, 1234), (START + 1, 1235)]);
         let mut tx = pool.begin().await.unwrap();
-        assert_eq!(indexer.write(&mut tx, &logs, &times).await.unwrap(), 7);
+        assert_eq!(indexer.write(&mut tx, &logs, &times).await.unwrap(), 8);
         assert_eq!(indexer.write(&mut tx, &logs, &times).await.unwrap(), 0);
         sqlx::query(
             "INSERT INTO shop.chain_cursor
@@ -764,8 +846,14 @@ mod tests {
                 })
             )
         );
+        assert_eq!(
+            get(&fallback_state, integrations).await,
+            get(&state, integrations).await
+        );
         let approved = approved_providers(pool).await.unwrap();
-        assert_eq!(approved.len(), 1);
+        assert_eq!(approved.len(), 2);
+        assert_eq!(approved[1].id, LEGACY_ID);
+        assert_eq!(approved[1].contracts.len(), 1);
         assert_eq!(
             approved[0].contracts,
             [
@@ -782,7 +870,10 @@ mod tests {
         assert_eq!(
             get(&state, integrations).await.1,
             json!({
-                "data": [{"name": "Provider", "description": "Example", "urn": ID}],
+                "data": [
+                    {"name": "Provider", "description": "Example", "urn": ID},
+                    {"name": "Legacy", "description": "Old", "urn": LEGACY_ID},
+                ],
             })
         );
 
@@ -807,7 +898,18 @@ mod tests {
             "removed manager retains just the legacy provider"
         );
         assert_eq!(managed[0]["id"], LEGACY_ID);
-        assert_eq!(get(&state, integrations).await.1, json!({"data": []}));
+        let approved = approved_providers(pool).await.unwrap();
+        let [legacy] = approved.as_slice() else {
+            panic!("the approved legacy provider remains listed");
+        };
+        assert_eq!(legacy.id, LEGACY_ID);
+        assert_eq!(legacy.name, None);
+        assert_eq!(legacy.description, None);
+        assert!(legacy.contracts.is_empty());
+        assert_eq!(
+            get(&state, integrations).await.1,
+            json!({"data": [{"urn": LEGACY_ID}]})
+        );
         let receipt: Value = sqlx::query_scalar(
             "SELECT receipt FROM shop.third_party_registry_event WHERE block_number = $1 AND receipt IS NOT NULL",
         ).bind(START + 1).fetch_one(pool).await.unwrap();
@@ -855,6 +957,7 @@ mod tests {
             "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes' WHERE indexer = $1",
         ).bind(INDEXER_THIRD_PARTY_REGISTRY).execute(pool).await.unwrap();
         assert_eq!(get(&state, &path).await.0, StatusCode::SERVICE_UNAVAILABLE);
+        drop(fallback_state);
         drop(state);
         db.drop().await;
     }

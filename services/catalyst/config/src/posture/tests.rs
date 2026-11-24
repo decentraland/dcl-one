@@ -247,6 +247,42 @@ fn a_mirror_indexes_the_third_party_registry_without_a_subgraph() {
     refuse_remote_secrets(&mut c).unwrap();
 }
 
+#[test]
+fn a_sepolia_mirror_keeps_its_polygon_registry_subgraph_during_index_catch_up() {
+    const URL: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
+    let pairs = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        (ENV, "mirror"),
+        ("ETH_NETWORK", "sepolia"),
+    ];
+    let config = parsed(&pairs);
+    assert!(
+        config
+            .marketplace
+            .marketplace_third_party_registry_index_enabled
+    );
+    assert_eq!(
+        config
+            .validator
+            .third_party_registry_l2_subgraph_url
+            .as_deref(),
+        Some("https://subgraph.decentraland.org/tpr-matic-mainnet")
+    );
+    let custom = parsed(&[
+        pairs[0],
+        pairs[1],
+        pairs[2],
+        (URL, "https://registry.example"),
+    ]);
+    assert_eq!(
+        custom
+            .validator
+            .third_party_registry_l2_subgraph_url
+            .as_deref(),
+        Some("https://registry.example")
+    );
+}
+
 /// Escrow leases are a dcl-one extension: the explorer backpack lists them
 /// and a local deploy counts them as item ownership only when the operator
 /// opts in, under every posture and without one.

@@ -15,16 +15,16 @@ export async function fetchIndexedThirdPartySlots(thirdPartyId: string): Promise
   const path = `/lambdas/third-party-integrations/providers/${encodeURIComponent(thirdPartyId)}`
   const signal = AbortSignal.timeout(2_500)
   try {
-    const provider = providerSlots.parse(await getJSON<unknown>(path, { signal, cache: 'no-store' }))
-    if (provider.id !== thirdPartyId || provider.availableSlots > provider.maxItems) {
-      throw new Error('Catalyst returned inconsistent third-party slot data')
-    }
-    return { maxItems: provider.maxItems, availableSlots: provider.availableSlots }
+    const result = providerSlots.safeParse(await getJSON<unknown>(path, { signal, cache: 'no-store' }))
+    if (!result.success) return undefined
+
+    const { id, maxItems, availableSlots } = result.data
+    if (id !== thirdPartyId || availableSlots > maxItems) return undefined
+
+    return { maxItems, availableSlots }
   } catch (error) {
-    // A recently registered provider may be missing while the index catches up.
-    if (signal.aborted || (error instanceof CatalystError && [0, 404, 502, 503, 504].includes(error.status))) {
-      return undefined
-    }
+    // Callers also read the live registry, so Catalyst availability does not gate publishing.
+    if (signal.aborted || error instanceof CatalystError) return undefined
     throw error
   }
 }

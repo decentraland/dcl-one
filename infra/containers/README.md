@@ -187,11 +187,11 @@ Curation committee upgrade: run `catalyst schema migrate` before deploying the A
 
 Third-party registry upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Use the mirror posture or set `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED=true` and supply a Polygon
-mainnet RPC via `TRADE_RPC_URLS` (chain 137) or `RPC_ENDPOINT_POLYGON`. Let `catalyst index` publish the
-full registry history before enabling the index on API replicas. During catch-up, replicas can keep
-`MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED=false` with their existing
-`THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`. Enable indexed reads and remove the subgraph setting after
-publication. The NFT worker still supplies wallet holdings for open mappings.
+mainnet RPC via `TRADE_RPC_URLS` (chain 137) or, on mainnet, `RPC_ENDPOINT_POLYGON`. During catch-up,
+API replicas can keep their existing `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` to serve provider lists.
+Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` publishes the full
+registry history, API replicas prefer the native index and can serve manager and slot details.
+The NFT worker supplies wallet holdings for open mappings.
 
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with

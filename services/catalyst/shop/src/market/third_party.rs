@@ -206,23 +206,30 @@ fn parse_providers(data: &Value) -> Vec<ThirdPartyProvider> {
     out
 }
 
-/// Approved providers from the published Polygon registry. Nodes without
-/// the index can opt in to the legacy subgraph, whose cache retains the
-/// last successful result during an upstream failure.
+/// Prefer the published Polygon registry. A configured subgraph can serve
+/// providers while the index is unavailable or disabled. Its cache retains
+/// the last successful result during an upstream failure.
 pub async fn third_party_providers(
     state: &MarketplaceState,
 ) -> Result<Vec<ThirdPartyProvider>, String> {
+    let subgraph_url = state.settings.third_party_registry_subgraph_url.as_deref();
     if third_party_registry::enabled(state) {
-        return third_party_registry::approved_providers(&state.pool).await;
+        match third_party_registry::approved_providers(&state.pool).await {
+            Ok(providers) => return Ok(providers),
+            Err(error) if subgraph_url.is_some() => {
+                tracing::debug!(%error, "reading third-party providers from the configured subgraph");
+            }
+            Err(error) => return Err(error),
+        }
     }
-    let Some(url) = state.settings.third_party_registry_subgraph_url.clone() else {
+    let Some(url) = subgraph_url else {
         tracing::debug!("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL is unset: no third-party providers");
         return Ok(Vec::new());
     };
     let cache = &state.third_party.providers;
     match cache
         .get_or_fetch((), || async {
-            let data = graph_query(&state.index, &url, TP_QUERY, json!({})).await?;
+            let data = graph_query(&state.index, url, TP_QUERY, json!({})).await?;
             Ok::<_, String>(Arc::new(parse_providers(&data)))
         })
         .await

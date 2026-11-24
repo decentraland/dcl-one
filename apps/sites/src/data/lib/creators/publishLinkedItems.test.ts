@@ -1118,10 +1118,24 @@ describe('toLinkedPublishError', () => {
 
 describe('getLinkedSlots', () => {
   it('adds the slots the registry sold that builder-server has not indexed yet', () => {
-    expect(getLinkedSlots(2, 5, { registered: true, maxItems: 8, consumedSlots: 3 })).toEqual({ available: 5, registered: true })
-    expect(getLinkedSlots(2, 5, { registered: true, maxItems: 5, consumedSlots: 3 })).toEqual({ available: 2, registered: true })
+    expect(getLinkedSlots(2, 5, { registered: true, maxItems: 8 })).toEqual({ available: 5, registered: true })
+    expect(getLinkedSlots(2, 5, { registered: true, maxItems: 5 })).toEqual({ available: 2, registered: true })
     // A registration the server still reads as virtual.
-    expect(getLinkedSlots(0, 0, { registered: true, maxItems: 3, consumedSlots: 0 })).toEqual({ available: 3, registered: true })
+    expect(getLinkedSlots(0, 0, { registered: true, maxItems: 3 })).toEqual({ available: 3, registered: true })
+  })
+
+  describe('when Catalyst is unavailable for a registered Polygon provider', () => {
+    let registry: { registered: boolean; maxItems: number }
+    let liveCapacity: { consumedSlots: number }
+
+    beforeEach(() => {
+      registry = { registered: true, maxItems: 12 }
+      liveCapacity = { consumedSlots: 4 }
+    })
+
+    it('should cap availability with the live registry balance', () => {
+      expect(getLinkedSlots(10, 12, registry, liveCapacity).available).toBe(8)
+    })
   })
 
   describe('when Catalyst indexes the provider', () => {
@@ -1132,18 +1146,18 @@ describe('getLinkedSlots', () => {
     })
 
     it('should honor Builder reservations that have yet to consume slots on-chain', () => {
-      expect(getLinkedSlots(1, 10, { registered: true, maxItems: 10, consumedSlots: 3 }, indexed).available).toBe(1)
+      expect(getLinkedSlots(1, 10, { registered: true, maxItems: 10 }, { consumedSlots: 3, indexed }).available).toBe(1)
     })
 
     describe('and a live purchase has yet to reach Catalyst', () => {
       it('should count the extra slots without exceeding the on-chain balance', () => {
-        expect(getLinkedSlots(10, 12, { registered: true, maxItems: 12, consumedSlots: 3 }, indexed).available).toBe(9)
+        expect(getLinkedSlots(10, 12, { registered: true, maxItems: 12 }, { consumedSlots: 3, indexed }).available).toBe(9)
       })
     })
 
     describe('and live purchases and consumption are both ahead of Catalyst', () => {
       it('should subtract the slots consumed since the index checkpoint', () => {
-        expect(getLinkedSlots(10, 12, { registered: true, maxItems: 12, consumedSlots: 4 }, indexed).available).toBe(8)
+        expect(getLinkedSlots(10, 12, { registered: true, maxItems: 12 }, { consumedSlots: 4, indexed }).available).toBe(8)
       })
     })
   })

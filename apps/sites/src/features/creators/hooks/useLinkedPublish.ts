@@ -66,7 +66,10 @@ async function fetchLinkedSlots(address: string, chainId: number, thirdPartyId: 
       ? registryPromise.then(record => (record.registered ? fetchIndexedThirdPartySlots(thirdPartyId) : undefined))
       : undefined
   ])
-  return getLinkedSlots(available, Number(indexed.maxItems) || 0, registry, indexedRegistry)
+  const chainCapacity = chainId === polygon.id && registry.registered
+    ? { consumedSlots: registry.consumedSlots, indexed: indexedRegistry }
+    : undefined
+  return getLinkedSlots(available, Number(indexed.maxItems) || 0, registry, chainCapacity)
 }
 
 /** The item slots the third party has free for the publish fee, read against the registry as well. */

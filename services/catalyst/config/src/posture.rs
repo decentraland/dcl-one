@@ -141,6 +141,10 @@ fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
 }
 
+fn third_party_registry_subgraph(lookup: &Lookup) -> Option<String> {
+    (!mainnet(lookup)).then(|| "https://subgraph.decentraland.org/tpr-matic-mainnet".into())
+}
+
 fn credits_manager(lookup: &Lookup) -> Option<String> {
     mainnet(lookup).then(|| CREDITS_MANAGER_MAINNET.to_string())
 }
@@ -312,6 +316,18 @@ const ROWS: &[Row] = &[
         "mirrors",
         "NFT_WORKER_BASE_URL",
         "https://nfts.decentraland.org",
+    ),
+    // Mirrors configured for testnet can read the Polygon registry before
+    // they have a separate mainnet RPC and a published registry index.
+    row(
+        "mirrors",
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+        From(
+            "Polygon registry subgraph when ETH_NETWORK is a testnet",
+            third_party_registry_subgraph,
+        ),
+        Is(""),
+        Is(""),
     ),
     // lamb2's explorer backpack lists chain-owned tokens only; listing this
     // node's escrow grants too stays an operator's opt-in under every posture,

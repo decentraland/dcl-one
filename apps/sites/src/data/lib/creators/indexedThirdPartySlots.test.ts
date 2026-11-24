@@ -41,13 +41,23 @@ describe('fetchIndexedThirdPartySlots', () => {
     })
   })
 
+  describe.each([429, 500])('when Catalyst returns HTTP %s', status => {
+    beforeEach(() => {
+      fetchProvider.mockResolvedValueOnce(new Response(null, { status }))
+    })
+
+    it('should indicate that indexed slots are unavailable', async () => {
+      await expect(fetchIndexedThirdPartySlots(id)).resolves.toBeUndefined()
+    })
+  })
+
   describe('when Catalyst returns an unsafe slot count', () => {
     beforeEach(() => {
       fetchProvider.mockResolvedValueOnce(Response.json({ id, maxItems: '9007199254740993', availableSlots: '7' }))
     })
 
-    it('should fail instead of rounding the count', async () => {
-      await expect(fetchIndexedThirdPartySlots(id)).rejects.toThrow()
+    it('should allow the caller to use the live count', async () => {
+      await expect(fetchIndexedThirdPartySlots(id)).resolves.toBeUndefined()
     })
   })
 })
