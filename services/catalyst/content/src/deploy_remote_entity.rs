@@ -19,8 +19,9 @@ use crate::auth::{is_canonical_cid, verify_hash};
 use crate::entity::{is_ipfs_v1, is_ipfs_v2};
 use crate::storage::Storage;
 
-const MAX_DOWNLOAD_RETRIES: u32 = 3;
-const RETRY_WAIT_MS: u64 = 500;
+const MAX_DOWNLOAD_ATTEMPTS: u32 = 10;
+const BEST_EFFORT_ATTEMPTS: u32 = 3;
+const RETRY_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 const MAX_BODY_BYTES: usize = 512 * 1024 * 1024;
 
@@ -457,10 +458,69 @@ async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) ->
     }
 }
 
+pub(crate) type CurrentDownloadPeers = Arc<tokio::sync::RwLock<Vec<String>>>;
+
+/// The peers available to a transfer. Sync downloads prefer the peers advertising the
+/// deployment and consult the current membership at each attempt.
+#[derive(Clone)]
+pub struct DownloadPeers {
+    advertisers: Arc<[String]>,
+    available: AvailablePeers,
+}
+
+#[derive(Clone)]
+enum AvailablePeers {
+    Fixed(Arc<[String]>),
+    Current(CurrentDownloadPeers),
+}
+
+impl DownloadPeers {
+    pub fn fixed(peers: &[String]) -> Self {
+        Self {
+            advertisers: Arc::default(),
+            available: AvailablePeers::Fixed(Arc::from(peers)),
+        }
+    }
+
+    pub(crate) fn current(advertisers: &[String], peers: CurrentDownloadPeers) -> Self {
+        Self {
+            advertisers: Arc::from(advertisers),
+            available: AvailablePeers::Current(peers),
+        }
+    }
+
+    async fn next(&self, tried: &HashSet<String>, rotation: usize) -> Option<String> {
+        match &self.available {
+            AvailablePeers::Fixed(peers) => self.next_available(peers, tried, rotation),
+            AvailablePeers::Current(peers) => {
+                self.next_available(&peers.read().await, tried, rotation)
+            }
+        }
+    }
+
+    fn next_available(
+        &self,
+        available: &[String],
+        tried: &HashSet<String>,
+        rotation: usize,
+    ) -> Option<String> {
+        let start = rotation % available.len().max(1);
+        let advertisers = self
+            .advertisers
+            .iter()
+            .filter(|peer| available.contains(peer));
+        let fallback = available[start..].iter().chain(&available[..start]);
+        advertisers
+            .chain(fallback)
+            .find(|peer| !tried.contains(peer.as_str()))
+            .cloned()
+    }
+}
+
 pub struct ContentSource<'a> {
     pub client: &'a CheckedRedirectClient,
     pub storage: Arc<Storage>,
-    pub servers: &'a [String],
+    pub servers: DownloadPeers,
     pub content_semaphore: Arc<Semaphore>,
 }
 
@@ -519,7 +579,7 @@ async fn deploy_entity_streaming_unguarded(
         client,
         storage.as_ref(),
         entity_id,
-        servers,
+        &servers,
         Some(budget),
         DownloadPolicy::Required,
     )
@@ -582,7 +642,7 @@ async fn deploy_entity_streaming_unguarded(
 
         let client = client.clone();
         let storage = storage.clone();
-        let servers = servers.to_vec();
+        let servers = servers.clone();
         let sem = content_semaphore.clone();
         let budget = budget.clone();
         let render = snapshot_hashes.contains(hash.as_str());
@@ -730,18 +790,18 @@ pub(crate) const MAX_FILE_REDIRECTS: usize = 2;
 /// How [`download_file`] treats a file no server serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadPolicy {
-    /// A file the entity needs: [`MAX_DOWNLOAD_RETRIES`] attempts over the servers in turn,
-    /// with a growing wait between them; the last failure is the error.
+    /// A file the entity needs: [`MAX_DOWNLOAD_ATTEMPTS`] attempts over the servers in turn,
+    /// with a 1 s wait between them. The last failure is the error.
     Required,
-    /// A best-effort file, such as a render a profile names only in its metadata: one request
-    /// to each of up to [`MAX_DOWNLOAD_RETRIES`] servers, without waiting between them, so a
-    /// hash no peer has costs no backoff while the caller holds a download permit. No server
-    /// serving it is `Ok(false)`, logged at `warn` unless each answered 404; only a store fault
-    /// is an error.
+    /// A best-effort file, such as a render a profile names only in its metadata. Each of up
+    /// to [`BEST_EFFORT_ATTEMPTS`] peers gets one request with no wait between them, so a
+    /// missing hash costs no backoff while the caller holds a download permit. No available
+    /// copy returns `Ok(false)`. An error beyond a 404 is logged at `warn`. Store faults are
+    /// returned.
     BestEffort,
 }
 
-/// Downloads `hash` from `servers`, starting at a random one, and stores the file only once its
+/// Downloads `hash` from `servers` and stores the file only once its
 /// decoded bytes hash to `hash`; `Ok(true)` once it is stored (or already was). With a
 /// `budget`, the decoded body is held against it from its first chunk until the file is
 /// stored. `policy` sets the attempts and what a failure answers.
@@ -749,7 +809,7 @@ pub async fn download_file(
     client: &CheckedRedirectClient,
     storage: &Storage,
     hash: &str,
-    servers: &[String],
+    servers: &DownloadPeers,
     budget: Option<&ByteBudget>,
     policy: DownloadPolicy,
 ) -> Result<bool, SyncError> {
@@ -757,23 +817,27 @@ pub async fn download_file(
         return Ok(true);
     }
     let required = policy == DownloadPolicy::Required;
-    if servers.is_empty() {
-        if required {
-            return Err(SyncError::Other("No servers available".into()));
-        }
-        return Ok(false);
-    }
     let attempts = if required {
-        MAX_DOWNLOAD_RETRIES
+        MAX_DOWNLOAD_ATTEMPTS
     } else {
-        servers.len().min(MAX_DOWNLOAD_RETRIES as usize) as u32
+        BEST_EFFORT_ATTEMPTS
     };
 
     let mut failure = None;
-    let start = (uuid::Uuid::new_v4().as_u128() % servers.len() as u128) as usize;
+    let rotation = uuid::Uuid::new_v4().as_u128() as usize;
+    let mut tried = HashSet::new();
     for attempt in 0..attempts {
-        let server = &servers[(start + attempt as usize) % servers.len()];
-        match fetch_verified(client, hash, server, attempt, budget).await {
+        let server = match servers.next(&tried, rotation).await {
+            None if required && !tried.is_empty() => {
+                tried.clear();
+                servers.next(&tried, rotation).await
+            }
+            next => next,
+        };
+        let Some(server) = server else {
+            break;
+        };
+        match fetch_verified(client, hash, &server, attempt, budget).await {
             Ok((bytes, reservation)) => {
                 storage.store(hash, bytes.into()).await?;
                 drop(reservation);
@@ -784,20 +848,14 @@ pub async fn download_file(
             Err(e) => failure = Some(e),
         }
 
+        tried.insert(server);
         if required && attempt + 1 < attempts {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                RETRY_WAIT_MS
-                    .saturating_mul(1u64 << attempt.min(6))
-                    .min(30_000),
-            ))
-            .await;
+            tokio::time::sleep(RETRY_WAIT).await;
         }
     }
 
     if required {
-        return Err(failure.unwrap_or_else(|| {
-            SyncError::Other(format!("Failed to download {} after retries", hash))
-        }));
+        return Err(failure.unwrap_or_else(|| SyncError::Other("No servers available".into())));
     }
     match failure {
         Some(error) => warn!(hash, %error, "a best-effort file could not be downloaded"),
@@ -1126,7 +1184,7 @@ mod tests {
             ContentSource {
                 client: &client,
                 storage,
-                servers: &servers,
+                servers: DownloadPeers::fixed(&servers),
                 content_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             },
             &deployer,
@@ -1231,7 +1289,7 @@ mod tests {
             ContentSource {
                 client: &client,
                 storage: storage.clone(),
-                servers: &servers,
+                servers: DownloadPeers::fixed(&servers),
                 content_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
             },
             &deployer,
@@ -1317,7 +1375,7 @@ mod tests {
             ContentSource {
                 client: &client,
                 storage,
-                servers,
+                servers: DownloadPeers::fixed(servers),
                 content_semaphore,
             },
             &deployer,
@@ -1477,7 +1535,7 @@ mod tests {
                     client,
                     storage,
                     hash,
-                    &servers,
+                    &DownloadPeers::fixed(&servers),
                     None,
                     DownloadPolicy::BestEffort,
                 )
@@ -1491,7 +1549,7 @@ mod tests {
             &client,
             &storage,
             &hash,
-            &[],
+            &DownloadPeers::fixed(&[]),
             None,
             DownloadPolicy::Required,
         )
@@ -1500,7 +1558,115 @@ mod tests {
         server.abort();
     }
 
-    /// A render no peer serves costs one request to each peer, with no backoff between them.
+    #[tokio::test(start_paused = true)]
+    async fn a_download_tries_its_advertiser_first_and_follows_a_peer_change() {
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+        use axum::{Router, http::StatusCode, routing::get};
+
+        const PAYLOAD: &[u8] = b"served by the new peer";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (removed, advertiser, added) = (
+            format!("{base}/removed"),
+            format!("{base}/advertiser"),
+            format!("{base}/added"),
+        );
+        let peers = CurrentDownloadPeers::default();
+        *peers.write().await = vec![removed, advertiser.clone()];
+        let servers = DownloadPeers::current(std::slice::from_ref(&advertiser), peers.clone());
+        assert_eq!(servers.next(&HashSet::new(), 0).await, Some(advertiser));
+
+        let hits = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let advertiser_hits = hits.clone();
+        let removed_hits = hits.clone();
+        let added_hits = hits.clone();
+        let app = Router::new()
+            .route(
+                "/removed/contents/{hash}",
+                get(move || {
+                    removed_hits.lock().push("removed");
+                    async { PAYLOAD }
+                }),
+            )
+            .route(
+                "/advertiser/contents/{hash}",
+                get(move || {
+                    let (peers, added) = (peers.clone(), added.clone());
+                    advertiser_hits.lock().push("advertiser");
+                    async move {
+                        *peers.write().await = vec![added];
+                        StatusCode::NOT_FOUND
+                    }
+                }),
+            )
+            .route(
+                "/added/contents/{hash}",
+                get(move || {
+                    added_hits.lock().push("added");
+                    async { PAYLOAD }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (storage, tmp) = temp_storage("advertising-peer").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(PAYLOAD);
+        assert!(
+            download_file(
+                &crate::sync::test_sync_client(reqwest::Client::new()),
+                &storage,
+                &hash,
+                &servers,
+                None,
+                DownloadPolicy::Required,
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(*hits.lock(), ["advertiser", "added"]);
+        server.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_required_download_tries_ten_times() {
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        let app = Router::new().route(
+            "/contents/{hash}",
+            get(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                async { StatusCode::NOT_FOUND }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (storage, tmp) = temp_storage("download-attempts").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(b"a required file the peer never serves");
+        let outcome = download_file(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &hash,
+            &DownloadPeers::fixed(&[base]),
+            None,
+            DownloadPolicy::Required,
+        )
+        .await;
+        assert!(
+            matches!(outcome, Err(SyncError::NotFound(_))),
+            "{outcome:?}"
+        );
+        assert_eq!(hits.load(Ordering::Relaxed), 10);
+        server.abort();
+    }
+
+    /// A render no peer serves costs one request to each peer, with no wait between them.
     #[tokio::test]
     async fn a_missing_render_is_asked_of_each_peer_once() {
         let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1529,14 +1695,13 @@ mod tests {
             &client,
             &storage,
             &hash,
-            &servers,
+            &DownloadPeers::fixed(&servers),
             None,
             DownloadPolicy::BestEffort,
         )
         .await
         .unwrap();
         assert!(!stored);
-        // A required download would ask a third time, after a wait.
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
         handles.iter().for_each(tokio::task::JoinHandle::abort);
     }
@@ -1750,7 +1915,7 @@ mod tests {
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
-            &[base],
+            &DownloadPeers::fixed(&[base]),
             None,
             DownloadPolicy::Required,
         )
@@ -1769,7 +1934,7 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn gzip_labeled_body_whose_raw_bytes_match_the_cid_is_rejected() {
         const PAYLOAD: &[u8] = br#"{"type":"scene","content":[],"t":"raw-labeled"}"#;
         let cid = hash_bytes_v1(PAYLOAD);
@@ -1780,7 +1945,7 @@ mod tests {
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
-            &[base],
+            &DownloadPeers::fixed(&[base]),
             None,
             DownloadPolicy::Required,
         )
@@ -1796,7 +1961,7 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn corrupt_gzip_content_still_fails_hash_verification() {
         const PAYLOAD: &[u8] = br#"{"type":"scene","content":[],"t":"expected"}"#;
         const OTHER: &[u8] = br#"{"type":"scene","content":[],"t":"corrupted"}"#;
@@ -1809,7 +1974,7 @@ mod tests {
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
-            &[base],
+            &DownloadPeers::fixed(&[base]),
             None,
             DownloadPolicy::Required,
         )

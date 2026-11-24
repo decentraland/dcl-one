@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
-use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
+use crate::deploy_remote_entity::{
+    ContentSource, CurrentDownloadPeers, DownloadPeers, RemoteDeployment, deploy_entity_streaming,
+};
 use crate::failed_deployments_store::{
     DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments,
 };
@@ -170,7 +172,7 @@ pub struct RetryFailedDeployments {
     storage: Arc<Storage>,
     deployer: Arc<LiveSyncDeployer>,
     failed_store: Arc<LiveFailedDeploymentsStore>,
-    peer_servers: Arc<tokio::sync::RwLock<Vec<String>>>,
+    peer_servers: CurrentDownloadPeers,
 }
 
 impl RetryFailedDeployments {
@@ -252,7 +254,7 @@ impl RetryFailedDeployments {
         let mut pages: u64 = 0;
 
         let mut cursor: Option<DueCursor> = None;
-        let mut servers: Option<Vec<String>> = None;
+        let servers = DownloadPeers::current(&[], self.peer_servers.clone());
         loop {
             let batch = self
                 .failed_store
@@ -263,18 +265,9 @@ impl RetryFailedDeployments {
                 break;
             }
             pages += 1;
-            if servers.is_none() {
-                let peers = self.peer_servers.read().await.clone();
-                if peers.is_empty() {
-                    warn!(due = fetched, "No peer servers available for retry");
-                    return Ok(RetryStats {
-                        waiting,
-                        evicted,
-                        pages,
-                        ..Default::default()
-                    });
-                }
-                servers = Some(peers);
+            if self.peer_servers.read().await.is_empty() {
+                warn!(due = fetched, "No peer servers available for retry");
+                break;
             }
             if pages == 1 {
                 info!(count = fetched, waiting, "Retrying failed deployments");
@@ -304,7 +297,6 @@ impl RetryFailedDeployments {
                 }
             }
 
-            let servers_ref: &[String] = servers.as_deref().unwrap_or_default();
             let succeeded_ref = &succeeded;
             let still_failing_ref = &still_failing;
             let discarded_ref = &discarded;
@@ -313,13 +305,14 @@ impl RetryFailedDeployments {
             futures::stream::iter(due)
                 .for_each_concurrent(retry_concurrency, |failure| {
                     let content_semaphore = content_semaphore.clone();
+                    let servers = servers.clone();
                     async move {
                         let attempt = next_attempt(failure);
                         let outcome = deploy_entity_streaming(
                             ContentSource {
                                 client: &self.http_client,
                                 storage: self.storage.clone(),
-                                servers: servers_ref,
+                                servers,
                                 content_semaphore,
                             },
                             self.deployer.as_ref(),

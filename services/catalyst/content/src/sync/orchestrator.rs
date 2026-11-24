@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::pointer_changes::{self, PeerUrls, PointerChangesOptions, ScheduleTarget};
+use super::pointer_changes::{self, PointerChangesOptions, ScheduleTarget};
 use super::repository::{LiveDeploymentRepository, LiveProcessedSnapshotStore};
 use super::snapshots::{self, SnapshotScheduling};
 use super::{
@@ -190,7 +190,6 @@ impl SyncOrchestrator {
                 deployment_repo: deps.deployment_repo,
                 status: deps.status,
                 servers: Default::default(),
-                peer_urls: Arc::new(PeerUrls::new(Arc::from(Vec::new()))),
                 bootstrap_done: Default::default(),
                 cancel: CancellationToken::new(),
                 control: deps.control,
@@ -234,7 +233,7 @@ impl SyncOrchestrator {
             });
             let mut urls: Vec<String> = servers.keys().cloned().collect();
             urls.sort();
-            *self.inner.peer_urls.write().unwrap() = Arc::from(urls);
+            self.inner.deployer.set_peers(urls).await;
         }
 
         if let Some(handle) = self.bootstrap_handle.lock().await.take() {
@@ -388,9 +387,6 @@ struct SyncOrchestratorRefs {
     deployment_repo: Arc<LiveDeploymentRepository>,
     status: Arc<SyncStatus>,
     servers: Arc<Mutex<HashMap<String, ServerState>>>,
-    /// Every peer's URL, the download fallback each stream reads per entity, so a running
-    /// stream follows peer changes.
-    peer_urls: Arc<PeerUrls>,
     bootstrap_done: Arc<Notify>,
     cancel: CancellationToken,
     control: SyncControl,
@@ -1081,7 +1077,6 @@ impl SyncOrchestratorRefs {
                     &options,
                     ScheduleTarget {
                         deployer: refs.deployer.as_ref(),
-                        content_servers: &refs.peer_urls,
                         report: &report,
                     },
                     persist_cursor.then(|| refs.deployment_repo.clone()),
@@ -1155,7 +1150,6 @@ impl SyncOrchestratorRefs {
                         &options,
                         ScheduleTarget {
                             deployer: refs.deployer.as_ref(),
-                            content_servers: &refs.peer_urls,
                             report: &report,
                         },
                         Some(refs.deployment_repo.clone()),
