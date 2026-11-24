@@ -20,6 +20,7 @@ import { startCallWith } from '../voiceChat/callGate'
 import { openGiftPicker } from '../gifting/GiftPicker'
 import { useGiftingAvailable } from '../gifting/useGifting'
 import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
+import { travelToPhoto } from '../gallery/reelActions'
 
 export function Passport({
   userId,
@@ -143,9 +144,10 @@ export function Passport({
         remove: session.gallery.remove,
         metas: session.gallery.metas,
         loadPhoto: session.gallery.loadPhoto,
-        onTeleport: (x, y) => {
+        loadWearables: session.gallery.loadWearables,
+        onJumpIn: (place) => {
           // A refused Jump In leaves the passport and its photo open.
-          if (session.map.teleport(x, y) === 'refused') return false
+          if (travelToPhoto(place, session.map) === 'refused') return false
           onClose()
           return true
         },
