@@ -155,6 +155,22 @@ worlds settings thumbnails, event posters and outfit thumbnails. A worlds mirror
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
+
 Read-through copies (explore's satellite, manifest and poster mirrors) take
 no lock: a removed blob is fetched again on its next read.
 
@@ -297,8 +313,27 @@ See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-loo
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
-remain external IDs, never storage authority. The old
-`worlds.world_scene_identity` table is a frozen upgrade source only: creating
+remain external IDs, never storage authority.
+
+World publication, undeployment, settings (including spawn), access and block
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
+This relation holds at most one pending row per changed world. Coalescing takes
+the pending row's lock without losing its original queue position, so a worker
+cannot consume a mark before its source update commits. The leased
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
+aggregate and the consumption of its mark commit together. The worker reads
+world and scene rows without taking row locks. A failed refresh rolls back
+both effects. Consecutive refresh failures back off to at most 30 seconds.
+A full reconciliation runs at its configured interval and can
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
+
+The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
 creation. This is once per creation, not once for the lifetime of a database:
 never drop/recreate the authoritative relation to recover it, because that
@@ -935,7 +970,7 @@ Rollout, in order:
 
 1. Deploy the binary without the scene routes on every replica and run its
    `catalyst schema migrate`, which records step
-   `0057_builder_scenes_retired`. Confirm no `serve` of the old build is
+   `0058_builder_scenes_retired`. Confirm no `serve` of the old build is
    left. From this point the new binary's collector no longer counts
    `builder.asset_catalog`, so the asset-pack files the catalogue pulled into
    the store become collectable; the other scene blobs stay protected by
@@ -952,7 +987,7 @@ Rollout, in order:
    names, then `catalyst storage gc --delete` to unlink them.
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0057_builder_scenes_retired` is not
+`meta.schema_steps`, one where step `0058_builder_scenes_retired` is not
 recorded (the new binary has not migrated it), one that holds only some of
 the seven tables, and one whose `builder.projects` or `builder.asset_packs`
 changed in the last ten minutes (an old `serve` still editing). It runs in
@@ -969,7 +1004,7 @@ release drops them again. Do not reset a database.
 
 The builder stores no published or approved flag on a collection: it derives
 both on read ("Builder chain state workload" below). Step
-`0059_builder_collection_flags_retired` drops the two checks that tied a
+`0060_builder_collection_flags_retired` drops the two checks that tied a
 contract address to the flag (`collections_contract_published_check`,
 `collections_pending_not_published_check`), so a draft can hold the contract
 address computed before its deployment. A database bootstrapped before the
@@ -1003,7 +1038,7 @@ Rollout, in order:
    binary, whether or not the release has run.
 2. Deploy the binary that derives collection state on every replica and run
    its `catalyst schema migrate`, which records step
-   `0059_builder_collection_flags_retired`. Confirm no `serve` of the old
+   `0060_builder_collection_flags_retired`. Confirm no `serve` of the old
    build is left, then set `CREATE_WRITES_ENABLED` back.
 3. Take a restore point: back up the database and test the restore. The
    drop is not reversible without that backup.
@@ -1014,7 +1049,7 @@ Rollout, in order:
    ```
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0059_builder_collection_flags_retired` is
+`meta.schema_steps`, one where step `0060_builder_collection_flags_retired` is
 not recorded, one that holds only one of the two columns, and one where a
 collection flagged published has no row in the Polygon collections copy, no
 verified publication, no submitted linked publication and no item with an
@@ -1056,7 +1091,7 @@ Rollout, in order:
 1. Set `CREATE_WRITES_ENABLED=false` on every replica.
 2. Deploy the binary that keeps item curations on every replica and run its
    `catalyst schema migrate`, which records step
-   `0065_builder_collection_forum`. Until the release runs, a third-party
+   `0066_builder_collection_forum`. Until the release runs, a third-party
    item the node submitted itself reads as unpublished.
 3. Take a restore point: back up the database and test the restore.
 4. Run the release once, with the administrative role, then set
@@ -1067,7 +1102,7 @@ Rollout, in order:
    ```
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0065_builder_collection_forum` is not
+`meta.schema_steps`, one where step `0066_builder_collection_forum` is not
 recorded, one that holds only one of the two columns, and one with a
 third-party item submitted here, without an item curation, whose
 `local_content_hash` is not 64 lowercase hex digits. It runs in one
@@ -1101,7 +1136,7 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 A third-party collection is submitted through `POST
 /v1/collections/{id}/publish` alone, so `builder.linked_collection_publications`
 has no reader or writer. Fresh databases don't have it. Step
-`0067_builder_linked_publications_retired` clears `publication_pending` on
+`0068_builder_linked_publications_retired` clears `publication_pending` on
 every third-party collection, which only that flow set, so an attempt left
 in flight doesn't keep its collection's drafts at 423.
 
@@ -1113,7 +1148,7 @@ It copies the cheque of each `submitted` row into `builder.slot_usage_cheques`
 salt its provider already used skipped and counted in a notice), clears
 `publication_pending` on third-party collections again and drops the table,
 in one transaction with a 10 s lock timeout. It refuses, changing nothing, a
-database without step 0067, one that still holds the linked forum column or
+database without step 0068, one that still holds the linked forum column or
 the builder collection flags (whose release reads this table), and one with a
 submitted row whose cheque a cheque row can't keep, a missing field included.
 A second run notes the table is gone. Until it runs,
@@ -1214,7 +1249,7 @@ Invariants:
   a stored state of the node's flow, not a published flag.
 - `builder.collections.contract_address` is stored lowercase
   (`collections_contract_address_lowercase_check`; step
-  `0072_builder_collection_contract_lowercase` sets it on an applied
+  `0073_builder_collection_contract_lowercase` sets it on an applied
   database), so its unique key holds for the lowercased address every read
   joins on.
 - Approved is the copy's `is_approved` for a standard collection. A
@@ -1321,7 +1356,7 @@ Invariants:
   of a standard draft whose contract the copy doesn't hold, which a
   complete pass of any age serves, as the owner's listing does.
 
-Indexes created with step `0060_builder_collection_listings` (the step adds the
+Indexes created with step `0061_builder_collection_listings` (the step adds the
 columns, checks and the unique constraint; the object pass that follows it
 builds the indexes, the function and the trigger):
 
@@ -1421,10 +1456,10 @@ Tables and what they hold:
   route reads.
   An upload stores only a hash its item names, verified against the bytes.
   `size` is at most 250,000,000 bytes, the largest item video
-  (`uploaded_contents_size_check`; step `0068_builder_uploaded_video_size`
+  (`uploaded_contents_size_check`; step `0069_builder_uploaded_video_size`
   sets it on an applied database). `video` is true only on a record the
   videos route wrote after its MP4 check (step
-  `0071_builder_uploaded_video_checked` adds it, false, to an applied
+  `0072_builder_uploaded_video_checked` adds it, false, to an applied
   database); both publications and the approval's video pin take no other
   record for a `video.mp4` entry.
 
@@ -1493,12 +1528,12 @@ Invariants:
   `a_standard_publication_takes_only_files_each_names_writer_uploaded` and
   `every_refusal_answers_before_anything_is_written`).
 
-Upgrade: step `0061_builder_item_contents_order` adds `item_contents.position`
+Upgrade: step `0062_builder_item_contents_order` adds `item_contents.position`
 and drops the key from `item_contents.hash` to `uploaded_contents`. A step
 can't retype a column or change a primary key, so the release
 `schemas/releases/builder-item-documents-and-uploaders.sql` turns `data` and
 `metrics` into `json` and keys `uploaded_contents` by hash and uploader. It
-refuses a database without step 0061, one where a table still references
+refuses a database without step 0062, one where a table still references
 `builder.uploaded_contents` by key (run `builder-scenes-retired.sql` first)
 and one where only one of the two documents is `json`; a second run notes
 it's done. Until it runs, item saves and uploads answer 503 naming the
@@ -1510,7 +1545,7 @@ Rollout, in order:
 
 1. Deploy the binary on every replica with creator writes closed
    (`CREATE_WRITES_ENABLED=false`) and run its `catalyst schema migrate`,
-   which records step 0061. Confirm no `serve` of an older build is left.
+   which records step 0062. Confirm no `serve` of an older build is left.
    Once the release has run, an older binary answers 500 to every item file
    upload (its upload record names a key the release replaces) and to a
    collection listing filtered by tag, and its item saves store documents in
@@ -1629,14 +1664,14 @@ Invariants:
   retired scene project) stays readable by its uploader alone and keeps its
   blob from the collector.
 
-Upgrade: step `0063_builder_item_video_named_by` adds `video_named_by`
+Upgrade: step `0064_builder_item_video_named_by` adds `video_named_by`
 (nullable, a check that refuses an empty or uppercase writer) and fills each
 video from the writer of the item's own entry for that hash, one holding an
 upload record first; a video no entry of its item names keeps no writer, so it
 opens nothing until a save writes it again. `schema migrate` builds
 `items_video_idx` from `schemas/50_create.sql`.
 
-Upgrade: step `0062_builder_item_contents_named_by` adds `named_by` (`NOT
+Upgrade: step `0063_builder_item_contents_named_by` adds `named_by` (`NOT
 NULL DEFAULT ''`, a check that refuses an empty or uppercase writer) and fills
 it in place. Each existing name goes to the first wallet that could have
 written it and holds the bytes, else to the item's owner: in order, the
@@ -1856,7 +1891,7 @@ Invariants:
 - The forward is at least once: at most six attempts, the wait doubling from
   a minute; a row the warehouse took is never claimed again.
 
-Upgrade: step `0064_builder_collection_lock` adds `collections.lock`; the
+Upgrade: step `0065_builder_collection_lock` adds `collections.lock`; the
 schema's object pass creates `builder.terms_acceptances` and its indexes.
 
 ## Builder third parties workload
@@ -1958,7 +1993,7 @@ Tables and what they hold:
   provider), `qty` (positive). Never updated by a route. A deleted
   collection's cheques stay with `collection_id` NULL (the foreign key sets
   it), so a spent salt stays spent; step
-  `0070_builder_slot_cheques_outlive_collections` drops the column's
+  `0071_builder_slot_cheques_outlive_collections` drops the column's
   `NOT NULL` and recreates the key with `ON DELETE SET NULL` on a database
   that has the table.
 - `builder.collections.forum_link` (an `http(s)` URL without spaces, at
@@ -2054,12 +2089,12 @@ Invariants code upholds:
   contents name, in the same transaction.
 
 Upgrade: the object pass creates the four tables; step
-`0065_builder_collection_forum` adds the forum columns and their checks. The
+`0066_builder_collection_forum` adds the forum columns and their checks. The
 import's `collection_curation`, `item_curation`, `collection_event` and
 `slot_usage_cheque` steps copy upstream's rows
 (`tooling/migration/sources/builder-server/MAPPING.md`).
 
-Step `0066_builder_collection_forum_claim` adds the claim timestamp and copies
+Step `0067_builder_collection_forum_claim` adds the claim timestamp and copies
 any linked publication's retained forum link into its collection before
 writes resume. It preserves an existing collection link. With writers
 stopped and a verified backup, run
@@ -2091,7 +2126,7 @@ The builder records the wearable validator's work in
 `handlers/validator.rs`; decided in
 [the validator ADR](docs/adr/2026-11-21-builder-validator-pulls-reviews.md)).
 The object pass creates both tables. Step
-`0069_builder_validation_retry` widens `validation_requests_trigger_check`
+`0070_builder_validation_retry` widens `validation_requests_trigger_check`
 to the trigger `retry` on a database that has the table; the object pass
 creates it with that check where it doesn't.
 

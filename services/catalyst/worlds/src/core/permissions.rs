@@ -327,9 +327,19 @@ fn metadata_strings(meta: &Value, key: &str) -> Vec<String> {
 }
 
 fn metadata_wallets(meta: &Value) -> Result<Vec<Address>, ApiError> {
-    metadata_strings(meta, "wallets")
+    let Some(wallets) = meta.get("wallets").filter(|wallets| !wallets.is_null()) else {
+        return Ok(Vec::new());
+    };
+    wallets
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("wallets must be an array of addresses."))?
         .iter()
-        .map(|w| parse_address(w))
+        .map(|wallet| {
+            let raw = wallet
+                .as_str()
+                .ok_or_else(|| ApiError::bad_request("wallets must be an array of addresses."))?;
+            parse_address(raw)
+        })
         .collect()
 }
 

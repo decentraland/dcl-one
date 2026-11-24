@@ -203,7 +203,7 @@ pub struct Settings {
     pub explorer_escrow_grants: bool,
     /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
     /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and
-    /// `direction`; off under the mirror posture, where lamb2 ignores them.
+    /// `direction`; off by default, as lamb2 ignores them.
     pub lambdas_catalog_extensions: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
@@ -1025,6 +1025,7 @@ pub fn router(state: SharedState) -> Router {
             post(lambdas_crypto::validate_signature).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/status", get(lambdas_status))
+        .route("/lamb2/status", get(lambdas_status))
         .route("/lambdas/{*rest}", any(lambdas_http::not_found))
         .route("/v1/trades", get(trades::get_trades))
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
