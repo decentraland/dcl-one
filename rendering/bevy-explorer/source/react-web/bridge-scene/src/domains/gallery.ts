@@ -2,10 +2,14 @@
 //   from: camera-reel-service via BevyApi.kernelFetch (signed) —
 //     GET    /api/users/:address/images?limit&offset&compact=true   one page of the grid + storage
 //     GET    /api/images/:id/metadata                               one photo's place + people
+//   the people's official marks from the engine (BevyApi.getOfficialWallets), their wearables from
+//   the catalyst (resolveWearables)
 //     PATCH  /api/images/:id/visibility {is_public}                 make a photo public/private
 //     DELETE /api/images/:id                                        remove a photo (own only)
 import { getPlayer } from '@dcl/sdk/players'
+import { BevyApi } from '../bevy-api'
 import { serviceBase, signed } from '../http'
+import { resolveWearables } from './wearables'
 import type { GalleryPhoto, GalleryPhotoMeta } from '@explorer-core/engine/protocol'
 import type { Ctx } from '../bridge'
 
@@ -19,9 +23,16 @@ type CompactResponse = { images?: CompactImage[]; currentImages?: number; maxIma
 type ImageMetadata = {
   userName?: string
   userAddress?: string
+  dateTime?: string
   realm?: string
   scene?: { name?: string; location?: { x?: string | number; y?: string | number } }
-  visiblePeople?: Array<{ userName?: string; userAddress?: string; isGuest?: boolean }>
+  visiblePeople?: Array<{ userName?: string; userAddress?: string; isGuest?: boolean; wearables?: unknown }>
+}
+
+/** Lowercased; empty on an engine without the read. */
+async function officialWallets(): Promise<Set<string>> {
+  const list = await BevyApi.getOfficialWallets?.().catch(() => undefined)
+  return new Set((list ?? []).map((a) => a.toLowerCase()))
 }
 type MetadataResponse = { metadata?: ImageMetadata }
 
@@ -68,15 +79,19 @@ export function registerGallery(ctx: Ctx): void {
   })
 
   ctx.on('getGalleryPhoto', async (msg) => {
-    const r = await base()
-      .then((b) => signed<MetadataResponse>(`${b}/images/${encodeURIComponent(msg.id)}/metadata`))
-      .catch(() => undefined)
+    const [r, official] = await Promise.all([
+      base()
+        .then((b) => signed<MetadataResponse>(`${b}/images/${encodeURIComponent(msg.id)}/metadata`))
+        .catch(() => undefined),
+      officialWallets()
+    ])
     const m = r?.metadata
     if (m == null) {
       ctx.send({ kind: 'galleryPhoto', id: msg.id, meta: null })
       return
     }
     const meta: GalleryPhotoMeta = {
+      dateTime: m.dateTime,
       userName: m.userName,
       userAddress: m.userAddress,
       sceneName: m.scene?.name,
@@ -85,9 +100,24 @@ export function registerGallery(ctx: Ctx): void {
       realm: m.realm,
       people: (m.visiblePeople ?? [])
         .filter((p) => typeof p.userAddress === 'string')
-        .map((p) => ({ address: p.userAddress as string, name: p.userName ?? '', isGuest: p.isGuest }))
+        .map((p) => ({
+          address: p.userAddress as string,
+          name: p.userName ?? '',
+          isGuest: p.isGuest,
+          wearables: Array.isArray(p.wearables) ? p.wearables.filter((w): w is string => typeof w === 'string') : [],
+          official: official.has((p.userAddress as string).toLowerCase())
+        }))
     }
     ctx.send({ kind: 'galleryPhoto', id: msg.id, meta })
+  })
+
+  // Anyone's urns (a photo's people), so resolveWearables, never the own-set indexing.
+  ctx.on('getGalleryWearables', async (msg) => {
+    const wearables = await resolveWearables(msg.urns, { shopUrls: true, dropFailed: true }).catch((e: unknown) => {
+      console.error('[gallery] wearables resolve failed', e)
+      return null
+    })
+    ctx.send({ kind: 'galleryWearables', requestId: msg.requestId, ok: wearables != null, wearables: wearables ?? [] })
   })
 
   ctx.on('deleteGalleryPhoto', async (msg) => {
