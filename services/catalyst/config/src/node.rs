@@ -231,21 +231,9 @@ impl NodeConfig {
     }
 
     pub fn init_tracing(&self) {
-        self.init_tracing_with(tracing_subscriber::layer::Identity::new());
-    }
-
-    /// [`Self::init_tracing`], with `layer` also seeing every event the
-    /// `RUST_LOG` filter lets through.
-    pub fn init_tracing_with<L>(&self, layer: L)
-    where
-        L: tracing_subscriber::Layer<tracing_subscriber::Registry> + Send + Sync + 'static,
-    {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
-        tracing_subscriber::registry()
-            .with(layer)
-            .with(tracing_subscriber::EnvFilter::new(&self.rust_log))
-            .with(tracing_subscriber::fmt::layer().with_target(false))
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(&self.rust_log))
+            .with_target(false)
             .init();
     }
 }

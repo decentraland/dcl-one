@@ -207,42 +207,15 @@ pub async fn graph_query_classified(
     let outcome = retry_with_backoff("subgraph", RETRY_ATTEMPTS, RETRY_BASE_MS, || {
         let body = body.clone();
         async move {
-            let resp = match client
-                .post(url)
-                .timeout(REQUEST_TIMEOUT)
-                .json(&body)
-                .send()
-                .await
-            {
-                Ok(resp) => resp,
-                Err(e) if e.is_connect() || e.is_timeout() || e.is_request() => {
-                    tracing::debug!(error = %e, "subgraph request failed; retrying");
-                    return Ok(RetryDecision::Retry {
-                        after: None,
-                        rate_limited: false,
-                    });
-                }
-                Err(e) => return Err(anyhow::anyhow!("subgraph request failed: {e}")),
-            };
-            let status = resp.status();
-            if is_transient_status(status) {
-                let after = resp
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(parse_retry_after);
-                return Ok(RetryDecision::Retry {
-                    after,
-                    rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
-                });
+            let started = std::time::Instant::now();
+            let (attempt, timed_out) = graph_attempt(client, url, &body).await;
+            SUBGRAPH_DURATION
+                .handle_owned([url.to_owned().into()])
+                .record(started.elapsed().as_secs_f64());
+            if !matches!(attempt, Ok(RetryDecision::Done(_))) {
+                subgraph_error(url, if timed_out { "timeout" } else { "unknown" });
             }
-            if !status.is_success() {
-                return Err(anyhow::anyhow!("subgraph returned HTTP {status}"));
-            }
-            let bytes = read_body_capped(resp, BODY_CAP).await?;
-            let parsed: Value = serde_json::from_slice(&bytes)
-                .map_err(|e| anyhow::anyhow!("failed to parse subgraph response: {e}"))?;
-            Ok(RetryDecision::Done(parsed))
+            attempt
         }
     })
     .await
@@ -261,15 +234,128 @@ pub async fn graph_query_classified(
         .and_then(Value::as_array)
         .filter(|e| !e.is_empty())
     {
+        let errors = Value::Array(errors.clone()).to_string();
+        let kind = if errors.contains("Failed to decode `block.number`") {
+            "invalid_block"
+        } else if errors.contains("Unexpected `") {
+            "syntax_error"
+        } else {
+            "unknown"
+        };
+        subgraph_error(url, kind);
         return Err(GraphQueryError::Invalid(format!(
-            "subgraph errors: {}",
-            Value::Array(errors.clone())
+            "subgraph errors: {errors}"
         )));
     }
-    body.get("data")
-        .cloned()
-        .filter(|d| !d.is_null())
-        .ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
+    let data = body.get("data").cloned().filter(|d| !d.is_null());
+    match &data {
+        Some(_) => SUBGRAPH_OK
+            .handle_owned([url.to_owned().into()])
+            .increment(1),
+        None => subgraph_error(url, "unknown"),
+    }
+    data.ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
+}
+
+/// The subgraph series lamb2 and the content server exported
+/// (`@dcl/thegraph-component` 0.1.2), labelled by the configured subgraph URL:
+/// every attempt's duration, each valid answer, and each failed attempt or
+/// invalid answer by `kind` (`timeout`, `invalid_block`, `syntax_error`,
+/// `unknown`).
+const SUBGRAPH_OK: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "subgraph_ok_total",
+    "Subgraph request counter",
+    None,
+    &["url"],
+);
+const SUBGRAPH_ERRORS: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    "subgraph_errors_total",
+    "Subgraph error counter",
+    None,
+    &["url", "kind"],
+);
+const SUBGRAPH_DURATION: dcl_metrics::HistogramFamily<1> = dcl_metrics::HistogramFamily::new(
+    "subgraph_query_duration_seconds",
+    "Request duration in seconds.",
+    Some(dcl_metrics::Unit::Seconds),
+    &["url"],
+    &[0.1, 0.3, 0.5, 1., 2., 5., 10., 20., 30., 60.],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[
+    SUBGRAPH_OK.descriptor,
+    SUBGRAPH_ERRORS.descriptor,
+    SUBGRAPH_DURATION.descriptor,
+];
+
+fn subgraph_error(url: &str, kind: &'static str) {
+    SUBGRAPH_ERRORS
+        .handle_owned([url.to_owned().into(), kind.into()])
+        .increment(1);
+}
+
+/// One subgraph request; `true` with a request that timed out.
+async fn graph_attempt(
+    client: &crate::http::Outbound,
+    url: &str,
+    body: &Value,
+) -> (anyhow::Result<RetryDecision<Value>>, bool) {
+    let resp = match client
+        .post(url)
+        .timeout(REQUEST_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) if e.is_connect() || e.is_timeout() || e.is_request() => {
+            tracing::debug!(error = %e, "subgraph request failed; retrying");
+            let retry = RetryDecision::Retry {
+                after: None,
+                rate_limited: false,
+            };
+            return (Ok(retry), e.is_timeout());
+        }
+        Err(e) => {
+            let timed_out = e.is_timeout();
+            return (
+                Err(anyhow::anyhow!("subgraph request failed: {e}")),
+                timed_out,
+            );
+        }
+    };
+    let status = resp.status();
+    if is_transient_status(status) {
+        let after = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_retry_after);
+        let retry = RetryDecision::Retry {
+            after,
+            rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+        };
+        return (Ok(retry), false);
+    }
+    if !status.is_success() {
+        return (
+            Err(anyhow::anyhow!("subgraph returned HTTP {status}")),
+            false,
+        );
+    }
+    let parsed = async {
+        let bytes = read_body_capped(resp, BODY_CAP).await?;
+        serde_json::from_slice::<Value>(&bytes)
+            .map_err(|e| anyhow::anyhow!("failed to parse subgraph response: {e}"))
+    };
+    match parsed.await {
+        Ok(parsed) => (Ok(RetryDecision::Done(parsed)), false),
+        Err(e) => {
+            let timed_out = e
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(reqwest::Error::is_timeout);
+            (Err(e), timed_out)
+        }
+    }
 }
 
 fn str_of(v: &Value, key: &str) -> String {
@@ -390,6 +476,15 @@ async fn walk_names(
             Err(format!("no terminal NFT page after {max_pages} pages"))
         })
         .await
+}
+
+/// Whether [`all_owned_names`] would answer from its memo, without a subgraph call.
+pub fn all_owned_names_memoized(state: &ChainIndex, owner: &str) -> bool {
+    state
+        .graph
+        .all_names
+        .get_fresh(&owner.to_lowercase())
+        .is_some()
 }
 
 /// [`all_owned_names`] for the lambdas `/users/{a}/names` list alone: when the
@@ -921,6 +1016,47 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("not a publicly routable"), "{err}");
+    }
+
+    /// The legacy subgraph series: a valid answer counts in `subgraph_ok_total`,
+    /// a GraphQL syntax error in `subgraph_errors_total{kind}`, and each attempt
+    /// in the duration histogram with its declared buckets, labelled by URL.
+    #[tokio::test(flavor = "current_thread")]
+    async fn subgraph_queries_record_the_legacy_series() {
+        let recorder = dcl_metrics::Registry::new(&[FAMILIES])
+            .unwrap()
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let (index, _) = test_support::index_with_names().await;
+        let good = index.settings.marketplace_subgraph_url.clone().unwrap();
+        graph_query(&index, &good, "{ nfts { id } }", json!({}))
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bad = format!("http://{}/subgraph", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/subgraph",
+            axum::routing::post(|| async {
+                axum::Json(json!({ "errors": [{ "message": "Unexpected `}`" }] }))
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        graph_query(&index, &bad, "{ nfts { id }", json!({}))
+            .await
+            .unwrap_err();
+        let rendered = handle.render();
+        for line in [
+            format!("subgraph_ok_total{{url=\"{good}\"}} 1"),
+            format!("subgraph_errors_total{{url=\"{bad}\",kind=\"syntax_error\"}} 1"),
+            format!("subgraph_query_duration_seconds_count{{url=\"{good}\"}} 1"),
+            format!("subgraph_query_duration_seconds_count{{url=\"{bad}\"}} 1"),
+            format!("subgraph_query_duration_seconds_bucket{{url=\"{good}\",le=\"60\"}} 1"),
+        ] {
+            assert!(rendered.contains(&line), "missing {line}:\n{rendered}");
+        }
     }
 
     #[tokio::test]
