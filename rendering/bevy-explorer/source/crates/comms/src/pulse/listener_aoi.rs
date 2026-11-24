@@ -127,6 +127,30 @@ pub fn listener_aoi(
     (aoi, compaction)
 }
 
+/// Parcels `rects` cover, overlaps counted per rect as the server's budget counts them.
+pub fn area(rects: &[pulse::ParcelRect]) -> i64 {
+    rects
+        .iter()
+        .map(|r| {
+            (i64::from(r.max_x) - i64::from(r.min_x) + 1)
+                * (i64::from(r.max_z) - i64::from(r.min_z) + 1)
+        })
+        .sum()
+}
+
+/// The realm to leave out after the server rejects `aoi`: the largest by area, ties by name. `None`
+/// for a single realm, which is all that is left to announce.
+pub fn realm_to_leave_out(aoi: &[pulse::SceneListenerAoi]) -> Option<&pulse::SceneListenerAoi> {
+    if aoi.len() < 2 {
+        return None;
+    }
+    aoi.iter().max_by(|a, b| {
+        area(&a.parcel_rects)
+            .cmp(&area(&b.parcel_rects))
+            .then_with(|| b.realm.cmp(&a.realm))
+    })
+}
+
 /// A scene's parcels, its rect count and bounding box, and whether it is announced as that box.
 struct Shape {
     realm: String,

@@ -210,3 +210,39 @@ fn realms_that_cannot_fit_are_dropped_largest_first() {
     // what is announced is announced exactly
     assert!(aoi.iter().all(|entry| entry.parcel_rects.len() == 1));
 }
+
+#[test]
+fn the_largest_realm_by_area_is_left_out_after_a_rejection() {
+    let aoi = [
+        realm_aoi("big.dcl.eth", vec![rect(IVec2::ZERO, IVec2::new(99, 99))]),
+        realm_aoi(
+            "many-rects.dcl.eth",
+            (0..50)
+                .map(|i| rect(IVec2::new(i * 2, 0), IVec2::new(i * 2, 0)))
+                .collect(),
+        ),
+        realm_aoi("small.dcl.eth", vec![rect(IVec2::ZERO, IVec2::new(1, 1))]),
+    ];
+
+    assert_eq!(realm_to_leave_out(&aoi).unwrap().realm, "big.dcl.eth");
+}
+
+#[test]
+fn a_tie_leaves_out_the_first_realm_by_name() {
+    let aoi = [
+        realm_aoi("b", vec![rect(IVec2::ZERO, IVec2::ZERO)]),
+        realm_aoi("a", vec![rect(IVec2::ZERO, IVec2::ZERO)]),
+    ];
+
+    assert_eq!(realm_to_leave_out(&aoi).unwrap().realm, "a");
+}
+
+#[test]
+fn a_single_realm_is_never_left_out() {
+    let aoi = [realm_aoi(
+        "only",
+        vec![rect(IVec2::ZERO, IVec2::new(999, 999))],
+    )];
+
+    assert!(realm_to_leave_out(&aoi).is_none());
+}

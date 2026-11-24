@@ -247,6 +247,11 @@ struct ListenerRole {
     aoi: Vec<pulse::SceneListenerAoi>,
     /// How `aoi` was compacted, so a change of which scenes collapse is logged once.
     compaction: Compaction,
+    /// The compacted AoI of the hosted scenes, before `left_out` is taken from it.
+    hosted_aoi: Vec<pulse::SceneListenerAoi>,
+    /// Realms left out of `aoi` after the server rejected an announcement over its budget, so one
+    /// oversized realm cannot cost the others their players. Cleared when the hosted scenes change.
+    left_out: HashSet<String>,
     /// The AoI the server holds: what the handshake carried, then what the last update carried.
     /// `flush_listener_aoi` sends an update whenever `aoi` differs from this, so a change is never
     /// lost — only deferred — however many frames it took to settle.
@@ -408,11 +413,7 @@ fn describe_aoi(aoi: &[pulse::SceneListenerAoi]) -> String {
     let rects: usize = aoi.iter().map(|realm| realm.parcel_rects.len()).sum();
     let area: i64 = aoi
         .iter()
-        .flat_map(|realm| &realm.parcel_rects)
-        .map(|r| {
-            (i64::from(r.max_x) - i64::from(r.min_x) + 1)
-                * (i64::from(r.max_z) - i64::from(r.min_z) + 1)
-        })
+        .map(|realm| listener_aoi::area(&realm.parcel_rects))
         .sum();
     format!(
         "{} realms, {rects} rects, {area} parcels, {} bytes",
@@ -1172,17 +1173,20 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
                     "pulse: disconnected ({reason:?}{hint}; handshake accepted: {})",
                     session.accepted
                 );
-                if let (
-                    transport::PulseDisconnect::InvalidHandshakeField
-                    | transport::PulseDisconnect::PacketCorrupted
-                    | transport::PulseDisconnect::InvalidSceneListenerField,
-                    PulseRole::Listener(listener),
-                ) = (reason, &session.role)
-                {
-                    error!(
-                        "pulse: the server rejected the scene-listener announcement ({}); retrying until the hosted scenes change",
-                        describe_aoi(&listener.announced)
-                    );
+                match (reason, session.role.listener_mut()) {
+                    // the codes a budget rejection carries: drop one realm so the rest pass
+                    (
+                        transport::PulseDisconnect::InvalidHandshakeField
+                        | transport::PulseDisconnect::InvalidSceneListenerField,
+                        Some(listener),
+                    ) => leave_out_rejected_realm(listener),
+                    (transport::PulseDisconnect::PacketCorrupted, Some(listener)) => {
+                        error!(
+                            "pulse: the server rejected the scene-listener announcement ({}); retrying until the hosted scenes change",
+                            describe_aoi(&listener.announced)
+                        );
+                    }
+                    _ => {}
                 }
                 taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
                 let accepted = session.accepted;
@@ -1782,8 +1786,40 @@ fn update_listener_aoi(
         log_compaction(&compaction, &aoi);
     }
     listener.compaction = compaction;
+    if listener.hosted_aoi != aoi {
+        if !listener.left_out.is_empty() {
+            info!("pulse: hosted scenes changed; announcing every realm again");
+            listener.left_out.clear();
+        }
+        listener.hosted_aoi = aoi;
+    }
+    let aoi = listener
+        .hosted_aoi
+        .iter()
+        .filter(|entry| !listener.left_out.contains(&entry.realm))
+        .cloned()
+        .collect();
 
     set_listener_aoi(session, aoi);
+}
+
+/// After a budget rejection, drops the largest realm from the listener's AoI so the next attempt
+/// can pass for the rest. Logs which, or that a single realm is left to retry as is.
+fn leave_out_rejected_realm(listener: &mut ListenerRole) {
+    let Some(realm) = listener_aoi::realm_to_leave_out(&listener.announced) else {
+        error!(
+            "pulse: the server rejected the scene-listener announcement ({}); retrying until the hosted scenes change",
+            describe_aoi(&listener.announced)
+        );
+        return;
+    };
+    let (name, parcels) = (realm.realm.clone(), listener_aoi::area(&realm.parcel_rects));
+    error!(
+        "pulse: the server rejected the scene-listener announcement ({}); leaving out {name} ({parcels} parcels), its players unseen until the hosted scenes change",
+        describe_aoi(&listener.announced)
+    );
+    listener.aoi.retain(|entry| entry.realm != name);
+    listener.left_out.insert(name);
 }
 
 /// Says what compaction changed in the announced AoI; called only when that changes.

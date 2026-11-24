@@ -316,3 +316,44 @@ fn a_compacted_scene_is_still_routed_by_its_exact_parcels() {
     assert_eq!(listener.compaction.collapsed.len(), 1);
     assert_eq!(listener.aoi[0].parcel_rects.len(), 2);
 }
+
+/// A realm left out after a rejection stays out until the hosted scenes change.
+#[test]
+fn a_left_out_realm_stays_out_until_the_hosted_scenes_change() {
+    let mut aoi = Aoi::listening();
+    aoi.app
+        .world_mut()
+        .resource_mut::<SceneRealms>()
+        .0
+        .insert(OTHER.to_owned(), "other-realm".to_owned());
+    aoi.context(SCENE, true);
+    aoi.context(OTHER, true);
+    aoi.definition(SCENE, &["0,0"]);
+    aoi.definition(OTHER, &["5,5"]);
+    aoi.update();
+    let realms = |aoi: &mut Aoi| -> Vec<String> {
+        aoi.listener().aoi.iter().map(|e| e.realm.clone()).collect()
+    };
+    assert_eq!(realms(&mut aoi), ["other-realm", REALM]);
+
+    aoi.listener().left_out.insert("other-realm".to_owned());
+    aoi.listener().aoi.retain(|e| e.realm != "other-realm");
+    // an unrelated rebuild with the same scenes keeps it out
+    aoi.app
+        .world_mut()
+        .resource_mut::<SceneRealms>()
+        .set_changed();
+    aoi.update();
+    assert_eq!(realms(&mut aoi), [REALM]);
+
+    aoi.definition("third", &["9,9"]);
+    aoi.context("third", true);
+    aoi.app
+        .world_mut()
+        .resource_mut::<SceneRealms>()
+        .0
+        .insert("third".to_owned(), REALM.to_owned());
+    aoi.update();
+    assert_eq!(realms(&mut aoi), ["other-realm", REALM]);
+    assert!(aoi.listener().left_out.is_empty());
+}

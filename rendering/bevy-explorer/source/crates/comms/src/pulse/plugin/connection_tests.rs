@@ -1770,3 +1770,70 @@ fn a_peer_on_a_parcel_no_scene_hosts_reaches_no_scene() {
     );
     assert!(reached(&mut second_updates).is_empty());
 }
+
+/// Two realms in one announcement: a small one and one far over any budget.
+fn two_realm_aoi() -> Vec<pulse::SceneListenerAoi> {
+    let mut aoi = home_aoi(IVec2::ZERO, IVec2::new(1, 0));
+    aoi.push(pulse::SceneListenerAoi {
+        realm: "track.dcl.eth".to_owned(),
+        parcel_rects: vec![pulse::ParcelRect {
+            min_x: -149,
+            min_z: -149,
+            max_x: 143,
+            max_z: 144,
+        }],
+    });
+    aoi
+}
+
+/// A budget rejection leaves the largest realm out, so the others keep their players.
+#[test]
+fn a_listener_rejected_over_budget_leaves_out_the_largest_realm() {
+    for reason in [
+        PulseDisconnect::InvalidHandshakeField,
+        PulseDisconnect::InvalidSceneListenerField,
+    ] {
+        let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+        {
+            let mut session = harness.session_mut();
+            let listener = session.role.listener_mut().unwrap();
+            listener.aoi = two_realm_aoi();
+            listener.announced = two_realm_aoi();
+        }
+
+        harness.report(PulseStatus::Disconnected(reason));
+        harness.pump_at(5.0);
+
+        let mut session = harness.session_mut();
+        let listener = session.role.listener_mut().unwrap();
+        assert_eq!(
+            listener.aoi,
+            home_aoi(IVec2::ZERO, IVec2::new(1, 0)),
+            "{reason:?}"
+        );
+        assert_eq!(
+            listener.left_out,
+            HashSet::from_iter(["track.dcl.eth".to_owned()])
+        );
+    }
+}
+
+/// An oversized packet is not a budget verdict: every realm is retried.
+#[test]
+fn a_listener_rejected_as_corrupt_keeps_every_realm() {
+    let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+    {
+        let mut session = harness.session_mut();
+        let listener = session.role.listener_mut().unwrap();
+        listener.aoi = two_realm_aoi();
+        listener.announced = two_realm_aoi();
+    }
+
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::PacketCorrupted));
+    harness.pump_at(5.0);
+
+    let mut session = harness.session_mut();
+    let listener = session.role.listener_mut().unwrap();
+    assert_eq!(listener.aoi, two_realm_aoi());
+    assert!(listener.left_out.is_empty());
+}
