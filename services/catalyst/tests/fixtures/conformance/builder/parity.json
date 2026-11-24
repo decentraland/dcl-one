@@ -5,7 +5,7 @@
     "revision": "98897af692f26063a088aebb2ea5bb3f683168a2",
     "route_ledger": "services/catalyst/builder/src/tests/upstream_routes.rs"
   },
-  "review_policy": "reviewed means every capture cited for the operation replays against the node with no difference, or with differences that only the deliberate gaps the operation lists account for, and at least one is cited, for the cases those captures cover; it never means exhaustive equivalence. known_gap names a difference a replay observes, and the capture's replay lists it exactly. not_reviewed means the cited captures, if any, don't settle the operation, even if the node routes it. Until the replay (services/catalyst/tests/builder_conformance.rs) arrives with the builder port, reviewed records a read of the captures against the port, not a replay, and an evidence entry outside this folder can name a node test the port has yet to add.",
+  "review_policy": "reviewed means every capture cited for the operation replays against the node with no difference, or with differences that only the deliberate gaps the operation lists account for, and at least one is cited, for the cases those captures cover; it never means exhaustive equivalence. known_gap names a difference a replay observes, and the capture's replay lists it exactly. not_reviewed means the cited captures, if any, don't settle the operation, even if the node routes it.",
   "volatile_fields": [
     "created_at",
     "updated_at",

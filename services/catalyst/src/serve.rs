@@ -907,6 +907,17 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             },
         );
     }
+    {
+        let builder = builder.clone();
+        jobs.spawn_periodic_leased(
+            "builder-validation-requests",
+            jobs::PeriodicCfg::every(Duration::from_secs(600)),
+            move |_ctx| {
+                let builder = builder.clone();
+                async move { builder::validator::sweep(&builder).await }
+            },
+        );
+    }
     camera_reel::events::spawn_retention_job(&camera_reel, &jobs);
     tracing::info!(
         builder = %builder.sources_label(),

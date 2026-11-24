@@ -268,6 +268,7 @@ pub async fn publish(
     let item_curations =
         crate::curation::record_item_curations(&mut tx, grant, &submitted, "pending").await?;
     crate::curation::record_collection_curation(&mut tx, grant, "pending", None).await?;
+    crate::review::on_third_party_publish(&mut tx, state, grant.id()).await?;
     tx.commit().await?;
     let ids: Vec<Uuid> = named.iter().map(|item| item.id).collect();
     let mut collection = state.items.collection(&grant.full_read()).await?;

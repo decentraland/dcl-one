@@ -895,6 +895,114 @@ async fn statuses(pool: &PgPool, item: Uuid) -> Vec<String> {
     .unwrap()
 }
 
+async fn admin_patch(
+    app: &axum::Router,
+    path: String,
+    body: serde_json::Value,
+) -> (u16, serde_json::Value) {
+    use tower::ServiceExt;
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PATCH")
+                .uri(path)
+                .header("authorization", "Bearer example-admin-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+
+#[tokio::test]
+async fn the_operators_status_patch_decides_the_newest_curation_of_a_submitted_item() {
+    let Some(pool) = scratch_pool(4).await else {
+        return;
+    };
+    let state = super::support::state_over_with(
+        pool.clone(),
+        None,
+        crate::Settings {
+            writes_enabled: true,
+            admin_token: Some("example-admin-token".into()),
+            ..crate::Settings::default()
+        },
+    )
+    .await;
+    let app = crate::router(state);
+    let c = collection(&pool, true).await;
+    let (submitted, unsubmitted) = (item(&pool, c).await, item(&pool, c).await);
+    sqlx::query("UPDATE builder.items SET local_content_hash = $2 WHERE collection_id = $1")
+        .bind(c)
+        .bind(content_hash())
+        .execute(&pool)
+        .await
+        .unwrap();
+    curate(&pool, submitted, "approved", "2025-01-01").await;
+    curate(&pool, submitted, "pending", "2025-01-02").await;
+
+    let (status, body) = admin_patch(
+        &app,
+        format!("/v1/collections/{c}/items/{submitted}/status"),
+        serde_json::json!({ "status": "rejected" }),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["data"]["updated"]),
+        (200, &serde_json::json!(1)),
+        "{body}"
+    );
+    assert_eq!(statuses(&pool, submitted).await, ["approved", "rejected"]);
+
+    let (status, body) = admin_patch(
+        &app,
+        format!("/v1/collections/{c}/items/{unsubmitted}/status"),
+        serde_json::json!({ "status": "approved" }),
+    )
+    .await;
+    assert_eq!(
+        status, 404,
+        "an item never submitted has no curation to decide: {body}"
+    );
+    assert_eq!(statuses(&pool, unsubmitted).await, Vec::<String>::new());
+
+    let (status, body) = admin_patch(
+        &app,
+        format!("/v1/collections/{c}/items/status"),
+        serde_json::json!({ "status": "approved", "itemIds": [submitted, unsubmitted] }),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["data"]["requested"], &body["data"]["updated"]),
+        (200, &serde_json::json!(2), &serde_json::json!(1)),
+        "{body}"
+    );
+    assert_eq!(statuses(&pool, submitted).await, ["approved", "approved"]);
+    assert_eq!(statuses(&pool, unsubmitted).await, Vec::<String>::new());
+
+    let other = collection(&pool, true).await;
+    let anchor = item(&pool, other).await;
+    curate(&pool, anchor, "approved", "2025-01-01").await;
+    let (status, _) = admin_patch(
+        &app,
+        format!("/v1/collections/{other}/items/{submitted}/status"),
+        serde_json::json!({ "status": "pending" }),
+    )
+    .await;
+    assert_eq!(
+        status, 404,
+        "an item is decided only through its own collection"
+    );
+    assert_eq!(statuses(&pool, submitted).await, ["approved", "approved"]);
+}
+
 #[tokio::test]
 async fn a_recorded_item_curation_is_the_items_newest_even_twice_in_one_transaction() {
     let Some(pool) = scratch_pool(2).await else {

@@ -6,6 +6,8 @@
 #[path = "support/db.rs"]
 mod db;
 
+#[path = "builder_conformance.rs"]
+mod builder_conformance;
 #[path = "content_live.rs"]
 mod content_live;
 #[path = "explore_mirrors.rs"]

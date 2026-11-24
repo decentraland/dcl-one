@@ -56,13 +56,14 @@ pub async fn get_collection_items(
 /// review flow as on: only a listing that filters by status or sorts by
 /// relevance asks.
 pub(crate) async fn review_flow_asked(
-    _state: &SharedState,
+    state: &SharedState,
     q: &ListQuery,
 ) -> Result<bool, ApiError> {
     if q.all("status").is_empty() && q.all("sort") != ["MOST_RELEVANT"] {
         return Ok(false);
     }
-    Ok(false)
+    let mut conn = state.items.pool().acquire().await?;
+    crate::review::enabled(&mut conn, state).await
 }
 
 /// builder-server's `HTTPError('Unauthorized', { eth_address }, 401)`: a

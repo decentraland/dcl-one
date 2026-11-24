@@ -176,6 +176,21 @@ async fn answers(app: &Router, method: &str, path: &str) -> (bool, StatusCode) {
 }
 
 #[tokio::test]
+async fn the_ledger_matches_the_router() {
+    let app = app().await;
+    let mut disagreements = Vec::new();
+    for &(method, path, route) in UPSTREAM {
+        let (routed, status) = answers(&app, method, &request_path(path)).await;
+        if routed != (route == Routed) {
+            disagreements.push(format!(
+                "{method} {path}: {route:?} in the ledger, answered {status}"
+            ));
+        }
+    }
+    assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+}
+
+#[tokio::test]
 async fn no_scene_route_answers_under_either_mount() {
     let app = app().await;
     let mut answered = Vec::new();

@@ -72,8 +72,10 @@ pub mod publication;
 pub mod publication_chain;
 pub mod publication_store;
 pub mod rarities;
+pub mod review;
 pub mod terms;
 pub mod third_parties;
+pub mod validator;
 pub mod writes;
 
 #[cfg(test)]
@@ -84,7 +86,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use sqlx::PgPool;
 
 use crate::chain_index::ChainIndex;
@@ -239,6 +241,8 @@ pub struct Settings {
     pub forum: Option<curation::forum::Forum>,
     /// Where a forum post's thumbnails link to.
     pub builder_server_url: String,
+    /// The wearable validator's secret; none turns validation off.
+    pub validator_secret: Option<validator::Secret>,
     /// Who may read the answers from another origin.
     pub cors: cors::Cors,
     /// The node's bound of unpublished upload bytes, if not the default.
@@ -268,6 +272,7 @@ impl std::fmt::Debug for Settings {
             .field("links", &self.links)
             .field("forum", &self.forum)
             .field("builder_server_url", &self.builder_server_url)
+            .field("validator_secret", &self.validator_secret)
             .field("cors", &self.cors)
             .field("unpublished_max_bytes", &self.unpublished_max_bytes)
             .field("unpublished_max_files", &self.unpublished_max_files)
@@ -430,9 +435,15 @@ impl Settings {
             }
         }
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
+        let validator_secret = non_empty(&raw.validator_secret);
         let admin_token = non_empty(&raw.admin_token);
-        if admin_token.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
-            bail!("CATALYRST_BUILDER_ADMIN_TOKEN must be at least {MIN_SECRET_BYTES} bytes");
+        for (name, secret) in [
+            ("WEARABLE_VALIDATOR_CALLBACK_SECRET", &validator_secret),
+            ("CATALYRST_BUILDER_ADMIN_TOKEN", &admin_token),
+        ] {
+            if secret.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
+                bail!("{name} must be at least {MIN_SECRET_BYTES} bytes");
+            }
         }
         if raw
             .video_uploads_max
@@ -459,6 +470,7 @@ impl Settings {
             links,
             forum,
             builder_server_url: builder_server_url.unwrap_or_default(),
+            validator_secret: validator_secret.map(validator::Secret::from),
             writes_enabled: raw.writes_enabled,
             polygon_rpc_url,
             admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
@@ -499,6 +511,8 @@ pub struct State {
     /// The content sync's state: whether this process is its own content
     /// authority, so an item URN its content lacks is unused.
     pub content_sync: Arc<crate::content::SyncStatus>,
+    /// The wearable validator's calls per source address.
+    pub validator_calls: crate::shared::limits::RateLimiter,
     /// The item video uploads' bounds and those in flight.
     pub videos: items::video::Videos,
     /// The item file uploads in flight, each holding its body in memory:
@@ -567,6 +581,7 @@ impl State {
             deployments: collections::deployment::Deployments::default(),
             notices,
             content_sync: Arc::default(),
+            validator_calls: validator::calls_limiter(),
             videos,
             file_uploads: items::places::Places::new(
                 "file uploads",
@@ -600,7 +615,7 @@ impl State {
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "polygon_chain={} polygon_rpc={} collections_reader={} admins={} newsletter={} warehouse={} slack={} forum={}",
+            "polygon_chain={} polygon_rpc={} collections_reader={} admins={} newsletter={} warehouse={} slack={} forum={} validator={}",
             self.settings.network.chain_id,
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
@@ -609,6 +624,7 @@ impl State {
             self.settings.warehouse.is_some(),
             self.settings.slack.is_some(),
             self.settings.forum.is_some(),
+            self.settings.validator_secret.is_some(),
         )
     }
 }
@@ -678,10 +694,31 @@ fn api_routes() -> Router<SharedState> {
             get(handlers::lifecycle::approval_data),
         )
         .route(
+            "/v1/collections/curation",
+            get(handlers::curation::get_curation_collections),
+        )
+        .route("/v1/curations", get(handlers::curation::curations))
+        .route(
+            "/v1/collections/{id}/curation",
+            get(handlers::curation::collection_curation)
+                .patch(handlers::curation::update_collection_curation)
+                .post(handlers::curation::request_collection_curation),
+        )
+        .route(
             "/v1/collections/{id}/curation/post",
             post(handlers::forum::reply),
         )
         .route("/v1/collections/{id}/post", post(handlers::forum::post))
+        .route(
+            "/v1/collections/{id}/itemCurations",
+            get(handlers::curation::collection_item_curations),
+        )
+        .route(
+            "/v1/items/{id}/curation",
+            get(handlers::curation::item_curation)
+                .patch(handlers::curation::update_item_curation)
+                .post(handlers::curation::request_item_curation),
+        )
         .route(
             "/v1/{address}/collections",
             get(handlers::collections::get_address_collections),
@@ -689,6 +726,42 @@ fn api_routes() -> Router<SharedState> {
         .route(
             "/v1/{address}/items",
             get(handlers::collections::get_address_items),
+        )
+        .route(
+            "/v1/collections/{id}/items/{item}/status",
+            patch(handlers::curation::patch_item_status),
+        )
+        .route(
+            "/v1/collections/{id}/items/status",
+            patch(handlers::curation::patch_items_status_bulk),
+        )
+        .route(
+            "/v1/validator/claims",
+            post(handlers::validator::claim)
+                .layer(DefaultBodyLimit::max(handlers::validator::SMALL_BODY)),
+        )
+        .route(
+            "/v1/validator/claims/{id}/lease",
+            post(handlers::validator::lease)
+                .layer(DefaultBodyLimit::max(handlers::validator::SMALL_BODY)),
+        )
+        .route(
+            "/v1/collections/{id}/validations",
+            post(handlers::review::validations),
+        )
+        .route(
+            "/v1/collections/{id}/curation/appeal",
+            post(handlers::review::appeal),
+        )
+        .route("/v1/collections/{id}/events", get(handlers::review::events))
+        .route(
+            "/v1/collections/{id}/comments",
+            post(handlers::review::comments),
+        )
+        .route(
+            "/v1/collections/{id}/validation-result",
+            post(handlers::validator::verdict)
+                .layer(DefaultBodyLimit::max(handlers::validator::VERDICT_BODY)),
         )
         .route("/v1/thirdParties", get(handlers::third_parties::list))
         .route(
@@ -922,6 +995,32 @@ mod router_tests {
     }
 
     #[test]
+    fn a_short_admin_token_or_validator_secret_stops_startup_without_showing_it() {
+        let short = "sk-example-31-bytes-long-secret";
+        let long = "sk-example-32-bytes-long-secret!";
+        assert_eq!((short.len(), long.len()), (31, 32));
+        for (name, raw) in [
+            (
+                "CATALYRST_BUILDER_ADMIN_TOKEN",
+                (|v: &str| RawSettings {
+                    admin_token: Some(v.into()),
+                    ..RawSettings::default()
+                }) as fn(&str) -> RawSettings,
+            ),
+            ("WEARABLE_VALIDATOR_CALLBACK_SECRET", |v: &str| {
+                RawSettings {
+                    validator_secret: Some(v.into()),
+                    ..RawSettings::default()
+                }
+            }),
+        ] {
+            let err = Settings::parse(raw(short)).unwrap_err().to_string();
+            assert!(err.contains(name) && !err.contains(short), "{err}");
+            assert!(Settings::parse(raw(long)).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
     fn no_secret_reaches_the_settings_printout() {
         let settings = Settings::parse(RawSettings {
             polygon_rpc_url: Some("https://rpc.example/v3/sk-example-rpc".into()),
@@ -938,6 +1037,7 @@ mod router_tests {
             forum_api_username: Some("builder".into()),
             forum_category: Some("7".into()),
             builder_server_url: Some("https://builder-api.example".into()),
+            validator_secret: Some("sk-example-validator-0123456789abcdef".into()),
             ..RawSettings::default()
         })
         .unwrap();
@@ -949,6 +1049,7 @@ mod router_tests {
             "sk-example-warehouse",
             "xoxb-example-slack",
             "sk-example-forum",
+            "sk-example-validator",
         ] {
             assert!(!printed.contains(secret), "{secret} in {printed}");
         }
