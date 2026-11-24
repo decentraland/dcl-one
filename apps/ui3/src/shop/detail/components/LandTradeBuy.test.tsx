@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
 import { createDemo, DemoShell } from "../../checkout/demo";
-import { APPROVAL_STILL_PENDING, TxPendingError } from "../../market/lib/tx";
+import { APPROVAL_REVERTED, APPROVAL_STILL_PENDING, TxPendingError, TxRevertedError } from "../../market/lib/tx";
 import { TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { buyTradeWithMana } from "../../market/purchase/executeOrder";
 import type { ManaWei } from "@shop/model/money";
@@ -79,7 +79,8 @@ describe("LandTradeBuy", () => {
     await vi.waitFor(() => expect(invalidated({ balance: stale.balance })).toEqual({ balance: true }));
   });
 
-  it("a bought LAND trade reads that LAND again, and no other parcel or token", async () => {
+  // Only the page's TanStack keys: the LAND page's own re-read (its useShopQuery reads) is LandBranch.buy.test's.
+  it("a bought LAND trade marks that LAND's query keys stale, and no other parcel's or token's", async () => {
     await buy(LAND);
     await vi.waitFor(() => expect(invalidated(stale)).toEqual(all(stale, true)));
     expect(invalidated(untouched)).toEqual(all(untouched, false));
@@ -100,6 +101,8 @@ describe("LandTradeBuy", () => {
     vi.mocked(buyTradeWithMana).mockRejectedValueOnce(new TxPendingError(`0x${"a".repeat(64)}`, "The MANA approval"));
     await buy(LAND);
     await screen.findByText(APPROVAL_STILL_PENDING);
+    // The approval to watch, on the listing's chain.
+    expect(screen.getByRole("link", { name: "View transaction" }).getAttribute("href")).toBe(`https://polygonscan.com/tx/0x${"a".repeat(64)}`);
     expect(screen.queryByText(/The purchase was sent/)).toBeNull();
     // No second Buy while the approval confirms: it would send a second approval.
     expect(screen.queryByTestId("order-buy")).toBeNull();
@@ -116,6 +119,15 @@ describe("LandTradeBuy", () => {
     await screen.findByText(/The purchase was sent and is still confirming/);
     expect(invalidated(stale)).toEqual(all(stale, true));
     expect(onPending).toHaveBeenCalledExactlyOnceWith(SALE);
+  });
+
+  it("an approval that reverted sent no sale: it says so, and reads nothing again", async () => {
+    vi.mocked(buyTradeWithMana).mockRejectedValueOnce(new TxRevertedError(`0x${"a".repeat(64)}`));
+    await buy(LAND);
+    await screen.findByText(APPROVAL_REVERTED);
+    expect(screen.queryByText(/listing may have been sold/)).toBeNull();
+    expect(invalidated(stale)).toEqual(all(stale, false));
+    expect(onPending).not.toHaveBeenCalled();
   });
 
   it("a declined LAND trade spent nothing and reads nothing again", async () => {

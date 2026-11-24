@@ -1,7 +1,7 @@
 // The shared site top bar over the docs chrome: SUMMARY.md sidebar, the rendered page, its outline, page navigation and the theme switcher.
 import { useEffect, useRef, useState } from "react";
 
-import { useChromeNav } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { useChromeNav } from "@dcl/one-ui";
 import SitesTopBar from "../components/chrome/SitesTopBar";
 import styles from "./DocsPage.module.css";
 import type { DocsPageView, DocsSpace } from "@/data/lib/docs/types";

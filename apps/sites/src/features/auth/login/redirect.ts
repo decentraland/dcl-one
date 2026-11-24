@@ -12,6 +12,6 @@ export function safeRedirectTarget(redirectTo: string | null, here: URL): string
 }
 
 /** The sign-in page's URL for a reader who should come back to `returnTo` (a path on this site). */
-export function loginPath(returnTo: string): string {
-  return `/auth/login?redirectTo=${encodeURIComponent(returnTo)}`;
+export function loginPath(returnTo: string, { walletSwitch = false } = {}): string {
+  return `/auth/login?redirectTo=${encodeURIComponent(returnTo)}${walletSwitch ? "&walletSwitch=1" : ""}`;
 }

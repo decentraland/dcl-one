@@ -10,6 +10,8 @@ pub struct LandAuthzConfig {
     #[arg(long, env = "LAND_AUTHZ_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub land_authz_index_enabled: bool,
 
+    /// Seconds between passes. When the index is enabled, values above 240
+    /// are clamped with a warning to leave room for retries.
     #[arg(long, env = "LAND_AUTHZ_INDEX_INTERVAL_SECS", default_value_t = 120)]
     pub land_authz_index_interval_secs: u64,
 

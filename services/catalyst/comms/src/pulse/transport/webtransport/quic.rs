@@ -493,6 +493,70 @@ mod tests {
         accepted
     }
 
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn client_reports_a_refusal_while_opening_its_reliable_stream() {
+        check_client_refusal(false).await;
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn client_reports_a_refusal_before_the_connect_response() {
+        check_client_refusal(true).await;
+    }
+
+    #[cfg(feature = "test-support")]
+    async fn check_client_refusal(close_before_response: bool) {
+        use super::super::client::{Client, ClientConfig, ClientError};
+        use crate::pulse::hardening::DisconnectReason;
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let hash = Sha256::digest(cert.cert.der()).to_vec();
+        let (certs, key) = parse_pem(&cert.cert.pem(), &cert.signing_key.serialize_pem()).unwrap();
+        let mut config = server_config(certs, key, IDLE_TIMEOUT).unwrap();
+        // CONNECT uses the only bidirectional stream, so client setup has to wait for credit.
+        Arc::get_mut(&mut config.transport)
+            .unwrap()
+            .max_concurrent_bidi_streams(1_u8.into());
+        let endpoint = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let mut server = web_transport_quinn::Server::new(endpoint);
+        let timeout = Duration::from_secs(2);
+        let dialing = tokio::task::spawn_blocking(move || {
+            Client::connect_within(
+                ClientConfig {
+                    url: format!("https://{address}/"),
+                    server_cert_hash: Some(hash),
+                },
+                Some(timeout),
+            )
+            .err()
+        });
+
+        let request = tokio::time::timeout(timeout, server.accept())
+            .await
+            .expect("client should send CONNECT")
+            .unwrap();
+        let refusal = DisconnectReason::PreAuthIpLimitExhausted.code();
+        let _session = if close_before_response {
+            let code = web_transport_quinn::proto::error_to_http3(refusal);
+            request.conn().close(code.try_into().unwrap(), b"refused");
+            None
+        } else {
+            let session = request.ok().await.unwrap();
+            session.close(refusal, b"");
+            Some(session)
+        };
+        match dialing.await.unwrap() {
+            Some(ClientError::Closed { code, reason }) => {
+                assert_eq!(code, refusal);
+                assert_eq!(reason, if close_before_response { "refused" } else { "" });
+            }
+            Some(error) => panic!("expected the server refusal, got {error}"),
+            None => panic!("client opened a stream despite the server refusal"),
+        }
+    }
+
     #[test]
     fn a_live_session_that_sends_nothing_outlives_the_idle_timeout() {
         // Pulse ends a session that never authenticates after 30 s, the idle timeout too: the

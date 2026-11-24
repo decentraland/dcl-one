@@ -204,6 +204,20 @@
   width: max-content;
   padding: 10px 5.3px 0;
 }
+/* Wrapped, the rows run down over the map, which keeps the pointer between the chips. */
+.categoriesWrap {
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+}
+.categoriesWrap .categoryRow {
+  flex-wrap: wrap;
+  row-gap: 10.7px;
+  width: auto;
+}
+.categoriesWrap .category {
+  pointer-events: auto;
+}
 .category {
   display: flex;
   align-items: center;

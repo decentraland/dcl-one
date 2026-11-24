@@ -13,8 +13,8 @@ const Parcel = z.tuple([z.number(), z.number()]);
 
 /**
  * One scene row a page can render. The node copies `name` from the scene's own title, which a scene can leave out,
- * and passes an absolute thumbnail URL of the deployer's choice through: a row without a name is not a card, and
- * only a content file is an image.
+ * and a realm provider may still pass an absolute thumbnail URL of the deployer's choice through: a row without a
+ * name is not a card, and only a content file is an image.
  */
 export const HotScene = z.object({
   id: z.string(),

@@ -92,12 +92,9 @@ fn thumbnail(scene: &OrderedJson, url: &str) -> Result<Option<OrderedJson>, Erro
     else {
         return Ok(None);
     };
-    if !truthy(value) {
-        return Ok(Some(value.clone()));
-    }
-    let name = value.as_str().ok_or(Error)?;
-    if name.starts_with("http") {
-        return Ok(Some(value.clone()));
+    // Only a file stored with the scene resolves to a thumbnail.
+    if !value.as_str().is_some_and(|name| !name.is_empty()) {
+        return Ok(None);
     }
     let Some(files) = scene.get("content").filter(|v| !v.is_null()) else {
         return Ok(None);

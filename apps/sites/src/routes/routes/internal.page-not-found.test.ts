@@ -1,12 +1,12 @@
 import { RouterContextProvider } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action } from "./internal.page-not-found";
 
-function post(body: string): Request {
+function post(body: string, userAgent?: string): Request {
   return new Request("https://example.org/internal/page-not-found", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(userAgent ? { "User-Agent": userAgent } : {}) },
     body,
   });
 }
@@ -25,6 +25,26 @@ describe("internal.page-not-found action", () => {
       post(JSON.stringify({ path: "/missing-page?q=1", referrer: "https://example.org/" })),
     );
     expect(accepted.status).toBe(202);
+  });
+
+  describe("when a bot submits a page-not-found report", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    beforeEach(() => {
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubEnv("SEGMENT_WRITE_KEY", "key-1");
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    });
+
+    it("should accept the report without relaying it to Segment", async () => {
+      const res = await call(post(JSON.stringify({ path: "/missing-page" }), "curl/8.6.0"));
+      expect(res.status).toBe(202);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("drops credential parameters from the path and the referrer before Segment", async () => {

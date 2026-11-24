@@ -7,7 +7,7 @@
 use std::{
     io::{BufRead, BufReader, Write},
     path::PathBuf,
-    sync::Mutex,
+    sync::{Mutex, PoisonError},
 };
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
@@ -98,14 +98,14 @@ pub async fn dm_history_append(
 ) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
-    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     append_record(&key, &path, entry)
 }
 
 pub async fn dm_history_read(account: &str, partner: &str) -> Result<Vec<DmHistoryEntry>, String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
-    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     read_records(&key, &path)
 }
 
@@ -151,7 +151,7 @@ pub async fn dm_history_trim(
 ) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
-    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let lines: Vec<String> = match std::fs::read_to_string(&path) {
         Ok(contents) => contents
             .lines()
@@ -173,7 +173,7 @@ pub async fn dm_history_trim(
 pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
-    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let _guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),

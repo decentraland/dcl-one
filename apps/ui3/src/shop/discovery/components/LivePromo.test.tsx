@@ -15,8 +15,8 @@ vi.mock("../../../wearable-preview/WearablePreview", () => ({
   },
 }));
 
-vi.mock("./animated-background/AnimatedBackground", () => ({
-  default: (props: { patternTiling?: number }) => <div data-testid="backdrop" data-tiling={props.patternTiling} />,
+vi.mock("@dcl/one-ui/components/AnimatedBackground/AnimatedBackground", () => ({
+  AnimatedBackground: (props: { patternTiling?: number }) => <div data-testid="backdrop" data-tiling={props.patternTiling} />,
 }));
 
 import LivePromo from "./LivePromo";

@@ -8,6 +8,7 @@ import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { mapPins } from '@explorer-core/features/map/mapPins'
 import { MARKER_ART } from '../../features/map/mapArt'
+import { saveOpen } from '@explorer-core/features/minimap/minimapPrefs'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
 // The layer data is one store for the page, read the first time a map asks: the live event is there
@@ -277,6 +278,34 @@ describe('minimap layers', () => {
     const edge = container.querySelector<HTMLElement>('[data-marker="destination-edge"]')
     await new Promise((r) => setTimeout(r, 50))
     expect(edge?.hidden).toBe(true)
+  })
+})
+
+describe('minimap Camera style', () => {
+  // Outside Genesis City the Camera style is the only one, whatever the preference says.
+  async function renderCamera(cameraReady: boolean): Promise<HTMLElement> {
+    saveOpen(false, true)
+    const session = fakeSession()
+    const { container } = await renderSettled(
+      <Minimap minimap={{ ...session.minimap, satelliteView: null, cameraReady }} map={session.map} sceneTitle="A World" setEngineViewport={vi.fn()} />
+    )
+    return container
+  }
+
+  it("keeps the map covered until the engine is drawing in it, so the player's own view does not show", async () => {
+    const container = await renderCamera(false)
+    const map = screen.getByRole('button', { name: 'Open map' })
+    expect(map.className).toContain('covered')
+    expect(map.className).not.toContain('cutout')
+    expect(container.firstElementChild?.className).not.toContain('cutoutRoot')
+  })
+
+  it('opens the hole onto the engine once it is', async () => {
+    const container = await renderCamera(true)
+    const map = screen.getByRole('button', { name: 'Open map' })
+    expect(map.className).toContain('cutout')
+    expect(map.className).not.toContain('covered')
+    expect(container.firstElementChild?.className).toContain('cutoutRoot')
   })
 })
 
