@@ -5,26 +5,34 @@ use futures::StreamExt;
 use tokio::time::{Duration, Instant};
 
 const MIN_TRANSFER_BYTES_PER_SECOND: u64 = 4 * 1024;
-const TRANSFER_GRACE_PERIOD: Duration = Duration::from_secs(60);
+const TRANSFER_RATE_WINDOW: Duration = Duration::from_secs(60);
 
-/// Checks cumulative throughput after the grace period. Count wire bytes before any
-/// decompression, and pass only time spent reading so local sinks can apply backpressure.
+/// Checks throughput in successive read windows. Count wire bytes before decompression
+/// and exclude time the consumer spends processing the body.
 #[derive(Default)]
 pub struct TransferRateGuard {
     read_time: Duration,
+    bytes_read: u64,
 }
 
 impl TransferRateGuard {
-    pub fn check(&mut self, bytes_read: u64, last_read: Duration) -> Result<()> {
+    pub fn check(&mut self, chunk_bytes: u64, last_read: Duration) -> Result<()> {
         self.read_time += last_read;
+        self.bytes_read = self.bytes_read.saturating_add(chunk_bytes);
+        if self.read_time <= TRANSFER_RATE_WINDOW {
+            return Ok(());
+        }
+
         let seconds = self.read_time.as_secs_f64();
-        if self.read_time > TRANSFER_GRACE_PERIOD
-            && (bytes_read as f64) < seconds * MIN_TRANSFER_BYTES_PER_SECOND as f64
-        {
+        let bytes_read = self.bytes_read;
+        if (bytes_read as f64) < seconds * MIN_TRANSFER_BYTES_PER_SECOND as f64 {
             return Err(anyhow!(
                 "transfer of {bytes_read} bytes over {seconds:.1}s fell below {MIN_TRANSFER_BYTES_PER_SECOND} bytes/s"
             ));
         }
+
+        // A completed window cannot subsidize a later trickle.
+        *self = Self::default();
         Ok(())
     }
 }
@@ -67,7 +75,7 @@ async fn read_body(
             return Err(anyhow!("response body exceeds the {max_bytes} byte cap"));
         }
         if let (Some(rate), Some(started)) = (&mut rate, read_started) {
-            rate.check(bytes_read as u64, started.elapsed())?;
+            rate.check(chunk.len() as u64, started.elapsed())?;
         }
         buf.extend_from_slice(&chunk);
     }
@@ -81,10 +89,10 @@ mod tests {
     #[test]
     fn a_trickle_fails_after_the_grace_period() {
         let mut rate = TransferRateGuard::default();
-        for seconds in [20, 40, 60] {
-            assert!(rate.check(seconds, Duration::from_secs(20)).is_ok());
+        for _ in 0..3 {
+            assert!(rate.check(1, Duration::from_secs(20)).is_ok());
         }
-        let err = rate.check(61, Duration::from_secs(1)).unwrap_err();
+        let err = rate.check(1, Duration::from_secs(1)).unwrap_err();
         assert!(err.to_string().contains("fell below 4096 bytes/s"), "{err}");
     }
 
@@ -93,5 +101,52 @@ mod tests {
         let mut rate = TransferRateGuard::default();
         let time = Duration::from_secs(90);
         assert!(rate.check(4096 * time.as_secs(), time).is_ok());
+    }
+
+    #[test]
+    fn an_initial_burst_cannot_subsidize_a_later_trickle() {
+        let mut rate = TransferRateGuard::default();
+        assert!(rate.check(1024 * 1024, Duration::ZERO).is_ok());
+        for _ in 0..7 {
+            assert!(rate.check(1, Duration::from_secs(16)).is_ok());
+        }
+        let error = rate.check(1, Duration::from_secs(16)).unwrap_err();
+        assert!(error.to_string().contains("fell below 4096 bytes/s"));
+    }
+
+    #[tokio::test]
+    async fn a_peer_response_body_is_aborted_when_it_trickles() {
+        use axum::{Router, body::Body, routing::get};
+
+        let (send, receive) = tokio::sync::mpsc::channel(2);
+        let receive = std::sync::Arc::new(tokio::sync::Mutex::new(Some(receive)));
+        let app = Router::new().route(
+            "/",
+            get(move || async move {
+                let receive = receive.lock().await.take().unwrap();
+                Body::from_stream(futures::stream::unfold(receive, |mut receive| async move {
+                    receive
+                        .recv()
+                        .await
+                        .map(|chunk| (Ok::<_, std::convert::Infallible>(chunk), receive))
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        send.send("first").await.unwrap();
+        let response = reqwest::Client::new().get(url).send().await.unwrap();
+
+        tokio::time::pause();
+        let mut read = Box::pin(read_peer_body_capped(response, 1024));
+        assert!(futures::poll!(&mut read).is_pending());
+        tokio::time::advance(Duration::from_secs(61)).await;
+        send.send("second").await.unwrap();
+        drop(send);
+
+        let error = read.await.unwrap_err();
+        assert!(error.to_string().contains("fell below 4096 bytes/s"));
+        server.abort();
     }
 }

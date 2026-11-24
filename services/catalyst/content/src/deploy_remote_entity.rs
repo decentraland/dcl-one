@@ -176,7 +176,7 @@ pub(crate) async fn stream_body<S: DecodedSink>(
         if stats.wire_len > cap as u64 {
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
-        rate.check(stats.wire_len, read_started.elapsed())
+        rate.check(chunk.len() as u64, read_started.elapsed())
             .map_err(|e| e.to_string())?;
         for piece in chunk.chunks(decoder.input_step()) {
             // `run` holds decoded bytes not yet counted in `decoded_len`.
