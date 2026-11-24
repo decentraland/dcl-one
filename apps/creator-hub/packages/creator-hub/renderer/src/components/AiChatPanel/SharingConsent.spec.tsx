@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -151,6 +154,17 @@ describe('when sharing is on', () => {
 
     expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(false);
     expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  // jsdom does no layout, so this reads the rule itself: the two uppercase buttons are wider
+  // than the 240 px menu, and on one row "Keep sharing" was drawn outside the menu.
+  it('should let the confirmation buttons wrap inside the menu', () => {
+    const sharingCss = readFileSync(join(__dirname, 'SharingConsent.module.css'), 'utf8');
+    const rule = (selector: string) =>
+      sharingCss.match(new RegExp(`${selector.replace(/[.*>]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1];
+
+    expect(rule('.menuConfirmActions')).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule('.menuConfirmActions > *')).toMatch(/flex:\s*1 1 auto/);
   });
 
   it('should keep sharing a chat when the creator cancels', () => {
