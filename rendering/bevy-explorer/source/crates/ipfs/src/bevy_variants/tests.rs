@@ -1382,3 +1382,48 @@ async fn a_flagged_base_outside_decentraland_is_never_requested() {
     assert!(elsewhere_log.lock_ignore_poison().is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A switch drops the manifests requested so far, so an entity requested again asks the new base.
+#[tokio::test]
+async fn an_entity_requested_after_a_switch_asks_the_new_base() {
+    let manifest_route = format!("/bevy/manifest/{SCENE}.json");
+    let manifest =
+        || format!(r#"{{"files": {{"{ORIGINAL_CID}": ["bevy/t4/{VARIANT_CID}"]}}}}"#).into_bytes();
+    let (first, first_log) = serve(vec![(manifest_route.clone(), manifest())]).await;
+    let (second, second_log) = serve(vec![(manifest_route.clone(), manifest())]).await;
+    let (io, dir) = io_with_cache("re-request");
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let loaded = |io: &Arc<IpfsIo>| {
+        let mut state = io.bevy_variants.manifest(SCENE).unwrap();
+        async move {
+            state
+                .wait_for(|state| !matches!(state, ManifestState::Pending))
+                .await
+                .unwrap()
+                .clone()
+        }
+    };
+
+    io.set_bevy_variants_base(Some(&first));
+    io.request_bevy_variants(SCENE);
+    assert!(matches!(loaded(&io).await, ManifestState::Loaded(_)));
+    io.request_bevy_variants(SCENE);
+    assert_eq!(requests_for(&first_log, &manifest_route), 1);
+
+    io.set_bevy_variants_base(Some(&second));
+    assert!(io.bevy_variants.manifest(SCENE).is_none());
+    io.request_bevy_variants(SCENE);
+    let ManifestState::Loaded(manifest) = loaded(&io).await else {
+        panic!("no manifest from the new base");
+    };
+    assert_eq!(manifest.base, second);
+    assert_eq!(requests_for(&first_log, &manifest_route), 1);
+    assert_eq!(requests_for(&second_log, &manifest_route), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -6,8 +6,9 @@
 //! the flags are read ([`flagged_base`]), falling back to the `bevy_variants_url` config field,
 //! else to the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`),
 //! which serve until the flags are read. `off` turns the client off. A new base applies to the
-//! entities asked for after it; a manifest from an earlier base serves nothing more, and the
-//! breakers start over. For each scene, wearable and emote entity it loads, the explorer fetches
+//! entities asked for after it, or asked for again: the manifests so far are dropped, one still
+//! being read serves nothing more, and the breakers start over. For each scene, wearable and
+//! emote entity it loads, the explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
 //! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
@@ -568,6 +569,8 @@ struct Bases {
     source: String,
 }
 
+/// Lock order: `base` before `manifests`, `session` and `far_lods`; none of those is held while
+/// `base` is taken.
 #[derive(Default)]
 pub struct BevyVariants {
     base: Mutex<Bases>,
@@ -634,6 +637,10 @@ impl BevyVariants {
             bases.used.push(url.to_owned());
         }
         info!("bevy variants: on, from `{url}`");
+        // an entity asked for again asks the new base; reads of the dropped manifests that
+        // are in flight keep their own receiver and find the base moved on
+        self.manifests.lock_ignore_poison().clear();
+        self.requested_at.lock_ignore_poison().clear();
         // what the breakers learnt was about another service
         {
             let mut session = self.session.lock_ignore_poison();
@@ -1155,6 +1162,10 @@ impl IpfsIo {
         let (fetched, from_cache) = match cached {
             Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
             None => {
+                // the base may have moved on during the awaits above
+                if !variants.is_current(&manifest.base) {
+                    return None;
+                }
                 let token = self.reqno.fetch_add(1, Ordering::SeqCst);
                 let (download, task) = self.share_download_with(
                     key,

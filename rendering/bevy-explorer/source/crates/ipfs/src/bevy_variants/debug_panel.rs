@@ -99,7 +99,8 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     manifests.sort();
 
     let session = variants.session.lock_ignore_poison();
-    let state = match (variants.base(), &session.disabled, variants.bc.get()) {
+    // `current` was read above: `base` is never taken while `session` is held
+    let state = match (current.as_deref(), &session.disabled, variants.bc.get()) {
         (None, _, _) => "off".to_owned(),
         (Some(_), Some(reason), _) => format!("off for this session: {reason}"),
         (Some(_), None, None) => "on, waiting for the renderer's texture formats".to_owned(),
