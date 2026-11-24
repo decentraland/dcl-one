@@ -1,7 +1,4 @@
-import type {
-  DownloadActionsProps,
-  StoreBadgeProps,
-} from "@dcl/one-ui/apps/sites/download/DownloadActions";
+import type { DownloadActionsProps, StoreBadgeProps } from "@dcl/one-ui";
 import { GOOGLE_PLAY_BASE_URL, googlePlayHref } from "./google-play";
 import { downloadSuccessHref } from "./installers";
 import { viewportOffers, type DetectedPlatform } from "./options";

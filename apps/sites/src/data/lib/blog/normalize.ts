@@ -9,11 +9,11 @@ import {
   BLOG_QUERY_MAX,
   BLOG_QUERY_MIN,
   type BlogAuthor,
-  type BlogCard,
+  type SitesBlogCard as BlogCard,
   type BlogCategory,
   type BlogImage,
   type BlogRichTextNode,
-} from "@dcl/one-ui/apps/sites/blog/blogModel";
+} from "@dcl/one-ui";
 
 /** A raw CMS entry or asset: `sys.id` plus untyped, already localized `fields`. */
 export type CmsEntry = { sys: { id: string }; fields?: Record<string, unknown> };

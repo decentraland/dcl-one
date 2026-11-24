@@ -6,10 +6,8 @@ import { MemoryRouter } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import SitesLayout from "./SitesLayout";
-import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
+import { SiteLayout, ChromeLink, useChromeNav } from "@dcl/one-ui";
 import DclTopBar from "@ui/web/frames/DclTopBar";
-import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
-import { useChromeNav } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 import ChromeNavBridge, { chromeHrefTarget, upstreamShopPath } from "./ChromeNavBridge";
 
 const ORIGIN = "https://example.org";

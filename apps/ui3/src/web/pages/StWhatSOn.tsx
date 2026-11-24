@@ -1,8 +1,15 @@
 import { siteUrl } from "../../data/site";
 import type { CSSProperties, ReactNode } from "react";
 import { useState, useSyncExternalStore } from "react";
-import { Button, CardActionButton, Tabs, TabsBar } from "@dcl/one-ui";
-import { GeneralReminderOff, GeneralReminderOn, MenusShare } from "@dcl/one-ui/foundations/icons";
+import {
+  GeneralReminderOff,
+  GeneralReminderOn,
+  MenusShare,
+  Button,
+  CardActionButton,
+  Tabs,
+  TabsBar,
+} from "@dcl/one-ui";
 import { SitesChromeMaybe } from "../frames/SitesChrome";
 import { asset } from "../../asset";
 import CoverImage from "../../components/CoverImage";

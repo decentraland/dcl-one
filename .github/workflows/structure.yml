@@ -45,6 +45,7 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p test_ui_standards.py
           python3 tooling/ui_standards.py --base "$UI_STANDARDS_BASE"
           python3 tooling/ui_standards.py --token-floor
+          python3 tooling/ui_standards.py --shared-imports
       # ui-gallery-publish.yml runs from main only, so its script and workflow shape are tested on every pull request.
       - name: Test the UI gallery publisher
         if: success() || failure()
