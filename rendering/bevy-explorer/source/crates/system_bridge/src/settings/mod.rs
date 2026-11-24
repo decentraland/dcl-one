@@ -44,6 +44,7 @@ use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
 use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
+use mute_mic_in_background_setting::MuteMicInBackgroundSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
 use rings::{FarLodRingSetting, LiveSceneRingSetting, NearLodRingSetting};
@@ -80,6 +81,7 @@ pub mod max_lods;
 // only the web host reports microphones
 #[cfg(any(target_arch = "wasm32", test))]
 mod microphone_setting;
+pub mod mute_mic_in_background_setting;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
@@ -249,6 +251,7 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
         #[cfg(target_arch = "wasm32")]
         microphone_setting::add(app, &mut settings, &config);
+        add_enum_setting::<MuteMicInBackgroundSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
         app.init_resource::<PlayerLanguage>();
