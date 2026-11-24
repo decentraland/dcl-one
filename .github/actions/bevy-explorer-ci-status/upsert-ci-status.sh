@@ -191,16 +191,19 @@ else
   prepare_body "$SECTION" "${SECTION_BODY:-}"
 fi
 
-# Replace the content of section $2 in $1 with its prepared body. A fence whose end marker a hand
-# edit removed is closed before the next section's start marker, or at the end of the comment.
+# Replace the content of section $2 in $1 with its prepared body. Hand edits are repaired: a
+# fence missing its end marker is closed before the next section's start marker or at the end of
+# the comment, and a repeated start marker of the section is dropped with what follows it.
 replace_section() {
   awk -v s="<!-- ci:$2:start -->" -v e="<!-- ci:$2:end -->" -v f="$WORK_DIR/$2.md" '
-    $0==s { print; while ((getline line < f) > 0) print line; close(f); skip=1; next }
-    $0==e { print; skip=0; next }
-    skip && /^<!-- ci:[^>]*:start -->$/ { print e; skip=0 }
-    skip  { next }
-          { print }
-    END   { if (skip) print e }
+    $0==s && mode    { next }
+    $0==s && !seen++ { print; while ((getline line < f) > 0) print line; close(f); mode="keep"; next }
+    $0==s            { mode="drop"; next }
+    $0==e            { if (mode != "drop") print; mode=""; next }
+    mode && /^<!-- ci:[^>]*:start -->$/ { if (mode == "keep") print e; mode="" }
+    mode             { next }
+                     { print }
+    END              { if (mode == "keep") print e }
   ' <<< "$1"
 }
 

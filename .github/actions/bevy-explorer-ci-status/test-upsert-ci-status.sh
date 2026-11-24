@@ -469,4 +469,40 @@ for section in build tests performance; do
 done
 pass "a fence missing its end marker is closed and settles on the first attempt"
 
+# --- 17. a repeated start marker is dropped with its content, not filled a second time ---------
+# build repeats inside its fence and as a closed fence at the end; tests repeats without an end
+# marker, once before performance and once at the end of the comment.
+reset_store "$(python3 - <<'PY'
+import json
+body = ("<!-- bevy-explorer-ci-status -->\n### 🚦 Bevy Explorer CI\n"
+        "<!-- ci:build:start -->\nOLD-BUILD\n<!-- ci:build:start -->\nOLD-BUILD-2\n<!-- ci:build:end -->\n\n"
+        "<!-- ci:tests:start -->\nOLD-TESTS\n<!-- ci:tests:end -->\n\n"
+        "<!-- ci:tests:start -->\nOLD-TESTS-2\n\n"
+        "<!-- ci:performance:start -->\nOLD-PERF\n<!-- ci:performance:end -->\n\n"
+        "<!-- ci:build:start -->\nOLD-BUILD-3\n<!-- ci:build:end -->\n\n"
+        "<!-- ci:tests:start -->\nOLD-TESTS-3")
+print(json.dumps([{"id": 4, "user": {"login": "github-actions[bot]"}, "body": body}]))
+PY
+)"
+rm -f "$WORK/calls" "$WORK/two/"*.md
+printf 'NEW-BUILD\n' > "$WORK/two/build.md"
+printf 'NEW-TESTS\n' > "$WORK/two/tests.md"
+OUT="$(GH_CALLS_LOG="$WORK/calls" run_sections "$WORK/two")"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "repeated start: directory write did not settle on attempt 1"
+[ "$(calls)" = 'GET PATCH GET ' ] || fail "repeated start: calls were '$(calls)'"
+grep -qx 'OLD-PERF' <<< "$(body_of)" || fail "repeated start: a section after a repeat was dropped"
+OUT="$(run_upsert performance NEW-PERF)"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "repeated start: performance write did not settle on attempt 1"
+BODY="$(body_of)"
+for want in NEW-BUILD NEW-TESTS NEW-PERF; do
+  [ "$(grep -cx "$want" <<< "$BODY")" = 1 ] || fail "repeated start: $want not there exactly once"
+done
+grep -q 'OLD-' <<< "$BODY" && fail "repeated start: stale content left"
+for section in build tests performance; do
+  for edge in start end; do
+    [ "$(grep -cxF "<!-- ci:$section:$edge -->" <<< "$BODY")" = 1 ] || fail "repeated start: $section $edge marker count wrong"
+  done
+done
+pass "a repeated start marker is dropped and the write settles on the first attempt"
+
 [ "$FAILED" = 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }
