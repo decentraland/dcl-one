@@ -5355,6 +5355,10 @@
           "kind": "regular"
         },
         {
+          "name": "backpackPreviewHole.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "backpackRandomize.test.tsx",
           "kind": "regular"
         },
@@ -5592,6 +5596,10 @@
         },
         {
           "name": "minimap.render.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "minimapCamera.session.test.tsx",
           "kind": "regular"
         },
         {
@@ -6002,7 +6010,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "1aef19308938648fc2a1482e3962b560a9d719c02d0f661fdb04e334e8297af8"
+      "sha256": "9e434066424a3c1c13b4aeb99841773c0558316a7b6aeafd205af16c882bd49c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -6059,6 +6067,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
       "sha256": "0f03d1ecb090d06c1c0a1bb5d7939677d22aa9e0f1d4be67ffccbf81818b8807"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/minimap.tsx",
+      "sha256": "5acba1432e2387df7aeef90905c9cf2a5facd0b81f7688384c445059832780e7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/nearbyMutes.ts",
@@ -6309,6 +6321,10 @@
       "sha256": "3b9c665ddb1f9a2920b2a3ebd0a367af94b98147b18562aa2088ed85e167bdf8"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeMinimap.test.ts",
+      "sha256": "5c133aeda45e342b823dc4c673f6b828a8bdb206ddf80badf560e694976fab46"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
       "sha256": "a9ed65f189907d37250eb611c61332c8b3cdd92fcf452d9889a9862ffb8a88c4"
     },
@@ -6490,7 +6506,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "5bddfaf72d3b327621dd0db5b5e8f6e7ba8f2b35be626925a0e670948b20c01c"
+      "sha256": "9c4f5d0869c78a357dcc1812a3deb8cac0da334fd7c994c225f919c3d8bf9dae"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6545,6 +6561,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeItemPurchase.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeMinimap.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
@@ -6642,7 +6659,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "c734f91326f36645a94c024aad4710004ff6d2c2f180865e87fd74d57336ef47"
+      "sha256": "7b2e9fecfc34e8e7e60dcfae0dcbcb83ea89d1c964337c4e56afed722471895f"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6682,7 +6699,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "8b6b00dd3b9b6ac71003e69653734aabab6abbc508a41da13f451d903ec561f5"
+      "sha256": "b5305a8fcae8da728e51384cefe4a588acd923521479ad85ac50941b6c6908c0"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -7270,7 +7287,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "6308c1489dd529bb5b761052e407e78b819efb47935c4f526fea1b11a861897b"
+      "sha256": "2249c821f93fa65996173907faa71e37b4f60807811c1fccf5a9e512ae1baa88"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -9286,15 +9303,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.tsx",
-      "sha256": "8ddbf27111539d6509386517667423d79be61e8537c028311c19bbd1dff62670"
+      "sha256": "073470b81339a9797f5ea5a20a02be0bddc64cd37549fa787a2511a161909f59"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "4f07411301223b9f7b4ec9d121f84ec524f851c4547074762f2827d54b4ac23d"
+      "sha256": "f72fa40d72eaaf93d736e4ef43cf9cd5b2876c765731686d143b6f4bd2cc172a"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "d9123c6fcfccdb6bd793681d23d4d12ae15a9408f102e35e00fea9a9f28f78b6"
+      "sha256": "b0254650c3b4b108f47a360695704dadce234df7e7059d1bd8b2ab157d979e50"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -9550,7 +9567,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
-      "sha256": "363b2c745f0bbed1b1f8ae4ea97aabf896069061df8de42c3bba5c2e56e2cae8"
+      "sha256": "db441849d9a9e8c3e6c75e2a1e2269e0fc0bc1711d26023aa2a36acd605e1428"
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.module.css",
@@ -9854,11 +9871,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "7baed97b826fd544e1cb57ed2af98afd627186f519722898fbfa7f70d6dd6ebf"
+      "sha256": "1e7fbb30d7ad846226b103292a9e354b60660e26302edc376f042d6e4132a4d2"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "6567c59e833b78499ddb9c2c52ff979e2745764cfe26c93d940fd67a44de2e61"
+      "sha256": "0118f59553f1c89bcbb0d558637db7d9ad9f9d15c1c13e8866c5c499afa499eb"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -10030,11 +10047,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.module.css",
-      "sha256": "c0e75d8144154f644d6f0dea2d36c4aab8830de663378c70940ccb0961a71f1d"
+      "sha256": "dd9b98b6fb7850844b25709a3335ba2dbddd93d74249b29c9487fa344f3e93ee"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "e414694f71ab5c879195bb2a7542469239173e4506916ebd49c3f84b29f80bba"
+      "sha256": "b05142fce771fe041ab16e8c5e144d342788659dcbb678625c2ed24f47ada05b"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -10262,7 +10279,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "cd156b4691bf92f0b8ca5b308cacad6d3b999925646a74f18e7a6d5f25d7a481"
+      "sha256": "cd4eb339fe2692d243e1c80bbe0de3f7542d494ab75984a12b3d23a683a4121d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10610,7 +10627,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "965c162cd0ef33cedd1a1dac3f1829961389f0d51e53d24cc81a6e410df5da07"
+      "sha256": "801eba4d40de565112c04a21349b82570148e5947bde5b6f968b71e68efa9314"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10622,7 +10639,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/avatarPreview.test.tsx",
-      "sha256": "4369c86053c65684ee82762fde4e598a40228e52f58793c35eaea60ce2f68b83"
+      "sha256": "1953608ff00aa1ca68e2f632c3a937a297348af818656905b4195af1dd8f5579"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
@@ -10659,6 +10676,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitSlots.test.tsx",
       "sha256": "366a04782e717368b93a5050c2e33509ae6885bf3fecdb22deb1843e0f6099ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "sha256": "8f285fd0c194cc8e1a93a7fc0c9ed17dda353aef7f598502b23c94bd3f5a883d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",
@@ -10862,7 +10883,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "0e0d20f92e6583328b7630bf86747e91f89ab415ff35d8cb810cd9ddef50c3b6"
+      "sha256": "16b7af853a4acfc216ef3a08fb15d6280ed5b5f7bc38bd1d68a1034b3afd5e95"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
@@ -10898,7 +10919,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "29a5693550db0fa7b55b34bd77a1c1e941184123654280b5d063287f7764528f"
+      "sha256": "ade044372f6f984e81efb58901b23fefc4802633a5c5e45223265775391e94c5"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "sha256": "928308c3660ff704eacd12bd0fd1877287bfa5463031da0bf13e29aa26a1d375"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -39026,6 +39051,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",
       "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
       "kind": "native:runtime"
@@ -41663,6 +41733,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
       "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
       "kind": "test:runtime"
     },
     {
@@ -42342,6 +42427,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
     },
@@ -42397,6 +42497,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -48727,6 +48842,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/backpackPreviewHole.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",
       "kind": "type"
     },
@@ -49023,6 +49143,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/minimapCamera.session.test.tsx",
       "kind": "type"
     },
     {

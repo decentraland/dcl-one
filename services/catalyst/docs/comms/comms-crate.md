@@ -84,6 +84,32 @@ UUID, or the base parcel of a Genesis scene (`ActiveDeployment::place_key`). A
 redeploy of the same place keeps the admins, their stream key access and their
 presenter control. A scene on a different place starts without them.
 
+Streaming notices retain one normalized recipient snapshot: owner, applicable
+LAND/World permission holders and explicit scene admins. Explore captures the
+Genesis admins, and each World scene admin with its granter, in the catalogue
+removal event before a pre-maintenance re-grant can overwrite grant timing or
+granter; World admins are told only after their saved granter's authority is
+checked; fallback enrichment reads retained grants after safety
+cleanup commits. External lookup outages leave notification resolution pending.
+Each accepted recipient has a durable cursor so bounded retries resume without
+starving later wallets. Credential issuance
+saves the bound `admin_place_key`; Explore freezes exact active/retiring world
+keys into removal events before delayed catalogue cleanup. Scene insertion
+clears catalogue evidence, while queued events and their recipients stay fixed.
+Historical feed seeding performs cleanup without notifying old removals.
+Explore's identity trigger retains displaced exact bindings in
+`explore.world_scene_binding` (`world_name`, `entity_id`, `identity`) without
+Social writes or row locks. Comms reads that evidence after a failed legacy
+binding lookup, even if the scene retires before retry. Saved exact
+credential/context keys take precedence. Original place context is captured
+before binding recovery and checkpointed before further fallible deferred work;
+a saved snapshot survives catalogue deletion and is never replaced by live data.
+SQL failures and timeouts remain pending. A successful missing or ambiguous
+canonical World binding instead records an unresolvable state and completes
+for independently established owner/permission holders and preserved recipients,
+skipping local-admin enrichment. No admin authority is inferred from overlapping
+parcels.
+
 A stream key is checked again at once when PostgreSQL announces a deployment
 or a change of a world's scenes, owner or grants (`streaming::cast::listen`;
 `DATABASE.md`, "Stream key notifications"). The key job stays for lost messages.

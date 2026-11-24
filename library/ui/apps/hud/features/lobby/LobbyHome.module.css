@@ -31,9 +31,6 @@
 .standInHidden {
   opacity: 0;
 }
-.standInInstant {
-  transition: none;
-}
 .standInBackdrop {
   position: absolute;
   inset: 0;

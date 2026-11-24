@@ -1199,6 +1199,7 @@ pub async fn generate_stream_link(
     // a world's one credential takes authority over the whole world or an
     // admin of the bound scene.
     let world_scene = world.map(|_| bound.place.admin_key().to_owned());
+    let admin_place_key = bound.place.admin_key().to_owned();
     let authority = super::key_authority(&state, &place_id, world, bound.place);
     match super::key_decision(&state, &authority, world_scene.as_deref(), &sf.signer).await {
         PermissionDecision::Allowed => {}
@@ -1208,7 +1209,15 @@ pub async fn generate_stream_link(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let access = issue_access(&state, &state.ingress(), &place_id, &bound.room, &sf.signer).await?;
+    let access = issue_access(
+        &state,
+        &state.ingress(),
+        &place_id,
+        &bound.room,
+        &sf.signer,
+        &admin_place_key,
+    )
+    .await?;
     let row = load_place(&state.pool, &place_id).await?;
     let (title, location) = match &row {
         Some(row) => (
