@@ -1,13 +1,6 @@
 name: E2E
 on:
   workflow_call:
-    secrets:
-      E2E_PRIVATE_KEY:
-        required: false
-      E2E_NAME:
-        required: false
-      E2E_LAND:
-        required: false
     inputs:
       inspector:
         type: boolean
@@ -116,11 +109,12 @@ jobs:
     if: inputs.creator-hub-offline
     timeout-minutes: 45
     runs-on: macos-latest
+    environment: ${{ inputs.creator-hub-live && (github.ref == 'refs/heads/main' && 'creator-hub-e2e' || 'creator-hub-e2e-pr') || '' }}
     concurrency:
-      group: ${{ inputs.creator-hub-live && 'creator-hub-e2e-live' || format('creator-hub-e2e-offline-{0}', github.run_id) }}
+      group: ${{ inputs.creator-hub-live && format('creator-hub-e2e-live-{0}', github.ref == 'refs/heads/main' && 'main' || 'pr') || format('creator-hub-e2e-offline-{0}', github.run_id) }}
       cancel-in-progress: false
     env:
-      HAS_LIVE_SECRETS: ${{ secrets.E2E_PRIVATE_KEY != '' }}
+      HAS_LIVE_SECRETS: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/creator-hub-setup
@@ -148,16 +142,16 @@ jobs:
 
       - name: No live secrets, so the live tier is skipped
         if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS != 'true'
-        run: echo "::warning::E2E_PRIVATE_KEY is not available to this run, so the @live specs did not run."
+        run: echo "::warning::CREATOR_HUB_E2E_PRIVATE_KEY is not available to this run, so the @live specs did not run."
       - name: e2e live tier (reuses the app packaged above)
         if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS == 'true'
         run: make test-creator-hub-e2e-ci-live
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
           E2E_CONTENT_URL: https://builder-items.decentraland.zone
-          E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
-          E2E_NAME: ${{ secrets.E2E_NAME }}
-          E2E_LAND: ${{ secrets.E2E_LAND }}
+          E2E_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY }}
+          E2E_NAME: ${{ secrets.CREATOR_HUB_E2E_NAME }}
+          E2E_LAND: ${{ secrets.CREATOR_HUB_E2E_LAND }}
 
       - name: upload e2e diagnostics
         if: failure()

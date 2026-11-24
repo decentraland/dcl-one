@@ -235,10 +235,13 @@ manual run, and on a pull request whose changes touch the deploy flow or what th
 (`creator-hub-live` and `every-suite` in `apps/creator-hub/e2e-selection.json`) only once a maintainer adds the `ci:creator-hub-e2e` label:
 real `.zone` deploys never run on a pull request without that admission, a fork's pull request has
 no secrets and skips it (a run without the secrets warns that live did not run), and the offline
-step is given no secrets at all. Every live run uses the
-same wallet, world and LAND, so the job holds one repository-wide concurrency group while live is
-selected, `main` included; a third run waiting on it cancels the pending one, which a re-run
-recovers, and a cancelled `main` run fails `Creator Hub CI` until it is re-run.
+step is given no secrets at all. The live step reads `CREATOR_HUB_E2E_PRIVATE_KEY`,
+`CREATOR_HUB_E2E_NAME` and `CREATOR_HUB_E2E_LAND` from a GitHub environment: `creator-hub-e2e` on
+`main` (restricted to `main` in its deployment branch rules) and `creator-hub-e2e-pr` everywhere
+else, each with its own world and LAND, so a pull request never deploys to `main`'s targets; a
+separate wallet in `creator-hub-e2e-pr` also keeps `main`'s key from pull request code. Runs sharing an environment deploy one at a time (concurrency groups
+`creator-hub-e2e-live-main` and `creator-hub-e2e-live-pr`); a third run waiting on a group cancels the
+pending one, which a re-run recovers, and pull requests never cancel `main`.
 `test:e2e:live` runs only `@live` locally. **`@scene` is
 deliberately not in those scripts** — creating a scene runs a live `npm install`, so it can fail on
 registry outages rather than real regressions, which would make it a flaky PR gate. Run it on demand

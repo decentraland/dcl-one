@@ -168,10 +168,6 @@ jobs:
     needs: [ changes, build ]
     if: needs.changes.outputs.e2e == 'true'
     uses: ./.github/workflows/creator-hub-e2e.yml
-    secrets:
-      E2E_LAND: ${{ secrets.E2E_LAND }}
-      E2E_NAME: ${{ secrets.E2E_NAME }}
-      E2E_PRIVATE_KEY: ${{ secrets.E2E_PRIVATE_KEY }}
     with:
       inspector: ${{ needs.changes.outputs.e2e-inspector == 'true' }}
       inspector-specs: ${{ needs.changes.outputs.e2e-inspector-specs }}
