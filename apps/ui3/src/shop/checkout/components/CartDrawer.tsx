@@ -2,7 +2,7 @@
 // The cart drawer: a right-side slide-in panel that opens (a) when an item is added to the cart, with a
 // success banner, and (b) when the cart icon in the subnav is clicked (no banner). It never starts a
 // charge: its primary CTA goes to the cart, where the buyer sees what they are buying first.
-import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation } from "react-router";
 
@@ -106,36 +106,68 @@ function DrawerLine({ line, cart, drawer }: { line: CartLine; cart: CartStore; d
   );
 }
 
-const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// A browser without modal dialogs still shows and hides the drawer; only the inert page is lost.
+function show(dialog: HTMLDialogElement) {
+  if (dialog.open) return;
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+function hide(dialog: HTMLDialogElement) {
+  if (!dialog.open) return;
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+// Go to cart preloads the cart page's code once the panel has slid in (a cancelled slide counts), so the slide keeps
+// the main thread and the network. Root's data does not reload between Shop pages either (shouldRevalidate in
+// apps/sites/src/routes/root.tsx), so the click waits for no server request. The in-world HUD's router has no
+// preload, so there it stays a plain link. Go to cart only navigates: the drawer closes when the page changes, so
+// the click does not wait for the dialog's close either. On the cart page the link changes no page, so there the
+// click closes the drawer.
+function DrawerCtas({ panel, onClose }: { panel: RefObject<HTMLElement | null>; onClose: () => void }) {
+  const [slid, setSlid] = useState(false);
+  const onCartPage = useLocation().pathname === `${SHOP_BASE}/cart`;
+  useEffect(() => {
+    const settle = () => setSlid(true);
+    void Promise.all((panel.current?.getAnimations?.() ?? []).map((a) => a.finished)).then(settle, settle);
+  }, [panel]);
+  return (
+    <div className={styles.ctas}>
+      <button type="button" className={styles.cta} data-variant="glass" onClick={onClose}>
+        Continue shopping
+      </button>
+      <Link to={`${SHOP_BASE}/cart`} prefetch={slid ? "render" : "none"} className={styles.cta} data-variant="primary" onClick={onCartPage ? onClose : undefined}>
+        Go to cart
+      </Link>
+    </div>
+  );
+}
 
 export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }: { cart?: CartStore; drawer?: CartDrawerStore }) {
   const lines = useCart((s) => s.lines, cart);
   const { open, justAdded } = useCartDrawer(drawer);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const { pathname } = useLocation();
 
-  // Escape closes the drawer (outside-click is the scrim's). No auto-dismiss: it stays until dismissed.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") drawer.close();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, drawer]);
+  // The dialog leaves the document only after its own close() has given focus back.
+  const [mounted, setMounted] = useState(false);
+  if (open && !mounted) setMounted(true);
 
-  // A modal: focus moves into it, the page behind does not scroll, and focus goes back where it was.
-  useEffect(() => {
-    if (!open) return;
-    const before = document.activeElement as HTMLElement | null;
-    panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = overflow;
-      before?.focus?.();
-    };
-  }, [open]);
+  // A modal <dialog>: the browser moves focus into it, keeps Tab inside, makes the page inert, closes it on Escape,
+  // and on close gives focus back where it was without a scroll of the page. No auto-dismiss: it stays until
+  // dismissed. A layout effect, so the panel's slide has started before DrawerCtas looks for it.
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open) {
+      show(dialog);
+    } else {
+      hide(dialog);
+      setMounted(false);
+    }
+  }, [open, mounted]);
 
   // Navigating away (a link in it, the browser's back) closes it: it belongs to the page it opened over.
   const openedOn = useRef(pathname);
@@ -147,23 +179,7 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
     if (pathname !== openedOn.current) drawer.close();
   }, [open, pathname, drawer]);
 
-  if (!open || typeof document === "undefined") return null;
-
-  // Tab and Shift+Tab stay inside the panel.
-  const trapTab = (e: ReactKeyboardEvent) => {
-    if (e.key !== "Tab" || !panelRef.current) return;
-    const focusable = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-    if (focusable.length === 0) return;
-    const first = focusable[0]!;
-    const last = focusable[focusable.length - 1]!;
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  if (!mounted || typeof document === "undefined") return null;
 
   // The count is the units (Σ quantity), not the distinct lines. A total with a line it cannot price would
   // read as complete while it is not, so it is shown only when every line has a price.
@@ -173,11 +189,21 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
   const isEmpty = lines.length === 0;
   const close = () => drawer.close();
 
-  // Portalled to <body> so it overlays the whole viewport, the fixed site nav included.
+  // Portalled to <body>, outside the page's stacking contexts. The close event follows a close the browser makes
+  // itself; a dialog already shown again by then stays open.
   return createPortal(
-    <div className={styles.root} role="dialog" aria-modal="true" aria-label="Shopping cart" data-testid="cart-drawer">
+    <dialog
+      ref={dialogRef}
+      className={styles.root}
+      aria-label="Shopping cart"
+      data-testid="cart-drawer"
+      onCancel={close}
+      onClose={() => {
+        if (!dialogRef.current?.open) close();
+      }}
+    >
       <div className={styles.scrim} onClick={close} />
-      <aside className={styles.panel} ref={panelRef} onKeyDown={trapTab}>
+      <aside className={styles.panel} ref={panelRef}>
         <header className={styles.head}>
           <h2 className={styles.title}>{`Shopping Cart (${count})`}</h2>
           <button type="button" className={styles.close} onClick={close} aria-label="Close">
@@ -223,18 +249,11 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
               {total !== null ? <CreditsAmount credits={total} className={styles.totalVal} coinClassName={styles.coin} testId="cart-drawer-total" /> : null}
             </div>
             {/* Dismiss on the left, advance on the right, and advancing stops at the cart. */}
-            <div className={styles.ctas}>
-              <button type="button" className={styles.cta} data-variant="glass" onClick={close}>
-                Continue shopping
-              </button>
-              <Link to={`${SHOP_BASE}/cart`} className={styles.cta} data-variant="primary" onClick={close}>
-                Go to cart
-              </Link>
-            </div>
+            <DrawerCtas panel={panelRef} onClose={close} />
           </footer>
         )}
       </aside>
-    </div>,
+    </dialog>,
     document.body,
   );
 }

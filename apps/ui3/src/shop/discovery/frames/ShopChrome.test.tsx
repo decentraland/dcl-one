@@ -149,4 +149,30 @@ describe("the Shop frame", () => {
     await chrome("/shop/settings", "web3");
     expect(screen.getAllByTestId("subnav")[0]!).toHaveAttribute("data-set", "shop");
   });
+
+  it("marks a scrolled page in the scroll event itself, with hysteresis, and clears the mark on unmount", async () => {
+    const scrollY = vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
+    onTestFinished(() => scrollY.mockRestore());
+    const scrollTo = (y: number) => {
+      scrollY.mockReturnValue(y);
+      window.dispatchEvent(new Event("scroll"));
+    };
+    const { unmount } = render(
+      <ShopHarness path="/shop/*" entry="/shop/overview" session="signedOut">
+        <ShopChrome footer={false} />
+      </ShopHarness>,
+    );
+    await act(async () => {});
+    const subnav = screen.getAllByTestId("subnav")[0]!;
+    const marks = () => [subnav.hasAttribute("data-scrolled"), document.body.hasAttribute("data-shop-scrolled")];
+    expect(marks()).toEqual([false, false]);
+    scrollTo(100);
+    expect(marks()).toEqual([true, true]);
+    scrollTo(10);
+    expect(marks()).toEqual([true, true]);
+    scrollTo(0);
+    expect(marks()).toEqual([false, false]);
+    unmount();
+    expect(document.body.hasAttribute("data-shop-scrolled")).toBe(false);
+  });
 });

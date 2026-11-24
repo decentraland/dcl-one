@@ -1,10 +1,10 @@
 import {
   useEffect,
   useRef,
-  useState,
   type AnchorHTMLAttributes,
   type ComponentType,
-  type ReactNode
+  type ReactNode,
+  type RefObject
 } from 'react'
 import ChromeBody from '../../components/AppChrome/ChromeBody'
 import SiteLayout from '../../components/AppChrome/SiteLayout'
@@ -51,7 +51,8 @@ export function ShopNavigation({
   children
 }: ShopNavigationProps) {
   const tabsRef = useRef<HTMLElement>(null)
-  const scrolled = useScrolled()
+  const subnavRef = useRef<HTMLDivElement>(null)
+  useScrolledMark(subnavRef)
   useEffect(() => {
     const nav = tabsRef.current
     const current = nav?.querySelector<HTMLElement>('[aria-current="page"]')
@@ -62,13 +63,7 @@ export function ShopNavigation({
     }
   }, [active, tabs])
   return (
-    <div
-      className="shop-subnav"
-      data-testid="subnav"
-      data-iap={iap || undefined}
-      data-set={set}
-      data-scrolled={scrolled || undefined}
-    >
+    <div ref={subnavRef} className="shop-subnav" data-testid="subnav" data-iap={iap || undefined} data-set={set}>
       <nav ref={tabsRef} className="shop-subnav__tabs" aria-label={label} data-testid="subnav-tabs">
         {tabs.map((tab) => (
           <Link
@@ -93,13 +88,14 @@ const SCROLL_ENTER = 24
 const SCROLL_EXIT = 4
 
 // The bars deepen once the page scrolls, with hysteresis so a page resting near the threshold does not flicker.
-function useScrolled(): boolean {
-  const [scrolled, setScrolled] = useState(false)
+// The scroll event sets the marks itself, so the bars change in that frame, not after a render. The body mark is
+// for the site nav's rule (shoptheme.css).
+function useScrolledMark(subnav: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     let on = false
     const apply = (next: boolean) => {
       on = next
-      setScrolled(next)
+      subnav.current?.toggleAttribute('data-scrolled', next)
       document.body.toggleAttribute('data-shop-scrolled', next)
     }
     const onScroll = () => {
@@ -112,6 +108,5 @@ function useScrolled(): boolean {
       window.removeEventListener('scroll', onScroll)
       document.body.removeAttribute('data-shop-scrolled')
     }
-  }, [])
-  return scrolled
+  }, [subnav])
 }

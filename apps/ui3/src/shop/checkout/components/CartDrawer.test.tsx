@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter, useNavigate } from "react-router";
-import { describe, expect, it } from "vitest";
+import { MemoryRouter, createRoutesStub, useLocation, useNavigate } from "react-router";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createCartDrawer } from "../../cart/drawer";
 import { createCartStore, type CartStorage } from "../../cart/store";
@@ -20,8 +20,10 @@ const hat = { asset: itemAsset(CHAIN.POLYGON, collection, 7n), listing: { acquis
 const jacket = { asset: tokenAsset(CHAIN.POLYGON, collection, 42n), listing: { tradeId: "t-1" }, display: { name: "Vintage Jacket", priceCredits: 30 } };
 
 let go: ((to: string) => void) | null = null;
+let here = "";
 function Navigator() {
   const navigate = useNavigate();
+  here = useLocation().pathname;
   go = (to) => void navigate(to);
   return null;
 }
@@ -40,6 +42,21 @@ function setup() {
 }
 
 const dialog = () => screen.getByRole("dialog", { name: "Shopping cart" });
+
+/** Stands in for the browser's modal dialog methods, which jsdom lacks, until the test ends. */
+function nativeDialog(methods: Pick<HTMLDialogElement, "showModal" | "close">) {
+  const proto = HTMLDialogElement.prototype;
+  const before = { showModal: Object.getOwnPropertyDescriptor(proto, "showModal"), close: Object.getOwnPropertyDescriptor(proto, "close") };
+  Object.defineProperty(proto, "showModal", { configurable: true, value: methods.showModal });
+  Object.defineProperty(proto, "close", { configurable: true, value: methods.close });
+  onTestFinished(() => {
+    for (const name of ["showModal", "close"] as const) {
+      const descriptor = before[name];
+      if (descriptor) Object.defineProperty(proto, name, descriptor);
+      else Reflect.deleteProperty(proto, name);
+    }
+  });
+}
 
 describe("the cart drawer, as upstream's CartPopover", () => {
   it("is not drawn while closed", () => {
@@ -107,31 +124,35 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     expect(within(dialog()).getByTestId("cart-drawer-banner")).toBeTruthy();
   });
 
-  it("is a modal: focus moves into it, the page stops scrolling, and both come back on close", () => {
+  it("is a native modal dialog, closed by its own close() before it leaves the document, so the browser gives focus back", () => {
+    // jsdom has no modal dialogs: these stand in for the browser's, which move focus in, keep it inside and give it
+    // back on close (Esc, focus and scroll: CartDrawer.browser.test.ts).
+    const calls: string[] = [];
+    nativeDialog({
+      showModal(this: HTMLDialogElement) {
+        calls.push("showModal");
+        this.setAttribute("open", "");
+      },
+      close(this: HTMLDialogElement) {
+        calls.push(this.isConnected ? "close" : "close outside the document");
+        this.removeAttribute("open");
+      },
+    });
+    const opener = document.body.appendChild(document.createElement("button"));
+    onTestFinished(() => opener.remove());
+    opener.focus();
+    const focus = vi.spyOn(opener, "focus");
     const { cart, drawer } = setup();
     act(() => {
       cart.add(hat);
       drawer.added();
     });
-    expect(dialog().contains(document.activeElement)).toBe(true);
-    expect(document.body.style.overflow).toBe("hidden");
-    act(() => drawer.close());
-    expect(document.body.style.overflow).toBe("");
-  });
-
-  it("keeps Tab inside the panel", () => {
-    const { cart, drawer } = setup();
-    act(() => {
-      cart.add(hat);
-      drawer.added();
-    });
-    const panel = dialog().querySelector("aside")!;
-    const focusable = [...panel.querySelectorAll<HTMLElement>("a[href], button:not([disabled])")];
-    focusable[focusable.length - 1]!.focus();
-    fireEvent.keyDown(panel, { key: "Tab" });
-    expect(document.activeElement).toBe(focusable[0]);
-    fireEvent.keyDown(panel, { key: "Tab", shiftKey: true });
-    expect(document.activeElement).toBe(focusable[focusable.length - 1]);
+    expect(calls).toEqual(["showModal"]);
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Continue shopping" }));
+    expect(calls).toEqual(["showModal", "close"]);
+    expect(screen.queryByTestId("cart-drawer")).toBeNull();
+    expect(drawer.getSnapshot().open).toBe(false);
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it("closes when the page changes under it, as the browser's back does", () => {
@@ -148,6 +169,40 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     expect(dialog()).toBeTruthy();
   });
 
+  it("Go to cart only navigates: the dialog closes on the cart page, so the click does not wait for the close", () => {
+    const closedOn: string[] = [];
+    nativeDialog({
+      showModal(this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+      close(this: HTMLDialogElement) {
+        closedOn.push(here);
+        this.removeAttribute("open");
+      },
+    });
+    const { cart, drawer } = setup();
+    act(() => {
+      cart.add(hat);
+      drawer.added();
+    });
+    fireEvent.click(within(dialog()).getByRole("link", { name: "Go to cart" }));
+    expect(closedOn).toEqual(["/shop/cart"]);
+    expect(screen.queryByTestId("cart-drawer")).toBeNull();
+    expect(drawer.getSnapshot().open).toBe(false);
+  });
+
+  it("on the cart page, where Go to cart changes no page, the click closes it", () => {
+    const { cart, drawer } = setup();
+    act(() => go!("/shop/cart"));
+    act(() => {
+      cart.add(hat);
+      drawer.added();
+    });
+    fireEvent.click(within(dialog()).getByRole("link", { name: "Go to cart" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(drawer.getSnapshot().open).toBe(false);
+  });
+
   it("removing a line takes the banner with it; an empty cart shows the empty state and no total", () => {
     const { cart, drawer } = setup();
     act(() => {
@@ -160,7 +215,7 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     expect(within(dialog()).queryByText(/^Total:/)).toBeNull();
   });
 
-  it("Continue shopping, the scrim's outside click and Escape close it", () => {
+  it("Continue shopping, the scrim's outside click and Escape (the dialog's cancel) close it", () => {
     const { cart, drawer } = setup();
     act(() => {
       cart.add(hat);
@@ -169,8 +224,26 @@ describe("the cart drawer, as upstream's CartPopover", () => {
     fireEvent.click(within(dialog()).getByRole("button", { name: "Continue shopping" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     act(() => drawer.open());
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(dialog().firstElementChild!);
     expect(screen.queryByRole("dialog")).toBeNull();
+    act(() => drawer.open());
+    fireEvent(dialog(), new Event("cancel"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(drawer.getSnapshot().open).toBe(false);
+  });
+
+  it("follows a close the browser makes itself, unless the drawer is open again by then", () => {
+    const { cart, drawer } = setup();
+    act(() => {
+      cart.add(hat);
+      drawer.added();
+    });
+    const d = screen.getByTestId("cart-drawer");
+    fireEvent(d, new Event("close"));
+    expect(drawer.getSnapshot().open).toBe(true);
+    d.removeAttribute("open");
+    fireEvent(d, new Event("close"));
+    expect(drawer.getSnapshot().open).toBe(false);
   });
 });
 
@@ -208,5 +281,67 @@ describe("adding from the item page", () => {
     launch({ line: last, method: null, offer: null, intent: "add" }, noop);
     expect(cart.getSnapshot().lines.find((l) => l.asset.token.kind === "item")!.quantity).toBe(1);
     expect(drawer.getSnapshot()).toEqual({ open: true, justAdded: 1 });
+  });
+});
+
+describe("Go to cart's preload", () => {
+  const preload = () => document.querySelector('link[rel="modulepreload"]');
+  // jsdom runs no CSS animations: each test says what the panel's getAnimations() answers.
+  const animations = (list: Animation[]) =>
+    Object.defineProperty(HTMLElement.prototype, "getAnimations", { configurable: true, value: () => list });
+  afterEach(() => void Reflect.deleteProperty(HTMLElement.prototype, "getAnimations"));
+
+  function framework() {
+    const cart = createCartStore({ storage: () => memory(), now: () => 1 });
+    const drawer = createCartDrawer();
+    const Stub = createRoutesStub([
+      { path: "/shop/items", Component: () => <CartDrawer cart={cart} drawer={drawer} /> },
+      { path: "/shop/cart", Component: () => null },
+    ]);
+    render(<Stub initialEntries={["/shop/items"]} />);
+    act(() => void cart.add(hat));
+    return drawer;
+  }
+
+  /** The panel's slide-in as the browser runs it: an animation that finishes when `end` is called. */
+  function slide() {
+    let end: () => void = () => {};
+    const finished = new Promise<void>((resolve) => {
+      end = () => resolve();
+    });
+    animations([{ finished } as unknown as Animation]);
+    return () => act(async () => end());
+  }
+
+  it("preloads the cart page's code once the panel has slid in, not while it slides or while the drawer is closed", async () => {
+    const end = slide();
+    const drawer = framework();
+    expect(preload()).toBeNull();
+    act(() => drawer.added());
+    expect(screen.getByRole("link", { name: "Go to cart" })).toBeTruthy();
+    expect(preload()).toBeNull();
+    await end();
+    expect(preload()).not.toBeNull();
+  });
+
+  it("preloads at once when the panel does not slide (reduced motion), and again after a close and an open", async () => {
+    animations([]);
+    const drawer = framework();
+    await act(async () => drawer.added());
+    expect(preload()).not.toBeNull();
+    act(() => drawer.close());
+    expect(preload()).toBeNull();
+    await act(async () => drawer.open());
+    expect(preload()).not.toBeNull();
+  });
+
+  it("is nothing in the in-world HUD, whose router has no preload: Go to cart stays a plain link", () => {
+    const { cart, drawer } = setup();
+    act(() => {
+      cart.add(hat);
+      drawer.added();
+    });
+    expect(preload()).toBeNull();
+    expect(within(dialog()).getByRole("link", { name: "Go to cart" }).getAttribute("href")).toBe("/shop/cart");
   });
 });

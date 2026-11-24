@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   isRouteErrorResponse,
@@ -36,6 +36,7 @@ import { reloadingForAccount } from "@/features/components/chrome/explorer-host"
 import { sessionChangePending, useSessionChangeRevalidation } from "@/data/lib/auth/session-change";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
+import { isShopPath } from "@ui/shop/native-contract";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { isPublicResponsePath, pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { useNotFoundPageView, useRoutePageView } from "@/core/lib/telemetry/page-view";
@@ -68,7 +69,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const forwardedScheme = request.headers.get("x-forwarded-proto");
   if (forwardedScheme === "http" || forwardedScheme === "https") requestUrl.protocol = forwardedScheme + ":";
   const shopApiMode = serverShopApiMode();
-  const wallet = readWallet(request);
+  // A response a shared cache may store names no visitor: the nav reads the account on the client after hydration.
+  const shared = context.get(publicResponseContext);
+  const wallet = shared ? null : readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
   const committee = wallet && isCreatorPath(requestUrl.pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
@@ -87,9 +90,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     publicPageBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
-    locale: context.get(publicResponseContext)
-      ? undefined
-      : sitesLanguage(parseCookies(request.headers.get("cookie")).lang).code,
+    locale: shared ? undefined : sitesLanguage(parseCookies(request.headers.get("cookie")).lang).code,
     /** The curation committee seat; read only for a Creator Hub path, false on every other path. */
     committee,
     /**
@@ -141,6 +142,10 @@ export function shouldRevalidate({
   if (isCreatorPath(nextUrl.pathname) && !isCreatorPath(currentUrl.pathname)) {
     return true;
   }
+  // Shop pages read root's data only as a first-render seed, so a move between them waits for no server request.
+  if (isShopPath(currentUrl.pathname) && isShopPath(nextUrl.pathname)) {
+    return false;
+  }
   return defaultShouldRevalidate;
 }
 
@@ -151,6 +156,26 @@ export function shouldRevalidate({
 export function meta({ error }: Route.MetaArgs) {
   if (isRouteErrorResponse(error) && error.status === 404) return notFoundMeta();
   return homeMeta(undefined);
+}
+
+/** A route's inline script for the document head: it runs while the document parses, before the page's code. */
+export type HeadScriptHandle = { headScript?: string };
+
+const unsubscribed = () => () => {};
+
+/**
+ * The matched routes' head scripts, on the server and during hydration only. After hydration, and on a client
+ * navigation, no render draws them, so no client render runs one.
+ */
+export function RouteHeadScripts() {
+  const firstRender = useSyncExternalStore(unsubscribed, () => false, () => true);
+  const matches = useMatches();
+  if (!firstRender) return null;
+  return matches.map(({ id, handle }) => {
+    const script = (handle as HeadScriptHandle | undefined)?.headScript;
+    // eslint-disable-next-line react/no-danger
+    return script ? <script key={id} dangerouslySetInnerHTML={{ __html: script }} /> : null;
+  });
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -200,6 +225,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: NAV_PENDING_SCRIPT }}
         />
+        <RouteHeadScripts />
         <link rel="icon" type="image/svg+xml" href={logo} />
         <Meta />
         <Links />

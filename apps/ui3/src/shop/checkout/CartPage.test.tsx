@@ -9,7 +9,8 @@ import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "@sh
 import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { batchAuthorization, creatorTrade } from "./fakes";
-import { createDemo, DemoShell, type DemoScenario } from "./demo";
+import { createDemo, DemoShell, type DemoLine, type DemoScenario } from "./demo";
+import { cartPicturesScript, PRIORITY_LINE_COUNT } from "../cart/pictures";
 import { resetIapModeCache } from "../credits/iap";
 import { takeTopUpReturn } from "../credits/returns";
 import { RESUME_CART_KEY } from "./purchase/cart";
@@ -103,6 +104,20 @@ describe("the cart line, drawn as upstream's", () => {
     expect(within(mint).getByTestId("cart-line-flap").getAttribute("data-size")).toBe("sm");
     expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).getByTestId("cart-line-flap-icon")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Back from the Cart" })).toBeTruthy();
+    await walletSettled();
+  });
+
+  it("the first lines' pictures load at once, ahead of the other images, and the cart document's head script preloads the same ones", async () => {
+    const lines: DemoLine[] = Array.from({ length: PRIORITY_LINE_COUNT + 1 }, (_, n) => ({ offer: (s) => storeMint(s), listing: { tradeId: `trade-${n}` }, name: `Hat ${n}`, thumbnail: `https://example.test/${n}.png` }));
+    onTestFinished(() => localStorage.clear());
+    renderCart({ session: "signedOut", lines, storage: localStorage });
+    const pictures = lines.map((l) => within(screen.getByRole("article", { name: l.name })).getByRole("img", { name: l.name }));
+    expect(pictures.map((p) => [p.getAttribute("loading"), p.getAttribute("fetchpriority")])).toEqual([...lines.slice(0, PRIORITY_LINE_COUNT).map(() => ["eager", "high"]), ["lazy", null]]);
+    // The script reads the lines back from storage, before any page code: the same lines come first.
+    new Function(cartPicturesScript({ own: "test:identity", shared: "test-shared-", host: "__testHost" }))();
+    const preloads = [...document.head.querySelectorAll('link[rel="preload"][as="image"]')];
+    onTestFinished(() => preloads.forEach((link) => link.remove()));
+    expect(preloads.map((link) => link.getAttribute("href"))).toEqual(pictures.slice(0, PRIORITY_LINE_COUNT).map((p) => p.getAttribute("src")));
     await walletSettled();
   });
 });

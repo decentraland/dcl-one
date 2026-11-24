@@ -178,8 +178,8 @@ export const publicResponseContext = createContext<boolean>(false);
 
 /**
  * Called from the middleware of a route served with a public `Cache-Control` (the docs), before its
- * loaders run: such a response is stored once and served to everyone, so it must carry neither a
- * visitor's session id nor a session cookie.
+ * loaders run: such a response is stored once and served to everyone, so it must carry no session
+ * cookie and nothing of the visitor in root data (session id, wallet, language).
  */
 export function markPublicResponse(context: Readonly<RouterContextProvider>): void {
   context.set(publicResponseContext, true);

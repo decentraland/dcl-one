@@ -1,10 +1,12 @@
-import type { RouterContextProvider } from "react-router";
+import { data, type RouterContextProvider } from "react-router";
 // The /shop route loaders: the page's SSR data (data/lib/shop/pages.server) with the session cookie
-// every sites document keeps. Caching is set by the routes' `headers` (shopHeaders): never public.
+// every sites document keeps. Caching is set by the routes' `headers` (shopHeaders): private, except the
+// cart document a shared cache may keep (shared-cart.ts).
 
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { publicResponseContext } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 import { loadShopPage } from "@/data/lib/shop/pages.server";
 
@@ -14,6 +16,11 @@ export async function shopLoader(
   params: Record<string, string | undefined>,
   context: Readonly<RouterContextProvider>,
 ) {
+  // A document a shared cache may keep carries no session id.
+  if (context.get(publicResponseContext)) {
+    const shared = await loadShopPage(page, { request, params });
+    return data(shared.data, { status: shared.status });
+  }
   const session = sidLoader(request, context);
   const load = await loadShopPage(page, { request, params });
   const url = new URL(request.url);
