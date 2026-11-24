@@ -75,7 +75,7 @@ pub use far_lod::FarLodStatus;
 use far_lod::{BreakerChange, FarLodHealth, FAR_LOD_BREAKER_FAILURES, FAR_LOD_COOL_DOWN};
 
 use crate::{
-    content_hash,
+    content_hash::{self, ContentHashView},
     download::FetchPolicy,
     failed_remotes,
     ipfs_path::{is_http_url, CacheKey, IpfsPath},
@@ -125,8 +125,8 @@ pub struct SupportedFormat {
 }
 
 impl SupportedFormat {
-    fn accepts_path(&self, file_path: &str) -> bool {
-        match extension(file_path) {
+    fn accepts_path(&self, content_path: ContentFilePathView<'_>) -> bool {
+        match extension(content_path.0) {
             Some(ext) => self.extensions.contains(&ext.as_str()),
             None => self.without_extension,
         }
@@ -343,33 +343,102 @@ fn extension(file_path: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+/// The path of a content file as its scene names it: relative to the scene, or a url.
+#[derive(Clone, Copy, Debug)]
+pub struct ContentFilePathView<'a>(&'a str);
+
+impl<'a> ContentFilePathView<'a> {
+    /// The content file path of `ipfs_path`, if it names a content file.
+    pub fn of(ipfs_path: &'a IpfsPath) -> Option<Self> {
+        ipfs_path.content_path().map(Self)
+    }
+
+    pub fn as_str(self) -> &'a str {
+        self.0
+    }
+}
+
+/// The variants base url: http(s), in its serialised form, without a trailing `/`.
+#[derive(Debug)]
+struct VariantsBaseUrl(String);
+
+impl VariantsBaseUrl {
+    fn parse(url: &str) -> Option<Self> {
+        match url::Url::parse(url.trim()) {
+            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
+                // the serialised form, so a prefix match agrees with a re-serialised remote url
+                Some(Self(parsed.as_str().trim_end_matches('/').to_owned()))
+            }
+            _ => None,
+        }
+    }
+
+    fn view(&self) -> VariantsBaseUrlView<'_> {
+        VariantsBaseUrlView(&self.0)
+    }
+}
+
+/// A borrowed [`VariantsBaseUrl`].
+#[derive(Clone, Copy, Debug)]
+struct VariantsBaseUrlView<'a>(&'a str);
+
+impl<'a> VariantsBaseUrlView<'a> {
+    fn as_str(self) -> &'a str {
+        self.0
+    }
+
+    /// The url `variant` is fetched from. A `glb-br` variant is fetched as its Brotli copy,
+    /// asked for by name, which the browser decodes; a `glb` variant's Brotli copy exists only
+    /// when it is smaller, so its own path is fetched and the server sends the copy to a client
+    /// that accepts `br`.
+    fn url_of(self, variant: &ContentFileVariant, payload_kind: ContentFilePayloadKind) -> String {
+        match payload_kind {
+            ContentFilePayloadKind::BcTexture | ContentFilePayloadKind::BcGlb => {
+                format!("{self}/{}", variant.path)
+            }
+            #[cfg(target_arch = "wasm32")]
+            ContentFilePayloadKind::BrotliGlb => format!("{self}/{}.br", variant.path),
+        }
+    }
+}
+
+impl std::fmt::Display for VariantsBaseUrlView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
 /// Whether a file of this type could be replaced by any supported format; others never wait on
 /// a manifest. A url a scene names (a far LOD's among them) never could: a manifest maps the
 /// scene's content files, by hash.
-pub fn could_have_variant(file_path: &str) -> bool {
-    !is_http_url(file_path)
+pub fn could_have_variant(content_path: ContentFilePathView<'_>) -> bool {
+    !is_http_url(content_path.0)
         && SUPPORTED_FORMATS
             .iter()
-            .any(|row| row.accepts_path(file_path))
+            .any(|row| row.accepts_path(content_path))
 }
 
-/// Whether this client can load `variant` at `file_path`: a supported format, for a file type
-/// it may replace, on a GPU that has what it needs (`bc`: BC texture support).
-pub fn supports(variant: &ContentFileVariant, file_path: &str, bc: bool) -> bool {
+/// Whether this client can load `variant` at `content_path`: a supported format, for a file
+/// type it may replace, on a GPU that has what it needs (`bc`: BC texture support).
+pub fn supports(
+    variant: &ContentFileVariant,
+    content_path: ContentFilePathView<'_>,
+    bc: bool,
+) -> bool {
     supported_format(variant)
-        .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(file_path))
+        .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(content_path))
 }
 
 /// The first variant this client supports that has not failed this session.
 pub fn select_variant<'a>(
     variants: &'a [ContentFileVariant],
-    file_path: &str,
+    content_path: ContentFilePathView<'_>,
     bc: bool,
     is_bad: impl Fn(&str) -> bool,
 ) -> Option<&'a ContentFileVariant> {
     variants
         .iter()
-        .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.path))
+        .find(|variant| supports(variant, content_path, bc) && !is_bad(&variant.path))
 }
 
 /// Why an entity (scene, wearable or emote) gets no manifest request, if it doesn't.
@@ -483,7 +552,7 @@ impl Session {
 
 #[derive(Default)]
 pub struct BevyVariants {
-    base: OnceLock<String>,
+    base: OnceLock<VariantsBaseUrl>,
     /// The GPU's BC support, once the renderer has reported it.
     bc: OnceLock<bool>,
     manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
@@ -495,14 +564,14 @@ pub struct BevyVariants {
 }
 
 impl BevyVariants {
-    fn base(&self) -> Option<&str> {
-        self.base.get().map(String::as_str)
+    fn base(&self) -> Option<VariantsBaseUrlView<'_>> {
+        self.base.get().map(VariantsBaseUrl::view)
     }
 
     /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url), if it is one.
     fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<&'a str> {
         remote
-            .strip_prefix(self.base()?)?
+            .strip_prefix(self.base()?.as_str())?
             .strip_prefix(FAR_LOD_DIR)?
             .strip_suffix(FAR_LOD_SUFFIX)
     }
@@ -512,16 +581,16 @@ impl BevyVariants {
     }
 
     fn set_base(&self, url: &str) {
-        let url = url.trim();
-        match url::Url::parse(url) {
-            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
-                // the serialised form, so a prefix match agrees with a re-serialised remote url
-                let url = parsed.as_str().trim_end_matches('/');
-                if self.base.set(url.to_owned()).is_ok() {
-                    info!("bevy variants: on, from `{url}`");
-                }
-            }
-            _ => warn!("bevy variants: ignoring `{url}`, not an http(s) url"),
+        let Some(base) = VariantsBaseUrl::parse(url) else {
+            warn!(
+                "bevy variants: ignoring `{}`, not an http(s) url",
+                url.trim()
+            );
+            return;
+        };
+        let shown = base.0.clone();
+        if self.base.set(base).is_ok() {
+            info!("bevy variants: on, from `{shown}`");
         }
     }
 
@@ -576,25 +645,31 @@ impl BevyVariants {
         self.session.lock_ignore_poison().bad.contains(variant)
     }
 
-    /// The variant `manifest` gives `file`, whose original is `original`, with its payload kind
-    /// and the url it is read from; else the original is read, and why when that is worth
-    /// reporting.
-    fn choose(
+    /// The variant `manifest` gives the content file at `content_path`, named by `content_hash`,
+    /// with its payload kind and the url it is read from; else the original is read, and why
+    /// when that is worth reporting.
+    fn fetchable_variant(
         &self,
-        base: &str,
+        base_url: VariantsBaseUrlView<'_>,
         manifest: &Manifest,
-        original: &str,
-        file: &str,
+        content_hash: ContentHashView<'_>,
+        content_path: ContentFilePathView<'_>,
     ) -> Result<(ContentFileVariant, ContentFilePayloadKind, String), Option<String>> {
-        let options = manifest.files.get(original).ok_or(None)?;
+        let options = manifest.files.get(content_hash.as_str()).ok_or(None)?;
         if self.disabled().is_some() {
             return Err(None);
         }
         let bc = self.bc();
-        if !options.iter().any(|variant| supports(variant, file, bc)) {
+        if !options
+            .iter()
+            .any(|variant| supports(variant, content_path, bc))
+        {
             let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
             // a format this file type would take on a GPU with BC textures
-            let wants_bc = !bc && options.iter().any(|variant| supports(variant, file, true));
+            let wants_bc = !bc
+                && options
+                    .iter()
+                    .any(|variant| supports(variant, content_path, true));
             return Err(Some(if wants_bc {
                 "the GPU has no BC texture support (or has not reported it yet)".to_owned()
             } else {
@@ -604,35 +679,30 @@ impl BevyVariants {
                 )
             }));
         }
-        let variant = select_variant(options, file, bc, |path| self.is_bad(path))
+        let variant = select_variant(options, content_path, bc, |path| self.is_bad(path))
             .ok_or(None)?
             .clone();
         let payload_kind = supported_format(&variant).ok_or(None)?.payload_kind;
-        // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
-        // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
-        // own path is fetched and the server sends the copy to a client that accepts `br`
-        let url = match payload_kind {
-            ContentFilePayloadKind::BcTexture | ContentFilePayloadKind::BcGlb => {
-                format!("{base}/{}", variant.path)
-            }
-            #[cfg(target_arch = "wasm32")]
-            ContentFilePayloadKind::BrotliGlb => format!("{base}/{}.br", variant.path),
-        };
+        let url = base_url.url_of(&variant, payload_kind);
         Ok((variant, payload_kind, url))
     }
 
-    /// The url of the variant a read of `ipfs_path`, whose original is `original`, would take
-    /// now: `Some(None)` when it would read the original, `None` while it would wait for its
+    /// The url of the variant a read of `ipfs_path`, named by `content_hash`, would take now:
+    /// `Some(None)` when it would read the original, `None` while it would wait for its
     /// entity's manifest.
-    fn planned_url(&self, ipfs_path: &IpfsPath, original: &str) -> Option<Option<String>> {
-        let (Some(base), Some(scene), Some(file)) = (
+    fn planned_url(
+        &self,
+        ipfs_path: &IpfsPath,
+        content_hash: ContentHashView<'_>,
+    ) -> Option<Option<String>> {
+        let (Some(base_url), Some(scene), Some(content_path)) = (
             self.base(),
             ipfs_path.scene_hash(),
-            ipfs_path.content_path(),
+            ContentFilePathView::of(ipfs_path),
         ) else {
             return Some(None);
         };
-        if !could_have_variant(file) {
+        if !could_have_variant(content_path) {
             return Some(None);
         }
         let Some(manifest) = self.manifest(scene) else {
@@ -642,7 +712,7 @@ impl BevyVariants {
         match state {
             ManifestState::Pending if !self.manifest_wait_left(scene).is_zero() => None,
             ManifestState::Loaded(manifest) => Some(
-                self.choose(base, &manifest, original, file)
+                self.fetchable_variant(base_url, &manifest, content_hash, content_path)
                     .ok()
                     .map(|(_, _, url)| url),
             ),
@@ -791,7 +861,10 @@ impl IpfsIo {
         let (original, url) = self.immutable_original_url(&ipfs_path)?;
         Some(
             self.bevy_variants
-                .planned_url(&ipfs_path, &original)?
+                .planned_url(
+                    &ipfs_path,
+                    ContentHashView::try_from(original.as_str()).ok()?,
+                )?
                 .unwrap_or(url),
         )
     }
@@ -802,7 +875,7 @@ impl IpfsIo {
         let context = self.context.blocking_read();
         let hash = ipfs_path
             .hash(&context)
-            .filter(|hash| crate::content_hash::ContentHashView::try_from(hash.as_str()).is_ok())?;
+            .filter(|hash| ContentHashView::try_from(hash.as_str()).is_ok())?;
         let url = ipfs_path.to_url(&context).ok()?;
         (!common::util::is_loopback_url(&url)).then_some((hash, url))
     }
@@ -964,7 +1037,11 @@ impl IpfsIo {
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
     /// no-op when variants are off.
     pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
-        let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
+        let Some(base) = self
+            .bevy_variants
+            .base()
+            .map(|base| base.as_str().to_owned())
+        else {
             return;
         };
         let Some(sender) = self.bevy_variants.begin(entity) else {
@@ -1031,9 +1108,10 @@ impl IpfsIo {
         path: &Path,
     ) -> Option<VariantRead> {
         let variants = &self.bevy_variants;
-        let base = variants.base()?;
-        let (scene, file) = (ipfs_path.scene_hash()?, ipfs_path.content_path()?);
-        if !could_have_variant(file) {
+        let base_url = variants.base()?;
+        let (scene, content_path) = (ipfs_path.scene_hash()?, ContentFilePathView::of(ipfs_path)?);
+        let file = content_path.as_str();
+        if !could_have_variant(content_path) {
             return None;
         }
         let mut manifest = variants.manifest(scene)?;
@@ -1084,15 +1162,17 @@ impl IpfsIo {
             .collection
             .hash(file)?
             .into_owned();
-        let (variant, payload_kind, url) = match variants.choose(base, &manifest, &original, file) {
-            Ok(chosen) => chosen,
-            Err(reason) => {
-                if let Some(reason) = reason {
-                    variants.fail(scene, file, None, reason);
+        let content_hash = ContentHashView::try_from(original.as_str()).ok()?;
+        let (variant, payload_kind, url) =
+            match variants.fetchable_variant(base_url, &manifest, content_hash, content_path) {
+                Ok(chosen) => chosen,
+                Err(reason) => {
+                    if let Some(reason) = reason {
+                        variants.fail(scene, file, None, reason);
+                    }
+                    return None;
                 }
-                return None;
-            }
-        };
+            };
         // the manifest names no hash for a variant, so its bytes are cached under a digest of
         // the url they came from, never under a content hash
         let key = CacheKey::Url(content_hash::url_cache_name(&url));

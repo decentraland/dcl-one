@@ -31,6 +31,7 @@ pub(crate) enum Check {
 }
 
 /// The content hashes this module computes, told apart by their form.
+#[derive(Clone, Copy, Debug)]
 enum ContentHashKind {
     /// `Qm…`
     V0,
@@ -60,6 +61,7 @@ impl TryFrom<&str> for ContentHashKind {
 
 /// A name with the form of a deployment's content hash: it names immutable bytes, whichever
 /// scene's content map holds it.
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ContentHashView<'a> {
     hash: &'a str,
     kind: ContentHashKind,
@@ -76,7 +78,11 @@ impl<'a> TryFrom<&'a str> for ContentHashView<'a> {
     }
 }
 
-impl ContentHashView<'_> {
+impl<'a> ContentHashView<'a> {
+    pub(crate) fn as_str(self) -> &'a str {
+        self.hash
+    }
+
     /// True when the hash names `bytes`.
     pub(crate) fn matches(&self, bytes: &[u8]) -> bool {
         let computed = match self.kind {
