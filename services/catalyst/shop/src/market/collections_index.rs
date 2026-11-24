@@ -422,11 +422,24 @@ pub type Known = (String, Option<String>);
 pub struct CollectionsIndex {
     addresses: Mutex<Option<Vec<Known>>>,
     filter: Mutex<HashSet<String>>,
+    /// Whether its fold projects the log into `shop.collections` and
+    /// `shop.items` (a process that runs no collections mirror); otherwise
+    /// it keeps the log alone.
+    project: bool,
 }
 
 impl CollectionsIndex {
+    /// The walk keeping the log alone.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The walk, projecting the log into the catalogue when `project`.
+    pub fn projecting(project: bool) -> Self {
+        Self {
+            project,
+            ..Self::default()
+        }
     }
 
     /// The hinted and walked collections, read once per pass.
@@ -581,21 +594,35 @@ impl ChainIndex for CollectionsIndex {
         sqlx::query("DELETE FROM shop.collection_event WHERE network = $1 AND block_number > $2")
             .bind(ChainNet::Matic.db_name())
             .bind(to)
-            .execute(conn)
+            .execute(&mut *conn)
             .await?;
+        super::collections_projection::invalidate(conn, ChainNet::Matic).await?;
         self.reset();
         Ok(())
     }
 
-    /// Nothing is projected yet: the log alone is published, complete to
-    /// the block the pass reached.
+    /// Projects the log into the catalogue when this process owns it
+    /// ([`super::collections_projection`]); either way the publication says
+    /// the log, and the projection when there is one, are complete to `upto`.
     async fn fold(
         &self,
-        _pool: &PgPool,
+        pool: &PgPool,
         _since: Option<i64>,
-        _upto: i64,
-        _owner: &Owner,
+        upto: i64,
+        owner: &Owner,
     ) -> anyhow::Result<bool> {
+        if self.project {
+            let out =
+                super::collections_projection::project(pool, owner, ChainNet::Matic, upto).await?;
+            tracing::info!(
+                upto,
+                rebuilt = out.rebuilt,
+                collections = out.collections,
+                replayed = out.replayed,
+                waiting = out.waiting,
+                "collections matic: projected"
+            );
+        }
         Ok(true)
     }
 }

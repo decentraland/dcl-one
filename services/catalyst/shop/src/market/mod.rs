@@ -68,6 +68,7 @@ pub mod chain_walk;
 pub mod collections;
 pub mod collections_fold;
 pub mod collections_index;
+pub mod collections_projection;
 pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;

@@ -1539,7 +1539,16 @@ fn visit_projections(
         add(
             "collections-index",
             url,
-            Arc::new(|| Arc::new(super::collections_index::CollectionsIndex::new())),
+            {
+                // The mirror and the fold never both write the catalogue: a
+                // process running the collections mirror keeps the log alone.
+                let project = !state.settings.market.mirrors_enabled;
+                Arc::new(move || {
+                    Arc::new(super::collections_index::CollectionsIndex::projecting(
+                        project,
+                    ))
+                })
+            },
             Some(gate),
             market_cfg(),
         );

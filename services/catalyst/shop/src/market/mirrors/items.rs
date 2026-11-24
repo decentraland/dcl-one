@@ -222,6 +222,19 @@ pub async fn upsert(
     if records.is_empty() {
         return Ok(0);
     }
+    // The collections index's fold may own the network's rows: the page is
+    // written only while it does not, under the network's catalogue lock.
+    let net = super::super::chain_walk::ChainNet::parse(network.db_name())
+        .expect("a mirrored network is a chain network");
+    let mut tx = pool.begin().await?;
+    super::super::collections_projection::lock(&mut tx, net, false).await?;
+    if super::super::collections_projection::owned(&mut tx, net).await? {
+        tracing::warn!(
+            network = network.db_name(),
+            "items mirror: the collections index owns this network's rows; the page is not written"
+        );
+        return Ok(0);
+    }
     let done = sqlx::query(
         "INSERT INTO shop.items \
              (network, contract_address, item_id, chain_id, item_type, urn, creator, beneficiary, rarity, total_supply, \
@@ -258,8 +271,9 @@ pub async fn upsert(
     .bind(chain_id)
     .bind(now_utc())
     .bind(Value::Array(records))
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(done.rows_affected() as i64)
 }
 

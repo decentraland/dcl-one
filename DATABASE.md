@@ -2849,9 +2849,11 @@ Those events are the items added, rescued and edited, the mints (`Issue`),
 the global and item minters and managers, approval, editability,
 completion, creatorship and ownership. The walk keeps them in
 `shop.collection_event`, appended with each window's cursor advance and
-deleted past a rewind. Its publication means the log is complete to
-`folded_block`. No route reads these tables yet: `shop.collections` and
-`shop.items` are still the collections subgraph's copy (`mirrors`).
+deleted past a rewind. A process that runs the collections mirror
+(`MARKETPLACE_MIRRORS_ENABLED=true`) keeps the log alone. One that does not
+also projects it into `shop.collections` and `shop.items` (see
+"Projection"). Either way, the publication means everything the fold wrote
+is complete to `folded_block`.
 
 **Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
 million mints, so the log is about 5.3 million rows, nearly all `issue`.
@@ -2927,6 +2929,85 @@ value has not changed since creation.
 log of a walked topic that does not decode fails its window instead of
 being skipped. A `ProxyCreated` from any contract other than the two
 factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
+
+**Projection.** When a pass closes, the fold writes Polygon's catalogue rows
+from the log and the creation reads, in one transaction fenced by the
+walk's owner. `shop.collection_projection` holds one row per network:
+- `owned_at` is set once, in the transaction of the first projection. From
+  then the fold is the only writer of the network's rows in both tables.
+- `projected_through` is the block the rows stand at.
+
+The mirror refuses to write a network the fold owns, and its job skips it.
+Both take the network's advisory lock (`pg_advisory_xact_lock(0x636f6c6c,
+<chain id>)`) around the ownership check and the write: the mirror shared,
+for each page, and the fold exclusive. So a page that read the network as
+unowned commits before the projection that takes it, and none commits
+after.
+
+A projection folds the events past `projected_through` onto the stored
+rows. It folds a collection again from its creation in three cases:
+- it has no row yet (created since, or waiting for its creation read);
+- an event names one of its items that has no row (metadata no item type
+  takes);
+- the walk rewound. A rewind clears `projected_through`, and the next fold
+  rebuilds every row of the network in one transaction, replacing the rows
+  it does not produce, the mirror's included.
+
+A collection waits, with no row and without holding the publication back,
+in either case:
+- until its creation read exists;
+- while that read was taken past the block and no walked event sets the
+  value it gives.
+
+The fold from the creation reads the collection's events other than mints
+through the partial index on them, a few hundred thousand rows. Mints come
+in three forms:
+- the mints of item minters with a finite allowance, which it replays;
+- each item's highest issued id;
+- the block time of the item's newest mint by the CollectionStore,
+  aggregated from the store's issues.
+
+A rebuild aggregates the whole log once. A resume reads only the events past
+`projected_through`, by the primary key.
+
+The rows follow the contract where the collections subgraph differs:
+- global and item minters and managers are sets; an account is listed once,
+  while its newest grant set it;
+- the store sells an item while it is a global minter or holds an allowance
+  for the item, and an item it can sell from its addition is listed from
+  then (`first_listed_at`);
+- each mint an item minter calls spends one of a finite allowance, unless it
+  called while it was the creator or a global minter, as `_issueToken` does.
+  `shop.items.minters` and `minter_allowances` hold the item minters with an
+  allowance left, and what they hold;
+- an item's supply is its highest issued id.
+
+Item metadata follows the subgraph's format: `w`, `sw` and `e` items,
+wearables with a known category, emotes with an unknown category as `dance`,
+and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
+`random_outcome`. `sold_at` is the newest primary sale only; secondary sales
+come with the sales index.
+
+The catalogue routes still decide readiness from the mirror's passes
+(`shop.mirror_state`), so no network is taken from the mirror while they do.
+
+**Switching a network from the mirror.** Run this after the catalogue routes
+follow the index and the NFT and sales walks take their contracts from it.
+Deploys are manual, one process at a time:
+
+1. Enable the walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true`) on the
+   process that runs the mirror, and wait until the `collections` cursor on
+   `matic` publishes. That is the catch-up, from block 15,202,000. The
+   mirror keeps serving meanwhile.
+2. Stop that process, set `MARKETPLACE_MIRRORS_ENABLED=false`, and start it
+   again (two processes must never write the catalogue under different
+   settings). The next pass's fold rebuilds the network's rows from the log
+   and takes the network.
+3. Check `SELECT owned_at, projected_through FROM shop.collection_projection`.
+
+To hand a network back to the mirror, stop the index process, run
+`DELETE FROM shop.collection_projection WHERE network = '<network>'`, and run
+the mirror until its next complete pass.
 
 ## Auth API relay state workload
 

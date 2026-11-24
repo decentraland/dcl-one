@@ -194,6 +194,11 @@ CREATE TABLE shop.items (
     mirrored_at timestamp without time zone NOT NULL,
     -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
     search_text text,
+    -- The item minters holding an allowance, in the order first granted, and
+    -- what each holds (the collections index's fold; empty in the mirror's
+    -- copy, which has no item minters).
+    minters text[] NOT NULL DEFAULT '{}',
+    minter_allowances numeric(78,0)[] NOT NULL DEFAULT '{}',
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -17090,6 +17095,11 @@ CREATE TABLE shop.collection_event (
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
 
+-- A collection's history in chain order, mints aside (a few hundred thousand
+-- rows): the fold of the collections it replays from their creation.
+CREATE INDEX collection_event_replay_idx ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind <> 'issue';
+
 -- The collections each factory lists (`collections(i)` at index `idx`), read
 -- by the collections index's gate before each attempt: the walk's address
 -- filter, a superset of the collections a window can create (a hint is not
@@ -17134,4 +17144,20 @@ CREATE TABLE shop.collection_seed (
     CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_seed_lowercase CHECK (contract_address = lower(contract_address) AND creator = lower(creator)),
     CONSTRAINT collection_seed_block_nonneg CHECK (read_block >= 0)
+);
+
+-- One row per network the collections index folds into shop.collections and
+-- shop.items. `owned_at` is set once, in the transaction of the fold's first
+-- projection: from then the fold is the network's only writer of both
+-- tables, and the collections mirror refuses to write it (both take the
+-- network's advisory lock, the mirror shared and the fold exclusive, around
+-- the check and the write). `projected_through` is the block the projected
+-- rows stand at; NULL (after a rewind, or before the first projection) makes
+-- the next fold rebuild the network's rows from the whole log.
+CREATE TABLE shop.collection_projection (
+    network text PRIMARY KEY,
+    owned_at timestamp without time zone,
+    projected_through bigint,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT collection_projection_network_known CHECK (network IN ('ethereum', 'matic'))
 );
