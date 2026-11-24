@@ -549,7 +549,8 @@ impl ProfileManager<'_, '_> {
         }
         // through the deployment's gateway when one serves profile images
         let url = common::base_domain::profile_image(&profile.thumbnail_url);
-        let ipfs_path = IpfsPath::new_from_url(&url, "png");
+        // shown in UI the player opens (passport, friends): ranks with the player's loads
+        let ipfs_path = IpfsPath::new_from_url(&url, "png").with_player_slot_owner();
         Ok(Some(
             self.ipfs.asset_server().load(PathBuf::from(&ipfs_path)),
         ))

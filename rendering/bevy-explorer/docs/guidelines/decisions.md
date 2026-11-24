@@ -173,9 +173,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Loads wait while engine memory is full.** From Full until the reading is back under the
   warning threshold, or has stayed under Full for 30 s, no new world scene spawns except the
   player's own, portables and system scenes, and the request slots grant only the player's
-  loads: its avatar and the previews system scenes show, its scenes, the SDK6 adaption layer
-  and the NFT dialog. Other avatars, other scenes and other URL requests wait in place; idle
-  collectible metadata is released. Nothing in use is unloaded. See the
+  loads: its avatar and the previews system scenes show, its scenes, the SDK6 adaption layer,
+  fonts and profile pictures. Other avatars, other scenes and other URL requests wait in place;
+  idle collectible metadata is released. Nothing in use is unloaded; the headless scene server
+  does not refuse. See the
   [ADR](../../../../docs/adr/2026-11-24-explorer-loads-wait-under-memory-pressure.md).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.

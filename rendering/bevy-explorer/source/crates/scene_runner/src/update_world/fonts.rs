@@ -386,7 +386,9 @@ fn fontsource_source(
         .find_map(|(weights, style)| weights.iter().find_map(|w| family.ttf(w, style)));
     match url {
         Some(url) => {
-            let path = IpfsPath::new_from_url(&url, "ttf");
+            // shared by every scene, so it ranks with the player's loads: the player's scene
+            // must not wait on it while engine memory is full
+            let path = IpfsPath::new_from_url(&url, "ttf").with_player_slot_owner();
             SlotSource::Loading(ipfas.asset_server().load::<Font>(PathBuf::from(&path)))
         }
         None => SlotSource::Fallback,

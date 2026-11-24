@@ -15,10 +15,9 @@ use crate::{
     ContainingScene,
 };
 
+use ipfs::partition::PlayerDownloads;
 use ipfs::partition::{avatar_key, keyed};
-pub use ipfs::partition::{
-    Partition, PartitionedDownloads, PartitionedEmoteDownloads, PlayerDownloads,
-};
+pub use ipfs::partition::{Partition, PartitionedDownloads, PartitionedEmoteDownloads};
 
 /// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
 /// bottom of the scene tier until it has one; the publisher raises the player's scene to the
@@ -139,8 +138,9 @@ pub fn update_scene_partitions(
 /// only on a frame in which a download waits for or holds a slot: a grant that chooses between
 /// downloads happens at an enqueue while others wait or at a release, so it reads this frame's
 /// keys unless the gate was idle when the frame began, and the steady state costs nothing.
-/// While engine memory is full, held requests keep the gate busy; then it publishes only on a
-/// frame in which a partition, a holder or the player's scenes changed.
+/// While engine memory is full, held requests keep the gate busy; then it publishes only when the
+/// player's scenes change, the one change that moves a hash across the hold (the player's own
+/// avatar and previews rank from their registration). Other keys only order held requests.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(
@@ -159,19 +159,7 @@ pub fn publish_download_priorities(
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
-    (changed, mut last_active): (
-        Query<
-            (),
-            Or<(
-                Changed<Partition>,
-                Changed<SceneHash>,
-                Changed<PartitionedDownloads>,
-                Changed<PartitionedEmoteDownloads>,
-                Changed<PlayerDownloads>,
-            )>,
-        >,
-        Local<HashSet<Entity>>,
-    ),
+    mut last_active: Local<HashSet<Entity>>,
 ) {
     if !ipfs.reads_download_priorities() {
         return;
@@ -180,7 +168,7 @@ pub fn publish_download_priorities(
         .single()
         .map(|player| containing_scene.get_oow(player))
         .unwrap_or_default();
-    if ipfs.downloads_held_from().is_some() && changed.is_empty() && active == *last_active {
+    if active == *last_active && ipfs.downloads_held_from().is_some() {
         return;
     }
     last_active.clone_from(&active);

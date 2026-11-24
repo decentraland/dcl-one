@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use common::{
     memory::{LoadRefusal, MemoryPressure, MemorySample, MemoryStatus},
     partition::Tier,
+    structs::NoRenderApp,
 };
 use ipfs::IpfsResource;
 use std::time::Duration;
@@ -20,7 +21,16 @@ impl Plugin for MemoryStatusPlugin {
         app.init_resource::<NativeSampler>();
         app.init_resource::<MemoryStatus>()
             .init_resource::<LoadRefusal>()
-            .add_systems(PreUpdate, (sample_memory, update_load_refusal).chain());
+            .add_systems(
+                PreUpdate,
+                (
+                    sample_memory,
+                    // the headless scene server's reading spans every tenant scene; holding them
+                    // would leave its colliders behind its clients'
+                    update_load_refusal.run_if(not(resource_exists::<NoRenderApp>)),
+                )
+                    .chain(),
+            );
     }
 }
 

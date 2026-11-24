@@ -441,8 +441,8 @@ pub enum IpfsKey {
 }
 
 /// The request-slot owner of the player's loads that name no scene, registered for the session
-/// with the player's scenes' rank.
-pub(crate) const PLAYER_SLOT_OWNER: &str = "player";
+/// with the player's scenes' rank. The `&` keeps it apart from every content hash.
+pub(crate) const PLAYER_SLOT_OWNER: &str = "&player";
 
 /// The [`IpfsKey::Part`] of a glTF loaded for its colliders only (`scene_lod`).
 pub const COLLIDERS_PART: &str = "colliders";
@@ -624,7 +624,8 @@ impl IpfsPath {
     }
 
     /// Rank this load's requests with the player's own, which do not wait while engine memory is
-    /// full: files the player's scene needs whichever scene asks, and UI the player opens.
+    /// full: small files shared by every scene, whichever scene asks, and UI the player opens.
+    /// Every such load of a url shares one asset path.
     pub fn with_player_slot_owner(self) -> Self {
         self.with_slot_owner(PLAYER_SLOT_OWNER)
     }

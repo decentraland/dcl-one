@@ -26,13 +26,16 @@ a dense area grows the engine until the platform kills it.
 - **Downloads.** While refusing, the request slots grant only tiers before `Avatar`: the
   player's own body, wearables and emotes, avatars that system scenes place (the backpack, a
   passport: `PlayerDownloads`), the scenes the player stands in, portables, system scenes, and
-  URL loads tagged as the player's (the SDK6 adaption layer, the NFT dialog's image). A URL load
-  a scene makes for an NFT frame ranks under that scene's hash. Other avatars, other scenes,
-  stand-ins, other URL requests and departed scenes keep their place in the queue. A held
-  request is granted as soon as it rises out of the held tiers: its hash is registered for the
-  player, the player's scene shares its download, or the player walks into its scene. While the
-  hold is on, download priorities are published only on frames in which a partition, a holder or
-  the player's scenes change.
+  URL loads tagged as the player's: small files every scene shares (the SDK6 adaption layer,
+  fonts) and profile pictures. An NFT image ranks under the scene that shows it, and the NFT
+  dialog that scene opens shares the frame's image. Other avatars, other scenes, stand-ins,
+  other URL requests and departed scenes keep their place in the queue. A held request is
+  granted as soon as it rises out of the held tiers: its hash is registered for the player, the
+  player's scene shares its download, or the player walks into its scene. While the hold is on,
+  download priorities are published only when the player's scenes change; other keys only
+  order held requests.
+- **Headless.** The scene server runs no refusal: its reading spans every tenant scene, and
+  holding their downloads would leave its colliders behind its clients'.
 - **Idle metadata.** While refusing, collectible metadata that no caller has requested in the
   last three frames is released; a later request loads it again. Waiting loads stop growth, but
   only released memory can bring the reading back under the warning threshold.
@@ -45,8 +48,8 @@ a dense area grows the engine until the platform kills it.
 - **Holding every download, the player's included.** The player's scene and avatar could stay
   incomplete for as long as memory stays full.
 - **Giving every URL load its scene as owner.** The owner is part of the asset path, so a file
-  several scenes load by URL (a font) would load once per scene. Only NFT frames, which are
-  rarely shared, are tagged with their scene.
+  several scenes load by URL (a font) would load once per scene. Shared files take the one
+  player owner instead; only NFT images, which are rarely shared, are tagged with their scene.
 - **Unloading scenes or shrinking the live radius at Warning.** It needs a lower representation
   to step down to; it is a separate decision.
 - **Per-scene memory estimates.** Fixed per-parcel figures are guesses; the measured reading is
@@ -60,8 +63,6 @@ a dense area grows the engine until the platform kills it.
 
 - Neighbouring scenes stall half-loaded and other avatars keep what they had while the refusal
   lasts; both resume when it ends, the held scenes spawning in the usual loading waves.
-- Fonts that scenes load by URL wait, the player's scene's included, so its text uses the
-  fallback font until the refusal ends.
 - The refusal slows growth; it does not cap it. Unaffected: the player's own loads, reads served
   by the disk or web cache (they take no request slot), instantiation of data already
   downloaded, and entity resolution, which posts outside the request slots.

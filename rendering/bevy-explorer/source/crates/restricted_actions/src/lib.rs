@@ -1829,6 +1829,7 @@ fn open_nft_dialog(
     containing_scene: ContainingScene,
     primary_user: Query<Entity, With<PrimaryUser>>,
     asset_server: Res<AssetServer>,
+    scenes: Query<&RendererSceneContext>,
 ) {
     for (scene, urn, response) in events.read().filter_map(|c| match (&c.origin, &c.call) {
         (RpcOrigin::Scene { entity: scene, .. }, RpcCall::OpenNftDialog { urn, response }) => {
@@ -1856,10 +1857,16 @@ fn open_nft_dialog(
             return;
         }
 
+        let Ok(context) = scenes.get(*scene) else {
+            response.send(Err("No scene".to_owned()));
+            return;
+        };
+
         let h_nft = asset_server.load(format!("nft://{}.nft", urlencoding::encode(urn)));
 
         commands.spawn(NftDialogSpawn {
             h_nft,
+            scene_hash: context.hash.to_string(),
             response: response.clone(),
         });
     }
@@ -1868,6 +1875,8 @@ fn open_nft_dialog(
 #[derive(Component)]
 pub struct NftDialogSpawn {
     h_nft: Handle<Nft>,
+    /// the scene that opened the dialog, whose NFT frame shares the image
+    scene_hash: String,
     response: RpcResultSender<Result<(), String>>,
 }
 
@@ -1883,8 +1892,10 @@ fn show_nft_dialog(
             commands.entity(ent).remove::<NftDialogSpawn>();
 
             let url = &nft.image_url;
-            // the player opened the dialog: downloaded with the player's loads
-            let ipfs_path = IpfsPath::new_from_url(url, "image").with_player_slot_owner();
+            // only the scene the player stands in can open it, so its loads are not held; the
+            // scene's own NFT frame shares the image
+            let ipfs_path =
+                IpfsPath::new_from_url(url, "image").with_slot_owner(&nft_spawn.scene_hash);
             let h_image = asset_server.load::<Image>(PathBuf::from(&ipfs_path));
 
             let creator = nft.creator.clone().unwrap_or("unknown".to_owned());
