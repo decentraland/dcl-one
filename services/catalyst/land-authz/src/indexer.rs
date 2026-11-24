@@ -964,7 +964,7 @@ pub async fn ready_cursor(
         }
         Ok(_) => None,
         Err(e) => {
-            tracing::warn!(error = %e, "land-authz: cannot read index_cursor; using the fallback reader");
+            tracing::warn!(error = %e, "land-authz: cannot read index_cursor; LAND rights are unavailable");
             None
         }
     }

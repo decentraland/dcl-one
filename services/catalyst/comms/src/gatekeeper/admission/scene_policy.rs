@@ -195,8 +195,9 @@ pub(super) fn parse_xy(s: &str) -> Option<(i32, i32)> {
 }
 
 /// The LAND manager document of a Genesis parcel through the permission
-/// core (`Policy::land_document`: the `land_authz` index once its fold is
-/// published, else `COMMS_LAND_OPERATORS_URL`). Upstream's `getLandOperators`
+/// core (`Policy::land_document`: the attached `land_authz` index alone,
+/// unavailable until its fold is published; `COMMS_LAND_OPERATORS_URL` only
+/// without an index). Upstream's `getLandOperators`
 /// re-throws on a transport error and on any non-2xx, so a source fault
 /// reaches the caller as a rejection and never as "this parcel has no
 /// operators". Without any source v2 has no LAND evidence at all: that is
@@ -214,7 +215,7 @@ pub(super) async fn try_fetch_land_operators(
         Ok(None) => {
             tracing::debug!(
                 parcel,
-                "no LAND operator source (land-authz index not ready, COMMS_LAND_OPERATORS_URL unset); no LAND operator is protected"
+                "no LAND operator source (no land-authz index attached, COMMS_LAND_OPERATORS_URL unset); no LAND operator is protected"
             );
             Ok(None)
         }

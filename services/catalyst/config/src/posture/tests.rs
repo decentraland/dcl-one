@@ -77,7 +77,10 @@ fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
     // land-manager subgraph (a value left in an environment is no Config
     // variable, so the process never reads it).
     for posture in [Posture::Mirror, Posture::Island, Posture::Journey] {
-        assert!(!expanded(posture, &[]).contains_key("LAND_SUBGRAPH_URL"), "{posture:?}");
+        assert!(
+            !expanded(posture, &[]).contains_key("LAND_SUBGRAPH_URL"),
+            "{posture:?}"
+        );
     }
 }
 

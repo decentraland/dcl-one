@@ -1249,8 +1249,9 @@ async fn run_race(pool: &PgPool, race: Race) {
 }
 
 /// Sends `req` while a transaction holds `land_authz.token_right`, so the
-/// route's LAND rights read waits after its lookup; once that read is waiting
-/// runs `race`, then releases the table and answers the route's response.
+/// route's LAND rights read waits after its lookup; once that read is seen
+/// waiting behind this test's lock holder, runs `race`, then releases the
+/// table and answers the route's response.
 async fn send_racing_the_rights_read(
     router: &Router,
     pool: &PgPool,
@@ -1262,16 +1263,28 @@ async fn send_racing_the_rights_read(
         .execute(&mut *lock)
         .await
         .unwrap();
+    let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
     let route = tokio::spawn({
         let router = router.clone();
         async move { call(&router, req).await }
     });
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
+        // A backend of this database waiting on this table behind the lock
+        // holder: scratch clones share relation OIDs, so neither the name nor
+        // the OID alone tells this test's route from another clone's.
         let waiting: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation \
-             WHERE NOT l.granted AND c.relname = 'token_right'",
+            "SELECT count(*) FROM pg_locks l \
+             JOIN pg_stat_activity a ON a.pid = l.pid \
+             WHERE NOT l.granted AND l.mode = 'AccessShareLock' \
+               AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND l.relation = 'land_authz.token_right'::regclass \
+               AND $1 = ANY(pg_blocking_pids(l.pid))",
         )
+        .bind(holder)
         .fetch_one(pool)
         .await
         .unwrap();

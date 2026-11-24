@@ -668,20 +668,16 @@ access.
   delegation. `GET /collaborator` lists the Genesis scenes whose
   `logsPermissions` name the signer and that pass the collaborator rule
   below; a LAND manager missing from `logsPermissions` is not listed.
-- **Manager sources.** In order: the LAND authorization index while it is
-  published (below); else the manager document at
-  `COMMS_LAND_OPERATORS_URL` (`/parcels/{x}/{y}/operators`, memoized 60 s
-  per parcel, where a 404 refuses); else the owner alone, directly or
-  through the estate, from the marketplace subgraph
-  (`MARKETPLACE_SUBGRAPH_URL`). With none of them every manager is
-  refused. Operators, update operators, `UpdateManager`s and
-  `ApprovalForAll` operators therefore need the index or
-  `COMMS_LAND_OPERATORS_URL`. A source that fails answers 401
-  `Unauthorized: Failed to verify world permissions` before
+- **Manager sources.** The LAND authorization index alone. Until it has
+  a published fold (below), storage management answers 503 `LAND rights
+  are unavailable on this node: the land-authz index has no fresh
+  published fold`, and neither `COMMS_LAND_OPERATORS_URL` nor a subgraph
+  stands in (`catalyst serve` always attaches the index; the URL is read
+  only by a permission core without one). A read of the index that fails
+  answers 401 `Unauthorized: Failed to verify world permissions` before
   `logsPermissions` is consulted.
-- **Collaborator source.** The index alone. `COMMS_LAND_OPERATORS_URL` and
-  the marketplace subgraph admit no Genesis collaborator, and without a
-  published index `GET /collaborator` lists no Genesis scene.
+- **Collaborator source.** The index alone. Without a published index
+  `GET /collaborator` lists no Genesis scene.
 - **Index publication.** `LAND_AUTHZ_INDEX_ENABLED=true` with
   `ETH_RPC_URL` runs the indexer in `catalyst index` (`NODE_POSTURE=mirror`
   turns the flag on); `catalyst serve` reads the published index from the
@@ -690,13 +686,12 @@ access.
   blocks of a head kept `LAND_AUTHZ_CONFIRMATIONS` (12) blocks back. The
   managers read the index while it is caught up, its fold is at most 30
   minutes old on the database clock and its registries are the node's; a
-  fold older than that drops them to the next source at once.
+  fold older than that makes them unavailable at once.
   The lamb2 LAND routes require a fold at most ten minutes
   old. The index interval is capped at four minutes. The batch permissions
-  preview uses the same 30-minute window as deploy authorization. They use their configured subgraph fallback when the fold expires.
-  The LAND subgraph can lag the chain and its per-parcel responses are
-  cached locally for five seconds. Parcels with the same owner and registry
-  share a five-second authorization cache. `GET /lambdas/land-authz/status`
+  preview uses the same 30-minute window as deploy authorization. They
+  answer the 503 `land-authz-index` envelope when the fold expires; no
+  subgraph stands in. `GET /lambdas/land-authz/status`
   reports Lambdas readiness as `ready`, with `readyWindowSecs` and
   `cursor.foldAgeSecs`, `cursor.foldedBlock` and `cursor.lastBlock`.
 - **Collaborator freshness.** Collaborator readiness is a separate

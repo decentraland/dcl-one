@@ -3037,6 +3037,28 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
         assert_eq!(status, expected, "{who}");
     }
 
+    // Once the index walks past its fold it decides nothing, with no
+    // operators URL configured either: a retryable 503, never a 401.
+    sqlx::query("UPDATE land_authz.index_cursor SET last_block = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "put",
+            "/values/k",
+            &owner_key,
+            &scene_metadata("main", &p1, &id),
+            None,
+            Some(r#"{"value":2}"#),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
+
     drop(app);
     pool.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -4075,14 +4097,22 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         );
     }
 
-    // While ordinary LAND readiness falls back during cursor advancement, a
-    // broken fallback is upstream's 401 for everyone: the owner lookup runs
-    // first and its failure answers before logsPermissions is read.
+    // While the attached index is between walking and publishing, it is the
+    // only LAND authority: a configured manager document that would grant is
+    // not read, and the answer is the index's 503 for everyone, before
+    // logsPermissions is consulted.
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 101")
         .execute(&pool)
         .await
         .unwrap();
-    let broken_source = fake_land_operators(&pointer, json!(null)).await;
+    let granting_source = fake_land_operators(
+        &pointer,
+        json!({
+            "owner": address_of(&collab_key), "operator": null, "updateOperator": null,
+            "updateManagers": [address_of(OUTSIDER_KEY)], "approvedForAll": []
+        }),
+    )
+    .await;
     let land = Arc::new(crate::land_authz::LandAuthzState::new(
         pool.clone(),
         crate::http::Outbound::for_tests(),
@@ -4092,9 +4122,9 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         .with_land_authz(Some(land))
         .with_land_operators(Some(LandOperatorsReader::new(
             crate::http::Outbound::for_tests().allowing_private_hosts(),
-            &broken_source,
+            &granting_source,
         )));
-    let broken_app = router(Arc::new(StorageState::new(
+    let unready_app = router(Arc::new(StorageState::new(
         pool.clone(),
         Arc::new(policy),
         Settings::for_tests(None),
@@ -4102,12 +4132,12 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
     )));
     for key in [collab_key.as_str(), OUTSIDER_KEY] {
         let (status, body) = send(
-            &broken_app,
+            &unready_app,
             signed_request("get", "/values/g", key, &meta, None, None).await,
         )
         .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-        assert_eq!(body["message"], super::FAILED_TO_VERIFY_MSG);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
     }
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 100")
         .execute(&pool)
@@ -4667,7 +4697,23 @@ async fn genesis_collaboration_requires_redeployment_after_any_parcel_ownership_
         .execute(pool).await.unwrap();
     sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes'")
         .execute(pool).await.unwrap();
-    assert_genesis_collaboration(&app, &key, &pointers[0], &new, false).await;
+    // A stale fold decides nothing for the attached index: the collaborator
+    // gets the index's 503, not a refusal.
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "put",
+            "/values/epoch",
+            &key,
+            &scene_metadata("main", &pointers[0], &new),
+            None,
+            Some(r#"{"value":1}"#),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
     // A stale history index does not prevent the independently configured
     // LAND document source from establishing the current owner's authority.
     let source = fake_land_operators(

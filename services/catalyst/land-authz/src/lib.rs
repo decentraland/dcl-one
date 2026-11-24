@@ -340,11 +340,7 @@ pub enum Unavailable {
 }
 
 impl LandAuthzState {
-    pub fn new(
-        pool: PgPool,
-        http: crate::http::Outbound,
-        settings: Settings,
-    ) -> Self {
+    pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         Self {
             pool,
             http,
@@ -400,7 +396,7 @@ impl LandAuthzState {
         {
             Ok(snapshot) => snapshot,
             Err(e) => {
-                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; using the fallback reader");
+                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; LAND rights are unavailable");
                 None
             }
         }

@@ -384,6 +384,20 @@ fn reader_unavailable(store: &'static str, reason: &str) -> AuthorityNotEstablis
     }
 }
 
+/// The source a LAND decision names while an attached land-authz index has
+/// no fresh published fold: the identifier its unavailable envelope carries.
+/// World storage answers it 503, never upstream's 401.
+pub const LAND_INDEX_SOURCE: &str = "land-authz-index";
+
+/// The answer while the attached land-authz index has no fresh published
+/// fold: undetermined, with no other source standing in.
+fn land_index_not_ready() -> AuthorityNotEstablished {
+    reader_unavailable(
+        LAND_INDEX_SOURCE,
+        "the land-authz index has no fresh published fold",
+    )
+}
+
 pub struct Policy {
     pool: PgPool,
     personal_worlds: PersonalWorldsPolicy,
@@ -542,23 +556,27 @@ impl Policy {
     }
 
     /// The LAND manager document of a Genesis parcel (the shape of
-    /// `/lambdas/parcels/{x}/{y}/operators`): from the `land_authz` index
-    /// when its fold is published, else through `COMMS_LAND_OPERATORS_URL`.
-    /// `Ok(None)` means no source can answer (neither is configured or
-    /// ready), which every caller treats as "no LAND evidence", never as an
-    /// empty document; `Ok(Some(None))` is a parcel the source does not know.
+    /// `/lambdas/parcels/{x}/{y}/operators`). With a `land_authz` index
+    /// attached, its published fold is the only authority: before it has a
+    /// fresh one the answer is undetermined ([`LAND_INDEX_SOURCE`]), and
+    /// `COMMS_LAND_OPERATORS_URL` does not stand in. Only a policy built
+    /// without the index reads that URL. `Ok(None)` means no source can
+    /// answer (no index attached, no URL), which every caller treats as "no
+    /// LAND evidence", never as an empty document; `Ok(Some(None))` is a
+    /// parcel the source does not know.
     pub async fn land_document(
         &self,
         parcel: Parcel,
     ) -> Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished> {
-        if let Some(land) = self.land_authz.as_ref()
-            && let Some(mut snapshot) = land.ready_snapshot().await
-        {
+        if let Some(land) = self.land_authz.as_ref() {
+            let Some(mut snapshot) = land.ready_snapshot().await else {
+                return Err(land_index_not_ready());
+            };
             let rights = land
                 .store()
                 .rights_on(&mut snapshot.tx, parcel.x, parcel.y)
                 .await
-                .map_err(|e| store_unavailable("land-authz index", &e))?;
+                .map_err(|e| store_unavailable("land_authz store", &e))?;
             // The deploy column: a parcel's cleared update-operator leg (the
             // zero address lamb2's `/operators` answers) falls back to its
             // estate's, so storage management and the comms protected set
@@ -1642,8 +1660,9 @@ impl Policy {
     }
 
     /// LAND ownership at any of `coords`, directly or through the estate,
-    /// from the land-authz index: undetermined while it has no published
-    /// fold, refused with no LAND source attached. No subgraph stands in.
+    /// from the land-authz index: undetermined ([`LAND_INDEX_SOURCE`]) while
+    /// it has no fresh published fold, refused with no index attached. No
+    /// subgraph stands in.
     async fn owns_land_at(&self, coords: &[(i32, i32)], actor: &Address) -> PermissionDecision {
         if coords.is_empty() {
             return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
@@ -1657,18 +1676,21 @@ impl Policy {
         match land_authz::owns_land_at(land, actor.as_str(), coords).await {
             Ok(true) => PermissionDecision::Allowed,
             Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
-            Err(e) => PermissionDecision::Refused(reader_unavailable(
-                "LAND rights source",
-                &e.to_string(),
-            )),
+            Err(land_authz::Unavailable::NotReady) => {
+                PermissionDecision::Refused(land_index_not_ready())
+            }
+            Err(e) => {
+                PermissionDecision::Refused(reader_unavailable("land_authz store", &e.to_string()))
+            }
         }
     }
 
     /// Whether `actor` may manage the storage of the Genesis scene standing
     /// on `parcel`: LAND authority at that parcel only (the old world-storage
     /// lambdas matrix): owner, operator, updateOperator, updateManager or
-    /// approvedForAll in its manager document; with no document source, LAND
-    /// ownership there. Scene admins get nothing here.
+    /// approvedForAll in its manager document ([`Self::land_document`]: an
+    /// attached index that is not ready leaves it undetermined); with no
+    /// document source, LAND ownership there. Scene admins get nothing here.
     pub async fn may_manage_land_storage(
         &self,
         parcel: Parcel,

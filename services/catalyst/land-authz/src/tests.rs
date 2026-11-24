@@ -3570,7 +3570,10 @@ async fn before_the_index_is_ready_nothing_answers_land_rights() {
         Err(Unavailable::NotReady)
     ));
     for (method, path) in [
-        ("GET", format!("/lambdas/users/{ALICE}/parcels/1/1/permissions")),
+        (
+            "GET",
+            format!("/lambdas/users/{ALICE}/parcels/1/1/permissions"),
+        ),
         ("POST", format!("/lambdas/users/{BOB}/parcels/permissions")),
         ("GET", "/lambdas/parcels/1/1/operators".to_string()),
         ("GET", format!("/lambdas/users/{ALICE}/lands-permissions")),
@@ -3586,6 +3589,18 @@ async fn before_the_index_is_ready_nothing_answers_land_rights() {
             "{method} {path}: {body}"
         );
     }
+    // An empty batch reads no row and still waits for the index.
+    let (status, _, body) = post_json(
+        &app,
+        &format!("/lambdas/users/{BOB}/parcels/permissions"),
+        json!({ "parcels": [] }),
+    )
+    .await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "empty batch: {body}"
+    );
     let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
     assert_eq!(body["ready"].as_bool(), Some(false));
     assert!(body.get("fallback").is_none(), "{body}");

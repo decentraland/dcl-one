@@ -29,7 +29,8 @@ const COORDS_ERR: &str = "Coordinates X and Y must be valid numbers in a valid r
 /// never a truncated batch.
 pub const MAX_BATCH_PARCELS: usize = 100;
 pub const SOURCE_HEADER: &str = "x-land-authz-source";
-const NOT_READY_MSG: &str = "LAND rights are unavailable on this node: the land-authz index has no fresh published fold";
+const NOT_READY_MSG: &str =
+    "LAND rights are unavailable on this node: the land-authz index has no fresh published fold";
 
 pub fn router(state: SharedState) -> Router {
     Router::new()
@@ -304,6 +305,11 @@ async fn parcels_permissions_batch(
         Err(msg) => return bad_request(&msg),
     };
     let coords: Vec<(i32, i32)> = parcels.iter().map(|&(x, y)| (x as i32, y as i32)).collect();
+    // An empty set reads no row, but the route keeps its contract: no
+    // answer before the index is ready.
+    if coords.is_empty() && state.ready_snapshot().await.is_none() {
+        return not_ready();
+    }
     match can_deploy_batch(&state, &coords, &addr).await {
         Ok(decisions) => {
             let source = decisions

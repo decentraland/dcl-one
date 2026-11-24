@@ -265,6 +265,10 @@ mod tests {
             .into_result()
             .unwrap_err();
         assert_eq!(undetermined.http_status(), 503, "{undetermined}");
+        assert!(
+            undetermined.to_string().contains("land-authz-index"),
+            "the refusal names the index: {undetermined}"
+        );
         // No LAND source attached: an explicit refusal, as for worlds.
         let unconfigured = state_with_land(pool.clone(), None);
         let place = PlaceLookup::new(&unconfigured, &place_id, &place_id);
