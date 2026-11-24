@@ -327,7 +327,7 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
-      - name: Prune superseded Rust libraries from the smoke snapshot
+      - name: Prune superseded Rust build artifacts from the smoke snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
         run: |
           echo "Before pruning (KiB)"

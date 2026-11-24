@@ -302,6 +302,7 @@ export type PageToScene =
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
+  | GetGalleryWearablesRequest
   | DeleteGalleryPhotoRequest
   | SetGalleryPhotoPublicRequest
 
@@ -1957,10 +1958,16 @@ export interface GalleryPerson {
   address: string
   name: string
   isGuest?: boolean
+  /** Urns of the wearables they had on when the photo was taken. */
+  wearables?: string[]
+  /** An official wallet, as the nametags mark it. */
+  official?: boolean
 }
 
 /** Full metadata for one photo (fetched lazily when its detail view opens). */
 export interface GalleryPhotoMeta {
+  /** When it was taken, epoch seconds as a string. */
+  dateTime?: string
   /** Who took the photo. */
   userName?: string
   userAddress?: string
@@ -2051,6 +2058,20 @@ export interface GalleryPhotoMessage {
   kind: 'galleryPhoto'
   id: string
   meta: GalleryPhotoMeta | null
+}
+
+/** Resolve a photo person's wearable urns, with shop links. Answered by a GalleryWearablesMessage. */
+export interface GetGalleryWearablesRequest {
+  kind: 'getGalleryWearables'
+  requestId: number
+  urns: string[]
+}
+
+export interface GalleryWearablesMessage {
+  kind: 'galleryWearables'
+  requestId: number
+  ok: boolean
+  wearables: Wearable[]
 }
 
 /** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
@@ -2671,6 +2692,7 @@ export type SceneToPage =
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
+  | GalleryWearablesMessage
   | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

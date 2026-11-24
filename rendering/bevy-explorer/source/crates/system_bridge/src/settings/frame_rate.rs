@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::structs::AppConfig;
+use common::structs::{AppConfig, UNCAPPED_FPS};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -8,11 +8,11 @@ pub struct FpsTargetSetting(usize);
 
 impl EnumAppSetting for FpsTargetSetting {
     fn variants() -> Vec<Self> {
-        vec![Self(30), Self(60), Self(120), Self(144), Self(999)]
+        vec![Self(30), Self(60), Self(120), Self(144), Self(UNCAPPED_FPS)]
     }
 
     fn name(&self) -> String {
-        if self.0 == 999 {
+        if self.0 == UNCAPPED_FPS {
             "Max".to_owned()
         } else {
             format!("{} fps", self.0)

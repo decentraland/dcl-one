@@ -123,9 +123,8 @@ describe("track_deferred", () => {
   it("is true for a conversion clicked before the document's first page view, sent at once", async () => {
     const { trackDownloadClick } = await loadDocument("/");
     trackDownloadClick(CLICK, { sid: "sid-1" });
-    const [click] = await clicks();
-    expect(click).toMatchObject({ track_deferred: true });
-    expect(click!.track_delivered_at).toBe(click!.track_called_at);
+    expect(sendBeacon).toHaveBeenCalledOnce();
+    expect(await clicks()).toEqual([expect.objectContaining({ track_deferred: true })]);
   });
 
   it("holds a non-conversion click until the first page view, then sends it deferred", async () => {
