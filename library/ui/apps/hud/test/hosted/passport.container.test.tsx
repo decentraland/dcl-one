@@ -10,6 +10,7 @@ import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { pending } from '@explorer-core/lib/analytics'
+import passportStyles from '../../features/profile/ProfilePassport.module.css'
 
 // COMPONENT: the smart <Passport userId> fetches the rich profile on open, renders identity-only from
 // the profile store until it lands, and shows the presentational ProfilePassport; openPassport mounts it.
@@ -61,6 +62,15 @@ describe('Passport container', () => {
       openPassport('0xabc')
     })
     expect(screen.getByText('gm from the plaza')).toBeTruthy()
+  })
+
+  it('openPassport puts the passport scrim on its backdrop', async () => {
+    receiveProfile('0xabc', RICH)
+    await renderWithSession(<PopupHost />)
+    act(() => {
+      openPassport('0xabc')
+    })
+    expect(document.getElementsByClassName(passportStyles.scrim)).toHaveLength(1)
   })
 
   it('openPassport opens on the tab it is given', async () => {
