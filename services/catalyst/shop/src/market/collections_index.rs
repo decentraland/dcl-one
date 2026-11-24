@@ -637,7 +637,10 @@ pub const HINT_TAIL: u32 = 16;
 /// only a filter, and the newer the list the fewer windows find a
 /// collection it lacks. Reading the tail again covers a reorg that put
 /// another collection at an index already read; the address read before
-/// stays, an address the filter takes in vain. Returns the hints added.
+/// stays, an address the filter takes in vain. The answers read are kept;
+/// an index without one (no answer, or not an address) fails the refresh,
+/// so no attempt walks on a list it could not read whole. Returns the hints
+/// added.
 pub async fn refresh_hints(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
     let sizes = eth_calls(
@@ -650,6 +653,7 @@ pub async fn refresh_hints(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize
     )
     .await?;
     let mut added = 0usize;
+    let mut unread = Vec::new();
     for ((factory, _), size) in FACTORIES.iter().zip(sizes) {
         let size = size
             .and_then(|b| U256::abi_decode(&b).ok())
@@ -691,7 +695,7 @@ pub async fn refresh_hints(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize
                 .and_then(|b| Address::abi_decode(&b).ok())
                 .filter(|a| !a.is_zero())
             else {
-                // Read again at the next refresh: indexes are never skipped.
+                unread.push(format!("{factory}[{i}]"));
                 continue;
             };
             idxs.push(*i as i32);
@@ -709,6 +713,12 @@ pub async fn refresh_hints(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize
         .execute(pool)
         .await?
         .rows_affected() as usize;
+    }
+    if let Some(first) = unread.first() {
+        anyhow::bail!(
+            "{} factory list indexes did not answer (first {first}); {added} new hints kept",
+            unread.len()
+        );
     }
     Ok(added)
 }
@@ -1627,8 +1637,9 @@ mod tests {
     }
 
     /// The gate takes every index each factory lists (an index whose answer
-    /// is missing is read again later, never skipped) and reads the creation
-    /// state at the finalized block of the collections deployed there.
+    /// is missing fails the attempt and is read again, never skipped) and
+    /// reads the creation state at the finalized block of the collections
+    /// deployed there.
     #[tokio::test]
     async fn the_gate_reads_the_factory_lists_and_the_creation_state() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
@@ -1678,6 +1689,18 @@ mod tests {
         let url = fake_rpc(calls.clone(), true).await;
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
+        // v2's index 1 does not answer: the attempt fails, the read hints stay.
+        let err = gate(&pool, &rpc).await.unwrap_err();
+        assert!(format!("{err:#}").contains(&format!("{v2}[1]")), "{err:#}");
+        let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.collection_seed")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(seeded, 0, "nothing past a list it could not read whole");
+        calls.lock().unwrap().insert(
+            call_key(v2, nth(1), "latest"),
+            word(c.parse::<Address>().unwrap()),
+        );
         assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
         let hints: Vec<(String, i32, String)> = sqlx::query_as(
             "SELECT factory, idx, address FROM shop.collection_hint ORDER BY address",
@@ -1687,7 +1710,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             hints,
-            vec![(v2.into(), 0, a.into()), (v3.into(), 0, b.into())]
+            vec![
+                (v2.into(), 0, a.into()),
+                (v3.into(), 0, b.into()),
+                (v2.into(), 1, c.into())
+            ]
         );
         let seeds: Vec<(String, String, String, String, bool, bool, i64)> = sqlx::query_as(
             "SELECT contract_address, name, symbol, creator, is_approved, is_editable, read_block FROM shop.collection_seed",
@@ -1709,15 +1736,6 @@ mod tests {
             "b has no code at the finalized block: it waits"
         );
 
-        calls.lock().unwrap().insert(
-            call_key(v2, nth(1), "latest"),
-            word(c.parse::<Address>().unwrap()),
-        );
-        assert_eq!(
-            refresh_hints(&pool, &rpc).await.unwrap(),
-            1,
-            "the missing index, once it answers"
-        );
         assert_eq!(refresh_hints(&pool, &rpc).await.unwrap(), 0);
         // A reorg puts another collection at v3's index 0: both stay hints.
         let d = "0x00000000000000000000000000000000000000d4";

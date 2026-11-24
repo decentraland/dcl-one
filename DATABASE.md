@@ -2787,7 +2787,11 @@ deleted past a rewind. Its publication means the log is complete to
 
 **Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
 million mints, so the log is about 5.3 million rows, nearly all `issue`.
-Averaged since the first factory (2021), that is about 3,000 mints a day. A window writes its rows
+Averaged since the first factory (2021), that is about 3,000 mints a day.
+Every mint is kept: an item's supply and its minters' allowances are exact
+only from them. Measured on Postgres 17 with one million rows shaped like
+the walk's `issue` rows, a row takes 174 bytes in the table and 41 in the
+primary key. 5.3 million rows therefore take about 1.1 GB. A window writes its rows
 in batches of 1,000 inside the cursor's transaction. The primary key
 (network, block, log index) serves the rewind's range delete. The partial
 index on `proxy_created` lists the walked collections for the address
@@ -2808,8 +2812,10 @@ each list again. A reorg that put another collection at an index already
 read adds that collection; the address read there before stays, a hint the
 filter takes in vain.
 
-A window that walks a `ProxyCreated` of an address outside its filter
-fails before it commits, and the next attempt reads the lists again. A
+A refresh keeps the addresses it read. If any index does not answer, it
+fails the attempt, so no window walks on a list that was not read whole. A
+window that walks a `ProxyCreated` of an address outside its filter fails
+before it commits, and the next attempt reads the lists again. A
 hint is only a filter: a collection exists for the index once its
 `ProxyCreated` is walked. The gate first checks that the endpoint serves
 chain 137.
