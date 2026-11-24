@@ -33,7 +33,8 @@
     "drive:cast": "node scripts/drive/cast.mts",
     "gen:docs-content": "node scripts/gen-docs-content.mts",
     "gen:docs-content:capture": "node scripts/gen-docs-content.mts --capture",
-    "gen:docs-content:check": "node scripts/gen-docs-content.mts --check"
+    "gen:docs-content:check": "node scripts/gen-docs-content.mts --check",
+    "gen:error-pages": "node scripts/gen-error-pages.mts"
   },
   "dependencies": {
     "@dcl-regenesislabs/wearable-validator": "0.6.4",
@@ -50,7 +51,7 @@
     "@stripe/react-stripe-js": "7.0.0",
     "@stripe/stripe-js": "10.1.0",
     "@tanstack/react-query": "5.104.3",
-    "@walletconnect/sign-client": "2.21.0",
+    "@walletconnect/sign-client": "2.26.0",
     "@xstate/react": "6.1.0",
     "buffer": "6.0.3",
     "date-fns": "4.4.0",

@@ -93,4 +93,6 @@ in {
   image-sites-polygon-credits-stream = webPolygonCredits stream;
   # Its compiled app, saved with the plain one in the `sites-app` image cache (tooling/image-cache.py).
   sites-app-polygon-credits = sitesPolygonCredits.app;
+  # The hosted component gallery the Sites image serves under /ui-gallery/, its own image cache entry.
+  ui-gallery = sites.uiGallery;
 }

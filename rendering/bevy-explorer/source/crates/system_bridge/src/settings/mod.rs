@@ -25,7 +25,6 @@ use bevy::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
-use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
@@ -48,6 +47,7 @@ use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
 use mute_mic_in_background_setting::MuteMicInBackgroundSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
+use rings::{FarLodRingSetting, LiveSceneRingSetting, NearLodRingSetting};
 use scene_threads::SceneThreadsSetting;
 use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanceSetting};
 use spring_bones_setting::SpringBonesSetting;
@@ -64,7 +64,6 @@ pub mod avatar_outline_setting;
 pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
-pub mod cel_shading_setting;
 pub mod chat_bubble_visibility;
 pub mod constrain_ui;
 mod debug_quality;
@@ -85,6 +84,7 @@ pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
 pub mod render_scale_setting;
+mod rings;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
@@ -210,7 +210,6 @@ impl Plugin for SettingBridgePlugin {
             &config,
         );
         add_enum_setting::<OobSetting>(app, &mut settings, &mut schedule, &config);
-        add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<SpringBonesSetting>(app, &mut settings, &mut schedule, &config);
@@ -225,6 +224,9 @@ impl Plugin for SettingBridgePlugin {
             add_int_setting::<UnloadDistanceSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<MaxNearLodsSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<MaxFarLodsSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<LiveSceneRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<NearLodRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<FarLodRingSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);

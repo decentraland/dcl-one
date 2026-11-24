@@ -95,6 +95,7 @@ pub async fn op_teleport_to(
     position_x: Option<i32>,
     position_y: Option<i32>,
     realm: Option<String>,
+    spawn_point: Option<String>,
 ) -> Result<bool, anyhow::Error> {
     debug!("op_teleport_to");
     let (sx, rx) = RpcResultSender::<Result<(), String>>::channel();
@@ -104,6 +105,7 @@ pub async fn op_teleport_to(
         .push(RpcCall::TeleportPlayer {
             to: position_x.zip(position_y).map(|(x, y)| IVec2::new(x, y)),
             realm,
+            spawn_point,
             response: sx,
         })?;
 

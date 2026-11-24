@@ -43,23 +43,52 @@ pub fn get_block_params(tag: BlockTag) -> Value {
     json!([tag.param(), false])
 }
 
-/// The `eth_getBlockByNumber` result: `None` for a block the node does not have.
-pub fn block_info(result: &Value) -> Result<Option<BlockInfo>, RpcError> {
+/// Why one block could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockError {
+    /// The call failed.
+    Rpc(RpcError),
+    /// The node answered `null`: it does not have the block (yet).
+    Missing(BlockTag),
+    /// The node answered a block without a usable number or timestamp.
+    Shape(String),
+}
+
+impl std::fmt::Display for BlockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockError::Rpc(e) => e.fmt(f),
+            BlockError::Missing(tag) => write!(f, "no block {}", tag.param()),
+            BlockError::Shape(m) => f.write_str(m),
+        }
+    }
+}
+
+impl std::error::Error for BlockError {}
+
+impl From<RpcError> for BlockError {
+    fn from(e: RpcError) -> Self {
+        BlockError::Rpc(e)
+    }
+}
+
+/// The block in the `eth_getBlockByNumber` result for `tag`.
+pub fn block_info(result: &Value, tag: BlockTag) -> Result<BlockInfo, BlockError> {
     if result.is_null() {
-        return Ok(None);
+        return Err(BlockError::Missing(tag));
     }
     let quantity = |key: &str| {
         result
             .get(key)
             .and_then(Value::as_str)
             .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-            .ok_or_else(|| RpcError::Malformed(format!("block without a hex {key}")))
+            .ok_or_else(|| BlockError::Shape(format!("block without a hex {key}")))
     };
-    Ok(Some(BlockInfo {
+    Ok(BlockInfo {
         number: quantity("number")?,
         timestamp: i64::try_from(quantity("timestamp")?)
-            .map_err(|_| RpcError::Malformed("block timestamp out of range".into()))?,
-    }))
+            .map_err(|_| BlockError::Shape("block timestamp out of range".into()))?,
+    })
 }
 
 /// The search and the blocks it has read (timestamp to the highest block seen at it).
@@ -102,6 +131,18 @@ impl BlockSearch {
             known.range(..=timestamp).next_back().map(info),
             known.range(timestamp.saturating_add(1)..).next().map(info),
         )
+    }
+
+    /// Whether `answer`, a [`Self::block_at`] answer for `timestamp`, is final: before the
+    /// first block, or the first known block after `timestamp` is its successor. A head-bound
+    /// answer is not, even when another search has read past `timestamp` since.
+    pub fn is_final(&self, timestamp: i64, answer: Option<BlockInfo>) -> bool {
+        let Some(answer) = answer else {
+            return true;
+        };
+        self.bounds(timestamp)
+            .1
+            .is_some_and(|next| next.number == answer.number + 1)
     }
 
     /// The last block at or before `timestamp` (unix seconds); the head when
@@ -195,8 +236,40 @@ mod tests {
             1000,
             "past the head: the head"
         );
+        let found = search.block_at(1501, chain(&reads)).await.unwrap();
+        assert!(search.is_final(1501, found), "its successor was read");
+        let head = search.block_at(5000, chain(&reads)).await.unwrap();
+        assert!(!search.is_final(5000, head), "the head may move");
         assert_eq!(at(1000).await.unwrap().unwrap().number, 0);
         assert_eq!(at(999).await.unwrap(), None, "before the first block");
+    }
+
+    /// A head-bound answer stays unsettled after a later search reads past its timestamp.
+    #[tokio::test]
+    async fn a_head_bound_answer_is_not_final_once_another_search_reads_past_it() {
+        let reads = AtomicUsize::new(0);
+        let search = BlockSearch::new();
+        let head_at = |head: u64| {
+            let reads = &reads;
+            move |tag| {
+                reads.fetch_add(1, Ordering::SeqCst);
+                let number = match tag {
+                    BlockTag::Latest => head,
+                    BlockTag::Number(n) => n.min(head),
+                };
+                std::future::ready(Ok::<_, ()>(BlockInfo {
+                    number,
+                    timestamp: 1000 + 2 * number as i64,
+                }))
+            }
+        };
+        let stale = search.block_at(1030, head_at(10)).await.unwrap();
+        assert_eq!(stale.unwrap().number, 10, "the head then");
+        let later = search.block_at(1029, head_at(20)).await.unwrap();
+        assert_eq!(later.unwrap().number, 14);
+        assert!(!search.is_final(1030, stale), "block 15 is at 1030");
+        assert!(search.is_final(1029, later));
+        assert!(search.is_final(999, None), "before the first block");
     }
 
     #[tokio::test]
@@ -253,18 +326,32 @@ mod tests {
 
     #[test]
     fn the_block_answer_is_parsed() {
+        let tag = BlockTag::Number(255);
         assert_eq!(
-            block_info(&json!({ "number": "0x10", "timestamp": "0x5f5e100" })).unwrap(),
-            Some(BlockInfo {
+            block_info(&json!({ "number": "0x10", "timestamp": "0x5f5e100" }), tag).unwrap(),
+            BlockInfo {
                 number: 16,
                 timestamp: 100_000_000
-            })
+            }
         );
-        assert_eq!(block_info(&Value::Null).unwrap(), None);
-        assert!(block_info(&json!({ "number": "0x1" })).is_err());
+        assert_eq!(block_info(&Value::Null, tag), Err(BlockError::Missing(tag)));
+        for bad in [
+            json!({ "number": "0x1" }),
+            json!({ "timestamp": "0x1" }),
+            json!({ "number": "0x1", "timestamp": "soon" }),
+            json!({ "number": "0x1", "timestamp": 1 }),
+            json!({ "number": "0x1", "timestamp": "0xffffffffffffffff" }),
+        ] {
+            assert!(
+                matches!(block_info(&bad, tag), Err(BlockError::Shape(_))),
+                "{bad}"
+            );
+        }
+        assert_eq!(BlockError::Missing(tag).to_string(), "no block 0xff");
         assert_eq!(
-            get_block_params(BlockTag::Number(255)),
-            json!(["0xff", false])
+            BlockError::from(RpcError::Status(502)),
+            BlockError::Rpc(RpcError::Status(502))
         );
+        assert_eq!(get_block_params(tag), json!(["0xff", false]));
     }
 }

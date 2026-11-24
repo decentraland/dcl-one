@@ -1,4 +1,4 @@
-import { blogPostHref } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import { blogPostHref } from "@dcl/one-ui";
 
 import { blogCms, BlogUnavailableError } from "../blog/cms";
 import { LATEST_POSTS, type BlogPostSummary } from "./blog-posts";

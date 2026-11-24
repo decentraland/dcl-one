@@ -24,50 +24,114 @@ describe('fs-safe', () => {
   })
 
   describe('when writing an artifact atomically', () => {
-    it('should create and replace the target without retaining a temporary file', async () => {
-      const file = path.join(root, 'nested/artifact.json')
-      await atomicWrite(file, 'old')
-      await atomicWrite(file, 'new')
-      expect(await readIfExists(file)).toBe('new')
-      expect((await readdir(path.dirname(file))).some(isAtomicTemporary)).toBe(false)
+    describe('and the target is written twice', () => {
+      let file: string
+
+      beforeEach(async () => {
+        file = path.join(root, 'nested/artifact.json')
+        await atomicWrite(file, 'old')
+        await atomicWrite(file, 'new')
+      })
+
+      it('should replace the target with the latest content', async () => {
+        expect(await readIfExists(file)).toBe('new')
+      })
+
+      it('should not retain a temporary file', async () => {
+        expect((await readdir(path.dirname(file))).some(isAtomicTemporary)).toBe(false)
+      })
     })
-    it('should reject a destination link without changing its target', async () => {
-      await writeFile(path.join(root, 'retained'), 'retained')
-      await symlink(path.join(root, 'retained'), path.join(root, 'linked'))
-      await expect(atomicWrite(path.join(root, 'linked'), 'changed')).rejects.toThrow('symlink')
-      expect(await readIfExists(path.join(root, 'retained'))).toBe('retained')
+
+    describe('and the destination is a link', () => {
+      let write: Promise<void>
+
+      beforeEach(async () => {
+        await writeFile(path.join(root, 'retained'), 'retained')
+        await symlink(path.join(root, 'retained'), path.join(root, 'linked'))
+        write = atomicWrite(path.join(root, 'linked'), 'changed')
+        write.catch(() => undefined)
+      })
+
+      it('should reject it', async () => {
+        await expect(write).rejects.toThrow(
+          `Path goes through a symlink: ${path.join(root, 'linked')}`
+        )
+      })
+
+      it('should not change the link target', async () => {
+        await write.catch(() => undefined)
+        expect(await readIfExists(path.join(root, 'retained'))).toBe('retained')
+      })
     })
-    it('should clean its temporary file if replacement fails', async () => {
-      await mkdir(path.join(root, 'directory'))
-      await expect(atomicWrite(path.join(root, 'directory'), 'changed')).rejects.toThrow()
-      expect(await readdir(path.join(root, 'directory'))).toEqual([])
-      expect((await readdir(root)).some(isAtomicTemporary)).toBe(false)
+
+    describe('and the replacement fails', () => {
+      let write: Promise<void>
+
+      beforeEach(async () => {
+        await mkdir(path.join(root, 'directory'))
+        write = atomicWrite(path.join(root, 'directory'), 'changed')
+        write.catch(() => undefined)
+      })
+
+      it('should reject with the rename error', async () => {
+        await expect(write).rejects.toThrow(/^E[A-Z]+: .*rename/)
+      })
+
+      it('should leave the directory standing at the target empty', async () => {
+        await write.catch(() => undefined)
+        expect(await readdir(path.join(root, 'directory'))).toEqual([])
+      })
+
+      it('should clean its temporary file', async () => {
+        await write.catch(() => undefined)
+        expect((await readdir(root)).some(isAtomicTemporary)).toBe(false)
+      })
     })
-    it('should ignore only reserved temporary names rather than legitimate JSON filenames', async () => {
-      const temporary = '.figma-tmp-00000000-0000-4000-8000-000000000000'
-      await writeFile(path.join(root, temporary), 'partial')
-      await writeFile(path.join(root, `${temporary}.json`), '{}')
-      expect(await listFiles(root)).toEqual([path.join(root, `${temporary}.json`)])
+
+    describe('and the directory holds a reserved temporary name and a similar JSON file', () => {
+      let temporary: string
+
+      beforeEach(async () => {
+        temporary = '.figma-tmp-00000000-0000-4000-8000-000000000000'
+        await writeFile(path.join(root, temporary), 'partial')
+        await writeFile(path.join(root, `${temporary}.json`), '{}')
+      })
+
+      it('should list every file but the reserved temporary name', async () => {
+        expect(await listFiles(root)).toEqual([path.join(root, `${temporary}.json`)])
+      })
     })
   })
+
   describe('when a file is missing', () => {
-    it('should report absence for a read and an empty list for a directory', async () => {
+    it('should report absence for a read', async () => {
       expect(await readIfExists(path.join(root, 'nope.txt'))).toBeUndefined()
+    })
+
+    it('should report an empty list for a directory', async () => {
       expect(await listFiles(path.join(root, 'nope'))).toEqual([])
     })
   })
 
   describe('when the read fails for another reason', () => {
-    it('should throw instead of reporting absence', async () => {
-      await mkdir(path.join(root, 'a-directory'))
+    describe('and the read targets a directory', () => {
+      beforeEach(async () => {
+        await mkdir(path.join(root, 'a-directory'))
+      })
 
-      await expect(readIfExists(path.join(root, 'a-directory'))).rejects.toThrow()
+      it('should throw instead of reporting absence', async () => {
+        await expect(readIfExists(path.join(root, 'a-directory'))).rejects.toThrow(/^EISDIR/)
+      })
     })
 
-    it('should throw when a file stands where a directory should be', async () => {
-      await writeFile(path.join(root, 'file'), 'x')
+    describe('and a file stands where a directory should be', () => {
+      beforeEach(async () => {
+        await writeFile(path.join(root, 'file'), 'x')
+      })
 
-      await expect(listFiles(path.join(root, 'file'))).rejects.toThrow()
+      it('should throw instead of listing nothing', async () => {
+        await expect(listFiles(path.join(root, 'file'))).rejects.toThrow(/^ENOTDIR/)
+      })
     })
   })
 
@@ -78,43 +142,68 @@ describe('fs-safe', () => {
       )
     })
 
-    it.each(['../escape.ts', 'a/../../escape.ts', '/etc/passwd', '', 'a\0b'])(
-      'should reject %j',
-      async (bad) => {
-        await expect(resolveContained(root, bad)).rejects.toThrow()
-      }
-    )
+    it.each([
+      ['../escape.ts', 'Path escapes its root: ../escape.ts'],
+      ['a/../../escape.ts', 'Path escapes its root: a/../../escape.ts'],
+      ['/etc/passwd', 'Path is not contained: "/etc/passwd"'],
+      ['', 'Path is not contained: ""'],
+      ['a\0b', 'Path is not contained: "a\\u0000b"']
+    ])('should reject %j', async (bad, message) => {
+      await expect(resolveContained(root, bad)).rejects.toThrow(message)
+    })
 
-    it('should reject a path that goes through a symlink', async () => {
-      const outside = await mkdtemp(path.join(os.tmpdir(), 'dcl-figma-outside-'))
-      try {
+    describe('and the path goes through a symlink', () => {
+      let outside: string
+
+      beforeEach(async () => {
+        outside = await mkdtemp(path.join(os.tmpdir(), 'dcl-figma-outside-'))
         await symlink(outside, path.join(root, 'linked'))
+      })
 
-        await expect(resolveContained(root, 'linked/file.ts')).rejects.toThrow(/symlink/)
-      } finally {
+      afterEach(async () => {
         await rm(outside, { recursive: true, force: true })
-      }
+      })
+
+      it('should reject it', async () => {
+        await expect(resolveContained(root, 'linked/file.ts')).rejects.toThrow(
+          'Path goes through a symlink: linked/file.ts'
+        )
+      })
     })
   })
+
   describe('when validating an output directory', () => {
-    it('should reject the workspace root itself', async () => {
-      await expect(validateOutputPath(root, root)).rejects.toThrow('workspace root')
+    describe('and it is the workspace root itself', () => {
+      it('should reject it', async () => {
+        await expect(validateOutputPath(root, root)).rejects.toThrow('workspace root')
+      })
     })
-    it('should reject a symlink ancestor that escapes the workspace', async () => {
-      const outside = await mkdtemp(path.join(os.tmpdir(), 'outside-workspace-'))
-      try {
+
+    describe('and a symlink ancestor escapes the workspace', () => {
+      let outside: string
+
+      beforeEach(async () => {
+        outside = await mkdtemp(path.join(os.tmpdir(), 'outside-workspace-'))
         await symlink(outside, path.join(root, 'escape'))
+      })
+
+      afterEach(async () => {
+        await rm(outside, { recursive: true, force: true })
+      })
+
+      it('should reject it', async () => {
         await expect(
           validateOutputPath(root, path.join(root, 'escape/new/output'))
         ).rejects.toThrow('outDir must stay inside')
-      } finally {
-        await rm(outside, { recursive: true, force: true })
-      }
+      })
     })
-    it('should accept a new descendant inside the workspace', async () => {
-      expect(await validateOutputPath(root, path.join(root, 'new/output'))).toBe(
-        await canonicalPath(path.join(root, 'new/output'))
-      )
+
+    describe('and it is a new descendant inside the workspace', () => {
+      it('should accept it', async () => {
+        expect(await validateOutputPath(root, path.join(root, 'new/output'))).toBe(
+          await canonicalPath(path.join(root, 'new/output'))
+        )
+      })
     })
   })
 })

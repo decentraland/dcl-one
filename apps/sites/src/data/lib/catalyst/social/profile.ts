@@ -1,4 +1,4 @@
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 import { profileFaceUrl, profileSnapshotUrl } from "../../auth/profile-face-url";
 import { siteUrl } from "../bases";

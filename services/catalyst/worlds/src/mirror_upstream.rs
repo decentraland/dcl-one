@@ -324,6 +324,8 @@ pub(super) struct WorldSettingsCopy {
     /// The source's key, a canonical CID or the SHA-256 hex of an upload; [`mirrored_thumbnail`]
     /// turns it into the CID of the bytes held here before it is stored.
     pub(super) thumbnail_hash: Option<String>,
+    /// The source's SHA-256 key when the imported CID is not a raw-leaf alias.
+    pub(super) thumbnail_legacy_sha256: Option<String>,
     /// The source names a thumbnail this pass could not fetch: the stored one stays.
     pub(super) thumbnail_unread: bool,
     /// `Some(None)` clears: upstream answers `null` for no fixed hour.
@@ -356,6 +358,7 @@ impl WorldSettingsCopy {
             }),
             thumbnail_hash: text("thumbnail_hash")
                 .filter(|h| is_canonical_cid(h) || raw_cid_v1_from_sha256_hex(h).is_some()),
+            thumbnail_legacy_sha256: None,
             thumbnail_unread: false,
             skybox_time: match body.get("skybox_time") {
                 None => None,
@@ -402,7 +405,14 @@ pub(super) async fn upstream_settings(
     };
     if let Some(key) = copy.thumbnail_hash.take() {
         match mirrored_thumbnail(client, pool, storage, source, name, &key).await {
-            Ok(cid) => copy.thumbnail_hash = cid,
+            Ok(cid) => {
+                if let (Some(raw_cid), Some(cid)) = (raw_cid_v1_from_sha256_hex(&key), cid.as_ref())
+                    && &raw_cid != cid
+                {
+                    copy.thumbnail_legacy_sha256 = Some(key);
+                }
+                copy.thumbnail_hash = cid;
+            }
             Err(e) => {
                 tracing::warn!(world = %name, thumbnail = %key, error = %e, "keeping the stored thumbnail");
                 copy.thumbnail_unread = true;
@@ -415,12 +425,10 @@ pub(super) async fn upstream_settings(
 /// The CID under which this node holds the thumbnail the source stores under `key`, fetched
 /// from `{source}/contents/{key}` when it is not held, or `None` when the source's file is no
 /// image this node serves (the world then has no thumbnail here). A failed read or store is an
-/// error, so the stored thumbnail stays. A SHA-256 hex key (an upload upstream,
-/// served only by the source) is checked against the bytes' SHA-256 and stored under their
-/// CIDv1, the key every route here serves; a row whose stored thumbnail already holds those
-/// bytes keeps it without a fetch (a thumbnail over one 256 KiB chunk has a CIDv1 that is not
-/// the raw-leaf CID of the digest). The bytes must be an image, as for a local write
-/// ([`storable_thumbnail_hash`]).
+/// error, so the stored thumbnail stays. The mirror checks a SHA-256 hex key against the
+/// digest of the bytes and stores them under their CIDv1. A row whose thumbnail already
+/// holds those bytes keeps it without a fetch, including thumbnails over one 256 KiB chunk.
+/// The bytes must be an image, as for a local write ([`storable_thumbnail_hash`]).
 pub(super) async fn mirrored_thumbnail(
     client: &crate::http::Outbound,
     pool: &PgPool,
@@ -431,7 +439,7 @@ pub(super) async fn mirrored_thumbnail(
 ) -> Result<Option<String>> {
     let sha256_is_key = |bytes: &[u8]| {
         use sha2::Digest;
-        hex::encode(sha2::Sha256::digest(bytes)) == key
+        bytes.len() <= MAX_THUMBNAIL_BYTES && hex::encode(sha2::Sha256::digest(bytes)) == key
     };
     let resolve = async {
         let held = |cid: String| async move {

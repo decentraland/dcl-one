@@ -87,6 +87,9 @@ impl LiveDeploymentRepository {
         crate::sync_deployer::is_entity_deployed(&self.pool, entity_id, timestamp_ms).await
     }
 
+    /// The persisted global frontier, for tests: nothing in the node reads it back (a peer resumes
+    /// from its own cursor, and the in-memory copy follows the writes).
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn get_sync_frontier(&self) -> Result<Timestamp, SyncError> {
         let row: Option<String> = sqlx::query_scalar(
             "SELECT value FROM content.system_properties WHERE key = 'sync_frontier'",

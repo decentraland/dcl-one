@@ -1,15 +1,17 @@
 // The product card's own parts: the rarity flap, the creator line while its profile loads and when its
 // picture fails, the sale price with what a screen reader hears, and which row the cart button replaces.
 
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createRoutesStub } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { shopCartDrawer } from "../../cart/drawer";
 import { shopCart } from "../../cart/store";
-import { catalogRow, CREATOR, PRIMARY_WEARABLE, ShopHarness, type SessionKind } from "../fixtures";
+import { catalogRow, CREATOR, fixtureHost, PRIMARY_WEARABLE, ShopHarness, type SessionKind } from "../fixtures";
 import { toCatalogItem, type CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { rarityCardPalette, rarityColor } from "@shop/discovery/lib/rarity";
 import { invalidateShopQueries } from "../query";
+import { ShopWalletProvider } from "../../wallet/context";
 import AssetCard, { CardCreator } from "./AssetCard";
 import CategoryFlap from "./CategoryFlap";
 
@@ -116,6 +118,15 @@ describe("the card's creator line", () => {
     fireEvent.error(screen.getByTestId("creator-ava"));
     expect(screen.queryByTestId("creator-ava")).toBeNull();
     expect(screen.getByTestId("creator-ava-letter")).toHaveTextContent("N");
+  });
+
+  it("shows the short address for an empty profile the feed carries, and asks for none", async () => {
+    profiles = () => profileAnswer(true);
+    card(item({ creatorProfile: { name: "", face: null, claimed: false } }));
+    expect(screen.getByTestId("creator-display")).toHaveTextContent(`${CREATOR.slice(0, 6)}…${CREATOR.slice(-4)}`);
+    expect(screen.queryByTestId("creator-ava")).toBeNull();
+    await settle();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/lambdas/profiles"))).toBe(false);
   });
 
   it("paints a profile the feed carries at once and asks for none", async () => {
@@ -237,5 +248,44 @@ describe("the card's price row", () => {
     card(item());
     await settle();
     expect(screen.getByTestId("card-media").querySelector("img")?.getAttribute("alt")).toBe("");
+  });
+});
+
+describe("the card's links", () => {
+  it("preload the detail page's code once one is in view, a view card's included", async () => {
+    const seen: { callback: IntersectionObserverCallback; el: Element }[] = [];
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(readonly callback: IntersectionObserverCallback) {}
+        observe(el: Element) {
+          seen.push({ callback: this.callback, el });
+        }
+        disconnect() {}
+      },
+    );
+    for (const asset of [item(), item({ available: 0 })]) {
+      seen.length = 0;
+      const Stub = createRoutesStub([
+        {
+          path: "/shop/items",
+          Component: () => (
+            <ShopWalletProvider host={fixtureHost("signedOut")} cart={shopCart}>
+              <AssetCard item={asset} />
+            </ShopWalletProvider>
+          ),
+        },
+        { path: "/shop/item/:contractAddress/:itemId", Component: () => null },
+      ]);
+      const { unmount } = render(<Stub initialEntries={["/shop/items"]} />);
+      await settle();
+      expect(document.querySelector('link[rel="modulepreload"]')).toBeNull();
+      const link = screen.getByTestId(asset.available === 0 ? "card-view" : "card-link");
+      const watched = seen.find((s) => s.el === link);
+      expect(watched).toBeDefined();
+      act(() => watched!.callback([{ isIntersecting: true, target: link } as unknown as IntersectionObserverEntry], {} as IntersectionObserver));
+      await waitFor(() => expect(document.querySelector('link[rel="modulepreload"]')).not.toBeNull());
+      unmount();
+    }
   });
 });

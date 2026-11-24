@@ -289,8 +289,20 @@ export async function bundleSingleProject(components: BundleComponents, options:
   /* istanbul ignore if */
   if (options.watch) {
     // Instead of using esbuild's watch, we create our own watcher
-    const watcher = watch(path.resolve(options.workingDirectory), {
-      ignored: ['**/node_modules/**', '**/dist/**', '**/*.crdt', '**/*.d.ts', path.resolve(options.outputFile)],
+    const root = path.resolve(options.workingDirectory)
+    const outputFile = path.resolve(options.outputFile)
+    const watcher = watch(root, {
+      ignored: (file: string) => {
+        const absolute = path.resolve(root, file)
+        const parts = path.relative(root, absolute).split(path.sep)
+        return (
+          parts.includes('node_modules') ||
+          parts.includes('dist') ||
+          absolute.endsWith('.crdt') ||
+          absolute.endsWith('.d.ts') ||
+          absolute === outputFile
+        )
+      },
       ignoreInitial: true
     })
 

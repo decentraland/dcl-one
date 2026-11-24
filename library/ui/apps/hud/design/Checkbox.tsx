@@ -13,6 +13,8 @@ interface CheckboxProps {
   variant?: 'default' | 'light'
   /** The box's name when its text sits apart from it (links in the text must not toggle it). */
   'aria-label'?: string
+  /** The input's id, for a `<label htmlFor>` on that text: a click on the text then toggles the box. */
+  id?: string
 }
 
 export function Checkbox({
@@ -21,7 +23,8 @@ export function Checkbox({
   onChange,
   children,
   variant = 'default',
-  'aria-label': label
+  'aria-label': label,
+  id
 }: CheckboxProps): React.JSX.Element {
   const [internal, setInternal] = useState(defaultChecked)
   const isControlled = checked !== undefined
@@ -36,6 +39,7 @@ export function Checkbox({
     <label className={`${styles.checkbox} ${variant === 'light' ? styles.light : ''}`.trim()}>
       <input
         type="checkbox"
+        id={id}
         aria-label={label}
         className={styles.input}
         checked={on}

@@ -55,8 +55,10 @@ async fn op_teleport_to(
     position_x: Option<i32>,
     position_y: Option<i32>,
     #[string] realm: Option<String>,
+    #[string] spawn_point: Option<String>,
 ) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_teleport_to(state, position_x, position_y, realm).await
+    dcl_js::restricted_actions::op_teleport_to(state, position_x, position_y, realm, spawn_point)
+        .await
 }
 
 #[op2(async)]

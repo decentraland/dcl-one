@@ -35,7 +35,9 @@ pub use queries::{
     build_unified_listings_sql,
 };
 #[cfg(test)]
-use queries::{id_contracts, related_rarity_sort_key, unified_branch, unified_selection};
+use queries::{
+    id_contracts, named_contracts, related_rarity_sort_key, unified_branch, unified_selection,
+};
 #[path = "shop_projection.rs"]
 mod projection;
 use projection::{
@@ -68,8 +70,7 @@ use sqlx::Row;
 use sqlx::postgres::PgRow;
 
 use super::catalog::{
-    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte,
-    unified_trades_cte_of,
+    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte_of,
 };
 use super::items::{USD_WEI_PER_CREDIT, mana_usd_rate, rate_to_numeric_string, recent_sales};
 use super::readers::{self, Ttl, cached, memoized};
@@ -973,16 +974,19 @@ async fn fetch(state: &MarketplaceState, b: Builder) -> Result<Vec<PgRow>, ApiEr
         .await?)
 }
 
-fn total_of(rows: &[PgRow]) -> i64 {
-    rows.first().map(|r| r.get::<i64, _>("total")).unwrap_or(0)
+// The count side always returns one row, even when OFFSET exhausts the
+// page. Discard its NULL page before mapping the non-null listing fields.
+fn counted_page(mut rows: Vec<PgRow>) -> (Vec<PgRow>, i64) {
+    let total = rows.first().map(|r| r.get::<i64, _>("total")).unwrap_or(0);
+    rows.retain(|r| r.get::<Option<bool>, _>("page_present") == Some(true));
+    (rows, total)
 }
 
 pub async fn shop_listings(
     state: &MarketplaceState,
     f: &ShopCatalogFilters,
 ) -> Result<(Vec<ShopListing>, i64), ApiError> {
-    let rows = fetch(state, build_shop_listings_sql(f, since(state))).await?;
-    let total = total_of(&rows);
+    let (rows, total) = counted_page(fetch(state, build_shop_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1018,8 +1022,8 @@ pub async fn legacy_listings(
     state: &MarketplaceState,
     f: &LegacyCatalogFilters,
 ) -> Result<(Vec<LegacyListing>, i64), ApiError> {
-    let rows = fetch(state, build_legacy_listings_sql(f, since(state))).await?;
-    let total = total_of(&rows);
+    let (rows, total) =
+        counted_page(fetch(state, build_legacy_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1090,11 +1094,9 @@ pub async fn unified_listings(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedListing>, i64), ApiError> {
-    let rows = fetch(state, build_unified_listings_sql(f, rate, since(state))).await?;
-    Ok((
-        rows.iter().map(map_unified_listing).collect(),
-        total_of(&rows),
-    ))
+    let (rows, total) =
+        counted_page(fetch(state, build_unified_listings_sql(f, rate, since(state))).await?);
+    Ok((rows.iter().map(map_unified_listing).collect(), total))
 }
 
 pub async fn unified_items(
@@ -1102,8 +1104,9 @@ pub async fn unified_items(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedItem>, i64), ApiError> {
-    let rows = fetch(state, build_unified_items_sql(f, rate, since(state))).await?;
-    Ok((rows.iter().map(map_unified_item).collect(), total_of(&rows)))
+    let (rows, total) =
+        counted_page(fetch(state, build_unified_items_sql(f, rate, since(state))).await?);
+    Ok((rows.iter().map(map_unified_item).collect(), total))
 }
 
 pub async fn items_by_ids(
@@ -1243,15 +1246,6 @@ pub async fn top_creators(
 async fn ready(state: &MarketplaceState) -> Result<(), Response> {
     super::mirrors::require_priced(state).await?;
     super::trades::require_ready(state).await
-}
-
-fn hour_cache() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        CACHE_CONTROL,
-        "public,max-age=3600,s-maxage=3600".parse().unwrap(),
-    );
-    headers
 }
 
 pub async fn get_shop_catalog(
@@ -1486,7 +1480,7 @@ pub async fn get_trending_catalog(
         directory_snapshot(&state)
     );
     match body {
-        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(hour_cache())),
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
         Err(r) => r,
     }
 }
@@ -1511,6 +1505,19 @@ fn with_creator_profiles(
     let mut body = Arc::unwrap_or_clone(body);
     name_creators(&mut body, directory, &state.denylist);
     (profiles_revalidate(), Json(body)).into_response()
+}
+
+/// The `Cache-Control` of a trending or top-creators answer sent without the creator directory (a
+/// cold node, a feed that did not lead the directory's read, or a failing read): kept briefly, so
+/// a CDN does not hold an answer without profiles, whose cards each ask `/lambdas/profiles`, for
+/// the hour these feeds were cached before they carried profiles.
+fn brief_cache() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CACHE_CONTROL,
+        "public,max-age=60,s-maxage=60".parse().unwrap(),
+    );
+    headers
 }
 
 /// The `Cache-Control` of a response that carries creator profiles: a cache may keep it only to
@@ -1667,7 +1674,7 @@ pub async fn get_top_creators(
     match ranked {
         Ok(mut data) => {
             let Some(directory) = directory.as_deref() else {
-                return (hour_cache(), Json(TopCreatorsResponseBody { data })).into_response();
+                return (brief_cache(), Json(TopCreatorsResponseBody { data })).into_response();
             };
             let ids = data.iter().map(|c| c.id.clone()).collect();
             let profiles = creator_profiles(directory, &ids, &state.denylist);
@@ -2163,6 +2170,27 @@ mod tests {
             !feed.contains("unnest("),
             "a feed reads every open trade: {feed}"
         );
+    }
+
+    #[test]
+    fn a_read_names_the_contracts_of_its_filter_and_its_selection() {
+        let (a, b, c) = (
+            "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+        );
+        let named = |list: &[(&str, &str)]| named_contracts(&parse_unified_filters(&pairs(list)));
+        assert_eq!(named(&[("first", "5")]), None);
+        assert_eq!(
+            named(&[("contractAddress", a), ("itemId", "0")]),
+            Some(vec![a.to_lowercase()])
+        );
+        let items = format!("{c}-1,{a}-2");
+        assert_eq!(
+            named(&[("contractAddress", b), ("items", &items)]),
+            Some(vec![a.to_lowercase(), b.to_string(), c.to_string()])
+        );
+        assert_eq!(named(&[("contractAddress", "nope")]), Some(vec![]));
     }
 
     #[test]

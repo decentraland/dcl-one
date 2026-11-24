@@ -95,12 +95,22 @@ fn sky_envmap_ambient(color: vec3<f32>, ambient: vec4<f32>, compression_weight: 
 // the share of a dielectric's light that is diffuse: one minus its 4% reflectance
 const DIELECTRIC_DIFFUSE: f32 = 0.96;
 
+// The reflectivity of the fragment being lit, for a material with a metallic value: the 4% of a
+// dielectric rising to 1 for a metal, whatever its colour (`sky_envmap_metallic_reflectivity`).
+// A shader sets it before lighting; negative, the default, leaves the F0 reading below.
+var<private> sky_envmap_reflectivity: f32 = -1.0;
+
+fn sky_envmap_metallic_reflectivity(metallic: f32) -> f32 {
+    return 1.0 - DIELECTRIC_DIFFUSE * (1.0 - metallic);
+}
+
 // The environment light: the ambient diffuse at full strength, with the reflection added on
 // top. bevy's own split takes the reflection's share out of the diffuse, which on a smooth
 // surface seen at a grazing angle is most of it: wherever the sun does not reach, the smooth
 // patches of a floor's roughness map read as dark, or as wet with the sky.
-// The reflectivity that widens the grazing term is the brightest channel of F0: 0.04 for a
-// dielectric, close to the albedo for a metal.
+// The reflectivity that widens the grazing term is `sky_envmap_reflectivity` where the shader
+// sets it, else the brightest channel of F0: 0.04 for a dielectric, close to the albedo for a
+// metal.
 // `compute_radiances` here is the top-level shader's override.
 fn sky_envmap_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
     let layer = (*input).layers[lighting::LAYER_BASE];
@@ -114,7 +124,7 @@ fn sky_envmap_light(input: ptr<function, lighting::LightingInput>, clusterable_o
     }
 
     let F0 = (*input).F0_;
-    let reflectivity = max(F0.r, max(F0.g, F0.b));
+    let reflectivity = select(max(F0.r, max(F0.g, F0.b)), sky_envmap_reflectivity, sky_envmap_reflectivity >= 0.0);
     let grazing = saturate(1.0 - layer.perceptual_roughness + reflectivity);
     let fresnel = pow(1.0 - saturate(layer.NdotV), 4.0);
     let surface_reduction = 1.0 / (layer.roughness * layer.roughness + 1.0);

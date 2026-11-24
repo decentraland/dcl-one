@@ -1,5 +1,7 @@
 # On the /catalyst-owner folder
 
+This guide covers the separate `catalyst-owner` distribution. For dcl-one, follow the [local development guide](https://github.com/decentraland/dcl-one/blob/main/docs/development.md).
+
 Ever felt curious about how Decentraland Catalyst nodes work? Ever wanted to run your own node and felt overwhelmed about where to start? Are you building content for Decentraland and finding it hard to do the whole development and testing cycles on production servers?
 
 If you are (or have been there), fear no more. This tutorial will help you in the process of planning, figuring out what you need to decide and then guide you step by step in starting up the server. Also, in case something might not go according to the plan, there is a troubleshooting section at the end with a few of the most common problems and how to fix them.
@@ -105,62 +107,6 @@ Once all environment variables have been set up, it is time to start the node. T
 # On the /catalyst-owner folder
 
 > ./init.sh
-## Loading env variables... [ OK ]
-[ OK ]
-## Checking if email is configured... [ OK ]
-## Checking if storage is configured... [ OK ]
-## Checking if catalyst url is configured... [ OK ]
- WARNING: You are not running latest image of Catalyst's Content and Catalyst's Lambdas Nodes.
- WARNING: You are not running latest image of Catalyst's Archipelago Node.
- WARNING: You are not running latest image of Catalyst's Explorer BFF Node.
- - DOCKER_TAG:               45a5154f11b53d55aadfdf7f958e2fce6a964824
- - LIGHTHOUSE_DOCKER_TAG:    latest
- - CATALYST_URL:             http://localhost
- - CONTENT_SERVER_STORAGE:   ./storage
- - EMAIL:                    a@a.com
- - ETH_NETWORK:              mainnet
- - REGENERATE:               0
-
-Starting in 5 seconds...
-45a5154f11b53d55aadfdf7f958e2fce6a964824: Pulling from decentraland/catalyst-content
-Digest: sha256:d6c2981c57cb9367fdb3228d15b07e4d26e62c902944115937de24ecd3ab6aac
-Status: Image is up to date for decentraland/catalyst-content:45a5154f11b53d55aadfdf7f958e2fce6a964824
-docker.io/decentraland/catalyst-content:45a5154f11b53d55aadfdf7f958e2fce6a964824
-45a5154f11b53d55aadfdf7f958e2fce6a964824: Pulling from decentraland/catalyst-lambdas
-Digest: sha256:5605812dd29316afc32e561d2a2ce1311f164f07ef3cd99a1cd60727518636e5
-Status: Image is up to date for decentraland/catalyst-lambdas:45a5154f11b53d55aadfdf7f958e2fce6a964824
-docker.io/decentraland/catalyst-lambdas:45a5154f11b53d55aadfdf7f958e2fce6a964824
-latest: Pulling from decentraland/catalyst-lighthouse
-Digest: sha256:fedc10b714823909f0a1c17955eed2f22a02e4f784090848d3253ef734e410d4
-Status: Image is up to date for decentraland/catalyst-lighthouse:latest
-docker.io/decentraland/catalyst-lighthouse:latest
-latest: Pulling from decentraland/archipelago-service
-Digest: sha256:e2c1d6fa96a5cfbbf6fb37e3840c0724fb5abeef8c366025a28fab3ad33d6480
-Status: Image is up to date for quay.io/decentraland/archipelago-service:latest
-quay.io/decentraland/archipelago-service:latest
-latest: Pulling from decentraland/explorer-bff
-Digest: sha256:fa9e305c44972a8613b01f4cd573d6fb84b0fb03ce953a506fbb06053202913c
-Status: Image is up to date for quay.io/decentraland/explorer-bff:latest
-quay.io/decentraland/explorer-bff:latest
-Stopping nginx ... done
-## Using HTTP because CATALYST_URL is set to http://localhost
-## Replacing value $katalyst_host on nginx server file... [ OK ]
-## Restarting containers...
-Creating network "catalyst-owner_default" with the default driver
-Creating catalyst-owner_comms-server_1 ... done
-Creating node-exporter                   ... done
-Creating catalyst-owner_lambdas_1      ... done
-Creating postgres                      ... done
-Creating catalyst-owner_certbot_1        ... done
-Creating nats                            ... done
-Creating postgres-exporter               ... done
-Creating catalyst-owner_content-server_1 ... done
-Creating catalyst-owner_archipelago_1    ... done
-Creating catalyst-owner_explorer-bff_1   ... done
-Creating nats-exporter                   ... done
-Creating cadvisor                        ... done
-Creating nginx                           ... done
-## Catalyst server is up and running at http://localhost
 ```
 
 If all went well, we now have a full Decentraland node running. You can now head to the browser and type the URL. If using the default, it should be [`http://localhost`](http://localhost/).

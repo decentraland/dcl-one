@@ -1615,6 +1615,34 @@ mod tests {
         }
     }
 
+    /// A stamped database gains the stream key notifications with no step.
+    #[test]
+    fn world_authority_notifications_are_in_the_existing_database_plan() {
+        let planned = plan(crate::SCHEMA_SQL).unwrap();
+        assert!(planned.iter().any(|p| matches!(&p.step, Step::Create { object: Object::Function {schema,name}, .. } if schema == "worlds" && name == "notify_world_authority")));
+        for (name, table) in [
+            (
+                "world_scenes_deployed_authority_notify",
+                "worlds.world_scenes",
+            ),
+            (
+                "world_scenes_removed_authority_notify",
+                "worlds.world_scenes",
+            ),
+            ("worlds_owner_authority_notify", "worlds.worlds"),
+            (
+                "world_permissions_authority_notify",
+                "worlds.world_permissions",
+            ),
+            (
+                "world_permission_parcels_authority_notify",
+                "worlds.world_permission_parcels",
+            ),
+        ] {
+            assert!(planned.iter().any(|p| matches!(&p.step, Step::Create { object: Object::Trigger {name:n,table:t}, .. } if n == name && t == table)), "{name}");
+        }
+    }
+
     #[tokio::test]
     async fn existing_catalogue_migration_installs_removal_triggers_and_seeds_once() {
         let Some(pool) = crate::scratch::pool(2).await else {

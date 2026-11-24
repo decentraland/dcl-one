@@ -12,7 +12,7 @@ export type IntercomSettings = {
 type IntercomFn = (...args: unknown[]) => void;
 type IntercomWindow = Window & {
   Intercom?: IntercomFn;
-  intercomSettings?: IntercomSettings & { hide_default_launcher: boolean };
+  intercomSettings?: IntercomSettings;
 };
 
 export const INTERCOM_WIDGET_URL = "https://widget.intercom.io/widget/";
@@ -49,7 +49,7 @@ function installStub(win: IntercomWindow): IntercomStub {
 export function loadIntercom(appId: string, settings: IntercomSettings, doc: Document = document): Promise<void> {
   const win = intercomWindow();
   if (!win) return Promise.reject(new Error("Intercom loads only in the browser"));
-  win.intercomSettings = { ...settings, hide_default_launcher: true };
+  win.intercomSettings = settings;
   let script = Array.from(doc.querySelectorAll<HTMLScriptElement>("script[data-intercom]")).find(
     (candidate) => candidate.dataset.intercom === appId,
   );
@@ -92,7 +92,7 @@ export function showIntercom(): boolean {
 export function useIntercom(appId: string, settings: IntercomSettings, wallet?: string | null): boolean {
   const { alignment } = settings;
   const session = useMemo(
-    () => ({ app_id: appId, alignment, hide_default_launcher: true, ...(wallet ? { Wallet: wallet } : {}) }),
+    () => ({ app_id: appId, alignment, ...(wallet ? { Wallet: wallet } : {}) }),
     [appId, alignment, wallet],
   );
   const [readySession, setReadySession] = useState<typeof session | null>(null);
@@ -105,7 +105,6 @@ export function useIntercom(appId: string, settings: IntercomSettings, wallet?: 
         if (!active || !fn) return;
         fn("ready", () => {
           if (!active) return;
-          fn("update", { hide_default_launcher: false });
           setReadySession(session);
         });
         fn("boot", session);

@@ -22,6 +22,8 @@
 //! scene's content is first on screen. The live scene's containers made before then name the
 //! same files and share the loaded glTFs.
 
+use std::ops::RangeInclusive;
+
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext, LoadState},
     ecs::{component::HookContext, world::DeferredWorld},
@@ -34,7 +36,7 @@ use common::{
     bounds_calc::scene_regions,
     partition::{LoadPriority, Tier},
     sets::SceneSets,
-    structs::{AppConfig, PreviewMode, SceneMeta},
+    structs::{AppConfig, PreviewMode, SceneMeta, FAR_LOD_RINGS, LIVE_SCENE_RINGS, NEAR_LOD_RINGS},
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::{
@@ -65,19 +67,52 @@ use crate::{
     vec3_to_parcel, PrimaryUser, SceneEntity,
 };
 
-/// A scene that is not live starts a near LOD when its nearest parcel is within this Chebyshev
-/// parcel ring of the player's parcel (`Partition::parcel_distance`): about 48 m.
-pub const NEAR_LOD_START_RING: u16 = 3;
+/// The streaming bands, in Chebyshev parcel rings of the player's parcel
+/// (`Partition::parcel_distance`; one ring is 16 m), from the "Live Scene Ring", "Near LOD Ring"
+/// and "Far LOD Ring" settings. Each keep ring is one past its start ring, so a player walking
+/// along an edge does not start and drop a scene or stand-in every few steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Rings {
+    /// a scene with a parcel within this ring goes live whatever the load distance
+    pub(crate) live: u16,
+    /// a live scene is kept until it is past this ring (and past the load distance and margin)
+    pub(crate) live_keep: u16,
+    /// a scene that is not live starts a near LOD within this ring; at or inside the live ring
+    /// that leaves near LODs only to live scenes still loading
+    pub(crate) near_start: u16,
+    /// a near LOD is kept until its scene is past this ring
+    pub(crate) near_keep: u16,
+    /// a far LOD, the pipeline's one mesh for the scene, starts from this ring: past the near
+    /// keep ring, and past the live keep ring when the live ring reaches further
+    pub(crate) far_start: u16,
+    /// the far LOD's outer bound; the imposter tiles may end it sooner
+    /// (`FAR_LOD_MAX_TILE_LEVEL`). Beyond either only the imposters remain
+    pub(crate) far: u16,
+}
 
-/// A near LOD is kept until its scene's nearest parcel is past this ring (about 64 m), so a
-/// player walking along the edge does not start and drop it every few steps.
-pub const NEAR_LOD_KEEP_RING: u16 = 4;
+impl Rings {
+    /// The rings the settings give, each clamped to its setting's range, so a hand-edited config
+    /// cannot widen the parcel scan past it.
+    pub(crate) fn from_config(config: &AppConfig) -> Self {
+        let clamp =
+            |value: u16, range: RangeInclusive<u16>| value.clamp(*range.start(), *range.end());
+        let live = clamp(config.live_scene_ring, LIVE_SCENE_RINGS);
+        let near_start = clamp(config.near_lod_ring, NEAR_LOD_RINGS);
+        Self {
+            live,
+            live_keep: live + 1,
+            near_start,
+            near_keep: near_start + 1,
+            far_start: near_start.max(live) + 2,
+            far: clamp(config.far_lod_ring, FAR_LOD_RINGS),
+        }
+    }
 
-/// A scene that is not live gets a far LOD, the pipeline's one mesh for it, while its nearest
-/// parcel is past the near LOD's keep ring and within this ring (about 320 m), and every parcel
-/// of it lies where the imposters would draw tiles of at most `FAR_LOD_MAX_TILE_LEVEL`. Beyond
-/// either only the imposters remain.
-pub(crate) const FAR_LOD_RING: u16 = 20;
+    /// The ring the stand-ins' parcel scan covers: both LOD bands.
+    pub(crate) fn scan(&self) -> u16 {
+        self.far.max(self.near_keep)
+    }
+}
 
 /// The largest imposter tile level (tiles of 2^level parcels a side) a far LOD may sit in. The
 /// imposters split any tile with a stand-in's parcel in it down to single parcels; keeping far
@@ -184,6 +219,12 @@ impl Plugin for SceneLodPlugin {
                 title: "Scene stand-ins",
                 query: "/scene_lod_state",
                 fields: &[
+                    ("Live scene ring", "rings.live"),
+                    ("Live keep ring", "rings.live_keep"),
+                    ("Near LOD ring", "rings.near"),
+                    ("Near LOD keep ring", "rings.near_keep"),
+                    ("Far LODs start at ring", "rings.far_start"),
+                    ("Far LOD ring", "rings.far"),
                     ("Near LOD colliders", "near.colliders"),
                     ("Near LODs shown", "near.shown"),
                     ("Near LODs loading", "near.loading"),
@@ -310,8 +351,8 @@ fn set_lod_tint(mut input: ConsoleCommand<LodTintCommand>, mut tint: ResMut<LodT
 #[command(name = "/scene_lod_state")]
 struct LodStateCommand;
 
-/// The stand-ins by state, for the Scene stand-ins debug section, with the far LODs' missing
-/// meshes and breaker (`IpfsIo::bevy_far_lod`): `paused_s` is null unless far LODs are paused.
+/// The active rings and the stand-ins by state, for the Scene stand-ins debug section, with the
+/// far LODs' missing meshes and breaker (`IpfsIo::bevy_far_lod`): `paused_s` is null unless far LODs are paused.
 /// `colliders` counts near LODs whose colliders part has started.
 fn lod_state(
     mut input: ConsoleCommand<LodStateCommand>,
@@ -351,7 +392,16 @@ fn lod_state(
     far["missing"] = json!(health.missing);
     far["failures"] = json!(health.failures);
     far["paused_s"] = json!(health.paused_for.map(|left| left.as_secs()));
-    input.reply_ok(json!({"tint": tint.0, "near": near, "far": far}).to_string());
+    let rings = Rings::from_config(&config);
+    let rings = json!({
+        "live": rings.live,
+        "live_keep": rings.live_keep,
+        "near": rings.near_start,
+        "near_keep": rings.near_keep,
+        "far_start": rings.far_start,
+        "far": rings.far,
+    });
+    input.reply_ok(json!({"tint": tint.0, "rings": rings, "near": near, "far": far}).to_string());
 }
 
 fn level_counts([waiting, loading, shown, none, _]: [u32; 5]) -> serde_json::Value {
@@ -376,9 +426,9 @@ pub struct SceneLod {
     /// placed at: its mesh is relative to it
     base: Option<IVec2>,
     /// the scene's parcels: those the realm's pointers name within the level's ring (the near
-    /// LOD's keep ring, the far ring), which are all its partition needs; a near LOD's become all
-    /// of them once its entity definition is loaded. A far LOD's stay those within the far ring:
-    /// its bounds and the parcels the imposters leave to it
+    /// LOD's keep ring, the scan ring), which are all its partition needs; a near LOD's become all
+    /// of them once its entity definition is loaded. A far LOD's stay those within the scan ring
+    /// (`Rings::scan`): its bounds and the parcels the imposters leave to it
     pub parcels: Vec<IVec2>,
     pub state: LodState,
     pub visuals: Visuals,
@@ -558,14 +608,16 @@ fn mark_shown_scenes(
     }
 }
 
-/// The scenes within the far ring of the player's parcel, by hash, from the realm's pointers:
-/// the urn, the base parcel, the ring of the nearest parcel (the ring `scene_partition`
-/// measures), the parcels within the ring and whether a far LOD fits them. Read again only when
-/// the player's parcel, the pointers, the preview state or the imposters' tile layout changes.
+/// The scenes within the scan ring of the player's parcel (`Rings::scan`), by hash, from the
+/// realm's pointers: the urn, the base parcel, the ring of the nearest parcel (the ring
+/// `scene_partition` measures), the parcels within the scan ring and whether a far LOD fits
+/// them. Read again only when the player's parcel, the scan ring, the pointers, the preview state
+/// or the imposters' tile layout changes.
 #[derive(Default)]
 struct ScenesInRange {
-    /// what the scenes were read for: the player's parcel, the pointers' generation and preview
-    read_for: Option<(IVec2, u64, bool)>,
+    /// what the scenes were read for: the player's parcel, the scan ring, the pointers'
+    /// generation and preview
+    read_for: Option<(IVec2, u16, u64, bool)>,
     scenes: HashMap<String, InRange>,
 }
 
@@ -583,16 +635,17 @@ impl ScenesInRange {
     fn read(
         &mut self,
         center: IVec2,
+        scan: u16,
         is_preview: bool,
         pointers: &ScenePointers,
         tiling: &ImposterTiling,
     ) {
-        self.read_for = Some((center, pointers.generation(), is_preview));
+        self.read_for = Some((center, scan, pointers.generation(), is_preview));
         self.scenes.clear();
         if is_preview || pointers.min() == IVec2::MAX {
             return;
         }
-        let ring = IVec2::splat(FAR_LOD_RING as i32);
+        let ring = IVec2::splat(scan as i32);
         let min = (center - ring).max(pointers.min());
         let max = (center + ring).min(pointers.max());
         for x in min.x..=max.x {
@@ -621,13 +674,13 @@ impl ScenesInRange {
 /// Which scenes have which stand-in, in a realm (never in preview), for a scene whose content
 /// has not been on screen. A near LOD while a parcel of it is within the near keep ring; only one
 /// within the start ring starts (`start_scene_lods`), and one between the two rings is kept, or
-/// waits. A far LOD while the realm listed its base parcel and its parcels within the far ring
-/// fit the imposter tiles, whether or not a near LOD of the scene shows: its visuals stop while
-/// the near LOD's show, and inside the near keep ring they start only to stand in for a near LOD
-/// that is not drawn (`lod_visual_changes`). A stand-in goes when its scene's content is first
-/// shown, when the scene leaves its band, or when the realm's pointers no longer name it. A far
-/// LOD's parcels are those it was spawned with. The far LOD's edge follows the imposter tiles
-/// with no hysteresis: see `FAR_LOD_MAX_TILE_LEVEL`.
+/// waits. A far LOD while its scene is within the far ring, the realm listed its base parcel and
+/// its parcels within the scan ring fit the imposter tiles, whether or not a near LOD of the scene
+/// shows: its visuals stop while the near LOD's show, and before the far start ring they start
+/// only to stand in for a near LOD that is not drawn (`lod_visual_changes`). A stand-in goes when
+/// its scene's content is first shown, when the scene leaves its band, or when the realm's
+/// pointers no longer name it. A far LOD's parcels are those it was spawned with. The far LOD's
+/// edge follows the imposter tiles with no hysteresis: see `FAR_LOD_MAX_TILE_LEVEL`.
 fn update_scene_lods(
     mut commands: Commands,
     preview: Res<PreviewMode>,
@@ -638,16 +691,24 @@ fn update_scene_lods(
     mut lods: Query<(Entity, &mut SceneLod)>,
     tiling: Res<ImposterTiling>,
     ipfs: Res<IpfsResource>,
+    config: Res<AppConfig>,
     mut in_range: Local<ScenesInRange>,
 ) {
     let Ok(focus) = focus.single() else {
         return;
     };
+    let rings = Rings::from_config(&config);
     let center = vec3_to_parcel(focus.translation());
-    if in_range.read_for != Some((center, pointers.generation(), preview.is_preview))
+    if in_range.read_for
+        != Some((
+            center,
+            rings.scan(),
+            pointers.generation(),
+            preview.is_preview,
+        ))
         || tiling.is_changed()
     {
-        in_range.read(center, preview.is_preview, &pointers, &tiling);
+        in_range.read(center, rings.scan(), preview.is_preview, &pointers, &tiling);
     }
     let scenes = &in_range.scenes;
     // no far LOD can be offered this session: none is kept or spawned
@@ -665,15 +726,18 @@ fn update_scene_lods(
         let scene = scenes.get_key_value(lod.hash.as_str());
         let keep = !shown(&lod.hash)
             && match lod.level {
-                LodLevel::Near => scene.is_some_and(|(_, scene)| scene.ring <= NEAR_LOD_KEEP_RING),
-                LodLevel::Far => !far_off && scene.is_some_and(|(_, scene)| scene.far_fits),
+                LodLevel::Near => scene.is_some_and(|(_, scene)| scene.ring <= rings.near_keep),
+                LodLevel::Far => {
+                    !far_off
+                        && scene.is_some_and(|(_, scene)| scene.ring <= rings.far && scene.far_fits)
+                }
             };
         if let (true, Some((hash, scene))) = (keep, scene) {
             // until its entity definition gives all of them, a near LOD's parcels are those
             // within the keep ring now: its partition, and so whether it starts, reads them
             let unknown = matches!(lod.state, LodState::Pending | LodState::Definition(_));
             if lod.level == LodLevel::Near && unknown {
-                let parcels = near_parcels(&scene.parcels, center);
+                let parcels = near_parcels(&scene.parcels, center, rings.near_keep);
                 if lod.parcels != parcels {
                     lod.parcels = parcels;
                 }
@@ -689,16 +753,14 @@ fn update_scene_lods(
         if shown(hash) {
             continue;
         }
-        let near = scene.ring <= NEAR_LOD_KEEP_RING;
-        for (level, wanted) in [
-            (LodLevel::Near, near),
-            (LodLevel::Far, scene.far_fits && !far_off),
-        ] {
+        let near = scene.ring <= rings.near_keep;
+        let far = !far_off && scene.ring <= rings.far && scene.far_fits;
+        for (level, wanted) in [(LodLevel::Near, near), (LodLevel::Far, far)] {
             if !wanted || existing.contains(&(hash.as_str(), level)) {
                 continue;
             }
             let parcels = match level {
-                LodLevel::Near => near_parcels(&scene.parcels, center),
+                LodLevel::Near => near_parcels(&scene.parcels, center, rings.near_keep),
                 LodLevel::Far => scene.parcels.clone(),
             };
             commands.spawn((
@@ -723,11 +785,11 @@ fn update_scene_lods(
 
 /// A scene's parcels within the near keep ring of `center`: a near LOD's until its entity
 /// definition gives all of them.
-fn near_parcels(parcels: &[IVec2], center: IVec2) -> Vec<IVec2> {
+fn near_parcels(parcels: &[IVec2], center: IVec2, near_keep: u16) -> Vec<IVec2> {
     parcels
         .iter()
         .copied()
-        .filter(|parcel| (*parcel - center).abs().max_element() <= NEAR_LOD_KEEP_RING as i32)
+        .filter(|parcel| (*parcel - center).abs().max_element() <= near_keep as i32)
         .collect()
 }
 
@@ -737,22 +799,23 @@ type LodRow<'a> = (Entity, &'a SceneLod, Option<&'a Partition>);
 /// whatever the facing: the ring bounds how many start, and each loads its colliders part and
 /// nothing drawn. A far LOD wherever it exists (`update_scene_lods` keeps it to its band): starting
 /// only names its mesh.
-fn may_start(level: LodLevel, partition: Option<&Partition>) -> bool {
+fn may_start(level: LodLevel, partition: Option<&Partition>, rings: &Rings) -> bool {
     partition.is_some_and(|partition| match level {
-        LodLevel::Near => partition.0.parcel_distance <= NEAR_LOD_START_RING,
+        LodLevel::Near => partition.0.parcel_distance <= rings.near_start,
         LodLevel::Far => true,
     })
 }
 
 /// Whether a stand-in's visuals may start where its scene is, not wholly behind the camera: a
-/// near LOD's within the start ring; a far LOD's past the near keep ring, or nearer when its
-/// scene's near LOD is not drawn (`near_waiting`), which between the start and keep rings is
-/// whenever its visuals are not already shown: they cannot start there.
-fn in_draw_band(level: LodLevel, partition: &Partition, near_waiting: bool) -> bool {
+/// near LOD's within the near start ring; a far LOD's from the far start ring, or nearer when its
+/// scene's near LOD is not drawn (`near_waiting`), which past the near start ring is whenever its
+/// visuals are not already shown: they cannot start there. `update_scene_lods` keeps far LODs
+/// within the far ring.
+fn in_draw_band(level: LodLevel, partition: &Partition, near_waiting: bool, rings: &Rings) -> bool {
     !partition.0.is_behind
         && match level {
-            LodLevel::Near => partition.0.parcel_distance <= NEAR_LOD_START_RING,
-            LodLevel::Far => partition.0.parcel_distance > NEAR_LOD_KEEP_RING || near_waiting,
+            LodLevel::Near => partition.0.parcel_distance <= rings.near_start,
+            LodLevel::Far => partition.0.parcel_distance >= rings.far_start || near_waiting,
         }
 }
 
@@ -768,6 +831,7 @@ fn visual_changes(
     level: LodLevel,
     max: usize,
     near_waiting: &HashSet<&str>,
+    rings: &Rings,
     max_starts: usize,
     blocked: &HashSet<&str>,
 ) -> (Vec<Entity>, Vec<Entity>) {
@@ -801,7 +865,12 @@ fn visual_changes(
         .filter_map(|(entity, lod, partition)| {
             partition
                 .filter(|partition| {
-                    in_draw_band(level, partition, near_waiting.contains(lod.hash.as_str()))
+                    in_draw_band(
+                        level,
+                        partition,
+                        near_waiting.contains(lod.hash.as_str()),
+                        rings,
+                    )
                 })
                 .map(|partition| (partition.0.load_priority(Tier::Lod), *entity))
         })
@@ -844,12 +913,14 @@ fn lod_visual_changes(
     config: &AppConfig,
     far_max_starts: usize,
 ) -> (Vec<Entity>, Vec<Entity>) {
+    let rings = Rings::from_config(config);
     let none = HashSet::new();
     let (mut start, mut stop) = visual_changes(
         lods,
         LodLevel::Near,
         config.max_near_lods,
         &none,
+        &rings,
         usize::MAX,
         &none,
     );
@@ -861,7 +932,7 @@ fn lod_visual_changes(
             else {
                 return false;
             };
-            if in_draw_band(LodLevel::Near, partition, false) {
+            if in_draw_band(LodLevel::Near, partition, false, &rings) {
                 match (&lod.state, &lod.visuals) {
                     (LodState::Ready(_), Visuals::Off) => !start.contains(entity),
                     (LodState::Ready(_), Visuals::Loading | Visuals::Shown) => {
@@ -873,7 +944,7 @@ fn lod_visual_changes(
             } else {
                 // between the start and keep rings a near LOD's visuals cannot start: unless
                 // they already show, it is not drawn, so the far LOD may stand in there too
-                partition.0.parcel_distance <= NEAR_LOD_KEEP_RING
+                partition.0.parcel_distance <= rings.near_keep
                     && !(lod.visuals.started() && !stop.contains(entity))
             }
         })
@@ -891,6 +962,7 @@ fn lod_visual_changes(
         LodLevel::Far,
         config.max_far_lods,
         &near_waiting,
+        &rings,
         far_max_starts,
         &near_drawn,
     );
@@ -926,16 +998,18 @@ fn start_scene_lods(
     live_scenes: Res<LiveScenes>,
     contexts: Query<(), With<RendererSceneContext>>,
     ipfas: IpfsAssetServer,
+    config: Res<AppConfig>,
     // absent without the render storage-buffer assets (tests), as for the live scene's bounds
     mut storage_buffers: Option<ResMut<Assets<ShaderStorageBuffer>>>,
 ) {
+    let rings = Rings::from_config(&config);
     // set once a far LOD's source is not known yet: the answer is the same for every scene
     let mut far_not_yet = false;
     for (root, lod, partition) in lods.iter_mut() {
         let lod = lod.into_inner();
         match &lod.state {
             LodState::Pending => {
-                if !may_start(lod.level, partition) {
+                if !may_start(lod.level, partition, &rings) {
                     continue;
                 }
                 if lod.level == LodLevel::Far {
@@ -1284,8 +1358,8 @@ fn scene_placement(definition: &EntityDefinition) -> Option<(IVec2, Vec<IVec2>)>
 }
 
 /// Shows a stand-in's visuals in one frame once each of its visuals containers is processed:
-/// some model loaded, or nothing to show if none did (the parcels then stay the loading walls'
-/// and the imposters'; the colliders part stays).
+/// some model loaded, or nothing to show if none did (the parcels then stay the imposters'; the
+/// colliders part stays).
 fn show_scene_lods(
     mut commands: Commands,
     mut lods: Query<(
@@ -1438,11 +1512,13 @@ mod tests {
         rows: &[(Entity, SceneLod, Partition)],
         max: usize,
     ) -> (Vec<Entity>, Vec<Entity>) {
+        let rings = Rings::from_config(&AppConfig::default());
         visual_changes(
             &as_rows(rows),
             LodLevel::Near,
             max,
             &HashSet::new(),
+            &rings,
             usize::MAX,
             &HashSet::new(),
         )
@@ -1452,25 +1528,115 @@ mod tests {
     /// far LOD starts wherever it exists.
     #[test]
     fn colliders_start_by_distance_alone() {
+        let rings = Rings::from_config(&AppConfig::default());
         let near = LodLevel::Near;
-        assert!(may_start(near, Some(&at_ring(1, true))));
-        assert!(may_start(near, Some(&at_ring(NEAR_LOD_START_RING, false))));
-        assert!(!may_start(near, Some(&at_ring(NEAR_LOD_KEEP_RING, false))));
-        assert!(!may_start(near, None));
-        assert!(may_start(LodLevel::Far, Some(&at_ring(9, true))));
+        assert!(may_start(near, Some(&at_ring(1, true)), &rings));
+        assert!(may_start(
+            near,
+            Some(&at_ring(rings.near_start, false)),
+            &rings
+        ));
+        assert!(!may_start(
+            near,
+            Some(&at_ring(rings.near_keep, false)),
+            &rings
+        ));
+        assert!(!may_start(near, None, &rings));
+        assert!(may_start(LodLevel::Far, Some(&at_ring(9, true)), &rings));
     }
 
-    /// Near visuals draw within ring 3; far visuals past ring 4, or nearer only when the scene's
-    /// near LOD is not drawn; neither when the scene is wholly behind the camera.
+    fn from_settings(live_scene_ring: u16, near_lod_ring: u16, far_lod_ring: u16) -> Rings {
+        Rings::from_config(&AppConfig {
+            live_scene_ring,
+            near_lod_ring,
+            far_lod_ring,
+            ..Default::default()
+        })
+    }
+
+    /// At the default rings near visuals draw within ring 3; far visuals past ring 4, or nearer
+    /// only when the scene's near LOD is not drawn; neither when the scene is wholly behind the
+    /// camera.
     #[test]
     fn visuals_draw_in_their_bands() {
-        assert!(in_draw_band(LodLevel::Near, &at_ring(3, false), false));
-        assert!(!in_draw_band(LodLevel::Near, &at_ring(4, false), false));
-        assert!(!in_draw_band(LodLevel::Near, &at_ring(2, true), false));
-        assert!(in_draw_band(LodLevel::Far, &at_ring(5, false), false));
-        assert!(!in_draw_band(LodLevel::Far, &at_ring(3, false), false));
-        assert!(in_draw_band(LodLevel::Far, &at_ring(3, false), true));
-        assert!(!in_draw_band(LodLevel::Far, &at_ring(6, true), false));
+        let rings = Rings::from_config(&AppConfig::default());
+        assert_eq!(rings, rings_of(1, 2, 3, 4, 5, 20));
+        let band =
+            |level, ring, behind, over| in_draw_band(level, &at_ring(ring, behind), over, &rings);
+        assert!(band(LodLevel::Near, 3, false, false));
+        assert!(!band(LodLevel::Near, 4, false, false));
+        assert!(!band(LodLevel::Near, 2, true, false));
+        assert!(band(LodLevel::Far, 5, false, false));
+        assert!(!band(LodLevel::Far, 3, false, false));
+        assert!(band(LodLevel::Far, 3, false, true));
+        assert!(!band(LodLevel::Far, 6, true, false));
+    }
+
+    fn rings_of(
+        live: u16,
+        live_keep: u16,
+        near_start: u16,
+        near_keep: u16,
+        far_start: u16,
+        far: u16,
+    ) -> Rings {
+        Rings {
+            live,
+            live_keep,
+            near_start,
+            near_keep,
+            far_start,
+            far,
+        }
+    }
+
+    /// The bands follow the ring settings: a wider near ring pushes the far LODs out with it.
+    #[test]
+    fn stand_ins_follow_the_ring_settings() {
+        let rings = from_settings(1, 6, 30);
+        assert_eq!(rings, rings_of(1, 2, 6, 7, 8, 30));
+        let band = |level, ring| in_draw_band(level, &at_ring(ring, false), false, &rings);
+        assert!(band(LodLevel::Near, 6));
+        assert!(!band(LodLevel::Near, 7));
+        assert!(!band(LodLevel::Far, 7));
+        assert!(band(LodLevel::Far, 8));
+        assert_eq!(rings.scan(), 30);
+    }
+
+    /// A near ring at or inside the live ring leaves no near band of its own, and the far LODs
+    /// start past the live keep ring; a far ring inside the near keep ring leaves no normal
+    /// far-start band (far LODs may still stand in for near LODs not drawn), and the
+    /// scan still covers the near one.
+    #[test]
+    fn overlapping_rings_stay_ordered() {
+        let rings = from_settings(3, 1, 20);
+        assert_eq!(rings, rings_of(3, 4, 1, 2, 5, 20));
+        assert!(!in_draw_band(
+            LodLevel::Far,
+            &at_ring(4, false),
+            false,
+            &rings
+        ));
+        assert!(in_draw_band(
+            LodLevel::Far,
+            &at_ring(5, false),
+            false,
+            &rings
+        ));
+
+        let rings = from_settings(1, 8, 5);
+        assert_eq!(rings, rings_of(1, 2, 8, 9, 10, 5));
+        assert_eq!(rings.scan(), 9);
+    }
+
+    /// Values past a setting's range, as a hand-edited config could hold, are clamped to it.
+    #[test]
+    fn rings_are_clamped_to_their_settings() {
+        assert_eq!(
+            from_settings(u16::MAX, 0, u16::MAX),
+            rings_of(3, 4, 1, 2, 5, 40)
+        );
+        assert_eq!(from_settings(0, u16::MAX, 0), rings_of(0, 1, 8, 9, 10, 5));
     }
 
     /// A scene whose near visuals find no place draws its far LOD in their stead, under the far
@@ -1527,7 +1693,7 @@ mod tests {
     #[test]
     fn a_far_lod_stands_in_between_the_near_rings() {
         let mut world = World::new();
-        let ring = NEAR_LOD_KEEP_RING;
+        let ring = Rings::from_config(&AppConfig::default()).near_keep;
         let near = |world: &mut World, state, visuals| {
             (
                 world.spawn_empty().id(),
@@ -1776,6 +1942,7 @@ mod tests {
         world.init_resource::<LiveScenes>();
         world.init_resource::<ImposterTiling>();
         world.insert_resource(ipfs_resource_with_base());
+        world.init_resource::<AppConfig>();
         let mut pointers = ScenePointers::default();
         pointers.set_realm(IVec2::splat(-20), IVec2::splat(20));
         for x in 0..=10 {
@@ -1880,6 +2047,7 @@ mod tests {
         world.init_resource::<PreviewMode>();
         world.init_resource::<ImposterTiling>();
         world.insert_resource(ipfs_resource_with_base());
+        world.init_resource::<AppConfig>();
         let mut pointers = ScenePointers::default();
         pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
         pointers.insert(

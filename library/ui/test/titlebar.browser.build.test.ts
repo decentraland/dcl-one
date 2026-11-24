@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/titlebar-browser.tsx')
 async function navigate(variant: string, width = 1920, closed = false, routes = false) {
@@ -483,20 +483,25 @@ for (const variant of ['settings', 'shop'])
             for (const box of buttons) expect(box.height).toBe(44)
           }
         )
-      it('should keep the route boundary and selected cue under forced colors', async () => {
-        await navigate(variant, 1920, true, true)
-        await browser.session.send('Emulation.setEmulatedMedia', {
-          features: [{ name: 'forced-colors', value: 'active' }]
+      describe('and forced colors are active', () => {
+        beforeEach(async () => {
+          await navigate(variant, 1920, true, true)
+          await browser.session.send('Emulation.setEmulatedMedia', {
+            features: [{ name: 'forced-colors', value: 'active' }]
+          })
         })
-        try {
+
+        afterEach(async () => {
+          await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
+        })
+
+        it('should keep the route boundary and selected cue', async () => {
           expect(
             await browser.evaluate(
               `(()=>{const c=document.querySelector('[aria-current=page]'),o=document.querySelector('nav a:not([aria-current])'),p=getComputedStyle(c,'::after'),b=getComputedStyle(o);return{cue:p.borderTopStyle+' '+p.borderTopWidth,boundary:b.borderTopStyle+' '+b.borderTopWidth+' '+(b.borderTopColor==='rgba(0, 0, 0, 0)')}})()`
             )
           ).toEqual({ cue: 'solid 2px', boundary: 'solid 1px false' })
-        } finally {
-          await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
-        }
+        })
       })
     }
   )
@@ -542,25 +547,40 @@ for (const variant of ['shop', 'places', 'backpack'])
         `(()=>{const i=document.querySelector('[data-control=search] input'),a=getComputedStyle(i),c=getComputedStyle(i.parentElement);return{focused:document.activeElement===i,input:{outline:a.outlineStyle,shadow:a.boxShadow},box:{outline:c.outlineStyle,color:c.outlineColor,offset:c.outlineOffset,shadow:c.boxShadow}}})()`
       )
     }
-    it('should draw one contour flush on the search box and none on the inner input', async () => {
-      const focus = await focusSearch()
-      expect(focus.focused).toBe(true)
-      expect(focus.input).toEqual({ outline: 'none', shadow: 'none' })
-      expect(focus.box).toEqual({
-        outline: 'solid',
-        color: 'rgba(0, 0, 0, 0)',
-        offset: '0px',
-        shadow: 'color(srgb 1 1 1 / 0.7) 0px 0px 0px 3px'
+    type Focus = Awaited<ReturnType<typeof focusSearch>>
+    describe('and the default focus style is used', () => {
+      let focus: Focus
+
+      beforeEach(async () => {
+        focus = await focusSearch()
+      })
+
+      it('should draw one contour flush on the search box and none on the inner input', async () => {
+        expect(focus.focused).toBe(true)
+        expect(focus.input).toEqual({ outline: 'none', shadow: 'none' })
+        expect(focus.box).toEqual({
+          outline: 'solid',
+          color: 'rgba(0, 0, 0, 0)',
+          offset: '0px',
+          shadow: 'color(srgb 1 1 1 / 0.7) 0px 0px 0px 3px'
+        })
       })
     })
-    it('should keep the earlier offset ring only when the comparison parameter asks for it', async () => {
-      const focus = await focusSearch('&searchfocus=offset')
-      expect(focus.input).toEqual({ outline: 'none', shadow: 'none' })
-      expect(focus.box).toEqual({
-        outline: 'solid',
-        color: 'rgb(252, 252, 252)',
-        offset: '2px',
-        shadow: 'none'
+    describe('and the comparison parameter asks for the earlier offset ring', () => {
+      let focus: Focus
+
+      beforeEach(async () => {
+        focus = await focusSearch('&searchfocus=offset')
+      })
+
+      it('should keep the earlier offset ring', async () => {
+        expect(focus.input).toEqual({ outline: 'none', shadow: 'none' })
+        expect(focus.box).toEqual({
+          outline: 'solid',
+          color: 'rgb(252, 252, 252)',
+          offset: '2px',
+          shadow: 'none'
+        })
       })
     })
   })
@@ -613,46 +633,58 @@ for (const [variant, name, id] of panels)
       })
       expect(state.options).toBeGreaterThanOrEqual(2)
     })
-    it('should close on Escape from inside the panel and return focus to its trigger', async () => {
-      await open()
-      await browser.evaluate(`document.querySelector('#${id} input').focus()`)
-      await press('Escape', 'Escape', 27)
-      expect(await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)).toBe(
-        true
-      )
-      expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
-      expect(await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')).toBe(
-        'false'
-      )
-    })
-    it('should close on Escape while focus is still on its trigger and keep focus there', async () => {
-      await open()
-      expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
-      await press('Escape', 'Escape', 27)
-      expect(await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)).toBe(
-        true
-      )
-      expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
-      expect(await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')).toBe(
-        'false'
-      )
-    })
-    it('should close when the pointer presses outside the toolbar', async () => {
-      await open()
-      await clickControl('main > p')
-      expect(await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)).toBe(
-        true
-      )
-      expect(await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')).toBe(
-        'false'
-      )
-    })
-    it('should keep the panel open when the pointer presses inside it', async () => {
-      await open()
-      await clickControl('#' + id + ' label')
-      expect(await browser.evaluate(`document.getElementById(${JSON.stringify(id)})!==null`)).toBe(
-        true
-      )
+    describe('and the panel is open', () => {
+      beforeEach(async () => {
+        await open()
+      })
+
+      it('should close on Escape from inside the panel and return focus to its trigger', async () => {
+        await browser.evaluate(`document.querySelector('#${id} input').focus()`)
+        await press('Escape', 'Escape', 27)
+        expect(
+          await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)
+        ).toBe(true)
+        expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
+        expect(await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')).toBe(
+          'false'
+        )
+      })
+      it('should close on Escape while focus is still on its trigger and keep focus there', async () => {
+        expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
+        await press('Escape', 'Escape', 27)
+        expect(
+          await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)
+        ).toBe(true)
+        expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
+        expect(await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')).toBe(
+          'false'
+        )
+      })
+      describe('and the pointer presses outside the toolbar', () => {
+        beforeEach(async () => {
+          await clickControl('main > p')
+        })
+
+        it('should close the panel', async () => {
+          expect(
+            await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)
+          ).toBe(true)
+          expect(
+            await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')
+          ).toBe('false')
+        })
+      })
+      describe('and the pointer presses inside it', () => {
+        beforeEach(async () => {
+          await clickControl('#' + id + ' label')
+        })
+
+        it('should keep the panel open', async () => {
+          expect(
+            await browser.evaluate(`document.getElementById(${JSON.stringify(id)})!==null`)
+          ).toBe(true)
+        })
+      })
     })
   })
 describe('when a shop sort option is chosen', () => {

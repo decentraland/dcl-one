@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactNode } from "react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DownloadOption } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip } from "@/data/lib/download/mac-chip";
@@ -11,9 +11,14 @@ import { track } from "@/core/lib/telemetry/track";
 import CreatorHubDownloadPage from "./CreatorHubDownloadPage";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../creators/components/SubNav", () => ({ SubNav: () => null }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+// A document whose analytics is ready: its page view has been sent.
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => fire(),
+}));
 vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/data/lib/download/mac-chip")>()),
   detectMacChip: vi.fn(() => "unknown"),
@@ -154,4 +159,38 @@ it("copies the page's link where there is no share sheet", async () => {
   expect(await navigator.clipboard.readText()).toBe("http://localhost/download/creator-hub");
   expect(await screen.findByRole("button", { name: "Link copied" })).toBeTruthy();
   expect(track).toHaveBeenCalledWith("lp_creatorhub_link_shared", { method: "copy" }, expect.anything());
+});
+
+describe("legacy Click (inventory 2.1.a)", () => {
+  const clicks = () => vi.mocked(track).mock.calls.filter(([event]) => event === "Click");
+  beforeEach(() => vi.mocked(detectMacChip).mockReturnValue("unknown"));
+
+  it("row 25: the main button sends place Download / creator_hub with no os, no correlation, not a conversion", async () => {
+    sessionStorage.clear();
+    render(<CreatorHubDownloadPage {...onMac} />);
+    await user().click(main());
+    expect(clicks()).toHaveLength(1);
+    const [, props, ctx] = clicks()[0]!;
+    expect(props).toMatchObject({ place: "Download", event: "Download", download_target: "creator_hub" });
+    expect(props).not.toHaveProperty("os");
+    expect(props).not.toHaveProperty("click_id");
+    expect(sessionStorage.getItem("downloadFunnel:lastClick")).toBeNull();
+    expect(ctx).toEqual({ sid: "s1", legacy: true });
+  });
+
+  it("row 26: another build names its system", async () => {
+    render(<CreatorHubDownloadPage {...onMac} />);
+    await user().click(screen.getByRole("link", { name: "Download for Windows" }));
+    expect(clicks()[0]![1]).toMatchObject({ place: "Download", event: "Download", download_target: "creator_hub", os: "Windows" });
+  });
+
+  it("keeps lp_creatorhub_download_clicked unchanged beside it", async () => {
+    render(<CreatorHubDownloadPage {...onMac} />);
+    await user().click(screen.getByRole("link", { name: "Download for macOS (Intel)" }));
+    expect(track).toHaveBeenCalledWith(
+      "lp_creatorhub_download_clicked",
+      { os: "macos", arch: "amd64", file_name: "hub-mac-x64.dmg", kind: "secondary" },
+      { sid: "s1", story: "landings/creator-hub-download" },
+    );
+  });
 });

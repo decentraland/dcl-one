@@ -31,7 +31,7 @@ import { splitEvents } from '@explorer-core/features/lobby/lobbyEvents'
 import { parseGotoTarget, randomParcel, worldName } from '@explorer-core/features/lobby/goto'
 import * as lobbyAnalytics from '@explorer-core/features/lobby/lobbyAnalytics'
 import type { Community, EventData, Friend } from '@explorer-core/engine/protocol'
-import { clip } from '../backpack/BackpackModal'
+import { modalHole } from '../backpack/BackpackModal'
 import { EngineViewport } from '../engine/EngineViewport'
 import { DEGREES_PER_PX } from '../engine/AvatarDragSurface'
 import { openCommunityModal } from '../communities/CommunityModal'
@@ -60,6 +60,7 @@ import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
+const RAIL_MAX_CARDS = 10
 /** Pixels a press on the avatar travels before it turns the avatar instead of opening the Backpack. */
 const DRAG_THRESHOLD = 8
 /** Pixels from the pointer. */
@@ -70,9 +71,11 @@ const CROWD_ERROR = 'The most crowded place could not be found. Please try again
 const FRIEND_UNKNOWN = 'Your friend’s location could not be found. Please try again.'
 
 // The Backpack's preview runs past its modal's edge; only the part inside the modal is a hole.
-function clipToModal(rect: Rect | null): { x: number; y: number; width: number; height: number } | null {
-  const frame = document.querySelector('[role="dialog"][aria-label="Backpack"]')?.getBoundingClientRect()
-  return rect == null || frame == null ? rect : clip({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }, frame)
+function clipToModal(rect: Rect | null): ReturnType<typeof modalHole> {
+  if (rect == null) return null
+  const frame = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Backpack"]')
+  const whole = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+  return frame == null ? { rect: whole, round: { topLeft: 0, topRight: 0, bottomRight: 0, bottomLeft: 0 } } : modalHole(whole, frame)
 }
 
 /** Until the engine has drawn the stage, so the lobby never shows an empty or half-loaded centre. */
@@ -338,8 +341,8 @@ export function LobbyHome({
     friendsLoading: session.friends.loading,
     totalFriends: session.friends.list.length,
     locations,
-    communities: session.lobbyData.communitiesLoaded ? session.communities.list : null,
-    photos: reel.loaded ? reel.photos.slice(0, 10) : null,
+    communities: session.lobbyData.communitiesLoaded ? session.communities.list.slice(0, RAIL_MAX_CARDS) : null,
+    photos: reel.loaded ? reel.photos.slice(0, RAIL_MAX_CARDS) : null,
     busy,
     friendsAt,
     onFriendHover: (friend, e) => {
@@ -467,7 +470,13 @@ export function LobbyHome({
     return el != null ? el.getBoundingClientRect().width / (el.offsetWidth || 1) || 1 : 1
   }
   const holeScale = hole == null ? 1 : canvasScale()
-  const backpackHole = hole == null ? undefined : holeClip({ x: hole.x / holeScale, y: hole.y / holeScale, width: hole.width / holeScale, height: hole.height / holeScale })
+  const backpackHole =
+    hole == null
+      ? undefined
+      : holeClip(
+          { x: hole.rect.x / holeScale, y: hole.rect.y / holeScale, width: hole.rect.width / holeScale, height: hole.rect.height / holeScale },
+          { topLeft: hole.round.topLeft / holeScale, topRight: hole.round.topRight / holeScale, bottomRight: hole.round.bottomRight / holeScale, bottomLeft: hole.round.bottomLeft / holeScale }
+        )
 
   const placeAt = (el: HTMLElement | null, at: { x: number; y: number }): void => {
     if (el == null) return

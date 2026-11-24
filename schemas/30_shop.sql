@@ -71,6 +71,9 @@ CREATE TABLE shop.trade_assets (
 CREATE INDEX idx_trade_assets_trade ON shop.trade_assets (trade_id);
 -- /v1/activity (trades_of_address): WHERE beneficiary = $1 ORDER BY created_at DESC LIMIT.
 CREATE INDEX idx_trade_assets_beneficiary_created ON shop.trade_assets (beneficiary, created_at DESC) WHERE beneficiary IS NOT NULL;
+-- The open trades of the contracts a Shop read names (unified_trades_cte_of):
+-- WHERE direction = 'sent' AND contract_address IN (...).
+CREATE INDEX idx_trade_assets_sent_contract ON shop.trade_assets (contract_address) WHERE direction = 'sent';
 
 CREATE TABLE shop.trade_assets_erc721 (
     asset_id uuid NOT NULL UNIQUE REFERENCES shop.trade_assets(id) ON DELETE CASCADE,
@@ -373,12 +376,48 @@ CREATE TABLE shop.chain_cursor (
     full_history boolean NOT NULL,
     reorg_rewinds integer NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    -- The chain the history was read from, as the source proved it; NULL on
+    -- a row written before the binding until a pass proves it (not ready).
+    chain_id bigint,
+    -- Raised by the job that takes the projection, on the session holding
+    -- its lease; every write to the projection checks it before commit.
+    owner_generation bigint NOT NULL DEFAULT 0,
+    -- A history not proven on the expected chain: not walked, rewound or
+    -- published until an operator revalidates or rebuilds it.
+    quarantined_at timestamp without time zone,
+    quarantine_reason text,
+    -- Set by an operator: the owner rebuilds the projection from its start
+    -- block with its own cleanup, in a fenced transaction.
+    rebuild_requested_at timestamp without time zone,
+    -- Set when the cursor block was found on another branch than its stored
+    -- hash, with the publication withdrawn, while the recovery searches;
+    -- cleared by the rewind or by a pass that proves the cursor again.
+    -- Readers of the height without the publication skip it meanwhile.
+    diverged_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
-    CONSTRAINT chain_cursor_hash_shape CHECK (last_block_hash IS NULL OR last_block_hash ~ '^0x[0-9a-f]{64}$')
+    CONSTRAINT chain_cursor_hash_shape CHECK (last_block_hash IS NULL OR last_block_hash ~ '^0x[0-9a-f]{64}$'),
+    CONSTRAINT chain_cursor_quarantine_reason CHECK ((quarantined_at IS NULL) = (quarantine_reason IS NULL))
+);
+
+-- The points a projection's cursor committed (a window's end, read in the
+-- same bracket as its logs and proven to extend the point before it), the
+-- newest 64 per projection, written with each advance. A reorg past the
+-- confirmation depth rewinds to the newest one still on the chain instead of
+-- the start block; that rewind drops the ones past it, a full rewind or a
+-- rebuild all of them. Read only once a reorg is seen.
+CREATE TABLE shop.chain_checkpoint (
+    indexer text NOT NULL,
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    block_hash text NOT NULL,
+    block_time bigint NOT NULL,
+    PRIMARY KEY (indexer, network, block_number),
+    FOREIGN KEY (indexer, network) REFERENCES shop.chain_cursor (indexer, network) ON DELETE CASCADE,
+    CONSTRAINT chain_checkpoint_hash_shape CHECK (block_hash ~ '^0x[0-9a-f]{64}$')
 );
 
 -- The collections the nft walk has taken in, and from which block. A
@@ -16164,15 +16203,17 @@ CREATE INDEX rental_event_signature_idx ON shop.rental_event (signature) WHERE k
 CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WHERE kind = 'signer_index_updated';
 
 -- The chain notification producers' progress (shop/src/rentals/notices.rs,
--- shop/src/market/{transfer,sale,royalty}_notices.rs), one row each (names in
+-- shop/src/market/{transfer,sale,royalty,bid}_notices.rs), one row each (names in
 -- shop::market::notice_cursor::PRODUCERS), advanced in the transaction that
 -- inserts the page's notifications: the last chain position handled;
 -- `rental_ended` orders by the rental's end time first. Seeded on the first
--- pass at the published head (kept in seed_*), so history is never announced.
+-- pass at the published head (kept in seed_*), so history is never announced,
+-- unless an operator seeded or moved it back first (`catalyst shop
+-- notice-rewind`, notice_cursor::rewind: cursor and seed only move back).
 -- A reorg rewind or a late nft backfill within 1,000 blocks of the head moves
 -- the rows of the producers that read that index back, never below their
 -- seed (notice_cursor::plan_replay); reorg-stable ids keep the replay
--- idempotent. Workload: ten rows, one update per producer page.
+-- idempotent. Workload: eleven rows, one update per producer page.
 CREATE TABLE shop.notification_cursor (
     producer text PRIMARY KEY,
     end_time bigint,
@@ -16185,7 +16226,7 @@ CREATE TABLE shop.notification_cursor (
     -- Exactly notice_cursor::PRODUCERS (a test compares them).
     CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('transfer_received', 'royalties_earned',
         'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic',
-        'sales:mint:matic', 'sales:bid_accepted:matic', 'royalties:bid_accepted:matic')),
+        'sales:mint:matic', 'sales:bid_accepted:matic', 'royalties:bid_accepted:matic', 'bid_received')),
     CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL)),
     CONSTRAINT notification_cursor_seed_end_time_shape CHECK ((producer = 'rental_ended') = (seed_end_time IS NOT NULL))
 );
@@ -16899,6 +16940,20 @@ CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller I
 -- The fold's "open bids a later acceptance invalidated".
 CREATE INDEX nft_bid_open_idx ON shop.nft_bid (network) WHERE status = 'open';
 
+-- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
+-- walk's transfers may name an owner the rewind took away, so the next fold
+-- infers again the seller of every bid created past `from_block` (a seller
+-- a sale event names stays), then deletes the rows it read. One row per nft
+-- rewind on Polygon (a reorg past the confirmation depth, or a rebuild),
+-- written in the rewind's transaction.
+CREATE TABLE shop.bid_seller_recheck (
+    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    network text NOT NULL,
+    from_block bigint NOT NULL,
+    recorded_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT bid_seller_recheck_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
 -- The venues a sale's royalties are computed for, with the cut the pinned
 -- contracts charge (`royaltiesCutPerMillion()`, read once at start and
 -- compared: a difference is a warning, never a rewrite). Four rows on
@@ -16920,3 +16975,20 @@ INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) 
     ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
     ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
     ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);
+
+-- Bounded sweeps retain unresolved work; ceilings freeze each cohort so new
+-- arrivals cannot indefinitely defer retry. Scope is the chain id, or zero
+-- for chain-independent workers. Keys refer to obligations, not owned rows:
+-- deletion/completion is allowed and a later sweep discovers delayed inserts.
+CREATE TABLE shop.worker_progress (
+    worker text NOT NULL,
+    scope bigint NOT NULL,
+    started_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    position bigint NOT NULL DEFAULT 0,
+    ceiling bigint NOT NULL DEFAULT 0,
+    key_position text[] NOT NULL DEFAULT '{}',
+    key_ceiling text[] NOT NULL DEFAULT '{}',
+    PRIMARY KEY (worker, scope),
+    CHECK (position >= 0 AND ceiling >= position),
+    CHECK (cardinality(key_position) <= 2 AND cardinality(key_ceiling) <= 2)
+);

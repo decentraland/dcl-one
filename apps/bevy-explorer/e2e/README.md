@@ -33,6 +33,7 @@ pnpm run e2e --visual                  # the Visual suite (build the scenes firs
 pnpm run e2e --filter 'opens the Backpack'              # a scenario-name pattern, not a file name
 pnpm run gpu-probe                     # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
+pnpm run avatar-sweep                  # frame time by avatar count, one JSON line per step (see below)
 ```
 
 The suite serves the web app on loopback at `http://localhost:<port>` (`driver/serve.ts`; the
@@ -100,6 +101,100 @@ console's coming or on the way into the world, leaves `boot-failures/boot-<n>.co
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
 as it happens.
+
+### Drive a scene by hand or by agent
+
+`pnpm run drive` boots one client on a loopback realm holding scenes from any folder (an SDK7
+scene with its bundle built), then runs console lines from stdin, so a person or an agent can
+drive a scene without writing a spec:
+
+```sh
+pnpm run drive --scene <scene dir> [--scene <dir> ...] [--position x,y] [--report <dir>] [--web-app <dir>] < commands.txt > replies.jsonl
+```
+
+It builds each scene folder with `buildScene` (`scene.json`, the `main` bundle, `main.crdt`,
+`assets/`), serves them with `serveRealm` on `DCL_E2E_REALM_PORT` and the web app (`--web-app`,
+else `DCL_E2E_WEB_APP`), signs in a guest and arrives at `--position` (the first scene's base
+parcel by default). The paths of `--scene`, `--report` and `--web-app` are read from the folder
+the command was started in, as the shell reads `< commands.txt`. Each stdin line is one console
+line; blank lines and `#` lines are skipped, and the lines run one after the other. stdout gets
+one JSON line per command, `{"line", "ok", "reply", "ms"}` (`ok:false` carries the command's
+error, and the run goes on); stderr gets the boot and a one-line summary of each reply. A
+`/login_identity` or `/hud_login` payload is redacted in all of them, as in the suite's reports.
+When stdin closes, `final.png` (the engine's frame) and `replies.jsonl` go to the report folder
+(`report/drive` by default), and the client and both servers close. An interrupt (SIGINT or
+SIGTERM) or a reader that closes stdout closes them too, a boot in progress included, and keeps
+no report.
+
+Of the variables above, these apply: `DCL_E2E_WEB_APP`, `DCL_E2E_WEB_PORT` and
+`DCL_E2E_REALM_PORT`, `DCL_E2E_BASE_DOMAIN`, `CHROME_PATH` and `CHROME_EXTRA_ARGS`,
+`DCL_E2E_HEADLESS`, `DCL_E2E_WINDOW`, and `DCL_E2E_TRANSPORT` with the `DCL_E2E_NATIVE_*` ones.
+`DCL_E2E_WEB_URL` opens an already served app, and the tool refuses `--web-app` beside it. The
+realm and the parcel are the tool's own, and it uses no account key.
+
+The tool takes no wait or sleep lines. To pace a longer script, pipe in a feed script that writes
+each line when it is due and reads stdout to decide the next one, for example counting the reply
+lines before going on. Because lines run one at a time, a feed cannot make two commands overlap.
+
+## Avatar sweep
+
+`scripts/avatar-sweep.ts` measures how frame time grows with the number of avatars, to choose the
+Max Avatars cap. It is a measurement, not a scenario: it serves the web app as the suite does,
+opens it in scene preview as an automatic guest (`?preview&guest=1&realm=<realm>`, preview being
+what enables `/avatar_demo`), waits for `/world_state` `inWorld`, and then, for every condition,
+clears the demo avatars, spawns each count in `--counts`, waits until `/avatar_demo` reports that
+many `built`, waits `--settle` seconds and samples `/performance_state` every 250 ms for
+`--window` seconds.
+
+```sh
+pnpm run avatar-sweep                                          # 0..800 avatars, caps 20 and all, idle and dancing
+pnpm run avatar-sweep --counts 0,100,400 --caps all --emotes none --window 20 --out sweep.jsonl
+pnpm run avatar-sweep --url http://localhost:8080/            # an app served already
+pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   # repeated runs
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
+| `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
+| `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
+| `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
+| `--seed` | `1` | The crowd: with a number, the avatar at each position has the same look in every run (`/avatar_demo seed`), so two builds are compared on the same avatars; `none` draws a new crowd each time |
+| `--setup` | none | A console line to run once before the first step, such as an engine tunable under comparison; repeat it for several |
+| `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
+| `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
+| `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
+| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin from run to run |
+| `--profile` | none (a temporary one, removed at the end) | A directory for Chrome's profile, kept between runs; needs a fixed `--port` (see below) |
+
+The demo avatars wear random base wearables: a few hundred models and textures from the
+catalyst, which a crowd of several hundred asks for all at once. Run after run, that is more than
+the catalyst allows one client, and it then refuses content files for hours. For anything beyond
+a single run, pass `--profile <dir>` and a fixed `--port`: Chrome keeps its profile in `<dir>`
+instead of a temporary folder, and with it the engine's content cache, which holds every content
+file by its hash. The browser keeps that cache by the page's origin, so the port has to stay the
+same; the sweep refuses `--profile` with a port picked anew. The first run fills the cache; later
+runs take the files from it and ask the catalyst for little: a 200-avatar run downloaded 1565
+files on an empty profile and 16 on the next run. Active-entity lookups are not cached and go to
+the catalyst every run. `loadSeconds` follows: a first run is a first visit, a later one a
+returning player's. One Chrome at a time uses a profile, and a profile grows to several hundred
+megabytes. The sweep's last stderr line is `/content_request_state`: `success` counts the run's
+downloads and `cached` what the cache answered.
+
+The player enters the world at a different spot each session, so for runs that are
+compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
+
+Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
+within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
+a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
+`emote`, `nametags`, `layout`, `seed`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
+`cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
+the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
+the machine's GPU (`pnpm run gpu-probe`) with the results. At the end the demo avatars are
+cleared, the session goes back to the Max Avatars setting, and nametags and the demo emote go
+back to what they were.
 
 ## How a spec is written
 
@@ -191,7 +286,15 @@ same file checks realm entry: entered when not banned or when the check fails, a
 stub, a `/changerealm` refused while banned, including for a new sign-in before it asks to enter.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
-adapter reported as a scene ban.
+adapter unloading its scene, a visit to a neighbouring parcel and return while still refused,
+completion of teleport arrival on return, followed by fresh admission and reloading on that
+parcel. `/ban_block_state` exposes `sceneAdmission.retainedRefusals` (scene id, scope and
+`retryDue` in elapsed engine seconds) for refusals retained while visiting another scene.
+The accepted adapter points at an unused loopback endpoint: this scenario
+checks admission and scene lifetime, not a successful LiveKit connection.
+`/scene_topics` registers the **Scene messages** debug section, covered by the registered-reading
+scenario. Routing, topic delivery and trust-policy counters share this reading; a rejected
+banned topic sender increments both `bannedSenderDrops` and `receiveDropped`.
 
 ## Scenario map
 
@@ -383,10 +486,12 @@ change on the left updates what is on the right in the same change, then runs th
 | The lobby's default layout or its Landing card (`library/explorer-core/features/lobby/layout.ts`, `LobbyCards.tsx`), or the layout editor's controls (`LobbyEditor.tsx`: `Customize lobby layout`, `Reset to Default`, `SAVE`) | `enterWorld` in `driver/session.ts`, which presses the first button named exactly `Jump In`: only the Landing card carries that name. The web driver starts each run on a fresh browser profile, so the default layout is shown. A native run reads the layout the client stored; when the lobby shows no `Jump In` for `NO_LANDING_POLLS` polls, `enterWorld` resets it to the shipped layout through the editor and saves it, then jumps in | `pnpm test`; the scenarios in CI |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
 | `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
+| How a console line splits into arguments (`crates/console/src/line.rs`, `SystemApi::ConsoleLine`), or the reply conventions (`screen`, normalized coordinates: `crates/console/src/reply.rs`) | `quoteWord` and a command's `rest` in the engine's `deploy/web/engine/engine.js` and `extract_js_api` (`src/web.rs`); `normalizeLine` and `CONSOLE_SPACE` in `driver/console.ts`; the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md); the readme section | `pnpm test`; the engine's `cargo test -p console` |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
 | The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
+| `scripts/drive.ts`: its flags, its stdin lines or its JSON lines | "Drive a scene by hand or by agent" above, the Explorer readme's "Agents and tests", `test/drive.test.ts` | `pnpm test` |
 | A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's file, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |

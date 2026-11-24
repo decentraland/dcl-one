@@ -21,7 +21,8 @@
 //!
 //! Source: `content.deployments` (active, `entity_type = 'scene'`) with
 //! `content.content_files` (the navmap thumbnail) and `content.local_entities`.
-//! Freshness: one pass per `PLACES_DERIVE_INTERVAL_SECS`; a pass stamps
+//! Committed world edits queue targeted refreshes. A full reconciliation runs
+//! every `PLACES_DERIVE_INTERVAL_SECS`; a pass stamps
 //! `fetched_at` on every row it derives and prunes the derived rows it did not
 //! stamp (a scene undeployed, overwritten or unpublished). Rebuild: the same
 //! pass (every derived row is recomputed from its deployment; the operator's
@@ -36,7 +37,7 @@ use std::time::Duration;
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 
 use super::query::{EXCLUDE_FROM_RANKING_SQL, raw_float8_sql};
 use crate::jobs::{Jobs, PeriodicCfg};
@@ -47,6 +48,9 @@ pub const PAGE: i64 = 1000;
 /// row it can hold.
 pub const BEFORE_FIRST_SCENE: i32 = i32::MIN;
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(300);
+const WORLD_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+const WORLD_UPDATE_MAX_RETRY: Duration = Duration::from_secs(30);
+const WORLD_UPDATE_BATCH: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeriveScope {
@@ -397,6 +401,7 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
             LIMIT 1
         ) s
         WHERE w.mirror_source IS NULL AND w.blocked_since IS NULL
+          /* affected worlds */
     ) u
     LEFT JOIN explore.place_moderation m ON m.place_id = u.id
     LEFT JOIN explore.place_ranking r ON r.place_id = u.id
@@ -416,19 +421,89 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
     WHERE l.raw->>'source' = 'worlds'
 "#;
 
-/// A world this node publishes is listed once, from the local leg: the mirrored
-/// row of the same world goes (the places mirror skips it while the local row
-/// stands, `mirror::UPSERT`).
+/// The mirror skips published worlds already listed locally or blocked here
+/// (`mirror::UPSERT`). Remove any mirror rows predating those conditions.
+/// `$1` scopes the deletion to a targeted refresh.
 const DISPLACE_MIRRORED_WORLDS: &str = r#"
-    DELETE FROM explore.place p USING explore.place_world_local l
-    WHERE l.raw->>'source' = 'worlds' AND p.world IS TRUE
-      AND (p.id = l.id OR lower(p.world_name) = l.id)
+    DELETE FROM explore.place p USING (
+        SELECT l.id AS name FROM explore.place_world_local l
+        WHERE l.raw->>'source' = 'worlds'
+          AND ($1::text[] IS NULL OR l.id = ANY($1))
+        UNION ALL
+        SELECT w.name FROM worlds.worlds w
+        WHERE w.mirror_source IS NULL AND w.blocked_since IS NOT NULL
+          AND ($1::text[] IS NULL OR w.name = ANY($1))
+          AND EXISTS (SELECT 1 FROM worlds.world_scenes ws
+                      WHERE ws.world_name = w.name AND ws.mirror_source IS NULL)
+    ) local
+    WHERE p.world IS TRUE AND (p.id = local.name OR lower(p.world_name) = local.name)
 "#;
 
 /// The local world rows a pass did not stamp (every local scene unpublished,
 /// the world blocked, or mirrored again): `$1` the pass start.
 const PRUNE_LOCAL_WORLDS: &str =
     "DELETE FROM explore.place_world_local WHERE raw->>'source' = 'worlds' AND fetched_at < $1";
+
+/// Coalesce edits in the same transaction as the Worlds write. The conflict
+/// must lock the pending row through commit so it cannot be drained while
+/// this edit is still invisible. Keep its queue position across edits.
+pub async fn mark_world_dirty(conn: &mut PgConnection, world_name: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO explore.world_place_updates AS pending (world_name) VALUES ($1)
+         ON CONFLICT (world_name) DO UPDATE SET queued_at = pending.queued_at",
+    )
+    .bind(world_name)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Serialize the local projection and world mirror upserts. The transaction
+/// lock also orders writes already sent to PostgreSQL around a lease loss.
+pub(super) async fn lock_world_projection(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('explore.world_place_projection'), 0)")
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+async fn refresh_queued_worlds(pool: &PgPool, content_public_url: &str) -> sqlx::Result<usize> {
+    let mut tx = pool.begin().await?;
+    let worlds: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM explore.world_place_updates WHERE world_name IN (
+             SELECT world_name FROM explore.world_place_updates
+             ORDER BY queued_at, world_name LIMIT $1 FOR UPDATE SKIP LOCKED
+         ) RETURNING world_name",
+    )
+    .bind(WORLD_UPDATE_BATCH as i64)
+    .fetch_all(&mut *tx)
+    .await?;
+    if !worlds.is_empty() {
+        lock_world_projection(&mut tx).await?;
+        let upsert =
+            UPSERT_LOCAL_WORLDS.replace("/* affected worlds */", "AND w.name = ANY($2::text[])");
+        let refreshed: Vec<String> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{upsert} RETURNING id")))
+                .bind(content_public_url)
+                .bind(&worlds)
+                .fetch_all(&mut *tx)
+                .await?;
+        sqlx::query(DISPLACE_MIRRORED_WORLDS)
+            .bind(&worlds)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "DELETE FROM explore.place_world_local
+             WHERE raw->>'source' = 'worlds' AND id = ANY($1) AND id <> ALL($2)",
+        )
+        .bind(&worlds)
+        .bind(&refreshed)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(worlds.len())
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Curation {
@@ -642,12 +717,14 @@ async fn run_once_with_storage(
         .await?
         .rows_affected();
     let mut tx = pool.begin().await?;
+    lock_world_projection(&mut tx).await?;
     derived += sqlx::query(UPSERT_LOCAL_WORLDS)
         .bind(content_public_url)
         .execute(&mut *tx)
         .await?
         .rows_affected() as usize;
     sqlx::query(DISPLACE_MIRRORED_WORLDS)
+        .bind(None::<Vec<String>>)
         .execute(&mut *tx)
         .await?;
     pruned += sqlx::query(PRUNE_LOCAL_WORLDS)
@@ -830,21 +907,64 @@ pub fn spawn_job(
     storage: Option<Arc<crate::storage::Storage>>,
 ) {
     tracing::info!(scope = ?scope, interval_secs = interval.as_secs(), "place catalogue: deriving from content deployments");
-    jobs.spawn_periodic_leased(
-        JOB_NAME,
-        PeriodicCfg::every(interval).with_error_backoff(Duration::from_secs(3600)),
-        move |ctx| {
-            let (pool, url, storage) = (pool.clone(), content_public_url.clone(), storage.clone());
-            async move {
-                let out = run_once_with_storage(&pool, scope, &url, storage.as_deref()).await?;
-                ctx.progress(format!(
-                    "{} places derived, {} pruned",
-                    out.derived, out.pruned
-                ));
-                Ok(())
+    let full_pass = jobs
+        .periodic_cfg(PeriodicCfg::every(interval).with_error_backoff(Duration::from_secs(3600)));
+    jobs.spawn_leased(JOB_NAME, move |ctx| {
+        let (pool, url, storage) = (pool.clone(), content_public_url.clone(), storage.clone());
+        let full_pass = full_pass.clone();
+        async move {
+            let next_full = tokio::time::sleep(full_pass.first_delay(JOB_NAME));
+            let next_update = tokio::time::sleep(WORLD_UPDATE_INTERVAL);
+            tokio::pin!(next_full, next_update);
+            let mut failures: u32 = 0;
+            let mut update_delay = WORLD_UPDATE_INTERVAL;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = ctx.cancel.cancelled() => return Ok(()),
+                    _ = &mut next_full => {
+                        let wait = match run_once_with_storage(&pool, scope, &url, storage.as_deref()).await {
+                            Ok(out) => {
+                                failures = 0;
+                                ctx.progress(format!("{} places derived, {} pruned", out.derived, out.pruned));
+                                full_pass.interval
+                            }
+                            Err(error) => {
+                                failures = failures.saturating_add(1);
+                                tracing::warn!(%error, "place catalogue reconciliation failed");
+                                ctx.error(error.to_string());
+                                full_pass.wait_after_failure(failures)
+                            }
+                        };
+                        ctx.pass_done();
+                        next_full.as_mut().reset(tokio::time::Instant::now() + wait);
+                    }
+                    _ = &mut next_update => {
+                        let wait = match refresh_queued_worlds(&pool, &url).await {
+                            Ok(worlds) => {
+                                update_delay = WORLD_UPDATE_INTERVAL;
+                                if worlds > 0 {
+                                    ctx.progress(format!("{worlds} world listings refreshed"));
+                                }
+                                if worlds == WORLD_UPDATE_BATCH {
+                                    Duration::ZERO
+                                } else {
+                                    WORLD_UPDATE_INTERVAL
+                                }
+                            }
+                            Err(error) => {
+                                update_delay = (update_delay * 2).min(WORLD_UPDATE_MAX_RETRY);
+                                tracing::warn!(%error, retry_in_secs = update_delay.as_secs(), "queued world place refresh failed");
+                                ctx.error(error.to_string());
+                                update_delay
+                            }
+                        };
+                        next_update.as_mut().reset(tokio::time::Instant::now() + wait);
+                    }
+                }
             }
-        },
-    );
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1520,6 +1640,43 @@ mod tests {
         };
         let mirrored = |id: &str| vec![(id.to_string(), None, Some("upstream".to_string()))];
 
+        let blocked_alias = json!({
+            "id": "separate-world-id",
+            "world_name": "Blocked.DCL.ETH",
+            "title": "upstream",
+        });
+        super::super::mirror::upsert_world(&pool, &blocked_alias)
+            .await
+            .unwrap();
+        world(&pool, "blocked.dcl.eth", None, "unrestricted").await;
+        let mut edit = pool.begin().await.unwrap();
+        sqlx::query(
+            "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now())
+             WHERE name = 'blocked.dcl.eth'",
+        )
+        .execute(&mut *edit)
+        .await
+        .unwrap();
+        mark_world_dirty(&mut edit, "blocked.dcl.eth")
+            .await
+            .unwrap();
+        edit.commit().await.unwrap();
+        assert_eq!(
+            listed("blocked.dcl.eth").await,
+            mirrored("separate-world-id")
+        );
+        assert_eq!(
+            refresh_queued_worlds(&pool, "https://node.example/content")
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(listed("blocked.dcl.eth").await.is_empty());
+        super::super::mirror::upsert_world(&pool, &blocked_alias)
+            .await
+            .unwrap();
+        assert!(listed("blocked.dcl.eth").await.is_empty());
+
         run_once(&pool, DeriveScope::Local, "https://node.example/content/")
             .await
             .unwrap();
@@ -1567,15 +1724,52 @@ mod tests {
             .unwrap();
         assert_eq!(listed("local.dcl.eth").await, local("Title local.dcl.eth"));
 
-        // a settings change shows on the next pass
-        sqlx::query("UPDATE worlds.worlds SET title = 'Renamed' WHERE name = 'local.dcl.eth'")
+        let url = "https://node.example/content";
+        let mut edit = pool.begin().await.unwrap();
+        mark_world_dirty(&mut edit, "local.dcl.eth").await.unwrap();
+        assert_eq!(refresh_queued_worlds(&pool, url).await.unwrap(), 0);
+        edit.rollback().await.unwrap();
+        assert_eq!(refresh_queued_worlds(&pool, url).await.unwrap(), 0);
+
+        let mut pending = pool.begin().await.unwrap();
+        mark_world_dirty(&mut pending, "local.dcl.eth")
+            .await
+            .unwrap();
+        pending.commit().await.unwrap();
+        let mut edit = pool.begin().await.unwrap();
+        sqlx::query(
+            "UPDATE worlds.worlds SET title = 'Renamed', categories = '{art}',
+                 show_in_places = false, access_type = 'allow-list',
+                 spawn_coordinates = '1,2', settings_version = settings_version + 1
+             WHERE name = 'local.dcl.eth'",
+        )
+        .execute(&mut *edit)
+        .await
+        .unwrap();
+        mark_world_dirty(&mut edit, "local.dcl.eth").await.unwrap();
+        assert_eq!(refresh_queued_worlds(&pool, url).await.unwrap(), 0);
+        assert_eq!(listed("local.dcl.eth").await, local("Title local.dcl.eth"));
+        edit.commit().await.unwrap();
+
+        sqlx::query("UPDATE worlds.worlds SET title = 'Idle' WHERE name = 'secret.dcl.eth'")
             .execute(&pool)
             .await
             .unwrap();
-        run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
+        assert_eq!(refresh_queued_worlds(&pool, url).await.unwrap(), 1);
         assert_eq!(listed("local.dcl.eth").await, local("Renamed"));
+        assert_eq!(
+            listed("secret.dcl.eth").await[0].2.as_deref(),
+            Some("Title secret.dcl.eth")
+        );
+        let settings = sqlx::query_as::<_, (Vec<String>, bool, bool, i32)>(
+            "SELECT categories, (raw->>'show_in_places')::boolean, (raw->>'is_private')::boolean,
+                    settings_version_num
+             FROM explore.place_world_local WHERE id = 'local.dcl.eth'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(settings, (vec!["art".into()], false, true, 1));
 
         // a blocked world leaves the catalogue until it is unblocked, and the
         // places mirror's passes meanwhile do not list upstream's copy of it
@@ -1583,15 +1777,16 @@ mod tests {
             ("timezone('UTC', now())", vec![]),
             ("NULL", local("Renamed")),
         ] {
+            let mut edit = pool.begin().await.unwrap();
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE worlds.worlds SET blocked_since = {blocked} WHERE name = 'local.dcl.eth'"
             )))
-            .execute(&pool)
+            .execute(&mut *edit)
             .await
             .unwrap();
-            run_once(&pool, DeriveScope::Local, "https://node.example/content")
-                .await
-                .unwrap();
+            mark_world_dirty(&mut edit, "local.dcl.eth").await.unwrap();
+            edit.commit().await.unwrap();
+            assert_eq!(refresh_queued_worlds(&pool, url).await.unwrap(), 1);
             super::super::mirror::upsert_world(&pool, &upstream("local.dcl.eth"))
                 .await
                 .unwrap();
@@ -1603,13 +1798,14 @@ mod tests {
         }
 
         // the last local scene unpublished: pruned, and the mirror lists it again
+        let mut edit = pool.begin().await.unwrap();
         sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = 'local.dcl.eth'")
-            .execute(&pool)
+            .execute(&mut *edit)
             .await
             .unwrap();
-        run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
+        mark_world_dirty(&mut edit, "local.dcl.eth").await.unwrap();
+        edit.commit().await.unwrap();
+        assert_eq!(refresh_queued_worlds(&pool, url).await.unwrap(), 1);
         assert_eq!(listed("local.dcl.eth").await, vec![]);
         super::super::mirror::upsert_world(&pool, &upstream("local.dcl.eth"))
             .await

@@ -35,7 +35,7 @@ use crate::content::queries::non_denylisted;
 use super::catalog::escape_like;
 use super::items::{self, CreditCatalogItem};
 use super::mirrors::{Mirror, require_ready};
-use super::readers::{Ttl, cached};
+use super::readers::{RefreshClaim, Ttl, cached};
 use super::wire::{ApiError, Params};
 use super::{MarketplaceState, SharedState};
 
@@ -180,47 +180,71 @@ pub struct CreatorProfile {
 
 /// How long a feed waits for a creator directory this node has not read yet.
 const DIRECTORY_WAIT: Duration = Duration::from_millis(500);
-/// How old an expired directory a feed still serves while it is refreshed (a failed refresh
-/// keeps it).
+/// How old a kept directory a feed still serves while it is refreshed (a failed refresh keeps
+/// the copy).
 const DIRECTORY_STALE_FOR: Duration = Duration::from_secs(3600);
+/// The longest a feed-started directory read may take before it ends as failed.
+#[cfg(not(test))]
+const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(60);
+/// Every test's cold read runs under this limit, so it leaves a loaded runner room for a read
+/// that starts behind a held lock, and still ends inside the hung-read test's 20 s poll.
+#[cfg(test)]
+const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(10);
+/// How long after a failed directory read the next one waits, so a failing database sees one
+/// directory read per this period rather than one per feed.
+const DIRECTORY_RETRY_AFTER: Duration = Duration::from_secs(30);
 
-/// The creator directory for a feed, which it never holds up: the fresh copy; else an expired one
-/// (up to [`DIRECTORY_STALE_FOR`] old) while one background read refreshes it; else, with none
-/// yet, that read for at most [`DIRECTORY_WAIT`]. `None` answers without inline profiles, and the
-/// cards ask for them; a failed read is logged, and only one read runs at a time.
+/// The creator directory for a feed, which it never holds up: the fresh copy; else the last good
+/// one (kept up to [`DIRECTORY_STALE_FOR`]) while one background read refreshes it; else, with
+/// none yet, that read for at most [`DIRECTORY_WAIT`], and only by the feed that started it.
+/// `None` answers without inline profiles, and the cards ask for them. Only one read runs at a
+/// time, and a failed one is retried after [`DIRECTORY_RETRY_AFTER`].
 pub async fn directory_snapshot(state: &SharedState) -> Option<Arc<Value>> {
     let readers = &state.readers;
     if let Some(fresh) = readers.fresh(Ttl::M15, CREATOR_DIRECTORY_KEY) {
         return Some(fresh);
     }
-    let refresh = readers.begin_refresh(CREATOR_DIRECTORY_KEY).then(|| {
-        let state = Arc::clone(state);
-        tokio::spawn(async move {
-            let read = directory_value(&state).await;
-            state.readers.end_refresh(CREATOR_DIRECTORY_KEY);
-            read.inspect_err(|e| tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"))
-                .ok()
-        })
-    });
-    if let Some(stale) = readers.within(Ttl::M15, CREATOR_DIRECTORY_KEY, DIRECTORY_STALE_FOR) {
-        return Some(stale);
+    let refresh = readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, DIRECTORY_RETRY_AFTER)
+        .map(|id| {
+            // Released however the read ends, a panic included, and even when the task never
+            // runs (a runtime shutting down drops it).
+            let mut claim = RefreshClaim::new(Arc::clone(state), CREATOR_DIRECTORY_KEY, id);
+            let state = Arc::clone(state);
+            tokio::spawn(async move {
+                // A read that hangs (a stuck connection, a lock) ends as failed at the limit, so
+                // the claim falls to the backoff instead of being held until a restart.
+                let read = tokio::time::timeout(DIRECTORY_READ_LIMIT, directory_value(&state))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(ApiError::Internal(format!(
+                            "the creator directory read took over {DIRECTORY_READ_LIMIT:?}"
+                        )))
+                    });
+                match &read {
+                    Ok(_) => claim.succeeded(),
+                    Err(e) => tracing::warn!(error = ?e, "creator directory unavailable; feeds answer without creator profiles"),
+                }
+                read.ok()
+            })
+        });
+    if let Some(kept) = readers.kept_within(CREATOR_DIRECTORY_KEY, DIRECTORY_STALE_FOR) {
+        return Some(kept);
     }
-    match refresh {
-        Some(read) => tokio::time::timeout(DIRECTORY_WAIT, read)
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten(),
-        // Another feed's read is in flight: wait on it as long.
-        None => tokio::time::timeout(DIRECTORY_WAIT, directory_value(state))
-            .await
-            .ok()
-            .and_then(Result::ok),
-    }
+    // With no copy yet, a feed that did not start the read answers without profiles rather than
+    // leading a read of its own, which its wait would cancel.
+    let read = refresh?;
+    tokio::time::timeout(DIRECTORY_WAIT, read)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
 }
 
-/// The profile of each of `addresses` (lowercase) the directory holds, after
-/// the content denylist.
+/// The profile of each of `addresses` (lowercase) the directory holds with an active profile,
+/// after the content denylist. A creator with none is left out, so the card asks
+/// `/lambdas/profiles` and shows a profile deployed since the directory was read; a denylisted
+/// profile still answers empty.
 pub fn creator_profiles(
     directory: &Value,
     addresses: &HashSet<String>,
@@ -236,6 +260,7 @@ pub fn creator_profiles(
                 .is_some_and(|a| addresses.contains(a))
         })
         .filter_map(|e| CreatorEntry::deserialize(e).ok())
+        .filter(|c| c.entity_id.is_some())
         .map(|c| {
             let c = c.without_denylisted_profile(denylist);
             let profile = CreatorProfile {
@@ -350,6 +375,11 @@ async fn directory_value(state: &MarketplaceState) -> Result<Arc<Value>, ApiErro
     )
     .await
     .map_err(ApiError::Internal)
+    .inspect(|directory| {
+        state
+            .readers
+            .keep(CREATOR_DIRECTORY_KEY, Arc::clone(directory))
+    })
 }
 
 /// Creators whose profile name or a NAME matches every term, best first:
@@ -660,6 +690,15 @@ mod tests {
             "{:?}",
             asked.elapsed()
         );
+        // Another feed while that read is still held up does not lead a read of its own: it
+        // answers without profiles at once.
+        let follower = std::time::Instant::now();
+        assert!(directory_snapshot(&state).await.is_none());
+        assert!(
+            follower.elapsed() < DIRECTORY_WAIT,
+            "{:?}",
+            follower.elapsed()
+        );
         assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
         lock.rollback().await.unwrap();
         until_fresh(state.clone()).await;
@@ -667,11 +706,7 @@ mod tests {
             .await
             .expect("the fresh directory");
 
-        state.readers.backdate(
-            Ttl::M15,
-            CREATOR_DIRECTORY_KEY,
-            Ttl::M15.duration() + Duration::from_secs(60),
-        );
+        state.readers.forget(Ttl::M15, CREATOR_DIRECTORY_KEY);
         assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
         let mut lock = pool.begin().await.unwrap();
         sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
@@ -685,20 +720,85 @@ mod tests {
         );
         lock.rollback().await.unwrap();
         until_fresh(state.clone()).await;
+
+        // The kept copy serves for an hour from its read, and no longer: past it, with the cache
+        // entry expired and the refresh held up, a feed answers without profiles.
+        state.readers.forget(Ttl::M15, CREATOR_DIRECTORY_KEY);
+        state.readers.backdate_kept(
+            CREATOR_DIRECTORY_KEY,
+            DIRECTORY_STALE_FOR + Duration::from_secs(1),
+        );
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let held = tokio::time::timeout(Duration::from_secs(10), directory_snapshot(&state))
+            .await
+            .expect("the feed is not held up by the directory's read");
+        assert!(held.is_none(), "a copy older than the hour is not served");
+        lock.rollback().await.unwrap();
+        until_fresh(state.clone()).await;
+    }
+
+    /// A feed-started directory read that hangs ends as failed at its limit and releases its claim
+    /// to the backoff: a stuck read never holds the refresh until a restart.
+    #[tokio::test]
+    async fn a_hung_directory_read_releases_its_claim() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let state =
+            crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let started = std::time::Instant::now();
+        assert!(directory_snapshot(&state).await.is_none());
+        // With the table still locked the read cannot succeed, so a claim this test can take
+        // means the read ended as failed and released it.
+        let claim = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if let Some(claim) = state
+                    .readers
+                    .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+                {
+                    break claim;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the hung read releases its claim");
+        assert!(
+            started.elapsed() >= DIRECTORY_READ_LIMIT,
+            "{:?}",
+            started.elapsed()
+        );
+        state
+            .readers
+            .end_refresh(CREATOR_DIRECTORY_KEY, claim, true);
+        lock.rollback().await.unwrap();
     }
 
     #[test]
     fn a_feed_takes_the_profiles_of_its_creators_only() {
         let mut quack = creator("0xaa", Some("Quack"), &["quack"], 3);
+        quack.entity_id = Some("bafyquack".into());
         quack.face = Some("https://cdn.example/entities/bafy/face.png".into());
         quack.claimed = true;
+        let mut unnamed = creator("0xee", None, &[], 1);
+        unnamed.entity_id = Some("bafyunnamed".into());
         let directory = serde_json::to_value(vec![
             quack,
             creator("0xbb", None, &[], 1),
             creator("0xdd", Some("Dee"), &[], 1),
+            unnamed,
         ])
         .unwrap();
-        let wanted: HashSet<String> = ["0xaa", "0xbb", "0xcc"].map(String::from).into();
+        let wanted: HashSet<String> = ["0xaa", "0xbb", "0xcc", "0xee"].map(String::from).into();
         let profiles = creator_profiles(&directory, &wanted, &Denylist::default());
         assert_eq!(profiles.len(), 2, "{profiles:?}");
         assert_eq!(
@@ -709,13 +809,18 @@ mod tests {
                 claimed: true
             }
         );
+        assert!(
+            !profiles.contains_key("0xbb"),
+            "a creator with no profile carries none, so the card asks for it"
+        );
         assert_eq!(
-            profiles["0xbb"],
+            profiles["0xee"],
             CreatorProfile {
                 name: String::new(),
                 face: None,
                 claimed: false
-            }
+            },
+            "a profile with no name is still a profile"
         );
     }
 

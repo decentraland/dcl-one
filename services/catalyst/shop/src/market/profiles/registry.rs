@@ -584,7 +584,7 @@ mod tests {
                             Json(json!({"error":"reader unavailable"})),
                         )
                     } else {
-                        (StatusCode::OK, Json(json!({"data": {}})))
+                        (StatusCode::OK, Json(json!({"data": {"nfts": []}})))
                     }
                 }
             }),

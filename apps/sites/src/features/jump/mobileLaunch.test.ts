@@ -1,26 +1,48 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import { STORES } from "../download/actions";
-import { androidIntentUrl, jumpInFor, mobileDeepLink, mobileLaunch, openOnIos } from "./mobileLaunch";
+import { androidIntentUrl, jumpInFor, type MobileLaunch, mobileDeepLink, mobileLaunch, openOnIos } from "./mobileLaunch";
 
 const ANDROID = { kind: "mobile", os: "android" } as const;
 const IOS = { kind: "mobile", os: "ios" } as const;
 const DESKTOP = { kind: "desktop", os: "macos", arch: "unknown" } as const;
 
 describe("mobileDeepLink", () => {
-  it("should carry the parcel and World to the app's open route", () => {
-    expect(mobileDeepLink({ coordinates: [-3, 2], realm: "foo.dcl.eth" })).toBe(
-      "decentraland://open?position=-3%2C2&realm=foo.dcl.eth",
-    );
+  describe("when the target names a parcel and a World", () => {
+    let target: { coordinates: [number, number]; realm?: string };
+
+    beforeEach(() => {
+      target = { coordinates: [-3, 2], realm: "foo.dcl.eth" };
+    });
+
+    it("should carry the parcel and World to the app's open route", () => {
+      expect(mobileDeepLink(target)).toBe("decentraland://open?position=-3%2C2&realm=foo.dcl.eth");
+    });
   });
 
-  it("should drop the defaults the app already uses", () => {
-    expect(mobileDeepLink({ coordinates: [0, 0], realm: "main" })).toBe("decentraland://open");
+  describe("when the target is the app's defaults", () => {
+    let target: { coordinates: [number, number]; realm?: string };
+
+    beforeEach(() => {
+      target = { coordinates: [0, 0], realm: "main" };
+    });
+
+    it("should drop the defaults the app already uses", () => {
+      expect(mobileDeepLink(target)).toBe("decentraland://open");
+    });
   });
 
-  it("should drop a realm that is not a realm name", () => {
-    expect(mobileDeepLink({ coordinates: [1, 1], realm: "x\"><script>" })).toBe("decentraland://open?position=1%2C1");
+  describe("when the realm is not a realm name", () => {
+    let target: { coordinates: [number, number]; realm?: string };
+
+    beforeEach(() => {
+      target = { coordinates: [1, 1], realm: "x\"><script>" };
+    });
+
+    it("should drop the realm", () => {
+      expect(mobileDeepLink(target)).toBe("decentraland://open?position=1%2C1");
+    });
   });
 });
 
@@ -33,57 +55,94 @@ describe("androidIntentUrl", () => {
 });
 
 describe("mobileLaunch", () => {
-  const target = { coordinates: [5, 6] as [number, number] };
+  let target: { coordinates: [number, number] };
 
-  it("should leave desktop visitors on the web explorer", () => {
-    expect(mobileLaunch(DESKTOP, target)).toBeNull();
-    expect(mobileLaunch({ kind: "unknown" }, target)).toBeNull();
+  beforeEach(() => {
+    target = { coordinates: [5, 6] };
   });
 
-  it("should send Android through an intent with the Play Store fallback", () => {
-    expect(mobileLaunch(ANDROID, target)).toEqual({
-      href: androidIntentUrl("decentraland://open?position=5%2C6", STORES.google_play),
-      storeUrl: STORES.google_play,
-      android: true,
+  describe("when the visitor is on desktop", () => {
+    it("should leave them on the web explorer", () => {
+      expect(mobileLaunch(DESKTOP, target)).toBeNull();
     });
   });
 
-  it("should send iOS through the deep link with the App Store as its fallback", () => {
-    expect(mobileLaunch(IOS, target)).toEqual({
-      href: "decentraland://open?position=5%2C6",
-      storeUrl: STORES.app_store,
-      android: false,
+  describe("when the visitor's platform is unknown", () => {
+    it("should leave them on the web explorer", () => {
+      expect(mobileLaunch({ kind: "unknown" }, target)).toBeNull();
+    });
+  });
+
+  describe("when the visitor is on Android", () => {
+    it("should send them through an intent with the Play Store fallback", () => {
+      expect(mobileLaunch(ANDROID, target)).toEqual({
+        href: androidIntentUrl("decentraland://open?position=5%2C6", STORES.google_play),
+        storeUrl: STORES.google_play,
+        android: true,
+      });
+    });
+  });
+
+  describe("when the visitor is on iOS", () => {
+    it("should send them through the deep link with the App Store as its fallback", () => {
+      expect(mobileLaunch(IOS, target)).toEqual({
+        href: "decentraland://open?position=5%2C6",
+        storeUrl: STORES.app_store,
+        android: false,
+      });
     });
   });
 });
 
 describe("jumpInFor", () => {
-  it("should offer nothing when the card has no Jump In", () => {
-    expect(jumpInFor(undefined, mobileLaunch(IOS, { coordinates: [1, 1] }))).toEqual({});
+  describe("when the card has no Jump In", () => {
+    let launch: MobileLaunch | null;
+
+    beforeEach(() => {
+      launch = mobileLaunch(IOS, { coordinates: [1, 1] });
+    });
+
+    it("should offer nothing", () => {
+      expect(jumpInFor(undefined, launch)).toEqual({});
+    });
   });
 
-  it("should keep the web explorer link on desktop", () => {
-    expect(jumpInFor("/play/?position=1%2C1", null)).toEqual({ jumpInHref: "/play/?position=1%2C1" });
+  describe("when the visitor is on desktop", () => {
+    it("should keep the web explorer link", () => {
+      expect(jumpInFor("/play/?position=1%2C1", null)).toEqual({ jumpInHref: "/play/?position=1%2C1" });
+    });
   });
 
-  it("should link Android straight to the intent, with no click handler", () => {
-    const launch = mobileLaunch(ANDROID, { coordinates: [1, 1] })!;
-    expect(jumpInFor("/play/", launch)).toEqual({ jumpInHref: launch.href });
+  describe("when the visitor is on Android", () => {
+    let launch: MobileLaunch;
+
+    beforeEach(() => {
+      launch = mobileLaunch(ANDROID, { coordinates: [1, 1] })!;
+    });
+
+    it("should link straight to the intent, with no click handler", () => {
+      expect(jumpInFor("/play/", launch)).toEqual({ jumpInHref: launch.href });
+    });
   });
 });
 
 describe("openOnIos", () => {
-  const assign = vi.fn();
-  const launch = { href: "decentraland://open", storeUrl: "https://apps.example/dcl", android: false };
+  let assign: Mock;
+  let launch: MobileLaunch;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    assign.mockReset();
+    assign = vi.fn();
+    launch = { href: "decentraland://open", storeUrl: "https://apps.example/dcl", android: false };
     Object.defineProperty(window, "location", { value: { assign }, configurable: true });
   });
-  afterEach(() => vi.useRealTimers());
 
-  it.each([
+  afterEach(() => {
+    vi.resetAllMocks();
+    vi.useRealTimers();
+  });
+
+  describe.each([
     ["blur", () => window.dispatchEvent(new Event("blur"))],
     ["pagehide", () => window.dispatchEvent(new Event("pagehide"))],
     [
@@ -94,26 +153,58 @@ describe("openOnIos", () => {
         Object.defineProperty(document, "hidden", { value: false, configurable: true });
       },
     ],
-  ])("should stay put when the app takes the link (%s)", async (_signal, leave) => {
-    const opened = openOnIos(launch, 1500);
-    leave();
-    await vi.advanceTimersByTimeAsync(1500);
-    await expect(opened).resolves.toBe(true);
-    expect(assign.mock.calls).toEqual([["decentraland://open"]]);
-  });
+  ])("when the app takes the link (%s)", (_signal, leave) => {
+    let opened: Promise<boolean>;
 
-  it("should open the App Store when the page never loses focus", async () => {
-    const opened = openOnIos(launch, 1500);
-    await vi.advanceTimersByTimeAsync(1500);
-    await expect(opened).resolves.toBe(false);
-    expect(assign.mock.calls).toEqual([["decentraland://open"], ["https://apps.example/dcl"]]);
-  });
-
-  it("should open the App Store at once when the scheme throws", async () => {
-    assign.mockImplementationOnce(() => {
-      throw new Error("blocked");
+    beforeEach(async () => {
+      opened = openOnIos(launch, 1500);
+      leave();
+      await vi.advanceTimersByTimeAsync(1500);
     });
-    await expect(openOnIos(launch, 1500)).resolves.toBe(false);
-    expect(assign).toHaveBeenLastCalledWith("https://apps.example/dcl");
+
+    it("should resolve as opened", async () => {
+      await expect(opened).resolves.toBe(true);
+    });
+
+    it("should stay put after following the deep link", () => {
+      expect(assign.mock.calls).toEqual([["decentraland://open"]]);
+    });
+  });
+
+  describe("when the page never loses focus", () => {
+    let opened: Promise<boolean>;
+
+    beforeEach(async () => {
+      opened = openOnIos(launch, 1500);
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    it("should resolve as not opened", async () => {
+      await expect(opened).resolves.toBe(false);
+    });
+
+    it("should open the App Store after the deep link", () => {
+      expect(assign.mock.calls).toEqual([["decentraland://open"], ["https://apps.example/dcl"]]);
+    });
+  });
+
+  describe("when the scheme throws", () => {
+    let opened: Promise<boolean>;
+
+    beforeEach(() => {
+      assign.mockImplementationOnce(() => {
+        throw new Error("blocked");
+      });
+      opened = openOnIos(launch, 1500);
+    });
+
+    it("should resolve as not opened", async () => {
+      await expect(opened).resolves.toBe(false);
+    });
+
+    it("should open the App Store at once", async () => {
+      await opened;
+      expect(assign).toHaveBeenLastCalledWith("https://apps.example/dcl");
+    });
   });
 });

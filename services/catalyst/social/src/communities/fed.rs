@@ -1201,6 +1201,106 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Before the place id release, a stored row may be in another case: a
+    /// federated add of it writes no second row and a federated removal in
+    /// any spelling reaches it.
+    #[tokio::test]
+    async fn federated_place_writes_match_rows_stored_in_another_case() {
+        let Some(database) = crate::db::scratch::OwnedDatabase::new(
+            "fed_place_ids",
+            crate::db::scratch::Schema::Full,
+            4,
+        )
+        .await
+        else {
+            return;
+        };
+        let pool = database.pool.clone();
+        sqlx::query("ALTER TABLE social.community_places DROP CONSTRAINT community_places_place_id_lowercase")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-place-ids-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let settings = super::super::Settings {
+            places_ownership_check: false,
+            ..super::super::Settings::for_tests()
+        };
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            settings,
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state.clone());
+        let owner = PrivateKeySigner::random();
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Cased', 'd', $2, FALSE, FALSE)")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by) VALUES ('Kept.DCL.eth', $1, $2), ('Gone.DCL.eth', $1, $2)")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/places"),
+            &env(
+                &owner,
+                CommunityPlacesAdd {
+                    community_id: hex_id.clone(),
+                    place_ids: vec!["kept.dcl.eth".into()],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = send(
+            &app,
+            &owner,
+            "DELETE",
+            &format!("{base}/places/gone.dcl.eth"),
+            &env(
+                &owner,
+                CommunityPlaceRemove {
+                    community_id: hex_id.clone(),
+                    place_id: "gone.dcl.eth".into(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let places: Vec<String> = sqlx::query_scalar(
+            "SELECT place_id FROM social.community_places WHERE community_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(places, ["Kept.DCL.eth"]);
+        drop((app, state));
+        database.drop().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A REST ban holds the membership lock while it removes the member and
     /// records the ban. A federation join that passed its ban pre-check
     /// before that ban committed waits for the lock, sees the ban and is
@@ -2341,7 +2441,8 @@ mod tests {
                 &member,
                 CommunityPlacesAdd {
                     community_id: hex_id.clone(),
-                    place_ids: vec!["p-1".into(), "p-2".into()],
+                    // stored lowercased, case variants once
+                    place_ids: vec!["P-1".into(), "p-2".into(), "p-1".into()],
                 },
             ),
         )
@@ -2351,12 +2452,12 @@ mod tests {
             &app,
             &owner,
             "DELETE",
-            &format!("{base}/places/p-2"),
+            &format!("{base}/places/P-2"),
             &env(
                 &owner,
                 CommunityPlaceRemove {
                     community_id: hex_id.clone(),
-                    place_id: "p-2".into(),
+                    place_id: "P-2".into(),
                 },
             ),
         )
