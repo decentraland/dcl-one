@@ -399,7 +399,7 @@ CREATE TABLE shop.chain_cursor (
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry', 'collections')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -17022,3 +17022,91 @@ CREATE TABLE shop.third_party_registry_event (
 
 CREATE INDEX third_party_registry_provider_version_idx ON shop.third_party_registry_event
     (provider_id, block_number DESC, log_index DESC);
+
+-- The collections index on Polygon (`shop.chain_cursor` indexer
+-- `collections`): the collection factories' ProxyCreated logs and the events
+-- of the collections they created, appended with the cursor advance and
+-- deleted past a rewind. About 5.3 million rows on Polygon, nearly all
+-- `issue` (one per mint), and some hundred thousand of the other kinds.
+-- `contract_address` is the collection (for `proxy_created`, the one
+-- created); the other columns hold what each kind carries:
+-- - `account`: the factory of a `proxy_created`; the minter or manager of a
+--   `set_*_minter`/`set_*_manager`; the new creator or owner of a transfer;
+--   the caller of an `issue`;
+-- - `flag`: the value of `set_global_minter`, `set_global_manager` and
+--   `set_item_manager`, the new value of `set_approved` and `set_editable`;
+-- - `amount`: the price of `add_item` and `update_item_data`, the allowance
+--   of `set_item_minter`, the issued id of an `issue`;
+-- - `max_supply`, `rarity`: `add_item`'s; `beneficiary`: `add_item`'s and
+--   `update_item_data`'s; `metadata`: `add_item`'s, `rescue_item`'s and
+--   `update_item_data`'s; `content_hash`: `add_item`'s and `rescue_item`'s.
+CREATE TABLE shop.collection_event (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    kind text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    item_id numeric(78,0),
+    account varchar(42),
+    flag boolean,
+    amount numeric(78,0),
+    max_supply numeric(78,0),
+    rarity text,
+    beneficiary varchar(42),
+    metadata text,
+    content_hash text,
+    PRIMARY KEY (network, block_number, log_index),
+    CONSTRAINT collection_event_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_event_kind_known CHECK (kind IN (
+        'proxy_created', 'add_item', 'rescue_item', 'update_item_data', 'issue', 'set_global_minter',
+        'set_global_manager', 'set_item_minter', 'set_item_manager', 'set_approved', 'set_editable', 'complete',
+        'creatorship_transferred', 'ownership_transferred')),
+    CONSTRAINT collection_event_lowercase CHECK (
+        contract_address = lower(contract_address) AND account = lower(account) AND beneficiary = lower(beneficiary))
+);
+
+-- The walked collections: the walk's address filter and the creation reads
+-- take them first.
+CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
+    WHERE kind = 'proxy_created';
+
+-- The collections each factory lists (`collections(i)` at index `idx`), read
+-- by the collections index's gate before each attempt at the latest block:
+-- the walk's address filter, a superset of the collections a window can
+-- create (a hint is not a collection until its ProxyCreated is walked). Rows
+-- are never deleted: an address a reorg took from an index stays a hint the
+-- filter takes in vain, beside the one read there after it. About six
+-- thousand rows on Polygon, read whole once per pass and per attempt.
+CREATE TABLE shop.collection_hint (
+    network text NOT NULL,
+    factory varchar(42) NOT NULL,
+    idx integer NOT NULL,
+    address varchar(42) NOT NULL,
+    PRIMARY KEY (network, address),
+    CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
+    CONSTRAINT collection_hint_idx_nonneg CHECK (idx >= 0)
+);
+
+-- What a collection's initialize set without an event (name, symbol,
+-- creator, approval, editability), read once by the collections index's
+-- gate at the network's safe block (Polygon's finalized), kept with it in
+-- `read_block`. A projection takes a value from it only when no walked event
+-- sets it and `read_block` is at or below the block it folds to. Not
+-- rewound: a finalized block's state. One row per collection.
+CREATE TABLE shop.collection_seed (
+    network text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    name text NOT NULL,
+    symbol text NOT NULL,
+    creator varchar(42) NOT NULL,
+    is_approved boolean NOT NULL,
+    is_editable boolean NOT NULL,
+    read_block bigint NOT NULL,
+    read_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    PRIMARY KEY (network, contract_address),
+    CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_seed_lowercase CHECK (contract_address = lower(contract_address) AND creator = lower(creator)),
+    CONSTRAINT collection_seed_block_nonneg CHECK (read_block >= 0)
+);

@@ -349,6 +349,9 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
+    // The collections walk keeps a log nothing reads yet: an operator's
+    // opt-in under every posture.
+    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",

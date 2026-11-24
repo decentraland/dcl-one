@@ -2497,8 +2497,8 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
-network (`ethereum`, `matic`). A window commit writes it once, and so do a
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`,
+`third_party_registry`, `collections`) on one network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
@@ -2767,6 +2767,72 @@ publication cannot be served. An empty result from a current publication
 means there are no matching providers. The index exposes on-chain slot
 availability as the maximum less consumed slots. Publish reservations and
 submission state still belong to the service that processes the submission.
+
+## Collections index
+
+The Polygon `collections` walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED`, off
+under every posture) reads the `TRADE_RPC_URLS` 137 entry. It walks two kinds
+of log from the first factory's start block (15,202,000), on the shared
+`shop.chain_cursor` (see "Market chain index cursors"):
+- the collection factories' `ProxyCreated`;
+- the events of every collection the factories created.
+
+Those events are the items added, rescued and edited, the mints (`Issue`),
+the global and item minters and managers, approval, editability,
+completion, creatorship and ownership. The walk keeps them in
+`shop.collection_event`, appended with each window's cursor advance and
+deleted past a rewind. Its publication means the log is complete to
+`folded_block`. No route reads these tables yet: `shop.collections` and
+`shop.items` are still the collections subgraph's copy (`mirrors`).
+
+**Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
+million mints, so the log is about 5.3 million rows, nearly all `issue`.
+Averaged since the first factory (2021), that is about 3,000 mints a day. A window writes its rows
+in batches of 1,000 inside the cursor's transaction. The primary key
+(network, block, log index) serves the rewind's range delete. The partial
+index on `proxy_created` lists the walked collections for the address
+filter and the creation reads.
+
+**Address filter.** A window's filter is fixed before its logs are read. A
+collection created inside a window emits its `initialize` events right after
+the factory's `ProxyCreated`, in the same transaction, so the walked
+`ProxyCreated` logs cannot supply the filter for that window.
+
+The filter takes the factories' own lists instead: `collectionsSize()` and
+`collections(i)`. The gate reads them at the latest block before each
+attempt into `shop.collection_hint`, one row per address, about 6,200 rows
+that only grow. That is a superset of what any window can create. A
+factory's collections enter the filter from the block the factory was
+deployed. Each refresh reads the indexes not yet read and the newest 16 of
+each list again. A reorg that put another collection at an index already
+read adds that collection; the address read there before stays, a hint the
+filter takes in vain.
+
+A window that walks a `ProxyCreated` of an address outside its filter
+fails before it commits, and the next attempt reads the lists again. A
+hint is only a filter: a collection exists for the index once its
+`ProxyCreated` is walked. The gate first checks that the endpoint serves
+chain 137.
+
+**Creation state.** `initialize` sets a collection's name, symbol, creator,
+approval and editability without an event. The gate reads them once per
+collection into `shop.collection_seed`:
+- walked collections first, then hinted ones;
+- at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
+  for each 200 collections;
+- at Polygon's finalized block, recorded in `read_block`.
+
+A collection with no code at that block waits for a later attempt. A read
+that fails is logged and does not stop the walk. Rows are never rewound:
+they are a finalized block's state. Whatever folds the log takes a value
+from the last walked event that sets it. It takes the read only when no
+event does and `read_block` is at or below the block it folds to; then the
+value has not changed since creation.
+
+**Decoding.** Every factory collection shares one ABI for these topics. A
+log of a walked topic that does not decode fails its window instead of
+being skipped. A `ProxyCreated` from any contract other than the two
+factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
 
 ## Auth API relay state workload
 

@@ -1,0 +1,1793 @@
+//! The `collections` index on Polygon: the collection factories'
+//! `ProxyCreated` logs and the events of every collection they created
+//! (items added, rescued and edited, mints, global and item minters and
+//! managers, approval, editability, completion, creatorship and ownership),
+//! kept in `shop.collection_event` with the cursor advance and deleted past a
+//! rewind. It is the native source `shop.collections` and `shop.items` are
+//! to be folded from, in place of the collections subgraph; until that
+//! projection exists the index only keeps the log, and its publication
+//! (`folded_block`) says the log is complete to that block.
+//!
+//! A window's address filter is fixed before its logs are read. A
+//! collection created inside a window emits its `initialize` events right
+//! after the factory's `ProxyCreated`, in the same transaction, so taking the
+//! filter from the walked `ProxyCreated` logs would miss them. The filter
+//! takes the factories' own lists instead (`collections(i)`, read by the gate
+//! before each attempt into `shop.collection_hint`), a superset of what any
+//! window can create; a window that walks a `ProxyCreated` of an address its
+//! filter did not take fails before it commits, and the next attempt reads
+//! the lists again. A hint is only a filter: a collection exists for the
+//! index once its factory's `ProxyCreated` is walked.
+//!
+//! `initialize` sets the name, symbol, creator, approval and editability
+//! without an event. The gate reads them once per collection at the
+//! network's safe block (`shop.collection_seed`, with that block), for the
+//! projection to take a value from the last walked event that sets it, and
+//! from that read only when no event does and the read is at or below the
+//! block it folds to.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
+use alloy_sol_types::{SolCall, SolEvent, SolValue, sol};
+use anyhow::{Context, ensure};
+use serde_json::{Value, json};
+use sqlx::{PgConnection, PgPool};
+
+use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_COLLECTIONS, LogGroup, Owner};
+use crate::chain_index::rpc::{Rpc, RpcLog};
+
+/// The collection factories on Polygon (`CollectionFactory` and
+/// `CollectionFactoryV3` under `matic` in `evm/addresses.json`) with the
+/// block the pinned collections subgraph starts each from
+/// (`decentraland/collections-graph` `config/matic.json` at ab6c586).
+pub const FACTORIES: [(&str, u64); 2] = [
+    ("0xb549b2442b2bd0a53795bc5cdcbfe0caf7aca9f8", 15_202_000),
+    ("0x3195e88ae10704b359764cb38e429d24f1c2f781", 28_121_692),
+];
+
+/// The first factory's start: a full history begins here.
+pub const START_BLOCK: u64 = FACTORIES[0].1;
+
+/// Calls per JSON-RPC batch the gate sends (one HTTP request each).
+pub const CALLS_PER_BATCH: usize = 100;
+
+/// Collections whose creation state one gate reads at most; the rest wait
+/// for the next attempt, so a fresh node's first gates stay short.
+pub const SEEDS_PER_GATE: usize = 500;
+
+sol! {
+    interface Factory {
+        event ProxyCreated(address indexed _address, bytes32 _salt);
+        function collectionsSize() external view returns (uint256);
+        function collections(uint256 index) external view returns (address);
+    }
+
+    interface Collection {
+        struct Item {
+            string rarity;
+            uint256 maxSupply;
+            uint256 totalSupply;
+            uint256 price;
+            address beneficiary;
+            string metadata;
+            string contentHash;
+        }
+        event AddItem(uint256 indexed _itemId, Item _item);
+        event RescueItem(uint256 indexed _itemId, string _contentHash, string _metadata);
+        event UpdateItemData(uint256 indexed _itemId, uint256 _price, address _beneficiary, string _metadata);
+        event Issue(address indexed _beneficiary, uint256 indexed _tokenId, uint256 indexed _itemId, uint256 _issuedId, address _caller);
+        event SetGlobalMinter(address indexed _minter, bool _value);
+        event SetGlobalManager(address indexed _manager, bool _value);
+        event SetItemMinter(uint256 indexed _itemId, address indexed _minter, uint256 _value);
+        event SetItemManager(uint256 indexed _itemId, address indexed _manager, bool _value);
+        event SetApproved(bool _previousValue, bool _newValue);
+        event SetEditable(bool _previousValue, bool _newValue);
+        event Complete();
+        event CreatorshipTransferred(address indexed _previousCreator, address indexed _newCreator);
+        event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+        function name() external view returns (string);
+        function symbol() external view returns (string);
+        function creator() external view returns (address);
+        function isApproved() external view returns (bool);
+        function isEditable() external view returns (bool);
+    }
+}
+
+pub const KIND_PROXY_CREATED: &str = "proxy_created";
+pub const KIND_ADD_ITEM: &str = "add_item";
+pub const KIND_RESCUE_ITEM: &str = "rescue_item";
+pub const KIND_UPDATE_ITEM_DATA: &str = "update_item_data";
+pub const KIND_ISSUE: &str = "issue";
+pub const KIND_SET_GLOBAL_MINTER: &str = "set_global_minter";
+pub const KIND_SET_GLOBAL_MANAGER: &str = "set_global_manager";
+pub const KIND_SET_ITEM_MINTER: &str = "set_item_minter";
+pub const KIND_SET_ITEM_MANAGER: &str = "set_item_manager";
+pub const KIND_SET_APPROVED: &str = "set_approved";
+pub const KIND_SET_EDITABLE: &str = "set_editable";
+pub const KIND_COMPLETE: &str = "complete";
+pub const KIND_CREATORSHIP_TRANSFERRED: &str = "creatorship_transferred";
+pub const KIND_OWNERSHIP_TRANSFERRED: &str = "ownership_transferred";
+
+/// The topics walked on every collection, in the event declaration order.
+pub const COLLECTION_TOPICS: [B256; 13] = [
+    Collection::AddItem::SIGNATURE_HASH,
+    Collection::RescueItem::SIGNATURE_HASH,
+    Collection::UpdateItemData::SIGNATURE_HASH,
+    Collection::Issue::SIGNATURE_HASH,
+    Collection::SetGlobalMinter::SIGNATURE_HASH,
+    Collection::SetGlobalManager::SIGNATURE_HASH,
+    Collection::SetItemMinter::SIGNATURE_HASH,
+    Collection::SetItemManager::SIGNATURE_HASH,
+    Collection::SetApproved::SIGNATURE_HASH,
+    Collection::SetEditable::SIGNATURE_HASH,
+    Collection::Complete::SIGNATURE_HASH,
+    Collection::CreatorshipTransferred::SIGNATURE_HASH,
+    Collection::OwnershipTransferred::SIGNATURE_HASH,
+];
+
+/// One row of `shop.collection_event`. `contract_address` is the collection
+/// (for `proxy_created`, the one created). The other columns hold what each
+/// kind carries and are NULL otherwise:
+/// - `account`: the factory of a `proxy_created`; the minter or manager of
+///   the four `set_*_minter`/`set_*_manager`; the new creator or owner of a
+///   transfer; the caller of an `issue`.
+/// - `flag`: the value of `set_global_minter`, `set_global_manager` and
+///   `set_item_manager`; the new value of `set_approved` and `set_editable`.
+/// - `amount`: the price of `add_item` and `update_item_data`, the allowance
+///   of `set_item_minter`, the issued id of an `issue`.
+/// - `max_supply`, `rarity`: `add_item`'s; `beneficiary`: `add_item`'s and
+///   `update_item_data`'s; `metadata`: `add_item`'s, `rescue_item`'s and
+///   `update_item_data`'s; `content_hash`: `add_item`'s and `rescue_item`'s.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CollectionEvent {
+    pub block_number: i64,
+    pub log_index: i32,
+    pub block_time: i64,
+    pub kind: &'static str,
+    pub contract_address: String,
+    pub item_id: Option<String>,
+    pub account: Option<String>,
+    pub flag: Option<bool>,
+    pub amount: Option<String>,
+    pub max_supply: Option<String>,
+    pub rarity: Option<String>,
+    pub beneficiary: Option<String>,
+    pub metadata: Option<String>,
+    pub content_hash: Option<String>,
+}
+
+fn address(a: Address) -> String {
+    format!("{a:#x}")
+}
+
+/// A string as Postgres `text` stores it: NUL removed (the contracts take
+/// any bytes; `decode_raw_log` already read them as lossy UTF-8).
+fn text(s: String) -> String {
+    if s.contains('\0') {
+        s.replace('\0', "")
+    } else {
+        s
+    }
+}
+
+/// One log as a row: `Ok(None)` for a topic the index does not walk, an
+/// error for a log of a walked topic that does not decode (the factories'
+/// collections share one ABI, so it is not data to skip).
+pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<CollectionEvent>> {
+    let (block, index) = chain_walk::log_position(log);
+    ensure!(
+        block >= 0 && block != i64::MAX && (0..=i64::from(i32::MAX)).contains(&index),
+        "collections log without a valid position"
+    );
+    let topics = log
+        .topics
+        .iter()
+        .map(|t| t.parse::<B256>())
+        .collect::<Result<Vec<_>, _>>()
+        .context("collections log topic")?;
+    let Some(topic0) = topics.first().copied() else {
+        return Ok(None);
+    };
+    let data = hex::decode(log.data.trim_start_matches("0x")).context("collections log data")?;
+    let emitter = log.address.to_ascii_lowercase();
+    let base = |kind: &'static str| CollectionEvent {
+        block_number: block,
+        log_index: index as i32,
+        block_time,
+        kind,
+        contract_address: emitter.clone(),
+        ..Default::default()
+    };
+    let decoded = |what: &'static str| {
+        move |e: alloy_sol_types::Error| anyhow::anyhow!("{what} at block {block} log {index}: {e}")
+    };
+    let event = match topic0 {
+        Factory::ProxyCreated::SIGNATURE_HASH => {
+            ensure!(
+                FACTORIES.iter().any(|(f, _)| *f == emitter),
+                "ProxyCreated at block {block} log {index} from {emitter}, not a collection factory"
+            );
+            let e = Factory::ProxyCreated::decode_raw_log(topics, &data)
+                .map_err(decoded("ProxyCreated"))?;
+            CollectionEvent {
+                contract_address: address(e._address),
+                account: Some(emitter.clone()),
+                ..base(KIND_PROXY_CREATED)
+            }
+        }
+        Collection::AddItem::SIGNATURE_HASH => {
+            let e =
+                Collection::AddItem::decode_raw_log(topics, &data).map_err(decoded("AddItem"))?;
+            CollectionEvent {
+                item_id: Some(e._itemId.to_string()),
+                amount: Some(e._item.price.to_string()),
+                max_supply: Some(e._item.maxSupply.to_string()),
+                rarity: Some(text(e._item.rarity)),
+                beneficiary: Some(address(e._item.beneficiary)),
+                metadata: Some(text(e._item.metadata)),
+                content_hash: Some(text(e._item.contentHash)),
+                ..base(KIND_ADD_ITEM)
+            }
+        }
+        Collection::RescueItem::SIGNATURE_HASH => {
+            let e = Collection::RescueItem::decode_raw_log(topics, &data)
+                .map_err(decoded("RescueItem"))?;
+            CollectionEvent {
+                item_id: Some(e._itemId.to_string()),
+                metadata: Some(text(e._metadata)),
+                content_hash: Some(text(e._contentHash)),
+                ..base(KIND_RESCUE_ITEM)
+            }
+        }
+        Collection::UpdateItemData::SIGNATURE_HASH => {
+            let e = Collection::UpdateItemData::decode_raw_log(topics, &data)
+                .map_err(decoded("UpdateItemData"))?;
+            CollectionEvent {
+                item_id: Some(e._itemId.to_string()),
+                amount: Some(e._price.to_string()),
+                beneficiary: Some(address(e._beneficiary)),
+                metadata: Some(text(e._metadata)),
+                ..base(KIND_UPDATE_ITEM_DATA)
+            }
+        }
+        Collection::Issue::SIGNATURE_HASH => {
+            let e = Collection::Issue::decode_raw_log(topics, &data).map_err(decoded("Issue"))?;
+            CollectionEvent {
+                item_id: Some(e._itemId.to_string()),
+                amount: Some(e._issuedId.to_string()),
+                account: Some(address(e._caller)),
+                ..base(KIND_ISSUE)
+            }
+        }
+        Collection::SetGlobalMinter::SIGNATURE_HASH => {
+            let e = Collection::SetGlobalMinter::decode_raw_log(topics, &data)
+                .map_err(decoded("SetGlobalMinter"))?;
+            CollectionEvent {
+                account: Some(address(e._minter)),
+                flag: Some(e._value),
+                ..base(KIND_SET_GLOBAL_MINTER)
+            }
+        }
+        Collection::SetGlobalManager::SIGNATURE_HASH => {
+            let e = Collection::SetGlobalManager::decode_raw_log(topics, &data)
+                .map_err(decoded("SetGlobalManager"))?;
+            CollectionEvent {
+                account: Some(address(e._manager)),
+                flag: Some(e._value),
+                ..base(KIND_SET_GLOBAL_MANAGER)
+            }
+        }
+        Collection::SetItemMinter::SIGNATURE_HASH => {
+            let e = Collection::SetItemMinter::decode_raw_log(topics, &data)
+                .map_err(decoded("SetItemMinter"))?;
+            CollectionEvent {
+                item_id: Some(e._itemId.to_string()),
+                account: Some(address(e._minter)),
+                amount: Some(e._value.to_string()),
+                ..base(KIND_SET_ITEM_MINTER)
+            }
+        }
+        Collection::SetItemManager::SIGNATURE_HASH => {
+            let e = Collection::SetItemManager::decode_raw_log(topics, &data)
+                .map_err(decoded("SetItemManager"))?;
+            CollectionEvent {
+                item_id: Some(e._itemId.to_string()),
+                account: Some(address(e._manager)),
+                flag: Some(e._value),
+                ..base(KIND_SET_ITEM_MANAGER)
+            }
+        }
+        Collection::SetApproved::SIGNATURE_HASH => {
+            let e = Collection::SetApproved::decode_raw_log(topics, &data)
+                .map_err(decoded("SetApproved"))?;
+            CollectionEvent {
+                flag: Some(e._newValue),
+                ..base(KIND_SET_APPROVED)
+            }
+        }
+        Collection::SetEditable::SIGNATURE_HASH => {
+            let e = Collection::SetEditable::decode_raw_log(topics, &data)
+                .map_err(decoded("SetEditable"))?;
+            CollectionEvent {
+                flag: Some(e._newValue),
+                ..base(KIND_SET_EDITABLE)
+            }
+        }
+        Collection::Complete::SIGNATURE_HASH => {
+            Collection::Complete::decode_raw_log(topics, &data).map_err(decoded("Complete"))?;
+            base(KIND_COMPLETE)
+        }
+        Collection::CreatorshipTransferred::SIGNATURE_HASH => {
+            let e = Collection::CreatorshipTransferred::decode_raw_log(topics, &data)
+                .map_err(decoded("CreatorshipTransferred"))?;
+            CollectionEvent {
+                account: Some(address(e._newCreator)),
+                ..base(KIND_CREATORSHIP_TRANSFERRED)
+            }
+        }
+        Collection::OwnershipTransferred::SIGNATURE_HASH => {
+            let e = Collection::OwnershipTransferred::decode_raw_log(topics, &data)
+                .map_err(decoded("OwnershipTransferred"))?;
+            CollectionEvent {
+                account: Some(address(e.newOwner)),
+                ..base(KIND_OWNERSHIP_TRANSFERRED)
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(event))
+}
+
+/// Inserts `rows` (duplicates dropped); the rows written.
+pub async fn insert_events(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    rows: &[CollectionEvent],
+) -> anyhow::Result<usize> {
+    let mut written = 0usize;
+    for chunk in rows.chunks(1_000) {
+        let col = |f: fn(&CollectionEvent) -> Option<String>| -> Vec<Option<String>> {
+            chunk.iter().map(f).collect()
+        };
+        written += sqlx::query(
+            "INSERT INTO shop.collection_event \
+                 (network, block_number, log_index, block_time, kind, contract_address, item_id, account, flag, \
+                  amount, max_supply, rarity, beneficiary, metadata, content_hash) \
+             SELECT $1, b, l, t, k, c, i::numeric, a, f, am::numeric, ms::numeric, r, bn, m, h \
+             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], \
+                         $9::bool[], $10::text[], $11::text[], $12::text[], $13::text[], $14::text[], $15::text[]) \
+                  AS u(b, l, t, k, c, i, a, f, am, ms, r, bn, m, h) \
+             ON CONFLICT (network, block_number, log_index) DO NOTHING",
+        )
+        .bind(net.db_name())
+        .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.log_index).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.block_time).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.kind).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.contract_address.as_str()).collect::<Vec<_>>())
+        .bind(col(|r| r.item_id.clone()))
+        .bind(col(|r| r.account.clone()))
+        .bind(chunk.iter().map(|r| r.flag).collect::<Vec<_>>())
+        .bind(col(|r| r.amount.clone()))
+        .bind(col(|r| r.max_supply.clone()))
+        .bind(col(|r| r.rarity.clone()))
+        .bind(col(|r| r.beneficiary.clone()))
+        .bind(col(|r| r.metadata.clone()))
+        .bind(col(|r| r.content_hash.clone()))
+        .execute(&mut *conn)
+        .await?
+        .rows_affected() as usize;
+    }
+    Ok(written)
+}
+
+/// A collection the filter may take and the factory that listed it (`None`
+/// for a walked one with no hint).
+pub type Known = (String, Option<String>);
+
+/// The Polygon walk. `addresses` keeps, per pass, the hinted and walked
+/// collections; `filter` the collections the current window's groups took,
+/// for its `write` to check.
+#[derive(Default)]
+pub struct CollectionsIndex {
+    addresses: Mutex<Option<Vec<Known>>>,
+    filter: Mutex<HashSet<String>>,
+}
+
+impl CollectionsIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The hinted and walked collections, read once per pass.
+    async fn load(&self, pool: &PgPool) -> anyhow::Result<Vec<Known>> {
+        if let Some(known) = self.addresses.lock().unwrap().clone() {
+            return Ok(known);
+        }
+        let known: Vec<Known> = sqlx::query_as(
+            "SELECT address, factory FROM shop.collection_hint WHERE network = $1 \
+             UNION \
+             SELECT e.contract_address, NULL FROM shop.collection_event e \
+             WHERE e.network = $1 AND e.kind = 'proxy_created' \
+               AND NOT EXISTS (SELECT 1 FROM shop.collection_hint h WHERE h.network = $1 AND h.address = e.contract_address)",
+        )
+        .bind(ChainNet::Matic.db_name())
+        .fetch_all(pool)
+        .await?;
+        *self.addresses.lock().unwrap() = Some(known.clone());
+        Ok(known)
+    }
+
+    fn reset(&self) {
+        *self.addresses.lock().unwrap() = None;
+        self.filter.lock().unwrap().clear();
+    }
+}
+
+/// The groups of window `[_, to]` over `known` (address, factory): each
+/// factory deployed by `to` with `ProxyCreated`, and every collection of
+/// those factories (and every walked one) with the collection topics.
+pub fn groups_for(to: u64, known: &[Known]) -> (Vec<LogGroup>, HashSet<String>) {
+    let live: Vec<&str> = FACTORIES
+        .iter()
+        .filter(|(_, from)| *from <= to)
+        .map(|(f, _)| *f)
+        .collect();
+    let mut collections: Vec<String> = known
+        .iter()
+        .filter(|(_, factory)| factory.as_deref().is_none_or(|f| live.contains(&f)))
+        .map(|(a, _)| a.clone())
+        .collect();
+    collections.sort();
+    collections.dedup();
+    let filter: HashSet<String> = collections.iter().cloned().collect();
+    let topics: Vec<String> = COLLECTION_TOPICS
+        .iter()
+        .map(|t| format!("{t:#x}"))
+        .collect();
+    let mut groups = vec![LogGroup {
+        addresses: live.iter().map(|f| f.to_string()).collect(),
+        topics: json!([[format!("{:#x}", Factory::ProxyCreated::SIGNATURE_HASH)]]),
+    }];
+    if !collections.is_empty() {
+        groups.push(LogGroup {
+            addresses: collections,
+            topics: json!([topics]),
+        });
+    }
+    (groups, filter)
+}
+
+#[async_trait::async_trait]
+impl ChainIndex for CollectionsIndex {
+    fn indexer(&self) -> &'static str {
+        INDEXER_COLLECTIONS
+    }
+
+    fn net(&self) -> ChainNet {
+        ChainNet::Matic
+    }
+
+    fn start_block(&self) -> u64 {
+        START_BLOCK
+    }
+
+    fn abandon(&self) {
+        self.reset();
+    }
+
+    fn begin_pass(&self) {
+        self.reset();
+    }
+
+    async fn groups(
+        &self,
+        pool: &PgPool,
+        _from: u64,
+        to: u64,
+        _anchor: (u64, i64),
+    ) -> anyhow::Result<Vec<LogGroup>> {
+        let known = self.load(pool).await?;
+        let (groups, filter) = groups_for(to, &known);
+        *self.filter.lock().unwrap() = filter;
+        Ok(groups)
+    }
+
+    async fn write(
+        &self,
+        conn: &mut PgConnection,
+        logs: &[RpcLog],
+        times: &HashMap<i64, i64>,
+    ) -> anyhow::Result<usize> {
+        let mut rows = Vec::with_capacity(logs.len());
+        for log in logs {
+            let block = chain_walk::log_position(log).0;
+            let time = times
+                .get(&block)
+                .copied()
+                .with_context(|| format!("collections: no block time for block {block}"))?;
+            if let Some(row) = decode_log(log, time)? {
+                rows.push(row);
+            }
+        }
+        {
+            let filter = self.filter.lock().unwrap();
+            if let Some(missed) = rows
+                .iter()
+                .find(|r| r.kind == KIND_PROXY_CREATED && !filter.contains(&r.contract_address))
+            {
+                anyhow::bail!(
+                    "collections matic: block {} created {}, which this window's filter did not take; \
+                     the next attempt reads the factory lists again",
+                    missed.block_number,
+                    missed.contract_address
+                );
+            }
+        }
+        insert_events(conn, ChainNet::Matic, &rows).await
+    }
+
+    async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM shop.collection_event WHERE network = $1 AND block_number > $2")
+            .bind(ChainNet::Matic.db_name())
+            .bind(to)
+            .execute(conn)
+            .await?;
+        self.reset();
+        Ok(())
+    }
+
+    /// Nothing is projected yet: the log alone is published, complete to
+    /// the block the pass reached.
+    async fn fold(
+        &self,
+        _pool: &PgPool,
+        _since: Option<i64>,
+        _upto: i64,
+        _owner: &Owner,
+    ) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+}
+
+/// One `eth_call` of `data` to `to` at `block`, as a batch element.
+fn call_request(id: usize, to: &str, data: &[u8], block: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "eth_call",
+        "params": [{ "to": to, "data": format!("0x{}", hex::encode(data)) }, block],
+    })
+}
+
+/// The returned bytes of one `eth_call` envelope; `None` for an error or a
+/// call that returned no data (a contract that does not exist at the block).
+fn returned(answer: &Value) -> Option<Vec<u8>> {
+    answer
+        .get("result")
+        .and_then(Value::as_str)
+        .and_then(|s| hex::decode(s.trim_start_matches("0x")).ok())
+        .filter(|b| !b.is_empty())
+}
+
+/// The answers of `calls` (to, data) at `block`, in their order, in batches
+/// of [`CALLS_PER_BATCH`]: the returned bytes of each, `None` where the
+/// endpoint answered an error, nothing, or a call that returned no data (a
+/// contract that does not exist at `block`). An endpoint that answers a
+/// batch with no element at all (one that does not take batches) is asked
+/// each call of it alone.
+pub async fn eth_calls(
+    rpc: &Rpc<'_>,
+    calls: &[(String, Vec<u8>)],
+    block: &str,
+) -> anyhow::Result<Vec<Option<Vec<u8>>>> {
+    let mut out = vec![None; calls.len()];
+    for (n, chunk) in calls.chunks(CALLS_PER_BATCH).enumerate() {
+        let base = n * CALLS_PER_BATCH;
+        let body: Vec<Value> = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, (to, data))| call_request(base + i, to, data, block))
+            .collect();
+        let answers = rpc
+            .batch(&body)
+            .await
+            .map_err(|e| anyhow::anyhow!("eth_call batch: {e}"))?;
+        if answers.is_empty() {
+            for (i, request) in body.iter().enumerate() {
+                let answer = rpc
+                    .call("eth_call", request["params"].clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                out[base + i] = returned(&answer);
+            }
+            continue;
+        }
+        for answer in answers {
+            let Some(id) = answer.get("id").and_then(Value::as_u64) else {
+                continue;
+            };
+            let id = id as usize;
+            if !(base..base + chunk.len()).contains(&id) {
+                continue;
+            }
+            out[id] = returned(&answer);
+        }
+    }
+    Ok(out)
+}
+
+/// The block the gate reads creation state at: Polygon's finalized block,
+/// Ethereum's head less its confirmations (the walk's own safe head).
+async fn safe_block(rpc: &Rpc<'_>, net: ChainNet) -> anyhow::Result<u64> {
+    Ok(match net {
+        ChainNet::Matic => rpc.finalized_header().await?.number,
+        ChainNet::Ethereum => rpc.head_block().await?.saturating_sub(net.confirmations()),
+    })
+}
+
+/// The newest indexes of each factory's list read again at every refresh.
+pub const HINT_TAIL: u32 = 16;
+
+/// Reads the factories' lists into `shop.collection_hint` at the latest
+/// block: every index each factory reports that is not there yet, and its
+/// newest [`HINT_TAIL`] again. The latest block, not the safe one: a hint is
+/// only a filter, and the newer the list the fewer windows find a
+/// collection it lacks. Reading the tail again covers a reorg that put
+/// another collection at an index already read; the address read before
+/// stays, an address the filter takes in vain. Returns the hints added.
+pub async fn refresh_hints(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
+    let net = ChainNet::Matic;
+    let sizes = eth_calls(
+        rpc,
+        &FACTORIES
+            .iter()
+            .map(|(f, _)| (f.to_string(), Factory::collectionsSizeCall {}.abi_encode()))
+            .collect::<Vec<_>>(),
+        "latest",
+    )
+    .await?;
+    let mut added = 0usize;
+    for ((factory, _), size) in FACTORIES.iter().zip(sizes) {
+        let size = size
+            .and_then(|b| U256::abi_decode(&b).ok())
+            .with_context(|| format!("{factory}.collectionsSize() did not answer"))?;
+        let size = u32::try_from(size).context("collectionsSize() out of range")?;
+        let have: HashSet<i32> = sqlx::query_scalar(
+            "SELECT idx FROM shop.collection_hint WHERE network = $1 AND factory = $2",
+        )
+        .bind(net.db_name())
+        .bind(factory)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .collect();
+        let tail = size.saturating_sub(HINT_TAIL);
+        let missing: Vec<u32> = (0..size)
+            .filter(|i| *i >= tail || !have.contains(&(*i as i32)))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let calls: Vec<(String, Vec<u8>)> = missing
+            .iter()
+            .map(|i| {
+                (
+                    factory.to_string(),
+                    Factory::collectionsCall {
+                        index: U256::from(*i),
+                    }
+                    .abi_encode(),
+                )
+            })
+            .collect();
+        let answers = eth_calls(rpc, &calls, "latest").await?;
+        let mut idxs = Vec::new();
+        let mut addrs = Vec::new();
+        for (i, answer) in missing.iter().zip(answers) {
+            let Some(a) = answer
+                .and_then(|b| Address::abi_decode(&b).ok())
+                .filter(|a| !a.is_zero())
+            else {
+                // Read again at the next refresh: indexes are never skipped.
+                continue;
+            };
+            idxs.push(*i as i32);
+            addrs.push(address(a));
+        }
+        added += sqlx::query(
+            "INSERT INTO shop.collection_hint (network, factory, idx, address) \
+             SELECT $1, $2, i, a FROM UNNEST($3::int[], $4::text[]) AS u(i, a) \
+             ON CONFLICT (network, address) DO NOTHING",
+        )
+        .bind(net.db_name())
+        .bind(factory)
+        .bind(&idxs)
+        .bind(&addrs)
+        .execute(pool)
+        .await?
+        .rows_affected() as usize;
+    }
+    Ok(added)
+}
+
+/// What `initialize` set without an event, as one read at `read_block`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seed {
+    pub contract_address: String,
+    pub name: String,
+    pub symbol: String,
+    pub creator: String,
+    pub is_approved: bool,
+    pub is_editable: bool,
+    pub read_block: i64,
+}
+
+/// The five answers of one collection, or `None` when any is missing (a
+/// contract not yet deployed at the block, or an endpoint that dropped one).
+pub fn seed_of(contract: &str, answers: &[Option<Vec<u8>>], read_block: u64) -> Option<Seed> {
+    let [name, symbol, creator, approved, editable] = answers else {
+        return None;
+    };
+    let string = |b: &Option<Vec<u8>>| {
+        Bytes::abi_decode(b.as_deref()?)
+            .ok()
+            .map(|s| text(String::from_utf8_lossy(&s).into_owned()))
+    };
+    Some(Seed {
+        contract_address: contract.to_string(),
+        name: string(name)?,
+        symbol: string(symbol)?,
+        creator: address(Address::abi_decode(creator.as_deref()?).ok()?),
+        is_approved: bool::abi_decode(approved.as_deref()?).ok()?,
+        is_editable: bool::abi_decode(editable.as_deref()?).ok()?,
+        read_block: i64::try_from(read_block).ok()?,
+    })
+}
+
+/// Reads the creation state of up to [`SEEDS_PER_GATE`] collections that
+/// have none, walked ones first, at the network's safe block, into
+/// `shop.collection_seed`. A collection not deployed at that block, or one
+/// an answer is missing for, waits for the next gate. Returns the seeds
+/// added.
+pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
+    let net = ChainNet::Matic;
+    let pending: Vec<String> = sqlx::query_scalar(
+        "SELECT address FROM ( \
+             SELECT e.contract_address AS address, 0 AS walked_first, e.block_number AS position \
+             FROM shop.collection_event e WHERE e.network = $1 AND e.kind = 'proxy_created' \
+             UNION ALL \
+             SELECT h.address, 1, h.idx FROM shop.collection_hint h WHERE h.network = $1 \
+         ) c \
+         WHERE NOT EXISTS (SELECT 1 FROM shop.collection_seed s WHERE s.network = $1 AND s.contract_address = c.address) \
+         GROUP BY address ORDER BY min(walked_first), min(position), address LIMIT $2",
+    )
+    .bind(net.db_name())
+    .bind(SEEDS_PER_GATE as i64)
+    .fetch_all(pool)
+    .await?;
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let block = safe_block(rpc, net).await?;
+    let selectors: [Vec<u8>; 5] = [
+        Collection::nameCall {}.abi_encode(),
+        Collection::symbolCall {}.abi_encode(),
+        Collection::creatorCall {}.abi_encode(),
+        Collection::isApprovedCall {}.abi_encode(),
+        Collection::isEditableCall {}.abi_encode(),
+    ];
+    let calls: Vec<(String, Vec<u8>)> = pending
+        .iter()
+        .flat_map(|c| selectors.iter().map(move |s| (c.clone(), s.clone())))
+        .collect();
+    let answers = eth_calls(rpc, &calls, &format!("0x{block:x}")).await?;
+    let seeds: Vec<Seed> = pending
+        .iter()
+        .zip(answers.chunks(selectors.len()))
+        .filter_map(|(c, a)| seed_of(c, a, block))
+        .collect();
+    write_seeds(pool, net, &seeds).await
+}
+
+/// Inserts `seeds`; a collection's first read stands.
+pub async fn write_seeds(pool: &PgPool, net: ChainNet, seeds: &[Seed]) -> anyhow::Result<usize> {
+    if seeds.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query(
+        "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block) \
+         SELECT $1, c, n, s, cr, a, e, b FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[], $7::bool[], $8::bigint[]) \
+              AS u(c, n, s, cr, a, e, b) \
+         ON CONFLICT (network, contract_address) DO NOTHING",
+    )
+    .bind(net.db_name())
+    .bind(seeds.iter().map(|s| s.contract_address.as_str()).collect::<Vec<_>>())
+    .bind(seeds.iter().map(|s| s.name.as_str()).collect::<Vec<_>>())
+    .bind(seeds.iter().map(|s| s.symbol.as_str()).collect::<Vec<_>>())
+    .bind(seeds.iter().map(|s| s.creator.as_str()).collect::<Vec<_>>())
+    .bind(seeds.iter().map(|s| s.is_approved).collect::<Vec<_>>())
+    .bind(seeds.iter().map(|s| s.is_editable).collect::<Vec<_>>())
+    .bind(seeds.iter().map(|s| s.read_block).collect::<Vec<_>>())
+    .execute(pool)
+    .await?
+    .rows_affected() as usize)
+}
+
+/// The gate before each attempt: the endpoint must serve Polygon (the
+/// creation reads are kept, never rewound); then the factories' lists (a
+/// failure fails the attempt: a filter without the newest collections would
+/// fail the windows that walk them), then the creation reads (a failure is
+/// only logged: the walk does not need them).
+pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>> {
+    let net = ChainNet::Matic;
+    super::ensure_chain(
+        &chain_walk::RpcSource::new(*rpc),
+        chain_walk::mainnet_chain(net),
+    )
+    .await
+    .context("collections matic: the endpoint's chain")?;
+    let hinted = refresh_hints(pool, rpc)
+        .await
+        .context("collections matic: reading the factory lists")?;
+    if hinted > 0 {
+        tracing::info!(
+            hinted,
+            "collections matic: new collections in the factory lists"
+        );
+    }
+    match read_seeds(pool, rpc).await {
+        Ok(0) => {}
+        Ok(seeded) => tracing::info!(seeded, "collections matic: creation state read"),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "collections matic: reading creation state failed; the next attempt retries")
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::LogData;
+    use std::sync::Arc;
+
+    use crate::chain_index::logs::{LogSource, Read, Window};
+    use crate::chain_index::rpc::{BlockHeader, RpcError};
+
+    const V3: &str = "0x3195e88ae10704b359764cb38e429d24f1c2f781";
+    /// The collection the fixture follows from its creation (block 97,707,994).
+    const CREATED: &str = "0x5f255679f7192bae8440746311757c4a5f752107";
+    /// An older collection the fixture holds a manager grant and a rescue of.
+    const OLDER: &str = "0xa968767179877418fe9313a54a3abe4d1ee24f0f";
+    const CREATOR: &str = "0x23be90335e79d3245615985d91f69814f98a0fab";
+
+    /// Real Polygon logs: the factory's ProxyCreated of `CREATED` and every
+    /// log both collections emitted from then to block 97,895,000, the
+    /// collection topics and others (Transfer, BaseURI, meta-transactions).
+    fn fixture() -> Vec<RpcLog> {
+        serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/shop/collections-polygon-logs.json"
+        )))
+        .unwrap()
+    }
+
+    fn at(logs: &[RpcLog], block: i64, index: i64) -> &RpcLog {
+        logs.iter()
+            .find(|l| chain_walk::log_position(l) == (block, index))
+            .unwrap()
+    }
+
+    fn rpc_log(address: &str, data: LogData, block: u64, index: u64) -> RpcLog {
+        RpcLog {
+            address: address.into(),
+            topics: data.topics().iter().map(|t| format!("{t:#x}")).collect(),
+            data: format!("0x{}", hex::encode(&data.data)),
+            block_number: format!("0x{block:x}"),
+            log_index: format!("0x{index:x}"),
+            block_timestamp: None,
+            block_hash: None,
+            transaction_hash: None,
+        }
+    }
+
+    #[test]
+    fn topics_are_the_contracts_event_signatures() {
+        let expect = [
+            (
+                Factory::ProxyCreated::SIGNATURE_HASH,
+                "0xcfaab0d6675a72a93c114f48dd85add1076be0c88545968759ef034da7ad146f",
+            ),
+            (
+                Collection::AddItem::SIGNATURE_HASH,
+                "0x1464db75caec2c4f1b56b5246ef01a229ff5edc3b0fcf9b2953fec53b3987d8f",
+            ),
+            (
+                Collection::RescueItem::SIGNATURE_HASH,
+                "0x87a972ab2db2d47a0bbefe72cefc4fe5a38b1b9d2bc4b9f366b59fdb6dbd9581",
+            ),
+            (
+                Collection::UpdateItemData::SIGNATURE_HASH,
+                "0xc3835f7dd5063bbc8fdc7077944498159008d73d30bf55fe6513e683c8c38209",
+            ),
+            (
+                Collection::Issue::SIGNATURE_HASH,
+                super::super::sales_index::TOPIC_ISSUE,
+            ),
+            (
+                Collection::SetGlobalMinter::SIGNATURE_HASH,
+                "0x27defe4b442489e757345f4f743096c5db8d2399e1474bb9653118cdf5313869",
+            ),
+            (
+                Collection::SetGlobalManager::SIGNATURE_HASH,
+                "0x68bb2af98a57ecc88afb707f2d75e1e253c3e30191071548355731e21322a432",
+            ),
+            (
+                Collection::SetItemMinter::SIGNATURE_HASH,
+                "0x45a634291439a8ec187e2b70279696615889c34c17c3a1208a7f85544e13b565",
+            ),
+            (
+                Collection::SetItemManager::SIGNATURE_HASH,
+                "0x1271b13cf757efd2a177fe5f26c2111b69ce904f1d0e3372832dc4e4773298cc",
+            ),
+            (
+                Collection::SetApproved::SIGNATURE_HASH,
+                "0x9ea3c7bd2b8ff87a3768286a529f5932ca385584c8ddf42eea8eade2ac1fb121",
+            ),
+            (
+                Collection::SetEditable::SIGNATURE_HASH,
+                "0xc8ca126810b77bfdcb10ae82ef3bc72619d404f9e3c4bf2057f03f057dcf230a",
+            ),
+            (
+                Collection::Complete::SIGNATURE_HASH,
+                "0x01b7dcb42d49142a99e4c98da755263c600213a33b780986779405b9823501d3",
+            ),
+            (
+                Collection::CreatorshipTransferred::SIGNATURE_HASH,
+                "0xf25c6226b06a6bf4b2c2391bb66962bb4290c323cf8b5814efb185aba3f42d5f",
+            ),
+            (
+                Collection::OwnershipTransferred::SIGNATURE_HASH,
+                "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
+            ),
+        ];
+        for (topic, hex) in expect {
+            assert_eq!(format!("{topic:#x}"), hex);
+        }
+        assert_eq!(
+            COLLECTION_TOPICS.len(),
+            expect.len() - 1,
+            "every collection topic is walked"
+        );
+    }
+
+    #[test]
+    fn factories_match_the_pinned_address_book() {
+        let pinned: Value = serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
+        let book = |name: &str| pinned["matic"][name].as_str().unwrap().to_lowercase();
+        assert_eq!(
+            FACTORIES.map(|(f, _)| f.to_string()),
+            [book("CollectionFactory"), book("CollectionFactoryV3")]
+        );
+    }
+
+    /// The real creation transaction and the collection's later logs decode
+    /// to the rows the projection needs; the logs of other topics are not rows.
+    #[test]
+    fn real_polygon_logs_decode_to_rows() {
+        let logs = fixture();
+        let row = |block, index| decode_log(at(&logs, block, index), 7).unwrap().unwrap();
+        let created = row(97_707_994, 30);
+        assert_eq!(
+            (
+                created.kind,
+                created.contract_address.as_str(),
+                created.account.as_deref()
+            ),
+            (KIND_PROXY_CREATED, CREATED, Some(V3))
+        );
+        assert_eq!(
+            (created.block_number, created.log_index, created.block_time),
+            (97_707_994, 30, 7)
+        );
+        let init_owner = row(97_707_994, 31);
+        assert_eq!(
+            (init_owner.kind, init_owner.account.as_deref()),
+            (KIND_OWNERSHIP_TRANSFERRED, Some(V3))
+        );
+        assert_eq!(
+            row(97_707_994, 36).account.as_deref(),
+            Some("0xbf6755a83c0dcdbb2933a96ea778e00b717d7004")
+        );
+        let helmet = row(97_707_994, 33);
+        assert_eq!(helmet.kind, KIND_ADD_ITEM);
+        assert_eq!(helmet.contract_address, CREATED);
+        assert_eq!(helmet.item_id.as_deref(), Some("0"));
+        assert_eq!(helmet.rarity.as_deref(), Some("epic"));
+        assert_eq!(helmet.max_supply.as_deref(), Some("1000"));
+        assert_eq!(
+            helmet.amount.as_deref(),
+            Some(U256::MAX.to_string().as_str()),
+            "the builder's not-for-sale price"
+        );
+        assert_eq!(helmet.beneficiary.as_deref(), Some(CREATOR));
+        assert_eq!(
+            helmet.metadata.as_deref(),
+            Some(
+                "1:w:Vintage Leather Helmet:Vintage racing leather with stitched detail and warm nickel.:helmet:BaseMale,BaseFemale"
+            )
+        );
+        assert_eq!(helmet.content_hash.as_deref(), Some(""));
+        assert_eq!(row(97_707_994, 34).rarity.as_deref(), Some("legendary"));
+        assert_eq!(row(97_707_994, 35).kind, KIND_COMPLETE);
+        let rescue = row(97_732_792, 9);
+        assert_eq!(
+            (rescue.kind, rescue.item_id.as_deref()),
+            (KIND_RESCUE_ITEM, Some("0"))
+        );
+        assert_eq!(
+            rescue.content_hash.as_deref(),
+            Some("bafkreihkpym6g2ykw4ah7nu4435jubdtaxpjrrvcn4jre3dfxqd5k634em")
+        );
+        assert_eq!(rescue.metadata, helmet.metadata);
+        let approved = row(97_732_808, 165);
+        assert_eq!(
+            (approved.kind, approved.flag),
+            (KIND_SET_APPROVED, Some(true))
+        );
+        let mint = row(97_751_770, 85);
+        assert_eq!(
+            (
+                mint.kind,
+                mint.item_id.as_deref(),
+                mint.amount.as_deref(),
+                mint.account.as_deref()
+            ),
+            (KIND_ISSUE, Some("0"), Some("1"), Some(CREATOR))
+        );
+        let minter = row(97_754_539, 3);
+        assert_eq!(
+            (minter.kind, minter.account.as_deref(), minter.flag),
+            (
+                KIND_SET_GLOBAL_MINTER,
+                Some("0xc36f78a5a475576edaf6c9010ddb5c968fb0a0de"),
+                Some(true)
+            )
+        );
+        let manager = row(97_012_160, 65);
+        assert_eq!(
+            (
+                manager.kind,
+                manager.contract_address.as_str(),
+                manager.account.as_deref(),
+                manager.flag
+            ),
+            (
+                KIND_SET_GLOBAL_MANAGER,
+                OLDER,
+                Some("0xe44ecce4e86c2263a093415da2bbdcecb1a4a1c6"),
+                Some(true)
+            )
+        );
+        // Transfer (the nft index's), BaseURI and the meta-transaction log.
+        for (block, index) in [(97_751_770, 84), (97_707_994, 32), (97_751_770, 83)] {
+            assert_eq!(decode_log(at(&logs, block, index), 7).unwrap(), None);
+        }
+        let rows = logs
+            .iter()
+            .filter_map(|l| decode_log(l, 7).unwrap())
+            .count();
+        assert_eq!(rows, 19);
+    }
+
+    /// The kinds the fixture lacks, from logs encoded with the contracts' ABI.
+    #[test]
+    fn every_other_kind_decodes_from_the_contract_abi() {
+        let c = Address::repeat_byte(0xc1);
+        let who = Address::repeat_byte(0xab);
+        let decode = |data: LogData| {
+            decode_log(&rpc_log(&address(c), data, 9, 2), 1)
+                .unwrap()
+                .unwrap()
+        };
+        let update = decode(
+            Collection::UpdateItemData {
+                _itemId: U256::from(4),
+                _price: U256::from(5_000u64),
+                _beneficiary: who,
+                _metadata: "1:e:Wave:hi:greetings:BaseMale:1:so".into(),
+            }
+            .encode_log_data(),
+        );
+        assert_eq!(
+            (
+                update.kind,
+                update.item_id.as_deref(),
+                update.amount.as_deref(),
+                update.beneficiary.as_deref()
+            ),
+            (
+                KIND_UPDATE_ITEM_DATA,
+                Some("4"),
+                Some("5000"),
+                Some(address(who).as_str())
+            )
+        );
+        assert_eq!(
+            update.metadata.as_deref(),
+            Some("1:e:Wave:hi:greetings:BaseMale:1:so")
+        );
+        let item_minter = decode(
+            Collection::SetItemMinter {
+                _itemId: U256::from(3),
+                _minter: who,
+                _value: U256::MAX,
+            }
+            .encode_log_data(),
+        );
+        assert_eq!(
+            (
+                item_minter.kind,
+                item_minter.item_id.as_deref(),
+                item_minter.account.as_deref()
+            ),
+            (KIND_SET_ITEM_MINTER, Some("3"), Some(address(who).as_str()))
+        );
+        assert_eq!(item_minter.amount, Some(U256::MAX.to_string()));
+        let item_manager = decode(
+            Collection::SetItemManager {
+                _itemId: U256::from(3),
+                _manager: who,
+                _value: false,
+            }
+            .encode_log_data(),
+        );
+        assert_eq!(
+            (item_manager.kind, item_manager.flag),
+            (KIND_SET_ITEM_MANAGER, Some(false))
+        );
+        let editable = decode(
+            Collection::SetEditable {
+                _previousValue: true,
+                _newValue: false,
+            }
+            .encode_log_data(),
+        );
+        assert_eq!(
+            (editable.kind, editable.flag),
+            (KIND_SET_EDITABLE, Some(false))
+        );
+        let creator = decode(
+            Collection::CreatorshipTransferred {
+                _previousCreator: Address::ZERO,
+                _newCreator: who,
+            }
+            .encode_log_data(),
+        );
+        assert_eq!(
+            (creator.kind, creator.account.as_deref()),
+            (KIND_CREATORSHIP_TRANSFERRED, Some(address(who).as_str()))
+        );
+        assert_eq!(creator.contract_address, address(c));
+    }
+
+    /// Bytes `text` cannot hold are dropped, invalid UTF-8 is replaced; a
+    /// ProxyCreated from another contract and a payload that does not decode
+    /// fail instead of being skipped.
+    #[test]
+    fn odd_payloads_are_stored_or_refused_never_skipped() {
+        let c = address(Address::repeat_byte(0xc1));
+        let item = Collection::Item {
+            rarity: "ep\0ic".into(),
+            maxSupply: U256::from(10),
+            totalSupply: U256::ZERO,
+            price: U256::from(1),
+            beneficiary: Address::repeat_byte(0xbe),
+            metadata: "1:w:A\0B:d:hat:BaseMale".into(),
+            contentHash: String::new(),
+        };
+        let added = decode_log(
+            &rpc_log(
+                &c,
+                Collection::AddItem {
+                    _itemId: U256::from(1),
+                    _item: item,
+                }
+                .encode_log_data(),
+                9,
+                0,
+            ),
+            1,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(added.rarity.as_deref(), Some("epic"));
+        assert_eq!(added.metadata.as_deref(), Some("1:w:AB:d:hat:BaseMale"));
+        let mut bad_utf8 = rpc_log(
+            &c,
+            Collection::RescueItem {
+                _itemId: U256::from(1),
+                _contentHash: "h".into(),
+                _metadata: "xyz".into(),
+            }
+            .encode_log_data(),
+            9,
+            1,
+        );
+        // The metadata's three bytes are the last word's first three.
+        let at = bad_utf8.data.len() - 64;
+        bad_utf8.data.replace_range(at..at + 2, "ff");
+        let rescue = decode_log(&bad_utf8, 1).unwrap().unwrap();
+        assert_eq!(rescue.metadata.as_deref(), Some("\u{fffd}yz"));
+
+        let foreign = rpc_log(
+            &c,
+            Factory::ProxyCreated {
+                _address: Address::repeat_byte(0x11),
+                _salt: B256::ZERO,
+            }
+            .encode_log_data(),
+            9,
+            2,
+        );
+        assert!(
+            decode_log(&foreign, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("not a collection factory")
+        );
+        let mut short = rpc_log(
+            &c,
+            Collection::SetApproved {
+                _previousValue: false,
+                _newValue: true,
+            }
+            .encode_log_data(),
+            9,
+            3,
+        );
+        short.data.truncate(66);
+        assert!(decode_log(&short, 1).is_err());
+    }
+
+    #[test]
+    fn the_filter_takes_each_factory_and_its_collections_from_its_deployment() {
+        let known = vec![
+            (
+                "0x00000000000000000000000000000000000000a2".to_string(),
+                Some(FACTORIES[0].0.to_string()),
+            ),
+            (
+                "0x00000000000000000000000000000000000000a3".to_string(),
+                Some(FACTORIES[1].0.to_string()),
+            ),
+            (
+                "0x00000000000000000000000000000000000000aa".to_string(),
+                None,
+            ),
+        ];
+        let (groups, filter) = groups_for(FACTORIES[1].1 - 1, &known);
+        assert_eq!(groups[0].addresses, vec![FACTORIES[0].0.to_string()]);
+        assert_eq!(
+            groups[1].addresses,
+            vec![
+                "0x00000000000000000000000000000000000000a2",
+                "0x00000000000000000000000000000000000000aa"
+            ]
+        );
+        assert_eq!(filter.len(), 2);
+        let (groups, filter) = groups_for(FACTORIES[1].1, &known);
+        assert_eq!(groups[0].addresses.len(), 2);
+        assert_eq!(groups[1].addresses.len(), 3);
+        assert!(filter.contains("0x00000000000000000000000000000000000000a3"));
+        assert_eq!(
+            groups[1].topics[0].as_array().unwrap().len(),
+            COLLECTION_TOPICS.len()
+        );
+        let (groups, _) = groups_for(FACTORIES[0].1, &[]);
+        assert_eq!(groups.len(), 1, "no collection yet, no empty group");
+    }
+
+    #[test]
+    fn a_seed_needs_all_five_answers() {
+        let answers = [
+            Some("World Track Memorabilia".to_string().abi_encode()),
+            Some("DCL-WRLDTRCKMMRBL".to_string().abi_encode()),
+            Some(CREATOR.parse::<Address>().unwrap().abi_encode()),
+            Some(true.abi_encode()),
+            Some(false.abi_encode()),
+        ];
+        let seed = seed_of(CREATED, &answers, 97_800_000).unwrap();
+        assert_eq!(
+            seed,
+            Seed {
+                contract_address: CREATED.into(),
+                name: "World Track Memorabilia".into(),
+                symbol: "DCL-WRLDTRCKMMRBL".into(),
+                creator: CREATOR.into(),
+                is_approved: true,
+                is_editable: false,
+                read_block: 97_800_000,
+            }
+        );
+        let mut missing = answers.clone();
+        missing[2] = None;
+        assert_eq!(seed_of(CREATED, &missing, 1), None);
+        assert_eq!(seed_of(CREATED, &answers[..4], 1), None);
+    }
+
+    /// A chain that answers `logs` by the groups' addresses and first
+    /// topics, with one hash per block and a finalized block.
+    struct Chain {
+        logs: Vec<RpcLog>,
+        finalized: u64,
+    }
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            hash: format!("0x{number:064x}"),
+            timestamp: 1_600_000_000 + 2 * number as i64,
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LogSource for Chain {
+        async fn chain_id(&self) -> Result<Read<u64>, RpcError> {
+            Ok(Read {
+                value: 137,
+                requests: 1,
+            })
+        }
+        async fn head(&self) -> Result<Read<u64>, RpcError> {
+            Ok(Read {
+                value: self.finalized + 64,
+                requests: 1,
+            })
+        }
+        async fn finalized(&self) -> Result<Read<BlockHeader>, RpcError> {
+            Ok(Read {
+                value: header(self.finalized),
+                requests: 1,
+            })
+        }
+        async fn header(&self, number: u64) -> Result<Read<BlockHeader>, RpcError> {
+            Ok(Read {
+                value: header(number),
+                requests: 1,
+            })
+        }
+        async fn window(
+            &self,
+            from: u64,
+            to: u64,
+            groups: &[LogGroup],
+            _chunk: &mut usize,
+        ) -> Result<Window, RpcError> {
+            let takes = |l: &RpcLog| {
+                groups.iter().any(|g| {
+                    g.addresses
+                        .iter()
+                        .any(|a| a.eq_ignore_ascii_case(&l.address))
+                        && g.topics[0]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|t| t.as_str().unwrap().eq_ignore_ascii_case(&l.topics[0]))
+                })
+            };
+            let mut logs: Vec<RpcLog> = self
+                .logs
+                .iter()
+                .filter(|l| {
+                    let b = chain_walk::log_position(l).0 as u64;
+                    (from..=to).contains(&b) && takes(l)
+                })
+                .cloned()
+                .collect();
+            logs.sort_by_key(chain_walk::log_position);
+            Ok(Window {
+                logs,
+                reached: to,
+                requests: groups.len(),
+                charge: groups.len(),
+                portal_sends: 0,
+            })
+        }
+        async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
+            let value = logs
+                .iter()
+                .map(|l| {
+                    let b = chain_walk::log_position(l).0;
+                    (b, header(b as u64).timestamp)
+                })
+                .collect();
+            Ok(Read { value, requests: 1 })
+        }
+    }
+
+    fn walk_settings() -> chain_walk::IndexSettings {
+        chain_walk::IndexSettings {
+            collections_enabled: true,
+            start_block_matic: Some(97_012_000),
+            requests_per_pass: 1_000,
+            ..Default::default()
+        }
+    }
+
+    async fn hint(pool: &PgPool, idx: i32, address: &str) {
+        sqlx::query("INSERT INTO shop.collection_hint (network, factory, idx, address) VALUES ('matic', $1, $2, $3)")
+            .bind(V3)
+            .bind(idx)
+            .bind(address)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn kinds(pool: &PgPool) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT kind, count(*) FROM shop.collection_event WHERE network = 'matic' GROUP BY kind ORDER BY kind",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// The walk over the real logs keeps every walked topic of the hinted
+    /// collections, nothing else, and a rewind drops what lies past it.
+    #[tokio::test]
+    async fn the_walk_keeps_the_hinted_collections_log() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        hint(&pool, 0, OLDER).await;
+        hint(&pool, 1, CREATED).await;
+        let chain = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let out = chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.indexed_to, 97_895_000);
+        assert_eq!(
+            kinds(&pool).await,
+            [
+                ("add_item", 2),
+                ("complete", 1),
+                ("issue", 5),
+                ("ownership_transferred", 2),
+                ("proxy_created", 1),
+                ("rescue_item", 4),
+                ("set_approved", 1),
+                ("set_global_manager", 1),
+                ("set_global_minter", 2),
+            ]
+            .map(|(k, n)| (k.to_string(), n))
+        );
+        let (contract, item, amount, max): (String, String, String, String) = sqlx::query_as(
+            "SELECT contract_address, item_id::text, amount::text, max_supply::text FROM shop.collection_event \
+             WHERE network = 'matic' AND block_number = 97707994 AND log_index = 34",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (contract.as_str(), item.as_str(), max.as_str()),
+            (CREATED, "1", "100")
+        );
+        assert_eq!(amount, U256::MAX.to_string());
+        let time: i64 = sqlx::query_scalar(
+            "SELECT block_time FROM shop.collection_event WHERE network = 'matic' AND kind = 'proxy_created'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(time, header(97_707_994).timestamp);
+
+        let mut tx = pool.begin().await.unwrap();
+        ix.rewind(&mut tx, 97_750_000).await.unwrap();
+        tx.commit().await.unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.collection_event")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            left, 11,
+            "the older collection's two rows and the nine of the creation up to its approval"
+        );
+    }
+
+    /// A window that walks a ProxyCreated its filter did not take commits
+    /// nothing; once the factory list has it, the walk takes the creation
+    /// and the collection's own logs from that window on.
+    #[tokio::test]
+    async fn a_collection_missing_from_the_hints_fails_its_window() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        hint(&pool, 0, OLDER).await;
+        let chain = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let err = chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains(CREATED), "{err:#}");
+        let cursor = chain_walk::cursor(&pool, INDEXER_COLLECTIONS, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            cursor.last_block < 97_707_994,
+            "the window holding the creation was not committed"
+        );
+        assert_eq!(
+            kinds(&pool).await,
+            [("rescue_item", 1), ("set_global_manager", 1)].map(|(k, n)| (k.to_string(), n))
+        );
+
+        hint(&pool, 1, CREATED).await;
+        chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        let created: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.collection_event WHERE contract_address = $1",
+        )
+        .bind(CREATED)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(created, 17);
+    }
+
+    /// The fake endpoint's `eth_call` answers by (to, data hex, block).
+    type Answers = Arc<std::sync::Mutex<HashMap<(String, String, String), String>>>;
+
+    /// A JSON-RPC endpoint for the gate: chain 137, finalized block 100, and
+    /// `calls` answering `eth_call` by (to, data hex, block); "0x" otherwise
+    /// (no contract there). Without `batches` it answers a batch with an
+    /// error object, as an endpoint that does not take batches.
+    async fn fake_rpc(calls: Answers, batches: bool) -> String {
+        use axum::{Json, extract::State, routing::post};
+        async fn answer(calls: &HashMap<(String, String, String), String>, req: &Value) -> Value {
+            let id = req["id"].clone();
+            let result = match req["method"].as_str().unwrap_or_default() {
+                "eth_chainId" => json!("0x89"),
+                "eth_getBlockByNumber" => json!({
+                    "number": "0x64", "hash": format!("0x{:064x}", 100), "timestamp": "0x5f5e1000"
+                }),
+                "eth_call" => {
+                    let p = &req["params"];
+                    let key = (
+                        p[0]["to"].as_str().unwrap().to_lowercase(),
+                        p[0]["data"].as_str().unwrap().to_string(),
+                        p[1].as_str().unwrap().to_string(),
+                    );
+                    json!(calls.get(&key).cloned().unwrap_or_else(|| "0x".into()))
+                }
+                _ => {
+                    return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "no" } });
+                }
+            };
+            json!({ "jsonrpc": "2.0", "id": id, "result": result })
+        }
+        type Calls = (Answers, bool);
+        async fn handle(
+            State((calls, batches)): State<Calls>,
+            Json(body): Json<Value>,
+        ) -> Json<Value> {
+            let calls = calls.lock().unwrap().clone();
+            Json(match body {
+                Value::Array(_) if !batches => {
+                    json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": "batches are not supported" } })
+                }
+                Value::Array(reqs) => {
+                    let mut out = Vec::new();
+                    for r in &reqs {
+                        out.push(answer(&calls, r).await);
+                    }
+                    Value::Array(out)
+                }
+                one => answer(&calls, &one).await,
+            })
+        }
+        let app = axum::Router::new()
+            .route("/", post(handle))
+            .with_state((calls, batches));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    }
+
+    fn call_key(to: &str, data: Vec<u8>, block: &str) -> (String, String, String) {
+        (
+            to.to_string(),
+            format!("0x{}", hex::encode(data)),
+            block.to_string(),
+        )
+    }
+
+    fn word(v: impl SolValue) -> String {
+        format!("0x{}", hex::encode(v.abi_encode()))
+    }
+
+    /// The gate takes every index each factory lists (an index whose answer
+    /// is missing is read again later, never skipped) and reads the creation
+    /// state at the finalized block of the collections deployed there.
+    #[tokio::test]
+    async fn the_gate_reads_the_factory_lists_and_the_creation_state() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (v2, v3) = (FACTORIES[0].0, FACTORIES[1].0);
+        let a = "0x00000000000000000000000000000000000000a1";
+        let b = "0x00000000000000000000000000000000000000b2";
+        let c = "0x00000000000000000000000000000000000000c3";
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        let nth = |i: u64| {
+            Factory::collectionsCall {
+                index: U256::from(i),
+            }
+            .abi_encode()
+        };
+        let mut calls = HashMap::new();
+        calls.insert(call_key(v2, size.clone(), "latest"), word(U256::from(2)));
+        calls.insert(call_key(v3, size.clone(), "latest"), word(U256::from(1)));
+        calls.insert(
+            call_key(v2, nth(0), "latest"),
+            word(a.parse::<Address>().unwrap()),
+        );
+        calls.insert(
+            call_key(v3, nth(0), "latest"),
+            word(b.parse::<Address>().unwrap()),
+        );
+        for (call, answer) in [
+            (
+                Collection::nameCall {}.abi_encode(),
+                word("Alpha".to_string()),
+            ),
+            (
+                Collection::symbolCall {}.abi_encode(),
+                word("ALP".to_string()),
+            ),
+            (
+                Collection::creatorCall {}.abi_encode(),
+                word(CREATOR.parse::<Address>().unwrap()),
+            ),
+            (Collection::isApprovedCall {}.abi_encode(), word(false)),
+            (Collection::isEditableCall {}.abi_encode(), word(true)),
+        ] {
+            calls.insert(call_key(a, call, "0x64"), answer);
+        }
+        let calls = Arc::new(std::sync::Mutex::new(calls));
+        let url = fake_rpc(calls.clone(), true).await;
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, &url);
+        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        let hints: Vec<(String, i32, String)> = sqlx::query_as(
+            "SELECT factory, idx, address FROM shop.collection_hint ORDER BY address",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            hints,
+            vec![(v2.into(), 0, a.into()), (v3.into(), 0, b.into())]
+        );
+        let seeds: Vec<(String, String, String, String, bool, bool, i64)> = sqlx::query_as(
+            "SELECT contract_address, name, symbol, creator, is_approved, is_editable, read_block FROM shop.collection_seed",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            seeds,
+            vec![(
+                a.into(),
+                "Alpha".into(),
+                "ALP".into(),
+                CREATOR.into(),
+                false,
+                true,
+                100
+            )],
+            "b has no code at the finalized block: it waits"
+        );
+
+        calls.lock().unwrap().insert(
+            call_key(v2, nth(1), "latest"),
+            word(c.parse::<Address>().unwrap()),
+        );
+        assert_eq!(
+            refresh_hints(&pool, &rpc).await.unwrap(),
+            1,
+            "the missing index, once it answers"
+        );
+        assert_eq!(refresh_hints(&pool, &rpc).await.unwrap(), 0);
+        // A reorg puts another collection at v3's index 0: both stay hints.
+        let d = "0x00000000000000000000000000000000000000d4";
+        calls.lock().unwrap().insert(
+            call_key(v3, nth(0), "latest"),
+            word(d.parse::<Address>().unwrap()),
+        );
+        assert_eq!(refresh_hints(&pool, &rpc).await.unwrap(), 1);
+        let v3_hints: Vec<String> = sqlx::query_scalar(
+            "SELECT address FROM shop.collection_hint WHERE factory = $1 ORDER BY address",
+        )
+        .bind(v3)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(v3_hints, vec![b.to_string(), d.to_string()]);
+    }
+
+    /// An endpoint that does not take batches is asked each call alone.
+    #[tokio::test]
+    async fn calls_go_one_by_one_where_batches_are_refused() {
+        let to = "0x00000000000000000000000000000000000000a1";
+        let name = Collection::nameCall {}.abi_encode();
+        let mut calls = HashMap::new();
+        calls.insert(
+            call_key(to, name.clone(), "latest"),
+            word("Alpha".to_string()),
+        );
+        let url = fake_rpc(Arc::new(std::sync::Mutex::new(calls)), false).await;
+        let http = crate::http::Outbound::for_tests();
+        let answers = eth_calls(
+            &Rpc::at(&http, &url),
+            &[
+                (to.to_string(), name),
+                (to.to_string(), Collection::symbolCall {}.abi_encode()),
+            ],
+            "latest",
+        )
+        .await
+        .unwrap();
+        assert_eq!(answers[0], Some("Alpha".to_string().abi_encode()));
+        assert_eq!(answers[1], None, "no data: not an answer");
+    }
+
+    /// An endpoint of another chain is refused before anything is read.
+    #[tokio::test]
+    async fn the_gate_refuses_another_chain() {
+        let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+            return;
+        };
+        use axum::{Json, routing::post};
+        let app = axum::Router::new().route(
+            "/",
+            post(|Json(req): Json<Value>| async move {
+                Json(json!({ "jsonrpc": "2.0", "id": req["id"], "result": "0x13882" }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let http = crate::http::Outbound::for_tests();
+        let url = format!("http://{addr}");
+        let err = gate(&pool, &Rpc::at(&http, &url)).await.unwrap_err();
+        assert!(format!("{err:#}").contains("chain"), "{err:#}");
+        let hints: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.collection_hint")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(hints, 0);
+    }
+}

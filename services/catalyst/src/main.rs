@@ -178,7 +178,7 @@ enum ShopCommand {
         database_url: String,
         #[arg(long, value_parser = ["ethereum", "matic"])]
         net: String,
-        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals", "third_party_registry"])]
+        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals", "third_party_registry", "collections"])]
         indexer: String,
         #[arg(long)]
         from: u64,
