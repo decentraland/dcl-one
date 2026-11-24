@@ -335,10 +335,6 @@
     "primitives": 0,
     "tokens": 10
   },
-  "apps/sites/src/features/creators/components/SubNav/SubNav.module.css": {
-    "primitives": 0,
-    "tokens": 4
-  },
   "apps/sites/src/features/creators/components/SuccessModal/SuccessModal.module.css": {
     "primitives": 0,
     "tokens": 2
