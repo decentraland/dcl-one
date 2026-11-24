@@ -1,9 +1,7 @@
 // credits-server client (shop credits, USD-denominated: 1 credit = 10 US cents). Requests are
 // ADR-44 signed through the lib/auth chokepoint.
 import { config } from './config'
-import { catalystUrl } from '../catalyst/bases'
 import { signedFetch } from './auth'
-import { isDecentralandHost } from './config/env'
 
 export type CreditsBalance = {
   credits: number
@@ -44,16 +42,7 @@ export class CreditsServerError extends Error {
   }
 }
 
-const host = () => (typeof window === 'undefined' ? '' : window.location.host)
-
-/** The credits-server: the environment's on a Decentraland host, else the node's `/credits`. */
-export const creditsUrl = (pageHost = host()) =>
-  isDecentralandHost(pageHost) ? config.get('CREDITS_SERVER_URL') : `${catalystUrl()}/credits`
-
-/** Whether the credits-server here answers `authorize-publication`: the node does not serve it. */
-export const canAuthorizePublication = (pageHost = host()) => isDecentralandHost(pageHost)
-
-const baseUrl = () => creditsUrl()
+const baseUrl = () => config.get('CREDITS_SERVER_URL')
 
 async function parseError(response: Response, fallback: string): Promise<CreditsServerError> {
   const body = (await response.json().catch(() => null)) as { error?: string } | null

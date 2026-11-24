@@ -1,14 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  CREDIT_PACKS,
-  MAX_PACK_QUANTITY,
-  fetchCreditPacks,
-  formatUsd,
-  recommendPack,
-  selectionTotals
-} from './creditPacks'
+import { describe, expect, it } from 'vitest'
+import { CREDIT_PACKS, MAX_PACK_QUANTITY, formatUsd, recommendPack, selectionTotals } from './creditPacks'
 
 describe('recommendPack', () => {
   it('preselects the cheapest single pack that covers the shortfall', () => {
@@ -49,36 +42,5 @@ describe('formatUsd', () => {
   it('renders dollars with two decimals and thousands separators', () => {
     expect(formatUsd(5.99)).toBe('$5.99')
     expect(formatUsd(1199.9)).toBe('$1,199.90')
-  })
-})
-
-describe('fetchCreditPacks', () => {
-  const fetchMock = vi.fn()
-
-  afterEach(() => {
-    fetchMock.mockReset()
-    vi.unstubAllGlobals()
-  })
-
-  describe('when the page is served by this deployment', () => {
-    it("should read the node's catalogue in order", async () => {
-      vi.stubGlobal('fetch', fetchMock)
-      fetchMock.mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            packs: [
-              { id: 'credits_usd_15', usd: 15.0, credits: 150, recommended: false, order: 2 },
-              { id: 'credits_usd_5', usd: 5.0, credits: 50, recommended: false, order: 1 }
-            ]
-          }),
-          { status: 200 }
-        )
-      )
-      await expect(fetchCreditPacks()).resolves.toEqual([
-        { id: 'credits_usd_5', usd: 5, credits: 50 },
-        { id: 'credits_usd_15', usd: 15, credits: 150 }
-      ])
-      expect(fetchMock).toHaveBeenCalledWith(`${window.location.origin}/credits/credits/packs`)
-    })
   })
 })

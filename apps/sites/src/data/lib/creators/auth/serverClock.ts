@@ -4,9 +4,7 @@
 // future" when the clock is ahead). This module measures how far the device
 // clock is from the servers' and lets signing correct for it, so a wrong device clock no longer locks the
 // creator out.
-import { catalystUrl } from '../../catalyst/bases'
 import { config } from '../config'
-import { isDecentralandHost } from '../config/env'
 
 /**
  * Drift below this is left alone: it fits inside the servers' 60s window with room for latency, and a
@@ -41,14 +39,10 @@ export function serverNow(): number {
   return Date.now() + offsetMs
 }
 
-/** The public time source (`currentTime`, CORS-enabled): credits-server's `/status` on a Decentraland host, else the node's `/lambdas/status`. */
-export const clockUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
-  isDecentralandHost(host) ? `${config.get('CREDITS_SERVER_URL')}/status` : `${catalystUrl()}/lambdas/status`
-
-/** Reads the time source and returns the offset it implies, from the midpoint of the round trip. */
+/** Reads credits-server's public `/status` (`currentTime`, CORS-enabled) and returns the offset it implies. */
 async function measureOffset(): Promise<number | null> {
   const sentAt = Date.now()
-  const response = await fetch(clockUrl())
+  const response = await fetch(`${config.get('CREDITS_SERVER_URL')}/status`)
   const receivedAt = Date.now()
   const body = (await response.json().catch(() => null)) as { currentTime?: unknown } | null
   if (!response.ok || typeof body?.currentTime !== 'number' || !Number.isFinite(body.currentTime)) return null

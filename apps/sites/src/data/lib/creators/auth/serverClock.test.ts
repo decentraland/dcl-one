@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '../test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clockUrl, resetServerClock, resyncServerClock, serverClockOffset, serverNow } from './serverClock'
+import { resetServerClock, resyncServerClock, serverClockOffset, serverNow } from './serverClock'
 
 const NOW = 1_794_700_000_000
 
@@ -123,21 +123,6 @@ describe('serverClock', () => {
 
     it('should read the server time once', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
-    })
-  })
-})
-
-describe('clockUrl', () => {
-  describe('when the page is served by this deployment', () => {
-    it("should be the node's lambdas status, whose currentTime is the node's clock", () => {
-      expect(clockUrl()).toBe(`${window.location.origin}/lambdas/status`)
-      expect(clockUrl('dcl.example')).toBe(`${window.location.origin}/lambdas/status`)
-    })
-  })
-
-  describe('when the page is on a Decentraland host', () => {
-    it("should be that environment's credits-server status", () => {
-      expect(clockUrl('decentraland.zone')).toBe('https://credits.decentraland.zone/status')
     })
   })
 })

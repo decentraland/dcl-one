@@ -6,9 +6,7 @@ import {
   CreditsServerError,
   authorizePublication,
   cancelCreditsOrder,
-  canAuthorizePublication,
   createCreditsCheckout,
-  creditsUrl,
   fetchCreditsBalance,
   pollCreditsOrder
 } from './credits'
@@ -32,7 +30,7 @@ describe('fetchCreditsBalance', () => {
     await expect(fetchCreditsBalance(ADDRESS)).resolves.toEqual({ credits: 560, balanceCents: 5600 })
     const [address, baseUrl, path] = mockedFetch.mock.calls[0]
     expect(address).toBe(ADDRESS)
-    expect(baseUrl).toBe(`${window.location.origin}/credits`)
+    expect(baseUrl).toBe('https://credits.decentraland.zone')
     expect(path).toBe(`/users/${ADDRESS}/credits`)
   })
 
@@ -150,49 +148,5 @@ describe('cancelCreditsOrder', () => {
     await expect(cancelCreditsOrder(ADDRESS, 'order-1')).resolves.toBeUndefined()
     expect(mockedFetch.mock.calls[0][2]).toBe('/credits/orders/order-1/cancel')
     expect(mockedFetch.mock.calls[0][3]?.method).toBe('POST')
-  })
-})
-
-describe('creditsUrl', () => {
-  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
-    afterEach(() => {
-      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
-    })
-
-    it("should be the credits of the node behind the page's origin", () => {
-      expect(creditsUrl()).toBe(`${window.location.origin}/credits`)
-      expect(creditsUrl('dcl.example')).toBe(`${window.location.origin}/credits`)
-    })
-
-    it('should be the credits of the public node base when the page names one', () => {
-      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
-      expect(creditsUrl()).toBe('https://node.example/credits')
-    })
-
-    it.each(['dcl.dev', 'dcl.live'])("should be the node's credits on a %s page", host => {
-      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = `https://${host}`
-      expect(creditsUrl(host)).toBe(`https://${host}/credits`)
-    })
-  })
-
-  describe('when the page is on a Decentraland host', () => {
-    it("should be that environment's credits-server", () => {
-      expect(creditsUrl('decentraland.zone')).toBe('https://credits.decentraland.zone')
-    })
-  })
-})
-
-describe('canAuthorizePublication', () => {
-  describe('when the page is served by this deployment', () => {
-    it('should be false: the node serves no authorize-publication', () => {
-      expect(canAuthorizePublication()).toBe(false)
-      expect(canAuthorizePublication('dcl.example')).toBe(false)
-    })
-  })
-
-  describe('when the page is on a Decentraland host', () => {
-    it("should be true: that environment's credits-server authorizes publications", () => {
-      expect(canAuthorizePublication('decentraland.zone')).toBe(true)
-    })
   })
 })
