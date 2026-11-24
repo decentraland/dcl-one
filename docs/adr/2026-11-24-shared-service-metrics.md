@@ -9,9 +9,9 @@ Catalyst domain crates record into the Rust metrics facade. Serve, Pulse and the
 
 ## Decision
 
-Use a shared Rust library, dcl-metrics, for process recorder setup, HTTP observations, WebSocket observations and service metric declarations. Each executable initializes its recorder before starting workers. Each replica exposes its own private scrape target. Service crates own domain metrics and record into their host process. Keep existing metric names, units, histogram buckets and compatibility views available to their consumers.
+Use a shared Rust library, dcl-metrics, for process recorder setup, HTTP observations, WebSocket observations and service metric declarations. Each executable initializes its recorder before starting workers. Each replica serves Prometheus exposition at exactly one address, `GET /metrics` on its private operator listener. Service crates own domain metrics and record into their host process. Preserve service metric names, units and histogram buckets. Use the shared HTTP families for request measurements across components.
 
-Count an HTTP request once, through response headers, including an upgrade handshake. Track established WebSocket connections through closure or cancellation. Count messages at an identified transport boundary and distinguish send failures from successful writes. Use bounded labels and matched route templates. Preserve per-process counters across compatibility-view resets.
+Count an HTTP request once, through response headers, including an upgrade handshake. Track established WebSocket connections through closure or cancellation. Count messages at an identified transport boundary and distinguish send failures from successful writes. Use bounded labels and matched route templates. Process counters accumulate for the lifetime of the process.
 
 ## Consequences
 
@@ -46,7 +46,7 @@ scrape_configs:
       - targets: ["127.0.0.1:5008"]
 ```
 
-The Social RPC route offers a filtered compatibility view. Stats and connector retain their compatibility routes and reset settings. Camera Reel also retains its compatibility HTTP metrics route. Use canonical targets for fleet totals. During migration, select the scrape job explicitly when comparing those views.
+When rolling out this change, point the collector at each serve replica’s private `/metrics` and remove scrape jobs for `/social-rpc/metrics`, `/archipelago-ea-stats/metrics`, `/archipelago-ea-ws-connector/metrics`, and `/camera-reel-service/metrics`. Those application routes and their configured aliases are retired. Use the `component` label on the shared HTTP metrics to select one service. Use the same process scrape for service-declared metrics, WebSocket traffic, and process measurements.
 
 ## Recording and querying
 
