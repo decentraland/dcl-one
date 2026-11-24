@@ -493,6 +493,32 @@ const mediaOf = (query: string): string => {
   return css.slice(start, css.indexOf('\n  }\n', start))
 }
 
+describe('EventCard dimmed', () => {
+  describe.each(['small', 'day'] as const)('when a %s card is dimmed', variant => {
+    beforeEach(() => {
+      setup({ variant, dimmed: true })
+    })
+
+    it('should fade its cover alone, keeping the title, host and time at full contrast', () => {
+      const media = screen.getByRole('article').querySelector('[data-dimmed]')
+      expect(media?.querySelector('img')).toBeTruthy()
+      expect(media?.contains(screen.getByRole('link', { name: 'Poker Night' }))).toBe(false)
+      expect(blockOf(css, '.media[data-dimmed]')).toContain('opacity: 0.5')
+      expect(css).not.toMatch(/\.card[^{]*\{[^}]*opacity: 0\.5/)
+    })
+  })
+
+  describe('when a card is not dimmed', () => {
+    beforeEach(() => {
+      setup({ variant: 'day' })
+    })
+
+    it('should not fade its cover', () => {
+      expect(screen.getByRole('article').querySelector('[data-dimmed]')).toBeNull()
+    })
+  })
+})
+
 describe('EventCard motion', () => {
   const hover = mediaOf('(hover: hover) and (min-width: 768px)')
 

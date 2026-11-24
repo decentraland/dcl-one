@@ -415,7 +415,9 @@ function useMyEventsTab(identity: AuthIdentity | null) {
   useSignInRequired(wanted && !hadIdentity, Boolean(identity));
   useEffect(() => {
     if (identity) setHadIdentity(true);
-    else if (wanted && hadIdentity)
+    // Once the tab is dropped after a sign-out, a later link to it asks to sign in again.
+    else if (!wanted) setHadIdentity(false);
+    else if (hadIdentity)
       setParams(
         (prev) => {
           const next = new URLSearchParams(prev);

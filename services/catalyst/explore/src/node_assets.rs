@@ -67,6 +67,31 @@ fn mounted_path(path: &str) -> Option<&str> {
     path.strip_prefix('/')?.strip_prefix(HOST_PREFIX)
 }
 
+/// Recognizes public event artwork by its catalogue URL. The caller enforces its source policy.
+pub fn is_event_poster_url(image: &str, node: Option<&Url>) -> bool {
+    let Some((url, path)) = parse_asset_url(image) else {
+        return false;
+    };
+    if url.query().is_some() {
+        return false;
+    }
+    if url.scheme() == "https"
+        && url.port().is_none()
+        && url.host_str() == Some(POSTER_BUCKET)
+        && poster_path(path).is_some()
+    {
+        return true;
+    }
+    let Some(relative) = node
+        .filter(|base| base.origin() == url.origin())
+        .and_then(|base| path.strip_prefix(base.path().trim_end_matches('/')))
+    else {
+        return false;
+    };
+    relative.strip_prefix("/events") == Some(DEFAULT_EVENT_IMAGE)
+        || mounted_path(relative).and_then(poster_path).is_some()
+}
+
 /// Parses authoring inputs using the same poster keys and mount as the read projection.
 pub(crate) fn event_poster_input<'a>(
     image: &'a str,
@@ -246,6 +271,38 @@ mod tests {
     use super::{node_asset_url, node_page_url, to_node};
 
     const D: &str = "https://node.example";
+
+    #[test]
+    fn native_posters_follow_the_public_mount_and_the_canonical_bucket() {
+        let base = url::Url::parse("https://node.example/base").unwrap();
+        let root = url::Url::parse("https://node.example/").unwrap();
+        for mount in [&root, &base] {
+            for path in [
+                "/events-assets-099ac00/poster/night.webp",
+                "/events-assets-099ac00/poster-vertical/art.png",
+                "/events/assets/event-default.webp",
+            ] {
+                let url = format!("{}{path}", mount.as_str().trim_end_matches('/'));
+                assert!(super::is_event_poster_url(&url, Some(mount)), "{url}");
+                assert!(!super::is_event_poster_url(&url, None), "{url}");
+            }
+        }
+        assert!(super::is_event_poster_url(
+            "https://events-assets-099ac00.decentraland.org/poster/night.webp",
+            None
+        ));
+        for path in [
+            "https://other.example/base/events-assets-099ac00/poster/night.webp",
+            "https://node.example/events-assets-099ac00/poster/night.webp",
+            "https://node.example/base/events-assets-099ac00/assets/event-default.webp",
+            "https://node.example/base/events-assets-099ac00/poster/a%2Fb.webp",
+            "https://node.example/base/events-assets-099ac00/poster/night.webp?version=1",
+            "https://user@node.example/base/events-assets-099ac00/poster/night.webp",
+            "https://node.example/base/events-assets-099ac00/poster/../poster/night.webp",
+        ] {
+            assert!(!super::is_event_poster_url(path, Some(&base)), "{path}");
+        }
+    }
 
     #[test]
     fn poster_projection_uses_inputs_the_upload_policy_recognizes() {

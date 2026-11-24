@@ -27,7 +27,8 @@ function withPreset(settings: Setting[]): Setting[] {
     ],
     value: currentPreset(settings),
     default: PRESET_NAMES.indexOf('Medium'),
-    stepSize: 1
+    stepSize: 1,
+    disabled: false
   }
   return [preset, ...settings]
 }

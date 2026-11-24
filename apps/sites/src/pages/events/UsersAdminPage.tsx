@@ -7,19 +7,19 @@ import {
   UsersTable,
   type AdminUserRow,
 } from "@dcl/one-ui";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { getIdentity } from "@/data/lib/auth/session";
-import { eventAdminKeys, loadEventProfileSettings, saveEventPermissions, type EventProfile } from "@/data/lib/catalyst/places/event-management";
+import { eventAdminKeys, eventGrantsQuery, loadEventProfileSettings, saveEventPermissions, type EventProfile } from "@/data/lib/catalyst/places/event-management";
 import { creatorProfilesQuery } from "@/data/lib/catalyst/social/creator-profiles";
-import { useEventsFooterCopy } from "../../events/locale";
-import { openSignIn } from "../../components/auth/signin-store";
-import SitesLayout from "../../components/chrome/SitesLayout";
-import { AdminAccessGate } from "./AdminAccessGate";
-import { EventAdminTabs } from "./EventAdminTabs";
-import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
-import { useToast } from "./useToast";
+import { useEventsFooterCopy } from "@/features/events/locale";
+import { openSignIn } from "@/features/components/auth/signin-store";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
+import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
+import { useEventAdmin, type EventAdminAccess } from "@/features/explorer/event-management/useEventAdmin";
+import { useToast } from "@/features/explorer/event-management/useToast";
 
 const SELF_LOCKED = "edit_any_profile";
 
@@ -34,11 +34,21 @@ function applyPermissionChanges(current: readonly string[], initial: readonly st
 export default function UsersAdminPage() {
   const access = useEventAdmin();
   const footerCopy = useEventsFooterCopy();
+  const reads = access.identity && access.canManageUsers;
+  const grants = useQuery(reads && access.identity ? eventGrantsQuery(access.identity) : { queryKey: eventAdminKeys.grants("anonymous"), queryFn: skipToken });
+  // The page waits on the moderator-only list too: a refusal (null) sends the account back to /events like
+  // a missing grant, and any other failure offers a retry here.
+  const usersAccess: EventAdminAccess = {
+    ...access,
+    loading: access.loading || Boolean(reads && grants.isPending),
+    error: access.error ?? (grants.error && !grants.data ? grants.error : null),
+    retry: access.error ? access.retry : () => void grants.refetch(),
+  };
   return (
     <SitesLayout active="whatson" headerSurface="overlay" overlayNav footerCopy={footerCopy}>
       <AdminPage bar={<EventAdminTabs active="users" />}>
-        <AdminAccessGate access={access} allowed={access.canManageUsers}>
-          <UsersAdmin key={access.identity?.signer.toLowerCase()} access={access} profiles={access.profiles ?? []} />
+        <AdminAccessGate access={usersAccess} allowed={access.canManageUsers && Boolean(grants.data)}>
+          <UsersAdmin key={access.identity?.signer.toLowerCase()} access={access} profiles={grants.data ?? []} />
         </AdminAccessGate>
       </AdminPage>
     </SitesLayout>
@@ -98,6 +108,7 @@ function UsersAdmin({ access, profiles }: { access: EventAdminAccess; profiles: 
       const sent = own && !changed.includes(SELF_LOCKED) ? [...changed, SELF_LOCKED] : changed;
       const saved = await saveEventPermissions(signer, address, sent);
       void client.invalidateQueries({ queryKey: eventAdminKeys.access(signer.signer) });
+      void client.invalidateQueries({ queryKey: eventAdminKeys.grants(signer.signer) });
       if (!mounted.current) return;
       const kept = saved.permissions.length !== sent.length || sent.some((permission) => !saved.permissions.includes(permission));
       setEditing(null);

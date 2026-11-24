@@ -99,6 +99,7 @@ pub mod search;
 pub mod shop;
 pub mod signed;
 pub mod third_party;
+pub mod third_party_registry;
 pub mod tips;
 pub mod trade_events;
 pub mod trades;
@@ -192,7 +193,7 @@ pub struct Settings {
     /// `RPC_ENDPOINT_POLYGON`: the POI list, and third-party ownership on
     /// the L2 of `ETH_NETWORK` (its `TRADE_RPC_URLS` entry otherwise).
     pub polygon_rpc_url: Option<String>,
-    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: the approved third-party providers.
+    /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: approved providers on nodes without the local registry index.
     pub third_party_registry_subgraph_url: Option<String>,
     /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
     pub nft_worker_base_url: Option<String>,
@@ -785,15 +786,10 @@ impl MarketplaceState {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
     }
 
-    /// The endpoint the committee walk reads (Polygon only): the
-    /// `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`
-    /// (off mainnet it serves another chain); the walk checks the endpoint
-    /// serves chain 137 before each pass.
-    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
-        if net != chain_walk::ChainNet::Matic {
-            return None;
-        }
-        self.chain_rpc_url(net).or_else(|| {
+    /// The `TRADE_RPC_URLS` 137 entry, with `RPC_ENDPOINT_POLYGON` as a
+    /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
+    pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
+        self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
             (self.settings.eth_network.trim() == "mainnet")
                 .then(|| self.settings.polygon_rpc_url.clone())
                 .flatten()
@@ -978,6 +974,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/lambdas/third-party-integrations",
             get(third_party::third_party_integrations),
+        )
+        .route(
+            "/lambdas/third-party-integrations/managers/{address}",
+            get(third_party_registry::managed_providers),
+        )
+        .route(
+            "/lambdas/third-party-integrations/providers/{id}",
+            get(third_party_registry::provider),
         )
         .route(
             "/lambdas/users/{address}/third-party-wearables",

@@ -43,6 +43,11 @@
     background: var(--dcl-neutrals-onix);
   }
 
+  /* A dimmed card fades its cover only, so the title, host and time keep their contrast. */
+  .media[data-dimmed] {
+    opacity: 0.5;
+  }
+
   .cover {
     position: absolute;
     inset: 0;

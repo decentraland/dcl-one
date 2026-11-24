@@ -42,6 +42,20 @@ are external. Explorer images: pipeline.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
 - `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
 
+## Magic account deletion
+
+Set `MAGIC_CLIENT_ID`, `MAGIC_SECRET_KEY_FILE`, and
+`ACCOUNT_DELETION_ALLOWED_ORIGINS` on the APIs deployment to enable
+`DELETE /auth-api/accounts` from the browser. The origin list is
+semicolon-delimited and empty by default. Set it to the exact URLs that
+serve Account Settings, for example
+`https://decentraland.org;https://account.decentraland.org;https://play.decentraland.org`
+for those production front ends.
+
+Set the same hourly limits on all API replicas. `ACCOUNT_DELETION_WALLET_LIMIT`
+defaults to 3, `ACCOUNT_DELETION_NETWORK_LIMIT` to 20 and
+`ACCOUNT_DELETION_GLOBAL_LIMIT` to 120. A zero limit refuses all attempts.
+
 ## Sites Explorer build input
 
 Sites bundles our Bevy web build under `/play/`; no other engine is used.
@@ -184,6 +198,14 @@ Event poster upgrade: run `catalyst schema migrate` before deploying the API. St
 Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API. Step `0051_explore_auth_identity_request_id` adds the nullable `auth_request_id` that binds a parked identity to its deep-link request; parked identities stay unbound. Sites binds only Creator Hub sign-ins, whose pickup must then send `x-identity-verifier`.
 
 Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Builder's committee routes admit only `BUILDER_ADMIN_ADDRESSES` until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee.
+
+Third-party registry upgrade: run `catalyst schema migrate` before deploying the updated index worker.
+Use the mirror posture or set `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED=true` and supply a Polygon
+mainnet RPC via `TRADE_RPC_URLS` (chain 137) or, on mainnet, `RPC_ENDPOINT_POLYGON`. During catch-up,
+API replicas can keep their existing `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` to serve provider lists.
+Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` publishes the full
+registry history, API replicas prefer the native index and can serve manager and slot details.
+The NFT worker supplies wallet holdings for open mappings.
 
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with

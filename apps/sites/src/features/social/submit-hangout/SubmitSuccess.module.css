@@ -7,8 +7,8 @@
   align-items: center;
   justify-content: center;
   overflow-y: auto;
-  /* no token: the source page gradient, the same as the editor's background */
-  background: radial-gradient(52.86% 115.71% at 9.01% 25.79%, #7434b1 0%, #481c6c 37.11%, #2b1040 100%);
+  /* The source page gradient, the same as the editor's background. */
+  background: radial-gradient(52.86% 115.71% at 9.01% 25.79%, var(--dcl-profile-gradient-start) 0%, var(--dcl-profile-gradient-middle) 37.11%, var(--dcl-profile-gradient-end) 100%);
   color: var(--dcl-text-primary);
 }
 
@@ -35,7 +35,7 @@
 
 .message {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--dcl-font-size-heading-2);
   font-weight: 500;
   line-height: 1.334;
   text-align: center;
@@ -53,7 +53,7 @@
 
 @media (max-width: 1023px) {
   .content { gap: var(--dcl-space-32); padding: var(--dcl-space-32) var(--dcl-space-16); }
-  .message { font-size: 18px; }
+  .message { font-size: var(--dcl-font-size-heading-5); }
 }
 
 @media (max-width: 599px) {

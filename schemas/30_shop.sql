@@ -16995,3 +16995,18 @@ CREATE TABLE shop.worker_progress (
     CHECK (position >= 0 AND ceiling >= position),
     CHECK (cardinality(key_position) <= 2 AND cardinality(key_ceiling) <= 2)
 );
+
+-- Provider state after each Polygon registry event. Keep previous versions
+-- for readers on the published cursor and for rewind.
+CREATE TABLE shop.third_party_registry_event (
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    provider_id text NOT NULL,
+    state jsonb NOT NULL,
+    receipt jsonb,
+    PRIMARY KEY (block_number, log_index)
+);
+
+CREATE INDEX third_party_registry_provider_version_idx ON shop.third_party_registry_event
+    (provider_id, block_number DESC, log_index DESC);

@@ -80,8 +80,8 @@
   color: var(--ink-7);
 }
 
-.mp-launch input[type="text"],
-.mp-launch input[type="number"],
+.mp-launch input[type='text'],
+.mp-launch input[type='number'],
 .mp-launch select {
   padding: 7px 10px;
   border: 1px solid var(--line);
