@@ -623,12 +623,37 @@ pub(super) async fn fold_listing(
     venue: &str,
     listing: uuid::Uuid,
     now: DateTime<Utc>,
-) -> Result<u64, sqlx::Error> {
+) -> Result<Option<u64>, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    let cursor = lock_cursor(&mut tx, chain).await?;
+    let Some(cursor) = cursor.filter(|cursor| chain_walk::is_ready_on(cursor, chain.id(), now))
+    else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    // Keep the publication row locked while deriving and writing the verdict.
+    // A rewind cannot withdraw this evidence between the read and commit.
+    let _published_through = cursor.folded_block;
     let verdicts = changed_verdicts(&mut tx, chain, venue, 0, Some(listing)).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
     tx.commit().await?;
-    Ok(written)
+    Ok(Some(written))
+}
+
+/// Lock and read the Rentals publication row for a decision that writes from
+/// its event log. Keep the lock until the caller commits the dependent write.
+pub(super) async fn lock_cursor(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+) -> Result<Option<chain_walk::Cursor>, sqlx::Error> {
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM shop.chain_cursor WHERE indexer=$1 AND network=$2 FOR SHARE",
+        chain_walk::CURSOR_COLUMNS
+    )))
+    .bind(chain.indexer())
+    .bind(ChainNet::Ethereum.db_name())
+    .fetch_optional(&mut *conn)
+    .await
 }
 
 /// The walk of one Ethereum Rentals deployment. Each deployment folds the

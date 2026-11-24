@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 use uuid::Uuid;
 
 use super::index;
@@ -100,6 +100,18 @@ async fn cancel(
     membership: Option<(i64, i64)>,
     now: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let written = cancel_on(&mut tx, cancels, membership, now).await?;
+    tx.commit().await?;
+    Ok(written)
+}
+
+async fn cancel_on(
+    conn: &mut PgConnection,
+    cancels: &[(Uuid, &'static str)],
+    membership: Option<(i64, i64)>,
+    now: NaiveDateTime,
+) -> Result<u64, sqlx::Error> {
     if cancels.is_empty() {
         return Ok(0);
     }
@@ -123,7 +135,7 @@ async fn cancel(
     .bind(now)
     .bind(membership.map(|(block, _)| block))
     .bind(membership.map(|(_, time)| time as f64))
-    .execute(pool)
+    .execute(&mut *conn)
     .await?
     .rows_affected())
 }
@@ -240,7 +252,6 @@ pub async fn cancel_moved(
         .bind(chain.id())
         .fetch_all(&mut *snapshot.tx)
         .await?;
-    snapshot.tx.rollback().await?;
     let cancels: Vec<(Uuid, &'static str)> = rows
         .iter()
         .filter_map(|r| {
@@ -276,14 +287,75 @@ pub async fn cancel_moved(
             .map(|reason| (r.get("id"), reason))
         })
         .collect();
-    cancel(
+    // Reacquire both publication rows in the write transaction. If either
+    // cursor changed since the evidence snapshot (including a rewind), discard
+    // the decision and let the next pass read its new publication.
+    snapshot.tx.rollback().await?;
+    let cursors = PublishedCursorSnapshot {
+        land,
+        land_cursor: &snapshot.cursor,
+        rentals_chain: chain,
+        rentals_cursor: &rentals_cursor,
+    };
+    cancel_if_published_snapshot(
         pool,
+        &cursors,
         &cancels,
         head_time.map(|time| (folded, time)),
+        now,
         now.naive_utc(),
     )
     .await
-    .map(Some)
+}
+
+struct PublishedCursorSnapshot<'a> {
+    land: LandNetwork,
+    land_cursor: &'a crate::land_authz::indexer::Cursor,
+    rentals_chain: index::RentalsChain,
+    rentals_cursor: &'a crate::market::chain_walk::Cursor,
+}
+
+async fn cancel_if_published_snapshot(
+    pool: &PgPool,
+    snapshot: &PublishedCursorSnapshot<'_>,
+    cancels: &[(Uuid, &'static str)],
+    membership: Option<(i64, i64)>,
+    now: DateTime<Utc>,
+    updated_at: NaiveDateTime,
+) -> Result<Option<u64>, sqlx::Error> {
+    if cancels.is_empty() {
+        return Ok(Some(0));
+    }
+    let mut tx = pool.begin().await?;
+    let current_land: Option<crate::land_authz::indexer::Cursor> = sqlx::query_as(
+        "SELECT network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, updated_at \
+         FROM land_authz.index_cursor WHERE network=$1 FOR SHARE",
+    )
+    .bind(snapshot.land.network)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let current_rentals = index::lock_cursor(&mut tx, snapshot.rentals_chain).await?;
+    let land_matches = current_land.as_ref().is_some_and(|cursor| {
+        cursor == snapshot.land_cursor
+            && cursor
+                .land_registry
+                .eq_ignore_ascii_case(snapshot.land.land_registry)
+            && cursor
+                .estate_registry
+                .eq_ignore_ascii_case(snapshot.land.estate_registry)
+            && crate::land_authz::indexer::index_ready(cursor, now)
+    });
+    let rentals_matches = current_rentals.as_ref().is_some_and(|cursor| {
+        cursor == snapshot.rentals_cursor
+            && crate::market::chain_walk::is_ready_on(cursor, snapshot.rentals_chain.id(), now)
+    });
+    if !land_matches || !rentals_matches {
+        tx.rollback().await?;
+        return Ok(None);
+    }
+    let written = cancel_on(&mut tx, cancels, membership, updated_at).await?;
+    tx.commit().await?;
+    Ok(Some(written))
 }
 
 /// What one pass did.
@@ -346,10 +418,9 @@ pub async fn sync_listing(
     let Some(chain) = chain else {
         return Ok(false);
     };
-    if !index::ready_on(pool, chain, now).await {
+    let Some(_) = index::fold_listing(pool, chain, &venue, id, now).await? else {
         return Ok(false);
-    }
-    index::fold_listing(pool, chain, &venue, id, now).await?;
+    };
     let still_open: bool =
         sqlx::query_scalar("SELECT status = 'open' FROM signatures.rentals WHERE id = $1")
             .bind(id)
@@ -850,6 +921,140 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    async fn wait_for_cursor_lock(pool: &PgPool) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                     WHERE datname=current_database() AND wait_event_type='Lock' \
+                       AND query ILIKE '%shop.chain_cursor%' AND query ILIKE '%FOR SHARE%')",
+                )
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("decision waits for the published cursor lock");
+    }
+
+    #[tokio::test]
+    async fn refresh_revalidates_the_rentals_cursor_before_folding_events() {
+        let Some(db) = OwnedDatabase::new("rental_refresh_cursor_rewind", Schema::Full, 4).await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "33", 33).await;
+        publish_rentals_index(pool).await;
+        let bump = index::decode_log(
+            &index::tests::asset_index_log(
+                LESSOR,
+                LAND_REGISTRY_MAINNET,
+                alloy_primitives::U256::from(33u8),
+                1,
+                50,
+                0,
+            ),
+            1_700_000_000,
+        )
+        .unwrap()
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
+            .await
+            .unwrap();
+        drop(conn);
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query(
+            "SELECT 1 FROM shop.chain_cursor WHERE indexer='rentals' AND network='ethereum' FOR UPDATE",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        let route_pool = pool.clone();
+        let refresh =
+            tokio::spawn(async move { sync_listing(&route_pool, id, None, Utc::now()).await });
+        wait_for_cursor_lock(pool).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals' AND network='ethereum'",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        lock.commit().await.unwrap();
+
+        assert!(!refresh.await.unwrap().unwrap());
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn status_pass_discards_cancellation_after_a_rentals_rewind() {
+        let Some(db) = OwnedDatabase::new("rental_status_cursor_rewind", Schema::Full, 4).await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "34", 34).await;
+        publish_rentals_index(pool).await;
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, 5, 5, timezone('UTC', now()), true)",
+        )
+        .bind(LAND_MAINNET.network)
+        .bind(LAND_MAINNET.land_registry)
+        .bind(LAND_MAINNET.estate_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 34, $2, 5, 0)",
+        )
+        .bind(LAND_MAINNET.land_registry)
+        .bind(OTHER)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (5, 0, $1, $2, 'transfer', 34, $3)",
+        )
+        .bind(Utc::now().timestamp() + 3600)
+        .bind(LAND_MAINNET.land_registry)
+        .bind(OTHER)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query(
+            "SELECT 1 FROM shop.chain_cursor WHERE indexer='rentals' AND network='ethereum' FOR UPDATE",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        let status_pool = pool.clone();
+        let pass =
+            tokio::spawn(async move { cancel_moved(&status_pool, LAND_MAINNET, Utc::now()).await });
+        wait_for_cursor_lock(pool).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals' AND network='ethereum'",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        lock.commit().await.unwrap();
+
+        assert_eq!(pass.await.unwrap().unwrap(), None);
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
     }
 
     #[tokio::test]
