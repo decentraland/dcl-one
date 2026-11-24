@@ -75,11 +75,14 @@ web crash report carries `feature_flags` and `feature_flags_override` itself (`c
 Once per session, when the settings registry and the analytics config exist, the engine sends
 `Settings Snapshot` (`settings_snapshot.rs`): `changed`, the settings whose value differs from
 their default, keyed by the setting's name, and `changed_count`, the number of entries in it
-(0 and an empty `changed` when nothing differs, so adoption has a denominator). A setting with
-named variants reports the variant's name, any other the number; a setting still unset
-(negative) is left out. It reads the player's saved settings, not the host page's session
-overrides. `/settings_snapshot` and the debug panel's "Settings snapshot" section show the same
-result live.
+(0 and an empty `changed` when nothing differs, so adoption has a denominator). Only the
+settings named in `REPORTED` in that file are reported: Gameplay, Controls, Audio, Chat, the
+graphics settings the HUD's Graphics Preset sets, Max Avatars and Scene Load Distance. A new
+setting is reported once its name is added there. A setting with named variants reports the
+variant's name, any other the number; a setting still unset (negative) is left out. It reads the
+player's saved settings, not the host page's session overrides. `/settings_snapshot` and the
+debug panel's "Settings snapshot" section show the same result live, plus `missing`: the listed
+names no setting on this platform matches.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it
