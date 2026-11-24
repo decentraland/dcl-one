@@ -487,18 +487,21 @@ where
         .context("reading explore_api.map_grid's revision")
 }
 
-/// Stores a built grid as the one row, guarded on the revision the build
-/// compared against (`prev`, `None` for no row): `false`, writing nothing,
-/// when another publisher stored a revision meanwhile.
-pub(super) async fn store_guarded(
-    pool: &PgPool,
+/// Stores a built grid as the one row on `executor`, guarded on the revision
+/// the build compared against (`prev`, `None` for no row): `false`, writing
+/// nothing, when another publisher stored a revision meanwhile.
+pub(super) async fn store_guarded<'e, E>(
+    executor: E,
     prev: Option<&Revision>,
     stamp: i64,
     digest_hex: &str,
     tile_count: i64,
     body_gzip: &[u8],
     built_at: NaiveDateTime,
-) -> sqlx::Result<bool> {
+) -> sqlx::Result<bool>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let written = match prev {
         None => {
             sqlx::query(
@@ -510,7 +513,7 @@ pub(super) async fn store_guarded(
             .bind(tile_count as i32)
             .bind(body_gzip)
             .bind(built_at)
-            .execute(pool)
+            .execute(executor)
             .await?
         }
         Some(prev) => {
@@ -526,7 +529,7 @@ pub(super) async fn store_guarded(
             .bind(built_at)
             .bind(prev.stamp)
             .bind(prev.etag.as_deref())
-            .execute(pool)
+            .execute(executor)
             .await?
         }
     };
@@ -624,8 +627,9 @@ fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
 /// writes nothing (and a process holding an older grid reloads the stored
 /// one); a different one waits until that revision is
 /// [`MIN_PUBLISH_INTERVAL`] old, then is stored with a write guarded on it
-/// and served only if newer than what this process holds. The build's clock
-/// is the snapshot's (`now()`), the clock the index cursors were written on. A build whose
+/// and served only if newer than what this process holds; a leased build
+/// writes on its lease's session. The build's clock is the snapshot's
+/// (`now()`), one PostgreSQL transaction clock for all its comparisons. A build whose
 /// revision another publisher replaced after its snapshot began is
 /// discarded: a pass never overwrites a revision published since its
 /// snapshot.
@@ -672,9 +676,9 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
                     .into(),
             );
         };
-        // The build's clock is the snapshot's: the index cursors were written
-        // on the database clock, so a fold committed just before the snapshot
-        // is never in its future; expiry and the stamp follow the same clock.
+        // The build's clock is the snapshot's: every comparison the build
+        // makes (readiness windows, expiry, the stamp, the publication floor)
+        // uses this one PostgreSQL transaction clock.
         let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT now()")
             .fetch_one(&mut *snapshot.tx)
             .await
@@ -752,20 +756,46 @@ async fn publish(
     let gz = tokio::task::spawn_blocking(move || gzip(&body))
         .await
         .context("grid gzip task")??;
-    // A builder whose lease went meanwhile stores nothing.
     anyhow::ensure!(!ctx.is_cancelled(), "cancelled before storing the grid");
     let built_at = now.naive_utc();
-    let stored_it = store_guarded(
-        &state.pool,
-        expected.as_ref(),
-        stamp,
-        &digest_hex,
-        tiles.len() as i64,
-        &gz,
-        built_at,
-    )
-    .await
-    .context("storing explore_api.map_grid")?;
+    let tile_count = tiles.len() as i64;
+    let stored_it = match ctx.lease() {
+        // On the lease's own session: the write commits while this process
+        // holds the lease, or not at all; a lease lost while the statement
+        // waits takes the statement with it.
+        Some(lease) => {
+            let (prev, digest_hex) = (expected.clone(), digest_hex.clone());
+            lease
+                .with_connection(move |conn| {
+                    Box::pin(async move {
+                        store_guarded(
+                            conn,
+                            prev.as_ref(),
+                            stamp,
+                            &digest_hex,
+                            tile_count,
+                            &gz,
+                            built_at,
+                        )
+                        .await
+                    })
+                })
+                .await
+                .context("storing explore_api.map_grid on the lease session")?
+        }
+        // An unleased run (tests, a single-process node) has no lease to lose.
+        None => store_guarded(
+            &state.pool,
+            expected.as_ref(),
+            stamp,
+            &digest_hex,
+            tile_count,
+            &gz,
+            built_at,
+        )
+        .await
+        .context("storing explore_api.map_grid")?,
+    };
     if !stored_it {
         // Another publisher stored a revision after this build's snapshot
         // began: its grid is served and this build discarded; the next pass
@@ -776,7 +806,6 @@ async fn publish(
     }
     tracing::info!(
         tiles = tiles.len(),
-        gzip_bytes = gz.len(),
         last_updated_at = stamp,
         "tile grid built"
     );

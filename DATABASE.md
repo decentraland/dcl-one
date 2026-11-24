@@ -2874,9 +2874,9 @@ builds it from its own indexes.
   published for the configured registries
   (`indexer::ready_snapshot`; a database error fails the pass as itself,
   not as an unpublished index). The build's clock is that snapshot's
-  `now()`, the clock the index cursors are written on, so a fold committed
-  just before the snapshot is never in its future. Shop's readiness checks
-  and rows run
+  `now()`: every comparison the build makes (the readiness windows, expiry,
+  the stamp, the publication floor) uses that one PostgreSQL transaction
+  clock. Shop's readiness checks and rows run
   on the same connection, which `serve` hands to Shop through
   `src/serve_adapters.rs` (Shop sits above Explore). The LAND facts, the
   index cursors and Shop's rows are therefore one state of the database: a
@@ -2894,8 +2894,10 @@ builds it from its own indexes.
   with the `shop.nft_event` row their `(updated_block, updated_log)` names,
   by primary key. The open `public_nft_order` trades that sell a token of
   either registry (`catalog::unified_trades_cte_of` scoped to the two
-  contracts, `idx_trade_assets_sent_contract`), priced in MANA (received
-  asset type 1; a USD-pegged price is not a MANA amount). The open, unexpired
+  contracts, `idx_trade_assets_sent_contract`), priced in MANA: received
+  as an ERC-20 (asset type 1) whose token is the chain's MANA
+  (`listings::mana_token`); another token or a USD-pegged price is not a
+  MANA amount. The open, unexpired
   `signatures.rentals` rows of both registries signed for the grid's chain
   and its Rentals contract, with their periods.
 - **Readiness:** the land-authz index published for the configured
@@ -2926,8 +2928,10 @@ builds it from its own indexes.
   minute. Then it is gzipped and written with an `UPDATE` guarded on that
   revision's stamp and `etag` (an `INSERT ...
   ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
-  in milliseconds and at least one second past it. A builder whose lease
-  went during the pass writes nothing. If another publisher
+  in milliseconds and at least one second past it. A leased build runs that
+  write on its lease's own session (`LeaseControl::with_connection`): it
+  commits while the process holds the lease or not at all, and a lease lost
+  while the statement waits takes the statement with it. If another publisher
   stored a revision after the snapshot began, the write stores nothing and
   the build is discarded: a pass never overwrites a revision published
   since its snapshot. A process serves a grid only if its stamp

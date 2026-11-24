@@ -2645,6 +2645,127 @@ async fn a_cancelled_or_too_early_build_stores_nothing() {
     db.teardown().await;
 }
 
+/// A leased build stores on its lease's own session. With the stored row
+/// locked by another session, the guarded write waits on that session; the
+/// lease is lost there (its backend ends) with no other revision stored in
+/// between, and the write goes with it: the row keeps the earlier revision.
+#[tokio::test]
+async fn a_lease_lost_while_the_write_waits_leaves_the_row_unchanged() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(FixedLandMarket(Mutex::new(Ok(priced(1000)))));
+    node.state.attach_land_market(market.clone());
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    let revision = || async {
+        sqlx::query_as::<_, (i64, Option<String>)>(
+            "SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+    let r0 = revision().await;
+
+    // Another session holds the row, so the next guarded write waits.
+    *market.0.lock() = Ok(priced(1500));
+    let mut locker = db.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM explore_api.map_grid WHERE id = 1 FOR UPDATE")
+        .execute(&mut *locker)
+        .await
+        .unwrap();
+
+    // One leased build; after a lost lease it does not run again.
+    let leased = Jobs::with_leases(
+        db.pool.clone(),
+        crate::jobs::LeaseSettings {
+            namespace: format!("map-grid-lease-{}", std::process::id()),
+            poll: Duration::from_secs(60),
+            keepalive: Duration::from_secs(30),
+        },
+    );
+    let (done, outcome) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let done = Arc::new(Mutex::new(Some(done)));
+    let state = node.state.clone();
+    leased.spawn_leased("map-grid-lease-test", move |lease_ctx| {
+        let (state, done) = (state.clone(), done.lock().take());
+        async move {
+            if let Some(done) = done {
+                let result = map::run_pass(&state, &lease_ctx).await;
+                let _ = done.send(result.map_err(|e| format!("{e:#}")));
+            }
+            Ok(())
+        }
+    });
+
+    // The write waits on the row lock, on the session holding the lease.
+    let mut waiting_pid = None;
+    for _ in 0..600 {
+        waiting_pid = sqlx::query_scalar::<_, i32>(
+            "SELECT pid FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock' \
+               AND query LIKE 'UPDATE explore_api.map_grid%'",
+        )
+        .fetch_optional(&db.pool)
+        .await
+        .unwrap();
+        if waiting_pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let waiting_pid = waiting_pid.expect("the guarded write waits on the row lock");
+    let lease_pid: i32 = sqlx::query_scalar(
+        "SELECT pid FROM pg_locks \
+         WHERE locktype = 'advisory' AND granted \
+           AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        waiting_pid, lease_pid,
+        "the write runs on the lease's session"
+    );
+
+    // The lease is lost while the statement waits; no other revision is
+    // stored in between. Then the row is released.
+    let ended: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(lease_pid)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert!(ended);
+    locker.rollback().await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(30), outcome)
+        .await
+        .expect("the leased build ends")
+        .unwrap();
+    assert!(
+        result.is_err(),
+        "the build fails with its lease: {result:?}"
+    );
+    assert_eq!(
+        revision().await,
+        r0,
+        "the old publication leaves the row unchanged"
+    );
+
+    leased.shutdown(Duration::from_secs(5)).await;
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
 /// The build reads Shop's side on the snapshot its LAND rows came from: a
 /// rewind committed in between is invisible to it, so the grid it stores is
 /// the coherent earlier state, and the next pass finds the index withdrawn,

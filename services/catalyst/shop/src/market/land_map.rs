@@ -15,8 +15,8 @@
 //! the snapshot began is invisible to it; the next build sees it whole.
 //!
 //! Readiness, the stage-5 rule (`check_ready`), on the caller's clock (the
-//! snapshot's, so a fold committed just before it is not in its future):
-//! the grid's chain must be
+//! map build passes its snapshot's transaction clock, the one every
+//! comparison of the build uses): the grid's chain must be
 //! Ethereum mainnet (the nft index walks only it), the nft index published
 //! on Ethereum (it folds the orders and the names; `chain_walk::ready_sql`,
 //! the cursor bound to chain 1) and `shop.trades` readable
@@ -24,8 +24,9 @@
 //! names the source and the grid is not built. The trades' chain verdicts
 //! (`shop.trade_chain_state`) close sold and cancelled listings while the
 //! trade-events index is published on Ethereum, as they do for the Shop.
-//! Trades count only when priced in MANA (received asset type 1): a price
-//! in USD-pegged MANA is not a MANA amount. Rental listings are the ones
+//! Trades count only when priced in MANA: an ERC-20 (received asset type 1)
+//! whose token is the chain's MANA (`listings::mana_token`); another token,
+//! or a price in USD-pegged MANA, is not a MANA amount. Rental listings are the ones
 //! signed for the grid's chain and its Rentals contract.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -128,14 +129,14 @@ WHERE r.status = 'open' AND r.contract_address = ANY($1) AND r.expiration >= $2
 
 /// The open trades of the LAND and Estate registries on Ethereum priced in
 /// MANA: `$1` now, `$2` the trades floor (`trades::mirrored_since`), `$3`
-/// the two registries.
+/// the two registries, `$4` the chain's MANA token.
 fn trades_sql() -> String {
     format!(
         "WITH {} SELECT u.id::text AS id, u.contract_address_sent, u.token_id, u.signer, \
            u.amount_received::text AS price, (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at_ms \
          FROM unified_trades u \
          WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL AND lower(u.network) = 'ethereum' \
-           AND u.received_asset_type = 1",
+           AND u.received_asset_type = 1 AND lower(u.received_contract) = $4",
         super::catalog::unified_trades_cte_of("$1", "$2", Some("$3"))
     )
 }
@@ -235,22 +236,29 @@ async fn read(
             updated_at: r.get::<Option<i64>, _>("block_time").filter(|t| *t > 0),
         })
         .collect();
-    let trades = sqlx::query(sqlx::AssertSqlSafe(trades_sql()))
-        .bind(naive_now)
-        .bind(super::trades::mirrored_since(&state.settings, naive_now))
-        .bind(&contracts)
-        .fetch_all(&mut *conn)
-        .await?
-        .iter()
-        .map(|r| LandTrade {
-            id: r.get("id"),
-            contract_address: r.get("contract_address_sent"),
-            token_id: r.get("token_id"),
-            signer: r.get("signer"),
-            price: r.get("price"),
-            created_at_ms: r.get("created_at_ms"),
-        })
-        .collect();
+    let trades = match super::listings::mana_token(chain_id) {
+        Some(mana) => {
+            sqlx::query(sqlx::AssertSqlSafe(trades_sql()))
+                .bind(naive_now)
+                .bind(super::trades::mirrored_since(&state.settings, naive_now))
+                .bind(&contracts)
+                .bind(mana)
+                .fetch_all(&mut *conn)
+                .await?
+        }
+        // No MANA on this chain: no trade can be priced in it.
+        None => Vec::new(),
+    }
+    .iter()
+    .map(|r| LandTrade {
+        id: r.get("id"),
+        contract_address: r.get("contract_address_sent"),
+        token_id: r.get("token_id"),
+        signer: r.get("signer"),
+        price: r.get("price"),
+        created_at_ms: r.get("created_at_ms"),
+    })
+    .collect();
     let rentals = match rentals_contract(chain_id as u64) {
         Some(venue) => sqlx::query(RENTALS_SQL)
             .bind(&contracts)
@@ -380,10 +388,23 @@ mod tests {
         mana: u64,
         expires_in: &str,
     ) {
-        priced_trade(pool, tag, contract, token, signer, mana, expires_in, 1).await;
+        let mana_token = super::super::listings::mana_token(1).unwrap();
+        priced_trade(
+            pool,
+            tag,
+            contract,
+            token,
+            signer,
+            mana,
+            expires_in,
+            (1, mana_token),
+        )
+        .await;
     }
 
-    /// [`trade`] received as asset type `received` (1 MANA, 2 USD-pegged MANA).
+    /// [`trade`] received as `(asset type, token contract)`: (1, the chain's
+    /// MANA) is a MANA price; another ERC-20, or type 2 (USD-pegged MANA),
+    /// is not.
     #[allow(clippy::too_many_arguments)]
     async fn priced_trade(
         pool: &sqlx::PgPool,
@@ -393,7 +414,7 @@ mod tests {
         signer: &str,
         mana: u64,
         expires_in: &str,
-        received: i16,
+        (received, received_token): (i16, &str),
     ) {
         let id: uuid::Uuid = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract) \
@@ -425,7 +446,7 @@ mod tests {
             "INSERT INTO shop.trade_assets (trade_id, direction, asset_type, contract_address, beneficiary) VALUES ($1, 'received', $4, $2, $3) RETURNING id",
         )
         .bind(id)
-        .bind(addr('8'))
+        .bind(received_token)
         .bind(signer)
         .bind(received)
         .fetch_one(pool)
@@ -543,8 +564,31 @@ mod tests {
         trade(&db.pool, "land", LAND, "5", &addr('a'), 42, "1 day").await;
         trade(&db.pool, "expired", LAND, "5", &addr('a'), 41, "-1 hour").await;
         trade(&db.pool, "other", &addr('6'), "5", &addr('a'), 40, "1 day").await;
-        // A LAND trade priced in USD-pegged MANA: not a MANA price.
-        priced_trade(&db.pool, "usd", LAND, "6", &addr('a'), 39, "1 day", 2).await;
+        // LAND trades priced in another ERC-20 and in USD-pegged MANA: not
+        // MANA prices.
+        let mana_token = super::super::listings::mana_token(1).unwrap();
+        priced_trade(
+            &db.pool,
+            "other-token",
+            LAND,
+            "6",
+            &addr('a'),
+            38,
+            "1 day",
+            (1, &addr('8')),
+        )
+        .await;
+        priced_trade(
+            &db.pool,
+            "usd",
+            LAND,
+            "6",
+            &addr('a'),
+            39,
+            "1 day",
+            (2, mana_token),
+        )
+        .await;
         // Rentals: the estate's open mainnet listing; an expired one; one of
         // the same LAND contract signed for Sepolia; one naming another
         // Rentals contract on mainnet.
