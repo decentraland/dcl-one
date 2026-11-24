@@ -1720,8 +1720,8 @@ fn load_active_entities(
     }
 }
 
-/// How many scenes in range the lifecycle did not spawn this frame because engine memory is
-/// full ([`EngineMemoryPressureMode`]); zero while loads are admitted.
+/// How many scenes in range the lifecycle did not spawn on its last frame because engine memory
+/// is full ([`EngineMemoryPressureMode::RefusalDueFull`]); zero while loads are admitted.
 #[derive(Resource, Default)]
 pub struct RefusedScenes(pub usize);
 
@@ -1787,7 +1787,8 @@ pub fn process_scene_lifecycle(
     ),
     config: Res<AppConfig>,
 ) {
-    // counted afresh each frame, also on a frame that returns early
+    // counted afresh each frame, also on a frame that returns early, into its own resource:
+    // the mode is only read here, so this system never writes it
     refused_scenes.0 = 0;
     let rings = Rings::from_config(&config);
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
