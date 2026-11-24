@@ -19,6 +19,7 @@ const base = (over: Partial<Setting>): Setting => ({
   value: 0,
   default: 0,
   stepSize: 1,
+  disabled: false,
   ...over
 })
 
@@ -159,6 +160,45 @@ describe('settings panel microphone', () => {
     expect(screen.getByRole('button', { name: 'Microphone' })).toHaveTextContent('USB Headset')
     rerender(panel({ ...settings, list: [headset('USB Headset (unplugged)')] }))
     expect(screen.getByRole('button', { name: 'Microphone' })).toHaveTextContent('USB Headset (unplugged)')
+  })
+})
+
+// A disabled setting keeps its value visible; its control does not change it.
+describe('settings panel disabled controls', () => {
+  it('a disabled select keeps its value and does not set', async () => {
+    const FPS = base({ name: 'Target Frame Rate', category: 'graphics', namedVariants: [{ name: '30 fps', description: 'Overridden by another setting.' }, { name: '60 fps', description: 'Overridden by another setting.' }], value: 1, default: 1, maxValue: 2, disabled: true })
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [FPS], set: vi.fn() }
+    render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    const select = screen.getByRole('button', { name: 'Target Frame Rate' })
+    expect(select).toBeDisabled()
+    expect(select.textContent).toContain('60 fps')
+    expect(select).toHaveAccessibleDescription('Overridden by another setting.')
+    await userEvent.click(select)
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(settings.set).not.toHaveBeenCalled()
+  })
+
+  it('a disabled toggle and slider do not set', async () => {
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [{ ...TOGGLE, category: 'graphics', disabled: true }, { ...SLIDER, category: 'graphics', disabled: true }], set: vi.fn() }
+    render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    const toggle = screen.getByRole('switch', { name: 'fullscreen' })
+    expect(toggle).toBeDisabled()
+    await userEvent.click(toggle)
+    expect(screen.getByRole('slider', { name: 'fov' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'decrease' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'increase' })).toBeDisabled()
+    expect(settings.set).not.toHaveBeenCalled()
+  })
+
+  it('greys out a shown control when only its disabled flag changes', () => {
+    const FPS = base({ name: 'Target Frame Rate', category: 'graphics', namedVariants: [{ name: '30 fps', description: '' }, { name: '60 fps', description: '' }], value: 1, default: 1, maxValue: 2 })
+    const panel = (s: Setting): React.JSX.Element => (
+      <SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={{ ...fakeSession().settings, open: true, list: [s] }} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />
+    )
+    const { rerender } = render(panel(FPS))
+    expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeEnabled()
+    rerender(panel({ ...FPS, disabled: true }))
+    expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeDisabled()
   })
 })
 

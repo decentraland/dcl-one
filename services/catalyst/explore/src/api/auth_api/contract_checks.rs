@@ -43,7 +43,7 @@ pub(super) enum Spent {
 }
 
 /// `source` as a budget key: an IPv6 key (a /64) widened to its /48.
-fn network_key(source: &str) -> String {
+pub(super) fn network_key(source: &str) -> String {
     match source.parse::<ipnet::Ipv6Net>() {
         Ok(net) if net.prefix_len() > IPV6_NETWORK_BITS => {
             ipnet::Ipv6Net::new(net.network(), IPV6_NETWORK_BITS)

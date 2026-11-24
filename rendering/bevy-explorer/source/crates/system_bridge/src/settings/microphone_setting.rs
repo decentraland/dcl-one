@@ -32,6 +32,7 @@ fn info(labels: Vec<String>, ids: &[String], config: &AppConfig) -> SettingInfo 
         value: choice(ids, config),
         default: 0.0,
         step_size: 1.0,
+        disabled: false,
     }
 }
 
@@ -42,7 +43,7 @@ fn set_choices(setting: &mut Setting, devices: &MicrophoneDevices, config: &AppC
     setting.info = info(devices.labels(), &ids, config);
     let apply_ids = ids.clone();
     setting.apply = Some(Box::new(
-        move |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
+        move |config: &mut AppConfig, value: f32| -> Result<(), anyhow::Error> {
             let index = value as usize;
             config.microphone = match index {
                 0 => None,
@@ -53,7 +54,7 @@ fn set_choices(setting: &mut Setting, devices: &MicrophoneDevices, config: &AppC
                         .clone(),
                 ),
             };
-            Ok(index as f32)
+            Ok(())
         },
     ));
     setting.load = Box::new(move |config: &AppConfig| choice(&ids, config));
@@ -67,6 +68,7 @@ pub(super) fn add(app: &mut App, settings: &mut Settings, config: &AppConfig) {
         apply: None,
         load: Box::new(|_: &AppConfig| 0.0),
         runtime_choices: true,
+        is_disabled: |_| false,
     };
     set_choices(&mut setting, &MicrophoneDevices::default(), config);
     settings.settings.push(setting);

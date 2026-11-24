@@ -3712,6 +3712,14 @@
           "kind": "regular"
         },
         {
+          "name": "chatLinkPrompts.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "chatLinkPrompts.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "chatText.tsx",
           "kind": "regular"
         },
@@ -5379,6 +5387,10 @@
           "kind": "regular"
         },
         {
+          "name": "chatLinkPrompts.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "chatTranslation.test.tsx",
           "kind": "regular"
         },
@@ -5934,7 +5946,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "5be8db1148fb066022f17294c8990eb8d8503cc9af89a03ba7e4d48150704583"
+      "sha256": "6f7be71f11d0491c7a88e57766ab630818d79d56c970a5180226648249b46287"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
@@ -5942,7 +5954,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "40369ceb89f585c96deef8ad73df920a7dba31acf1f07d9f1773646e7977ecba"
+      "sha256": "bec668fef4b9bb4e5e5fb9895a76c2cab8f13de45cdefdc9d4843be3130a02ab"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -6182,7 +6194,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "4e61c6e08d78b26defbaeba27701b1e5ffe70968a3f0223cac6d717a6bcff3fb"
+      "sha256": "87fc68b55efbbabab2111cbbb2e1b05e7709ddc588ac6df22571340c3c90d61f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
@@ -6346,7 +6358,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "27b3090e53557703543d02cd147a6c9c90ea029ccb699f833193acacc17e9ca8"
+      "sha256": "1b9dd9725cf6e07f62be872b8a046a36613fabe0c48adc7fa31a103ae96900dc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
@@ -6639,7 +6651,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "46d8de449c27064628a69d39db3c42c92fa7b8480f60b7e0bc1f95df7a25aa63"
+      "sha256": "e24c0910c83bc43426bd0796cffbb21fdcfa8e66de6c0bec1ccbd79166a6222a"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -7267,7 +7279,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "06fd8af624e0603c8a74a536818489f522f80e51a7f3e00611693f47df7a0fb0"
+      "sha256": "b20e1b2b4ac143fa10a7f8094cd176adde5413027e479059368751f648ca8c97"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -9131,7 +9143,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Select.tsx",
-      "sha256": "9707b850d4a3aa9c0b51846e50ed4e001f202557570667b021acefc745287daa"
+      "sha256": "11943a5be834aab97ebc6fd97abeb5bad376a62eb7653bed4d3d1a7cc6b74a58"
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
@@ -9155,7 +9167,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Slider.tsx",
-      "sha256": "f2903668f8de1465409107720b84e8a43b9b2bd9cf4acfa51ddd7a2b32523359"
+      "sha256": "6dc5cb0754485f86797ef9ab218cb289c50271ffe688b0b7d2f6e361e1d3a7ab"
     },
     {
       "path": "library/ui/apps/hud/design/Spinner.module.css",
@@ -9227,7 +9239,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Toggle.tsx",
-      "sha256": "f402f7ab1afb9ca4a71f641308834390582be6b4ee25f7e8c06c057421317df1"
+      "sha256": "b8f22e32051d49dfb1529860d0eb0dcdc5ab9e3d04ed9ac2a639908ee931a192"
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.module.css",
@@ -9295,11 +9307,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "1f5de8f949194fbfd4d42c50b4c45b16edd1b5b39aa724d4226b97db56badfd5"
+      "sha256": "fb4f866451de489a1a5ed311928098ce24ecb29a33f7f894d6cbeb9cc0be70a2"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "8475f4605ef40263c772068a820334a9ecbeef3165e50bbd9e0fa3208bd6f4c8"
+      "sha256": "10be41a2e8e5cc2713221a6e27a836fc246f1167af0c8bd309e6ded5bc955d5e"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9366,8 +9378,16 @@
       "sha256": "4658b1f69737ac86daf89267ad1f42612b5acba2bb588ad21dfedf7f4d1b81b3"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "sha256": "8cef6c46ce44cd86d0580e9088c936063fc3ef1a93cdbdd87655745d44742b04"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "sha256": "df81758006cbf6716a3acb0f13b90fb2d80ee98781c15467d2279764052cbaff"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/chatText.tsx",
-      "sha256": "967b6d836c7e2d11cbdd3182989139e54b46e1467f4b3a5bdac1e9fe04e1e1fe"
+      "sha256": "726139f4604c7521b4ad894429a74f671920b8b70614a7db89556a5f75a0e7c8"
     },
     {
       "path": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
@@ -9983,11 +10003,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
-      "sha256": "14888f01c31c6675d0a878baa442d884dc8b7f599d97c5c662f7acce83a64633"
+      "sha256": "f1acaa8ee792bf27c9b9dab45e3f4779c6c975b2d915027b97c687f107d2bfdf"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
-      "sha256": "a2d757288bddb3f94d58ff88ea55478db1019beade58b3ede9291869ece054ff"
+      "sha256": "164be1018c56a9638c3e8f0259038289549f39fc8bd24b49a931de4715f60bb4"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MenuBackdrop.module.css",
@@ -10171,7 +10191,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "247b872acc380b3170c3c82231606573e79625e83b5a1231b8eeb09c5ce6deee"
+      "sha256": "e89dd72a4a7a6f97fab01b123dc12a4b01d0a5e63155a6569c3b399082329127"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -10191,7 +10211,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "255f7160fadf3c3b6c86b157de8be9926bb2a527ff409ecc8f466b614a081f44"
+      "sha256": "f9a154c512ef0b6ea8fd00953c26d0298e8c1914f067a4bb5909081cd062be8d"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
@@ -10263,11 +10283,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
-      "sha256": "1bdcf550666e71ebdaddb18e8deb44b67b660786849b1dd784aed0fb0d910893"
+      "sha256": "32cbe604ee4160b7cef69d41ed69a23bf575eb3d943ae22159ab09bee6443b2e"
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "eeba39e7c76453d3771c51acd480767154d97e40a9105da9823edf1ca2e87be1"
+      "sha256": "27ae135f3356e9784bd15f9bbe443c7189cab14f8200c3d96fac72a7626e26ef"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -10519,7 +10539,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "6db5d8eda817cb9e7c1530a5d5263c1747d9daefc9f16c089c7823d4b4a273eb"
+      "sha256": "5a3c58668bcaabdb483fb2ea12f4620d943c5a7de7e83da9406d039e3ae0062a"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10675,7 +10695,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.rich.test.tsx",
-      "sha256": "daf1082b67d72904db860f5142602989df7a38e68e8e1a2f2ac1cb29a9d8413e"
+      "sha256": "4e028945b78749d2fc1713c37f3f6ebc71c36e0f63c5f3c35a96fa7be9b4b262"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.test.tsx",
@@ -10686,8 +10706,12 @@
       "sha256": "2fc80074fd409694ec352e01e79cb2d3710f9442e51e071dd3e02576e8fa2c11"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "sha256": "c3c3c2996587f9a125a58fce83af95022729aca12e1cc7ec4ed1cb12ee97f109"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "abc75106488d4ed2bd1f6bedab34c7c1d3c2c10fe62b6cd21f335d00826ea3ef"
+      "sha256": "f49c2eb9ed7b04a49d36450abcdd322ed7b18db40880b5451c281765c38d96c2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -10903,7 +10927,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
-      "sha256": "b3d6cb97ac3bb1abe747ecb1ba2bb01b12afe367e7508bd3f755b9ace0549b64"
+      "sha256": "f785b521895e0100e5e56bd8d3347ed94007b2b2c871cac8096c118e6a0e1d66"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
@@ -10931,7 +10955,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "74954fd0f3761c120a041ce0bd2bfc1cfd38a3d634c4b20be3bf31dcef274790"
+      "sha256": "e7973b9ae93910f281708ffa47e21cce6483c87c103511020f54ef45f74affd2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -10987,11 +11011,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "8396ef8b51cc40e6ed087cf4c542aba0e3211d35af1c68af5a27a099ec456c9b"
+      "sha256": "63c223c25671f190bf6233b1b4adba22cad1d885ef428456b1277524dc3cfad5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
-      "sha256": "97c4f2ea42d7b00b02e5bc295a56adf8dfc4b524b6db9b2e9e850a0d4ba812ad"
+      "sha256": "0c06ee379654478897edb12e313b1a81715e99bc84585de88da73a0977bc4add"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/shop.test.tsx",
@@ -10999,7 +11023,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "143e3ac749c222a85f4b766223443b4f8328760cc3c494e4ba2dd5ff179871e9"
+      "sha256": "473241e0e75f7dfd75f04abf4e54226fef2380112cc04d4e1546c75b10664b84"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -11075,7 +11099,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
-      "sha256": "c793f5858e5293ab1331026a802ef64c841c99a77fad985920949e4178e695db"
+      "sha256": "08d593d3686cd7e9da76821284db320f32e5cfa4632be60a132f126e9840a131"
     },
     {
       "path": "library/ui/apps/hud/test/pageWindow.test.ts",
@@ -14247,6 +14271,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "kind": "native:runtime"
     },
@@ -20558,6 +20597,51 @@
     {
       "from": "library/ui/apps/hud/features/chat/chatIdentity.ts",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.module.css",
       "kind": "test:runtime"
     },
     {
@@ -32082,6 +32166,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "kind": "native:runtime"
     },
@@ -38996,6 +39095,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
       "to": "library/explorer-core/features/chat/translation.ts",
       "kind": "native:runtime"
@@ -42462,6 +42606,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "native:runtime"
     },
@@ -44123,6 +44282,21 @@
     {
       "from": "library/ui/apps/hud/test/mapPins.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/menu.clicks.test.tsx",
+      "to": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
       "kind": "test:runtime"
     },
     {
@@ -47132,6 +47306,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/chatLinkPrompts.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/chatText.tsx",
       "kind": "type"
     },
@@ -48288,6 +48467,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/chatGoto.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/chatLinkPrompts.test.tsx",
       "kind": "type"
     },
     {
