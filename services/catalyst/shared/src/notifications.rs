@@ -292,6 +292,49 @@ where
     Ok(inserted as u64)
 }
 
+/// Reconciles previous keys created in the current identity period before
+/// upserting. An existing canonical key wins; otherwise one previous row whose
+/// metadata contains `previous_metadata` carries it, retaining its id, creation
+/// time, read state and delivery records. Rows from previous periods or with
+/// other metadata cannot suppress a new notice and remain intact.
+/// The caller must commit reconciliation and the upsert in the same transaction.
+pub async fn insert_reconciled_keyed_notification(
+    transaction: &mut sqlx::PgConnection,
+    broadcast_key: &str,
+    notification: &NewNotification,
+    previous_keys: &[String],
+    created_since: NaiveDateTime,
+    previous_metadata: &Json,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "notifications.user:{}",
+            notification.address.as_str()
+        ))
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "UPDATE social.notifications SET broadcast_key=$1
+         WHERE id=(
+             SELECT id FROM social.notifications
+             WHERE address=$2 AND type=$3 AND broadcast_key=ANY($4)
+               AND created_at >= $5 AND metadata @> $6
+             ORDER BY created_at,id LIMIT 1
+         ) AND NOT EXISTS (
+             SELECT 1 FROM social.notifications WHERE address=$2 AND broadcast_key=$1
+         )",
+    )
+    .bind(broadcast_key)
+    .bind(&notification.address)
+    .bind(&notification.kind)
+    .bind(previous_keys)
+    .bind(created_since)
+    .bind(previous_metadata)
+    .execute(&mut *transaction)
+    .await?;
+    insert_keyed_notification(transaction, broadcast_key, notification).await
+}
+
 /// Inserts a notice and delivery once per source identity. Exact previous
 /// identities keep their row, payload and delivery; only their key is attached.
 /// The caller must retain the transaction through the source's own write.

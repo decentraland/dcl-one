@@ -252,7 +252,8 @@ pub async fn progress(
     let mut goals = Vec::new();
     let (season, current_week) = if let Some(s) = season {
         let (week, _, end) = s.week(now);
-        // Reads initialize only registered identities; unregistered users get the same definition as a default.
+        // Existing wallets persist progress independently of program enrollment.
+        // Addresses without a wallet row receive the goal definitions as defaults.
         if state.settings.writes_enabled {
             initialize(&mut tx, address, s.id, week).await?;
         }

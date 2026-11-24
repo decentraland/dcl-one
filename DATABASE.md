@@ -1984,11 +1984,49 @@ receipt identity. `METRICS.md` records the synthetic access-path measurement.
 Production volume and latency remain unmeasured.
 
 The `credits-reminders` job reads progress rows of the current week and grants
-for its weekly reminders by the progress and grant primary keys. Its usage
-reminders read claimed grants expiring within seven days or one day through
+for its weekly reminders by the progress and grant primary keys. Wallets with no
+completed goal receive the do-not-miss-out reminder; wallets with both completed
+and pending goals receive the complete-goals reminder. Partial steps do not count
+as completion. Each season permits only one goal definition, `take-photo`, so a
+wallet cannot have both completed and pending goals in the same week: the
+complete-goals reminder is never sent with the current schema. A partially
+completed `take-photo` receives do-not-miss-out instead.
+Reminder selection does not apply enrollment, opt-out, claim-block or wallet-flag
+restrictions; grant and claim authorization still enforce their own policy.
+Program opt-out does not unsubscribe from reminders; email delivery still applies
+the recipient's notification preferences.
+Its usage reminders require progress in any week of the current or last season,
+using the progress primary-key prefix by address and season, and read claimed
+grants expiring within seven days or one day through
 the partial index on `credits.goal_grants (expires_at) WHERE claimed_at IS NOT
-NULL`, which the object pass creates on existing databases. Notifications are
-keyed per wallet, season and week, so a rerun inserts nothing.
+NULL`, which the object pass creates on existing databases. Credits with any
+consumption are excluded. Weekly notifications are keyed per wallet, season and
+week; usage notifications aggregate all eligible grants per wallet and key by
+the current or last season plus the aggregate's full expiry (`max(expires_at)`
+as UTC microseconds since the epoch), independently of each grant's origin. A
+later expiry batch within the same selected season therefore gets its own notice
+and delivery, while an earlier notice for another batch remains as it was. The
+shared writer reconciles old unqualified keys in the same transaction as its
+upsert, under a per-wallet notification advisory lock. An existing qualified key
+wins; otherwise one same-kind notice under an exact unqualified key (any started
+season) carries the qualified key, retaining its ID, creation time, read state
+and delivery records, but only if it was created since both the selected season
+began and this expiry's reminder window opened, and its metadata announces the
+same `expirationDate`. Metadata refreshes to the combined balance; no new
+delivery is created. Candidates are read through the address/key unique index
+for one wallet; the metadata containment filter applies to those few rows
+(`EXPLAIN (ANALYZE, BUFFERS)` on 120k synthetic notices: one index search per
+lookup, 0.1 ms; production volume unmeasured). Other historical notices remain
+intact and cannot suppress another batch. Old keys hold only a month and day, so
+an old notice cannot be proven to announce a specific batch when two batches
+expire on the same calendar day; deleted, manual or incomplete history is not
+reconstructed. Delivery retention does not remove the notification used for
+reconciliation. Retire writers using origin-season keys and writers using
+unqualified selected-season keys before running the corrected leased job; those
+writers do not take its notification lock.
+
+The [usage notice identity decision](docs/adr/2026-11-22-credits-usage-notice-identity.md)
+defines this reconciliation and rollout boundary.
 
 The worker runs through the existing leased job registry under the Ops write
 gate. Receipts survive photo deletion and event retention; changing visibility

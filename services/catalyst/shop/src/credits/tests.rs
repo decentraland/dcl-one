@@ -1939,6 +1939,181 @@ async fn double_post_grants_once_and_replays_original_amounts() {
 }
 
 #[tokio::test]
+async fn studio_grant_routes_authorize_and_notify_the_recipient_once() {
+    let Some(db) = OwnDatabase::create("studio_grant_routes").await else {
+        return;
+    };
+    let token = uuid::Uuid::new_v4().to_string();
+    for prefix in ["/credits", "/shop-api"] {
+        let mut state = test_state(db.pool.clone(), StateCfg::default());
+        Arc::get_mut(&mut state).unwrap().settings.admin_token = Some(token.clone());
+        let routes = if prefix == "/credits" {
+            router(state)
+        } else {
+            super::shop_router(state)
+        };
+        let app = Router::new().nest(prefix, routes);
+        let path = format!("{prefix}/admin/credits/grant");
+        let wallet = scratch_wallet();
+        let body = json!({"address":wallet.address,"amount":"30","studioName":" Acme Studio ","idempotencyKey":unique("studio")});
+        let auth = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {value}")).unwrap(),
+            );
+            headers
+        };
+        for headers in [
+            HeaderMap::new(),
+            auth("invalid"),
+            signed_headers(&wallet, "POST", &path).await,
+        ] {
+            assert_eq!(
+                send(&app, "POST", &path, headers, Some(body.clone()))
+                    .await
+                    .0,
+                StatusCode::FORBIDDEN
+            );
+        }
+        for table in ["credits.ledger", "ops.admin_audit", "social.notifications"] {
+            let sql = format!("SELECT count(*) FROM {table}");
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                    .fetch_one(&db.pool)
+                    .await
+                    .unwrap(),
+                0
+            );
+        }
+        let (first, second) = tokio::join!(
+            send(&app, "POST", &path, auth(&token), Some(body.clone())),
+            send(&app, "POST", &path, auth(&token), Some(body.clone())),
+        );
+        assert_eq!((first.0, second.0), (StatusCode::OK, StatusCode::OK));
+        assert_ne!(first.2["replayed"], second.2["replayed"]);
+        assert_eq!(available(&db.pool, &wallet.address).await, "30");
+        let notices: Vec<(String, Value)> = sqlx::query_as("SELECT address,metadata FROM social.notifications WHERE address=$1 AND type='credits_on_demand_granted'")
+            .bind(&wallet.address).fetch_all(&db.pool).await.unwrap();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].0, wallet.address);
+        assert_eq!(notices[0].1["studioName"], "Acme Studio");
+        assert_eq!(notices[0].1["title"], "A gift from Acme Studio");
+        assert_eq!(notices[0].1["creditsGranted"], 30);
+        assert_eq!(notices[0].1["denomination"], "USD");
+        assert_eq!(notices[0].1["link"], "https://decentraland.org/shop");
+        let deliveries: i64 = sqlx::query_scalar("SELECT count(*) FROM social.notification_deliveries d JOIN social.notifications n ON n.id=d.notification_id WHERE n.address=$1")
+            .bind(&wallet.address).fetch_one(&db.pool).await.unwrap();
+        assert_eq!(deliveries, 1);
+        let actor: String = sqlx::query_scalar("SELECT actor FROM ops.admin_audit WHERE target=$1")
+            .bind(&wallet.address)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(actor, format!("token:{}", super::admin::ADMIN_TOKEN_ENV));
+        let mut invalid = body.clone();
+        invalid["studioName"] = json!("x".repeat(super::admin_store::MAX_STUDIO_NAME_CHARS + 1));
+        assert_eq!(
+            send(&app, "POST", &path, auth(&token), Some(invalid))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        sqlx::query("DELETE FROM social.notifications WHERE address=$1")
+            .bind(&wallet.address)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        cleanup(&db.pool, &wallet.address).await;
+        sqlx::query("DELETE FROM ops.admin_audit WHERE target=$1")
+            .bind(&wallet.address)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn studio_grant_notification_failure_rolls_back_and_retries() {
+    let Some(db) = OwnDatabase::create("studio_grant_atomic").await else {
+        return;
+    };
+    let token = uuid::Uuid::new_v4().to_string();
+    let mut state = test_state(db.pool.clone(), StateCfg::default());
+    Arc::get_mut(&mut state).unwrap().settings.admin_token = Some(token.clone());
+    let app = Router::new()
+        .nest("/credits", router(state.clone()))
+        .nest("/shop-api", super::shop_router(state));
+    let wallet = scratch_wallet();
+    let body = json!({"address":wallet.address,"amount":"30","studioName":"Acme Studio","idempotencyKey":unique("studio")});
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
+    sqlx::query("ALTER TABLE social.notifications ADD CONSTRAINT refuse_studio_test CHECK(type <> 'credits_on_demand_granted')")
+        .execute(&db.pool).await.unwrap();
+    for prefix in ["/credits", "/shop-api"] {
+        let path = format!("{prefix}/admin/credits/grant");
+        assert_eq!(
+            send(&app, "POST", &path, headers.clone(), Some(body.clone()))
+                .await
+                .0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        for table in [
+            "credits.wallets",
+            "credits.ledger",
+            "credits.idempotency",
+            "ops.admin_audit",
+            "social.notifications",
+            "social.notification_deliveries",
+            "credits.goal_grants",
+        ] {
+            let sql = format!("SELECT count(*) FROM {table}");
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                    .fetch_one(&db.pool)
+                    .await
+                    .unwrap(),
+                0,
+                "{table}"
+            );
+        }
+    }
+    sqlx::query("ALTER TABLE social.notifications DROP CONSTRAINT refuse_studio_test")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (prefix, replayed) in [("/credits", false), ("/shop-api", true)] {
+        let path = format!("{prefix}/admin/credits/grant");
+        let (status, _, out) = send(&app, "POST", &path, headers.clone(), Some(body.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(out["replayed"], replayed);
+    }
+    assert_eq!(available(&db.pool, &wallet.address).await, "30");
+    for table in [
+        "credits.ledger",
+        "credits.idempotency",
+        "ops.admin_audit",
+        "social.notifications",
+        "social.notification_deliveries",
+    ] {
+        let sql = format!("SELECT count(*) FROM {table}");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            1,
+            "{table}"
+        );
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn an_operator_grant_notifies_once_and_a_purchase_never() {
     let Some(pool) = pool().await else { return };
     let addr = scratch_wallet().address;

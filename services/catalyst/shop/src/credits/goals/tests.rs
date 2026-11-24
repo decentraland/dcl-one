@@ -571,6 +571,17 @@ async fn notification_failure_rolls_back_completion_and_concurrent_photos_count_
         .await,
         1
     );
+    assert_eq!(process_batch(&state, 100).await.unwrap(), 0);
+    let notices: Vec<(String, Value)> = sqlx::query_as(
+        "SELECT address,metadata FROM social.notifications WHERE type='credits_goal_completed'",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].0, OWNER);
+    assert_eq!(notices[0].1["goalId"], GOAL);
+    assert_eq!(notices[0].1["creditsObtained"], 1.0);
     db.drop().await;
 }
 
