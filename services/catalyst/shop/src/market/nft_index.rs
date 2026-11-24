@@ -1050,9 +1050,10 @@ impl ChainIndex for NftIndex {
         source: &dyn chain_walk::LogSource,
         owner: &chain_walk::Owner,
         window_blocks: u64,
+        remaining: usize,
     ) -> anyhow::Result<usize> {
         if self.net == ChainNet::Ethereum {
-            estate_repair::step(pool, source, owner, window_blocks).await
+            estate_repair::step(pool, source, owner, window_blocks, remaining).await
         } else {
             Ok(0)
         }

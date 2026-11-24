@@ -1161,6 +1161,7 @@ pub trait ChainIndex: Send + Sync {
         _source: &dyn LogSource,
         _owner: &Owner,
         _window_blocks: u64,
+        _remaining: usize,
     ) -> anyhow::Result<usize> {
         Ok(0)
     }
@@ -2172,7 +2173,13 @@ pub(crate) async fn close(
     }
     if out.published && close.remaining > 0 {
         match ix
-            .after_publish(pool, source, owner, settings.window_blocks.max(1))
+            .after_publish(
+                pool,
+                source,
+                owner,
+                settings.window_blocks.max(1),
+                close.remaining,
+            )
             .await
         {
             Ok(requests) => out.requests += requests,

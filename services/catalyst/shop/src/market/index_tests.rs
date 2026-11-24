@@ -1378,7 +1378,7 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     let renamed = estate_document(first + 4, 1, 2, false, r#"0,"Later","Update""#);
     let chain = FakeChain::new(
         first - 1 + net.confirmations(),
-        vec![renamed],
+        vec![renamed, estate_document(last, 2, 2, false, "0")],
         2_000_000,
         100,
     );
@@ -1395,6 +1395,9 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
         .execute(&db.pool)
         .await
         .unwrap();
+    // The old parser accepted "0" and erased the preceding valid Update.
+    sqlx::query("UPDATE shop.land_data SET name=NULL, description=NULL, updated_block=$1, updated_log=2 WHERE token_id=2")
+        .bind(last as i64).execute(&db.pool).await.unwrap();
     chain.logs.lock().extend([
         log_json(&estate_document(
             first,
@@ -1421,11 +1424,11 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     };
     let names = || {
         sqlx::query_as::<_, (String, String)>(
-            "SELECT token_id::text, name FROM shop.land_data ORDER BY token_id",
+            "SELECT token_id::text, coalesce(name, '') FROM shop.land_data ORDER BY token_id",
         )
         .fetch_all(&db.pool)
     };
-    let old = vec![(String::from("2"), String::from("Later"))];
+    let old = vec![(String::from("2"), String::new())];
     assert_eq!(names().await.unwrap(), old);
 
     // The forward walk spends this pass's log budget. It captures the old
@@ -1434,15 +1437,54 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     *chain.head.lock() += 1;
     assert!(pass(&busy, &url, &NftIndex::new(net)).await.published);
     assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
-    // An archive error leaves the same window owed and ownership published.
-    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    // Pause the archive at its historical upper bound and observe the new
+    // publish from a separate connection before the read can finish.
+    let published_at = || {
+        sqlx::query_scalar::<_, chrono::NaiveDateTime>(
+        "SELECT folded_at FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum' AND folded_block=last_block"
+    ).fetch_one(&db.pool)
+    };
+    let before = published_at().await.unwrap();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *chain.gate_at.lock() = Some((first + 1, gate.clone()));
+    chain.reorg_on_logs.store(true, Ordering::SeqCst);
+    let restarted = NftIndex::new(net);
+    let (out, during) = tokio::join!(pass(&small, &url, &restarted), async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while chain.probes_waiting.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("archive reached the gated header");
+        let during = published_at().await.unwrap();
+        *chain.gate_at.lock() = None;
+        gate.add_permits(1);
+        during
+    });
+    assert!(out.published && during > before);
+    assert_eq!(published_at().await.unwrap(), during);
+    assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
+    chain.forks.lock().remove(&(first + 1));
+
+    // The RPC briefly serves another branch for just the historical log
+    // read. Both endpoint headers look stable again by the closing bracket.
+    *chain.fork_after.lock() = Some(ForkAfter {
+        header: first + 1,
+        reads: 1,
+        from: first,
+        salt: 0xcf,
+        logs: vec![log_json(&estate_document(first, 0, 1, true, "0,Orphan,"))],
+        one_read: true,
+    });
     assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
     assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
-    chain.fail_chain_id.store(false, Ordering::SeqCst);
 
-    for position in [first + 1, first + 3, last] {
-        // A fresh projection and owner for every pass, as on restart.
-        let out = pass(&small, &url, &NftIndex::new(net)).await;
+    // This first window spans both creations but has budget for only one
+    // event-block header. The next owner resumes at the second creation.
+    let dense = state_over(db.pool.clone(), &url, index_settings(1, 6), false);
+    for (position, state) in [(first + 1, &dense), (first + 3, &small), (last, &small)] {
+        let out = pass(state, &url, &NftIndex::new(net)).await;
         assert!(out.published);
         assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
         if position < last {
@@ -1456,6 +1498,13 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
             ("2".into(), "Later".into())
         ]
     );
+    let restored: (String, i64, i32) = sqlx::query_as(
+        "SELECT description, updated_block, updated_log FROM shop.land_data WHERE token_id=2",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(restored, (String::from("Update"), (first + 4) as i64, 1));
     let reads = chain.get_logs.load(Ordering::SeqCst);
     assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
     assert_eq!(chain.get_logs.load(Ordering::SeqCst), reads);

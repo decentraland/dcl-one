@@ -2456,7 +2456,9 @@ published cursor can already be past creations that the old walk skipped.
 Using spare log budget after publication, each pass reads one window of
 `CreateEstate` from the Estate registry, starting at deployment block 6,236,547.
 The `nft_estate_creations` row in `shop.worker_progress` records the last
-repaired block and the original cursor height. Historical names keep their
+repaired block, its hash, and the original cursor height. Each archive window
+is checked against the published cursor and the hashes of its creation logs.
+Historical names keep their
 existing values until the final window refolds estate documents by block and
 log index. Ownership and profiles remain available during the repair. A rewind
 removes orphaned events and shortens the repair range before the walk resumes.
