@@ -169,7 +169,8 @@ pub struct LoopPacing {
     // the last loop's, from its start to its deadline, for the debug panel
     budget: Option<Duration>,
     // from the previous frame's handoff to this frame's start, for the debug panel: the engine
-    // worker's work between frames (the runner, its event loop's tasks), which no reserve covers
+    // worker's work between frames (the runner, its event loop's tasks) and, under a frame rate
+    // cap, its wait for the cap's next frame; the reserve covers neither
     handoff_gap: Option<Duration>,
     tail: TailEstimate,
     wait_lateness: WaitLateness,

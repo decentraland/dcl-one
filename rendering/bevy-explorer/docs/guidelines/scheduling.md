@@ -109,7 +109,8 @@ reserve, the waits' lateness and the scenes whose relays wake (`/scene_loop_stat
 `loop_pacing/web/debug_panel.rs`). It also shows the time from a frame's handoff to the next
 frame's start: the engine worker runs unpaced after the handoff (the render worker's animation
 frame paces it inside the handoff), so that time is the runner's and its event loop's work
-between frames, which the reserve does not cover.
+between frames and, under a frame rate cap, the wait for the cap's next frame. The reserve covers
+neither: the work is small, and the cap's wait is time the frame does not need.
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
