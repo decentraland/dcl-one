@@ -9,6 +9,9 @@ const JOBS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) fn register_metrics() {
     comms::gatekeeper::admission::cluster::metrics::register_series();
     crate::worlds::core::metrics::register_series();
+    // Every process starts bootstrapping, as the legacy content server reported from its start;
+    // the sync leader or the status mirror moves the state on.
+    crate::content::sync::metrics::sync_state(&crate::content::SyncState::Bootstrapping);
 }
 
 fn warn_retired_metrics_settings() {

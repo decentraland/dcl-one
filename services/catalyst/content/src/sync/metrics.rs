@@ -12,6 +12,7 @@ use std::time::Duration;
 use dcl_metrics::{CounterFamily, Descriptor, GaugeFamily, HistogramFamily, SharedString};
 
 use crate::SyncState;
+use crate::series::{DEFAULT_BUCKETS, ENTITY_TYPES, counter, gauge};
 
 /// The `source` label of a snapshot pass.
 pub const SNAPSHOTS: &str = "snapshots";
@@ -22,26 +23,6 @@ pub const POINTER_CHANGES: &str = "pointer-changes";
 const REQUEST_BUCKETS: &[f64] = &[
     0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
 ];
-/// prom-client's default, which `dcl_deployment_time` used by declaring none.
-const PROM_CLIENT_DEFAULT_BUCKETS: &[f64] = &[
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-];
-
-const fn counter<const N: usize>(
-    name: &'static str,
-    help: &'static str,
-    keys: &'static [&'static str; N],
-) -> CounterFamily<N> {
-    CounterFamily::new(name, help, None, keys)
-}
-
-const fn gauge<const N: usize>(
-    name: &'static str,
-    help: &'static str,
-    keys: &'static [&'static str; N],
-) -> GaugeFamily<N> {
-    GaugeFamily::new(name, help, None, keys)
-}
 
 const fn histogram<const N: usize>(
     name: &'static str,
@@ -155,7 +136,7 @@ const DEPLOYMENT_TIME: HistogramFamily<2> = histogram(
     "dcl_deployment_time",
     "Time spent deploying an entity",
     &["entity_type", "failed"],
-    PROM_CLIENT_DEFAULT_BUCKETS,
+    DEFAULT_BUCKETS,
 );
 const SYNC_STATE: GaugeFamily<0> = gauge(
     "dcl_content_server_sync_state",
@@ -242,11 +223,9 @@ pub const FAMILIES: &[Descriptor] = &[
     QUEUE_PENDING.descriptor,
 ];
 
-/// The entity types `@dcl/schemas` names; deployments-to-sqs reported any other as `other`.
-const ENTITY_TYPES: [&str; 6] = ["scene", "wearable", "profile", "store", "emote", "outfits"];
-
-/// `entityType` (the deployments-to-sqs families) from a peer's JSON, clamped to a known type or
-/// `other`. The content server's `entity_type` label goes through [`crate::series::entity_type`].
+/// `entityType` (the deployments-to-sqs families) from a peer's JSON, clamped to one of
+/// [`ENTITY_TYPES`] or, as deployments-to-sqs did, `other`. The content server's `entity_type`
+/// label goes through [`crate::series::entity_type`].
 pub fn entity_type_label(entity_type: &str) -> &'static str {
     ENTITY_TYPES
         .into_iter()
@@ -273,6 +252,14 @@ pub fn download_finished(remote_server: &str, elapsed: Duration, bytes: Option<u
         Some(bytes) => DOWNLOAD_BYTES.handle_owned(label()).increment(bytes),
         None => DOWNLOAD_ERRORS.handle_owned(label()).increment(1),
     }
+}
+
+/// A read-through probe that `remote_server` answered 404: timed like any request, not counted
+/// as an error, because a client can name any hash.
+pub fn download_missed(remote_server: &str, elapsed: Duration) {
+    DOWNLOAD_DURATION
+        .handle_owned([SharedString::from(remote_server.to_owned())])
+        .record(elapsed.as_secs_f64());
 }
 
 /// A body that arrived whole but does not hash to its name.
@@ -488,6 +475,17 @@ pub fn sync_state(state: &SyncState) {
 /// The rows of `content.failed_deployments`.
 pub fn failed_deployments(rows: u64) {
     FAILED_DEPLOYMENTS.handle([]).set(rows as f64);
+}
+
+/// Zeroes `dcl_content_server_failed_deployments` when dropped: the retry worker of this process
+/// stopped, and the process that took over reports the rows.
+#[must_use = "the gauge is zeroed when this drops"]
+pub struct FailedDeploymentsExport;
+
+impl Drop for FailedDeploymentsExport {
+    fn drop(&mut self) {
+        failed_deployments(0);
+    }
 }
 
 /// A recorder with the serve registry's content and sync declarations, for this thread until

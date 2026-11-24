@@ -34,8 +34,8 @@ none is reported as "replaced by". These sync families sit beside them and measu
   for `https://peer.example/content`. It is empty for snapshot entities, because a snapshot has no
   single origin. A download that follows a redirect is still counted under the peer that was asked,
   not under the redirect target. The target is chosen by the peer and is not bounded.
-- `entity_type` and `entityType` are one of `scene`, `wearable`, `profile`, `store`, `emote` or
-  `outfits`. Any other value from a peer is reported as `unknown` in `entity_type`, as the content
+- `entity_type` and `entityType` are one of `scene`, `profile`, `wearable`, `store`, `emote` or
+  `outfits` (`content/src/series.rs` `ENTITY_TYPES`, shared with the content server's series). Any other value from a peer is reported as `unknown` in `entity_type`, as the content
   server's own series do (`content.md`), and as `other` in `entityType`, as deployments-to-sqs did.
 
 ## snapshots-fetcher
@@ -43,8 +43,8 @@ none is reported as "replaced by". These sync families sit beside them and measu
 | Legacy series | Type and labels | dcl-one | Observed at | Notes |
 | --- | --- | --- | --- | --- |
 | `dcl_content_download_bytes_total` | counter `remote_server` | emitted | `deploy_remote_entity::fetch_verified`, `sync::snapshots::download_snapshot_file` | Decoded bytes of a body that arrived whole. |
-| `dcl_content_download_duration_seconds` | histogram `remote_server`, buckets 0.01–60 | emitted | same | One observation per request, whether it succeeds or fails. |
-| `dcl_content_download_errors_total` | counter `remote_server` | emitted | same | Request error, non-2xx status (404 included), unreadable or truncated body. A read-through miss that a source answers 404 counts here too. |
+| `dcl_content_download_duration_seconds` | histogram `remote_server`, buckets 0.01–60 | emitted | same | One observation per request, whether it succeeds or fails. Read-through probes are included, 404s too. |
+| `dcl_content_download_errors_total` | counter `remote_server` | emitted | same | Request error, non-2xx status (404 included), unreadable or truncated body. A read-through probe (`read_through`, `Requester::ReadThrough`) that a source answers 404 is not counted, because any client can ask for a hash no source has. Its other failures are counted, and so are the content-file downloads of an entity the read-through deploys. |
 | `dcl_content_download_hash_errors_total` | counter `remote_server` | emitted | same | Whole body that does not hash to its name. |
 | `dcl_corrupt_entity_files_evicted_total` | counter | emitted | `deploy_remote_entity::evict_corrupt_entity_file_locked` | Stored entity file removed after it failed its hash check. |
 | `dcl_entities_deployments_processed_total` | counter `remote_server`, `source` | emitted | `batch_deployer::DeploymentReport::record_acknowledged`, `batch_deployer::skipped` | Deployed, recorded in `content.failed_deployments`, or skipped. |
@@ -66,8 +66,8 @@ none is reported as "replaced by". These sync families sit beside them and measu
 | `dcl_pending_download_gauge` | gauge `entity_type` | emitted | `deploy_remote_entity::deploy_entity_streaming` | Entities whose entity and content files are downloading, during sync, retries and read-through. |
 | `dcl_pending_deployment_gauge` | gauge `entity_type` | emitted | `batch_deployer::BatchDeployer::schedule_undeployed` | Entities that hold a slot in the sync queue, from scheduling until their outcome is recorded. |
 | `dcl_deployment_time` | histogram `entity_type`, `failed`, prom-client default buckets | emitted | `deploy_remote_entity::deploy_entity_streaming` | Validation and hand-off to the batch writer. The database write happens in a later flush. |
-| `dcl_content_server_sync_state` | gauge | emitted | `SyncStatus::set_state` | `Syncing` is 1. `Bootstrapping`, `PartiallySynced` (profiles still bootstrapping) and `Failed` are 0. A node serving unsynced (`SERVE_UNSYNCED`) reports 1. A process that does not run sync reports the state it mirrors from the leader. |
-| `dcl_content_server_failed_deployments` | gauge | emitted | `sync::retry_failed::execute_retry_cycle` | Rows in `content.failed_deployments`, counted once per retry cycle (`retry_delay_ms`, 15 minutes by default). Absent until the first cycle (which waits for bootstrap when this process runs sync) and while the retry worker is off. |
+| `dcl_content_server_sync_state` | gauge | emitted | `src/serve_lifecycle.rs` `register_metrics`, `SyncStatus::set_state` | Every serve process reports 0 from startup, as the legacy content server did. `Syncing` is 1. `Bootstrapping`, `PartiallySynced` (profiles still bootstrapping) and `Failed` are 0. A node serving unsynced (`SERVE_UNSYNCED`) reports 1. A process that does not hold the `sync` lease reports the state it mirrors from the leader (`sync::status_mirror::pull`), so a former leader reports its successor's state from its next pull. A leader that takes the lease starts at 0. |
+| `dcl_content_server_failed_deployments` | gauge | emitted | `sync::retry_failed::RetryFailedDeployments::export_failed_deployments`, `execute_retry_cycle` | Rows in `content.failed_deployments`. The retry worker counts them when it starts, before it waits for bootstrap, then once per retry cycle (`retry_delay_ms`, 15 minutes by default). The legacy content server also updated it on every change. When the worker stops (its lease moved or the process stops), it sets 0, so only the process that retries reports the rows. Absent on a process that never ran the retry worker, and while it is off. |
 
 ## deployments-to-sqs
 

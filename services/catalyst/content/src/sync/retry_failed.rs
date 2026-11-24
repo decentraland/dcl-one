@@ -227,6 +227,23 @@ impl RetryFailedDeployments {
         }
     }
 
+    /// Sets `dcl_content_server_failed_deployments` to the rows of `content.failed_deployments`.
+    async fn count_failed_deployments(&self) {
+        match self.failed_store.count_all().await {
+            Ok(rows) => crate::sync::metrics::failed_deployments(rows),
+            Err(e) => warn!(error = %e, "Failed to count failed deployments"),
+        }
+    }
+
+    /// Exports `dcl_content_server_failed_deployments` while this process retries: counted now,
+    /// as the legacy content server did at its start, then once per cycle, and zeroed when the
+    /// guard drops (the lease moved or the process stops), so only the process that retries
+    /// reports the rows and a fleet `sum()` counts them once.
+    pub async fn export_failed_deployments(&self) -> crate::sync::metrics::FailedDeploymentsExport {
+        self.count_failed_deployments().await;
+        crate::sync::metrics::FailedDeploymentsExport
+    }
+
     /// One cycle: `now` is fixed once, so a record re-reported during the cycle (deadline moved
     /// past `now`) or recorded fresh (deadline at the epoch, before the cursor) waits for the next
     /// cycle, and the keyset cursor moves forward even when a re-report fails to land. Each page
@@ -242,10 +259,7 @@ impl RetryFailedDeployments {
             Ok(undecided) => dcl_metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
             Err(e) => warn!(error = %e, "Failed to count undecided failed deployments"),
         }
-        match self.failed_store.count_all().await {
-            Ok(rows) => crate::sync::metrics::failed_deployments(rows),
-            Err(e) => warn!(error = %e, "Failed to count failed deployments"),
-        }
+        self.count_failed_deployments().await;
         let waiting = self.failed_store.count_waiting(now_ms).await?;
 
         let retry_concurrency = self.config.retry_concurrency.max(1);
@@ -589,9 +603,14 @@ mod tests {
             peers,
         );
 
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
+        let rows = || {
+            crate::sync::metrics::sample(&handle.render(), "dcl_content_server_failed_deployments")
+        };
         let stats = retry.execute_retry_cycle().await.unwrap();
         assert_eq!(hits.load(Ordering::Relaxed), 1);
         assert_eq!((stats.skipped, stats.still_failing), (2, 0));
+        assert_eq!(rows(), Some(2.0), "the cycle counts every row");
         let page = store.select_due(0, 10, None, 10).await.unwrap();
         assert_eq!(page.failures.len(), 2);
         assert!(
@@ -600,6 +619,53 @@ mod tests {
                 .all(|record| record.retry_count == 2 && record.next_retry_at == 0)
         );
         server.abort();
+    }
+
+    /// The retry worker reports the rows from its start, before any cycle, and zeroes the gauge
+    /// when it stops, so a former leader does not keep reporting them.
+    #[tokio::test]
+    async fn the_retry_worker_reports_the_rows_while_it_runs() {
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+
+        let Some(pool) = catalyst_db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let store = Arc::new(LiveFailedDeploymentsStore::new(pool.clone()));
+        for entity in [b"one".as_slice(), b"two", b"three"] {
+            store
+                .report_failure(FailedDeployment {
+                    entity_id: dcl_auth::hash_bytes_v1(entity),
+                    ..failure(0, 0)
+                })
+                .await
+                .unwrap();
+        }
+        let (storage, tmp) = temp_storage("retry-failed-gauge").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let retry = RetryFailedDeployments::new(
+            RetryFailedConfig::default(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            storage,
+            deployer,
+            store,
+            Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        );
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
+        let rows = || {
+            crate::sync::metrics::sample(&handle.render(), "dcl_content_server_failed_deployments")
+        };
+
+        assert_eq!(rows(), None);
+        let exported = retry.export_failed_deployments().await;
+        assert_eq!(rows(), Some(3.0));
+        drop(exported);
+        assert_eq!(rows(), Some(0.0));
     }
 
     #[test]
