@@ -16,7 +16,7 @@ use bevy::{
 
 use common::{
     partition::{scene_partition, Tier},
-    sets::RealmLifecycle,
+    sets::{PostUpdateSets, RealmLifecycle},
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
         IVec2Arg, NearbyVoiceDisabled, PlayerParcelChanged, PreviewMode, PrimaryCamera,
@@ -117,10 +117,18 @@ impl Plugin for SceneLifecyclePlugin {
         );
 
         app.add_event::<PlayerParcelChanged>();
-        app.add_systems(Update, report_player_parcel);
+        app.add_systems(PostUpdate, player_parcel_report());
 
         app.add_systems(PostUpdate, realm_lifecycle_systems().in_set(RealmLifecycle));
     }
+}
+
+/// The player parcel report, where the plugin runs it. A teleport in `Update` moves the player at
+/// once and defers its `OutOfWorld`: here both are in place, with the frame's movement.
+fn player_parcel_report() -> ScheduleConfigs<ScheduleSystem> {
+    report_player_parcel
+        .after(PostUpdateSets::PlayerUpdate)
+        .into_configs()
 }
 
 /// The realm lifecycle, in the order the plugin runs it.
@@ -1325,7 +1333,8 @@ pub fn process_realm_change(
 /// The player's parcel, the scene the realm lists there and whether the player is in world, as
 /// analytics reports them.
 fn report_player_parcel(
-    // `GlobalTransform` lags a placement until `PostUpdate`; `in_world` must match the parcel
+    // `GlobalTransform` lags this frame's placement until `TransformPropagate`; `in_world` must
+    // match the parcel
     player: Query<(&Transform, Has<OutOfWorld>), With<PrimaryUser>>,
     pointers: Res<ScenePointers>,
     mut last: Local<Option<PlayerParcelChanged>>,
