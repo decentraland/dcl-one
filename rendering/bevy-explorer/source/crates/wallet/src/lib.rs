@@ -65,7 +65,7 @@ impl Wallet {
     }
 
     pub fn disconnect(&mut self) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.inner = None;
         write.root_address = None;
         write.delegates.clear();
@@ -75,7 +75,7 @@ impl Wallet {
     pub fn finalize_as_guest(&mut self) {
         let inner: Arc<dyn ObjSafeWalletSigner + Send + Sync> =
             Arc::new(PrivateKeySigner::random_with(&mut rand::thread_rng()));
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(inner.address());
         write.delegates.clear();
         write.guest_account = false;
@@ -86,7 +86,7 @@ impl Wallet {
         let inner: Arc<dyn ObjSafeWalletSigner + Send + Sync> = Arc::new(
             PrivateKeySigner::random_with(&mut rand::rngs::StdRng::from_seed(seed)),
         );
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(inner.address());
         write.delegates.clear();
         write.guest_account = false;
@@ -100,7 +100,7 @@ impl Wallet {
         auth: Vec<ChainLink>,
         guest_account: bool,
     ) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(root_address);
         write.delegates = auth;
         write.guest_account = guest_account;
@@ -115,7 +115,7 @@ impl Wallet {
         auth: Vec<ChainLink>,
         guest_account: bool,
     ) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(root_address);
         write.delegates = auth;
         write.guest_account = guest_account;
@@ -141,18 +141,18 @@ impl Wallet {
     }
 
     pub fn address(&self) -> Option<Address> {
-        self.0.try_read().unwrap().root_address
+        self.0.blocking_read().root_address
     }
 
     pub fn is_guest(&self) -> bool {
-        self.0.try_read().unwrap().delegates.is_empty()
+        self.0.blocking_read().delegates.is_empty()
     }
 
     /// An account that was created for a guest. It signs in and keeps a profile like any
     /// other account (so `is_guest` is false), but the user holds no wallet to approve
     /// transactions with.
     pub fn is_guest_account(&self) -> bool {
-        self.0.try_read().unwrap().guest_account
+        self.0.blocking_read().guest_account
     }
 
     /// Either kind of guest: what a server is told as `isGuest`, as unity-explorer tells it.

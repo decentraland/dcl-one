@@ -38,7 +38,9 @@ on:
       - 'library/**/tests/fixtures/**'
   # Every pull request, so "CI gate" always reports and can be a required check; the `changes` plan skips the
   # heavy jobs when nothing under push.paths changed (a skipped job counts as passing for a required check).
+  # ready_for_review: the Explorer CI gate fails a draft's held run, so the smoke job reads the ready run.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 permissions:
   contents: read
   actions: read
@@ -47,7 +49,7 @@ concurrency:
   # Main runs finish: they are the macOS check for source that PRs test on Linux only.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
-  ERROR_PAGE_LFS: library/ui/apps/sites/assets/errors/**,library/ui/apps/sites/assets/custom-welcome-background.webp,library/ui/apps/sites/assets/logo-pattern.webp,library/ui/foundations/typography/fonts/**
+  ERROR_PAGE_LFS: library/ui/apps/sites/assets/errors/**,library/ui/assets/**,library/ui/foundations/typography/fonts/**
 jobs:
   changes:
     name: Changes

@@ -13572,6 +13572,7 @@ dependencies = [
  "input_manager",
  "ipfs",
  "rapier3d-f64",
+ "scene_material",
  "scene_runner",
  "serde_json",
  "tween",

@@ -195,7 +195,9 @@ mod tests {
         );
 
         // the realm changes before the scene runner reports the player out of world
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
         app.world_mut()
             .resource_mut::<SegmentConfig>()
             .update_realm("https://worlds.example/world/a.dcl.eth/".into());
@@ -237,7 +239,9 @@ mod tests {
         let (wallet, config) = signed_in(Utc::now().timestamp_millis(), false);
         let (mut app, player, mut receiver) = app(config);
         app.insert_resource(wallet);
-        app.world_mut().entity_mut(player).insert(OutOfWorld);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(OutOfWorld::default());
 
         change(&mut app, None, IVec2::ZERO, Some(Some("loading")), false);
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();

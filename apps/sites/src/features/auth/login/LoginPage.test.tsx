@@ -10,7 +10,7 @@ import { getIdentity, setBrowserWalletIdentity, setIdentity, suspendWalletIdenti
 
 import LoginPage from "./LoginPage";
 import { signInKindFor } from "@/data/lib/auth/signin-kind";
-import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
+import { dclLogoUrl as sitesLogo } from "@dcl/one-ui";
 
 vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });

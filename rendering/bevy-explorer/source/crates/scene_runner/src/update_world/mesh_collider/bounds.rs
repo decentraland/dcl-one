@@ -3,8 +3,11 @@ use common::partition::PARCEL_SIZE;
 use rapier3d_f64::prelude::Collider;
 use scene_material::BoundRegion;
 
-/// How far a collider's box may reach past the edge of its scene, in metres.
-const EDGE_ALLOWANCE: f64 = 0.05;
+use super::volume::DRAWN_PAST_BOUNDS;
+
+/// How far a collider's box may reach past the edge of its scene, in metres: as far as the scene
+/// counts as drawn.
+const EDGE_ALLOWANCE: f64 = DRAWN_PAST_BOUNDS;
 /// The box is first drawn in on each side by a quarter of its smaller horizontal size, and by
 /// this at most, in metres.
 const MAX_INSET: f64 = 0.15;

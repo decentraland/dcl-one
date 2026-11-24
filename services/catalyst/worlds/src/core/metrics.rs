@@ -31,6 +31,19 @@ pub const GARBAGE_COLLECTION_REMOVED_BYTES: &str = "garbage_collection_removed_b
 pub const GARBAGE_COLLECTION_LAST_SUCCESS: &str =
     "garbage_collection_last_success_timestamp_seconds";
 pub const CONTENT_LOCK_WRITER_TIMEOUTS: &str = "content_lock_writer_timeouts";
+const ALLOWANCE_READ_FAILURES: &str = "worlds_allowance_read_failures_total";
+
+pub fn register_series() {
+    metrics::describe_counter!(
+        ALLOWANCE_READ_FAILURES,
+        "World storage allowance lookups that failed after the configured chain reads and retries."
+    );
+    metrics::counter!(ALLOWANCE_READ_FAILURES).increment(0);
+}
+
+pub(super) fn allowance_read_failed() {
+    metrics::counter!(ALLOWANCE_READ_FAILURES).increment(1);
+}
 
 /// `POST /entities`' route label, as upstream.
 pub const ENTITIES_ROUTE: &str = "entities";
