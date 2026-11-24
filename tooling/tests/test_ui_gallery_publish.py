@@ -576,7 +576,9 @@ class CommentTest(unittest.TestCase):
         [(method, path, fields)] = self.comment()
         self.assertEqual((method, path), ('POST', f'repos/{REPO}/issues/{PULL}/comments'))
         lines = [line for line in fields['body'].splitlines() if line and not line.startswith('<!--')]
-        self.assertEqual(lines, [f'[Open the UI gallery]({PAGE})', 'Built from aaaaaaa, kept until 2026-11-25 (UTC).'])
+        self.assertEqual(lines, [f'[Open the UI gallery]({PAGE})', 'Built from aaaaaaa, kept until 2026-11-25 (UTC).',
+                                 publish.WALLET_WARNING])
+        self.assertIn('never connect a wallet or sign anything there', publish.WALLET_WARNING)
         self.assertIn(publish.MARKER, fields['body'])
 
     def test_updates_its_own_comment_and_never_another_one_with_the_marker(self):
