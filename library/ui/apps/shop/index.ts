@@ -1,0 +1,1 @@
+export { ShopFooter } from './ShopFooter'
