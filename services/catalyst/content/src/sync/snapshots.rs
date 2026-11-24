@@ -298,6 +298,7 @@ pub async fn fetch_snapshots(
         {
             Ok(resp) => {
                 if resp.status().is_success() {
+                    // The 15 s request timeout covers this body read.
                     let body = read_body_capped(resp, MAX_SNAPSHOT_LIST_BYTES)
                         .await
                         .map_err(|e| {

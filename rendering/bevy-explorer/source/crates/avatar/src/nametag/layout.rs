@@ -44,6 +44,20 @@ pub const VOICE_SIZE: Vec2 = Vec2::new(13.0, 12.0);
 pub const DM_TAG_SIZE: Vec2 = Vec2::new(31.0, 21.0);
 const MESSAGE_MARGIN_TOP: f32 = 10.0;
 
+/// A scene's plate: its label's size, its border's width and its corner radius.
+pub(super) const PLATE_FONT_SIZE: f32 = 14.0;
+pub(super) const PLATE_BORDER: f32 = 1.5;
+pub(super) const PLATE_RADIUS: f32 = 11.0;
+const PLATE_MIN_WIDTH: f32 = 22.0;
+const PLATE_MAX_WIDTH: f32 = 300.0;
+/// Between the border and the label, across and up.
+const PLATE_PADDING: Vec2 = Vec2::new(6.0, 1.0);
+/// The widest a plate's label gets: a longer one is cut to it.
+pub(super) const PLATE_MAX_LABEL_WIDTH: f32 =
+    PLATE_MAX_WIDTH - 2.0 * (PLATE_PADDING.x + PLATE_BORDER);
+/// How far a plate floats over the name's box.
+const PLATE_GAP: f32 = 2.0;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Voice {
     #[default]
@@ -262,6 +276,37 @@ pub fn layout(header: &Header, progress: &BubbleProgress) -> TagLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct PlateLayout {
+    /// The plate's box: the border fills it.
+    pub(super) rect: Rect,
+    /// The label's top left.
+    pub(super) label: Vec2,
+}
+
+/// Where a scene's plate with a label of `label` size goes: over the name's box `name`, or
+/// standing on the anchor in its place when the name does not show.
+pub(super) fn plate(label: Vec2, name: Option<Rect>) -> PlateLayout {
+    let inset = PLATE_PADDING + Vec2::splat(PLATE_BORDER);
+    // a plate with nothing written on it is as tall as one line
+    let line = label.y.max(PLATE_FONT_SIZE * LINE_HEIGHT);
+    let width = (label.x.max(0.0) + 2.0 * inset.x).clamp(PLATE_MIN_WIDTH, PLATE_MAX_WIDTH);
+    let bottom = name.map_or(0.0, |name| name.max.y + PLATE_GAP);
+    let rect = Rect::new(
+        -width * 0.5,
+        bottom,
+        width * 0.5,
+        bottom + line + 2.0 * inset.y,
+    );
+    PlateLayout {
+        rect,
+        label: Vec2::new(
+            -label.x * 0.5,
+            rect.max.y - inset.y - (line - label.y) * 0.5,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,5 +499,58 @@ mod tests {
         let tag = layout(&header(), &progress);
         assert!(tag.root.width() > 0.0 && tag.root.height() > 0.0);
         assert!(tag.message.is_none() && tag.community.is_none() && tag.dm.is_none());
+    }
+
+    #[test]
+    fn a_plate_floats_centred_over_the_name() {
+        let tag = layout(&header(), &BubbleProgress::default());
+        let label = Vec2::new(70.0, PLATE_FONT_SIZE * LINE_HEIGHT);
+        let plate = plate(label, Some(tag.root));
+        assert!(close(plate.rect.min.y, tag.root.max.y + 2.0));
+        assert!(close(plate.rect.center().x, 0.0));
+        assert!(close(plate.rect.width(), 70.0 + 2.0 * 7.5));
+        assert!(close(plate.rect.height(), label.y + 2.0 * 2.5));
+        assert_eq!(
+            plate.label,
+            Vec2::new(plate.rect.min.x + 7.5, plate.rect.max.y - 2.5)
+        );
+    }
+
+    #[test]
+    fn a_plate_stays_over_a_bubble_as_it_opens() {
+        let label = Vec2::new(120.0, 2.0 * MESSAGE_FONT_SIZE * LINE_HEIGHT);
+        let open = layout(
+            &header(),
+            &BubbleProgress {
+                padding: 1.0,
+                tail: 1.0,
+                container: message_container(label),
+                ..Default::default()
+            },
+        );
+        let plate = plate(Vec2::new(40.0, 17.0), Some(open.root));
+        assert!(close(plate.rect.min.y, open.root.max.y + 2.0));
+    }
+
+    #[test]
+    fn a_plate_stands_on_the_anchor_when_no_name_shows() {
+        let plate = plate(Vec2::new(40.0, 17.0), None);
+        assert!(close(plate.rect.min.y, 0.0));
+        assert!(close(plate.rect.center().x, 0.0));
+    }
+
+    #[test]
+    fn a_plate_keeps_between_its_narrowest_and_its_widest() {
+        // nothing written: one line tall, and round
+        let empty = plate(Vec2::ZERO, None);
+        assert!(close(empty.rect.width(), 22.0));
+        assert!(close(
+            empty.rect.height(),
+            PLATE_FONT_SIZE * LINE_HEIGHT + 5.0
+        ));
+        let widest = plate(Vec2::new(PLATE_MAX_LABEL_WIDTH, 17.0), None);
+        assert!(close(widest.rect.width(), 300.0));
+        let wider = plate(Vec2::new(900.0, 17.0), None);
+        assert!(close(wider.rect.width(), 300.0));
     }
 }

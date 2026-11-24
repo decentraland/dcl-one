@@ -63,11 +63,9 @@ async fn host_tuned(
     let pool = crate::db::scratch::pool(4).await?;
     let tmp = std::env::temp_dir().join(format!("catalyst-scene-host-{}", Uuid::new_v4().simple()));
     let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
-    let policy = Arc::new(Policy::new(
-        pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        names,
-    ));
+    let policy = Arc::new(
+        Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), names).with_subgraph_names(),
+    );
     let mut raw = RawSettings {
         disable_js_runtime: !js,
         auth_timeout_secs: 2,

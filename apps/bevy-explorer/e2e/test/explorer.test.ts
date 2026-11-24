@@ -161,9 +161,9 @@ describe('Explorer', () => {
   })
 
   test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
-    const tag = { player: 'local', sceneAvatar: false, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
+    const tag = { player: 'local', sceneAvatar: false, nameShown: true, plate: { label: 'VIP', labelColor: '#FCFCFC', backgroundColor: '#161518', borderColor: '#161518' }, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
     const fake = new FakeConsole({
-      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, plates: 1, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
       nametag_bubble: JSON.stringify({ bubbles: 1 })
     })
     const explorer = new Explorer(fake)
@@ -171,6 +171,9 @@ describe('Explorer', () => {
     assert.equal(state.shown, 1)
     assert.equal(state.tags[0]?.suffix, '#12ab')
     assert.equal(state.tags[0]?.sceneAvatar, false)
+    assert.equal(state.plates, 1)
+    assert.equal(state.tags[0]?.nameShown, true)
+    assert.equal(state.tags[0]?.plate?.label, 'VIP')
     assert.equal(await explorer.nametagBubble('local', 'nearby', 'hello there'), 1)
     assert.equal(fake.lines.at(-1), '/nametag_bubble local nearby hello there')
   })

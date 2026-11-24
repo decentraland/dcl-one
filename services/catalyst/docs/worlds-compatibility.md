@@ -256,16 +256,20 @@ A difference not listed here is a gap, not a decision.
   name has an owner only while the ENS Registry still gives its node to
   the NameWrapper (upstream trusts the NameWrapper alone).
 - **DCL NAME holder reader.** A DCL NAME world's owner is the NAME's
-  current holder, read from `MARKETPLACE_SUBGRAPH_URL` (upstream's
-  marketplace subgraph); it has no default and only the `mirror` posture
-  sets it. Without it a DCL NAME world has no owner for writes: publishes,
+  current holder, read from the nft index on a node that walks it
+  (`MARKETPLACE_NFT_INDEX_ENABLED` on mainnet), which authorizes only while
+  every block it walked is folded and published (between walking a
+  transfer and publishing it, and while the index is behind, owner writes
+  and admission answer 503); elsewhere from `MARKETPLACE_SUBGRAPH_URL`
+  (upstream's marketplace subgraph), which has no default and only the
+  `mirror` posture sets. Without either a DCL NAME world has no owner for writes: publishes,
   the owner-gated permission, settings, undeploy and storage routes, and
   the owner's scene-admin rights (admins, bans, stream key, Cast) are
   refused (upstream reads the stored owner first, which keeps naming a
   former holder until a publish replaces it). The reads still
   use the stored owner then: `GET /world/{name}/permissions`, `/limits`,
   owner admission, the ban-protected set and the quota pass. `catalyst serve`
-  with `WORLDS_WRITES_ENABLED=true` refuses to start without the URL, before
+  with `WORLDS_WRITES_ENABLED=true` refuses to start without either, before
   it opens the database (`catalyst index` takes no world writes and skips
   this rule), unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true` (a node
   without chain access, such as the `journey` posture), where it logs a
