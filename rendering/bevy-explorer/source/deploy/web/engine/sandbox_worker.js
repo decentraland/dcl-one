@@ -579,8 +579,7 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   // 1 ms sleep
   // an i32 without the glue: as unsigned, for an address past 2 GiB
   const wakePtr = enter(() => relay.relay_wake_ptr()) >>> 0;
-  const wakeView =
-    relayWaitAsync && wakePtr ? new RelayInt32Array(sharedMemory.buffer, wakePtr, 1) : undefined;
+  const wakeView = wakePtr ? new RelayInt32Array(sharedMemory.buffer, wakePtr, 1) : undefined;
 
   let done = false;
   let finishRequested = false;
