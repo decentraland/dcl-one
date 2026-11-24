@@ -1,5 +1,5 @@
 use super::*;
-use crate::scene_partition::BEHIND_SCENE_TICK_RATE;
+use crate::scene_partition::{BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE};
 use common::partition::PartitionData;
 
 const BEHIND_FAR: PartitionData = PartitionData {
@@ -54,22 +54,27 @@ fn each_distance_band_has_its_rate() {
 }
 
 #[test]
-fn the_farthest_band_does_not_tick() {
-    let partition = at(80.0, false);
-    assert_eq!(scene_tick_rate(&partition), 0.0);
-    assert!(!tick_rate_allows(scene_tick_rate(&partition), 3600.0));
+fn the_farthest_band_keeps_a_slow_tick() {
+    assert_eq!(scene_tick_rate(&at(80.0, false)), FAR_SCENE_TICK_RATE);
+    assert_eq!(scene_tick_rate(&at(5000.0, true)), FAR_SCENE_TICK_RATE);
 }
 
 #[test]
 fn a_behind_scene_ticks_at_most_once_a_second() {
     assert_eq!(scene_tick_rate(&at(0.0, true)), BEHIND_SCENE_TICK_RATE);
     assert_eq!(scene_tick_rate(&at(70.0, true)), BEHIND_SCENE_TICK_RATE);
-    assert_eq!(scene_tick_rate(&at(90.0, true)), 0.0);
 }
 
 #[test]
 fn a_capped_scene_ticks_once_its_interval_has_passed() {
-    assert!(!tick_rate_allows(5.0, 0.19));
-    assert!(tick_rate_allows(5.0, 0.2));
-    assert!(tick_rate_allows(5.0, 1.0));
+    assert!(!tick_rate_allows(5.0, 0.15, 0.016));
+    assert!(tick_rate_allows(5.0, 0.2, 0.016));
+    assert!(tick_rate_allows(5.0, 1.0, 0.016));
+}
+
+#[test]
+fn an_interval_within_half_a_frame_counts_as_passed() {
+    // two 60 fps frames that came in just under 1/30 s
+    assert!(tick_rate_allows(30.0, 0.0332, 1.0 / 60.0));
+    assert!(!tick_rate_allows(30.0, 0.0166, 1.0 / 60.0));
 }

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::PrimitiveTopology};
 use bevy_console::ConsoleCommand;
-use common::structs::PrimaryUser;
+use common::structs::{PrimaryCamera, PrimaryUser};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_material::SceneMaterial;
 use serde_json::{json, Value};
@@ -13,6 +13,7 @@ use crate::{
         CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
+    scene_partition::{BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE, SCENE_TICK_RATE_BANDS},
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
@@ -165,7 +166,10 @@ impl Plugin for SceneDebugPanelPlugin {
                 query: "/scene_tick_rate_state",
                 fields: &[
                     ("Scenes at the full rate", "full"),
-                    ("Scenes by maximum ticks a second", "capped"),
+                    (
+                        "Scenes capped at ticks a second (40 / 30 / 15 / 10 / 5 / 1 / 0.5)",
+                        "capped",
+                    ),
                     ("Scene-frames skipped by the cap", "skipped"),
                 ],
                 actions: &[],
@@ -567,30 +571,46 @@ fn scene_content(
 #[command(name = "/scene_tick_rate_state")]
 struct TickRateState;
 
-/// The running scenes by their distance band's tick rate cap (`scene_tick_rate`), and the
-/// scene-frames the cap has skipped since startup.
+/// Every rate `scene_tick_rate` gives, in the order of the section's `capped` label.
+const CAPPED_RATES: [f32; 7] = [
+    SCENE_TICK_RATE_BANDS[0].1,
+    SCENE_TICK_RATE_BANDS[1].1,
+    SCENE_TICK_RATE_BANDS[2].1,
+    SCENE_TICK_RATE_BANDS[3].1,
+    SCENE_TICK_RATE_BANDS[4].1,
+    BEHIND_SCENE_TICK_RATE,
+    FAR_SCENE_TICK_RATE,
+];
+
+/// The running scenes at the full rate and at each distance band's tick rate cap
+/// (`scene_tick_rate`), and the scene-frames the cap has skipped since startup.
 fn tick_rate_state(
     mut input: ConsoleCommand<TickRateState>,
     scenes: Query<&RendererSceneContext>,
+    rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
     updates: Res<SceneUpdates>,
 ) {
     if input.take().is_none() {
         return;
     }
+    if rendering_camera.is_empty() {
+        input.reply_ok(
+            json!({"unavailable": {"": "No rendering camera: every scene ticks at the full rate."}})
+                .to_string(),
+        );
+        return;
+    }
     let mut full = 0usize;
-    let mut capped = std::collections::BTreeMap::<u32, usize>::new();
+    let mut capped = [0usize; CAPPED_RATES.len()];
     for context in scenes.iter().filter(|context| !context.broken()) {
-        match context.tick_rate_cap {
+        match context
+            .tick_rate_cap
+            .and_then(|rate| CAPPED_RATES.iter().position(|r| *r == rate))
+        {
             None => full += 1,
-            Some(rate) => *capped.entry(rate as u32).or_default() += 1,
+            Some(band) => capped[band] += 1,
         }
     }
-    let capped = capped
-        .iter()
-        .rev()
-        .map(|(rate, count)| format!("{rate}/s: {count}"))
-        .collect::<Vec<_>>()
-        .join(", ");
     input.reply_ok(
         json!({"full": full, "capped": capped, "skipped": updates.skipped_rate_capped}).to_string(),
     );

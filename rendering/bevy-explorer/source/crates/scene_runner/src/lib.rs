@@ -621,11 +621,27 @@ fn update_scene_priority(
     // mark scenes that have been in-flight past the timeout as broken and free their
     // slot, so a wedged scene worker can't hold a scene thread forever
     let elapsed = time.elapsed_secs_f64();
-    for (ent, _, mut context, maybe_super) in scenes.iter_mut() {
+    // the distance bands cap tick rates only where a camera renders: the headless server ticks
+    // every scene it runs
+    let rate_capped = !rendering_camera.is_empty();
+    let imposter_scene = match &imposter_scene.0 {
+        Some((PointerResult::Exists { hash, .. }, _)) => live_scenes.scenes.get(hash).copied(),
+        _ => None,
+    };
+    for (ent, maybe_partition, mut context, maybe_super) in scenes.iter_mut() {
         // before this frame's dispatch
         if let Some(wake) = context.wake() {
             wake.set(wake_scenes.contains(&ent));
         }
+        let full_rate = !rate_capped
+            || active_scenes.contains(&ent)
+            || wake_scenes.contains(&ent)
+            || maybe_super.is_some()
+            || context.inspected
+            || imposter_scene == Some(ent)
+            || context.tick_number < SCENE_LOADED_TICK;
+        let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
+        context.tick_rate_cap = (!full_rate).then(|| scene_tick_rate(&partition));
         if not_responding(
             context.in_flight(),
             context.inspected,
@@ -655,14 +671,6 @@ fn update_scene_priority(
     let mut skipped_already_sent = 0u64;
     let mut skipped_rate_capped = 0u64;
 
-    // the distance bands cap tick rates only where a camera renders: the headless server ticks
-    // every scene it runs
-    let rate_capped = !rendering_camera.is_empty();
-    let imposter_scene = match &imposter_scene.0 {
-        Some((PointerResult::Exists { hash, .. }, _)) => live_scenes.scenes.get(hash).copied(),
-        _ => None,
-    };
-
     // sort eligible scenes
     updates.scene_queue = scenes
         .iter_mut()
@@ -688,17 +696,10 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, maybe_partition, mut context, maybe_super)| {
+        .filter_map(|(ent, maybe_partition, mut context, _)| {
             let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
             let active = active_scenes.contains(&ent);
             context.priority = if active { 0.0 } else { partition.sqr_distance };
-            let full_rate = !rate_capped
-                || active
-                || wake_scenes.contains(&ent)
-                || maybe_super.is_some()
-                || imposter_scene == Some(ent)
-                || context.tick_number < SCENE_LOADED_TICK;
-            context.tick_rate_cap = (!full_rate).then(|| scene_tick_rate(&partition));
             let not_yet_run = context.last_sent < time.elapsed_secs_f64();
 
             if !context.in_flight() && !not_yet_run {
@@ -711,7 +712,7 @@ fn update_scene_priority(
             let age = time.elapsed_secs_f64() - context.last_sent;
             if context
                 .tick_rate_cap
-                .is_some_and(|rate| !tick_rate_allows(rate, age))
+                .is_some_and(|rate| !tick_rate_allows(rate, age, time.delta_secs_f64()))
             {
                 skipped_rate_capped += 1;
                 return None;
@@ -1212,6 +1213,87 @@ mod player_scenes_tests {
         world.entity_mut(scene).insert(context);
     }
 
+    fn scene_loop_resources(world: &mut World) {
+        let (sender, receiver) = scene_response_channel();
+        world.insert_resource(SceneUpdates {
+            sender,
+            receiver: SyncCell::new(receiver),
+            jobs_in_flight: Default::default(),
+            update_deadline: web_time::SystemTime::now(),
+            eligible_jobs: 0,
+            scene_queue: Default::default(),
+            loop_end_time: Instant::now(),
+            frame_target: None,
+            priority_scenes: Default::default(),
+            frames: 0,
+            skipped_in_flight: 0,
+            skipped_already_sent: 0,
+            skipped_rate_capped: 0,
+        });
+        world.init_resource::<Time>();
+        world.init_resource::<CurrentImposterScene>();
+    }
+
+    fn queued(world: &World) -> HashSet<Entity> {
+        world
+            .resource::<SceneUpdates>()
+            .scene_queue
+            .iter()
+            .map(|(scene, _)| *scene)
+            .collect()
+    }
+
+    /// With a rendering camera, a loaded scene beyond the last band waits out its interval; the
+    /// player's scene and the portable are queued every frame.
+    #[test]
+    fn a_far_scene_waits_for_its_band_while_the_players_scenes_tick() {
+        let mut world = World::new();
+        let Scenes {
+            here,
+            east,
+            portable,
+            ..
+        } = scenes(&mut world);
+        for (scene, parcel) in [
+            (here, IVec2::new(2, 2)),
+            (east, IVec2::new(3, 2)),
+            (portable, IVec2::ZERO),
+        ] {
+            live_scene(&mut world, scene, parcel);
+            world
+                .get_mut::<RendererSceneContext>(scene)
+                .unwrap()
+                .tick_number = SCENE_LOADED_TICK;
+        }
+        world.entity_mut(east).insert(Partition(PartitionData {
+            sqr_distance: 100.0 * 100.0,
+            parcel_distance: 6,
+            is_behind: false,
+        }));
+        world.spawn((PrimaryCamera::default(), Camera::default()));
+        scene_loop_resources(&mut world);
+        let frame = |world: &mut World, seconds: f32| {
+            world
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs_f32(seconds));
+            world.run_system_once(update_scene_priority).unwrap();
+        };
+
+        frame(&mut world, 0.1);
+        assert_eq!(queued(&world), HashSet::from_iter([here, portable]));
+        assert_eq!(world.resource::<SceneUpdates>().skipped_rate_capped, 1);
+        assert_eq!(
+            world
+                .get::<RendererSceneContext>(east)
+                .unwrap()
+                .tick_rate_cap,
+            Some(scene_partition::FAR_SCENE_TICK_RATE)
+        );
+
+        frame(&mut world, 2.0);
+        assert!(queued(&world).contains(&east));
+    }
+
     fn wakes(world: &World, scene: Entity) -> bool {
         world
             .get::<RendererSceneContext>(scene)
@@ -1234,23 +1316,7 @@ mod player_scenes_tests {
         live_scene(&mut world, here, IVec2::new(2, 2));
         live_scene(&mut world, east, IVec2::new(3, 2));
         live_scene(&mut world, portable, IVec2::ZERO);
-        let (sender, receiver) = scene_response_channel();
-        world.insert_resource(SceneUpdates {
-            sender,
-            receiver: SyncCell::new(receiver),
-            jobs_in_flight: Default::default(),
-            update_deadline: web_time::SystemTime::now(),
-            eligible_jobs: 0,
-            scene_queue: Default::default(),
-            loop_end_time: Instant::now(),
-            frame_target: None,
-            priority_scenes: Default::default(),
-            frames: 0,
-            skipped_in_flight: 0,
-            skipped_already_sent: 0,
-            skipped_rate_capped: 0,
-        });
-        world.init_resource::<Time>();
+        scene_loop_resources(&mut world);
 
         world.run_system_once(update_scene_priority).unwrap();
         assert!(wakes(&world, here) && wakes(&world, portable));

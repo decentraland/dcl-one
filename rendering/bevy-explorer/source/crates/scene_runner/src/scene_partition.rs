@@ -53,8 +53,8 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
 pub const BEHIND_SCENE_TICK_PENALTY: f32 = 4.0;
 
 /// The most ticks a second of a scene whose nearest parcel is under each distance (m) from the
-/// player, nearest band first. A scene beyond the last band does not tick.
-pub const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
+/// player, nearest band first. A scene beyond the last band ticks at `FAR_SCENE_TICK_RATE`.
+pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
     (16.0, 40.0),
     (32.0, 30.0),
     (48.0, 15.0),
@@ -62,16 +62,21 @@ pub const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
     (80.0, 5.0),
 ];
 
-/// The most ticks a second of a scene behind the camera, in a band that ticks.
-pub const BEHIND_SCENE_TICK_RATE: f32 = 1.0;
+/// The ticks a second of a scene beyond the last band: enough to drain the global CRDT and
+/// scene comms channels it reads only while ticking, which drop messages when full.
+pub(crate) const FAR_SCENE_TICK_RATE: f32 = 0.5;
 
-/// The most ticks a second of a scene at `partition`: its distance band's rate, at most
-/// `BEHIND_SCENE_TICK_RATE` behind the camera; 0 beyond the last band.
-pub fn scene_tick_rate(partition: &PartitionData) -> f32 {
+/// The most ticks a second of a scene behind the camera.
+pub(crate) const BEHIND_SCENE_TICK_RATE: f32 = 1.0;
+
+/// The most ticks a second of a scene at `partition`: its distance band's rate, or
+/// `FAR_SCENE_TICK_RATE` beyond the last band, at most `BEHIND_SCENE_TICK_RATE` behind the
+/// camera.
+pub(crate) fn scene_tick_rate(partition: &PartitionData) -> f32 {
     let rate = SCENE_TICK_RATE_BANDS
         .iter()
         .find(|(distance, _)| partition.sqr_distance < distance * distance)
-        .map_or(0.0, |(_, rate)| *rate);
+        .map_or(FAR_SCENE_TICK_RATE, |(_, rate)| *rate);
     if partition.is_behind {
         rate.min(BEHIND_SCENE_TICK_RATE)
     } else {
@@ -80,9 +85,10 @@ pub fn scene_tick_rate(partition: &PartitionData) -> f32 {
 }
 
 /// Whether a scene ticking at most `rate` times a second, last sent `age` seconds ago, may tick
-/// again.
-pub fn tick_rate_allows(rate: f32, age: f64) -> bool {
-    rate > 0.0 && age * rate as f64 >= 1.0
+/// in a frame of `frame` seconds. `age` grows a frame at a time, so the interval counts as
+/// passed within half a frame of it; otherwise frame jitter would miss it about half the time.
+pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
+    rate > 0.0 && (age + frame * 0.5) * rate as f64 >= 1.0
 }
 
 /// Where partitions are measured from: distance from the player, facing from the rendering

@@ -153,12 +153,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   grounded means within 0.2 m of the ground, as for the animation, and the opacity rises
   over the next 0.2 m instead of the last metre: with the projector's 0.5 fade factor,
   Unity's ramp left the blob nearly invisible before the player landed.
-- **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
-  asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
-  scheduler and measure raw squared distance from the player to the nearest point of a scene's
+- **Downloads without distance buckets; scene ticks capped by distance band.** unity-explorer
+  ranks scenes and asset loads by distance buckets and sets each scene's tick rate from a
+  bucket-indexed table. We keep the aging scheduler and measure raw squared distance from the player to the nearest point of a scene's
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue. On top of the queue each scene has a maximum tick rate by distance
-  band, at most once a second behind the camera, and none from 80 m on
+  band, at most once a second behind the camera, and once every two seconds from 80 m on, where
+  unity-explorer stops ticking: a scene here drains its message channels only while ticking
   ([scheduling](scheduling.md#tick-rate-bands),
   [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md)). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
