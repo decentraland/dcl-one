@@ -272,7 +272,7 @@ State, in every build:
   restrictions debug section's source and what the minimap's restrictions icon lists:
   `cameraLocked`, `avatarHidden`, `avatarMovementsBlocked`, `passportCannotBeOpened`,
   `experiencesBlocked` (the scene turns portable experiences off or hides their UI),
-  `skyboxTimeUiBlocked` (the scene sets the time of day and no explicit `/time` overrides it) and
+  `skyboxTimeUiBlocked` (the scene sets the time of day, which the HUD and `/time` cannot change) and
   `nearbyVoiceChatBlocked`.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
   `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that

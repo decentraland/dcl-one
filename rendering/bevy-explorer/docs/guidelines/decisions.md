@@ -35,12 +35,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
   alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
   wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
-- **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
-  clock hands control back to the scene. While a scene controls the sky and the clock runs,
-  the HUD's Skybox menu is locked, as in Unity, and the minimap's restrictions list says so; a
-  time stopped beforehand, or `/time`, still beats scene time, and nothing is locked then.
-  `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
-  direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
+- **Day and night (#1467).** A scene's time always wins, as in Unity: over the running clock,
+  over a time set from the HUD and over `/time`, which still move the clock and show once no
+  scene sets the time. The HUD's Skybox menu is locked meanwhile and the minimap's restrictions
+  list says so. `transitionMode` in scene.json is ignored. HUD and `/time` skips take the
+  nearest direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene restrictions list.** The minimap lists `Experiences disabled` where the scene's
   `featureToggles.portableExperiences` is `disabled` or `hideUi`; Unity defines the line and
   never shows it. Each line follows the engine's state that frame (`/scene_restrictions_state`),

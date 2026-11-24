@@ -18,8 +18,9 @@
 //   assertions are Unity's: the label is an HH:mm time within 17:50 to 18:10, and the Auto
 //   switch reaches the state asked of it at each change. Added: the slider reads about
 //   18 and is enabled. Unity restores the switch only; here the clock is put back as found too.
-//   Where the scene sets the time of day and the clock runs, the switch and the slider are
-//   disabled (`/scene_restrictions_state` `skyboxTimeUiBlocked`); the stopped clock here overrides it.
+//   Where the scene sets the time of day the switch and the slider are disabled and `/time` does
+//   not move the sky (`/scene_restrictions_state` `skyboxTimeUiBlocked`), so these scenarios need
+//   a place whose scene sets no time.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
