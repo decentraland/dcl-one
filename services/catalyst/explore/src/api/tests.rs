@@ -2533,6 +2533,17 @@ async fn an_older_build_never_replaces_a_newer_publication() {
         (y.0, y_grid.digest),
         "A serves Y"
     );
+    let marker: (i64, Option<String>) = sqlx::query_as(
+        "SELECT items, cursor FROM explore_api.mirror_passes WHERE mirror = 'map-grid'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marker,
+        (served.tiles.len() as i64, Some(y.0.to_string())),
+        "the pass reports the revision it serves"
+    );
 
     // A fresh build whose inputs really are 1500 publishes them past Y.
     map::run_pass(&a.state, &ctx).await.unwrap();

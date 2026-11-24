@@ -567,8 +567,9 @@ fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
 /// writes nothing (and a process holding an older grid reloads the stored
 /// one); a different one is stored with a write guarded on that revision,
 /// and served only if newer than what this process holds. A build whose
-/// revision another publisher replaced after its snapshot began, from inputs
-/// at least as new, is discarded: it never overwrites a newer publication.
+/// revision another publisher replaced after its snapshot began is
+/// discarded: a pass never overwrites a revision published since its
+/// snapshot.
 /// A source that is not published fails the pass naming it (`/mirrors`'
 /// `lastError`) and keeps the held grid; no partial grid is built.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
@@ -645,9 +646,13 @@ async fn publish(
     now: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<mirror::PassOutcome> {
     let digest_hex = hex::encode(digest);
-    let outcome = |stamp: i64| mirror::PassOutcome {
-        items: tiles.len() as i64,
-        cursor: Some(stamp.to_string()),
+    // A pass that serves another revision than its own build reports that
+    // revision's tile count and stamp together, from the one grid it serves.
+    let served = |state: &Shared| {
+        state.map.snapshot().map(|g| mirror::PassOutcome {
+            items: g.tiles.len() as i64,
+            cursor: Some(g.last_updated_at.to_string()),
+        })
     };
     if let Some((_, Some(etag))) = &expected
         && *etag == digest_hex
@@ -655,7 +660,7 @@ async fn publish(
         // The revision these inputs follow is this body: nothing to write;
         // serve the newest stored one.
         reload_if_newer(state).await?;
-        return Ok(outcome(state.map.last_updated_at()));
+        return served(state).context("a stored revision is served after its reload");
     }
     let stamp = next_stamp(expected.as_ref().map(|(s, _)| *s), now.timestamp_millis());
     let gz = tokio::task::spawn_blocking(move || gzip(&body))
@@ -675,12 +680,11 @@ async fn publish(
     .context("storing explore_api.map_grid")?;
     if !stored_it {
         // Another publisher stored a revision after this build's snapshot
-        // began, from inputs at least as new: its grid is served and this
-        // build discarded; the next pass reads its inputs after it.
+        // began: its grid is served and this build discarded; the next pass
+        // reads its inputs after it.
         tracing::warn!("another process stored a tile grid during this build; serving it instead");
         reload_if_newer(state).await?;
-        let current = stored_revision(&state.pool).await?.map_or(0, |(s, _)| s);
-        return Ok(outcome(current));
+        return served(state).context("a stored revision is served after its reload");
     }
     tracing::info!(
         tiles = tiles.len(),
@@ -688,7 +692,10 @@ async fn publish(
         last_updated_at = stamp,
         "tile grid built"
     );
-    let out = outcome(stamp);
+    let out = mirror::PassOutcome {
+        items: tiles.len() as i64,
+        cursor: Some(stamp.to_string()),
+    };
     state
         .map
         .install_newer(Grid::from_parts(tiles, stamp, built_at, digest));

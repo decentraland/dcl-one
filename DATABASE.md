@@ -2919,9 +2919,9 @@ gone.
   an `UPDATE` guarded on that revision's stamp and `etag` (an `INSERT ...
   ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
   in milliseconds and at least one second past it. If another publisher
-  stored a revision after the snapshot began, from inputs at least as new,
-  the write stores nothing and the build is discarded: an older build never
-  replaces a newer publication. A process serves a grid only if its stamp
+  stored a revision after the snapshot began, the write stores nothing and
+  the build is discarded: a pass never overwrites a revision published
+  since its snapshot. A process serves a grid only if its stamp
   is newer than the one it holds, decided under its grid lock, so a slow
   reload never brings back an older revision. An order or rental that
   expires changes the body on the next pass. A PNG answer takes one grid
