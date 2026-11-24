@@ -46,10 +46,12 @@ transaction as its rows. Two rules:
   also the items mirror's first complete pass; otherwise they answer the
   `nft-index` unavailable envelope. `/v1/orders` and
   `/v1/orders/open-by-items` are the exception: while the index does not
-  meet the rule their v3 listings leg is empty, so no listing is served
-  unguarded, and the legacy orders still answer with status 200. The
-  response then holds no v3 listing, LAND and estate listings included, and
-  its total counts the legacy orders only.
+  meet the rule their v3 listings leg keeps only the listings of contracts
+  the index holds no token of (LAND and estates), which the owner guard
+  never filters, so no listing the guard could drop is served unguarded,
+  and the legacy orders still answer with status 200. The total counts what
+  is served. The `x-listings-owner-check` response header names the case:
+  `checked` (the guard ran), `partial` (this one) or `unchecked` (below).
 
 Neither rule compares `folded_block` with `last_block`: each pass advances
 `last_block` before it folds and publishes, so that equality is false for part
@@ -60,9 +62,11 @@ complete.
 
 A node that does not walk the index (the switch off, or a network other than
 mainnet) serves profiles and outfits as deployed, serves the v3 listings of
-`/v1/orders` without the owner guard, and answers the envelope on the
-inventory routes. A mainnet mirror refuses to start with the index off or
-with a `TRADE_RPC_URLS` that names no chain 137 endpoint.
+`/v1/orders` without the owner guard (`x-listings-owner-check: unchecked`,
+so a client knows a listing may name a token its signer sold), and answers
+the envelope on the inventory routes. A mainnet mirror refuses to start
+with the index off or with a `TRADE_RPC_URLS` that names no chain 137
+endpoint.
 
 ## Consequences
 

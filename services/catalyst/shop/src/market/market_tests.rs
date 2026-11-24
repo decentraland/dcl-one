@@ -3439,10 +3439,18 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         owner: Some(WALLET_A.into()),
         ..Default::default()
     };
-    let unpublished = super::orders::trades_leg(&state, &open).await.unwrap();
-    assert!(
-        unpublished.is_empty(),
-        "an unpublished index serves no listing, guarded or not"
+    use super::orders::OwnerCheck;
+    let ids_of = |rows: Vec<super::orders::Keyed>| {
+        let mut ids: Vec<String> = rows.into_iter().map(|k| k.order.id).collect();
+        ids.sort();
+        ids
+    };
+    let (unpublished, check) = super::orders::trades_leg(&state, &open).await.unwrap();
+    assert_eq!(check, OwnerCheck::Partial);
+    assert_eq!(
+        ids_of(unpublished),
+        vec![elsewhere.clone()],
+        "an unpublished index serves only the listings of contracts it holds no token of: the guard passes those anyway"
     );
     let not_walking = std::sync::Arc::new(super::MarketplaceState::new(
         pool.clone(),
@@ -3450,13 +3458,11 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         market_settings(&url, &url, true),
     ));
     assert!(!super::owned_items::walks_here(&not_walking));
-    let mut ids: Vec<String> = super::orders::trades_leg(&not_walking, &open)
+    let (rows, check) = super::orders::trades_leg(&not_walking, &open)
         .await
-        .unwrap()
-        .into_iter()
-        .map(|k| k.order.id)
-        .collect();
-    ids.sort();
+        .unwrap();
+    assert_eq!(check, OwnerCheck::Unchecked);
+    let ids = ids_of(rows);
     let mut want = vec![
         held.clone(),
         sold.clone(),
@@ -3476,12 +3482,11 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         Duration::ZERO,
     )
     .await;
-    assert!(
-        super::orders::trades_leg(&state, &open)
-            .await
-            .unwrap()
-            .is_empty(),
-        "a read of both networks waits for Ethereum"
+    let (rows, check) = super::orders::trades_leg(&state, &open).await.unwrap();
+    assert_eq!(
+        (ids_of(rows), check),
+        (vec![elsewhere.clone()], OwnerCheck::Partial),
+        "a read of both networks waits for Ethereum to guard the indexed contracts"
     );
     let matic = super::orders::OrderFilters {
         network: Some(super::wire::Network::Matic),
@@ -3498,15 +3503,11 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         ("both", &open, &super::chain_walk::ChainNet::ALL[..]),
     ] {
         super::owned_items::test_support::publish(&pool, nets, false, Duration::ZERO).await;
-        let mut ids: Vec<String> = super::orders::trades_leg(&state, filters)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|k| k.order.id)
-            .collect();
-        ids.sort();
+        let (rows, check) = super::orders::trades_leg(&state, filters).await.unwrap();
+        assert_eq!(check, OwnerCheck::Checked, "{label}");
         assert_eq!(
-            ids, want,
+            ids_of(rows),
+            want,
             "{label}: the sold ({sold}) and burned ({burned}) tokens' listings drop out"
         );
     }

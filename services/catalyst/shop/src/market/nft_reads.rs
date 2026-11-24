@@ -179,6 +179,49 @@ impl std::ops::DerefMut for ReadConn {
     }
 }
 
+/// How long one statement of a `/v1/nfts`, prices or estate-size read may
+/// run before Postgres cancels it (the pool's own bound is 60 s): a page
+/// anyone can ask for holds one pool connection no longer than this, and
+/// answers [`read_error`]'s 503 past it. Above the slowest statements
+/// measured on the seeded index (DATABASE.md): 7 to 8 s for a
+/// 32,000-token owner's capped total naming no category, 8.1 s for the
+/// deepest page sorted by price naming no category.
+pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Past this many tokens, an owner's page sorted by price or listing time
+/// is read in two parts like a page without an owner: one part looks up
+/// the listing of every token the owner holds (7 to 8 s for 32,000 tokens),
+/// two parts start from the listed tokens (0.6 s for the same owner, 240
+/// ms for any owner), so the two meet at about a thousand tokens.
+pub const LARGE_OWNER_TOKENS: i64 = 1_000;
+
+/// A statement of a read failed: a cancelled one ([`READ_STATEMENT_TIMEOUT`])
+/// is a 503 naming the bound, anything else a 500.
+fn read_error(e: sqlx::Error) -> Response {
+    let cancelled = e
+        .as_database_error()
+        .is_some_and(|d| d.code().as_deref() == Some("57014"));
+    if cancelled {
+        return super::service_unavailable(&format!(
+            "the read ran past its {} s statement bound: narrow the filters or the page window",
+            READ_STATEMENT_TIMEOUT.as_secs()
+        ));
+    }
+    ApiError::internal(e.to_string()).into_response()
+}
+
+/// Whether `owner` holds more than [`LARGE_OWNER_TOKENS`] tokens in the nft
+/// index (counted up to one past the bound).
+async fn holds_many(conn: &mut PgConnection, owner: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*) > $2 FROM (SELECT 1 FROM shop.nft WHERE owner = $1 LIMIT $2 + 1) t",
+    )
+    .bind(owner.to_lowercase())
+    .bind(LARGE_OWNER_TOKENS)
+    .fetch_one(conn)
+    .await
+}
+
 /// Why no connection was opened for a read of [`Sources`].
 enum ReadConnError {
     /// It reads LAND, and the land-authz index is not ready.
@@ -214,6 +257,12 @@ async fn open_read_conn(
             .map_err(ReadConnError::Pool)?;
         ReadConn::Pool(tx)
     };
+    // Transaction-local: the bound ends with the read.
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!("{}ms", READ_STATEMENT_TIMEOUT.as_millis()))
+        .execute(&mut *conn)
+        .await
+        .map_err(ReadConnError::Pool)?;
     check_nft(&mut conn, f, sources)
         .await
         .map_err(|e| match e {
@@ -867,6 +916,29 @@ pub fn build_nfts_query(
     (String, sqlx::postgres::PgArguments),
     (String, sqlx::postgres::PgArguments),
 ) {
+    build_nfts_query_for(f, sources, land, first, skip, now_ms, since, false)
+}
+
+/// [`build_nfts_query`], with `large_owner` when the filter's owner holds
+/// more than [`LARGE_OWNER_TOKENS`] tokens: that owner's page sorted by
+/// price or listing time is read in two parts too.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "build_nfts_query's inputs and the owner's size"
+)]
+pub fn build_nfts_query_for(
+    f: &NftFilters,
+    sources: Sources,
+    land: Option<LandNetwork>,
+    first: i64,
+    skip: i64,
+    now_ms: i64,
+    since: Option<chrono::NaiveDateTime>,
+    large_owner: bool,
+) -> (
+    (String, sqlx::postgres::PgArguments),
+    (String, sqlx::postgres::PgArguments),
+) {
     let page = {
         let mut b = Builder::new();
         let orders = needs_orders(f);
@@ -874,8 +946,9 @@ pub fn build_nfts_query(
         // listed rows: each source is read in two parts, so that no read
         // prices every candidate (below). An owner's page keeps one part:
         // its candidates are that owner's tokens, and reading every listed
-        // token first costs a typical owner more than it saves.
-        let split = sorts_on_orders(f) && !on_sale_only(f) && f.owner.is_none();
+        // token first costs a typical owner more than it saves; past
+        // [`LARGE_OWNER_TOKENS`] it saves more than it costs.
+        let split = sorts_on_orders(f) && !on_sale_only(f) && (f.owner.is_none() || large_owner);
         let (prefix, mut legs) = if split && f.is_on_sale != Some(false) {
             let from = Candidates::Listed;
             candidate_legs(&mut b, f, sources, land, now_ms, since, from, orders)
@@ -1188,16 +1261,30 @@ pub async fn list_nfts(
         })?,
     };
     let now_ms = Utc::now().timestamp_millis();
-    let ((page_sql, page_args), (total_sql, total_args)) =
-        build_nfts_query(f, sources, land, first, skip, now_ms, trades_since(state));
+    let large_owner = match &f.owner {
+        Some(owner) if sorts_on_orders(f) && !on_sale_only(f) => {
+            holds_many(&mut conn, owner).await.map_err(read_error)?
+        }
+        _ => false,
+    };
+    let ((page_sql, page_args), (total_sql, total_args)) = build_nfts_query_for(
+        f,
+        sources,
+        land,
+        first,
+        skip,
+        now_ms,
+        trades_since(state),
+        large_owner,
+    );
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(page_sql), page_args)
         .fetch_all(&mut *conn)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
+        .map_err(read_error)?;
     let total: i64 = sqlx::query_scalar_with(sqlx::AssertSqlSafe(total_sql), total_args)
         .fetch_one(&mut *conn)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
+        .map_err(read_error)?;
     let estates: Vec<String> = rows
         .iter()
         .filter(|r| r.get::<String, _>("category") == "estate")
@@ -1205,7 +1292,7 @@ pub async fn list_nfts(
         .collect();
     let parcels = estate_parcels(&mut conn, &estates)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
+        .map_err(read_error)?;
     Ok((
         rows.iter()
             .map(|r| row_to_result(r, &parcels, &state.settings.land_image_base_url))
@@ -1309,7 +1396,7 @@ pub async fn estate_sizes(state: &MarketplaceState, f: &NftFilters) -> Result<Hi
     let sizes: Vec<Option<i32>> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(b.sql), b.args)
         .fetch_all(&mut *conn)
         .await
-        .map_err(|e| ApiError::internal(e.to_string()).into_response())?;
+        .map_err(read_error)?;
     Ok(consolidate(
         sizes.into_iter().flatten().map(|s| s.to_string()),
     ))
@@ -1420,6 +1507,88 @@ mod tests {
     use super::*;
     use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET};
     use crate::market::nfts::parse_filters;
+
+    /// A read connection carries the statement bound; a statement cancelled
+    /// by it answers the 503 naming it, any other failure a 500; an owner
+    /// counts as large past [`LARGE_OWNER_TOKENS`] tokens.
+    #[tokio::test]
+    async fn reads_are_bounded_and_large_owners_are_counted() {
+        let Some(own) = crate::market::tests::support::OwnDb::create("read_bound").await else {
+            return;
+        };
+        let pool = own.pool.clone();
+        let mut conn = open_read_conn(&pool, None, &NftFilters::default(), Sources::default())
+            .await
+            .unwrap_or_else(|_| panic!("a read of no source opens"));
+        let bound: String = sqlx::query_scalar("SELECT current_setting('statement_timeout')")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(bound, format!("{}s", READ_STATEMENT_TIMEOUT.as_secs()));
+
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT set_config('statement_timeout', '20ms', true)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let cancelled = sqlx::query("SELECT pg_sleep(1)")
+            .execute(&mut *tx)
+            .await
+            .unwrap_err();
+        tx.rollback().await.unwrap();
+        let response = read_error(cancelled);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&body).contains("statement bound"),
+            "{body:?}"
+        );
+        let failed = sqlx::query("SELECT 1 / 0")
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            read_error(failed).status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+
+        let owner = "0x00000000000000000000000000000000000000aa";
+        let insert = |n: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+                     SELECT 'matic', '0x00000000000000000000000000000000000000c1', g, $1, 1, g, 1, 1, 1, 0, 1 \
+                     FROM generate_series((SELECT count(*) FROM shop.nft) + 1, (SELECT count(*) FROM shop.nft) + $2) g",
+                )
+                .bind(owner)
+                .bind(n)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let large = || {
+            let pool = pool.clone();
+            async move {
+                let mut conn = pool.acquire().await.unwrap();
+                holds_many(&mut conn, &owner.to_uppercase().replace("0X", "0x"))
+                    .await
+                    .unwrap()
+            }
+        };
+        insert(LARGE_OWNER_TOKENS).await;
+        assert!(!large().await, "exactly the bound is not large");
+        insert(1).await;
+        assert!(large().await, "one past the bound is large");
+        drop(conn);
+        own.drop().await;
+    }
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter()
@@ -1810,6 +1979,20 @@ mod tests {
                         .fetch_all(&pool)
                         .await
                         .unwrap();
+                    // An owner past LARGE_OWNER_TOKENS: the same page, read
+                    // in two parts.
+                    let large = if f.owner.is_some() {
+                        let ((page, args), _) =
+                            build_nfts_query_for(&f, s, land, first, skip, now, None, true);
+                        Some(
+                            sqlx::query_with(sqlx::AssertSqlSafe(page), args)
+                                .fetch_all(&pool)
+                                .await
+                                .unwrap(),
+                        )
+                    } else {
+                        None
+                    };
                     let mut bld = Builder::new();
                     let every = Candidates::Every;
                     let (prefix, legs) =
@@ -1833,6 +2016,13 @@ mod tests {
                         .await
                         .unwrap();
                     assert_eq!(ids(&got), ids(&want), "{q:?} first={first} skip={skip}");
+                    if let Some(large) = &large {
+                        assert_eq!(
+                            ids(large),
+                            ids(&want),
+                            "{q:?} first={first} skip={skip}, a large owner"
+                        );
+                    }
                     compared += usize::from(!want.is_empty());
                 }
             }

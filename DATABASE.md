@@ -3442,8 +3442,11 @@ commits in between is never half-seen:
   it on the networks it reads (wearables both, emotes Polygon), and the lists
   also need the items mirror's complete pass (`shop.mirror_state`); otherwise
   they answer the `nft-index` envelope. The `/v1/orders` routes instead
-  answer 200 with an empty v3 listings leg (the legacy orders only) until the
-  index is fresh on the networks the read names.
+  answer 200: until the index is fresh on the networks the read names, their
+  v3 listings leg keeps only the listings of contracts the index holds no
+  token of (LAND, estates), which the guard never filters, and the
+  `x-listings-owner-check` header says `partial` (`checked` when the guard
+  ran, `unchecked` on a node that does not walk the index).
 
 Queries, all bounded by one owner or one batch:
 
@@ -3503,9 +3506,11 @@ its rows without one, read in the source's key order (`shop.nft`'s and
 + skip` rows. The two parts hold every candidate of the source, so their
 union holds the window of the whole set, and no read prices every
 candidate. With `isOnSale=false` only the second part is read. An owner's
-page keeps one part: a typical owner's price-sorted page takes 10 ms that
-way and 240 ms split (the cost of reading every listed token first), a
-32,000-token owner's 7 to 8 s and 0.6 s.
+page keeps one part unless the owner holds more than 1,000 tokens
+(`LARGE_OWNER_TOKENS`, counted in the read's snapshot): a typical owner's
+price-sorted page takes 10 ms that way and 240 ms split (the cost of
+reading every listed token first), a 32,000-token owner's 7 to 8 s and
+0.6 s.
 
 Each candidate row's v3 listing is a lateral lookup in `unified_trades`,
 which these statements declare `NOT MATERIALIZED`: the lookup reads the
@@ -3563,12 +3568,16 @@ default) on this seed. With `unified_trades` materialized, no token index
 and the LAND source unrestricted, the same seed took 2.9 s for the
 wearables on sale (page and total), 30 s for the on-sale page naming no
 category, 59 s for `isOnSale=false`, and 30 s for the capped total of a
-sort by price. No read here has a bound of its own. Planning a split page
-takes 15 to 23 ms.
+sort by price. Every statement of these reads runs under a transaction-local
+`statement_timeout` of 10 s (`READ_STATEMENT_TIMEOUT`), above the slowest
+ones measured here (8.1 s), and a cancelled one answers 503 naming the
+bound instead of holding a pool connection up to the pool's 60 s. Planning
+a split page takes 15 to 23 ms.
 
 With an owner: a 32,000-token owner's `category=wearable` page 78 ms and
 total 167 ms, its `isOnSale=true` page 277 ms, and its page sorted by price
-7 to 8 s, the listing lookup of each of its tokens, and its capped total
+7 to 8 s read in one part, the listing lookup of each of its tokens (0.6 s
+in two parts, as such an owner's page is now read), and its capped total
 with no category 7 to 8 s. A statement
 repeated on one connection is planned generically from its sixth run: that
 plan took 1.0 s for the 78 ms page and 1.3 to 1.6 s for the price-sorted one.
