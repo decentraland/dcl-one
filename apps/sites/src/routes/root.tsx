@@ -44,6 +44,8 @@ import { sitesSegmentPublicConfig } from "@/core/lib/telemetry/public-config.ser
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
+import { nodeNetworkId } from "@/data/lib/catalyst/node-network.server";
+import { isDeployedHost } from "@/data/lib/creators/config/env";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
 import { homeMeta, notFoundMeta } from "./lib/social-meta";
 import type { Route } from "./+types/root";
@@ -86,6 +88,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     docsBase,
     commitHash,
     pulseServer,
+    /** The node's Ethereum network id on a deployed host, which the Creator Hub's environment follows there. */
+    nodeNetworkId: isDeployedHost(requestUrl.host) ? await nodeNetworkId() : undefined,
     catalystBase,
     publicPageBase: catalystBase || requestUrl.origin,
     shopApiMode,
@@ -192,7 +196,7 @@ export function RouteHeadScripts() {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; shopSegmentWriteKey?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; shopSegmentWriteKey?: string; docsBase?: string; commitHash?: string; pulseServer?: string; nodeNetworkId?: number; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
@@ -208,6 +212,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     docsBase: data?.docsBase ?? "",
     commitHash: data?.commitHash ?? "",
     pulseServer: data?.pulseServer ?? "",
+    nodeNetworkId: data?.nodeNetworkId,
   }).replace(/</g, "\\u003c");
   const catalystBase = data?.catalystBase
     ? `;window.__CATALYST_BASE__=${JSON.stringify(data.catalystBase).replace(/</g, "\\u003c")}`

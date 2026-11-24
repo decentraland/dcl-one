@@ -15,8 +15,13 @@ const BY_ENV = {
   [Env.PRODUCTION]: prod
 }
 
-/** The page's environment: in the browser, the one its address names. */
-export const config = createEnvConfig(BY_ENV, resolveEnv(typeof window === 'undefined' ? undefined : window.location, fallback))
+/** The page's environment: in the browser, the one its address names, or its node's network on a deployed host. */
+export const config = createEnvConfig(
+  BY_ENV,
+  typeof window === 'undefined'
+    ? fallback
+    : resolveEnv(window.location, fallback, window.__DCL_PUBLIC__?.nodeNetworkId)
+)
 
 const search = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)
 
