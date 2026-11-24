@@ -74,7 +74,7 @@ use scene_runner::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use system_bridge::SystemApi;
-use teleport::{handle_out_of_world, teleport_player};
+use teleport::handle_out_of_world;
 use ui_core::button::DuiButton;
 use user_input::avatar_movement::{ActivePlayerComponent, AvatarMovement, AvatarMovementInfo};
 use wallet::{browser_auth::remote_send_async, sign_request, Wallet};
@@ -108,8 +108,7 @@ impl Plugin for RestrictedActionsPlugin {
                     event_player_moved_scene,
                     event_scene_ready,
                     send_scene_messages,
-                    teleport_player.after(change_realm),
-                    handle_out_of_world,
+                    teleport::landing_systems(),
                     announce_returned_to_world.after(handle_out_of_world),
                     open_nft_dialog,
                 ),
@@ -133,6 +132,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
         app.init_resource::<input_manager::SystemActionStreams>();
+        app.add_plugins(teleport::diagnostics::TeleportDiagnosticsPlugin);
         app.add_console_command::<SpawnPortableCommand, _>(spawn_portable_command);
         app.add_console_command::<KillPortableCommand, _>(kill_portable_command);
         app.add_plugins(agent_commands::AgentCommandsPlugin);
@@ -684,7 +684,7 @@ fn change_realm(
 
     for (new_realm, response, report) in perms.drain_success(PermissionType::ChangeRealm) {
         debug!("change realm action -> base");
-        *target = RealmInitialLocation::Base;
+        *target = RealmInitialLocation::BASE;
         // answered once the realm is actually set (or failed, keeping the player where they are)
         commands.send_event(ChangeRealmEvent {
             new_realm,

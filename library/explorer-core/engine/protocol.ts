@@ -1077,8 +1077,11 @@ export interface TeleportRequest {
    *  a full reconnect, as for changeRealm, even to the realm the player is in. Omitted: a parcel of
    *  the realm the player is in. */
   realm?: string
-  /** Set with `realm`: the scene answers with a `travelResult` carrying this id. */
+  /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** Land on the destination scene's spawn point of this name (compared in lowercase); its default
+   *  spawn without one, or when the scene has none of that name. */
+  spawnPoint?: string
 }
 
 /** Change to a world/realm (page → scene → changeRealm). `realm` is a world name
@@ -1088,10 +1091,13 @@ export interface ChangeRealmRequest {
   realm: string
   /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** As for a teleport: the spawn point to land on, by name. */
+  spawnPoint?: string
 }
 
-/** How a realm change the page asked for ended (scene → page). On failure the engine kept the
- *  player in the realm they were in; `message` is the engine's reason. */
+/** How a realm change or a teleport the page asked for ended (scene → page). On failure the engine
+ *  kept the player in the realm they were in; `message` is the engine's reason. `realm` is empty
+ *  for a teleport inside the realm. */
 export interface TravelResultMessage {
   kind: 'travelResult'
   travelId: number
