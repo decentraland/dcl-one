@@ -385,17 +385,12 @@ fn reader_unavailable(store: &'static str, reason: &str) -> AuthorityNotEstablis
 }
 
 /// The source a LAND decision names while an attached land-authz index has
-/// no fresh published fold: the identifier its unavailable envelope carries.
-/// World storage answers it 503, never upstream's 401.
-pub const LAND_INDEX_SOURCE: &str = "land-authz-index";
+/// no fresh published fold. World storage answers it 503, never upstream's
+/// 401.
+pub use crate::shared::identity::LAND_INDEX_SOURCE;
 
-/// The answer while the attached land-authz index has no fresh published
-/// fold: undetermined, with no other source standing in.
 fn land_index_not_ready() -> AuthorityNotEstablished {
-    reader_unavailable(
-        LAND_INDEX_SOURCE,
-        "the land-authz index has no fresh published fold",
-    )
+    AuthorityNotEstablished::land_index_not_ready()
 }
 
 pub struct Policy {

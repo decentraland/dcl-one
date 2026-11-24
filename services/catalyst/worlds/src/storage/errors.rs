@@ -165,9 +165,7 @@ impl From<AuthorityNotEstablished> for ApiError {
         match &why {
             // No upstream answer exists for an index that is not published
             // yet: a retryable 503 naming it, never "not authorized".
-            AuthorityNotEstablished::UndeterminedStoreUnavailable { store, .. }
-                if *store == crate::policy::LAND_INDEX_SOURCE =>
-            {
+            why if why.is_land_index_not_ready() => {
                 ApiError::Unavailable(LAND_INDEX_NOT_READY_MSG.to_string())
             }
             AuthorityNotEstablished::UndeterminedStoreUnavailable {
