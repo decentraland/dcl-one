@@ -1,4 +1,4 @@
-import type { AboutResponse } from '@dcl/protocol/out-ts/decentraland/realm/about.gen'
+import type { AboutResponse } from '../generated/decentraland/realm/about.gen'
 import { CliComponents } from '../components'
 import { getCatalystBaseUrl } from './config'
 

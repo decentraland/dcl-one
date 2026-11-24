@@ -31,11 +31,14 @@ env:
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
 jobs:
   check:
-    name: The release version is valid and new
+    name: Decide what to publish
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.changed.outputs.publish }}
     steps:
-      - if: github.event_name == 'workflow_dispatch'
+      - name: The release version is valid and new
+        if: github.event_name == 'workflow_dispatch'
         env:
           VERSION: ${{ inputs.version }}
         run: |
@@ -52,6 +55,23 @@ jobs:
             echo "sdk-v$VERSION already exists; pick a new version" >&2
             exit 1
           fi
+      - name: The push changed what the packages ship
+        id: changed
+        # the other paths that start this workflow change the SDK's tests, not its packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          publish=true
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # the comparison lists at most 300 files; a push that large, or one with no parent, publishes
+            files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true)
+            if [ -n "$files" ] && [ "$(wc -l <<< "$files")" -lt 300 ] \
+              && ! grep -qE '^(library/js-sdk-toolchain|library/protocol)/' <<< "$files"; then
+              publish=false
+            fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
   build:
     needs: check
     uses: ./.github/workflows/sdk.yml
@@ -64,8 +84,8 @@ jobs:
       id-token: write
   publish:
     name: Publish to npm
-    needs: build
-    if: github.ref == 'refs/heads/main'
+    needs: [check, build]
+    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
     concurrency:
       group: sdk-publish-${{ github.event_name }}
       cancel-in-progress: false

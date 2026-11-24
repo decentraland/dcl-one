@@ -23,17 +23,19 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 It installs with pnpm as one workspace with a single lockfile
 ([decision](2026-11-13-pnpm-default-package-manager.md)).
 
-- `@dcl/protocol` is `link:../protocol` (root) and `link:../../../../protocol` (`sdk-commands`):
+- `@dcl/protocol` is `link:../protocol` in the root manifest:
   the install links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
-- `make prepare` pins `@dcl/protocol` and `@dcl/hashing` in the packed manifests to
-  `PROTOCOL_VERSION` and `HASHING_VERSION`, which the caller must set. `sdk.yml` sets them to
-  versions already on npm: `sdk-commands` uses only `hashV1` from one and the `local_development`
-  and realm `about` messages from the other, so a pin moves only when `library/hashing` or
-  `library/protocol` changes one of those, after that change is published. A tarball never names
-  a local link or a version that is not on npm (`scripts/check-no-local-packages.cjs`, run by
-  `sdk.yml`).
+- No published package depends on `@dcl/protocol`. `@dcl/sdk-commands`, the one that used it at
+  runtime, generates the two messages it needs (`local_development`, realm `about`) into
+  `src/generated` during `make build`, with the options `@dcl/protocol`'s own `out-ts` uses, so the
+  SDK ships the protocol at its commit and never waits on a protocol release.
+- `make prepare` pins `@dcl/hashing` in the packed `sdk-commands` manifest to `HASHING_VERSION`,
+  which the caller must set. `sdk.yml` sets it to the version on npm whose `hashV1`, the one
+  function `sdk-commands` uses, returns what `library/hashing` does; the pin moves when that
+  changes, after the library is published. A tarball never names a local link or a version that is
+  not on npm (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
   components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`, and a
@@ -49,7 +51,8 @@ It installs with pnpm as one workspace with a single lockfile
   of 3.20.1, so generated code in a PR comes from that version.
 - `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on pull
   requests that change `library/js-sdk-toolchain` or `library/protocol`.
-  `.github/workflows/sdk-release.yml` calls the same jobs on a push to `main` and publishes `ecs`,
+  `.github/workflows/sdk-release.yml` calls the same jobs on a push to `main` and, when the push
+  changed `library/js-sdk-toolchain` or `library/protocol`, publishes `ecs`,
   `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` (`playground-assets` is built and tested, not
   published) as `@dcl/*` under the `next` dist-tag, as `<latest patch+1>-<run>.commit-<sha>`
   (oddish derives the version from the registry's `latest`; the manifests keep `7.0.0` as upstream

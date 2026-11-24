@@ -93,8 +93,9 @@ publish job uses the `npm-release` environment, which only `main` may deploy to,
 trusted publishers require that environment, so a branch or a pull request cannot publish them
 whatever its workflow says.
 
-A push to `main` that touches the SDK or the protocol publishes under `next` as
-`<latest patch+1>-<run>.commit-<sha>`.
+A push to `main` that changes `library/js-sdk-toolchain` or `library/protocol` publishes under
+`next` as `<latest patch+1>-<run>.commit-<sha>`. The SDK is generated from the protocol at build
+time, so a protocol change ships in the SDK without a protocol release.
 
 A versioned release is a manual run from `main`:
 

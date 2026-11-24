@@ -33,10 +33,8 @@ env:
   # playground-assets is built and tested with the rest but not published
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
   PREVIEW_SCOPE: '@dcl-regenesislabs'
-  # What the packed sdk-commands names for its two linked dependencies: versions already on npm.
-  # It uses hashV1 from one and the local_development and realm about messages from the other;
-  # move a pin when library/hashing or library/protocol changes one of those.
-  PROTOCOL_VERSION: 1.0.0-43896819135.commit-551f65b
+  # What the packed sdk-commands names for the hashing library it links: the version on npm whose
+  # hashV1, the one function it uses, returns what library/hashing does. Move it when that changes.
   HASHING_VERSION: 1.1.3
 jobs:
   lint:
