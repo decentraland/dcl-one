@@ -22,7 +22,10 @@ const net = vi.hoisted(() => ({
 }));
 
 vi.mock("@/data/lib/friends/friends", () => ({ fetchFriendsCount: net.count, fetchFriendsPage: net.list }));
-vi.mock("@ui/data/hooks/useCommunityProfiles", () => ({ fetchCommunityProfiles: net.summaries }));
+vi.mock("@/data/lib/catalyst/social/member-profiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/lib/catalyst/social/member-profiles")>()),
+  fetchMemberProfiles: net.summaries,
+}));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity }) }));
 vi.mock("./hooks", () => ({ useProfileFlags: () => ({ data: { referral: net.referralEnabled } }) }));
 

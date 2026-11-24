@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, type MouseEvent } from "react";
 
 import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.server";
 import { track } from "@/core/lib/telemetry/track";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 import {
@@ -48,7 +49,11 @@ export function trackCreatorHubClick(
 }
 
 /** The click handler of an installer link: reports the download, then opens the install steps for that build. */
-export function useCreatorHubDownloadClick({ sid, userId }: DownloadClickSession, surface: CreatorHubClickSurface) {
+export function useCreatorHubDownloadClick(
+  { sid, userId }: Omit<DownloadClickSession, "scope">,
+  surface: CreatorHubClickSurface,
+) {
+  const scope = useLegacyTrackScope();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const cancel = () => {
@@ -71,14 +76,14 @@ export function useCreatorHubDownloadClick({ sid, userId }: DownloadClickSession
         { sid, story: CREATOR_HUB_DOWNLOAD_STORY },
       );
       // The legacy main button carried no `data-os`; each other build named its system.
-      trackCreatorHubClick(surface, { sid, userId }, kind === "secondary" ? osText(option) : undefined);
+      trackCreatorHubClick(surface, { sid, userId, scope }, kind === "secondary" ? osText(option) : undefined);
       // A click that opens the file elsewhere (a new tab or window) leaves this page where it is. Before a release
       // is read the link opens the releases page here, and nothing is downloading yet.
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !option.fileName) return;
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = setTimeout(() => window.location.assign(successPath(option.osKey, option.arch)), SUCCESS_DELAY_MS);
     },
-    [sid, userId, surface],
+    [sid, userId, surface, scope],
   );
 }
 

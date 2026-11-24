@@ -2,7 +2,7 @@
 
 The Shop's portable core ([ADR](../../docs/adr/2026-11-09-shop-portable-core.md)): the model (addresses, assets, chains, money, purchases, settlement and
 its wire shapes), card prices, sale and rarity rules, the price slider, currency formatting,
-payment rules and copy, cart partitioning, the in-world cart model and purchase line rules (`cart/inWorld.ts`, `cart/lines.ts`: storage, locks and ids come from the host), the try-on URN (`detail/lib/tryOn.ts`), the spend guard, contract ABIs and the `/shop-api`
+payment rules and copy, cart partitioning and the Credits + MANA split of a cart (`cart/splitPlan.ts`), the in-world cart model and purchase line rules (`cart/inWorld.ts`, `cart/lines.ts`: storage, locks and ids come from the host), the try-on URN (`detail/lib/tryOn.ts`), the spend guard, contract ABIs and the `/shop-api`
 endpoint map. Every Shop host imports it as `@shop/*`: the web Shop and the `/play` HUD in
 `apps/ui3`, and `apps/sites`. The Explorer React HUD is to follow.
 

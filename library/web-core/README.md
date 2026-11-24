@@ -1,6 +1,6 @@
 # `library/web-core`
 
-The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-18-shared-web-logic-library.md)). Sites and ui3 import it as `@web-core/*`; ui3 may import it, it never imports an app.
+The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-18-shared-web-logic-library.md)). Sites and ui3 import it as `@web-core/*`; ui3 may import it, it never imports an app. The app-scoped UI in `library/ui/apps/` (the Sites flow map, and the in-world Shop session and wallet account) imports it too; `library/ui/components/` and `library/ui/foundations/` do not.
 
 | Path | What |
 | --- | --- |

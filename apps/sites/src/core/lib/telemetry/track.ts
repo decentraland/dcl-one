@@ -500,15 +500,21 @@ export function legacyAnalyticsReady(): boolean {
 }
 
 /**
- * Runs `fire` now when the document is ready, else once its first Sites page view is sent: the legacy
- * `useDeferredTrack` queue. A document that never sends one (a bot, an exempt session) never runs it.
+ * Runs `fire` now when the document is ready, else once its first Sites page view is sent. A document that
+ * never sends one (a bot, an exempt session) never runs it. Returns a cancel for a registration still waiting:
+ * the legacy `useDeferredTrack` queue belonged to its component, so a caller scopes it with
+ * `useLegacyTrackScope` (`legacy-click.ts`) rather than leave it to the next route.
  */
-export function whenLegacyAnalyticsReady(fire: () => void): void {
+export function whenLegacyAnalyticsReady(fire: () => void): () => void {
   if (legacyReady) {
     fire();
-    return;
+    return () => {};
   }
   whenReady.push(fire);
+  // Cancels a registration still waiting; one that has run is gone already.
+  return () => {
+    whenReady = whenReady.filter((pending) => pending !== fire);
+  };
 }
 
 function markLegacyAnalyticsReady(): void {
