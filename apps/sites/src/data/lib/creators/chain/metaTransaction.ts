@@ -25,6 +25,9 @@ export class MetaTransactionError extends Error {
   }
 }
 
+/** The relayer answered a signed meta-transaction with a refusal: it sent nothing. */
+export class RelayRefusedError extends MetaTransactionError {}
+
 /** The wallet requests a meta-transaction makes; lib/auth answers them over the session's provider. */
 export type MetaTransactionWallet = {
   /** `eth_getCode` at the latest block. */
@@ -166,8 +169,10 @@ export async function sendMetaTransaction(
       txHash?: string
     } | null
     if (body?.ok === false || !response.ok) {
-      if (body?.message && body.code) throw new MetaTransactionError(body.message, body.code)
-      throw new Error(`HTTP Error. Status: ${response.status}.`)
+      throw new RelayRefusedError(
+        body?.message && body.code ? body.message : `HTTP Error. Status: ${response.status}.`,
+        body?.message && body.code ? body.code : MetaTransactionErrorCode.UNKNOWN
+      )
     }
     // Waiting on a missing hash would poll forever.
     if (typeof body?.txHash !== 'string') throw new Error('The relayer answered without a transaction hash')

@@ -36,7 +36,7 @@ type Scenario = {
   relay?: { status: number; body: object }
 }
 
-/** A wallet on Ethereum signing with the test key, a Polygon read node answering the nonce, and the relayer. */
+/** A wallet on Ethereum signing with the test key and refusing to leave it, a Polygon read node answering the nonce, and the relayer. */
 function world(scenario: Scenario = {}) {
   const walletLog: Request[] = []
   let answered = 0
@@ -57,6 +57,8 @@ function world(scenario: Scenario = {}) {
         return accounts()
       case 'eth_getCode':
         return scenario.code ?? '0x'
+      case 'wallet_switchEthereumChain':
+        throw Object.assign(new Error('User rejected the request.'), { code: 4001 })
       case 'eth_signTypedData_v4': {
         if (scenario.denies) throw new Error('MetaMask Typed Message Signature: User denied message signature.')
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- EIP-1193 wallets reject with plain objects
