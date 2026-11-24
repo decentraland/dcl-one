@@ -42,10 +42,27 @@ pub struct ContentMapping {
 
 const MAX_CONTENT_FILES: usize = 25_000;
 
-/// Read the same manifest on local upload, peer preflight and synced validation.
-/// Enforce the declaration limit before building the list of distinct downloads.
+/// A new upload must declare its content as an array when the field is present.
 pub(crate) fn deserialize_content<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
+) -> Result<Vec<ContentMapping>, D::Error> {
+    read_content(deserializer, false)
+}
+
+/// Some historical peer manifests use null for an empty list. Retain the
+/// declaration and CID checks for any files a manifest names.
+pub(crate) fn parse_peer_content(
+    value: &serde_json::Value,
+) -> Result<Vec<ContentMapping>, serde_json::Error> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    read_content(value, true)
+}
+
+fn read_content<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    record_peer_rejections: bool,
 ) -> Result<Vec<ContentMapping>, D::Error> {
     #[derive(Deserialize)]
     struct RawEntry {
@@ -53,7 +70,9 @@ pub(crate) fn deserialize_content<'de, D: serde::Deserializer<'de>>(
         hash: Option<serde_json::Value>,
     }
 
-    struct Content;
+    struct Content {
+        record_peer_rejections: bool,
+    }
 
     impl<'de> serde::de::Visitor<'de> for Content {
         type Value = Vec<ContentMapping>;
@@ -69,7 +88,14 @@ pub(crate) fn deserialize_content<'de, D: serde::Deserializer<'de>>(
             use serde::de::Error as _;
             use serde_json::Value::String;
 
+            let record_rejection = |reason: &'static str| {
+                if self.record_peer_rejections {
+                    metrics::counter!("content_sync_manifest_rejections_total", "reason" => reason)
+                        .increment(1);
+                }
+            };
             let over_limit = || {
+                record_rejection("declaration_limit");
                 A::Error::custom(format_args!(
                     "content declares more files than the maximum of {MAX_CONTENT_FILES}"
                 ))
@@ -94,6 +120,7 @@ pub(crate) fn deserialize_content<'de, D: serde::Deserializer<'de>>(
                     ));
                 };
                 if !crate::auth::is_canonical_cid(&hash) {
+                    record_rejection("invalid_cid");
                     return Err(A::Error::custom("Content entry has an invalid hash"));
                 }
                 content.push(ContentMapping { file, hash });
@@ -102,7 +129,9 @@ pub(crate) fn deserialize_content<'de, D: serde::Deserializer<'de>>(
         }
     }
 
-    deserializer.deserialize_seq(Content)
+    deserializer.deserialize_seq(Content {
+        record_peer_rejections,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -233,6 +262,28 @@ pub(crate) fn deployment_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_manifest_limits_report_rejection_reasons() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let oversized = serde_json::Value::Array(vec![serde_json::Value::Null; 25_001]);
+        let invalid_cid = serde_json::json!([{"file":"a","hash":"not-a-cid"}]);
+        metrics::with_local_recorder(&recorder, || {
+            for content in [&oversized, &invalid_cid] {
+                assert!(parse_peer_content(content).is_err());
+                assert!(deserialize_content(content).is_err());
+            }
+        });
+        let output = handle.render();
+        assert!(
+            output
+                .contains("content_sync_manifest_rejections_total{reason=\"declaration_limit\"} 1")
+        );
+        assert!(
+            output.contains("content_sync_manifest_rejections_total{reason=\"invalid_cid\"} 1")
+        );
+    }
 
     #[test]
     fn ipfs_hashes_follow_the_schema_patterns() {

@@ -31,16 +31,9 @@ struct RawEntity {
     entity_type: Option<serde_json::Value>,
     pointers: Option<serde_json::Value>,
     timestamp: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "present_content")]
     content: Option<serde_json::Value>,
     version: Option<String>,
     metadata: Option<serde_json::Value>,
-}
-
-fn present_content<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error> {
-    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 pub fn parse_entity_from_bytes(buffer: &[u8], id: &str) -> Result<Entity, ValidatorError> {
@@ -56,7 +49,7 @@ pub fn parse_entity_from_bytes(buffer: &[u8], id: &str) -> Result<Entity, Valida
     let content = raw
         .content
         .as_ref()
-        .map(crate::entity::deserialize_content)
+        .map(crate::entity::parse_peer_content)
         .transpose()
         .map_err(|e| ValidatorError::EntityParse(e.to_string()))?
         .unwrap_or_default();

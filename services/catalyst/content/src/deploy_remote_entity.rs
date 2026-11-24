@@ -785,7 +785,7 @@ fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, String> {
     }
     let declared: Vec<_> = entity
         .get("content")
-        .map(crate::entity::deserialize_content)
+        .map(crate::entity::parse_peer_content)
         .transpose()
         .map_err(|e| e.to_string())?
         .unwrap_or_default()
@@ -1153,9 +1153,23 @@ mod tests {
     }
 
     #[test]
+    fn peer_replay_reads_legacy_null_content_as_empty() {
+        let entity = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":null}"#;
+
+        assert!(entity_files(entity).unwrap().content.is_empty());
+        assert!(
+            crate::validator::entity_parser::parse_entity_from_bytes(entity, "id")
+                .unwrap()
+                .content
+                .is_empty()
+        );
+        assert!(serde_json::from_slice::<crate::entity::Entity>(entity).is_err());
+    }
+
+    #[test]
     fn local_and_synced_manifests_reject_the_same_invalid_content() {
         for (content, explanation) in [
-            (serde_json::Value::Null, "array"),
+            (serde_json::json!("not an array"), "array"),
             (
                 serde_json::json!([{"file":"missing-hash"}]),
                 "valid strings",

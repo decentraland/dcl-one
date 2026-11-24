@@ -101,10 +101,13 @@ Peer downloads use temporary staging. The blob collector can reclaim old
 peer snapshot files once their final owning reference is gone. A local
 published snapshot continues to retain its blob.
 
-Local deployment and peer replay accept at most 25,000 content declarations
-per entity. This counts declared file names before hashes are deduplicated.
-An older manifest above that limit can remain stored on the node that accepted
-it. A new deployment or a replay of that manifest fails validation.
+New local deployments require an array when `content` is present. Peer replay
+reads an explicit null as an empty list for compatibility with legacy manifests.
+Both paths accept at most 25,000 declarations per entity, counted before hashes
+are deduplicated. An older manifest above that limit can remain stored on the
+node that accepted it. A new deployment or a replay of that manifest fails
+validation. The `content_sync_manifest_rejections_total` counter reports peer
+rejections with the reason `declaration_limit` or `invalid_cid`.
 
 ## Worlds, persistent storage and scene hosting
 
