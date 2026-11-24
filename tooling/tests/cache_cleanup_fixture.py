@@ -4,24 +4,43 @@ import re
 from subprocess import CompletedProcess
 
 
-def cache_cleanup_api(pages, states=None):
+def cache_cleanup_api(pages, states=None, remaining=(1000,), listing_error=None, states_error=None):
+    """`states` maps a PR number to its state, OPEN when absent. None is a PR GitHub cannot
+    resolve: gh then prints the states it found plus the error and exits 1. `remaining` is
+    the core budget each rate-limit read reports in turn, the last one repeated.
+    `listing_error` and `states_error` fail that call with the given stderr."""
     states = states or {}
+    budget = list(remaining)
 
     def run(args, *, capture_output, text):
         if args[:2] != ['gh', 'api'] or not capture_output or not text:
             raise AssertionError(f'Unexpected command: {args}')
         if args[-1] == 'rate_limit':
-            body = {'resources': {'core': {'remaining': 1000}}}
+            body = {'resources': {'core': {'remaining': budget.pop(0) if len(budget) > 1 else budget[0]}}}
         elif any(arg.endswith('/actions/caches') for arg in args):
+            # Only both flags make gh return every page as one JSON array.
+            if '--paginate' not in args or '--slurp' not in args:
+                raise AssertionError(f'Listing without --paginate --slurp: {args}')
+            if listing_error:
+                return CompletedProcess(args, 1, stdout='', stderr=listing_error)
             body = pages
         elif args[2] == 'graphql':
+            if states_error:
+                return CompletedProcess(args, 1, stdout='', stderr=states_error)
             query = next(arg for arg in args if arg.startswith('query='))
             numbers = re.findall(r'p([0-9]+): pullRequest\(number: \1\)', query)
             if not numbers:
                 raise AssertionError(f'Missing pull requests in query: {query}')
+            found = {number: states.get(number, 'OPEN') for number in numbers}
             body = {'data': {'repository': {
-                f'p{number}': {'state': states.get(number, 'OPEN')} for number in numbers
+                f'p{number}': {'state': state} if state else None for number, state in found.items()
             }}}
+            missing = [number for number, state in found.items() if state is None]
+            if missing:
+                body['errors'] = [{'type': 'NOT_FOUND', 'path': ['repository', f'p{number}']}
+                                  for number in missing]
+                return CompletedProcess(args, 1, stdout=json.dumps(body),
+                                        stderr='GraphQL: Could not resolve to a PullRequest')
         elif args[2:4] == ['--method', 'DELETE']:
             return CompletedProcess(args, 0, stdout='', stderr='')
         else:
