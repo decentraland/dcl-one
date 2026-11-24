@@ -409,7 +409,7 @@ impl IpfsAssetServer<'_, '_> {
     }
 
     /// [`IpfsIo::planned_source_url`] of the content file `file_path` of the entity
-    /// `content_hash`, as [`Self::load_content_file_with_settings`] would load it.
+    /// `content_hash`.
     pub fn content_file_source_url(&self, file_path: &str, content_hash: &str) -> Option<String> {
         let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
             content_hash.to_owned(),

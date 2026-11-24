@@ -149,12 +149,8 @@ impl GltfNames {
 #[derive(Resource, Default)]
 pub struct GltfNameCache(HashMap<AssetId<Gltf>, GltfNames>);
 
-/// Keep the name cache and the shared models honest across asset lifetime changes: an asset
-/// that is gone, or read again, leaves both. A reload of a variant that failed to decode reads
-/// its original, which may reference other files, so it is no longer shared. `Modified` needs
-/// care: dropping the source is itself a mutation and fires it, so only a reload — which
-/// repopulates `source` — invalidates the entry. Runs before `update_gltf`, so no container
-/// takes a reloaded model.
+/// Removes from the name cache and the shared models an asset that is gone or was read again.
+/// A `Modified` asset without a `source` had its source dropped, not a reload, and stays.
 fn maintain_gltf_caches(
     mut events: EventReader<AssetEvent<Gltf>>,
     mut cache: ResMut<GltfNameCache>,
@@ -291,11 +287,7 @@ fn extras_collider_mask(extras: &str) -> Option<u32> {
 pub struct GltfHandle(Handle<Gltf>);
 
 /// The glTF assets scenes share, by the url their file's bytes are read from
-/// (`IpfsIo::immutable_source_url`): every read of that url gives the same bytes, so a scene
-/// that takes the asset sees the file it would have loaded. A file that references no other
-/// file holds the same model in every scene, so the first scene's asset serves the others: one
-/// copy of its meshes, materials and textures. A file that references others by uri resolves
-/// them in its own scene's content map, so each scene keeps its own asset of it.
+/// (`IpfsIo::immutable_source_url`). It holds only assets whose file references no other file.
 #[derive(Resource, Default)]
 pub(crate) struct SharedGltfs(HashMap<String, AssetId<Gltf>>);
 
@@ -588,8 +580,7 @@ fn update_gltf(
         } else {
             RenderAssetTransferPriority::Priority(0)
         };
-        // the asset another scene shares for this file's url, when it is loaded already. A
-        // colliders part loads under an asset path of its own and keeps no source to check
+        // the shared asset for this file's url, when one is loaded; never for a colliders part
         let shared = (part != Some(&GltfPart::Colliders))
             .then(|| ipfas.content_file_source_url(&gltf.0.src, content_hash))
             .flatten()
@@ -604,7 +595,6 @@ fn update_gltf(
                 ),
             )
         } else if let Some(h_gltf) = shared {
-            // keeps the upload priority of the scene that loaded it
             Ok(h_gltf)
         } else {
             ipfas.load_content_file_with_settings::<Gltf, GltfLoaderSettings>(
@@ -661,9 +651,8 @@ fn update_gltf(
         };
         let gltf_scene_handle = gltf.default_scene.as_ref();
 
-        // the first scene to load a file that references no other serves it to the rest. Scenes
-        // that loaded it at the same time each have a copy: all but the shared one take it, and
-        // their copies go
+        // a loaded copy of a shared file is swapped for the shared asset; the first copy of a
+        // file that references no other becomes the shared one
         let id = h_gltf.0.id();
         let url = (part != Some(&GltfPart::Colliders))
             .then(|| ipfas.asset_server().get_path(id))
@@ -676,15 +665,13 @@ fn update_gltf(
                 &h_gltf.0,
                 references_no_file(gltf),
             ) {
-                // spawned next frame, from the shared asset, which keeps the upload priority of
-                // the scene that loaded it
                 commands.entity(ent).try_insert(GltfHandle(h_shared));
                 continue;
             }
         }
 
-        // validate texture types. Read first: a mutable borrow marks the material changed, which
-        // sends a shared model's material to the gpu again for each container
+        // validate texture types. A mutable borrow marks the material changed, so it is taken
+        // only to disable a texture
         for h_mat in gltf.materials.iter() {
             let invalid = base_mats
                 .get(h_mat)
@@ -804,16 +791,12 @@ pub struct SceneResourceLookup {
     pub mesh_ids_by_hash: HashMap<u64, AssetId<Mesh>>,
 }
 
-/// The converted meshes of every scene, by the hash of their data and whether they are drawn: a
-/// mesh converted for one scene serves each other scene with the same data, with one copy on the
-/// gpu and one collision shape. A colliders part's meshes stay in main-world memory, apart from
-/// those that are drawn.
+/// The converted meshes of every scene, with their collision shapes, by the salted hash of their
+/// data and whether they are drawn.
 #[derive(Resource)]
 pub(crate) struct SharedMeshes {
-    /// random for the process and hashed in first, so no scene can make a mesh whose hash
-    /// matches another scene's mesh and have that scene draw it and collide with it.
-    /// `getrandom` has an entropy source on web too, where std's hash keys do not. Without one,
-    /// each scene reuses only the meshes it converted or used itself
+    /// random for the process and hashed in first, so a scene cannot choose mesh data whose
+    /// hash equals another scene's mesh's. `None` when `getrandom` has no entropy source
     hash_salt: Option<[u8; 16]>,
     by_hash: HashMap<(u64, bool), CachedMeshData>,
     /// a mesh asset's hash, taken before conversion changes the mesh
@@ -1731,8 +1714,7 @@ pub(crate) fn update_ready_gltfs(
     }
 
     // now that nothing borrows `gltfs`, release the parsed documents + GLB blobs whose
-    // names we just cached. `get_mut` marks the asset Modified; maintain_gltf_caches tells
-    // that apart from a real reload by the dropped source.
+    // names we just cached. `get_mut` marks the asset Modified.
     for id in drop_sources {
         if let Some(gltf) = gltfs.get_mut(id) {
             gltf.source = None;

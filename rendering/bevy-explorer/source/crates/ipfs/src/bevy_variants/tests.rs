@@ -146,7 +146,7 @@ fn selects_the_first_variant_this_client_takes() {
     ];
     let none_bad = |_: &str| false;
     assert_eq!(
-        select_variant(
+        ContentFileVariant::preferred(
             &variants,
             ContentFilePathView("images/a.png"),
             true,
@@ -156,21 +156,21 @@ fn selects_the_first_variant_this_client_takes() {
         Some(served_path(VARIANT_CID))
     );
     // the extension is matched case-insensitively, and a path without one is an image too
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &variants,
         ContentFilePathView("images/A.JPG"),
         true,
         none_bad
     )
     .is_some());
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &variants,
         ContentFilePathView("images/a.ktx2"),
         true,
         none_bad
     )
     .is_some());
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &variants,
         ContentFilePathView("noextension"),
         true,
@@ -178,7 +178,7 @@ fn selects_the_first_variant_this_client_takes() {
     )
     .is_some());
     // no BC on the GPU: nothing
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &variants,
         ContentFilePathView("images/a.png"),
         false,
@@ -186,14 +186,14 @@ fn selects_the_first_variant_this_client_takes() {
     )
     .is_none());
     // a texture never replaces a model, nor a file another loader reads
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &variants,
         ContentFilePathView("models/a.glb"),
         true,
         none_bad
     )
     .is_none());
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &variants,
         ContentFilePathView("sounds/a.mp3"),
         true,
@@ -202,9 +202,10 @@ fn selects_the_first_variant_this_client_takes() {
     .is_none());
     // a variant that failed this session is passed over for the next supported one
     let bad = served_path(VARIANT_CID);
-    let fallback = select_variant(&variants, ContentFilePathView("a.png"), true, |path| {
-        path == bad
-    });
+    let fallback =
+        ContentFileVariant::preferred(&variants, ContentFilePathView("a.png"), true, |path| {
+            path == bad
+        });
     assert_eq!(
         fallback.map(|v| v.path.clone()),
         Some(served_path(OTHER_CID))
@@ -214,16 +215,52 @@ fn selects_the_first_variant_this_client_takes() {
     // on a GPU with BC textures
     let glb = [variant(VARIANT_CID, "model", "glb")];
     assert!(supported_format(&glb[0]).is_some());
-    assert!(select_variant(&glb, ContentFilePathView("models/a.glb"), true, none_bad).is_some());
-    assert!(select_variant(&glb, ContentFilePathView("models/A.GLB"), true, none_bad).is_some());
-    assert!(select_variant(&glb, ContentFilePathView("models/a.glb"), false, none_bad).is_none());
-    assert!(select_variant(&glb, ContentFilePathView("models/a.gltf"), true, none_bad).is_none());
-    assert!(select_variant(&glb, ContentFilePathView("images/a.png"), true, none_bad).is_none());
+    assert!(ContentFileVariant::preferred(
+        &glb,
+        ContentFilePathView("models/a.glb"),
+        true,
+        none_bad
+    )
+    .is_some());
+    assert!(ContentFileVariant::preferred(
+        &glb,
+        ContentFilePathView("models/A.GLB"),
+        true,
+        none_bad
+    )
+    .is_some());
+    assert!(ContentFileVariant::preferred(
+        &glb,
+        ContentFilePathView("models/a.glb"),
+        false,
+        none_bad
+    )
+    .is_none());
+    assert!(ContentFileVariant::preferred(
+        &glb,
+        ContentFilePathView("models/a.gltf"),
+        true,
+        none_bad
+    )
+    .is_none());
+    assert!(ContentFileVariant::preferred(
+        &glb,
+        ContentFilePathView("images/a.png"),
+        true,
+        none_bad
+    )
+    .is_none());
     // `glb-br` is fetched as a Brotli copy only a browser decodes: native leaves it untaken and
     // loads the original model (the web build takes it for `.glb` files)
     let brotli = [variant(VARIANT_CID, "model", "glb-br")];
     assert!(supported_format(&brotli[0]).is_none());
-    assert!(select_variant(&brotli, ContentFilePathView("models/a.glb"), true, none_bad).is_none());
+    assert!(ContentFileVariant::preferred(
+        &brotli,
+        ContentFilePathView("models/a.glb"),
+        true,
+        none_bad
+    )
+    .is_none());
     assert_eq!(
         taken_formats(),
         "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders), \
@@ -233,7 +270,7 @@ fn selects_the_first_variant_this_client_takes() {
     // the earlier mesh format is not in the schema any more
     assert!(supported_format(&variant(VARIANT_CID, "model", "glb-meshopt")).is_none());
     // a kind/format pair the schema does not have
-    assert!(select_variant(
+    assert!(ContentFileVariant::preferred(
         &[variant(VARIANT_CID, "model", "ktx2-bc")],
         ContentFilePathView("a.png"),
         true,

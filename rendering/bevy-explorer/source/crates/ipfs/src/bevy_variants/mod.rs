@@ -266,6 +266,26 @@ impl ContentFileVariant {
             format: format.to_owned(),
         })
     }
+
+    /// Whether this client can load the variant at `content_path`: a supported format, for a
+    /// file type it may replace, on a GPU that has what it needs (`bc`: BC texture support).
+    pub fn supports(&self, content_path: ContentFilePathView<'_>, bc: bool) -> bool {
+        supported_format(self)
+            .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(content_path))
+    }
+
+    /// The first of `variants` this client supports at `content_path` and `is_bad` does not
+    /// reject.
+    pub fn preferred<'a>(
+        variants: &'a [ContentFileVariant],
+        content_path: ContentFilePathView<'_>,
+        bc: bool,
+        is_bad: impl Fn(&str) -> bool,
+    ) -> Option<&'a ContentFileVariant> {
+        variants
+            .iter()
+            .find(|variant| variant.supports(content_path, bc) && !is_bad(&variant.path))
+    }
 }
 
 #[derive(Debug)]
@@ -366,7 +386,7 @@ impl VariantsBaseUrl {
     fn parse(url: &str) -> Option<Self> {
         match url::Url::parse(url.trim()) {
             Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
-                // the serialised form, so a prefix match agrees with a re-serialised remote url
+                // `Url`'s serialised form
                 Some(Self(parsed.as_str().trim_end_matches('/').to_owned()))
             }
             _ => None,
@@ -387,10 +407,8 @@ impl<'a> VariantsBaseUrlView<'a> {
         self.0
     }
 
-    /// The url `variant` is fetched from. A `glb-br` variant is fetched as its Brotli copy,
-    /// asked for by name, which the browser decodes; a `glb` variant's Brotli copy exists only
-    /// when it is smaller, so its own path is fetched and the server sends the copy to a client
-    /// that accepts `br`.
+    /// The url of `variant` under this base: its path, or for a `glb-br` variant the path of
+    /// its Brotli copy (`{path}.br`).
     fn url_of(self, variant: &ContentFileVariant, payload_kind: ContentFilePayloadKind) -> String {
         match payload_kind {
             ContentFilePayloadKind::BcTexture | ContentFilePayloadKind::BcGlb => {
@@ -416,29 +434,6 @@ pub fn could_have_variant(content_path: ContentFilePathView<'_>) -> bool {
         && SUPPORTED_FORMATS
             .iter()
             .any(|row| row.accepts_path(content_path))
-}
-
-/// Whether this client can load `variant` at `content_path`: a supported format, for a file
-/// type it may replace, on a GPU that has what it needs (`bc`: BC texture support).
-pub fn supports(
-    variant: &ContentFileVariant,
-    content_path: ContentFilePathView<'_>,
-    bc: bool,
-) -> bool {
-    supported_format(variant)
-        .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(content_path))
-}
-
-/// The first variant this client supports that has not failed this session.
-pub fn select_variant<'a>(
-    variants: &'a [ContentFileVariant],
-    content_path: ContentFilePathView<'_>,
-    bc: bool,
-    is_bad: impl Fn(&str) -> bool,
-) -> Option<&'a ContentFileVariant> {
-    variants
-        .iter()
-        .find(|variant| supports(variant, content_path, bc) && !is_bad(&variant.path))
 }
 
 /// Why an entity (scene, wearable or emote) gets no manifest request, if it doesn't.
@@ -646,8 +641,7 @@ impl BevyVariants {
     }
 
     /// The variant `manifest` gives the content file at `content_path`, named by `content_hash`,
-    /// with its payload kind and the url it is read from; else the original is read, and why
-    /// when that is worth reporting.
+    /// with its payload kind and url; else `Err`, with the reason when one is worth reporting.
     fn fetchable_variant(
         &self,
         base_url: VariantsBaseUrlView<'_>,
@@ -662,14 +656,14 @@ impl BevyVariants {
         let bc = self.bc();
         if !options
             .iter()
-            .any(|variant| supports(variant, content_path, bc))
+            .any(|variant| variant.supports(content_path, bc))
         {
             let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
             // a format this file type would take on a GPU with BC textures
             let wants_bc = !bc
                 && options
                     .iter()
-                    .any(|variant| supports(variant, content_path, true));
+                    .any(|variant| variant.supports(content_path, true));
             return Err(Some(if wants_bc {
                 "the GPU has no BC texture support (or has not reported it yet)".to_owned()
             } else {
@@ -679,17 +673,18 @@ impl BevyVariants {
                 )
             }));
         }
-        let variant = select_variant(options, content_path, bc, |path| self.is_bad(path))
-            .ok_or(None)?
-            .clone();
+        let variant =
+            ContentFileVariant::preferred(options, content_path, bc, |path| self.is_bad(path))
+                .ok_or(None)?
+                .clone();
         let payload_kind = supported_format(&variant).ok_or(None)?.payload_kind;
         let url = base_url.url_of(&variant, payload_kind);
         Ok((variant, payload_kind, url))
     }
 
-    /// The url of the variant a read of `ipfs_path`, named by `content_hash`, would take now:
-    /// `Some(None)` when it would read the original, `None` while it would wait for its
-    /// entity's manifest.
+    /// The url of the variant the content file at `ipfs_path`, named by `content_hash`, maps to
+    /// now: `Some(None)` when there is none, `None` while its entity's manifest is pending and
+    /// its wait has time left.
     fn planned_url(
         &self,
         ipfs_path: &IpfsPath,
@@ -850,7 +845,7 @@ impl IpfsIo {
 
     /// [`Self::immutable_source_url`] of a read of the content file at asset `path` that has not
     /// happened yet: the variant its entity's manifest picks now, else the original's url. None
-    /// while that manifest is pending, as the read would wait for it.
+    /// while that manifest is pending.
     ///
     /// Blocking: reads the context.
     pub(crate) fn planned_source_url(&self, path: &Path) -> Option<String> {
