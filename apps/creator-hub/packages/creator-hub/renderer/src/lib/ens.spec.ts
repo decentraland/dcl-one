@@ -65,13 +65,31 @@ describe('DCLNames.fetchNames', () => {
     });
   });
 
-  describe('when the content server cannot answer', () => {
-    beforeEach(() => {
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+  describe('when a short page comes before the announced total', () => {
+    beforeEach(async () => {
+      const full = Array.from({ length: 1000 }, (_, i) => `n${i}`);
+      fetchMock.mockResolvedValueOnce(page(full, 5000));
+      fetchMock.mockResolvedValueOnce(page(['a', 'b', 'c'], 5000));
+      names = await new DCLNames().fetchNames('0x1');
     });
 
-    it('should fail rather than answer no NAMEs', async () => {
+    it('should end the walk on the short page', () => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(names).toHaveLength(1003);
+    });
+  });
+
+  describe('when the content server cannot answer', () => {
+    let cancel: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      cancel = vi.fn().mockResolvedValue(undefined);
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503, body: { cancel } });
+    });
+
+    it('should fail rather than answer no NAMEs, releasing the unread body', async () => {
       await expect(new DCLNames().fetchNames('0x1')).rejects.toThrow('503');
+      expect(cancel).toHaveBeenCalledTimes(1);
     });
   });
 });
@@ -84,15 +102,26 @@ describe('DCLNames.fetchNamesOwners', () => {
   });
 
   describe('when one NAME is held and another is not', () => {
+    let cancel: ReturnType<typeof vi.fn>;
+
     beforeEach(async () => {
+      cancel = vi.fn().mockResolvedValue(undefined);
       fetchMock.mockImplementation((url: string) =>
         Promise.resolve(
           url.includes('/names/alice/')
             ? { ok: true, status: 200, json: () => Promise.resolve({ owner: '0xa1' }) }
-            : { ok: false, status: 404 },
+            : { ok: false, status: 404, body: { cancel } },
         ),
       );
-      owners = await new DCLNames().fetchNamesOwners(['Alice', 'nobody']);
+      owners = await new DCLNames().fetchNamesOwners(['Alice', 'alice', 'nobody']);
+    });
+
+    it('should ask once per distinct NAME', () => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should release the body of the 404', () => {
+      expect(cancel).toHaveBeenCalledTimes(1);
     });
 
     it('should ask the owner route once per NAME, lowercased', () => {
@@ -110,12 +139,33 @@ describe('DCLNames.fetchNamesOwners', () => {
   });
 
   describe('when an owner lookup fails', () => {
+    let cancel: ReturnType<typeof vi.fn>;
+
     beforeEach(() => {
-      fetchMock.mockResolvedValue({ ok: false, status: 502 });
+      cancel = vi.fn().mockResolvedValue(undefined);
+      fetchMock.mockResolvedValue({ ok: false, status: 502, body: { cancel } });
     });
 
-    it('should fail the whole read rather than answer the NAME unheld', async () => {
+    it('should fail the whole read rather than answer the NAME unheld, releasing the body', async () => {
       await expect(new DCLNames().fetchNamesOwners(['alice'])).rejects.toThrow('502');
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when a lookup fails while others wait their turn', () => {
+    beforeEach(() => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 502,
+        body: { cancel: () => Promise.resolve() },
+      });
+    });
+
+    it('should not send the lookups still queued behind it', async () => {
+      const labels = Array.from({ length: 20 }, (_, i) => `n${i}`);
+      await expect(new DCLNames().fetchNamesOwners(labels)).rejects.toThrow('502');
+      // The first eight start together; none queued behind them is sent.
+      expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(8);
     });
   });
 

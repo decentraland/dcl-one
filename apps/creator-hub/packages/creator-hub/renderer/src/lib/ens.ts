@@ -132,6 +132,7 @@ export class DCLNames {
         this.timeout,
       );
       if (!response.ok) {
+        await discard(response);
         throw new Error(response.status.toString());
       }
       const page: DCLNamesPage = await response.json();
@@ -144,35 +145,50 @@ export class DCLNames {
 
   /**
    * The holder of each NAME in `names` (bare labels, no `.dcl.eth`), keyed by the lowercased
-   * label; a NAME nobody holds is left out. Any failed lookup fails the whole read.
+   * label; a NAME nobody holds is left out. One request per distinct NAME (the lambdas have no
+   * batch owner route; a contributable list is a handful), at most 8 at once. Any failed lookup
+   * fails the whole read, and the lookups still queued behind it are not sent.
    */
   public async fetchNamesOwners(names: string[]): Promise<Record<string, string>> {
     const results: Record<string, string> = {};
-    if (!names) {
-      return results;
-    }
+    const labels = [...new Set(names.map(name => name.toLowerCase()))];
+    let failed = false;
     await Promise.all(
-      names.map(name =>
+      labels.map(label =>
         OWNER_LOOKUPS(async () => {
-          const label = name.toLowerCase();
-          const response: Response = await fetch(
-            `${this.lambdas}/names/${encodeURIComponent(label)}/owner`,
-            undefined,
-            this.timeout,
-          );
-          if (response.status === 404) {
+          if (failed) {
             return;
           }
-          if (!response.ok) {
-            throw new Error(response.status.toString());
-          }
-          const { owner }: { owner?: string } = await response.json();
-          if (owner) {
-            results[label] = owner;
+          try {
+            const response: Response = await fetch(
+              `${this.lambdas}/names/${encodeURIComponent(label)}/owner`,
+              undefined,
+              this.timeout,
+            );
+            if (response.status === 404) {
+              await discard(response);
+              return;
+            }
+            if (!response.ok) {
+              await discard(response);
+              throw new Error(response.status.toString());
+            }
+            const { owner }: { owner?: string } = await response.json();
+            if (owner) {
+              results[label] = owner;
+            }
+          } catch (error) {
+            failed = true;
+            throw error;
           }
         }),
       ),
     );
     return results;
   }
+}
+
+/** Releases a response whose body is not read, so its connection is not held until collected. */
+async function discard(response: Response) {
+  await response.body?.cancel().catch(() => undefined);
 }
