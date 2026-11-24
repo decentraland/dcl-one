@@ -109,12 +109,22 @@ pub async fn save_collection(
     signer: &str,
     collection: serde_json::Value,
 ) -> Result<serde_json::Value, crate::http::ApiError> {
-    use crate::collections::save;
+    use crate::collections::{contract, save};
+    let mut collection = collection;
+    if collection.get("data").is_none() {
+        collection["data"] =
+            contract::initialize_calldata_based(signer, "Test", store.network.base_uri).into();
+    }
     let request = save::parse(&collection_body(collection, signer))?;
     let provider = request.urn.as_deref().and_then(save::third_party_urn);
     let deployment = match provider {
         Some(_) => None,
-        None => Some(save::standard_deployment(&store.network, &request, signer)?),
+        None => Some(save::standard_deployment(
+            &store.network,
+            "",
+            &request,
+            signer,
+        )?),
     };
     let id = Uuid::parse_str(&request.id).unwrap();
     store

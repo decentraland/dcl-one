@@ -168,6 +168,7 @@ pub(super) fn builder_settings(config: &Config) -> anyhow::Result<builder::Setti
         forum_api_key: config.create.forum_api_key.clone(),
         forum_api_username: config.create.forum_api_username.clone(),
         forum_category: config.create.forum_category.clone(),
+        public_url: Some(config.node.own_url()),
         builder_server_url: config.create.builder_server_url.clone(),
         cors_origin: config.create.cors_origin.clone(),
         cors_method: config.create.cors_method.clone(),

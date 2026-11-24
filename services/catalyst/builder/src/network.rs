@@ -74,7 +74,17 @@ pub fn for_eth_network(eth_network: &str) -> Option<Network> {
     }
 }
 
+/// Where a node serves a standard collection's token metadata.
+const TOKEN_METADATA_PATH: &str = "/lambdas/collections/standard/erc721/";
+
 impl Network {
+    /// Whether `base_uri` is the network's token metadata base or the one
+    /// the node at `node` (its address without a trailing slash) serves.
+    pub fn serves_token_metadata(&self, base_uri: &str, node: &str) -> bool {
+        base_uri == self.base_uri
+            || (!node.is_empty() && base_uri.strip_prefix(node) == Some(TOKEN_METADATA_PATH))
+    }
+
     /// `urn:decentraland:<protocol>:collections-v2:<contract>`.
     pub fn collection_urn(&self, contract: &str) -> String {
         format!(
@@ -147,6 +157,26 @@ mod tests {
         assert!(AMOY.answers("0x13882"));
         assert!(!AMOY.answers("0x89"));
         assert!(!AMOY.answers("amoy"));
+    }
+
+    #[test]
+    fn a_token_metadata_base_is_the_networks_or_the_nodes() {
+        let node = "https://node.example.org";
+        let own = "https://node.example.org/lambdas/collections/standard/erc721/";
+        assert!(POLYGON.serves_token_metadata(POLYGON.base_uri, node));
+        assert!(POLYGON.serves_token_metadata(own, node));
+        assert!(AMOY.serves_token_metadata(AMOY.base_uri, ""));
+        for foreign in [
+            AMOY.base_uri,
+            "https://other.example.org/lambdas/collections/standard/erc721/",
+            "https://node.example.org/lambdas/collections/standard/erc721/137/",
+            "https://node.example.org.evil.example/lambdas/collections/standard/erc721/",
+            "https://node.example.org/lambdas/collections/standard/erc721",
+            "",
+        ] {
+            assert!(!POLYGON.serves_token_metadata(foreign, node), "{foreign}");
+        }
+        assert!(!POLYGON.serves_token_metadata(TOKEN_METADATA_PATH, ""));
     }
 
     #[test]

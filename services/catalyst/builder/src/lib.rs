@@ -153,6 +153,9 @@ pub struct RawSettings {
     /// `ETH_NETWORK`: the Polygon chain it pairs is the builder's
     /// ([`network`]); unset is `mainnet`, `ETH_NETWORK`'s default.
     pub eth_network: Option<String>,
+    /// The address clients reach this node at (`PUBLIC_URL`, else its bind
+    /// address).
+    pub public_url: Option<String>,
     /// `MATIC_COLLECTIONS_SUBGRAPH_URL` as set, empty included; unset reads
     /// the network's collections subgraph.
     pub matic_collections_subgraph_url: Option<String>,
@@ -210,6 +213,9 @@ pub struct RawSettings {
 pub struct Settings {
     /// The Polygon chain whose contracts, URNs and chain id the builder uses.
     pub network: network::Network,
+    /// This node's own address without a trailing slash, whose token
+    /// metadata base a collection may name; empty names none.
+    pub public_url: String,
     /// The network's collections subgraph, read while
     /// `MATIC_COLLECTIONS_SUBGRAPH_URL` is unset ([`State::collections_subgraph`]).
     pub default_collections_subgraph: Option<String>,
@@ -427,6 +433,9 @@ impl Settings {
         let default_of = |set: &Option<String>, url: &str| set.is_none().then(|| url.to_string());
         Ok(Self {
             network,
+            public_url: non_empty(&raw.public_url)
+                .map(|url| url.trim_end_matches('/').to_string())
+                .unwrap_or_default(),
             default_collections_subgraph: default_of(
                 &raw.matic_collections_subgraph_url,
                 network.collections_subgraph,
