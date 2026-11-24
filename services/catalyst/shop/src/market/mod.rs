@@ -80,6 +80,7 @@ pub mod lambdas_crypto;
 pub mod lambdas_explorer;
 pub mod lambdas_http;
 pub mod lambdas_land;
+pub mod land_map;
 pub mod legacy_orders;
 pub mod listings;
 pub mod lists;
