@@ -68,6 +68,9 @@ pub struct RendererSceneContext {
     pub scene_bounds: SceneBounds,
     pub spawn_points: Vec<SpawnPoint>,
     pub priority: f32,
+    /// The most ticks a second the scene loop sends this scene (`scene_tick_rate`), refreshed
+    /// each frame; `None` at the full rate.
+    pub tick_rate_cap: Option<f32>,
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.
     pub portable_experiences: PortableExperiencesToggle,
@@ -154,6 +157,9 @@ pub const SCENE_JS_SPAWN_TICK: u32 = 1;
 pub const SCENE_FIRST_DISPATCH_TICK: u32 = 2;
 /// The reply to the scene's first `onUpdate`.
 pub const SCENE_FIRST_UPDATE_TICK: u32 = 3;
+/// From this tick the scene counts as loaded: before it, the player's scene defers the others'
+/// loading, and the scene loop ticks it at the full rate.
+pub const SCENE_LOADED_TICK: u32 = 7;
 
 pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
 
@@ -271,6 +277,7 @@ impl RendererSceneContext {
             last_update_frame: 0,
             state: SceneState::Init,
             priority,
+            tick_rate_cap: None,
             crdt_store: Default::default(),
             initial_crdt: None,
             blocked: Default::default(),

@@ -18,7 +18,7 @@ use crate::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
-    vec3_to_parcel, ContainerEntity, ContainingScene,
+    vec3_to_parcel, ContainerEntity, ContainingScene, SceneUpdates,
 };
 
 pub(super) struct SceneDebugPanelPlugin;
@@ -32,6 +32,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<SceneContent, _>(scene_content)
             .add_console_command::<LoadingState, _>(loading_state)
             .add_console_command::<TextureState, _>(texture_state)
+            .add_console_command::<TickRateState, _>(tick_rate_state)
             .add_debug_section(DebugSection {
                 title: "Current Scene",
                 query: "/current_scene_state",
@@ -157,6 +158,17 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Broken scenes", "broken"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene Tick Rates",
+                query: "/scene_tick_rate_state",
+                fields: &[
+                    ("Scenes at the full rate", "full"),
+                    ("Scenes by maximum ticks a second", "capped"),
+                    ("Scene-frames skipped by the cap", "skipped"),
+                ],
+                actions: &[],
                 inputs: &[],
             })
             .add_debug_section(DebugSection {
@@ -549,6 +561,39 @@ fn scene_content(
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
         "colliders": colliders.map_or(0, SceneColliderData::collider_count),
         "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
+}
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/scene_tick_rate_state")]
+struct TickRateState;
+
+/// The running scenes by their distance band's tick rate cap (`scene_tick_rate`), and the
+/// scene-frames the cap has skipped since startup.
+fn tick_rate_state(
+    mut input: ConsoleCommand<TickRateState>,
+    scenes: Query<&RendererSceneContext>,
+    updates: Res<SceneUpdates>,
+) {
+    if input.take().is_none() {
+        return;
+    }
+    let mut full = 0usize;
+    let mut capped = std::collections::BTreeMap::<u32, usize>::new();
+    for context in scenes.iter().filter(|context| !context.broken()) {
+        match context.tick_rate_cap {
+            None => full += 1,
+            Some(rate) => *capped.entry(rate as u32).or_default() += 1,
+        }
+    }
+    let capped = capped
+        .iter()
+        .rev()
+        .map(|(rate, count)| format!("{rate}/s: {count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    input.reply_ok(
+        json!({"full": full, "capped": capped, "skipped": updates.skipped_rate_capped}).to_string(),
+    );
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

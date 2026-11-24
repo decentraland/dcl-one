@@ -161,6 +161,32 @@ a system in this set); see the
 while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
 one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
 
+### Tick rate bands
+
+On top of the queue, each scene has a maximum tick rate from its partition
+(`scene_tick_rate`, `crates/scene_runner/src/scene_partition.rs`): `update_scene_priority`
+leaves it out of the frame's queue until `1 / rate` seconds have passed since it was last sent.
+The frame rate rounds that interval up to whole frames: at 60 fps a 40 or 30 a second band
+ticks about every other frame.
+
+| Distance from the player to the scene's nearest parcel | Ticks a second, in front | Behind the camera |
+|---|---|---|
+| under 16 m | 40 | 1 |
+| 16 to 32 m | 30 | 1 |
+| 32 to 48 m | 15 | 1 |
+| 48 to 64 m | 10 | 1 |
+| 64 to 80 m | 5 | 1 |
+| 80 m on | 0 | 0 |
+
+The table is `SCENE_TICK_RATE_BANDS` and `BEHIND_SCENE_TICK_RATE`. A scene keeps the full rate
+while it is one of the player's scenes, at the player's position while they are out of world, a
+portable or global scene, a named priority scene, the system scene or the scene being baked into
+an imposter, and until it reaches `SCENE_LOADED_TICK`, since loading waits on a scene's first
+ticks. Without a rendering camera (headless) nothing is capped. The runtime debug panel's
+"Scene Tick Rates" section (`/scene_tick_rate_state`) counts the scenes at each cap and the
+scene-frames the cap has skipped. See the
+[ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
+
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.
 

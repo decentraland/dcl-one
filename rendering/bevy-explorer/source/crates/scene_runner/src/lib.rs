@@ -58,9 +58,10 @@ use web_time::Instant;
 
 use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
-    initialize_scene::SuperUserScene,
+    initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
-        publish_download_priorities, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
+        publish_download_priorities, scene_tick_rate, tick_rate_allows, update_scene_partitions,
+        Partition, BEHIND_SCENE_TICK_PENALTY,
     },
 };
 use common::partition::PartitionData;
@@ -69,7 +70,9 @@ use self::{
     initialize_scene::{
         LiveScenes, PointerResult, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
     },
-    renderer_context::{RendererSceneContext, SceneState, SCENE_FIRST_DISPATCH_TICK},
+    renderer_context::{
+        RendererSceneContext, SceneState, SCENE_FIRST_DISPATCH_TICK, SCENE_LOADED_TICK,
+    },
     update_scene::SceneInputPlugin,
     update_world::{CrdtExtractors, SceneOutputPlugin},
 };
@@ -120,6 +123,9 @@ pub struct SceneUpdates {
     pub skipped_in_flight: u64,
     /// Scene-frames lost because the scene had already been dispatched this frame.
     pub skipped_already_sent: u64,
+    /// Scene-frames skipped because the scene's distance band allowed no tick yet
+    /// (`scene_tick_rate`).
+    pub skipped_rate_capped: u64,
     /// Named scene entities that must be scheduled every frame (e.g. the
     /// movement controller). These scenes bypass the `scene_threads` limit
     /// but still occupy slots, preventing non-priority scenes from running.
@@ -408,6 +414,7 @@ impl Plugin for SceneRunnerPlugin {
             frames: 0,
             skipped_in_flight: 0,
             skipped_already_sent: 0,
+            skipped_rate_capped: 0,
         });
 
         app.add_event::<LoadSceneEvent>();
@@ -592,6 +599,9 @@ fn update_scene_priority(
         Without<SceneLoading>,
     >,
     player: Query<Entity, With<PrimaryUser>>,
+    rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
+    imposter_scene: Res<CurrentImposterScene>,
+    live_scenes: Res<LiveScenes>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
     containing_scene: ContainingScene,
@@ -643,6 +653,15 @@ fn update_scene_priority(
     // both borrow `updates` mutably at once.
     let mut skipped_in_flight = 0u64;
     let mut skipped_already_sent = 0u64;
+    let mut skipped_rate_capped = 0u64;
+
+    // the distance bands cap tick rates only where a camera renders: the headless server ticks
+    // every scene it runs
+    let rate_capped = !rendering_camera.is_empty();
+    let imposter_scene = match &imposter_scene.0 {
+        Some((PointerResult::Exists { hash, .. }, _)) => live_scenes.scenes.get(hash).copied(),
+        _ => None,
+    };
 
     // sort eligible scenes
     updates.scene_queue = scenes
@@ -669,10 +688,17 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, maybe_partition, mut context, _)| {
+        .filter_map(|(ent, maybe_partition, mut context, maybe_super)| {
             let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
             let active = active_scenes.contains(&ent);
             context.priority = if active { 0.0 } else { partition.sqr_distance };
+            let full_rate = !rate_capped
+                || active
+                || wake_scenes.contains(&ent)
+                || maybe_super.is_some()
+                || imposter_scene == Some(ent)
+                || context.tick_number < SCENE_LOADED_TICK;
+            context.tick_rate_cap = (!full_rate).then(|| scene_tick_rate(&partition));
             let not_yet_run = context.last_sent < time.elapsed_secs_f64();
 
             if !context.in_flight() && !not_yet_run {
@@ -683,12 +709,20 @@ fn update_scene_priority(
                 return None;
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
+            if context
+                .tick_rate_cap
+                .is_some_and(|rate| !tick_rate_allows(rate, age))
+            {
+                skipped_rate_capped += 1;
+                return None;
+            }
             updates.eligible_jobs += 1;
             Some((ent, scene_tick_key(partition, active, age)))
         })
         .collect();
     updates.skipped_in_flight += skipped_in_flight;
     updates.skipped_already_sent += skipped_already_sent;
+    updates.skipped_rate_capped += skipped_rate_capped;
     updates
         .scene_queue
         .make_contiguous()
@@ -1214,6 +1248,7 @@ mod player_scenes_tests {
             frames: 0,
             skipped_in_flight: 0,
             skipped_already_sent: 0,
+            skipped_rate_capped: 0,
         });
         world.init_resource::<Time>();
 

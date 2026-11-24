@@ -50,7 +50,7 @@ use crate::{
     parcel_to_vec3,
     renderer_context::{
         RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
-        SCENE_JS_SPAWN_TICK,
+        SCENE_JS_SPAWN_TICK, SCENE_LOADED_TICK,
     },
     ring_parcels,
     scene_lod::Rings,
@@ -1920,12 +1920,14 @@ pub fn process_scene_lifecycle(
         // a failed load is terminal: the entity is kept (so the scene isn't respawned while
         // in range) but it will never get further, so it must not defer other scenes. a
         // frozen scene never advances its tick, so it's as loaded as it's going to get;
-        // without the exemption a scene frozen before tick 7 defers other scenes (and
+        // without the exemption a scene frozen before `SCENE_LOADED_TICK` defers other scenes (and
         // imposters) forever
         let failed = matches!(maybe_loading, Some(SceneLoading::Failed));
         let still_loading = !failed
             && maybe_ctx.is_none_or(|ctx| {
-                ctx.tick_number <= 6 && !ctx.broken() && !ctx.blocked.contains(FROZEN_BLOCK)
+                ctx.tick_number < SCENE_LOADED_TICK
+                    && !ctx.broken()
+                    && !ctx.blocked.contains(FROZEN_BLOCK)
             });
 
         // check if the current scene is still loading

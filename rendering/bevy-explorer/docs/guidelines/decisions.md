@@ -157,7 +157,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
-  farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
+  farther in the tick queue. On top of the queue each scene has a maximum tick rate by distance
+  band, at most once a second behind the camera, and none from 80 m on
+  ([scheduling](scheduling.md#tick-rate-bands),
+  [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md)). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
   with no hash): the player's own wearables and the emotes they play or have equipped, then the
   player's scenes,
