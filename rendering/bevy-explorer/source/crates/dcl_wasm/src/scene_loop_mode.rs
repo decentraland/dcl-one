@@ -21,24 +21,30 @@ pub enum SceneLoopMode {
 }
 
 impl SceneLoopMode {
+    /// Every mode, the default first, with its name (the page parameter's and the debug panel
+    /// command's) and what it does. The names and the debug panel's choices all come from here.
+    pub const ALL: [(Self, &'static str, &'static str); 4] = [
+        (Self::Both, "both", "relay wake and frame-start deadline"),
+        (Self::Relay, "relay", "relay wake only"),
+        (Self::Deadline, "deadline", "frame-start deadline only"),
+        (Self::Legacy, "legacy", "neither, no reply wake"),
+    ];
+
+    /// The mode named `name` ([`Self::name`]).
     pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "legacy" => Some(Self::Legacy),
-            "relay" => Some(Self::Relay),
-            "deadline" => Some(Self::Deadline),
-            "both" => Some(Self::Both),
-            _ => None,
-        }
+        Self::ALL
+            .iter()
+            .find(|(_, mode_name, _)| *mode_name == name)
+            .map(|(mode, ..)| *mode)
     }
 
-    /// The page parameter's name for the mode ([`Self::parse`]).
+    /// The mode's name in [`Self::ALL`].
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Legacy => "legacy",
-            Self::Relay => "relay",
-            Self::Deadline => "deadline",
-            Self::Both => "both",
-        }
+        Self::ALL
+            .iter()
+            .find(|(mode, ..)| *mode == self)
+            .map(|(_, name, _)| *name)
+            .expect("every mode is in SceneLoopMode::ALL")
     }
 
     /// The relay waits for the engine's tick instead of sleeping.
@@ -110,6 +116,7 @@ mod tests {
             assert_eq!(SceneLoopMode::from_u8(mode.to_u8()), mode);
         }
         assert_eq!(SceneLoopMode::parse("frame"), None);
+        assert_eq!(SceneLoopMode::ALL[0].0, SceneLoopMode::default());
         assert_eq!(SceneLoopMode::from_u8(9), SceneLoopMode::Legacy);
         assert!(SceneLoopMode::Both.relay_wake() && SceneLoopMode::Both.frame_deadline());
         assert!(!SceneLoopMode::Legacy.relay_wake() && !SceneLoopMode::Legacy.frame_deadline());

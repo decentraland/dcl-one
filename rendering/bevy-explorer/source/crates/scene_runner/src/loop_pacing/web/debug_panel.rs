@@ -101,14 +101,13 @@ mod commands {
     use super::{state, ModeView};
     use crate::{loop_pacing::LoopPacing, renderer_context::RendererSceneContext, SceneUpdates};
 
-    const MODES: &[(&str, &str)] = &[
-        ("both (relay wake and frame-start deadline)", "both"),
-        ("relay (relay wake only)", "relay"),
-        ("deadline (frame-start deadline only)", "deadline"),
-        ("legacy (neither, no reply wake)", "legacy"),
-    ];
-
     pub fn add_section(app: &mut App) {
+        let captions = SceneLoopMode::ALL.map(|(_, name, does)| format!("{name} ({does})"));
+        let modes: Vec<(&str, &str)> = captions
+            .iter()
+            .zip(SceneLoopMode::ALL)
+            .map(|(caption, (_, name, _))| (caption.as_str(), name))
+            .collect();
         app.add_console_command::<SceneLoopState, _>(scene_loop_state)
             .add_console_command::<SceneLoopModeCommand, _>(set_scene_loop_mode)
             .add_debug_section(DebugSection {
@@ -141,7 +140,7 @@ mod commands {
                     label: "Scheduling mode (?sceneLoop=)",
                     field: "mode",
                     command: "/scene_loop_mode {value}",
-                    kind: DebugInputKind::Select(MODES),
+                    kind: DebugInputKind::Select(&modes),
                 }],
             });
     }
@@ -200,7 +199,13 @@ mod commands {
                     scene_loop_mode::set(mode);
                     input.reply_ok(format!("scene loop mode {}", mode.name()));
                 }
-                None => input.reply_failed("choose legacy, relay, deadline or both"),
+                None => {
+                    let names: Vec<_> = SceneLoopMode::ALL
+                        .iter()
+                        .map(|(_, name, _)| *name)
+                        .collect();
+                    input.reply_failed(format!("choose one of {}", names.join(", ")))
+                }
             }
         }
     }
