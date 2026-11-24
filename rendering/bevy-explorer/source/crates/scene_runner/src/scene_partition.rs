@@ -93,10 +93,12 @@ pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
     (age + frame * 0.25) * rate as f64 >= 1.0
 }
 
-/// The global updates sent since a capped scene's last dispatch from which it is due: half what
-/// its scene host holds between ticks, so it reads them before the host drops any.
+/// The global updates delivered to a capped scene's host since its last dispatch from which it
+/// is due: a quarter of what the host holds. A spawn replay (at most another quarter's worth
+/// before the scene is due) can at most double it, which still leaves half the host free for
+/// the updates that arrive before the scene ticks.
 pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
-    common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 2;
+    common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
 
 /// Where partitions are measured from: distance from the player, facing from the rendering
 /// camera (a `PrimaryCamera` with a `Camera`). Without one, as on the headless server whose

@@ -775,8 +775,8 @@ fn player_scenes(
     scenes
 }
 
-/// The global updates sent to scenes, summed over the crdt contexts (the client has one). A
-/// scene's host forwards each to it as it is sent, and the scene reads them at its next tick.
+/// The global updates delivered to each scene host, replays included, summed over the crdt
+/// contexts (the client has one). The scene reads what its host holds at its next tick.
 fn global_updates_sent(crdt_contexts: &Query<&GlobalCrdtState>) -> u64 {
     crdt_contexts.iter().map(GlobalCrdtState::sent).sum()
 }

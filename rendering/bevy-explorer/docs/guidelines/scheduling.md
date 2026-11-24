@@ -184,14 +184,16 @@ The table is `SCENE_TICK_RATE_BANDS`, `BEHIND_SCENE_TICK_RATE` and `FAR_SCENE_TI
 farthest band keeps a slow tick because a scene drains its channels only while ticking, and a
 full channel drops messages. For global updates a rate is not enough: a scene's host holds at
 most `SCENE_GLOBAL_UPDATE_CAPACITY` of them between its ticks, so a capped scene with
-`GLOBAL_UPDATE_BACKLOG_DUE` sent since its last dispatch (`GlobalCrdtState::sent` against the
-count it recorded then) is due whatever its band. A scene keeps the full rate while it is one of
-the player's scenes, at the player's position while they are out of world, a portable or global
-scene, a named priority scene, the system scene, a scene under the inspector or the scene being
-baked into an imposter, and until it reaches `SCENE_LOADED_TICK`, since loading waits on a
-scene's first ticks. Without a rendering camera (headless) nothing is capped. The runtime debug
-panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) counts the scenes at each cap, the
-scene-frames the cap has skipped and those due early on unread global updates. See the
+`GLOBAL_UPDATE_BACKLOG_DUE` (a quarter of the capacity) delivered since its last dispatch
+(`GlobalCrdtState::sent`, which on native includes the updates a spawning scene's receiver
+replays to the whole context, against the count it recorded then) is due whatever its band. A
+scene keeps the full rate while it is one of the player's scenes, at the player's position while
+they are out of world, a portable or global scene, a named priority scene, the system scene, a
+scene under the inspector or the scene being baked into an imposter, and until it reaches
+`SCENE_LOADED_TICK`, since loading waits on a scene's first ticks. Without a rendering camera
+(headless) nothing is capped. The runtime debug panel's "Scene Tick Rates" section
+(`/scene_tick_rate_state`) counts the scenes at each cap, the scene-frames the cap has skipped
+and those due early on unread global updates. See the
 [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never

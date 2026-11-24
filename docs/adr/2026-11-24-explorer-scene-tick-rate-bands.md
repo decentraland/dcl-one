@@ -32,9 +32,11 @@ and main-thread time each frame there is spare time, whether or not the player c
   every update sent, plus, when a scene spawns, the updates since its snapshot that the native
   forwarder replays to every scene of the context (`count_replayed`). Each dispatch records the
   count on the scene (`global_updates_read`), and a capped scene with `GLOBAL_UPDATE_BACKLOG_DUE`
-  (500) or more delivered since is due whatever its band. Only that scene is released. Updates
-  sent between a spawn and the forwarder's swap are replayed uncounted; the 524 entries between
-  the threshold and the hosts' capacity cover that window. The slow tick keeps a scene's other
+  (250) or more delivered since is due whatever its band. Only that scene is released. A replay
+  holds at most what the scene has not read, so before the scene is due its host holds at most
+  about 500 of 1,024 entries; the free half takes the updates that arrive until it ticks,
+  including those sent between a spawn and the forwarder's swap, which are replayed uncounted.
+  The web relay does not replay, so only native counts replays. The slow tick keeps a scene's other
   channels, such as scene comms, moving.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
