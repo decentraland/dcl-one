@@ -374,7 +374,10 @@ LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBa
 SHARED_IMPORT_KEPT = frozenset(
     (f'apps/ui3/src/shop/discovery/components/{name}', LAZY_ANIMATED_BACKGROUND)
     for name in ('LivePromo.tsx', 'LivePromo.test.tsx')
-)
+) | {
+    ('apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts',
+     '@dcl/one-ui/components/Tooltip/Tooltip'),
+}
 
 
 # library/ui files apps/ may import by relative path: Node-only Figma review tooling, not UI, which the entry does
