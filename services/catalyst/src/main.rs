@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 use catalyst::config::Config;
-use catalyst::{builder, comms, content, db, explore, http, ops, storage};
+use catalyst::{comms, content, db, explore, http, ops, storage};
 use catalyst_config::posture;
 
 #[cfg(not(target_env = "msvc"))]
@@ -33,11 +33,6 @@ enum Command {
     Schema {
         #[command(subcommand)]
         command: SchemaCommand,
-    },
-    /// Builder operator commands (the old `catalyrst-builder catalog|seed`).
-    Builder {
-        #[command(subcommand)]
-        command: BuilderCommand,
     },
     /// Content server operator commands.
     Content {
@@ -352,37 +347,6 @@ enum SecretsCommand {
         pulse_file: Option<PathBuf>,
         #[arg(long)]
         with_abgen: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum BuilderCommand {
-    /// Walk an `@dcl/asset-packs` tree, store every asset file in the blob
-    /// store and upsert the one `builder.asset_catalog` row `/v1/assetPacks`
-    /// serves (503 with this command's hint until it runs). Given the npm
-    /// package's `catalog.json` instead, upsert the row from it and store
-    /// nothing: the files are pulled from the builder bucket on first read.
-    Catalog {
-        packs_dir: String,
-        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
-        database_url: String,
-        #[arg(
-            long,
-            env = "STORAGE_ROOT_FOLDER",
-            default_value = "/var/lib/catalyst/content"
-        )]
-        storage_root_folder: String,
-    },
-    /// Pull the named asset-pack files from a bucket into the blob store.
-    Seed {
-        base_url: String,
-        hashes: Vec<String>,
-        #[arg(
-            long,
-            env = "STORAGE_ROOT_FOLDER",
-            default_value = "/var/lib/catalyst/content"
-        )]
-        storage_root_folder: String,
     },
 }
 
@@ -788,34 +752,6 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 comms::gatekeeper::admission::functions::social_functions_sql(true)
             );
             Ok(())
-        }
-        Command::Builder {
-            command:
-                BuilderCommand::Catalog {
-                    packs_dir,
-                    database_url,
-                    storage_root_folder,
-                },
-        } => {
-            tracing_subscriber::fmt().with_target(false).init();
-            let pool = db::connect_pool(
-                &database_url,
-                &db::PoolSettings {
-                    max_connections: 2,
-                    ..Default::default()
-                },
-            )
-            .await
-            .context("connecting to DATABASE_URL")?;
-            db::bootstrap(&pool).await?;
-            let storage = storage::Storage::from_config(Path::new(&storage_root_folder))
-                .await
-                .with_context(|| format!("opening STORAGE_ROOT_FOLDER {storage_root_folder}"))?;
-            if Path::new(&packs_dir).is_file() {
-                builder::catalog::import(&pool, &packs_dir).await
-            } else {
-                builder::catalog::build(&pool, &storage, &packs_dir).await
-            }
         }
         Command::Pulse => catalyst::pulse_generation::run_from_env().await,
         Command::Explore {
@@ -1349,24 +1285,6 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 counts.absent,
                 counts.errors
             );
-            Ok(())
-        }
-        Command::Builder {
-            command:
-                BuilderCommand::Seed {
-                    base_url,
-                    hashes,
-                    storage_root_folder,
-                },
-        } => {
-            tracing_subscriber::fmt().with_target(false).init();
-            let storage = storage::Storage::from_config(Path::new(&storage_root_folder))
-                .await
-                .with_context(|| format!("opening STORAGE_ROOT_FOLDER {storage_root_folder}"))?;
-            let http = http::Outbound::new(http::HttpClientCfg::default())
-                .context("building the HTTP client")?;
-            let stored = builder::catalog::seed(&storage, &http, &base_url, &hashes).await?;
-            println!("seed: {stored} of {} files stored", hashes.len());
             Ok(())
         }
     }

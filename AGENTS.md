@@ -44,8 +44,8 @@ Code that serves none of these deliverables is removed, not kept for reference:
 2. What's On and discovery (places, events, map);
 3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
-5. `/create`: creators landing, collections and curation; the Creator Hub desktop app `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`), with no web Creator Hub ([ADR](docs/adr/2026-11-19-creator-hub-desktop-only.md));
-6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;
+5. `/create`: creators landing, collections and curation (the wearable and emote builder and the management of what is deployed; no scene editor, scene projects or scene publishing); the Creator Hub desktop app `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`), where scenes are authored, with no web Creator Hub ([ADR](docs/adr/2026-11-19-creator-hub-desktop-only.md), [ADR](docs/adr/2026-11-18-scenes-are-authored-locally.md));
+6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite, working on local files;
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
 9. one backend schema (`schemas/`);

@@ -390,7 +390,7 @@ def render(table, cfg, mime):
     locations += location('~ "^/badges/assets/.+$"', proxy("apis",
         f"client_max_body_size {BADGES_ASSET_CAP}; "
         f"limit_conn badge_asset_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
-    locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
+    locations += location("~ ^(/builder-api)?/v1/items/[^/]+/files/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
     locations += pair("/auth-api/socket.io", "auth_socket", True)

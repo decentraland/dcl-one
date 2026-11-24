@@ -652,9 +652,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('app: [sites, ui3]', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
         selected = [step for step in steps if 'needs.changes.outputs.web-units' in step]
-        self.assertEqual(len(selected), 4)
-        for app, command in [('ui3', 'ui3 test'), ('ui3', 'ui3 test:browser'),
-                             ('ui3', 'ui3/editor-scene test'), ('sites', 'sites test')]:
+        self.assertEqual(len(selected), 3)
+        for app, command in [('ui3', 'ui3 test'), ('ui3', 'ui3 test:browser'), ('sites', 'sites test')]:
             step = next(step for step in selected if f'pnpm --dir apps/{command}\n' in step)
             self.assertIn(f"if: matrix.app == '{app}' && needs.changes.outputs.web-units != 'false'", step)
         for app in ('ui3', 'sites'):
@@ -662,14 +661,12 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             self.assertIn(f"if: matrix.app == '{app}'\n", contracts)
         self.assertIn('typecheck:scripts', contracts)
         self.assertIn('gen:schemas:check', contracts)
-        # Both legs share the pnpm cache key, so only the UI3 leg saves it, after the editor scene
-        # install: a store saved from the Sites leg would lack the UI3-only packages.
         save = next(step for step in steps if step.startswith('name: Save the pnpm store from main'))
         self.assertIn("if: matrix.app == 'ui3' && github.ref == 'refs/heads/main'", save)
         installs = [i for i, step in enumerate(steps)
-                    if 'pnpm --dir apps/sites install' in step or 'pnpm --dir apps/ui3/editor-scene install' in step]
-        self.assertEqual(len(installs), 2)
-        self.assertLess(max(installs), steps.index(save))
+                    if 'pnpm --dir apps/ui3 install' in step and 'pnpm --dir apps/sites install' in step]
+        self.assertEqual(len(installs), 1)
+        self.assertLess(installs[0], steps.index(save))
 
 
 class WindowsMetricsWorkflowTest(unittest.TestCase):

@@ -57,6 +57,10 @@ describe('isTrustedSystemScene', () => {
     )
   })
 
+  it('rejects the editor-scene path, which nothing vouches for', () => {
+    expect(isTrustedSystemScene('/editor-scene/EditorScene')).toBe(false)
+  })
+
   it('rejects a bare path, which nothing vouches for', () => {
     expect(isTrustedSystemScene('./scenes/whatever')).toBe(false)
   })

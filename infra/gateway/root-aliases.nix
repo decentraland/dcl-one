@@ -498,15 +498,6 @@
     ];
   }
   {
-    key = "^~ /builder-items/";
-    rewrite = "^/builder-items/(.*)$ /builder-api/contents/$1";
-    probe = [
-      "GET"
-      "/builder-items/QmNotStoredAnywhere"
-      "/builder-api/contents/QmNotStoredAnywhere"
-    ];
-  }
-  {
     key = "= /registry";
     to = "/asset-bundle-registry$uri";
     probe = [

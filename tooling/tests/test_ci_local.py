@@ -158,12 +158,11 @@ class CiLocalTest(unittest.TestCase):
         self.assertFalse(ci.triggered('development.yml', changed, event='push'))
 
     def test_zip_extract_edits_select_the_scenes_that_install_it(self):
-        # The bridge scene and the editor scene copy it (pnpm-workspace.yaml); Creator Hub CI builds neither.
         changed = {'apps/creator-hub/packages/zip-extract/index.js'}
         for event in ('push', 'pull_request'):
             self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed, event=event))
         self.assertTrue(ci.triggered('apis-sites-images.yml', changed))
-        self.assertTrue(ci.triggered('development.yml', changed, event='push'))
+        self.assertFalse(ci.triggered('development.yml', changed, event='push'))
 
     def test_root_cargo_and_toolchain_edits_select_sites_and_its_web_producer(self):
         for path in ('.cargo/config.toml', 'rust-toolchain', 'rust-toolchain.toml'):

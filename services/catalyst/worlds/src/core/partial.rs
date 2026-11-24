@@ -1467,7 +1467,6 @@ async fn run_cleanup(
         removed: 0,
         failed: 0,
     };
-    // The catalogue and global scenes, read once per run outside the store lock to pre-filter.
     let mut fixed: Option<HashSet<String>> = None;
     let mut after: Option<(NaiveDateTime, String)> = None;
     loop {
@@ -1487,10 +1486,7 @@ async fn run_cleanup(
         after = Some((last.1, last.0.clone()));
         let fixed_refs = match &mut fixed {
             Some(fixed) => &*fixed,
-            slot @ None => {
-                let mut conn = state.pool.acquire().await?;
-                slot.insert(catalyst_storage::gc::fixed_references(&mut conn, pins(state)).await?)
-            }
+            slot @ None => slot.insert(catalyst_storage::gc::fixed_references(pins(state)).await?),
         };
         for batch in page.chunks(RECLAIM_BATCH) {
             let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
@@ -1604,15 +1600,9 @@ async fn reclaim(
     let mut keys: Vec<String> = candidates.iter().map(|(_, k)| k.clone()).collect();
     keys.sort();
     keys.dedup();
-    let mut referenced = catalyst_storage::gc::referenced_rows_among_on(&mut lock, &keys)
+    let referenced = catalyst_storage::gc::referenced_rows_among_on(&mut lock, &keys)
         .await
         .map_err(|e| failed(&e))?;
-    // Re-read under the lock: an import since the run began may name a stored file.
-    referenced.extend(
-        catalyst_storage::gc::catalogue_references(&mut lock)
-            .await
-            .map_err(|e| failed(&e))?,
-    );
     let mut unlinked: HashMap<String, bool> = HashMap::new();
     let mut broken: HashSet<String> = HashSet::new();
     for (entity_id, key) in &candidates {

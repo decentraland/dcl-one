@@ -113,7 +113,6 @@
 /apps/ui3/src/explorer/ @decentraland/web-applications
 
 # creator-ui
-/apps/ui3/editor-scene/ @decentraland/web-applications
 /apps/creator-hub/ @decentraland/web-applications
 /.github/workflows/creator-hub-*.yml @decentraland/web-applications
 /.github/actions/creator-hub-*/ @decentraland/web-applications

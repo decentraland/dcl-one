@@ -37,9 +37,7 @@ The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes
   (`apps/ui3/public/play`).
 - Off `decentraland.org`, service URLs come from the gateway's prefix table (`lib/baseDomain.ts`);
   `?baseDomain=decentraland.org` selects the Foundation deployments.
-- `lib/editorEmbed.ts`: the Creator Hub editor frames `/play/` with its trusted scene, the session
-  fragment becomes the sandbox channel suffix, the engine runs with `editor`, and no bridge is
-  reported. The shell mounts its app once per document.
+- The shell mounts its app once per document.
 - The native CEF HUD and its SDK bridge receive gateway service URLs from the desktop engine.
   CEF routes eligible snapshot images when displaying profiles and notifications (`@hud-host`'s
   `nativeProfileImage`, `react-web/src/host.ts`). Sites uses its web service configuration and the

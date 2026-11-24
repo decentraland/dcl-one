@@ -1,9 +1,4 @@
 pub(crate) mod ansi;
-mod assistant;
-mod assistant_bridge;
-mod assistant_history;
-mod assistant_provider;
-mod assistant_utterances;
 pub(crate) mod chrome;
 mod content_cache;
 mod deploy_api;
@@ -12,14 +7,10 @@ mod deploy_rights;
 mod deploy_status;
 mod edit;
 mod editor;
-mod external_debug;
-mod external_debug_state;
 mod host_slot;
 mod http;
 mod land_picker;
 mod landing;
-mod project_assets;
-mod project_bridge;
 pub(crate) mod proxy;
 pub(crate) mod scene_logs;
 mod storage_page;
@@ -116,8 +107,6 @@ pub struct StartOptions {
     /// Skip the authoritative-server isolate a scene.json
     /// `authoritativeMultiplayer: true` attaches (upstream parity).
     pub no_host: bool,
-    /// `--talk`: hands-free listening in the web explorer's Scene assistant.
-    pub talk: Option<Talk>,
     /// `--[no-]optimize-textures` and `--[no-]keep-source-textures`, stored
     /// as the project setting. With the setting on, the background import
     /// runs and the preview serves models' textures as UASTC KTX2, the same
@@ -135,32 +124,6 @@ pub struct StartOptions {
     /// `--web`: open the hosted web explorer once the banner prints.
     pub launch_web: bool,
 }
-
-/// `--talk`: the web explorer that will be opened is let through the
-/// `/api/project/*` origin gate for this run, the banner prints the URL that
-/// lands in it with the Scene assistant open, and `open_browser` opens that
-/// URL once (`--no-browser` turns it off).
-#[derive(Clone, Debug, Default)]
-pub struct Talk {
-    /// `--player`: the web explorer to use, over `DCL_SCENE_CLI_WEB_EXPLORER`.
-    pub player: Option<String>,
-    pub open_browser: bool,
-}
-
-/// The web explorer `--talk` opens when neither `--player` nor
-/// `DCL_SCENE_CLI_WEB_EXPLORER` names one and the binary carries no player of
-/// its own: the build's site player (`play_embed::site_player`), since the
-/// HUD that carries the Scene assistant lives there, not on the join
-/// block's default player. Empty when the build names no site, which
-/// `--talk` refuses with the flag and variable to set.
-fn talk_web_explorer() -> String {
-    play_embed::site_player().unwrap_or_default()
-}
-
-/// The origin `--talk` lets through the `/api/project/*` gate, set once per
-/// run before the server takes requests. It reaches that gate only: the
-/// data-layer upgrade keeps to `DCL_SCENE_CLI_ALLOWED_ORIGINS`.
-static TALK_ORIGIN: OnceLock<String> = OnceLock::new();
 
 /// `--public-url`, parsed: what a request for that host is answered as when
 /// the proxy in front says nothing about the scheme or the path it serves.
@@ -242,24 +205,20 @@ fn public_url_of(headers: &HeaderMap) -> Option<&'static PublicUrl> {
 }
 
 /// The site the embedded player's HUD reads its services from
-/// (`play_embed::PlayConfig`): the origin of the player `--player` or
+/// (`play_embed::PlayConfig`): the origin of the player
 /// `DCL_SCENE_CLI_WEB_EXPLORER` names when that is not a loopback address —
 /// a self-hoster pointing at their own site gets its places and events —
 /// else the build's site, if any. The embedded player itself is on
 /// 127.0.0.1 and names no site.
-fn play_site(flag: Option<&str>, env: Option<&str>) -> String {
-    [flag, env]
-        .into_iter()
-        .flatten()
-        .filter_map(origin_of_url)
-        .find(|origin| !is_local_origin(origin))
+fn play_site(env: Option<&str>) -> String {
+    env.and_then(origin_of_url)
+        .filter(|origin| !is_local_origin(origin))
         .or_else(play_embed::default_site)
         .unwrap_or_default()
 }
 
 /// Whether an origin is this machine: a loopback or unspecified address
-/// (127.0.0.2 and 0.0.0.0 included), `localhost` or a `.localhost` name —
-/// the same reading of a host as the `/api/project` gate's.
+/// (127.0.0.2 and 0.0.0.0 included), `localhost` or a `.localhost` name.
 fn is_local_origin(origin: &str) -> bool {
     let Ok(url) = url::Url::parse(origin) else {
         return false;
@@ -272,70 +231,21 @@ fn is_local_origin(origin: &str) -> bool {
     }
 }
 
-/// The `--talk` player: the flag, else the player this binary embeds
-/// (`play_embed::local_player`, same-origin with the project API and a
-/// secure context on 127.0.0.1), else the environment, else
-/// [`talk_web_explorer`]; blank values count as absent.
-fn talk_player(flag: Option<&str>, embedded: Option<&str>, env: Option<&str>) -> String {
-    [flag, embedded, env]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .map_or_else(talk_web_explorer, str::to_string)
-        .trim_end_matches('/')
-        .to_string()
-}
-
-/// The web join URL with `assistant=1`, which opens the Scene assistant in
-/// the HUD; ahead of any fragment the player URL carried. An `assistant`
-/// pair the player URL brought along is dropped rather than kept ahead of
-/// ours, since the HUD reads the first one. None when the player is not an
-/// http(s) URL.
-fn talk_url(player: &str, realm: &str, position: (i64, i64)) -> Option<String> {
-    let joined = joinblock::web_join_url(player, realm, position);
-    if joined.is_empty() {
-        return None;
-    }
-    let (base, fragment) = match joined.split_once('#') {
-        Some((base, fragment)) => (base.to_string(), Some(fragment.to_string())),
-        None => (joined, None),
-    };
-    let (path, query) = base.split_once('?').unwrap_or((&base, ""));
-    let kept: Vec<&str> = query
-        .split('&')
-        .filter(|pair| !pair.is_empty() && pair.split('=').next() != Some("assistant"))
-        .collect();
-    let mut url = format!("{path}?{}&assistant=1", kept.join("&"));
-    if let Some(fragment) = fragment {
-        url.push('#');
-        url.push_str(&fragment);
-    }
-    Some(url)
-}
-
-/// The origin an http(s) URL's requests carry, in the exact form
-/// `project_bridge::allowed` compares (`scheme://host[:port]`, lowercase, no
-/// default port).
+/// The origin an http(s) URL's requests carry (`scheme://host[:port]`,
+/// lowercase, no default port).
 fn origin_of_url(url: &str) -> Option<String> {
     let url = url::Url::parse(url.trim()).ok()?;
     matches!(url.scheme(), "http" | "https").then(|| url.origin().ascii_serialization())
 }
 
-/// The editor origins the `/api/project/*` gate accepts: the comma list in
-/// `DCL_SCENE_CLI_ALLOWED_ORIGINS` plus the `--talk` origin, each once.
-fn editor_origins(env: Option<&str>, talk: Option<&str>) -> Vec<String> {
-    let mut origins: Vec<String> = env
-        .unwrap_or_default()
+/// The origins a comma list such as `DCL_SCENE_CLI_ALLOWED_ORIGINS` names.
+fn origin_list(env: Option<&str>) -> Vec<String> {
+    env.unwrap_or_default()
         .split(',')
-        .chain(talk)
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    origins.retain(|o| seen.insert(o.clone()));
-    origins
+        .collect()
 }
 
 /// Extra source lines quoted either side of the line a scene error points at.
@@ -360,9 +270,6 @@ pub(crate) struct AppState {
     /// Readers take a snapshot; `set_scene_json` / `refresh_scene_json` are
     /// the only writers (the landing page's editors rewrite scene.json).
     projects: RwLock<Vec<Project>>,
-    project_watch: bool,
-    assistant: assistant::Assistant,
-    external_debug: external_debug_state::DebugState,
     machine: String,
     reload_tx: broadcast::Sender<ReloadFrame>,
     offline_comms: bool,
@@ -414,13 +321,9 @@ pub(crate) struct AppState {
     /// `Authorization: Bearer` on top of the loopback and origin gates, so
     /// an origin on the allow-list is not enough to write. A page gets it
     /// from the landing page's `<meta>` (served to top-level navigations
-    /// on a loopback Host only, see [`page_token`]) or from the `#token=`
-    /// fragment of a URL `start` printed; [`bearer_ok`] checks it.
+    /// on a loopback Host only, see [`page_token`]); a program gets it from
+    /// the `ready` event of `start --json`. [`bearer_ok`] checks it.
     token: String,
-    /// `--talk`'s player URL without the token; `/talk` redirects a
-    /// top-level navigation to it with the `#token=` fragment, so the
-    /// browser opener's argv never carries the token.
-    talk_url: OnceLock<String>,
 }
 
 impl AppState {
@@ -428,9 +331,6 @@ impl AppState {
     fn new(projects: Vec<Project>, port: u16, reload_tx: broadcast::Sender<ReloadFrame>) -> Self {
         AppState {
             projects: RwLock::new(projects),
-            project_watch: false,
-            assistant: assistant::Assistant::default(),
-            external_debug: external_debug_state::DebugState::default(),
             machine: machine_id(),
             reload_tx,
             offline_comms: false,
@@ -454,7 +354,6 @@ impl AppState {
             recent_requests: Mutex::new(VecDeque::new()),
             deploy: deploy_page::DeployState::default(),
             token: mint_token(),
-            talk_url: OnceLock::new(),
         }
     }
 
@@ -627,7 +526,7 @@ fn same_origin(origin: &str, proto: &str, host: &str) -> bool {
         && origin.port_or_known_default() == local.port_or_known_default()
 }
 
-/// 32 random bytes, base64url: a bearer that rides a URL fragment unencoded.
+/// 32 random bytes, base64url: a bearer that rides a URL query unencoded.
 fn mint_token() -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>())
@@ -665,7 +564,7 @@ fn constant_time_eq(given: &str, expected: &str) -> bool {
             == 0
 }
 
-pub(super) const TOKEN_HINT: &str = "this write needs the preview's capability token: open the preview from a link dcl-scene-cli start printed (it carries #token=) or send Authorization: Bearer <token>";
+pub(super) const TOKEN_HINT: &str = "this write needs the preview's capability token: open the launch page at http://127.0.0.1:<port> on the machine running dcl-scene-cli start, or send Authorization: Bearer <token> with the token of the ready event of start --json";
 
 fn unauthorized() -> Response {
     (
@@ -738,31 +637,6 @@ async fn problems() -> Response {
         .into_response()
 }
 
-/// The URL `--talk` hands the browser opener: `/talk` on this preview,
-/// which redirects a top-level navigation to the player with the token in
-/// the fragment. The opener's argv — readable by every local user in
-/// `ps` for as long as xdg-open and its helpers live — never carries it.
-fn talk_opener_url(port: u16) -> String {
-    format!("http://127.0.0.1:{port}/talk")
-}
-
-/// `GET /talk`: the `--talk` player URL, with `#token=` for a request
-/// [`page_token`] would serve the token to, bare otherwise.
-async fn talk_redirect(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(url) = st.talk_url.get() else {
-        return (
-            axum::http::StatusCode::NOT_FOUND,
-            "this preview was not started with --talk\n",
-        )
-            .into_response();
-    };
-    let target = match page_token(&st, &headers) {
-        Some(token) => with_token_fragment(url, token),
-        None => url.clone(),
-    };
-    axum::response::Redirect::to(&target).into_response()
-}
-
 /// `localhost`, `127.0.0.0/8` or `[::1]`, with or without a port.
 fn loopback_host(host: &str) -> bool {
     let Ok(url) = url::Url::parse(&format!("http://{host}")) else {
@@ -773,18 +647,6 @@ fn loopback_host(host: &str) -> bool {
         Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
         None => false,
-    }
-}
-
-/// `#token=<token>` on a URL, after any fragment it already has: the HUD
-/// and the Creator Hub read the fragment as query pairs, so `mcptoken` and
-/// this coexist. A fragment, never a query: it stays out of request lines,
-/// logs and referrers.
-fn with_token_fragment(url: &str, token: &str) -> String {
-    match url.split_once('#') {
-        Some((_, fragment)) if !fragment.is_empty() => format!("{url}&token={token}"),
-        Some((base, _)) => format!("{base}#token={token}"),
-        None => format!("{url}#token={token}"),
     }
 }
 
@@ -842,13 +704,8 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     let (port, listener) =
         bind_preview_port("start", Ipv4Addr::UNSPECIFIED.into(), opts.port).await?;
 
-    // The embedded player's page names the site its HUD reads services from;
-    // set once, before the first /play/ request splices it in.
     if let Err(refused) = play_embed::configure(play_embed::PlayConfig {
-        site: play_site(
-            opts.talk.as_ref().and_then(|t| t.player.as_deref()),
-            std::env::var("DCL_SCENE_CLI_WEB_EXPLORER").ok().as_deref(),
-        ),
+        site: play_site(std::env::var("DCL_SCENE_CLI_WEB_EXPLORER").ok().as_deref()),
     }) {
         eprintln!(
             "play: the embedded player was configured before this start; keeping its site, not {}",
@@ -856,33 +713,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         );
     }
 
-    // --talk: the explorer's origin passes the /api/project gate for this run,
-    // registered before the server takes its first request.
-    let talk_link = match &opts.talk {
-        Some(talk) => {
-            let player = talk_player(
-                talk.player.as_deref(),
-                play_embed::local_player(port).as_deref(),
-                std::env::var("DCL_SCENE_CLI_WEB_EXPLORER").ok().as_deref(),
-            );
-            let realm = format!("http://127.0.0.1:{port}");
-            let position = opts
-                .position
-                .unwrap_or_else(|| joinblock::base_coords(&first.scene_json));
-            let url = talk_url(&player, &realm, position)
-                .context("--talk needs a complete http:// or https:// web explorer URL (--player or DCL_SCENE_CLI_WEB_EXPLORER)")?;
-            let origin = origin_of_url(&player).expect("a URL that joined is an http(s) URL");
-            let _ = TALK_ORIGIN.set(origin);
-            assistant_provider::note_at_start();
-            Some((url, talk.open_browser))
-        }
-        None => None,
-    };
-
-    // Voice by default: a livekit-server of this preview's own, unless comms
-    // are off, on a server elsewhere, or the preview is reached through a
-    // tunnel, which forwards the preview port alone and never media ports.
-    // A scene with a server stays on the ws-room too: see `host_slot`.
     let hosts_scene = !opts.no_host && crate::entrypoint::authoritative_multiplayer(&first);
     let mut embed_livekit = false;
     if opts.embedded_livekit && opts.livekit.is_none() && !opts.offline_comms {
@@ -922,7 +752,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     };
 
     let mut state = AppState::new(workspace.projects.clone(), port, broadcast::channel(32).0);
-    state.project_watch = !opts.no_watch;
     state.offline_comms = opts.offline_comms;
     if let Some(named) = opts.livekit.clone() {
         let _ = state.livekit.set(named);
@@ -939,10 +768,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     state.explorer_params = opts.explorer_params.clone();
     state.link_defaults = link_defaults(opts.multi_instance, opts.skip_auth_screen);
     let state = Arc::new(state);
-    let talk_link = talk_link.map(|(url, open)| {
-        let _ = state.talk_url.set(url.clone());
-        (with_token_fragment(&url, &state.token), open)
-    });
     match scene_log_port(opts.mcp, opts.mcp_port, port) {
         Some(mcp_port) => {
             scene_logs::spawn(mcp_port, workspace.projects.clone(), opts.source_context)
@@ -953,11 +778,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
 
     let comms_state = Arc::new(crate::comms::CommsState::default());
 
-    // The built-in livekit-server starts beside the build and the preview
-    // does not wait for it: pages, content and reloads are served at once,
-    // and only what names the comms transport holds its answer until the
-    // server has answered or been given up on (`AppState::voice_settled`).
-    // The task's handle keeps the server's process for the session.
     let voice_note = |st: &AppState, server: String| {
         let Some(lk) = st.voice() else { return };
         let rooms = st
@@ -992,8 +812,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         })
     });
 
-    // Opened beside the build, which leaves the database alone: creating it
-    // and its schema costs as much as bundling a small scene.
     let storage_target = {
         let root = first.root.clone();
         tokio::task::spawn_blocking(move || crate::storage::open(&root).and_then(|db| db.target()))
@@ -1015,7 +833,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         voice_note(&state, lk.describe_url());
     }
 
-    // where Storage/EnvVar reads and writes go, before the host that uses them
     match storage_target
         .await
         .map_err(anyhow::Error::from)
@@ -1110,18 +927,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
             ux::note_arrow(line);
         }
         let mut launches = Vec::new();
-        if let Some((url, open_browser)) = talk_link {
-            // Under --json this text is on stderr, which a parent program
-            // can copy to a log: the opener URL has no token in it.
-            let shown = match ux::events() {
-                true => talk_opener_url(port),
-                false => url,
-            };
-            ux::note_arrow(format!("Talk: {shown}"));
-            if open_browser {
-                launches.push(open_client("talk", "the Talk page", &talk_opener_url(port)));
-            }
-        }
         if launch_desktop {
             let link = block.local_desktop_link();
             ux::note_arrow(format!("Desktop client: {link}"));
@@ -1141,7 +946,7 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         ux::event(&ready_event(
             &block,
             &banner_state,
-            [started("talk"), started("desktop"), started("web")],
+            [started("desktop"), started("web")],
         ));
         report_launches(launches);
         if let Some(trunk_url) = trunk_url {
@@ -1257,7 +1062,7 @@ fn report_launches(launches: Vec<Launch>) {
     }
 }
 
-fn ready_event(block: &JoinBlock, st: &AppState, opened: [(bool, &'static str); 3]) -> ReadyEvent {
+fn ready_event(block: &JoinBlock, st: &AppState, opened: [(bool, &'static str); 2]) -> ReadyEvent {
     let port = block.port;
     let url = format!("http://127.0.0.1:{port}");
     ReadyEvent {
@@ -1515,12 +1320,10 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
             get(world_content).head(world_content),
         )
         .route("/mobile-preview", get(mobile_preview))
-        .route("/scene-inspector", get(external_debug::producer))
         .route("/data-layer", get(data_layer_ws))
         .route("/inspector", get(inspector_redirect))
         .route("/inspector/", get(inspector_index))
         .route("/inspector/{*path}", get(inspector_asset))
-        .route("/talk", get(talk_redirect))
         .route(PROBLEMS_PATH, get(problems))
         .with_state(state.clone())
         .merge(crate::comms::routes(comms_state))
@@ -1556,7 +1359,6 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
                 .merge(storage_page::routes())
                 .with_state(state.clone()),
         )
-        .merge(project_bridge::routes(state.clone()))
         .merge(play_routes(state.clone()))
         .layer(middleware::from_fn_with_state(state, access_log))
         .layer(compression_layer())
@@ -2182,34 +1984,17 @@ fn authority_of(origin: &str) -> Option<String> {
     (!authority.is_empty()).then(|| authority.to_ascii_lowercase())
 }
 
-/// What the `/api/project/*` gate accepts: `DCL_SCENE_CLI_ALLOWED_ORIGINS`
-/// plus the `--talk` origin.
-fn allowed_editor_origins() -> Vec<String> {
-    editor_origins(
-        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS")
-            .ok()
-            .as_deref(),
-        TALK_ORIGIN.get().map(String::as_str),
-    )
-}
-
-/// What the data-layer upgrade accepts besides same-origin: only
-/// `DCL_SCENE_CLI_ALLOWED_ORIGINS`. `--talk` opens the Scene assistant's
-/// `/api/project/*` and nothing wider.
+/// What the data-layer upgrade accepts besides same-origin:
+/// `DCL_SCENE_CLI_ALLOWED_ORIGINS`.
 fn data_layer_origins() -> Vec<String> {
-    editor_origins(
+    origin_list(
         std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS")
             .ok()
             .as_deref(),
-        None,
     )
 }
 
 fn data_layer_origin_allowed(headers: &HeaderMap) -> bool {
-    data_layer_origin_allowed_by(headers, &data_layer_origins())
-}
-
-fn data_layer_origin_allowed_by(headers: &HeaderMap, allowed: &[String]) -> bool {
     let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
         return true;
     };
@@ -2231,7 +2016,7 @@ fn data_layer_origin_allowed_by(headers: &HeaderMap, allowed: &[String]) -> bool
     if request_authority.as_deref() == Some(origin_authority.as_str()) {
         return true;
     }
-    allowed
+    data_layer_origins()
         .iter()
         .any(|a| a.eq_ignore_ascii_case(&origin_authority) || a.eq_ignore_ascii_case(origin))
 }

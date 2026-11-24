@@ -156,8 +156,7 @@ export interface HudHost {
   /** Whether the engine ended its own run (react-web's benchmark autopilot): the bridge scene went
    *  with it, so its silence is no fault. */
   engineExited(): boolean
-  /** Set the bridge session id the engine forwards to the scene sandbox, before it boots (/play's
-   *  editor embed uses the editor's); a no-op where the host has none. */
+  /** Set the bridge session id the engine forwards to the scene sandbox, before it boots; a no-op where the host has none. */
   seedBridgeSession(): void
   /** The web engine's launch for this entry url. */
   engineLaunch(params: URLSearchParams): EngineLaunch
