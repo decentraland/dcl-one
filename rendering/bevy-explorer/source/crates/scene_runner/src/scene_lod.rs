@@ -822,8 +822,9 @@ fn in_draw_band(level: LodLevel, partition: &Partition, near_waiting: bool, ring
 /// The visuals of `level` to start and to stop this frame, keeping at most `max` started. Those
 /// whose models are known and that are in the level's band (`in_draw_band`) start, nearest first
 /// (by the download key: ring, then distance), while there is a free place. With none free, one
-/// started behind the camera makes way for each in view, the farthest first; one in view never
-/// does. Once the setting is lowered, the farthest over it stop, those behind the camera first.
+/// started behind the camera makes way for each in view, then one in view in a farther ring than
+/// the newcomer, the farthest first; one in view never makes way for one in its own or a farther
+/// ring. Once the setting is lowered, the farthest over it stop, those behind the camera first.
 /// Visuals with no partition yet are kept. At most `max_starts` start, and those of the scenes in
 /// `blocked` never do.
 fn visual_changes(
@@ -886,14 +887,18 @@ fn visual_changes(
         count -= 1;
     }
     let mut start = Vec::new();
-    for (_, entity) in candidates.into_iter().take(max_starts) {
+    for (candidate_key, entity) in candidates.into_iter().take(max_starts) {
         if count < max {
             start.push(entity);
             count += 1;
             continue;
         }
-        // full: one behind the camera makes way, never one in view
-        match evictable.next_if(|(key, _)| key.is_some_and(|key| key.is_behind)) {
+        // full: one behind the camera makes way, then one in view in a strictly farther ring
+        match evictable.next_if(|(key, _)| {
+            key.is_some_and(|key| {
+                key.is_behind || key.parcel_distance > candidate_key.parcel_distance
+            })
+        }) {
             Some((_, behind)) => {
                 stop.push(behind);
                 start.push(entity);
@@ -1826,7 +1831,7 @@ mod tests {
     }
 
     /// With every place taken, one started behind the camera makes way for one in view, the
-    /// farthest first; one in view never does.
+    /// farthest first; one in view makes way only for a nearer ring.
     #[test]
     fn one_behind_makes_way_for_one_in_view() {
         let mut world = World::new();
@@ -1845,6 +1850,66 @@ mod tests {
             near_changes(&rows, 3),
             (vec![rows[4].0, rows[3].0], vec![rows[2].0, rows[1].0])
         );
+    }
+
+    /// [`near_changes`] for far LODs: the same rows, each made a far LOD.
+    fn far_changes(
+        rows: &mut [(Entity, SceneLod, Partition)],
+        max: usize,
+    ) -> (Vec<Entity>, Vec<Entity>) {
+        for (_, lod, _) in rows.iter_mut() {
+            lod.level = LodLevel::Far;
+        }
+        let rings = Rings::from_config(&AppConfig::default());
+        visual_changes(
+            &as_rows(rows),
+            LodLevel::Far,
+            max,
+            &HashSet::new(),
+            &rings,
+            usize::MAX,
+            &HashSet::new(),
+        )
+    }
+
+    /// With every place taken by far LODs in view (those of a place the player left), one in a
+    /// nearer ring takes the place of the farthest started one, the nearest first.
+    #[test]
+    fn a_nearer_one_in_view_takes_the_place_of_a_farther_one() {
+        let mut world = World::new();
+        let mut rows = rows(
+            &mut world,
+            &[
+                (15, false, true),
+                (16, false, true),
+                (15, false, true),
+                (6, false, false),
+                (5, false, false),
+            ],
+        );
+        let changes = far_changes(&mut rows, 3);
+        assert_eq!(
+            changes,
+            (vec![rows[4].0, rows[3].0], vec![rows[1].0, rows[0].0])
+        );
+    }
+
+    /// In view, one in the same ring as a started one, or a farther one, never takes its place,
+    /// so turning the camera swaps nothing.
+    #[test]
+    fn in_view_stand_ins_in_the_same_ring_never_swap() {
+        let mut world = World::new();
+        let mut rows = rows(
+            &mut world,
+            &[
+                (8, false, true),
+                (8, false, true),
+                (8, false, false),
+                (8, false, false),
+                (9, false, false),
+            ],
+        );
+        assert_eq!(far_changes(&mut rows, 2), (vec![], vec![]));
     }
 
     /// Lowering "Max Near LODs" stops the farthest over it, those behind the camera first.
