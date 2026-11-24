@@ -103,7 +103,10 @@ The page parameter `?sceneLoop=` selects the web scheduling for diagnostics: `bo
 default, applies both of the above; `relay` keeps only the relay wake; `deadline` keeps only the
 frame-start deadline. All three also end the loop's wait for replies when a reply arrives and
 keep its timed waits clear of the deadline by their lateness (below). `legacy` uses none of
-these.
+these. The runtime debug panel's "Scene Loop" section (web) switches the mode without a reload
+(`/scene_loop_mode`) and shows where the last loop's deadline came from, its budget, the tail
+reserve, the waits' lateness and the scenes whose relays wake (`/scene_loop_state`,
+`loop_pacing/web/debug_panel.rs`).
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 

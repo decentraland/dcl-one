@@ -20,6 +20,8 @@ use bevy::{
 
 use super::loop_bounds;
 
+mod debug_panel;
+
 /// Frames the tail estimate covers. It is used once they are all measured, so its 90th
 /// percentile always leaves out the 3 largest: with fewer frames the nearest-rank 90th percentile
 /// is the maximum, and a few heavy frames at the start would hold the loop on its floor.
@@ -141,6 +143,14 @@ impl Plugin for LoopPacingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LoopPacing>();
         app.add_systems(First, web_frame_start);
+        // as the scene runner's other sections: only an app that renders has the console
+        if app
+            .world()
+            .get_resource::<common::structs::NoRenderApp>()
+            .is_none()
+        {
+            debug_panel::add_section(app);
+        }
     }
 
     // the deadline mode measures the frame's tail with the pipelined-rendering diagnostics,
@@ -150,12 +160,14 @@ impl Plugin for LoopPacingPlugin {
     }
 }
 
-/// The web scene loop across frames: the frame's start, the loop's last end, the frame's tail and
-/// the lateness of the loop's timed waits.
+/// The web scene loop across frames: the frame's start, the loop's last end and budget, the
+/// frame's tail and the lateness of the loop's timed waits.
 #[derive(bevy::prelude::Resource, Default)]
 pub struct LoopPacing {
     frame_start: Option<Instant>,
     loop_end: Option<Instant>,
+    // the last loop's, from its start to its deadline, for the debug panel
+    budget: Option<Duration>,
     tail: TailEstimate,
     wait_lateness: WaitLateness,
 }
@@ -210,6 +222,7 @@ impl LoopPacing {
             grid
         };
         let waits_for_replies = mode.loop_waits_for_replies();
+        self.budget = Some(deadline.saturating_duration_since(loop_start));
         PacedLoop {
             deadline,
             last_wait_end: if waits_for_replies {

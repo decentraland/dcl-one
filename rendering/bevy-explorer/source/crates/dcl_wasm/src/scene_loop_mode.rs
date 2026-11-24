@@ -6,9 +6,10 @@
 //! Only the relays of the scenes the engine wakes (each scene's `dcl_types::SceneWake`: the scene
 //! the player is in, portable experiences and the named priority scenes) wait for its send; any
 //! other scene's relay keeps the poll.
-//! Set from the page (`?sceneLoop=`); the relays read it from engine memory each step, so a
-//! change reaches every scene worker without a message. Outside the wasm-only module so the host
-//! tests cover the names; nothing reads it natively.
+//! Set from the page (`?sceneLoop=`) or, without a reload, the debug panel (scene_runner
+//! `/scene_loop_mode`); the engine's scene loop reads it each frame and the relays from engine
+//! memory each step, so a change reaches every scene worker without a message. Outside the
+//! wasm-only module so the host tests cover the names; nothing reads it natively.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SceneLoopMode {
@@ -27,6 +28,16 @@ impl SceneLoopMode {
             "deadline" => Some(Self::Deadline),
             "both" => Some(Self::Both),
             _ => None,
+        }
+    }
+
+    /// The page parameter's name for the mode ([`Self::parse`]).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::Relay => "relay",
+            Self::Deadline => "deadline",
+            Self::Both => "both",
         }
     }
 
@@ -96,6 +107,7 @@ mod tests {
             ("both", SceneLoopMode::Both),
         ] {
             assert_eq!(SceneLoopMode::parse(name), Some(mode));
+            assert_eq!(mode.name(), name);
             assert_eq!(SceneLoopMode::from_u8(mode.to_u8()), mode);
         }
         assert_eq!(SceneLoopMode::parse("frame"), None);
