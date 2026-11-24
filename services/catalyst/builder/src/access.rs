@@ -541,6 +541,20 @@ type StoredCollection = (
     Option<bool>,
 );
 
+/// Whether `signer` may change or remove the virtual third party `id`
+/// listing `listed`: a wallet it lists that also manages the provider
+/// ([`provider_managers`] over `registry`), so a change never widens an
+/// unapproved record's managers for a wallet the registry leaves out.
+pub(crate) fn changes_virtual_third_party(
+    registry: &[Provider],
+    id: &str,
+    listed: &[String],
+    signer: &str,
+) -> bool {
+    has_manager(listed, signer)
+        && has_manager(&provider_managers(Some(registry), id, Some(listed)), signer)
+}
+
 /// The wallets that manage the provider `id`, as builder-server's
 /// `ThirdPartyService.isManager` orders its sources: the registry's managers
 /// once it approved the provider; before approval, its managers that the
