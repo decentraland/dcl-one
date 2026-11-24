@@ -1,8 +1,8 @@
 import { useContext } from "react";
 
 import { sitesFooterCopy, PressKit, SitesLocaleContext, type SitesLocaleHandle } from "@dcl/one-ui";
-import SitesChrome from "@ui/web/frames/SitesChrome";
 
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { pressCopy } from "@/features/press/locale";
 
 import { publicBase, SOCIAL_LOGO } from "../lib/social-meta";
@@ -27,7 +27,7 @@ export default function Press() {
   const copy = pressCopy[locale];
 
   return (
-    <SitesChrome active="none" footerCopy={sitesFooterCopy[locale]}>
+    <SitesLayout active="none" footerCopy={sitesFooterCopy[locale]}>
       <title>{locale === "en" ? TITLE : copy.title}</title>
       <PressKit
         title={copy.title}
@@ -36,6 +36,6 @@ export default function Press() {
         downloadLabel={copy.download}
         downloadHref={PRESS_KIT_URL}
       />
-    </SitesChrome>
+    </SitesLayout>
   );
 }
