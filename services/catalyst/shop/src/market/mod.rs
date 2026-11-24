@@ -777,6 +777,19 @@ impl MarketplaceState {
         self.chain_rpc_url(net)
     }
 
+    /// Sepolia rentals use an explicit chain endpoint, or the node's Ethereum
+    /// RPC only when it is configured for Sepolia.
+    pub(crate) fn sepolia_rentals_rpc_url(&self) -> Option<String> {
+        if self.settings.eth_network.eq_ignore_ascii_case("sepolia") {
+            return self.rpc_url_for(chain_walk::ChainNet::Ethereum, 11_155_111);
+        }
+        self.settings
+            .market
+            .trade_rpc_urls
+            .for_chain(11_155_111)
+            .map(str::to_string)
+    }
+
     /// The endpoint the trade-events walk of `net` reads: the
     /// `TRADE_RPC_URLS` entry of the chain it indexes
     /// (`MARKETPLACE_INDEX_CHAIN_ID_*`), and for Ethereum `ETH_RPC_URL`.

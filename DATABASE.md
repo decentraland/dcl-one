@@ -1832,6 +1832,39 @@ so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
 
+## Wallet rental reads
+
+`GET /v1/rentals/{address}` reads `shop.chain_cursor` and
+`shop.rental_event` in one statement snapshot. A single lookup returns
+both wallet roles. The two partial participant indexes find the
+wallet's historical assets in the requested venue, and the existing asset
+index finds each candidate's latest rent or claim and the current period's
+rent events. Each result contains one row per asset and role. There is no new
+projection table or response cache. Production lookup rates and latency
+have not been measured.
+
+The missing-objects step of `schema migrate` builds
+`rental_event_lessor_idx` and `rental_event_tenant_idx` non-concurrently.
+It holds a SHARE lock on `shop.rental_event` until the migration commits,
+so chain index writes wait. To keep writes moving during an index build on
+a large history, prebuild both indexes with `CREATE INDEX CONCURRENTLY`
+using the definitions in `schemas/30_shop.sql`.
+
+The read stops at the published block. A stale or unpublished cursor
+returns 503. The latest rent or claim is evaluated before checking the
+current participants. A rent stays in the lessor's list until claim and
+in the tenant's list until expiry. Extensions add to the end of the original
+period, as the Rentals contract does. The route returns the operator on the
+latest rent event. Mainnet and Sepolia use separate
+`(network, block_number, log_index)` event keys and separate cursors under the
+Ethereum supervisor. Only the mainnet index updates listing statuses and
+supplies rental notifications.
+
+The index worker uses the `TRADE_RPC_URLS` entry for chain 11155111 or
+`ETH_RPC_URL` with `ETH_NETWORK=sepolia`. Check the selected chain's
+`ready` field at `GET /signatures-api/v1/rentals-index` before routing
+clients to the wallet rental endpoint.
+
 ## Rental listing status workload
 
 `signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
@@ -2444,7 +2477,7 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
@@ -2462,7 +2495,7 @@ The sampler uses the index worker's existing pool and writes no rows.
 `chain-walk-matic`, in the process that runs the indexes. It walks each
 projection that process enables under the projection's own lease,
 `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
-`rentals-index-ethereum`), so
+`rentals-index-ethereum`, `rentals-index-sepolia-ethereum`), so
 processes with different projections enabled share a network. Each
 projection keeps its own cadence and backoff, though one that reached the
 target may join a due companion's shared walk ahead of its own turn, so
