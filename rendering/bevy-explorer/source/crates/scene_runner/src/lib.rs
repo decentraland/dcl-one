@@ -281,11 +281,6 @@ pub struct SceneLoopTiming {
 #[derive(Resource)]
 pub struct SceneLoopSchedule {
     schedule: Schedule,
-    /// Absolute wall-clock deadline for the end of the next frame. Accumulating this
-    /// by the frame target (rather than restarting the clock from `Instant::now()` each
-    /// frame) means a frame that overruns is repaid by a correspondingly shorter sleep,
-    /// so the long-run rate matches the target instead of losing the overshoot forever.
-    next_frame_end: Instant,
 }
 
 /// The time from the start of one scene loop pass to the start of the next while the loop
@@ -471,7 +466,6 @@ impl Plugin for SceneRunnerPlugin {
 
         app.insert_resource(SceneLoopSchedule {
             schedule: scene_schedule,
-            next_frame_end: Instant::now(),
         });
 
         app.add_plugins(SceneInputPlugin);
@@ -530,24 +524,11 @@ fn run_scene_loop(world: &mut World) {
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
-    let frame_target_duration = if fps == 0.0 {
-        Duration::from_secs(100)
-    } else {
-        Duration::from_nanos((1e9 / fps) as u64)
-    };
+    let frame_target = (fps != 0.0).then(|| Duration::from_nanos((1e9 / fps) as u64));
     let start_loop_time = Instant::now();
-    let frame_target = (fps != 0.0).then_some(frame_target_duration);
-    let (grid_end_time, next_frame_end) = loop_pacing::grid_deadline(
-        loop_schedule.next_frame_end,
-        start_loop_time,
-        frame_target_duration,
-    );
-    loop_schedule.next_frame_end = next_frame_end;
-    let mut paced = world.resource_mut::<loop_pacing::LoopPacing>().begin(
-        grid_end_time,
-        start_loop_time,
-        frame_target,
-    );
+    let mut paced = world
+        .resource_mut::<loop_pacing::LoopPacing>()
+        .begin(start_loop_time, frame_target);
     let target_end_time = paced.deadline;
 
     let mut updates = world.resource_mut::<SceneUpdates>();

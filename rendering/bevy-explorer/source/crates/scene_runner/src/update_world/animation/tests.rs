@@ -49,7 +49,6 @@ fn scene_fixture() -> (App, Entity, SceneEntityId, Entity) {
     .init_resource::<TrackComponents>()
     .insert_resource(SceneLoopSchedule {
         schedule: Schedule::new(SceneLoopLabel),
-        next_frame_end: web_time::Instant::now(),
     })
     .add_plugins(AnimatorPlugin)
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(

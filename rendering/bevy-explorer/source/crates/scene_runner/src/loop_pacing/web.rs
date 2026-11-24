@@ -193,10 +193,13 @@ pub struct LastLoop {
     pub deadline_from: DeadlineFrom,
 }
 
-/// The web scene loop across frames: the frame's start, the loop's last end and budget, the
-/// frame's tail and the lateness of the loop's timed waits.
+/// The web scene loop across frames: the grid of frame targets, the frame's start, the loop's
+/// last end and budget, the frame's tail and the lateness of the loop's timed waits.
 #[derive(bevy::prelude::Resource, Default)]
 pub struct LoopPacing {
+    // read only by `begin`
+    #[cfg(target_arch = "wasm32")]
+    grid: super::FrameGrid,
     frame_start: Option<Instant>,
     loop_end: Option<Instant>,
     // the last loop's, for the debug panel
@@ -277,18 +280,14 @@ impl LoopPacing {
         self.wait_lateness.wait_end(deadline, loop_start)
     }
 
-    /// Starts the frame's scene loop under the page's scene loop mode
-    /// (`dcl_wasm::scene_loop_mode`), read once here: its deadline, from the frame's start in the
-    /// deadline mode, and, when a reply ends its waits, the last moment a timed wait may end
-    /// ([`WaitLateness::wait_end`]). `frame` is the frame target, None with an uncapped frame
-    /// rate.
+    /// Starts the frame's scene loop, which starts at `loop_start`, under the page's scene loop
+    /// mode (`dcl_wasm::scene_loop_mode`), read once here: its deadline, from the frame's start in
+    /// the deadline mode, else the grid's ([`super::FrameGrid::advance`]), and, when a reply ends
+    /// its waits, the last moment a timed wait may end ([`WaitLateness::wait_end`]). `frame` is
+    /// the frame target, None with an uncapped frame rate.
     #[cfg(target_arch = "wasm32")]
-    pub fn begin(
-        &mut self,
-        grid: Instant,
-        loop_start: Instant,
-        frame: Option<Duration>,
-    ) -> PacedLoop {
+    pub fn begin(&mut self, loop_start: Instant, frame: Option<Duration>) -> PacedLoop {
+        let grid = self.grid.advance(loop_start, frame);
         let mode = dcl_wasm::scene_loop_mode::get();
         let deadline = self.start_loop(mode.frame_deadline(), grid, loop_start, frame);
         let waits_for_replies = mode.loop_waits_for_replies();

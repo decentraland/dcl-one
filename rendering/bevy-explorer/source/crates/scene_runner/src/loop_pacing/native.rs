@@ -10,6 +10,8 @@ use bevy::{
 };
 use spin_sleep::SpinSleeper;
 
+use super::FrameGrid;
+
 pub struct LoopPacingPlugin;
 
 impl Plugin for LoopPacingPlugin {
@@ -20,19 +22,17 @@ impl Plugin for LoopPacingPlugin {
 
 #[derive(Resource, Default)]
 pub struct LoopPacing {
+    grid: FrameGrid,
     sleeper: SpinSleeper,
 }
 
 impl LoopPacing {
-    /// Starts the frame's scene loop on the grid deadline `grid`. A native sleep can wake late
-    /// by the sleeper's accuracy, so no wait for replies ends closer to the deadline than that.
-    /// `frame` is the frame target, None with an uncapped frame rate.
-    pub fn begin(
-        &mut self,
-        grid: Instant,
-        _loop_start: Instant,
-        frame: Option<Duration>,
-    ) -> PacedLoop {
+    /// Starts the frame's scene loop, which starts at `loop_start`, on the grid deadline
+    /// ([`FrameGrid::advance`]). A native sleep can wake late by the sleeper's accuracy, so no
+    /// wait for replies ends closer to the deadline than that. `frame` is the frame target, None
+    /// with an uncapped frame rate.
+    pub fn begin(&mut self, loop_start: Instant, frame: Option<Duration>) -> PacedLoop {
+        let grid = self.grid.advance(loop_start, frame);
         PacedLoop {
             deadline: grid,
             last_wait_end: grid - Duration::new(0, self.sleeper.native_accuracy_ns()),
@@ -79,7 +79,8 @@ mod tests {
         let mut pacing = LoopPacing::default();
         let s = Instant::now();
         let grid = s + ms(9.0);
-        let paced = pacing.begin(grid, s, Some(T));
+        pacing.grid.next_frame_end = grid;
+        let paced = pacing.begin(s, Some(T));
         assert_eq!(paced.deadline, grid);
         assert_eq!(
             grid - paced.last_wait_end,
@@ -92,12 +93,14 @@ mod tests {
     fn the_frame_limiter_sleeps_to_the_deadline_only_with_a_frame_cap() {
         let mut pacing = LoopPacing::default();
         let s = Instant::now();
-        let capped = pacing.begin(s + ms(2.0), s, Some(T));
+        pacing.grid.next_frame_end = s + ms(2.0);
+        let capped = pacing.begin(s, Some(T));
         pacing.end(capped, s);
         assert!(Instant::now() >= s + ms(2.0));
 
         let s = Instant::now();
-        let uncapped = pacing.begin(s + Duration::from_secs(10), s, None);
+        pacing.grid.next_frame_end = s + Duration::from_secs(10);
+        let uncapped = pacing.begin(s, None);
         pacing.end(uncapped, s);
         assert!(Instant::now() < s + Duration::from_secs(10));
     }
