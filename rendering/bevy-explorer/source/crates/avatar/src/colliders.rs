@@ -224,6 +224,7 @@ fn send_message_to_scene(
 
 fn handle_avatar_modifier_requests(
     mut events: EventReader<SystemApi>,
+    // Pulse presence is available before the modifier-area system initializes the player.
     players: Query<(&ForeignPlayer, Option<&PlayerModifiers>)>,
     transports: Query<&Transport>,
 ) {

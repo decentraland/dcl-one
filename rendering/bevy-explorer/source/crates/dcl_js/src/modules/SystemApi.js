@@ -519,7 +519,8 @@ module.exports.setMicEnabled = function(enabled) {
     Deno.core.ops.op_set_mic_enabled(enabled);
 }
 
-// [{ userId: string, hideAvatar: bool, hideProfile: bool }]
+// [{ userId: string, hideAvatar: bool, hideProfile: bool, pulseAbsent: bool }]
+// An entry can report Pulse absence with both hide flags false.
 module.exports.getAvatarModifiers = async function() {
     return await Deno.core.ops.op_get_avatar_modifiers();
 }

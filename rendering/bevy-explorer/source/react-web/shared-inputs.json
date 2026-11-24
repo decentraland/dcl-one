@@ -5986,7 +5986,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "3ff2c2d735e48309e20caf9d80fccded911eaf653b2b4e4c2ed6e5f3fbd3dbfb"
+      "sha256": "19dd235050b9c1f6d108535c4b68f5e44d04dad00c4a6ef3e4d2c168fd4ec5aa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6006,7 +6006,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
-      "sha256": "82878e2faeab32a6c735c23822488bebf41c39c7020ff7a94ec03d0f3027cde7"
+      "sha256": "89d47bcdb9726d4cfd9bf6946692e5ac03c04fe355c2318ddad0d304821fb1f2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
@@ -6266,7 +6266,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
-      "sha256": "723ba4f9579529a76e21286a002fcf79ba313fb28e358f56bfa1b4806dcc9bc1"
+      "sha256": "34d823dcce367edab2d9b70dc2d73a669f4039bf31ce2a8ee14c47608429ccda"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",

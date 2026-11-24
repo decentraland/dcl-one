@@ -506,7 +506,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
   When a peer's Pulse membership ends, its avatar and nametag disappear, its avatar collider is
   removed, and it leaves the Nearby panel. LiveKit can keep the peer in the room for voice and room
-  messages. The next Pulse join places the avatar at its new pose immediately.
+  messages. Nearby chat resolves clickable @mentions from this roster. The next Pulse join places
+  the avatar at its new pose immediately.
 - **Pulse refusals set a floor under the next wait.** Server full (disconnect code 6) waits at least
   60 s, the pre-auth limits (7, 8) and the per-IP connection cap (17) at least 10 s, the per-IP
   scene-listener cap (18) 10 s doubling to 5 minutes, and all five are retried, as the Pulse

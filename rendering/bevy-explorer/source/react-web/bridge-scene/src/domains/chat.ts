@@ -5,7 +5,7 @@
 import { engine, PlayerIdentityData, PointerLock } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
 import { getPlayerData } from '~system/Players'
-import { BevyApi } from '../bevy-api'
+import { BevyApi, type AvatarModifierState } from '../bevy-api'
 import { httpOrUndef, profileKey } from './profile'
 import { relay, singleFlight, throttleByDt } from '../system-helpers'
 import type { Ctx } from '../bridge'
@@ -77,9 +77,20 @@ export function registerChat(ctx: Ctx): void {
     if (faces.has(key)) stale.add(key)
   })
   let lastKey = ''
-  ctx.push(throttleByDt(3, singleFlight(async () => {
-    const modifiers = await BevyApi.getAvatarModifiers().catch(() => undefined)
-    if (modifiers === undefined) return
+  let modifierSnapshot: AvatarModifierState[] | undefined
+  const pollModifiers = throttleByDt(3, singleFlight(async () => {
+    try {
+      modifierSnapshot = await BevyApi.getAvatarModifiers()
+    } catch {
+      modifierSnapshot = undefined
+    }
+  }))
+  ctx.push((dt) => {
+    pollModifiers(dt)
+    if (modifierSnapshot === undefined) return
+    // Consume the result in the bridge's guarded frame system.
+    const modifiers = modifierSnapshot
+    modifierSnapshot = undefined
     const pulseAbsent = new Set(modifiers.filter((state) => state.pulseAbsent).map((state) => profileKey(state.userId)))
     const members: NearbyMember[] = []
     for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
@@ -120,5 +131,5 @@ export function registerChat(ctx: Ctx): void {
     if (key === lastKey) return
     lastKey = key
     ctx.send({ kind: 'members', members })
-  })))
+  })
 }

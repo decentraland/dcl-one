@@ -29,8 +29,9 @@ describe('bridge scene: the chat domain', () => {
     const { registerChat } = await import('../../bridge-scene/src/domains/chat')
     // LiveKit keeps both identities in the SDK view through the Pulse departure.
     getEntitiesWith.mockReturnValue([[1, { address: '0xA' }], [2, { address: '0xB' }]])
-    getAvatarModifiers
+    getAvatarModifiers.mockReset()
       .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('modifier snapshot unavailable'))
       .mockResolvedValueOnce([
         { userId: '0xa', hideAvatar: false, hideProfile: false, pulseAbsent: true },
         { userId: '0xb', hideAvatar: true, hideProfile: false, pulseAbsent: false }
@@ -43,9 +44,31 @@ describe('bridge scene: the chat domain', () => {
     }
     registerChat({ send, on: vi.fn(), push: (system) => systems.push(system) })
 
-    for (const addresses of [['0xA', '0xB'], ['0xB'], ['0xA', '0xB']]) {
-      for (const system of systems) system(3)
-      await vi.waitFor(() => expect(rosters.at(-1)).toEqual(addresses))
+    const tick = (dt: number) => {
+      for (const system of systems) system(dt)
     }
+    const poll = async (dt: number) => {
+      tick(dt)
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+
+    await poll(0.016)
+    expect(getAvatarModifiers).toHaveBeenCalledTimes(1)
+    expect(rosters).toEqual([])
+    tick(0)
+    expect(rosters).toEqual([['0xA', '0xB']])
+
+    await poll(3)
+    expect(getAvatarModifiers).toHaveBeenCalledTimes(2)
+    tick(0)
+    expect(rosters).toEqual([['0xA', '0xB']])
+
+    await poll(3)
+    tick(0)
+    expect(rosters.at(-1)).toEqual(['0xB'])
+    await poll(3)
+    tick(0)
+    expect(rosters.at(-1)).toEqual(['0xA', '0xB'])
   })
 })
