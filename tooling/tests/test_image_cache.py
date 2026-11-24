@@ -631,5 +631,75 @@ class ImageRetentionTest(unittest.TestCase):
         self.assertEqual(self.sweep(rows[2:] + [self.entry(5)]), {3})
 
 
+class CacheSweepBudgetTest(unittest.TestCase):
+    """The sweep's rate-budget gates, and PR-state reads that come back partial or refused."""
+
+    WORKFLOW = Path(__file__).parents[2] / '.github/workflows/closed-pr-cache.yml'
+    RATE_LIMITED = 'gh: API rate limit already exceeded for installation ID 1. (HTTP 403)'
+
+    def setUp(self):
+        source = self.WORKFLOW.read_text()
+        self.script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
+        self.reserve = int(re.search(r'^RESERVE = ([0-9]+)$', self.script, re.M)[1])
+        self.listing_cost = int(re.search(r'^LISTING_COST = ([0-9]+)$', self.script, re.M)[1])
+
+    def sweep(self, entries, **api):
+        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
+                                     'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
+                patch('subprocess.run', side_effect=cache_cleanup_api([{'actions_caches': entries}], **api)) as cli, \
+                patch('builtins.print') as printed:
+            try:
+                exec(compile(self.script, str(self.WORKFLOW), 'exec'), {})
+                code = None
+            except SystemExit as stop:
+                code = stop.code
+        calls = [call.args[0] for call in cli.call_args_list]
+        deleted = [int(call[-1].rsplit('/', 1)[-1]) for call in calls if 'DELETE' in call]
+        output = '\n'.join(str(arg) for call in printed.call_args_list for arg in call.args)
+        return calls, deleted, code, output
+
+    @staticmethod
+    def image(number, scope='main', size=0):
+        ref = 'refs/heads/main' if scope == 'main' else f'refs/pull/{scope[3:]}/merge'
+        return dict(id=number, ref=ref, key=f'images-v2-{scope}-catalyst-amd64-{number:064x}',
+                    created_at=f'2026-11-08T00:{number:02d}:00Z', size_in_bytes=size)
+
+    def test_a_budget_at_the_listing_cost_skips_the_sweep_before_listing(self):
+        rows = [self.image(1, 'pr-93'), self.image(2, 'pr-93')]
+        floor = self.reserve + self.listing_cost
+        calls, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, remaining=(floor,))
+        self.assertEqual((code, deleted), (0, []))
+        self.assertEqual(calls, [['gh', 'api', 'rate_limit']])
+        self.assertIn('below the listing cost', output)
+        _, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED'}, remaining=(floor + 1,))
+        self.assertEqual((code, sorted(deleted)), (None, [1, 2]))
+
+    def test_a_primary_rate_limit_while_listing_ends_the_sweep_without_deleting(self):
+        calls, deleted, code, output = self.sweep([self.image(1, 'pr-93')], states={'93': 'CLOSED'},
+                                                  listing_error=self.RATE_LIMITED)
+        self.assertEqual((code, deleted), (0, []))
+        self.assertFalse(any('graphql' in call for call in calls))
+        self.assertIn('rate limited while listing caches', output)
+
+    def test_the_sweep_stops_at_the_reserve_after_freeing_the_biggest_entries(self):
+        rows = [self.image(i, 'pr-93', size) for i, size in {1: 10, 2: 40, 3: 30, 4: 20}.items()]
+        # The first read lets the listing start. The one before the first deletion leaves two calls above the reserve.
+        _, deleted, code, output = self.sweep(rows, states={'93': 'MERGED'}, remaining=(1000, self.reserve + 2))
+        self.assertEqual((code, deleted), (None, [2, 3]))
+        self.assertIn('stopped with 2 entries left to free', output)
+
+    def test_a_partial_state_answer_frees_the_closed_pr_and_keeps_the_unresolved_one(self):
+        rows = [self.image(1, 'pr-93'), self.image(2, 'pr-94'), self.image(3, 'pr-95')]
+        calls, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED', '94': None})
+        self.assertEqual((code, deleted), (None, [1]))
+        self.assertEqual(sum('graphql' in call for call in calls), 1)
+
+    def test_a_rate_limit_resolving_states_defers_closed_prs_but_still_prunes_main(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        _, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, states_error=self.RATE_LIMITED)
+        self.assertEqual((code, deleted), (None, [1]))
+        self.assertIn('closed-PR cleanup deferred', output)
+
+
 if __name__ == '__main__':
     unittest.main()
