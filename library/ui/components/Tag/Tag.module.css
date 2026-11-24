@@ -161,18 +161,6 @@
     font-weight: 400;
   }
 
-  /* Not in the Tags page: the location tag's size and text over the overlay surface, so it reads
-   * over a map. */
-  .root[data-variant='updated'] {
-    gap: var(--dcl-space-4);
-    height: 23px;
-    padding: 0 var(--dcl-space-8) 0 var(--dcl-space-4);
-    border-radius: var(--dcl-radius-xs);
-    background: var(--dcl-bg-surface-overlay);
-    font-size: var(--dcl-font-size-label-tag);
-    font-weight: 400;
-  }
-
   .root[data-variant='public'],
   .root[data-variant='private'] {
     gap: var(--dcl-space-4);

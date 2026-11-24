@@ -23,11 +23,13 @@ afterEach(() => {
 });
 
 describe("MapGridAge", () => {
-  it("says how long ago the map API last found its grid current, as an updated tag", async () => {
+  it("says how long ago the map API last found its grid current, with a decorative clock", async () => {
     const reads = serveTilesInfo(async () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE, checkedAt: Date.now() - 12 * MINUTE }));
     render(<MapGridAge />);
-    const tag = await screen.findByText("Updated 12 min ago");
-    expect(tag.closest("[data-variant]")).toHaveAttribute("data-variant", "updated");
+    const label = await screen.findByText("Updated 12 min ago");
+    const mark = label.querySelector("svg");
+    expect(mark).not.toBeNull();
+    expect(mark).toHaveAttribute("aria-hidden", "true");
     expect(reads).toEqual(["/v2/tiles/info"]);
   });
 

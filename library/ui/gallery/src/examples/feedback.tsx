@@ -267,7 +267,6 @@ export const feedbackEntries: GalleryEntry[] = [
               main
             </Tag>
             <Tag variant="location">Genesis Plaza</Tag>
-            <Tag variant="updated">Updated 12 min ago</Tag>
             <Tag variant="role">Member</Tag>
             <Tag variant="role" appearance="emphasized">
               Owner

@@ -1,6 +1,7 @@
-import { Tag } from "@dcl/one-ui";
+import { GeneralHistory } from "@dcl/one-ui";
 import { useMapGridAge } from "@hud/features/map/useMapGridAge";
 import { serviceHref } from "../../data/catalyst/client";
+import styles from "./MapGridAge.module.css";
 
 /**
  * How old the atlas under a LAND map is ("Updated 12 min ago"), from the map API's parcel grid
@@ -9,5 +10,11 @@ import { serviceHref } from "../../data/catalyst/client";
  */
 export default function MapGridAge() {
   const age = useMapGridAge(serviceHref("map"), true);
-  return age == null ? null : <Tag variant="updated">{age}</Tag>;
+  if (age == null) return null;
+  return (
+    <span className={styles.root}>
+      <GeneralHistory className={styles.icon} size={14} focusable="false" aria-hidden="true" />
+      {age}
+    </span>
+  );
 }

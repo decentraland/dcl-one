@@ -123,9 +123,9 @@
 }
 
 /* The parcels map's age, beside the zoom controls and under the layers panel when that is open. It
-   mirrors the shared library's `updated` tag (library/ui/components/Tag) on purpose: the HUD's build
-   admits only that library's foundations, so the HUD draws it with its own styles. 23px high, radius
-   6px, a 14px clock and 12px text on Transparencies/Overlay 80 (`--map-age`). */
+   matches the Shop LAND map's age label (the shared library's location tag sized on the overlay
+   surface), drawn in HUD styles since the HUD keeps its own until its move to the shared library:
+   23px high, radius 6px, a 14px clock and 12px text on Transparencies/Overlay 80 (`--map-age`). */
 .age {
   position: absolute;
   left: 64px;

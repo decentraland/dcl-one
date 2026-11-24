@@ -546,7 +546,8 @@ Expectations:
   API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `Date`);
   nothing without `checkedAt`, on the Satellite view or while the page is hidden. It is read when
   shown and every minute (`features/map/useMapGridAge.ts`, shared with the Shop's LAND map), and drawn
-  in HUD styles mirroring one-ui's `updated` Tag, since the HUD's build admits only the foundations.
+  in HUD styles matching the Shop LAND map's label, since the HUD keeps its own styles until its move
+  to the shared library (its build admits only the foundations).
 - **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
