@@ -933,7 +933,10 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
         .iter()
         .filter(|row| follows(row))
         .map(|row| row.key)
-        .chain(["MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED"])
+        .chain([
+            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED",
+            "MARKETPLACE_COLLECTIONS_INDEX_ENABLED",
+        ])
         .filter(|key| env(key).is_some_and(|v| switched_on(&v)))
         .collect();
     if !on.is_empty() {

@@ -20,8 +20,8 @@
 //! index once its factory's `ProxyCreated` is walked.
 //!
 //! `initialize` sets the name, symbol, creator, approval and editability
-//! without an event. The gate reads them once per collection at the
-//! network's safe block (`shop.collection_seed`, with that block), for the
+//! without an event. The gate reads them once per collection at Polygon's
+//! finalized block (`shop.collection_seed`, with that block), for the
 //! projection to take a value from the last walked event that sets it, and
 //! from that read only when no event does and the read is at or below the
 //! block it folds to.
@@ -49,6 +49,22 @@ pub const FACTORIES: [(&str, u64); 2] = [
 
 /// The first factory's start: a full history begins here.
 pub const START_BLOCK: u64 = FACTORIES[0].1;
+
+/// List indexes one refresh reads at most: a size an endpoint misreports
+/// costs a bounded read, and a fresh node fills its lists over several
+/// attempts.
+pub const HINT_READS_PER_REFRESH: usize = 1_000;
+
+/// List indexes read and kept together.
+pub const HINT_CHUNK: usize = 200;
+
+/// What one refresh of the factory lists did: the hints it added or made
+/// final, and the indexes it left for the next one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Refreshed {
+    pub added: usize,
+    pub remaining: usize,
+}
 
 /// Calls per JSON-RPC batch the gate sends (one HTTP request each).
 pub const CALLS_PER_BATCH: usize = 100;
@@ -488,6 +504,26 @@ impl ChainIndex for CollectionsIndex {
         self.reset();
     }
 
+    /// Every pass alone starts here: the hints the gate just read are read
+    /// again (a shared walk does it in `begin_pass`).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the trait's signature: the pass's source, anchor, budget, chunk, owner and cursor"
+    )]
+    async fn lanes(
+        &self,
+        _pool: &PgPool,
+        _source: &dyn chain_walk::LogSource,
+        _anchor: (u64, i64),
+        _budget: usize,
+        _chunk: &mut usize,
+        _owner: &Owner,
+        _cursor: Option<(u64, &str)>,
+    ) -> anyhow::Result<chain_walk::Spent> {
+        self.reset();
+        Ok(chain_walk::Spent::default())
+    }
+
     async fn groups(
         &self,
         pool: &PgPool,
@@ -568,165 +604,228 @@ fn call_request(id: usize, to: &str, data: &[u8], block: &str) -> Value {
     })
 }
 
-/// The returned bytes of one `eth_call` envelope; `None` for an error or a
-/// call that returned no data (a contract that does not exist at the block).
-fn returned(answer: &Value) -> Option<Vec<u8>> {
-    answer
-        .get("result")
-        .and_then(Value::as_str)
-        .and_then(|s| hex::decode(s.trim_start_matches("0x")).ok())
-        .filter(|b| !b.is_empty())
+/// What one `eth_call` answered: the bytes it returned, `None` when it
+/// returned nothing or reverted (no contract at the block), or the JSON-RPC
+/// error code of any other refusal (`-1` for an answer that never came).
+pub type Answer = Result<Option<Vec<u8>>, i64>;
+
+fn answer_of(envelope: &Value) -> Answer {
+    if let Some(result) = envelope.get("result") {
+        return Ok(result
+            .as_str()
+            .and_then(|s| hex::decode(s.trim_start_matches("0x")).ok())
+            .filter(|b| !b.is_empty()));
+    }
+    let error = envelope.get("error");
+    let code = error.and_then(|e| e.get("code")).and_then(Value::as_i64);
+    let reverted = code == Some(3)
+        || error
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.to_ascii_lowercase().contains("revert"));
+    if reverted {
+        Ok(None)
+    } else {
+        Err(code.unwrap_or(-1))
+    }
 }
 
-/// The answers of `calls` (to, data) at `block`, in their order, in batches
-/// of [`CALLS_PER_BATCH`]: the returned bytes of each, `None` where the
-/// endpoint answered an error, nothing, or a call that returned no data (a
-/// contract that does not exist at `block`). An endpoint that answers a
-/// batch with no element at all (one that does not take batches) is asked
-/// each call of it alone.
+/// The answers of `calls` (to, data) at `block`, in their order, in JSON-RPC
+/// batches of at most [`CALLS_PER_BATCH`]. A batch the endpoint refuses (a
+/// transport error or a status) is halved and sent again, down to one call,
+/// whose refusal fails the read; a batch answered with no element at all (an
+/// endpoint that does not take batches) is sent call by call.
 pub async fn eth_calls(
     rpc: &Rpc<'_>,
     calls: &[(String, Vec<u8>)],
     block: &str,
-) -> anyhow::Result<Vec<Option<Vec<u8>>>> {
-    let mut out = vec![None; calls.len()];
-    for (n, chunk) in calls.chunks(CALLS_PER_BATCH).enumerate() {
-        let base = n * CALLS_PER_BATCH;
-        let body: Vec<Value> = chunk
-            .iter()
-            .enumerate()
-            .map(|(i, (to, data))| call_request(base + i, to, data, block))
+) -> anyhow::Result<Vec<Answer>> {
+    let mut out: Vec<Answer> = vec![Err(-1); calls.len()];
+    let mut todo: Vec<(usize, usize)> = (0..calls.len())
+        .step_by(CALLS_PER_BATCH)
+        .map(|start| (start, CALLS_PER_BATCH.min(calls.len() - start)))
+        .rev()
+        .collect();
+    while let Some((start, len)) = todo.pop() {
+        let body: Vec<Value> = (start..start + len)
+            .map(|i| call_request(i, &calls[i].0, &calls[i].1, block))
             .collect();
-        let answers = rpc
-            .batch(&body)
-            .await
-            .map_err(|e| anyhow::anyhow!("eth_call batch: {e}"))?;
-        if answers.is_empty() {
-            for (i, request) in body.iter().enumerate() {
-                let answer = rpc
-                    .call("eth_call", request["params"].clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                out[base + i] = returned(&answer);
+        match rpc.batch(&body).await {
+            Ok(answers) if answers.is_empty() => {
+                for (i, request) in (start..).zip(&body) {
+                    let envelope = rpc
+                        .call("eth_call", request["params"].clone())
+                        .await
+                        .map_err(|e| anyhow::anyhow!("eth_call: {e}"))?;
+                    out[i] = answer_of(&envelope);
+                }
             }
-            continue;
-        }
-        for answer in answers {
-            let Some(id) = answer.get("id").and_then(Value::as_u64) else {
-                continue;
-            };
-            let id = id as usize;
-            if !(base..base + chunk.len()).contains(&id) {
-                continue;
+            Ok(answers) => {
+                for answer in answers {
+                    let Some(id) = answer.get("id").and_then(Value::as_u64) else {
+                        continue;
+                    };
+                    let id = id as usize;
+                    if (start..start + len).contains(&id) {
+                        out[id] = answer_of(&answer);
+                    }
+                }
             }
-            out[id] = returned(&answer);
+            Err(_) if len > 1 => {
+                let half = len / 2;
+                todo.push((start + half, len - half));
+                todo.push((start, half));
+            }
+            Err(e) => anyhow::bail!("eth_call batch: {e}"),
         }
     }
     Ok(out)
 }
 
-/// The block the gate reads creation state at: Polygon's finalized block,
-/// Ethereum's head less its confirmations (the walk's own safe head).
-async fn safe_block(rpc: &Rpc<'_>, net: ChainNet) -> anyhow::Result<u64> {
-    Ok(match net {
-        ChainNet::Matic => rpc.finalized_header().await?.number,
-        ChainNet::Ethereum => rpc.head_block().await?.saturating_sub(net.confirmations()),
-    })
+/// The JSON-RPC error codes among `answers`, for a log line: how many, and
+/// the first.
+fn refusals(answers: &[Answer]) -> Option<(usize, i64)> {
+    let mut codes = answers.iter().filter_map(|a| a.as_ref().err());
+    let first = *codes.next()?;
+    Some((1 + codes.count(), first))
 }
 
-/// The newest indexes of each factory's list read again at every refresh.
-pub const HINT_TAIL: u32 = 16;
-
-/// Reads the factories' lists into `shop.collection_hint` at the latest
-/// block: every index each factory reports that is not there yet, and its
-/// newest [`HINT_TAIL`] again. The latest block, not the safe one: a hint is
-/// only a filter, and the newer the list the fewer windows find a
-/// collection it lacks. Reading the tail again covers a reorg that put
-/// another collection at an index already read; the address read before
-/// stays, an address the filter takes in vain. The answers read are kept;
-/// an index without one (no answer, or not an address) fails the refresh,
-/// so no attempt walks on a list it could not read whole. Returns the hints
-/// added.
-pub async fn refresh_hints(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
+/// Reads the factories' lists into `shop.collection_hint`. Every index the
+/// list holds at the finalized block `finalized` is read there once, a row
+/// read at a finalized block being final; the indexes past it are read at
+/// the latest block at every refresh until the finalized block reaches
+/// them, so the filter already takes a collection the walk can reach before
+/// it is final. A provisional address a reorg replaced stays a hint the
+/// filter takes in vain; the address read at the finalized block is added
+/// beside it. Once each list is final up to the finalized block, a refresh
+/// costs the four `collectionsSize()` reads. At most
+/// [`HINT_READS_PER_REFRESH`] indexes are read in one refresh (a fresh node's
+/// lists take several; `remaining` counts the rest), in chunks kept as soon
+/// as they are read. An index without an answer (none, a refusal, or not an
+/// address) fails the refresh, so no attempt walks on a list it could not
+/// read whole.
+pub async fn refresh_hints(
+    pool: &PgPool,
+    rpc: &Rpc<'_>,
+    finalized: u64,
+) -> anyhow::Result<Refreshed> {
     let net = ChainNet::Matic;
-    let sizes = eth_calls(
-        rpc,
-        &FACTORIES
-            .iter()
-            .map(|(f, _)| (f.to_string(), Factory::collectionsSizeCall {}.abi_encode()))
-            .collect::<Vec<_>>(),
-        "latest",
-    )
-    .await?;
-    let mut added = 0usize;
-    let mut unread = Vec::new();
-    for ((factory, _), size) in FACTORIES.iter().zip(sizes) {
-        let size = size
+    let at_final = format!("0x{finalized:x}");
+    let size_calls: Vec<(String, Vec<u8>)> = FACTORIES
+        .iter()
+        .map(|(f, _)| (f.to_string(), Factory::collectionsSizeCall {}.abi_encode()))
+        .collect();
+    let size = |answer: Answer, factory: &str| -> anyhow::Result<u32> {
+        let size = answer
+            .ok()
+            .flatten()
             .and_then(|b| U256::abi_decode(&b).ok())
             .with_context(|| format!("{factory}.collectionsSize() did not answer"))?;
-        let size = u32::try_from(size).context("collectionsSize() out of range")?;
-        let have: HashSet<i32> = sqlx::query_scalar(
-            "SELECT idx FROM shop.collection_hint WHERE network = $1 AND factory = $2",
+        u32::try_from(size).context("collectionsSize() out of range")
+    };
+    let final_sizes = eth_calls(rpc, &size_calls, &at_final).await?;
+    let latest_sizes = eth_calls(rpc, &size_calls, "latest").await?;
+    let mut added = 0usize;
+    let mut unread = Vec::new();
+    let mut budget = HINT_READS_PER_REFRESH;
+    let mut remaining = 0usize;
+    for (((factory, _), final_size), latest_size) in
+        FACTORIES.iter().zip(final_sizes).zip(latest_sizes)
+    {
+        let final_size = size(final_size, factory)?;
+        let latest_size = size(latest_size, factory)?;
+        let finals: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.collection_hint WHERE network = $1 AND factory = $2 AND finalized",
         )
         .bind(net.db_name())
         .bind(factory)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .collect();
-        let tail = size.saturating_sub(HINT_TAIL);
-        let missing: Vec<u32> = (0..size)
-            .filter(|i| *i >= tail || !have.contains(&(*i as i32)))
-            .collect();
-        if missing.is_empty() {
-            continue;
-        }
-        let calls: Vec<(String, Vec<u8>)> = missing
-            .iter()
-            .map(|i| {
-                (
-                    factory.to_string(),
-                    Factory::collectionsCall {
-                        index: U256::from(*i),
+        .fetch_one(pool)
+        .await?;
+        let missing: Vec<i32> = if finals < i64::from(final_size) {
+            sqlx::query_scalar(
+                "SELECT i FROM generate_series(0, $3 - 1) AS i \
+                 WHERE NOT EXISTS (SELECT 1 FROM shop.collection_hint h \
+                                   WHERE h.network = $1 AND h.factory = $2 AND h.idx = i AND h.finalized)",
+            )
+            .bind(net.db_name())
+            .bind(factory)
+            .bind(final_size as i32)
+            .fetch_all(pool)
+            .await?
+        } else {
+            Vec::new()
+        };
+        let provisional: Vec<i32> = (final_size..latest_size).map(|i| i as i32).collect();
+        for (indexes, block, finalized) in [
+            (missing, at_final.as_str(), true),
+            (provisional, "latest", false),
+        ] {
+            let take = indexes.len().min(budget);
+            budget -= take;
+            remaining += indexes.len() - take;
+            // Each chunk is kept as soon as it is read: an error later in
+            // the refresh loses none of it.
+            for chunk in indexes[..take].chunks(HINT_CHUNK) {
+                let calls: Vec<(String, Vec<u8>)> = chunk
+                    .iter()
+                    .map(|i| {
+                        let index = U256::from(*i as u32);
+                        (
+                            factory.to_string(),
+                            Factory::collectionsCall { index }.abi_encode(),
+                        )
+                    })
+                    .collect();
+                let answers = eth_calls(rpc, &calls, block).await?;
+                if let Some((count, first)) = refusals(&answers) {
+                    tracing::warn!(
+                        count,
+                        first_code = first,
+                        factory,
+                        "collections matic: factory list reads refused"
+                    );
+                }
+                let mut idxs = Vec::new();
+                let mut addrs = Vec::new();
+                for (i, answer) in chunk.iter().zip(answers) {
+                    match answer
+                        .ok()
+                        .flatten()
+                        .and_then(|b| Address::abi_decode(&b).ok())
+                        .filter(|a| !a.is_zero())
+                    {
+                        Some(a) => {
+                            idxs.push(*i);
+                            addrs.push(address(a));
+                        }
+                        None => unread.push(format!("{factory}[{i}]")),
                     }
-                    .abi_encode(),
+                }
+                added += sqlx::query(
+                    "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized) \
+                     SELECT $1, $2, i, a, $5 FROM UNNEST($3::int[], $4::text[]) AS u(i, a) \
+                     ON CONFLICT (network, address) DO UPDATE \
+                     SET finalized = true, factory = EXCLUDED.factory, idx = EXCLUDED.idx \
+                     WHERE EXCLUDED.finalized AND NOT shop.collection_hint.finalized",
                 )
-            })
-            .collect();
-        let answers = eth_calls(rpc, &calls, "latest").await?;
-        let mut idxs = Vec::new();
-        let mut addrs = Vec::new();
-        for (i, answer) in missing.iter().zip(answers) {
-            let Some(a) = answer
-                .and_then(|b| Address::abi_decode(&b).ok())
-                .filter(|a| !a.is_zero())
-            else {
-                unread.push(format!("{factory}[{i}]"));
-                continue;
-            };
-            idxs.push(*i as i32);
-            addrs.push(address(a));
+                .bind(net.db_name())
+                .bind(factory)
+                .bind(&idxs)
+                .bind(&addrs)
+                .bind(finalized)
+                .execute(pool)
+                .await?
+                .rows_affected() as usize;
+            }
         }
-        added += sqlx::query(
-            "INSERT INTO shop.collection_hint (network, factory, idx, address) \
-             SELECT $1, $2, i, a FROM UNNEST($3::int[], $4::text[]) AS u(i, a) \
-             ON CONFLICT (network, address) DO NOTHING",
-        )
-        .bind(net.db_name())
-        .bind(factory)
-        .bind(&idxs)
-        .bind(&addrs)
-        .execute(pool)
-        .await?
-        .rows_affected() as usize;
     }
     if let Some(first) = unread.first() {
         anyhow::bail!(
-            "{} factory list indexes did not answer (first {first}); {added} new hints kept",
+            "{} factory list indexes did not answer (first {first}); {added} hints kept",
             unread.len()
         );
     }
-    Ok(added)
+    Ok(Refreshed { added, remaining })
 }
 
 /// What `initialize` set without an event, as one read at `read_block`.
@@ -742,13 +841,14 @@ pub struct Seed {
 }
 
 /// The five answers of one collection, or `None` when any is missing (a
-/// contract not yet deployed at the block, or an endpoint that dropped one).
-pub fn seed_of(contract: &str, answers: &[Option<Vec<u8>>], read_block: u64) -> Option<Seed> {
+/// contract not yet deployed at the block, or a refused call).
+pub fn seed_of(contract: &str, answers: &[Answer], read_block: u64) -> Option<Seed> {
     let [name, symbol, creator, approved, editable] = answers else {
         return None;
     };
-    let string = |b: &Option<Vec<u8>>| {
-        Bytes::abi_decode(b.as_deref()?)
+    let bytes = |a: &Answer| a.as_ref().ok()?.clone();
+    let string = |a: &Answer| {
+        Bytes::abi_decode(&bytes(a)?)
             .ok()
             .map(|s| text(String::from_utf8_lossy(&s).into_owned()))
     };
@@ -756,19 +856,18 @@ pub fn seed_of(contract: &str, answers: &[Option<Vec<u8>>], read_block: u64) -> 
         contract_address: contract.to_string(),
         name: string(name)?,
         symbol: string(symbol)?,
-        creator: address(Address::abi_decode(creator.as_deref()?).ok()?),
-        is_approved: bool::abi_decode(approved.as_deref()?).ok()?,
-        is_editable: bool::abi_decode(editable.as_deref()?).ok()?,
+        creator: address(Address::abi_decode(&bytes(creator)?).ok()?),
+        is_approved: bool::abi_decode(&bytes(approved)?).ok()?,
+        is_editable: bool::abi_decode(&bytes(editable)?).ok()?,
         read_block: i64::try_from(read_block).ok()?,
     })
 }
 
 /// Reads the creation state of up to [`SEEDS_PER_GATE`] collections that
-/// have none, walked ones first, at the network's safe block, into
+/// have none, walked ones first, at the finalized block `finalized`, into
 /// `shop.collection_seed`. A collection not deployed at that block, or one
-/// an answer is missing for, waits for the next gate. Returns the seeds
-/// added.
-pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
+/// a call was refused for, waits for the next gate. Returns the seeds added.
+pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
     let pending: Vec<String> = sqlx::query_scalar(
         "SELECT address FROM ( \
@@ -787,7 +886,6 @@ pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
     if pending.is_empty() {
         return Ok(0);
     }
-    let block = safe_block(rpc, net).await?;
     let selectors: [Vec<u8>; 5] = [
         Collection::nameCall {}.abi_encode(),
         Collection::symbolCall {}.abi_encode(),
@@ -799,11 +897,18 @@ pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
         .iter()
         .flat_map(|c| selectors.iter().map(move |s| (c.clone(), s.clone())))
         .collect();
-    let answers = eth_calls(rpc, &calls, &format!("0x{block:x}")).await?;
+    let answers = eth_calls(rpc, &calls, &format!("0x{finalized:x}")).await?;
+    if let Some((count, first)) = refusals(&answers) {
+        tracing::warn!(
+            count,
+            first_code = first,
+            "collections matic: creation reads refused; they are read again later"
+        );
+    }
     let seeds: Vec<Seed> = pending
         .iter()
         .zip(answers.chunks(selectors.len()))
-        .filter_map(|(c, a)| seed_of(c, a, block))
+        .filter_map(|(c, a)| seed_of(c, a, finalized))
         .collect();
     write_seeds(pool, net, &seeds).await
 }
@@ -836,7 +941,9 @@ pub async fn write_seeds(pool: &PgPool, net: ChainNet, seeds: &[Seed]) -> anyhow
 /// creation reads are kept, never rewound); then the factories' lists (a
 /// failure fails the attempt: a filter without the newest collections would
 /// fail the windows that walk them), then the creation reads (a failure is
-/// only logged: the walk does not need them).
+/// only logged: the walk does not need them), both against Polygon's
+/// finalized block, read once. While the lists are not read whole (a fresh
+/// node's take several attempts) the attempt waits for the next interval.
 pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>> {
     let net = ChainNet::Matic;
     super::ensure_chain(
@@ -845,16 +952,27 @@ pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>
     )
     .await
     .context("collections matic: the endpoint's chain")?;
-    let hinted = refresh_hints(pool, rpc)
+    let finalized = rpc
+        .finalized_header()
+        .await
+        .context("collections matic: the finalized block")?
+        .number;
+    let hinted = refresh_hints(pool, rpc, finalized)
         .await
         .context("collections matic: reading the factory lists")?;
-    if hinted > 0 {
+    if hinted.added > 0 {
         tracing::info!(
-            hinted,
+            hinted = hinted.added,
             "collections matic: new collections in the factory lists"
         );
     }
-    match read_seeds(pool, rpc).await {
+    if hinted.remaining > 0 {
+        return Ok(Some(format!(
+            "collections matic: {} factory list indexes still to read",
+            hinted.remaining
+        )));
+    }
+    match read_seeds(pool, rpc, finalized).await {
         Ok(0) => {}
         Ok(seeded) => tracing::info!(seeded, "collections matic: creation state read"),
         Err(e) => {
@@ -1329,12 +1447,12 @@ mod tests {
 
     #[test]
     fn a_seed_needs_all_five_answers() {
-        let answers = [
-            Some("World Track Memorabilia".to_string().abi_encode()),
-            Some("DCL-WRLDTRCKMMRBL".to_string().abi_encode()),
-            Some(CREATOR.parse::<Address>().unwrap().abi_encode()),
-            Some(true.abi_encode()),
-            Some(false.abi_encode()),
+        let answers: [Answer; 5] = [
+            Ok(Some("World Track Memorabilia".to_string().abi_encode())),
+            Ok(Some("DCL-WRLDTRCKMMRBL".to_string().abi_encode())),
+            Ok(Some(CREATOR.parse::<Address>().unwrap().abi_encode())),
+            Ok(Some(true.abi_encode())),
+            Ok(Some(false.abi_encode())),
         ];
         let seed = seed_of(CREATED, &answers, 97_800_000).unwrap();
         assert_eq!(
@@ -1350,8 +1468,11 @@ mod tests {
             }
         );
         let mut missing = answers.clone();
-        missing[2] = None;
+        missing[2] = Ok(None);
         assert_eq!(seed_of(CREATED, &missing, 1), None);
+        let mut refused = answers.clone();
+        refused[4] = Err(-32005);
+        assert_eq!(seed_of(CREATED, &refused, 1), None);
         assert_eq!(seed_of(CREATED, &answers[..4], 1), None);
     }
 
@@ -1455,7 +1576,7 @@ mod tests {
     }
 
     async fn hint(pool: &PgPool, idx: i32, address: &str) {
-        sqlx::query("INSERT INTO shop.collection_hint (network, factory, idx, address) VALUES ('matic', $1, $2, $3)")
+        sqlx::query("INSERT INTO shop.collection_hint (network, factory, idx, address, finalized) VALUES ('matic', $1, $2, $3, true)")
             .bind(V3)
             .bind(idx)
             .bind(address)
@@ -1588,16 +1709,64 @@ mod tests {
         assert_eq!(created, 17);
     }
 
-    /// The fake endpoint's `eth_call` answers by (to, data hex, block).
+    /// A pass alone after a successful one takes the hints the gate added
+    /// since: the index reads them again at the start of every pass.
+    #[tokio::test]
+    async fn a_pass_alone_takes_the_hints_added_since_the_last() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        hint(&pool, 0, OLDER).await;
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let early = Chain {
+            logs: fixture(),
+            finalized: 97_700_000,
+        };
+        chain_walk::run_pass(&pool, &early, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        hint(&pool, 1, CREATED).await;
+        let later = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        chain_walk::run_pass(&pool, &later, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        let created: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.collection_event WHERE contract_address = $1",
+        )
+        .bind(CREATED)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(created, 17);
+    }
+
+    /// The fake endpoint's `eth_call` answers by (to, data hex, block): a
+    /// hex result, or `error:<code>` for a refusal.
     type Answers = Arc<std::sync::Mutex<HashMap<(String, String, String), String>>>;
 
     /// A JSON-RPC endpoint for the gate: chain 137, finalized block 100, and
-    /// `calls` answering `eth_call` by (to, data hex, block); "0x" otherwise
-    /// (no contract there). Without `batches` it answers a batch with an
-    /// error object, as an endpoint that does not take batches.
-    async fn fake_rpc(calls: Answers, batches: bool) -> String {
+    /// `calls` answering `eth_call`; "0x" otherwise (no contract there). It
+    /// answers a batch longer than `max_batch` with a 413 and, when
+    /// `max_batch` is 0, every batch with an error object (an endpoint that
+    /// takes none). `seen` counts the `eth_call`s it answered.
+    async fn fake_rpc(
+        calls: Answers,
+        max_batch: usize,
+        seen: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> String {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
         use axum::{Json, extract::State, routing::post};
-        async fn answer(calls: &HashMap<(String, String, String), String>, req: &Value) -> Value {
+        fn answer(
+            calls: &HashMap<(String, String, String), String>,
+            req: &Value,
+            seen: &std::sync::atomic::AtomicUsize,
+        ) -> Value {
             let id = req["id"].clone();
             let result = match req["method"].as_str().unwrap_or_default() {
                 "eth_chainId" => json!("0x89"),
@@ -1605,13 +1774,19 @@ mod tests {
                     "number": "0x64", "hash": format!("0x{:064x}", 100), "timestamp": "0x5f5e1000"
                 }),
                 "eth_call" => {
+                    seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let p = &req["params"];
                     let key = (
                         p[0]["to"].as_str().unwrap().to_lowercase(),
                         p[0]["data"].as_str().unwrap().to_string(),
                         p[1].as_str().unwrap().to_string(),
                     );
-                    json!(calls.get(&key).cloned().unwrap_or_else(|| "0x".into()))
+                    let found = calls.get(&key).cloned().unwrap_or_else(|| "0x".into());
+                    if let Some(code) = found.strip_prefix("error:") {
+                        let code: i64 = code.parse().unwrap();
+                        return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": "refused" } });
+                    }
+                    json!(found)
                 }
                 _ => {
                     return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "no" } });
@@ -1619,29 +1794,27 @@ mod tests {
             };
             json!({ "jsonrpc": "2.0", "id": id, "result": result })
         }
-        type Calls = (Answers, bool);
+        type Shared = (Answers, usize, Arc<std::sync::atomic::AtomicUsize>);
         async fn handle(
-            State((calls, batches)): State<Calls>,
+            State((calls, max_batch, seen)): State<Shared>,
             Json(body): Json<Value>,
-        ) -> Json<Value> {
+        ) -> axum::response::Response {
             let calls = calls.lock().unwrap().clone();
-            Json(match body {
-                Value::Array(_) if !batches => {
-                    json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": "batches are not supported" } })
-                }
+            match body {
+                Value::Array(_) if max_batch == 0 => Json(json!({
+                    "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": "batches are not supported" }
+                }))
+                .into_response(),
+                Value::Array(reqs) if reqs.len() > max_batch => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
                 Value::Array(reqs) => {
-                    let mut out = Vec::new();
-                    for r in &reqs {
-                        out.push(answer(&calls, r).await);
-                    }
-                    Value::Array(out)
+                    Json(Value::Array(reqs.iter().map(|r| answer(&calls, r, &seen)).collect())).into_response()
                 }
-                one => answer(&calls, &one).await,
-            })
+                one => Json(answer(&calls, &one, &seen)).into_response(),
+            }
         }
         let app = axum::Router::new()
             .route("/", post(handle))
-            .with_state((calls, batches));
+            .with_state((calls, max_batch, seen));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1662,10 +1835,21 @@ mod tests {
         format!("0x{}", hex::encode(v.abi_encode()))
     }
 
-    /// The gate takes every index each factory lists (an index whose answer
-    /// is missing fails the attempt and is read again, never skipped) and
-    /// reads the creation state at the finalized block of the collections
-    /// deployed there.
+    fn nth(i: u64) -> Vec<u8> {
+        Factory::collectionsCall {
+            index: U256::from(i),
+        }
+        .abi_encode()
+    }
+
+    fn addr(a: &str) -> String {
+        word(a.parse::<Address>().unwrap())
+    }
+
+    /// The gate reads each list index once at the finalized block and the
+    /// newer ones at the latest block until they are final; an index whose
+    /// answer is missing fails the attempt and is read again, never skipped;
+    /// the creation state is read at the finalized block.
     #[tokio::test]
     async fn the_gate_reads_the_factory_lists_and_the_creation_state() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
@@ -1675,24 +1859,17 @@ mod tests {
         let a = "0x00000000000000000000000000000000000000a1";
         let b = "0x00000000000000000000000000000000000000b2";
         let c = "0x00000000000000000000000000000000000000c3";
+        let p = "0x00000000000000000000000000000000000000e5";
         let size = Factory::collectionsSizeCall {}.abi_encode();
-        let nth = |i: u64| {
-            Factory::collectionsCall {
-                index: U256::from(i),
-            }
-            .abi_encode()
-        };
         let mut calls = HashMap::new();
-        calls.insert(call_key(v2, size.clone(), "latest"), word(U256::from(2)));
-        calls.insert(call_key(v3, size.clone(), "latest"), word(U256::from(1)));
-        calls.insert(
-            call_key(v2, nth(0), "latest"),
-            word(a.parse::<Address>().unwrap()),
-        );
-        calls.insert(
-            call_key(v3, nth(0), "latest"),
-            word(b.parse::<Address>().unwrap()),
-        );
+        for block in ["0x64", "latest"] {
+            calls.insert(call_key(v2, size.clone(), block), word(U256::from(2)));
+        }
+        calls.insert(call_key(v3, size.clone(), "0x64"), word(U256::from(1)));
+        calls.insert(call_key(v3, size.clone(), "latest"), word(U256::from(2)));
+        calls.insert(call_key(v2, nth(0), "0x64"), addr(a));
+        calls.insert(call_key(v3, nth(0), "0x64"), addr(b));
+        calls.insert(call_key(v3, nth(1), "latest"), addr(p));
         for (call, answer) in [
             (
                 Collection::nameCall {}.abi_encode(),
@@ -1702,19 +1879,25 @@ mod tests {
                 Collection::symbolCall {}.abi_encode(),
                 word("ALP".to_string()),
             ),
-            (
-                Collection::creatorCall {}.abi_encode(),
-                word(CREATOR.parse::<Address>().unwrap()),
-            ),
+            (Collection::creatorCall {}.abi_encode(), addr(CREATOR)),
             (Collection::isApprovedCall {}.abi_encode(), word(false)),
             (Collection::isEditableCall {}.abi_encode(), word(true)),
         ] {
             calls.insert(call_key(a, call, "0x64"), answer);
         }
         let calls = Arc::new(std::sync::Mutex::new(calls));
-        let url = fake_rpc(calls.clone(), true).await;
+        let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let url = fake_rpc(calls.clone(), 100, seen.clone()).await;
         let http = crate::http::Outbound::for_tests();
         let rpc = Rpc::at(&http, &url);
+        let hints = || async {
+            sqlx::query_as::<_, (String, i32, String, bool)>(
+                "SELECT factory, idx, address, finalized FROM shop.collection_hint ORDER BY address",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
         // v2's index 1 does not answer: the attempt fails, the read hints stay.
         let err = gate(&pool, &rpc).await.unwrap_err();
         assert!(format!("{err:#}").contains(&format!("{v2}[1]")), "{err:#}");
@@ -1723,23 +1906,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(seeded, 0, "nothing past a list it could not read whole");
-        calls.lock().unwrap().insert(
-            call_key(v2, nth(1), "latest"),
-            word(c.parse::<Address>().unwrap()),
-        );
+        calls
+            .lock()
+            .unwrap()
+            .insert(call_key(v2, nth(1), "0x64"), addr(c));
         assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
-        let hints: Vec<(String, i32, String)> = sqlx::query_as(
-            "SELECT factory, idx, address FROM shop.collection_hint ORDER BY address",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
         assert_eq!(
-            hints,
+            hints().await,
             vec![
-                (v2.into(), 0, a.into()),
-                (v3.into(), 0, b.into()),
-                (v2.into(), 1, c.into())
+                (v2.into(), 0, a.into(), true),
+                (v3.into(), 0, b.into(), true),
+                (v2.into(), 1, c.into(), true),
+                (v3.into(), 1, p.into(), false),
             ]
         );
         let seeds: Vec<(String, String, String, String, bool, bool, i64)> = sqlx::query_as(
@@ -1759,51 +1937,163 @@ mod tests {
                 true,
                 100
             )],
-            "b has no code at the finalized block: it waits"
+            "the others have no code at the finalized block: they wait"
         );
 
-        assert_eq!(refresh_hints(&pool, &rpc).await.unwrap(), 0);
-        // A reorg puts another collection at v3's index 0: both stay hints.
+        // The provisional index is read again at every refresh; a reorg put
+        // another collection there, and the finalized block reaches it.
         let d = "0x00000000000000000000000000000000000000d4";
-        calls.lock().unwrap().insert(
-            call_key(v3, nth(0), "latest"),
-            word(d.parse::<Address>().unwrap()),
+        calls
+            .lock()
+            .unwrap()
+            .insert(call_key(v3, nth(1), "latest"), addr(d));
+        assert_eq!(
+            refresh_hints(&pool, &rpc, 100).await.unwrap().added,
+            1,
+            "d, provisional"
         );
-        assert_eq!(refresh_hints(&pool, &rpc).await.unwrap(), 1);
-        let v3_hints: Vec<String> = sqlx::query_scalar(
-            "SELECT address FROM shop.collection_hint WHERE factory = $1 ORDER BY address",
-        )
-        .bind(v3)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(v3_hints, vec![b.to_string(), d.to_string()]);
+        calls
+            .lock()
+            .unwrap()
+            .insert(call_key(v3, size.clone(), "0x64"), word(U256::from(2)));
+        calls
+            .lock()
+            .unwrap()
+            .insert(call_key(v3, nth(1), "0x64"), addr(d));
+        assert_eq!(
+            refresh_hints(&pool, &rpc, 100).await.unwrap().added,
+            1,
+            "d made final"
+        );
+        assert_eq!(
+            hints()
+                .await
+                .into_iter()
+                .filter(|h| h.0 == v3)
+                .collect::<Vec<_>>(),
+            vec![
+                (v3.into(), 0, b.into(), true),
+                (v3.into(), 1, d.into(), true),
+                (v3.into(), 1, p.into(), false)
+            ],
+            "the address the reorg replaced stays a provisional hint"
+        );
+        // Every list final up to the finalized block: only the four sizes.
+        let before = seen.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(refresh_hints(&pool, &rpc, 100).await.unwrap().added, 0);
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst) - before, 4);
     }
 
-    /// An endpoint that does not take batches is asked each call alone.
+    /// A fresh node's lists are read over several attempts, at most
+    /// [`HINT_READS_PER_REFRESH`] indexes each, the attempt waiting until
+    /// they are whole; what a refresh read is kept even when an index in it
+    /// is refused.
     #[tokio::test]
-    async fn calls_go_one_by_one_where_batches_are_refused() {
+    async fn long_lists_are_read_over_several_attempts() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (v2, v3) = (FACTORIES[0].0, FACTORIES[1].0);
+        let total = HINT_READS_PER_REFRESH as u64 + 200;
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        let mut calls = HashMap::new();
+        for block in ["0x64", "latest"] {
+            calls.insert(call_key(v2, size.clone(), block), word(U256::from(total)));
+            calls.insert(call_key(v3, size.clone(), block), word(U256::ZERO));
+        }
+        for i in 0..total {
+            let a = format!("0x{:040x}", 0x1000 + i);
+            calls.insert(call_key(v2, nth(i), "0x64"), addr(&a));
+        }
+        calls.insert(call_key(v2, nth(450), "0x64"), "error:-32005".into());
+        let calls = Arc::new(std::sync::Mutex::new(calls));
+        let url = fake_rpc(calls.clone(), 100, Arc::default()).await;
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, &url);
+        let count = || async {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM shop.collection_hint")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let err = gate(&pool, &rpc).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains(&format!("{v2}[450]")),
+            "{err:#}"
+        );
+        assert_eq!(
+            count().await,
+            HINT_READS_PER_REFRESH as i64 - 1,
+            "the chunks around it kept"
+        );
+        calls.lock().unwrap().insert(
+            call_key(v2, nth(450), "0x64"),
+            addr(&format!("0x{:040x}", 0x1000 + 450)),
+        );
+        assert_eq!(
+            gate(&pool, &rpc).await.unwrap(),
+            None,
+            "201 left: one attempt"
+        );
+        assert_eq!(count().await, total as i64);
+
+        let fresh = crate::db::scratch::isolated_pool(2).await.unwrap();
+        let waiting = gate(&fresh, &rpc).await.unwrap();
+        assert_eq!(
+            waiting.as_deref(),
+            Some("collections matic: 200 factory list indexes still to read")
+        );
+        assert_eq!(gate(&fresh, &rpc).await.unwrap(), None);
+    }
+
+    /// An endpoint that does not take batches is asked each call alone; one
+    /// that refuses a large batch is sent halves; a call refused with an
+    /// error keeps its code, a call that returned nothing is no answer.
+    #[tokio::test]
+    async fn calls_adapt_to_the_endpoints_batches() {
         let to = "0x00000000000000000000000000000000000000a1";
         let name = Collection::nameCall {}.abi_encode();
-        let mut calls = HashMap::new();
-        calls.insert(
+        let symbol = Collection::symbolCall {}.abi_encode();
+        let mut answers = HashMap::new();
+        answers.insert(
             call_key(to, name.clone(), "latest"),
             word("Alpha".to_string()),
         );
-        let url = fake_rpc(Arc::new(std::sync::Mutex::new(calls)), false).await;
+        answers.insert(
+            call_key(to, symbol.clone(), "latest"),
+            "error:-32005".to_string(),
+        );
+        let answers = Arc::new(std::sync::Mutex::new(answers));
         let http = crate::http::Outbound::for_tests();
-        let answers = eth_calls(
-            &Rpc::at(&http, &url),
-            &[
-                (to.to_string(), name),
-                (to.to_string(), Collection::symbolCall {}.abi_encode()),
-            ],
-            "latest",
-        )
-        .await
-        .unwrap();
-        assert_eq!(answers[0], Some("Alpha".to_string().abi_encode()));
-        assert_eq!(answers[1], None, "no data: not an answer");
+        let calls: Vec<(String, Vec<u8>)> = [
+            &name,
+            &symbol,
+            &name,
+            &name,
+            &Collection::creatorCall {}.abi_encode(),
+        ]
+        .into_iter()
+        .map(|d| (to.to_string(), d.clone()))
+        .collect();
+        for max_batch in [0, 2, 100] {
+            let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let url = fake_rpc(answers.clone(), max_batch, seen.clone()).await;
+            let got = eth_calls(&Rpc::at(&http, &url), &calls, "latest")
+                .await
+                .unwrap();
+            let alpha = Ok(Some("Alpha".to_string().abi_encode()));
+            assert_eq!(
+                got,
+                vec![alpha.clone(), Err(-32005), alpha.clone(), alpha, Ok(None)],
+                "batches of {max_batch}"
+            );
+            assert_eq!(
+                seen.load(std::sync::atomic::Ordering::SeqCst),
+                calls.len(),
+                "each call answered once"
+            );
+            assert_eq!(refusals(&got), Some((1, -32005)));
+        }
     }
 
     /// An endpoint of another chain is refused before anything is read.

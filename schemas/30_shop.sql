@@ -17091,26 +17091,32 @@ CREATE INDEX collection_event_created_idx ON shop.collection_event (network, con
     WHERE kind = 'proxy_created';
 
 -- The collections each factory lists (`collections(i)` at index `idx`), read
--- by the collections index's gate before each attempt at the latest block:
--- the walk's address filter, a superset of the collections a window can
--- create (a hint is not a collection until its ProxyCreated is walked). Rows
--- are never deleted: an address a reorg took from an index stays a hint the
--- filter takes in vain, beside the one read there after it. About six
--- thousand rows on Polygon, read whole once per pass and per attempt.
+-- by the collections index's gate before each attempt: the walk's address
+-- filter, a superset of the collections a window can create (a hint is not
+-- a collection until its ProxyCreated is walked). Each index is read once at
+-- the finalized block (`finalized`); the indexes past it are read at the
+-- latest block at every refresh until then. Rows are never deleted: a
+-- provisional address a reorg replaced stays a hint the filter takes in
+-- vain. About six thousand rows on Polygon, read whole once per pass.
 CREATE TABLE shop.collection_hint (
     network text NOT NULL,
     factory varchar(42) NOT NULL,
     idx integer NOT NULL,
     address varchar(42) NOT NULL,
+    finalized boolean NOT NULL,
     PRIMARY KEY (network, address),
     CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
     CONSTRAINT collection_hint_idx_nonneg CHECK (idx >= 0)
 );
 
+-- One finalized address per list index: the refresh counts them and finds
+-- the indexes still to read.
+CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, factory, idx) WHERE finalized;
+
 -- What a collection's initialize set without an event (name, symbol,
 -- creator, approval, editability), read once by the collections index's
--- gate at the network's safe block (Polygon's finalized), kept with it in
+-- gate at Polygon's finalized block, kept with it in
 -- `read_block`. A projection takes a value from it only when no walked event
 -- sets it and `read_block` is at or below the block it folds to. Not
 -- rewound: a finalized block's state. One row per collection.

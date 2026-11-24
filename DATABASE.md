@@ -2863,19 +2863,27 @@ the factory's `ProxyCreated`, in the same transaction, so the walked
 `ProxyCreated` logs cannot supply the filter for that window.
 
 The filter takes the factories' own lists instead: `collectionsSize()` and
-`collections(i)`. The gate reads them at the latest block before each
-attempt into `shop.collection_hint`, one row per address, about 6,200 rows
-that only grow. That is a superset of what any window can create. A
-factory's collections enter the filter from the block the factory was
-deployed. Each refresh reads the indexes not yet read and the newest 16 of
-each list again. A reorg that put another collection at an index already
-read adds that collection; the address read there before stays, a hint the
-filter takes in vain.
+`collections(i)`, read by the gate before each attempt into
+`shop.collection_hint`, one row per address, about 6,200 rows that only
+grow. That is a superset of what any window can create. A factory's
+collections enter the filter from the block the factory was deployed. Each
+index is read once at the finalized block and marked final; the indexes
+past it are read at the latest block at every refresh until the finalized
+block reaches them, so the filter already takes a collection the walk can
+reach. A provisional address that a reorg replaced stays as a hint the
+filter takes in vain, and the address read at the finalized block is added
+beside it. Once every list is final up to the finalized block, a refresh
+costs the four `collectionsSize()` reads.
 
-A refresh keeps the addresses it read. If any index does not answer, it
-fails the attempt, so no window walks on a list that was not read whole. A
-window that walks a `ProxyCreated` of an address outside its filter fails
-before it commits, and the next attempt reads the lists again. A
+A refresh reads at most 1,000 indexes, in chunks of 200 kept as soon as
+they are read. While a list is not read whole, the attempt waits for the
+next interval; a fresh node's lists take about seven attempts. If any index
+does not answer, the refresh fails the attempt, so no window walks on a list
+that was not read whole. A JSON-RPC batch the endpoint refuses is halved and sent again, down to
+single calls, and an endpoint that answers batches with nothing gets single
+calls. A window that walks a `ProxyCreated` of an address outside its
+filter fails before it commits, and the next attempt reads the lists again.
+Every pass reads the hints from the table again, alone or shared. A
 hint is only a filter: a collection exists for the index once its
 `ProxyCreated` is walked. The gate first checks that the endpoint serves
 chain 137.

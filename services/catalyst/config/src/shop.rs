@@ -173,7 +173,8 @@ pub struct MarketplaceConfig {
     pub marketplace_collections_index_enabled: bool,
 
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
-    /// MANA transfers, sales, committee, third-party registry and rentals walks (30 under mirror).
+    /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
+    /// (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
