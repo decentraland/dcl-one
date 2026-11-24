@@ -2,7 +2,7 @@
 name = "catalyst-builder"
 version.workspace = true
 edition = "2024"
-description = "Builder: the scene builder's projects, pools, items and the creator plane's write gate"
+description = "Builder: wearable and emote drafts, their publication and curation, and the creator plane's write gate"
 publish = false
 
 [dependencies]

@@ -1846,14 +1846,13 @@ struct Reclaimed {
 /// Races: every content writer that commits a deployment takes the lock's
 /// shared side and checks there that the files its rows name are stored: a
 /// local deploy (a partial publication included), the peer-sync flush
-/// (read-through's too) and a world scene deploy; so do builder's item and
-/// project file uploads before committing the rows that name their blobs.
-/// So either such a writer has committed its rows and the check keeps the
-/// blob, or it finds the blob gone: a local deploy answers 503 for a retry
-/// that uploads it again, the sync flush leaves that entity out and records
-/// it for the retry worker, which downloads it again, and builder stores it
-/// again. Another upload's receipts are written before its blobs, so a
-/// staged blob it claims is kept (an expired one's too, until its own
+/// (read-through's too) and a world scene deploy. So either such a writer
+/// has committed its rows and the check keeps the blob, or it finds the blob
+/// gone: a local deploy answers 503 for a retry that uploads it again, and
+/// the sync flush leaves that entity out and records it for the retry
+/// worker, which downloads it again. Builder item files live in a tree of
+/// their own that this reclaim never unlinks from. Another upload's receipts
+/// are written before its blobs, so a staged blob it claims is kept (an expired one's too, until its own
 /// cleanup); one it found stored may go between its existence check and its
 /// receipt, and its completing batch's re-check reports it missing again.
 /// An upload a blob of which could not be unlinked keeps its row, and a
@@ -1862,15 +1861,13 @@ struct Reclaimed {
 /// accounting only once every unlink succeeded. An upload whose entity a
 /// sync or read-through download of this process holds is skipped (checked
 /// under the lock), so that download is not sent to the retry worker. The
-/// store's other writers that commit a row naming a blob (the asset-pack
-/// catalogue build, the camera-reel import, social's thumbnails, contents,
-/// MLS blobs and profile images, worlds settings thumbnails and mirror
+/// store's other writers that commit a row naming a blob (the camera-reel
+/// import, social's thumbnails, contents, MLS blobs and profile images, worlds settings thumbnails and mirror
 /// passes, event posters, outfit thumbnails) store or re-check it under the
 /// shared side in the row's transaction ([`gc::store_for_row`]), so they are
 /// ordered the same way. Camera-reel uploads and report evidence commit their
 /// row before the blob, so the reference read keeps it, and read-through
-/// copies (explore's mirrors, the asset catalogue pull) fetch a removed blob
-/// again on its next read.
+/// copies (explore's mirrors) fetch a removed blob again on its next read.
 async fn reclaim_uploads(
     pool: &PgPool,
     storage: &Storage,

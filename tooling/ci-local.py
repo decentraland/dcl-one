@@ -114,8 +114,6 @@ def web_steps(changed_ui3=True):
     steps = [install]
     if changed_ui3:
         steps.append(Step('ui3 unit tests', 'pnpm --dir apps/ui3 test', tools=('pnpm',)))
-        steps.append(Step('editor scene tests', 'pnpm --dir apps/ui3/editor-scene install --frozen-lockfile --prefer-offline && '
-                          'pnpm --dir apps/ui3/editor-scene test', tools=('pnpm',)))
     steps.append(Step('sites unit tests', 'pnpm --dir apps/sites test', tools=('pnpm',)))
     return steps
 

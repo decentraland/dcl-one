@@ -80,7 +80,7 @@ and skip when unset. The test binaries run `CATALYST_TEST_JOBS` at a time
 node's integration tests link as a few grouped binaries, each file a module (filter with
 `cargo test --test <group> -- <file>::`); the socket groups (`sockets_*`) share at most
 one test thread per core. The web
-packages run `pnpm test` (`apps/ui3`, `apps/sites`, `apps/ui3/editor-scene`) and
+packages run `pnpm test` (`apps/ui3`, `apps/sites`) and
 `pnpm test` in `rendering/bevy-explorer/source/react-web` after
 `scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol
 test`; the workflow guards run with `python3 -m unittest discover -s tooling/tests`.

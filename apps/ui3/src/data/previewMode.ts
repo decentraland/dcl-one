@@ -3,9 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { sendBridge } from "../overlay/bridge";
 import { isPreviewShell } from "../overlay/nativeHost";
 
-/** What the launch URL says about a scene preview; `assistant` asks for the Scene assistant panel
-    to be open from the first frame (`assistant=1`, as `dcl-scene-cli start --talk` links it). */
-export type PreviewLaunch = { preview: boolean; realm: string | null; origin: string | null; assistant: boolean };
+/** What the launch URL says about a scene preview. */
+export type PreviewLaunch = { preview: boolean; realm: string | null; origin: string | null };
 
 /** The SDK run's capability token, handed over as `#token=` on the launch URL and kept only here:
     never in storage, and off the URL bar as soon as it is read, so a copied link or a screenshot
@@ -49,22 +48,15 @@ function stripTokenFromUrl(rest: string): void {
 }
 
 export function previewLaunch(search: string, hash: string = typeof window === "undefined" ? "" : window.location.hash): PreviewLaunch {
-  if (!isPreviewShell(search)) return { preview: false, realm: null, origin: null, assistant: false };
+  if (!isPreviewShell(search)) return { preview: false, realm: null, origin: null };
   const claimed = claimPreviewToken(hash);
   if (claimed.token) stripTokenFromUrl(claimed.rest);
   let realm: string | null = null;
-  let assistant = false;
   try {
-    const params = new URLSearchParams(search);
-    realm = params.get("realm")?.trim() || null;
-    assistant = /^(1|true|yes)$/i.test(params.get("assistant")?.trim() ?? "");
+    realm = new URLSearchParams(search).get("realm")?.trim() || null;
   } catch {
     realm = null;
   }
-  // The engine's launch-params writer (engine/web/src/url-params.ts) drops `realm` from
-  // the address bar when it is the bundle's default realm, which is the page's own origin: the
-  // player dcl-scene-cli embeds is served by the SDK it previews. A preview with no realm left in
-  // the URL is therefore a preview of this origin, not of nothing.
   if (!realm && typeof window !== "undefined" && /^https?:$/.test(window.location?.protocol ?? "")) realm = window.location.origin;
   let origin: string | null = null;
   if (realm) {
@@ -75,7 +67,7 @@ export function previewLaunch(search: string, hash: string = typeof window === "
       origin = null;
     }
   }
-  return { preview: true, realm, origin, assistant: assistant && !!origin };
+  return { preview: true, realm, origin };
 }
 
 export function previewHost(origin: string | null): string {

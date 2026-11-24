@@ -1160,7 +1160,7 @@ fn the_ready_event_names_the_links_and_the_run_token() {
     let line = serde_json::to_string(&ready_event(
         &block,
         &st,
-        [(false, "talk"), (false, "desktop"), (false, "web")],
+        [(false, "desktop"), (false, "web")],
     ))
     .unwrap();
     assert!(
@@ -1200,12 +1200,12 @@ fn the_ready_event_names_the_links_and_the_run_token() {
 #[test]
 fn the_ready_event_names_the_data_layer_and_the_opened_clients() {
     let block = ready_block(8123);
-    let opened = [(true, "talk"), (false, "desktop"), (true, "web")];
+    let opened = [(false, "desktop"), (true, "web")];
     let with_ui = state_with_data_layer(PathBuf::from("inspector-public"));
     let event = serde_json::to_value(ready_event(&block, &with_ui, opened)).unwrap();
     assert_eq!(event["dataLayerUrl"], "ws://127.0.0.1:8123/data-layer");
     assert_eq!(event["editorUrl"], "http://127.0.0.1:8123/inspector/");
-    assert_eq!(event["clientsOpened"], json!(["talk", "web"]));
+    assert_eq!(event["clientsOpened"], json!(["web"]));
 
     let (tx, host_rx) = tokio::sync::watch::channel(Default::default());
     let mut no_ui = state(vec![]);
@@ -1583,48 +1583,6 @@ async fn streamed_content_files_survive_gzip() {
     server.abort();
 }
 
-#[test]
-fn the_talk_player_prefers_the_flag_then_the_embedded_player_then_the_env_then_the_site() {
-    assert_eq!(talk_player(None, None, None), talk_web_explorer());
-    assert_eq!(talk_player(Some("  "), None, Some("")), talk_web_explorer());
-    assert_eq!(
-        talk_player(None, None, Some("https://decentraland.org/bevy-web/")),
-        "https://decentraland.org/bevy-web"
-    );
-    assert_eq!(
-        talk_player(
-            Some(" http://localhost:5173/play/ "),
-            None,
-            Some("https://decentraland.org/bevy-web")
-        ),
-        "http://localhost:5173/play"
-    );
-    let embedded = Some("http://127.0.0.1:8000/play/");
-    assert_eq!(
-        talk_player(None, embedded, Some("https://decentraland.org/bevy-web")),
-        "http://127.0.0.1:8000/play",
-        "the embedded player beats the environment"
-    );
-    assert_eq!(
-        talk_player(Some("https://example.org/play/"), embedded, None),
-        "https://example.org/play",
-        "and an explicit --player beats the embedded player"
-    );
-    let url = talk_url(
-        &talk_player(None, embedded, None),
-        "http://127.0.0.1:8000",
-        (3, -4),
-    )
-    .unwrap();
-    assert!(
-        url.starts_with(
-            "http://127.0.0.1:8000/play/?preview=true&realm=http://127.0.0.1:8000&position=3,-4"
-        ),
-        "the talk URL lands in the embedded player: {url}"
-    );
-    assert!(url.contains("&assistant=1"), "{url}");
-}
-
 /// The `Play:` line names the player and the engine build only when the
 /// binary carries one, and warns about the secure context only when a LAN
 /// address was printed for other devices to use.
@@ -1656,107 +1614,8 @@ fn the_play_lines_follow_the_embedded_player_and_the_lan_address() {
     }
 }
 
-/// The query is checked as parsed pairs: `web_join_url` adds a `portables`
-/// pair whenever the shell has `DCL_SCENE_CLI_WORLD_BASE` set, and that pair is
-/// not what this test is about.
 #[test]
-fn the_talk_url_opens_the_assistant_ahead_of_any_fragment() {
-    let parts = |url: &str| {
-        let parsed = url::Url::parse(url).unwrap();
-        let pairs: Vec<(String, String)> = parsed
-            .query_pairs()
-            .filter(|(k, _)| k != "portables")
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
-        (
-            parsed.path().to_string(),
-            pairs,
-            parsed.fragment().map(str::to_string),
-        )
-    };
-    let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
-
-    let url = talk_url("https://example.org/play", "http://127.0.0.1:8000", (5, -3)).unwrap();
-    assert!(url.starts_with(
-        "https://example.org/play/?preview=true&realm=http://127.0.0.1:8000&position=5,-3"
-    ));
-    assert!(url.ends_with("&assistant=1"), "{url}");
-    assert_eq!(
-        parts(&url),
-        (
-            "/play/".to_string(),
-            vec![
-                pair("preview", "true"),
-                pair("realm", "http://127.0.0.1:8000"),
-                pair("position", "5,-3"),
-                pair("assistant", "1"),
-            ],
-            None
-        )
-    );
-
-    let url = talk_url(
-        "https://example.org/play/?quality=low#view",
-        "http://127.0.0.1:8000",
-        (0, 0),
-    )
-    .unwrap();
-    assert!(url.ends_with("&quality=low&assistant=1#view"), "{url}");
-    assert_eq!(
-        parts(&url),
-        (
-            "/play/".to_string(),
-            vec![
-                pair("preview", "true"),
-                pair("realm", "http://127.0.0.1:8000"),
-                pair("position", "0,0"),
-                pair("quality", "low"),
-                pair("assistant", "1"),
-            ],
-            Some("view".to_string())
-        )
-    );
-
-    assert_eq!(talk_url("not a url", "http://127.0.0.1:8000", (0, 0)), None);
-    assert_eq!(
-        talk_url("ftp://example.org/play", "http://127.0.0.1:8000", (0, 0)),
-        None
-    );
-}
-
-/// The HUD reads the first `assistant` pair, so one the player URL carried
-/// (`--player 'https://example.org/play?assistant=0'`) must not stay ahead of
-/// ours.
-#[test]
-fn the_talk_url_replaces_an_assistant_pair_the_player_url_carried() {
-    for player in [
-        "https://example.org/play?assistant=0",
-        "https://example.org/play/?assistant=0&quality=low&assistant=1#view",
-        "https://example.org/play?assistant=",
-    ] {
-        let url = talk_url(player, "http://127.0.0.1:8000", (0, 0)).unwrap();
-        let parsed = url::Url::parse(&url).unwrap();
-        let assistant: Vec<_> = parsed
-            .query_pairs()
-            .filter(|(k, _)| k == "assistant")
-            .map(|(_, v)| v.into_owned())
-            .collect();
-        assert_eq!(assistant, ["1"], "{url}");
-        assert_eq!(url.matches("assistant=").count(), 1, "{url}");
-        let (last_key, _) = parsed.query_pairs().last().unwrap();
-        assert_eq!(last_key, "assistant", "{url}");
-        assert_eq!(
-            parsed
-                .query_pairs()
-                .any(|(k, v)| k == "quality" && v == "low"),
-            player.contains("quality=low"),
-            "other pairs stay: {url}"
-        );
-    }
-}
-
-#[test]
-fn the_talk_origin_is_the_gate_form_of_the_player_url() {
+fn origin_of_url_is_the_origin_a_request_carries() {
     assert_eq!(
         origin_of_url("https://example.org/play/?x=1#f").as_deref(),
         Some("https://example.org")
@@ -1773,66 +1632,19 @@ fn the_talk_origin_is_the_gate_form_of_the_player_url() {
     assert_eq!(origin_of_url("example.org/play"), None);
 }
 
-/// `--talk` widens the `/api/project/*` gate and nothing else: the data-layer
-/// upgrade (the Creator Hub's scene-editing websocket) keeps to the
-/// `DCL_SCENE_CLI_ALLOWED_ORIGINS` list, as the README and `--talk` help say.
 #[test]
-fn the_talk_origin_reaches_the_project_bridge_but_not_the_data_layer() {
-    let talk = "https://talk-origin.test";
-    let _ = TALK_ORIGIN.set(talk.to_string());
+fn origin_list_reads_a_comma_list() {
+    assert!(origin_list(None).is_empty());
     assert_eq!(
-        TALK_ORIGIN.get().map(String::as_str),
-        Some(talk),
-        "another test set it first"
-    );
-    let mut headers = HeaderMap::new();
-    headers.insert(header::HOST, "127.0.0.1:8000".parse().unwrap());
-    headers.insert(header::ORIGIN, talk.parse().unwrap());
-
-    let bridge = allowed_editor_origins();
-    assert!(bridge.iter().any(|o| o == talk), "{bridge:?}");
-    assert!(project_bridge::allowed(
-        &headers,
-        "127.0.0.1:8000".parse().unwrap(),
-        &bridge
-    ));
-
-    let data_layer = data_layer_origins();
-    assert!(!data_layer.iter().any(|o| o == talk), "{data_layer:?}");
-    assert!(
-        !data_layer_origin_allowed(&headers),
-        "the talk origin must not open data-layer sessions"
-    );
-    assert!(
-        data_layer_origin_allowed_by(&headers, &bridge),
-        "the origin list is the only difference"
-    );
-}
-
-#[test]
-fn editor_origins_merge_the_env_list_with_the_talk_origin_once() {
-    assert!(editor_origins(None, None).is_empty());
-    assert_eq!(
-        editor_origins(Some(" https://a.test, ,https://b.test "), None),
+        origin_list(Some(" https://a.test, ,https://b.test ")),
         ["https://a.test", "https://b.test"]
-    );
-    assert_eq!(
-        editor_origins(None, Some("https://example.org")),
-        ["https://example.org"]
-    );
-    assert_eq!(
-        editor_origins(
-            Some("https://example.org,https://a.test"),
-            Some("https://example.org")
-        ),
-        ["https://example.org", "https://a.test"]
     );
 }
 
 /// Every route that changes the project wants the bearer; every read goes
-/// without it, so an older Creator Hub keeps reading. The token gate is
-/// checked before the route's own preconditions (a 428 or 503 with the
-/// token is the route answering; a 401 without it is the gate).
+/// without it. The token gate is checked before the route's own
+/// preconditions (a 428 or 503 with the token is the route answering; a 401
+/// without it is the gate).
 #[tokio::test]
 async fn every_mutating_route_needs_the_token_and_reads_do_not() {
     let (_tmp, a, st) = one_scene("tokengate");
@@ -1841,31 +1653,6 @@ async fn every_mutating_route_needs_the_token_and_reads_do_not() {
     let bearer = format!("Bearer {}", st.token);
     let own: &'static str = format!("http://{addr}").leak();
     let writes: &[(&str, &str, Option<Value>)] = &[
-        (
-            "PUT",
-            "/api/project/file?path=src/index.ts",
-            Some(json!({"content":"x","revision":null})),
-        ),
-        ("DELETE", "/api/project/file?path=src/index.ts", None),
-        ("PUT", "/api/project/asset?path=assets/a.glb", None),
-        ("DELETE", "/api/project/asset?path=assets/a.glb", None),
-        (
-            "POST",
-            "/api/project/assistant/turn",
-            Some(json!({"provider":"codex","prompt":"hi"})),
-        ),
-        ("DELETE", "/api/project/assistant/turn/abc", None),
-        ("DELETE", "/api/project/assistant/conversations/abc", None),
-        (
-            "POST",
-            "/api/project/assistant/mcp",
-            Some(json!({"jsonrpc":"2.0","id":1,"method":"ping"})),
-        ),
-        (
-            "POST",
-            "/api/project/debug/command",
-            Some(json!({"sessionId":1,"cmd":"pause"})),
-        ),
         ("POST", "/scene-json", Some(json!({"title":"T"}))),
         ("POST", "/scene-thumbnail", None),
     ];
@@ -1936,17 +1723,7 @@ async fn every_mutating_route_needs_the_token_and_reads_do_not() {
         404,
         "with it, the upgrade reaches the route (no data layer in this preview)"
     );
-    for path in [
-        "/api/project",
-        "/api/project/files",
-        "/api/project/file?path=scene.json",
-        "/api/project/assets",
-        "/api/project/assistant/conversations",
-        "/api/project/assistant/providers",
-        "/api/project/debug",
-        "/scene.json",
-        "/about",
-    ] {
+    for path in ["/scene.json", "/about"] {
         let status = client
             .get(format!("{own}{path}"))
             .header("origin", own)
@@ -1962,10 +1739,82 @@ async fn every_mutating_route_needs_the_token_and_reads_do_not() {
     server.abort();
 }
 
+/// The preview serves no project-editing API to another page: no
+/// `/api/project/*`, no debug producer socket, no `/talk` redirect.
+#[tokio::test]
+async fn the_preview_serves_no_project_api() {
+    let (_tmp, a, st) = one_scene("noproject");
+    let (addr, server) = serve(&st).await;
+    let client = reqwest::Client::new();
+    let own = format!("http://{addr}");
+    for path in [
+        "/api/project",
+        "/api/project/files",
+        "/api/project/file?path=scene.json",
+        "/api/project/assets",
+        "/api/project/assistant/providers",
+        "/api/project/assistant/conversations",
+        "/api/project/debug",
+        "/scene-inspector",
+        "/talk",
+    ] {
+        let resp = client
+            .get(format!("{own}{path}"))
+            .header("origin", &own)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 404, "GET {path}");
+        assert!(
+            !resp.text().await.unwrap().contains("--talk"),
+            "GET {path} names no removed flag"
+        );
+    }
+    let write = client
+        .put(format!("{own}/api/project/file?path=src/index.ts"))
+        .header("origin", &own)
+        .header("authorization", format!("Bearer {}", st.token))
+        .json(&json!({"content":"x","revision":null}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(write.status().as_u16(), 404);
+    assert!(!a.root.join("src/index.ts").exists());
+    server.abort();
+}
+
+/// The landing page links to no web scene editor, whatever the environment
+/// names.
+#[tokio::test]
+async fn the_landing_page_has_no_editor_link() {
+    let _env = crate::deploy::ENV_LOCK.lock().await;
+    crate::set_test_env(
+        "DCL_SCENE_CLI_CREATOR_HUB_URL",
+        "https://example.org/create",
+    );
+    let (_tmp, _a, st) = one_scene("noeditorlink");
+    let (addr, server) = serve(&st).await;
+    let page = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("accept", "text/html")
+        .header("sec-fetch-site", "none")
+        .header("sec-fetch-mode", "navigate")
+        .header("sec-fetch-dest", "document")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    crate::remove_test_env("DCL_SCENE_CLI_CREATOR_HUB_URL");
+    assert!(!page.contains("Edit in Creator Hub"), "{page:.400}");
+    assert!(!page.contains("projectUrl="), "{page:.400}");
+    server.abort();
+}
+
 /// The token is server-rendered into the page for a top-level navigation
 /// (`Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`) on a
-/// loopback host, and into the Creator Hub link's fragment there. A
-/// same-origin fetch of `/` (what a scene in the embedded player can do), a
+/// loopback host. A same-origin fetch of `/` (what a scene in the embedded player can do), a
 /// header-less request (what a scene in the native client sends), a framed
 /// navigation, a cross-origin fetch, a LAN host, a tunnel replay and a
 /// proxied request all get the page without it; a request that already
@@ -2001,15 +1850,6 @@ async fn the_token_rides_only_top_level_navigations_on_a_loopback_host() {
     };
     let typed = page("/", top_level()).await;
     assert!(typed.contains(&meta), "a typed navigation: {typed:.300}");
-    assert!(
-        super::project_bridge::creator_url("x").is_none()
-            || typed.contains(&format!(
-                "projectUrl=http%3A%2F%2F{addr}#token={}",
-                st.token
-            ))
-            || typed.contains(&format!("#token={}\"", st.token)),
-        "the Creator Hub link, when the build names one, carries the fragment: {typed:.400}"
-    );
     assert!(
         page("/scene", top_level()).await.contains(&meta),
         "/scene edits too"
@@ -2115,12 +1955,7 @@ async fn the_token_rides_only_top_level_navigations_on_a_loopback_host() {
     assert!(!page("/", tunnel).await.contains(&st.token));
     let mut proxied = top_level();
     proxied.push(("x-forwarded-for", "203.0.113.2".into()));
-    let proxied = page("/", proxied).await;
-    assert!(!proxied.contains(&st.token));
-    assert!(
-        !proxied.contains("#token="),
-        "and the Creator Hub link stays bare: {proxied:.200}"
-    );
+    assert!(!page("/", proxied).await.contains(&st.token));
     server.abort();
 }
 
@@ -2233,60 +2068,6 @@ async fn the_form_token_is_rendered_only_where_the_run_token_is() {
     server.abort();
 }
 
-/// `--talk --open` hands the opener `/talk`, never the player URL with the
-/// token: the argv of xdg-open and its helpers is readable by every local
-/// user for as long as they live. `/talk` then redirects a top-level
-/// navigation to the player with `#token=`, and anything else to the bare
-/// player URL.
-#[tokio::test]
-async fn the_browser_opener_never_sees_the_token() {
-    let (_tmp, _a, st) = one_scene("talk");
-    let (addr, server) = serve(&st).await;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap();
-    let opener = talk_opener_url(addr.port());
-    assert_eq!(opener, format!("http://127.0.0.1:{}/talk", addr.port()));
-    assert!(!opener.contains('#'));
-    let not_talking = client.get(&opener).send().await.unwrap();
-    assert_eq!(not_talking.status().as_u16(), 404);
-    assert!(not_talking.text().await.unwrap().contains("--talk"));
-
-    let player =
-        format!("http://{addr}/play/?preview=true&realm=http://{addr}&position=0,0&assistant=1");
-    st.talk_url.set(player.clone()).unwrap();
-    let opened = client
-        .get(&opener)
-        .header("sec-fetch-site", "none")
-        .header("sec-fetch-mode", "navigate")
-        .header("sec-fetch-dest", "document")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(opened.status().as_u16(), 303);
-    assert_eq!(
-        opened.headers()["location"],
-        format!("{player}#token={}", st.token)
-    );
-    let fetched = client
-        .get(&opener)
-        .header("sec-fetch-site", "same-origin")
-        .header("sec-fetch-mode", "cors")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(fetched.status().as_u16(), 303);
-    assert_eq!(fetched.headers()["location"], player);
-    let bare = client.get(&opener).send().await.unwrap();
-    assert_eq!(
-        bare.headers()["location"],
-        player,
-        "no Fetch Metadata, no token"
-    );
-    server.abort();
-}
-
 /// The Origin gate compares a parsed origin — scheme, host, port — with the
 /// Host header, not a suffix: `http://evil127.0.0.1:8000` used to pass for
 /// `127.0.0.1:8000`.
@@ -2329,32 +2110,22 @@ fn cross_origin_refusal_compares_the_parsed_origin_exactly() {
     );
 }
 
-/// The printed URLs carry the token as a fragment, never a query: after the
-/// fragment a player URL already had, so `mcptoken` and this coexist.
+/// A refused write says where the token really comes from: the launch page
+/// on the loopback address, or the `ready` event of `start --json`.
+#[tokio::test]
+async fn the_401_names_where_the_token_comes_from() {
+    let resp = unauthorized();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = body_text(resp).await;
+    assert!(!body.contains("#token="), "{body}");
+    assert!(body.contains("http://127.0.0.1"), "{body}");
+    assert!(body.contains("start --json"), "{body}");
+    assert!(body.contains("Authorization: Bearer"), "{body}");
+}
+
+/// The run's token is 32 random bytes, and the bearer check wants it exactly.
 #[test]
-fn printed_urls_carry_the_token_as_a_fragment() {
-    assert_eq!(
-        with_token_fragment(
-            "http://127.0.0.1:8000/play/?preview=true&assistant=1",
-            "abc"
-        ),
-        "http://127.0.0.1:8000/play/?preview=true&assistant=1#token=abc"
-    );
-    assert_eq!(
-        with_token_fragment("https://example.org/play/?assistant=1#mcptoken=m", "abc"),
-        "https://example.org/play/?assistant=1#mcptoken=m&token=abc"
-    );
-    assert_eq!(
-        with_token_fragment("https://example.org/play/#", "abc"),
-        "https://example.org/play/#token=abc"
-    );
-    assert_eq!(
-        with_token_fragment(
-            "https://example.org/create?projectUrl=http%3A%2F%2F127.0.0.1%3A8000",
-            "abc"
-        ),
-        "https://example.org/create?projectUrl=http%3A%2F%2F127.0.0.1%3A8000#token=abc"
-    );
+fn the_run_token_is_random_and_checked_exactly() {
     let token = mint_token();
     assert_eq!(token.len(), 43, "32 bytes, base64url, unpadded: {token}");
     assert!(
@@ -2403,19 +2174,12 @@ fn printed_urls_carry_the_token_as_a_fragment() {
 #[test]
 fn play_site_is_the_first_player_origin_off_this_machine() {
     assert_eq!(
-        play_site(None, None),
+        play_site(None),
         play_embed::default_site().unwrap_or_default()
     );
     assert_eq!(
-        play_site(Some("https://example.org/play/?x=1"), None),
+        play_site(Some("https://example.org/play/?x=1")),
         "https://example.org"
-    );
-    assert_eq!(
-        play_site(
-            Some("http://127.0.0.1:8160/play/"),
-            Some("https://self.host:8443/play")
-        ),
-        "https://self.host:8443"
     );
     for local in [
         "http://127.0.0.1:8000/play/",
@@ -2427,17 +2191,17 @@ fn play_site_is_the_first_player_origin_off_this_machine() {
         "http://[0:0:0:0:0:0:0:1]:8000/play/",
     ] {
         assert_eq!(
-            play_site(Some(local), None),
+            play_site(Some(local)),
             play_embed::default_site().unwrap_or_default(),
             "{local}"
         );
     }
     assert_eq!(
-        play_site(Some("  "), Some("not a url")),
+        play_site(Some("not a url")),
         play_embed::default_site().unwrap_or_default()
     );
     assert_eq!(
-        play_site(Some("ftp://x/play"), None),
+        play_site(Some("ftp://x/play")),
         play_embed::default_site().unwrap_or_default()
     );
     assert!(!is_local_origin("https://example.org"));

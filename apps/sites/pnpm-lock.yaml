@@ -292,12 +292,6 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@dcl/asset-packs':
-        specifier: 2.17.2
-        version: 2.17.2(@dcl/ecs@7.30.1)
-      '@dcl/ecs':
-        specifier: 7.30.1
-        version: 7.30.1
       '@react-router/dev':
         specifier: 8.4.0
         version: 8.4.0(@react-router/serve@8.4.0(react-router@8.4.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(supports-color@10.2.2)(typescript@7.0.2))(react-router@8.4.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(supports-color@10.2.2)(typescript@7.0.2)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15))
@@ -513,17 +507,9 @@ packages:
       '@earendil-works/pi-ai':
         optional: true
 
-  '@dcl/asset-packs@2.17.2':
-    resolution: {integrity: sha512-/YMQEBYkdZCcpPOP58l8fYDduGqtNnO0JYgOwI0RNMZ8MW/Dl902RW5KExhlGBfto+X2BwFH3aY8yAG/qbW2OQ==}
-    peerDependencies:
-      '@dcl/ecs': ^7.15.2
-
   '@dcl/crypto@3.9.0':
     resolution: {integrity: sha512-ZMDTfkkEHEGCujtg5jNnpjyHu7+PUvBb0XWBPVftgWVJDoUNlVIGpbOZk4lP42hXIUrv5zLbodkMVI5lLRrx+g==}
     engines: {node: '>=22.0.0'}
-
-  '@dcl/ecs@7.30.1':
-    resolution: {integrity: sha512-3ZNB1OStBoEWCw1Fov8zxHPhWzH7UJHXelqUEaEQQKcjuqLffOfFiPrE0gbE+iwvJC3Me6zNIM90s+lBgpP+FQ==}
 
   '@dcl/rpc@1.1.2':
     resolution: {integrity: sha512-HgZe9umoD48ZQRaiKTss+vj/War/HjH/DBnb6pzd5fx2OMInaB1YYso3OZ4dCT/OC0AtNny8Tkb3CUJdYAvj/w==}
@@ -3130,18 +3116,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@dcl/asset-packs@2.17.2(@dcl/ecs@7.30.1)':
-    dependencies:
-      '@dcl/ecs': 7.30.1
-      mitt: 3.0.1
-
   '@dcl/crypto@3.9.0':
     dependencies:
       '@dcl/schemas': 27.4.0
       eth-connect: 6.4.0
       ethereum-cryptography: 2.2.1
-
-  '@dcl/ecs@7.30.1': {}
 
   '@dcl/rpc@1.1.2':
     dependencies:

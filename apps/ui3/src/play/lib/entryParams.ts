@@ -1,9 +1,3 @@
-// Every query param the entry url may carry, in one place, so a link with anything else can be
-// called out instead of silently ignored. Two sources: the engine's web param table (the params a
-// LINK may set — launch, destination and the base domain; a `host` param like `editor` is an
-// embedding page's to set, never a link's) and this page's own switches — the user-facing ones
-// with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
-
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
 import { THIRDWEB_GUEST_PARAM } from '@explorer-core/features/auth/guestWalletParam'
 import type { AcceptedParam } from '@explorer-core/hostContract'
@@ -78,7 +72,7 @@ export function acceptedEntryParams(): AcceptedParam[] {
 }
 
 /** The entry url's params that nothing reads — ignored, and worth telling the user about.
- *  `hostParams`: host-delivered params this page is acting on (the scene editor's `editor`). */
+ *  `hostParams`: host-delivered params this page is acting on. */
 export function unrecognisedEntryParams(q: URLSearchParams, hostParams: string[] = []): string[] {
   const accepted = new Set([...acceptedEntryParams().map((p) => p.name), ...INTERNAL_PARAMS, ...hostParams])
   return [...new Set(q.keys())].filter((name) => !accepted.has(name) && !isAttributionParam(name))

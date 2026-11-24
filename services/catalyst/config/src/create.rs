@@ -14,14 +14,9 @@ pub struct CreateConfig {
     pub create_writes_enabled: bool,
 
     /// Public http(s) URL of the item content bucket; unset, a storage miss
-    /// answers 404 instead of the 301 and `/contents/{hash}` serves the store only.
+    /// answers 404 instead of the 301.
     #[arg(long, env = "BUILDER_CONTENT_BUCKET_URL")]
     pub builder_content_bucket_url: Option<String>,
-
-    /// Public http(s) URL of the asset-packs bucket (scene-template models);
-    /// `/contents/{hash}` pulls from it when the item bucket misses.
-    #[arg(long, env = "BUILDER_ASSET_PACKS_BUCKET_URL")]
-    pub builder_asset_packs_bucket_url: Option<String>,
 
     /// The Foundation's builder API a linked publication is verified against
     /// (the mirror posture's: Decentraland's); empty answers that route 503.
@@ -108,7 +103,6 @@ mod tests {
         assert!(!c.create.create_writes_enabled, "creator writes are opt-in");
         assert!(
             c.create.builder_content_bucket_url.is_none()
-                && c.create.builder_asset_packs_bucket_url.is_none()
                 && c.create.builder_polygon_rpc_url.is_none()
         );
         assert_eq!(c.create.builder_admin_addresses, "");
