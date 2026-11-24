@@ -43,9 +43,11 @@ use bevy_atmosphere::{
     prelude::AtmosphereCamera,
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, SkyReflectionSetting};
+use common::{
+    sky_preset::LIGHT_UNIT_LUX,
+    structs::{AppConfig, SkyReflectionSetting},
+};
 use console::DoAddConsoleCommand;
-use scene_runner::update_world::lights::LIGHT_UNIT_LUX;
 use std::f32::consts::PI;
 
 const SKY_ENVMAP_SHADER_HANDLE: Handle<Shader> =
@@ -303,7 +305,6 @@ fn ambient_cube_bytes(bands: [Vec3; 3], scale: f32) -> Vec<u8> {
 // the skybox material draws the cube without the view exposure, while the pbr
 // shader applies it to environment light. cancel it so a mirror reflects the
 // sky as drawn, up to the limit the map is generated with (sky_envmap.wgsl).
-#[allow(clippy::type_complexity)]
 fn attach_sky_envmap(
     mut commands: Commands,
     envmap: Res<SkyEnvmap>,
@@ -460,8 +461,10 @@ fn ambient_console_command(
 struct SkyEnvmapLabel;
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::render::render_resource::ShaderType;
 
@@ -639,7 +642,6 @@ fn array_view(texture: &Texture, mip: u32) -> TextureView {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn prepare_sky_envmap(
     mut commands: Commands,
     existing: Option<ResMut<SkyEnvmapResources>>,

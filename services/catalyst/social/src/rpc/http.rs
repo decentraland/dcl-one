@@ -296,7 +296,7 @@ async fn signer(
 ) -> Result<String, CommError> {
     let path = signed_path(original, local);
     Ok(
-        auth::require_signer(headers, method, &path, state.eip1654.as_deref())
+        auth::require_signer(headers, method, &path, state.eip1654.as_ref())
             .await?
             .into_string(),
     )
@@ -1051,17 +1051,15 @@ async fn update_social_settings(
         &[],
         1,
     )?;
-    let row = state
-        .ctx
-        .db()
-        .upsert_social_settings(
-            &me,
-            text(&object, "privateMessagesPrivacy"),
-            text(&object, "blockedUsersMessagesVisibility"),
-            text(&object, "showSituationReactions"),
-        )
-        .await
-        .map_err(failed)?;
+    let row = ops::update_social_settings(
+        &state.ctx,
+        &me,
+        text(&object, "privateMessagesPrivacy"),
+        text(&object, "blockedUsersMessagesVisibility"),
+        text(&object, "showSituationReactions"),
+    )
+    .await
+    .map_err(failed)?;
     data(StatusCode::OK, settings(&row))
 }
 

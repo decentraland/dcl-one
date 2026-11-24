@@ -6,7 +6,7 @@
 // `executeMetaTransaction` and pays. The nonce is read from the target over our RPC, exactly as the
 // relay re-reads it to recover the signer, so both sides hash the same digest.
 
-import { decodeFunctionResult, encodeFunctionData, pad, toHex, type Hex } from "viem";
+import { decodeFunctionData, decodeFunctionResult, encodeFunctionData, pad, toHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import type { ChainId } from "@shop/model/chain";
@@ -14,6 +14,7 @@ import { NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/a
 import { relayerUrl as configuredRelayer } from "./config";
 import type { MetaTxStyle } from "./contracts";
 import type { ChainReader } from "./rpc";
+import { accountCodeKind } from "./wallet";
 
 export type MetaTxTarget = {
   address: string;
@@ -31,11 +32,39 @@ export type MetaTxTarget = {
  */
 export type GaslessReason = "disabled" | "contract-account" | "signing-failed" | "relayer-rejected" | "relayer-unreachable" | "unknown";
 
+/**
+ * What a relay's refusal says of itself, when it does: its code (its daily limits name themselves:
+ * `quota_reached` for the account's own fee-free quota, `relay_budget_spent` for the relay's), and for a spent quota
+ * when its next slot frees (`retryAt`, unix seconds) and how many it holds (`quota`).
+ */
+export type RelayRefusal = { error?: string; retryAt?: number; quota?: number };
+
+/**
+ * A relay answer's refusal fields, each kept only in its own shape. The code is read from `code` (the upstream
+ * transactions-server's field, which dcl-one's relay also answers), else from `error` (dcl-one's own, and its only
+ * one before it answered `code` too).
+ */
+export function relayRefusal(body: unknown): RelayRefusal {
+  const answer = (body && typeof body === "object" ? body : {}) as { code?: unknown; error?: unknown; retryAt?: unknown; quota?: unknown };
+  const positive = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+  // A quota of none is an answer too: the account gets no fee-free transactions at all.
+  const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  const named = (v: unknown): v is string => typeof v === "string" && v !== "";
+  const error = named(answer.code) ? answer.code : named(answer.error) ? answer.error : undefined;
+  return {
+    ...(error != null ? { error } : {}),
+    ...(positive(answer.retryAt) ? { retryAt: answer.retryAt } : {}),
+    ...(count(answer.quota) ? { quota: answer.quota } : {}),
+  };
+}
+
 export class GaslessUnavailableError extends Error {
   override name = "GaslessUnavailableError";
   constructor(
     message: string,
     readonly reason: GaslessReason = "unknown",
+    /** The relay's own word for the refusal, when it answered one. */
+    readonly refusal: RelayRefusal = {},
   ) {
     super(message);
   }
@@ -108,12 +137,38 @@ export function encodeExecuteMetaTransaction(style: MetaTxStyle, from: string, f
   return encodeFunctionData({ abi: NATIVE_META_TX_ABI, functionName: "executeMetaTransaction", args: [from as Hex, functionData, r, s, v] });
 }
 
+/** Who an `executeMetaTransaction` calldata of the target's style runs as, and the call it runs; null when it is not one. */
+export function decodeExecuteMetaTransaction(style: MetaTxStyle, data: Hex): { from: string; functionData: Hex } | null {
+  try {
+    const abi = style === "functionData" ? OFFCHAIN_META_TX_ABI : NATIVE_META_TX_ABI;
+    const { functionName, args } = decodeFunctionData({ abi, data });
+    if (functionName !== "executeMetaTransaction") return null;
+    return { from: String(args[0]).toLowerCase(), functionData: args[1] as Hex };
+  } catch {
+    return null;
+  }
+}
+
 function declined(e: unknown): boolean {
   const err = e as { code?: unknown; message?: string } | null;
   return err?.code === 4001 || err?.code === "ACTION_REJECTED" || /denied|reject|cancel/i.test(err?.message ?? "");
 }
 
-export type RelayOptions = {
+/**
+ * Which nonce a signature may be at: no lower than `minNonce`, or exactly `exactNonce`. The type takes one or the other; a
+ * call that passes both anyway is signed at `exactNonce` if the two agree, and refused (`RangeError`, before anything is
+ * read, signed or sent) when `minNonce` is above it.
+ */
+type NonceChoice =
+  /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
+  | { minNonce?: bigint; exactNonce?: never }
+  /**
+   * Sign only at this nonce: when the target's nonce reads as any other, nothing is asked of the wallet
+   * (`NonceMovedError`). A replacement that must compete with one signed call at its nonce, and no other, uses it.
+   */
+  | { exactNonce: bigint; minNonce?: never };
+
+export type RelayOptions = NonceChoice & {
   provider: Eip1193Provider;
   reader: ChainReader;
   target: MetaTxTarget;
@@ -121,21 +176,46 @@ export type RelayOptions = {
   functionData: Hex;
   relayerUrl?: string;
   fetchImpl?: typeof fetch;
-  /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
-  minNonce?: bigint;
   /** Fired once the buyer signed (the prompt is gone), before the relay is called. */
   onSigned?: () => void;
+  /**
+   * The signed execution, before it goes to the relay: what `relaySignedMetaTransaction` can send again, and the nonce it
+   * names. A throw here stops it before anything is sent (the caller could not record it).
+   */
+  onSignedCall?: (call: SignedCall) => void;
 };
+
+/** A meta-transaction signed for one nonce: sent again as is, it can still run at most once. */
+export type SignedCall = { to: string; data: Hex; nonce: bigint };
 
 export type Relayed = { txHash: Hex; nonce: bigint };
 
+/** The target's nonce read as `read`, not the `expected` one a signature was asked for: nothing was signed or sent. */
+export class NonceMovedError extends Error {
+  override name = "NonceMovedError";
+  constructor(
+    readonly expected: bigint,
+    readonly read: bigint,
+  ) {
+    super(`The nonce reads ${read}, not ${expected}`);
+  }
+}
+
 export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed> {
   const { provider, reader, target, from, functionData } = opts;
-  const code = await reader.code(target.chainId, from).catch(() => "0x" as Hex);
-  if (code && code !== "0x") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
+  // The type keeps the two apart; a caller that passes both anyway is refused here when they can't both hold.
+  const { exactNonce, minNonce } = opts;
+  if (exactNonce !== undefined && minNonce !== undefined && minNonce > exactNonce) {
+    throw new RangeError(`A signature can't be at nonce ${exactNonce} and at least ${minNonce}`);
+  }
+  // Only bytecode read as such makes the account a contract (accountCodeKind); a read that fails or answers something else
+  // says nothing, and the relay is tried as it always was.
+  const code = await reader.code(target.chainId, from).catch(() => null);
+  if (accountCodeKind(code) === "contract") throw new GaslessUnavailableError("Contract accounts are not supported", "contract-account");
 
   const read = await readMetaTxNonce(reader, target, from);
-  const nonce = opts.minNonce !== undefined && opts.minNonce > read ? opts.minNonce : read;
+  if (exactNonce !== undefined && read !== exactNonce) throw new NonceMovedError(exactNonce, read);
+  const nonce = exactNonce ?? (minNonce !== undefined && minNonce > read ? minNonce : read);
   const typed = metaTxTypedData(target, from, nonce, functionData);
 
   let signature: Hex;
@@ -149,16 +229,28 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
   opts.onSigned?.();
 
   const data = encodeExecuteMetaTransaction(target.metaTx, from, functionData, signature);
+  opts.onSignedCall?.({ to: target.address, data, nonce });
+  const txHash = await relaySignedMetaTransaction({ from, to: target.address, data, relayerUrl: opts.relayerUrl, fetchImpl: opts.fetchImpl });
+  return { txHash, nonce };
+}
+
+/**
+ * Sends an execution already signed (`encodeExecuteMetaTransaction`'s call data) through the relay: its hash, or a
+ * GaslessUnavailableError, "relayer-rejected" only when the relay says nothing was broadcast (refusedBeforeBroadcast).
+ * Sending the same signed execution again can run it at most once: its signature names one nonce.
+ */
+export async function relaySignedMetaTransaction(opts: { from: string; to: string; data: Hex; relayerUrl?: string; fetchImpl?: typeof fetch }): Promise<Hex> {
+  const { from, data } = opts;
   const base = (opts.relayerUrl ?? configuredRelayer()).replace(/\/$/, "");
   const fetchImpl = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
-  type RelayerBody = { ok?: boolean; txHash?: string; message?: string; code?: unknown; not_sent?: unknown };
+  type RelayerBody = { ok?: boolean; txHash?: string; message?: string; code?: unknown; error?: unknown; not_sent?: unknown };
   let body: RelayerBody | null = null;
   let status = 0;
   try {
     const res = await fetchImpl(`${base}/transactions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ transactionData: { from, params: [target.address, data] } }),
+      body: JSON.stringify({ transactionData: { from, params: [opts.to, data] } }),
     });
     status = res.status;
     body = (await res.json().catch(() => null)) as RelayerBody | null;
@@ -166,9 +258,9 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
     throw new GaslessUnavailableError((e as Error)?.message ?? "relayer unreachable", "relayer-unreachable");
   }
   if (!body) throw new GaslessUnavailableError(`relayer answered ${status} with no body`, "relayer-unreachable");
-  if (body.ok !== false && body.txHash) return { txHash: body.txHash as Hex, nonce };
+  if (body.ok !== false && body.txHash) return body.txHash as Hex;
   const reason = refusedBeforeBroadcast(body) ? "relayer-rejected" : "relayer-unreachable";
-  throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, reason);
+  throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, reason, relayRefusal(body));
 }
 
 /**
@@ -185,6 +277,17 @@ export function refusedBeforeBroadcast(body: unknown): boolean {
 
 export function isGaslessUnavailable(e: unknown): e is GaslessUnavailableError {
   return e instanceof GaslessUnavailableError || (e as { name?: string } | null)?.name === "GaslessUnavailableError";
+}
+
+/** Relay failures that prove nothing was sent: the relay said so (`not_sent`), or it was never asked. */
+const NOT_SENT: readonly GaslessReason[] = ["relayer-rejected", "disabled", "contract-account", "signing-failed"];
+
+/**
+ * Whether a relayed call is known not to have been sent: only then may the same effect go out another way (the wallet)
+ * without risking it twice. Any other failure (a lost answer, an unknown one) may have been sent.
+ */
+export function provedNotSent(e: unknown): boolean {
+  return isGaslessUnavailable(e) && NOT_SENT.includes(e.reason);
 }
 
 export function isSignatureDeclined(e: unknown): boolean {

@@ -1,5 +1,5 @@
 use crate::auth::AuthChain;
-use crate::auth::{eip1654::Eip1654Validator, verify::verify_auth_chain_at_verification_time};
+use crate::auth::{eip1654::Eip1654Validator, verify::verify_login_chain_at_verification_time};
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
@@ -175,7 +175,7 @@ impl ChallengeStore {
             return Err(AuthError::ChallengeMismatch);
         }
 
-        verify_auth_chain_at_verification_time(
+        verify_login_chain_at_verification_time(
             chain,
             expected_payload,
             now.timestamp_millis(),
@@ -352,11 +352,14 @@ mod tests {
         ) -> Result<bool, crate::auth::AuthError> {
             Ok(false)
         }
-        async fn verification_time_block(&self, _: i64) -> Result<u64, crate::auth::AuthError> {
+        async fn verification_time_block(
+            &self,
+            _: i64,
+        ) -> Result<Option<u64>, crate::auth::AuthError> {
             if self.hold_lookup {
                 self.release.acquire().await.unwrap().forget();
             }
-            Ok(4)
+            Ok(Some(4))
         }
         async fn validate_signature_at_block(
             &self,
@@ -605,6 +608,39 @@ mod tests {
             ));
             assert_eq!(store.pending(), 1);
         }
+    }
+
+    /// A scoped login (ADR-162) never answers the challenge, and leaves it pending.
+    #[tokio::test]
+    async fn a_scoped_login_cannot_answer_the_challenge() {
+        let store = ChallengeStore::new(cfg());
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let address = root.address();
+        let challenge = offered(&store, &address);
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "comms".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let expiration = chrono::Utc::now().timestamp_millis() + 600_000;
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root, &ephemeral, expiration, &grants, &challenge,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let result = store
+            .verify_stored(&address, &address, &challenge, &challenge, &chain, None)
+            .await;
+        assert!(
+            matches!(&result, Err(AuthError::InvalidChain(m)) if m.contains("without a service identifier")),
+            "{result:?}"
+        );
+        assert_eq!(store.pending(), 1);
     }
 
     fn mandate(address: &str, expiration: &str) -> String {
@@ -936,6 +972,44 @@ mod tests {
         .expect("chain json");
 
         redeem(&s, &address, &challenge, &chain).expect_err("impostor signature must be rejected");
+    }
+
+    #[test]
+    fn only_a_login_delegation_redeems_a_challenge() {
+        use alloy::signers::{SignerSync, local::PrivateKeySigner};
+
+        for (first_line, accepted) in [
+            ("Decentraland Login", true),
+            ("Decentraland Storage Delegation", false),
+        ] {
+            let s = ChallengeStore::new(cfg());
+            let root = PrivateKeySigner::random();
+            let ephemeral = PrivateKeySigner::random();
+            let address = format!("{:#x}", root.address());
+            let challenge = offered(&s, &address);
+            let delegation = format!(
+                "{first_line}\nEphemeral address: {:#x}\nExpiration: 2099-12-31T00:00:00.000Z",
+                ephemeral.address()
+            );
+            let chain: AuthChain = serde_json::from_value(serde_json::json!([
+                { "type": "SIGNER", "payload": address, "signature": "" },
+                { "type": "ECDSA_EPHEMERAL", "payload": delegation,
+                  "signature": root.sign_message_sync(delegation.as_bytes()).unwrap().to_string() },
+                { "type": "ECDSA_SIGNED_ENTITY", "payload": challenge,
+                  "signature": ephemeral.sign_message_sync(challenge.as_bytes()).unwrap().to_string() },
+            ]))
+            .unwrap();
+            let result = redeem(&s, &address, &challenge, &chain);
+            if accepted {
+                result.expect("a login delegation redeems");
+            } else {
+                let err = result.unwrap_err();
+                assert!(
+                    matches!(&err, AuthError::InvalidChain(d) if d.contains("InvalidEphemeralPayload")),
+                    "{err:?}"
+                );
+            }
+        }
     }
 
     fn signed(signer: &alloy::signers::local::PrivateKeySigner, challenge: &str) -> AuthChain {

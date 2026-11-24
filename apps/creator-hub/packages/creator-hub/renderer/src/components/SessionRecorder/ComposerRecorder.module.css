@@ -1,0 +1,114 @@
+/* The recorder's controls inside the chat composer: the Record button beside Send, and the bar
+   that takes the text field's place while a recording runs and while it is transcribed. */
+
+/* Same box as the composer's text field, so the composer keeps its height when they swap. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 43px;
+  padding: 8.5px 6px 8.5px 8px;
+  border-radius: 10px;
+  background-color: var(--ai-input-bg);
+  box-shadow: inset 0 0 0 1px var(--palette-neutral-softWhite);
+}
+
+.bar[data-state="transcribing"] {
+  padding-left: 14px;
+}
+
+/* A 26px round icon button on a light veil: Record, Discard, Stop and the transcribing spinner. */
+.round.round {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.round.round:hover:not(:disabled) {
+  background-color: var(--palette-whiteTransparent-soft);
+}
+
+.round.round:disabled {
+  background-color: var(--palette-whiteTransparent-subtle);
+  opacity: 0.4;
+}
+
+.round.round:focus-visible,
+.send.send:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.send.send {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  background-color: var(--brand);
+}
+
+.send.send:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.send.send:disabled {
+  opacity: 0.4;
+}
+
+/* Holds the spinner where a button sits in the other states; not itself a control. */
+.spinnerSlot {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background-color: var(--palette-whiteTransparent-subtle);
+  color: var(--palette-neutral-softWhite);
+}
+
+.icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+/* One 2px bar per microphone level (about every 100 ms), newest on the right; the oldest are
+   clipped on the left as new ones arrive. */
+.wave {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  overflow: hidden;
+}
+
+.waveBar {
+  flex: none;
+  width: 2px;
+  height: var(--bar-height);
+  border-radius: 1px;
+  background-color: var(--palette-whiteTransparent-blurry);
+}
+
+.status {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tone-secondary);
+  font-size: 0.875rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

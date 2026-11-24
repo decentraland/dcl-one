@@ -40,6 +40,7 @@ declare module "three" {
     name: string;
     parent: Object3D | null;
     visible: boolean;
+    userData: Record<string, unknown>;
     position: Vector3;
     rotation: Euler;
     scale: Vector3;
@@ -125,6 +126,25 @@ declare module "three" {
     );
   }
 
+  export class Matrix4 {}
+
+  export class Bone extends Object3D {
+    isBone: true;
+  }
+
+  export class Skeleton {
+    constructor(bones: Bone[], boneInverses?: Matrix4[]);
+    bones: Bone[];
+    boneInverses: Matrix4[];
+  }
+
+  export class SkinnedMesh extends Mesh {
+    isSkinnedMesh: true;
+    skeleton: Skeleton;
+    bindMatrix: Matrix4;
+    bind(skeleton: Skeleton, bindMatrix?: Matrix4): void;
+  }
+
   export class PerspectiveCamera extends Camera {
     constructor(fov?: number, aspect?: number, near?: number, far?: number);
     fov: number;
@@ -198,6 +218,7 @@ declare module "three" {
 
   export class LoadingManager {
     setURLModifier(callback: (url: string) => string): this;
+    resolveURL(url: string): string;
   }
 
   export interface WebGLRendererParameters {

@@ -22,7 +22,7 @@ impl Plugin for MapPinsDebugPanelPlugin {
                     ("Pins read from those scenes", "read"),
                     ("Pins of other scenes, ignored", "ignored"),
                     ("HUD subscribers", "subscribers"),
-                    ("Pins last sent (with a scene icon / in all)", "sent"),
+                    ("Pins last sent", "sent"),
                     ("Pins last sent (parcel and title)", "pins"),
                 ],
                 actions: &[],
@@ -60,7 +60,7 @@ fn map_pins_state(
             "read": read,
             "ignored": ignored,
             "subscribers": streams.senders.iter().filter(|s| !s.is_closed()).count(),
-            "sent": sent.map(|list| [list.iter().filter(|p| p.icon.is_some()).count(), list.len()]),
+            "sent": sent.map(|list| list.len()),
             "pins": sent.filter(|list| !list.is_empty()).map(|list| list
                 .iter()
                 .map(|p| format!("{},{} {}", p.x, p.y, p.title))

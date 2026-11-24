@@ -184,13 +184,32 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **`/goto` and `/goto-local`**: `/goto x,y` teleports inside the realm the player is in, Genesis City or a
+      world, within that realm's bounds; `/goto world` and `world/x,y` travel; `genesis` and `main` are Genesis City, at Genesis Plaza when no parcel is named;
+      `random` and `crowd` are Genesis City places from any realm; `/goto-local x,y` never changes realm. Each answers once in chat when the
+      engine does (`🟢 You teleported to x,y.`, `🟢 Welcome to the … world!`, `🟢 Welcome to Genesis
+      City!`), a failure in chat alone with no travel notice beside it, a parcel out of bounds or a
+      bad destination at once. In a scene preview `/goto x,y` moves inside the preview, and
+      `random` and `crowd` answer the engine's refusal to change realm. A `/goto` typed while a
+      travel is under way is read against the realm travelled to; a travel it replaces answers
+      `🔴 Error: The operation was canceled!`. A place inside the realm travelled to
+      (`/goto world/x,y` on the way to that world, `/goto-local x,y`) is that travel asked for
+      again, so a travel that fails moves nobody. A `/goto crowd` still reading the busiest scene
+      gives way to a `/goto` typed after it. A destination ending in `/name` lands on the scene's
+      spawn point of that name (the debug panel's Teleport section shows the name looked for and
+      whether the scene had it). Tests: `library/ui/apps/hud/test/hosted/chatGoto.test.tsx` (the
+      session), `library/explorer-core/features/chat/chatCommands.test.ts` (the destinations),
+      `src/test/bridgeTravel.test.ts` (the bridge).
 - [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
       message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
       for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
-      A translated message replaces the bubble's text.
+      A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
+      bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
+      closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
+      to a tag is coloured as chat links it.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
@@ -202,8 +221,16 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
       turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
       the look at once (Halloween 2026, Game World).
-      Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
-      close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
+      Customize opens the Backpack modal: the lobby around it keeps the stage's last frame, the
+      preview stays the Backpack's purple until the engine reports `avatarPreviewReady`, then shows
+      the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
+      of the preview outside the modal; closing hands the live stage back. Jump In loads the world
+      (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
+      Minimap settings, expanding the minimap in that style and entering a World each show the map
+      square black until the engine reports `minimapReady`, then the top-down view, with nothing of
+      the player's own view in the square in between. Switching back to Satellite or Parcel atlas
+      shows the tiles at once.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
@@ -423,6 +450,31 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Scene item purchase
+
+A scene's request to open the purchase confirmation for one item (`openExplorerUi` with
+`EU_ITEM_PURCHASE`; bridge `domains/itemPurchase.ts`, `features/itemPurchase`). The engine applies
+the gates and parses the item; the HUD draws nothing of its own. Expectations:
+
+- **Answered on receipt.** The engine holds the scene's call, and every other scene's request,
+  until the HUD says `accepted` or `unavailable`, with no deadline. The session answers in its
+  message handler (`useEngineSession.ts`), never after a read, a render or an effect.
+- **A page that connects settles the request in flight** (`domains/itemPurchase.ts`): the bridge
+  sends a request no page answered again on `hello`, and reports one a previous page accepted
+  `dismissed`. The session answers a repeated request id once.
+- **Availability is the host's.** A host that can buy passes `purchaseSceneItem` to `HudApp`
+  (`/play` in the web shell, with the in-world Shop on), which hands it to the session; without
+  it every request is `unavailable`. This host passes none.
+- **One outcome.** An accepted request is reported once more: `purchased`, `dismissed` or
+  `failed`. A request with no item is `accepted` then `failed` with nothing opened. A purchase
+  that rejects, or throws before returning a promise, is `failed`.
+- **The confirmation is the shell's** purchase dialog, over the HUD frame; there is no HUD page,
+  popup or screenshot for this domain.
+- Tests: `library/ui/apps/hud/test/hosted/itemPurchase.test.tsx` (the session contract and the
+  answers above); `src/test/bridgeItemPurchase.test.ts` (the relay and what `hello` settles); `apps/ui3/src/play/test/scenePurchase.test.ts` (what the shell is asked and how
+  its operation's states map to the outcome); the engine's gates and request lifecycle in
+  `crates/restricted_actions/src/item_purchase.rs`.
+
 ## Preview texture optimization
 
 A scene preview served by `dcl-scene-cli start` reports its background texture import on the
@@ -493,16 +545,18 @@ Expectations:
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
   image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
 - **Home:** the map and the place detail read the session's home and set it with `setHomeScene`
-  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home does not clear it.
-  Until the engine answers, the home is the web build's boot copy, its default realm read as
-  Genesis City, so the startup lobby agrees with the world.
+  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home on the place
+  that is home clears it with `clearHomeScene`, as the minimap's switch does. The home is the
+  signed-in account's: `homeScene` says `pinned: false` for an account with none, which then has
+  no pin and starts on 0,0 of the default realm. Until the engine answers, the home is the web
+  build's boot copy, its default realm read as Genesis City, so the startup lobby agrees with
+  the world; the lobby asks again once it shows, as the account may not be the boot copy's.
 - **Arrival** ends a route only in Genesis City: a World's parcels share the numbers, not the place.
 - **Quest pins:** the engine streams the map pins of portable experiences (`GetMapPinsStream`, the
   whole list on each change, the last list again on `hello`), and the session drops them when it ends.
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
-  pin outside the city is dropped. A pin without an icon, or whose icon fails to load, draws the
-  default quest pin. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows
-  two pins, one with a broken icon.
+  pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
+  not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
 - Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
@@ -525,9 +579,16 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 - **SEND TIP waits:** the form opens with the first suggestion picked, so it is ready to send at once; SEND TIP
   answers only `ARM_MS` (500 ms) after the form appears (`design/ArmedButton`), so a second click of the press that
   opened it sends nothing.
+- **Telling the creator:** once the tip is mined the shell forwards its hash to the catalyst
+  (`features/donate/tip.ts` `forwardUntil`). A 429, a 5xx or no answer is asked again with backoff, never sooner than
+  the server's Retry-After, until the delivery window ends; a 503 for a lagging index carries a Retry-After and is
+  asked again too. A 503 coded `tip-index-unavailable` (the node has no MANA transfer index, its cursor lacks the
+  whole history, or nothing has advanced it for hours) and any other 4xx end the forward at once;
+  the shell only logs that outcome, and the tip itself stays sent.
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
   `library/ui/apps/hud/test/hosted/donateSend.test.tsx` (SEND TIP's wait),
-  `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
+  `library/explorer-core/test/donatePlace.test.ts`, `library/explorer-core/test/donateTip.test.ts` (the forward's
+  retries and stops); the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
   and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.
 
 ## Gifting
@@ -540,7 +601,7 @@ Expectations:
 
 - **Where it shows:** the profile card of chat names, nametags and the friend row (after View Profile), the
   community card's member menu (after Call; greyed for a blocked member, either way), and another player's
-  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest sender or a guest recipient.
+  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest sender. A guest recipient is offered it, as in unity-explorer.
   Whether the session may gift is asked as each of those surfaces opens, as Donate's host is asked (`useGiftingAvailable`); nothing is cached.
 - **The picker** reads 16 owned on-chain items a page through the bridge's `giftingQuery`, newest first, with the
   search on the server. A pending gift doesn't count as a copy; an equipped single copy is covered and can't be

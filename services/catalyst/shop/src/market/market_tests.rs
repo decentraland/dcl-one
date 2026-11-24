@@ -120,6 +120,23 @@ async fn get(router: Router, uri: &str) -> (StatusCode, Value) {
     call(router, "GET", uri, HeaderMap::new(), None).await
 }
 
+/// A GET and its `Cache-Control` (empty when the response sets none).
+async fn get_cached(router: Router, uri: &str) -> (Value, String) {
+    let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+    let cache = resp
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (serde_json::from_slice(&bytes).unwrap(), cache)
+}
+
 fn bearer(token: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
     h.insert(
@@ -447,7 +464,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let pool = state.pool.clone();
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
-    let v3_minter = listings::offchain_marketplace_v2(137).unwrap().address;
+    let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
 
     let mut collections = vec![
         mirrors::collections::fixture(&c1, "First", CREATOR, true),
@@ -1437,6 +1454,51 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // A marketplace the collection does not list as a minter cannot mint: every leg drops its order.
+    let set_minter = |minter: &'static str| {
+        let (pool, c1) = (pool.clone(), c1.clone());
+        async move {
+            sqlx::query(
+                "UPDATE shop.collections SET minters = ARRAY[$2] WHERE contract_address = $1",
+            )
+            .bind(&c1)
+            .bind(minter)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    set_minter(listings::offchain_marketplace_v2(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    let (status, body) = get(app(), &format!("/v3/catalog/shop?contractAddress={c1}")).await;
+    assert_eq!(
+        (status, body["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    set_minter(listings::offchain_marketplace_v3(137).unwrap().address).await;
+    state.readers.clear();
+    let (status, body) = get(app(), &format!("/v1/items?contractAddress={c1}&itemId=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"][0]["tradeId"].as_str(),
+        Some(primary_id.as_str()),
+        "{}",
+        body["data"][0]
+    );
+
+    // The trending rail's memo is filled right before the cancellation below, so the few reads in
+    // between are all that separate it from the check that it still answers: its 30 s cannot lapse
+    // over the rest of this test on a slow runner.
+    state.readers.clear();
+    let (status, trending) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(status, StatusCode::OK, "{trending}");
     // An operator cancellation drops the listing from every leg.
     let (status, body) = call(
         app(),
@@ -1457,6 +1519,151 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    // An item read stays fresh; the trending rail answers from its 30 s memo until it lapses.
+    let (_, body) = get(
+        app(),
+        &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
+    )
+    .await;
+    assert_eq!(unified_total(&body), 0, "{body}");
+    let carries_primary = |body: &Value| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["tradeId"] == primary_id.as_str())
+    };
+    assert!(carries_primary(&trending), "{trending}");
+    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(body["data"], trending["data"]);
+    state.readers.clear();
+    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert!(!carries_primary(&body), "{body}");
+    // A read that names its item never reads the creator directory; a browse read does.
+    use super::readers::Ttl;
+    use super::search::CREATOR_DIRECTORY_KEY;
+    state.readers.clear();
+    let (status, body) = get(
+        app(),
+        &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The browse read started the directory's read in the background; it may land after the
+    // answer, which waits at most 500 ms for it.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the browse read fills the creator directory");
+
+    // The feeds carry their creators' profiles per response, never memoized with the page: a
+    // profile denylisted after the pages were memoized leaves the very next answer, and every
+    // response that carries a profile is sent no-cache.
+    let profile_entity = format!("bafyprofile{t}");
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'profile', $2, $3::json, now(), ARRAY[$1], now(), '[]'::json)",
+    )
+    .bind(CREATOR)
+    .bind(&profile_entity)
+    .bind(json!({ "v": { "avatars": [{ "name": "Creatorname", "avatar": { "snapshots": { "face256": "bafyface" } } }] } }).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')")
+        .bind(CREATOR)
+        .bind(&profile_entity)
+        .execute(&pool)
+        .await
+        .unwrap();
+    state.readers.clear();
+    // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
+    // feeds below then find it fresh, start no refresh of their own, and never depend on how
+    // fast a cold read is.
+    super::search::creator_directory(&state).await.unwrap();
+    let feeds = [
+        "/v3/catalog/unified?groupBy=item&first=12",
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ];
+    let creator_profile = |body: &Value| {
+        let rows = body["data"].as_array().unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r["creator"] == CREATOR || r["id"] == CREATOR)
+            .unwrap_or_else(|| panic!("a row of the creator: {body}"));
+        row.get("creatorProfile")
+            .or_else(|| row.get("profile"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    for uri in feeds {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert_eq!(
+            creator_profile(&body)["name"],
+            "Creatorname",
+            "{uri}: {body}"
+        );
+        assert!(
+            creator_profile(&body)["face"].as_str().is_some(),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "no-cache", "{uri}");
+    }
+    let listed = "https://registry.example/denylist";
+    state.denylist.set_remote(listed, [profile_entity.clone()]);
+    for uri in feeds {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert_eq!(
+            creator_profile(&body),
+            json!({ "name": "", "face": null, "claimed": false }),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "no-cache", "{uri}");
+    }
+    state.denylist.set_remote(listed, Vec::<String>::new());
+    sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
+        .bind(&profile_entity)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A feed without the creator directory (here, its refresh held by another) answers without
+    // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
+    // answer whose cards each ask /lambdas/profiles.
+    // A claim still live from the feeds above could not release this hold either: its release
+    // acts only on its own claim.
+    state.readers.clear();
+    let hold = state
+        .readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .expect("a reset frees the directory's refresh");
+    for uri in [
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ] {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert!(
+            body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none() && r.get("profile").is_none()),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
+    }
+    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -1809,6 +2016,99 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .execute(pool)
     .await
     .unwrap();
+    // Its collection lets the v3 marketplace mint, so its item orders are served.
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+             is_approved, is_editable, minters, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', lower($1), 137, 'Item fixture', lower($2), lower($2), $3, true, true, false, ARRAY[$4], 0, 0, 0, now()) \
+         ON CONFLICT (network, contract_address) DO NOTHING",
+    )
+    .bind(contract)
+    .bind(creator)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+    .bind(listings::offchain_marketplace_v3(137).unwrap().address)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// One contract and one item id on both networks: the read that names both
+/// pages the two rows itself and keeps the exact total on every page, as the
+/// paged read and its count do over the whole contract.
+#[tokio::test]
+async fn an_item_on_two_networks_keeps_its_total_on_every_page() {
+    use super::items::{ItemFilters, list_items};
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let contract = contract_of(&tag(), 3);
+    for (network, chain_id, item_id, created_at) in [
+        ("matic", 137, "7", 2),
+        ("ethereum", 1, "7", 1),
+        ("matic", 137, "8", 3),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+                 total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ($1, $2, $3::numeric, $4, 'wearable_v2', $5, $6, 'common', 0, 10, 10, 0, '', 'Item', 'hat', $7, 0, 0, now())",
+        )
+        .bind(network)
+        .bind(&contract)
+        .bind(item_id)
+        .bind(chain_id)
+        .bind(format!("urn:decentraland:{network}:collections-v2:{contract}:{item_id}"))
+        .bind(CREATOR)
+        .bind(created_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let read = |item_id: Option<&str>, first: i64, skip: i64| {
+        let f = ItemFilters {
+            contract_addresses: vec![contract.clone()],
+            item_id: item_id.map(String::from),
+            first: Some(first),
+            skip: Some(skip),
+            ..ItemFilters::default()
+        };
+        let state = state.clone();
+        async move {
+            let (items, total) = list_items(&state, &f).await.unwrap();
+            let chains: Vec<i64> = items
+                .iter()
+                .map(|i| {
+                    serde_json::to_value(i).unwrap()["chainId"]
+                        .as_i64()
+                        .unwrap()
+                })
+                .collect();
+            (chains, total)
+        }
+    };
+    for (first, skip, chains) in [
+        (1, 0, vec![137]),
+        (1, 1, vec![1]),
+        (1, 2, vec![]),
+        (5, 0, vec![137, 1]),
+        (0, 0, vec![]),
+    ] {
+        assert_eq!(
+            read(Some("7"), first, skip).await,
+            (chains, 2),
+            "first={first} skip={skip}"
+        );
+    }
+    assert_eq!(
+        read(None, 1, 0).await,
+        (vec![137], 3),
+        "the whole contract: a full page, then its count"
+    );
+    sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 /// The `public_item_order` ids the shared `unified_trades` view serves now.
@@ -1949,6 +2249,19 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["ok"], true);
     let created = body["data"]["id"].as_str().unwrap().to_string();
+    // The 201 carries the stored trade, `received` included, as the read answers it.
+    assert_eq!(
+        body["data"]["received"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let (status, read) = get(
+        market_router(state.clone()),
+        &format!("/v1/trades/{created}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(body["data"], read["data"]);
     let (status, body) = call(
         market_router(state.clone()),
         "POST",
@@ -2435,6 +2748,104 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
     for id in ids {
         delete_trade(&pool, &id).await;
     }
+}
+
+/// A read that names a contract reads only that contract's open trades; its
+/// rows are those of the read over every open trade, restricted to it.
+#[tokio::test]
+async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
+    use super::shop::{
+        build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
+        parse_shop_filters, parse_unified_filters,
+    };
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (c, item) in [(&c1, "0"), (&c1, "1"), (&c2, "0")] {
+        seed_item_row(&pool, c, item, CREATOR).await;
+    }
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true WHERE contract_address = ANY($1)")
+        .bind(vec![c1.clone(), c2.clone()])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for (c, kind, sent_type, value, received_type, amount) in [
+        (&c1, "public_item_order", 4, "0", 2, "250000000000000000"),
+        (&c1, "public_item_order", 4, "1", 1, "5000000000000000000"),
+        (&c1, "public_nft_order", 3, "7", 2, "400000000000000000"),
+        (&c1, "public_nft_order", 3, "8", 1, "6000000000000000000"),
+        (&c2, "public_item_order", 4, "0", 2, "300000000000000000"),
+    ] {
+        let asset = |asset_type, contract: &str, value: &str| Asset {
+            asset_type,
+            contract: contract.to_string(),
+            value: value.to_string(),
+        };
+        let sent = asset(sent_type, c, value);
+        let received = asset(
+            received_type,
+            "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0",
+            amount,
+        );
+        ids.push(insert_trade(&pool, kind, CREATOR, sent, received).await.0);
+    }
+
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+    let build = |kind: &str, pairs: &[(String, String)]| match kind {
+        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), None),
+        "items" => build_unified_items_sql(&parse_unified_filters(pairs), rate, None),
+        _ => build_unified_listings_sql(&parse_unified_filters(pairs), rate, None),
+    };
+    let rows = async |b: super::catalog::Builder| -> Vec<Value> {
+        let sql = format!("SELECT to_jsonb(q) - 'total' FROM ({}) q", b.sql);
+        sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql), b.args)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    for (kind, params) in [
+        ("listings", &[("includeLegacySecondary", "true")][..]),
+        ("listings", &[("itemId", "0"), ("listingType", "primary")]),
+        ("listings", &[("itemId", "1"), ("source", "legacy")]),
+        ("items", &[("includeLegacySecondary", "true")]),
+        ("shop", &[]),
+    ] {
+        let whole: Vec<(String, String)> = params
+            .iter()
+            .chain(&[("first", "1000")])
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut named = whole.clone();
+        named.push((
+            "contractAddress".to_string(),
+            c1.to_uppercase().replace("0X", "0x"),
+        ));
+        let (named, whole) = (build(kind, &named), build(kind, &whole));
+        assert!(
+            named
+                .sql
+                .contains("sent.contract_address IN (SELECT unnest(")
+                && !whole.sql.contains("unnest("),
+            "{}",
+            named.sql
+        );
+        let of_c1: Vec<Value> = rows(whole)
+            .await
+            .into_iter()
+            .filter(|r| r["contract_address"] == c1.as_str())
+            .collect();
+        assert!(!of_c1.is_empty(), "{kind} {params:?}");
+        assert_eq!(rows(named).await, of_c1, "{kind} {params:?}");
+    }
+
+    for id in ids {
+        delete_trade(&pool, &id).await;
+    }
+    cleanup_mirror(&pool, &[c1, c2]).await;
 }
 
 #[tokio::test]
@@ -2949,4 +3360,134 @@ async fn deep_merged_pages_read_the_graph_in_pages_it_accepts() {
         earned, want,
         "1,400 accounts across both networks, skip 995: ten rows past the 1000-row window, not an empty page"
     );
+}
+
+#[tokio::test]
+async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
+    use super::shop::*;
+    use sqlx::Row;
+    let Some(db) = crate::test_db::OwnDatabase::create("shop_page_totals").await else {
+        return;
+    };
+    // Prices, names, timestamps, relevance and discount each induce a different order.
+    let fixture = tag();
+    for (id, name, price, created) in [
+        (1, "Hat", 10, 2),
+        (2, "Hat Blue", 30, 3),
+        (3, "A Hat", 20, 1),
+    ] {
+        let contract = contract_of(&fixture, id);
+        seed_item_row(&db.pool, &contract, &id.to_string(), CREATOR).await;
+        sqlx::query("UPDATE shop.items SET name = $2, search_is_collection_approved = true WHERE network = 'matic' AND contract_address = $1")
+            .bind(&contract).bind(name).execute(&db.pool).await.unwrap();
+        if id == 3 {
+            sqlx::query("INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks,
+                discount_type, discount_ppm, root, collections, effective_since, expires_at)
+                VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794',
+                    '{\"uses\": 10}', 1, 100000, '0x00', ARRAY[$3], now() - interval '1 day', now() + interval '1 day')")
+                .bind(CREATOR).bind(format!("0x{}", tag())).bind(&contract).execute(&db.pool).await.unwrap();
+        }
+        for asset_type in [1, 2] {
+            let (trade, _) = insert_trade(
+                &db.pool,
+                "public_item_order",
+                CREATOR,
+                Asset {
+                    asset_type: 4,
+                    contract: contract.clone(),
+                    value: id.to_string(),
+                },
+                Asset {
+                    asset_type,
+                    contract: contract.clone(),
+                    value: format!("{price}000000000000000000"),
+                },
+            )
+            .await;
+            sqlx::query("UPDATE shop.trades SET created_at = timestamp '2026-01-01' + $2 * interval '1 day' WHERE id = $1::uuid")
+                .bind(trade).bind(f64::from(created)).execute(&db.pool).await.unwrap();
+        }
+    }
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("1").unwrap();
+    for feed in ["shop", "legacy", "unified listings", "unified items"] {
+        for (sort, expected) in [
+            (ShopSortBy::Newest, ["2", "1", "3"]),
+            (ShopSortBy::Cheapest, ["1", "3", "2"]),
+            (ShopSortBy::MostExpensive, ["2", "3", "1"]),
+            (ShopSortBy::Name, ["3", "1", "2"]),
+            (ShopSortBy::Discount, ["3", "2", "1"]),
+            (ShopSortBy::Relevance, ["1", "2", "3"]),
+        ] {
+            // The legacy catalog only supports date, price and name ordering.
+            let expected = if feed == "legacy"
+                && matches!(sort, ShopSortBy::Discount | ShopSortBy::Relevance)
+            {
+                ["2", "1", "3"]
+            } else {
+                expected
+            };
+            for skip in [0, 2, 3, 1000] {
+                let base = ShopCatalogFilters {
+                    first: Some(2),
+                    skip: Some(skip),
+                    search: Some("Hat".into()),
+                    sort_by: Some(sort),
+                    ..Default::default()
+                };
+                let unified = UnifiedCatalogFilters {
+                    base: base.clone(),
+                    source: Some(UnifiedSource::Native),
+                    ..Default::default()
+                };
+                let b = match feed {
+                    "shop" => build_shop_listings_sql(&base, None),
+                    "legacy" => build_legacy_listings_sql(
+                        &LegacyCatalogFilters {
+                            first: base.first,
+                            skip: base.skip,
+                            search: base.search,
+                            sort_by: base.sort_by,
+                            ..Default::default()
+                        },
+                        None,
+                    ),
+                    "unified listings" => build_unified_listings_sql(&unified, rate, None),
+                    "unified items" => build_unified_items_sql(&unified, rate, None),
+                    _ => unreachable!(),
+                };
+                let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
+                    .fetch_all(&db.pool)
+                    .await
+                    .unwrap();
+                let label = format!("{feed} {sort:?} skip={skip}");
+                assert!(!rows.is_empty(), "{label}: missing total");
+                for row in &rows {
+                    assert_eq!(row.get::<i64, _>("total"), 3, "{label}");
+                }
+                if skip >= 3 {
+                    assert_eq!(rows.len(), 1, "{label}");
+                    assert_eq!(
+                        rows[0].get::<Option<bool>, _>("page_present"),
+                        None,
+                        "{label}"
+                    );
+                } else {
+                    let ids: Vec<&str> = rows
+                        .iter()
+                        .map(|row| {
+                            assert_eq!(
+                                row.get::<Option<bool>, _>("page_present"),
+                                Some(true),
+                                "{label}"
+                            );
+                            row.get("item_id")
+                        })
+                        .collect();
+                    let start = skip as usize;
+                    assert_eq!(ids, expected[start..(start + 2).min(3)], "{label}");
+                }
+            }
+        }
+    }
+    db.drop().await;
 }

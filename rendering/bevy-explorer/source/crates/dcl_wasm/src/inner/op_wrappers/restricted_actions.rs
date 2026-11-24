@@ -43,10 +43,17 @@ pub async fn op_teleport_to(
     position_x: Option<i32>,
     position_y: Option<i32>,
     realm: Option<String>,
+    spawn_point: Option<String>,
 ) -> Result<bool, WasmError> {
-    dcl_js::restricted_actions::op_teleport_to(state.rc(), position_x, position_y, realm)
-        .await
-        .map_err(WasmError::from)
+    dcl_js::restricted_actions::op_teleport_to(
+        state.rc(),
+        position_x,
+        position_y,
+        realm,
+        spawn_point,
+    )
+    .await
+    .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]
@@ -112,8 +119,13 @@ pub async fn op_ui_focus(
 }
 
 #[wasm_bindgen]
-pub async fn op_open_explorer_ui(op_state: &WorkerContext, ui: i32) -> Result<i32, WasmError> {
-    dcl_js::restricted_actions::op_open_explorer_ui(op_state.rc(), ui)
+pub async fn op_open_explorer_ui(
+    op_state: &WorkerContext,
+    ui: i32,
+    request_id: u32,
+    item_urn: Option<String>,
+) -> Result<i32, WasmError> {
+    dcl_js::restricted_actions::op_open_explorer_ui(op_state.rc(), ui, request_id, item_urn)
         .await
         .map_err(WasmError::from)
 }

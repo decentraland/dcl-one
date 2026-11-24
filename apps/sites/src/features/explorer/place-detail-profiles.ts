@@ -1,16 +1,23 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { PlaceDetailCreator, SceneChatView } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
-import { sameOriginContentUrl } from "@ui/data/catalyst/profile";
-import { asAddress } from "@ui/data/catalyst/sceneOwner";
-import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
-import { qk, STALE } from "@ui/data/queryKeys";
-import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@ui/shop/discovery/lib/avatarColor";
+import type { PlaceDetailCreator, SceneChatView } from "@dcl/one-ui";
+import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@web-core/profile/avatarColor";
 
 import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
 import type { Place } from "@/data/lib/catalyst/schema";
+import {
+  asAddress,
+  fetchMemberProfiles,
+  MEMBER_PROFILES_STALE_MS,
+  sameOriginContentUrl,
+} from "@/data/lib/catalyst/social/member-profiles";
 
 import { FOUNDATION_AVATAR_BACKGROUND } from "../places/cards";
 import type { SceneChat } from "./scene-chat/useSceneChat";
+
+const profileKeys = {
+  creator: (address?: string) => ["place-creator-profile", address] as const,
+  sceneChat: (addresses: readonly string[]) => ["scene-chat-profiles", ...addresses] as const,
+};
 
 export function usePlaceDetailCreator(place: Pick<Place, "title" | "contact_name" | "owner"> | null): PlaceDetailCreator | undefined {
   const contact = place?.contact_name?.trim();
@@ -18,10 +25,10 @@ export function usePlaceDetailCreator(place: Pick<Place, "title" | "contact_name
   const foundation = contactName?.toLowerCase() === FOUNDATION_CONTACT_NAME.toLowerCase();
   const address = contactName && !foundation ? asAddress(place?.owner) ?? undefined : undefined;
   const { data: profiles } = useQuery({
-    queryKey: qk.placeCreatorProfile(address),
-    queryFn: ({ signal }) => fetchCommunityProfiles(address ? [address] : [], { signal }),
+    queryKey: profileKeys.creator(address),
+    queryFn: ({ signal }) => fetchMemberProfiles(address ? [address] : [], { signal }),
     enabled: Boolean(address),
-    staleTime: STALE.profile,
+    staleTime: MEMBER_PROFILES_STALE_MS,
     retry: false,
   });
   const name = contactName || place?.title?.trim();
@@ -36,13 +43,13 @@ export function usePlaceDetailCreator(place: Pick<Place, "title" | "contact_name
 export function usePlaceDetailChat(chat: SceneChat): SceneChatView {
   const addresses = [...new Set(chat.messages.map((message) => asAddress(message.sender)).filter((address) => address !== null))].sort();
   const { data: profiles } = useQuery({
-    queryKey: qk.sceneChatProfiles(addresses),
+    queryKey: profileKeys.sceneChat(addresses),
     queryFn: async ({ signal }) => {
-      const found = await fetchCommunityProfiles(addresses, { signal });
+      const found = await fetchMemberProfiles(addresses, { signal });
       return Object.fromEntries(addresses.map((address) => [address, found[address] ?? null]));
     },
     enabled: addresses.length > 0,
-    staleTime: STALE.profile,
+    staleTime: MEMBER_PROFILES_STALE_MS,
     retry: false,
     // Keep the names already read while a newly seen sender's profile loads.
     placeholderData: keepPreviousData,

@@ -42,7 +42,10 @@ use ipfs::IpfsAssetServer;
 #[cfg(feature = "explorer")]
 use scene_runner::{asset_preload::plugin::PreloadedGltf, permissions::Permission};
 
-use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
+use crate::{
+    hover_glow::{can_glow, set_hover_glows},
+    process_avatar, upload_cpu_mesh, AvatarDefinition, AvatarShape,
+};
 
 #[derive(Component)]
 pub struct AvatarAnimPlayer(pub Entity);
@@ -169,6 +172,8 @@ impl Plugin for AvatarAnimationPlugin {
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
+                // after the filing, so a preloaded emote's first request has the player as owner
+                preload_equipped_emotes.after(file_emote_downloads),
             )
                 .in_set(SceneSets::PostLoop),
         );
@@ -186,12 +191,12 @@ impl Plugin for AvatarAnimationPlugin {
 }
 
 /// File each avatar's emote downloads under the avatar, as its wearables are: the entity hashes
-/// of the emotes it plays (the full-body one and the upper-body request) go on the avatar as
+/// of the emotes it plays (the full-body one and the upper-body request), and for the player
+/// the emotes they have equipped (`preload_equipped_emotes`), go on the avatar as
 /// `PartitionedEmoteDownloads`, so the request slots rank an emote's definition, model and
 /// sounds in the avatar tier at this avatar's partition. With no owner they rank after every
 /// scene in range. A scene emote downloads under its scene's hash and a built-in one does not
 /// download, so neither is listed. Written only when the list changes.
-#[allow(clippy::type_complexity)]
 pub(crate) fn file_emote_downloads(
     mut commands: Commands,
     avatars: Query<
@@ -200,18 +205,27 @@ pub(crate) fn file_emote_downloads(
             &ActiveEmote,
             Option<&MaskedEmote>,
             Option<&PartitionedEmoteDownloads>,
+            Option<&AvatarShape>,
+            Has<PrimaryUser>,
         ),
         With<AvatarAnimPlayer>,
     >,
     mut emote_loader: CollectibleManager<Emote>,
 ) {
-    for (entity, active, masked, filed) in &avatars {
+    for (entity, active, masked, filed, shape, is_player) in &avatars {
         let masked = masked
             .and_then(|masked| masked.request.as_ref())
             .map(|request| &request.urn);
-        let hashes = emote_download_hashes(std::iter::once(&active.urn).chain(masked), |urn| {
-            emote_loader.get_hash(urn).ok()
-        });
+        let equipped = shape
+            .filter(|_| is_player)
+            .into_iter()
+            .flat_map(|shape| shape.0.emotes.iter())
+            .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
+            .collect::<Vec<_>>();
+        let hashes = emote_download_hashes(
+            std::iter::once(&active.urn).chain(masked).chain(&equipped),
+            |urn| emote_loader.get_hash(urn).ok(),
+        );
         match (filed, hashes.is_empty()) {
             (None, true) => {}
             (Some(filed), false) if filed.0 == hashes => {}
@@ -236,21 +250,86 @@ pub(crate) fn emote_download_hashes<'a>(
     urns: impl IntoIterator<Item = &'a EmoteUrn>,
     resolve: impl FnMut(&'a EmoteUrn) -> Option<String>,
 ) -> Vec<String> {
-    let mut hashes: Vec<String> = urns
-        .into_iter()
-        .filter(|urn| urn.scene_emote().is_none())
-        .filter_map(resolve)
-        .collect();
-    hashes.sort();
-    hashes.dedup();
-    hashes
+    common::partition::resolved_hashes(
+        urns.into_iter().filter(|urn| urn.scene_emote().is_none()),
+        resolve,
+    )
 }
 
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
 
+/// The body shape and equipped emote urns whose clips have all loaded, on the player. Present
+/// only while it matches what they have equipped; `preload_equipped_emotes` stops asking while it
+/// does.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub(crate) struct EquippedEmotesLoaded {
+    pub(crate) body_shape: String,
+    pub(crate) urns: Vec<String>,
+}
+
+/// Loads the local player's equipped emotes once their avatar is built, so the first press of
+/// each plays at once instead of waiting on the pointer, entity and clip fetches. Loaded emotes
+/// stay in the collectible cache, so this stops asking once every equipped clip has loaded or its
+/// GLB has failed to load, and asks again when the equipped set or the body shape changes.
+/// `file_emote_downloads` files the equipped emotes under the player, so their downloads rank
+/// with the player's own.
+pub(crate) fn preload_equipped_emotes(
+    mut commands: Commands,
+    player: Query<
+        (
+            Entity,
+            &AvatarShape,
+            &Children,
+            Option<&EquippedEmotesLoaded>,
+        ),
+        With<PrimaryUser>,
+    >,
+    definitions: Query<&AvatarDefinition>,
+    mut emote_loader: CollectibleManager<Emote>,
+    gltfs: Res<Assets<Gltf>>,
+    asset_server: Res<AssetServer>,
+) {
+    let Ok((player, shape, children, loaded)) = player.single() else {
+        return;
+    };
+    let Some(definition) = children.iter().flat_map(|c| definitions.get(c).ok()).next() else {
+        return;
+    };
+    let bodyshape = &definition.render.body_shape;
+    let equipped = &shape.0.emotes;
+    if loaded.is_some_and(|loaded| &loaded.body_shape == bodyshape && &loaded.urns == equipped) {
+        return;
+    }
+
+    let mut pending = false;
+    for urn in equipped
+        .iter()
+        .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
+    {
+        match emote_loader.get_representation(&urn, bodyshape) {
+            // a GLB that failed to load never yields a clip, so it is settled too
+            Ok(emote) => {
+                pending |=
+                    emote.avatar_animation(&gltfs).is_err() && !emote.load_failed(&asset_server)
+            }
+            Err(CollectibleError::Loading) => pending = true,
+            // missing, failed or not made for this body shape: playing it fails the same way
+            Err(_) => {}
+        }
+    }
+
+    if !pending {
+        commands.entity(player).try_insert(EquippedEmotesLoaded {
+            body_shape: bodyshape.clone(),
+            urns: equipped.clone(),
+        });
+    } else if loaded.is_some() {
+        commands.entity(player).try_remove::<EquippedEmotesLoaded>();
+    }
+}
+
 #[cfg(feature = "explorer")]
-#[allow(clippy::type_complexity)]
 fn handle_trigger_emotes(
     mut commands: Commands,
     mut emote_cmds: EventReader<RpcCallEvent>,
@@ -312,7 +391,6 @@ fn handle_trigger_emotes(
 // (or a switch to a different urn); a looping emote also sends an explicit stop when it ends —
 // one-shots end on the receiver's own timer (and the Pulse server's), so they need no stop.
 #[cfg(feature = "explorer")]
-#[allow(clippy::too_many_arguments)]
 fn broadcast_emote(
     q: Query<(&ActiveEmote, &MaskedEmote), With<PrimaryUser>>,
     emotes: CollectibleManager<Emote>,
@@ -378,8 +456,9 @@ fn broadcast_emote(
             });
         }
         // A looping emote ended: send an explicit stop. One-shots end on the receiver's own timer
-        // (and the Pulse server's), so they need no stop and fall through to the `_` arm.
-        (Some(emote), None) if emote.repeat => {
+        // (and the Pulse server's), so they need no stop and fall through to the `_` arm, except
+        // one too long for Pulse, which goes out durationless like a loop.
+        (Some(emote), None) if ends_with_stop(emote) => {
             *count += 1;
             let urn = emotes.source_urn(&emote.urn);
             debug!("sending emote stop: {urn}");
@@ -404,6 +483,13 @@ fn broadcast_emote(
     // playing. Set in one place so the unchanged `_` case can't drop the state and re-fire the
     // start.
     *last = current;
+}
+
+/// Whether an emote that stops playing needs an explicit stop on the wire: a loop, or a one-shot
+/// sent without its duration because Pulse refuses one that long.
+#[cfg(feature = "explorer")]
+fn ends_with_stop(emote: &EmotePlayback) -> bool {
+    emote.repeat || comms::pulse_emote_duration(emote.duration_ms).is_none()
 }
 
 /// Outside control of an avatar's full-body emote, for previews that pause and scrub it: `paused`
@@ -571,7 +657,6 @@ fn identity(playback: &EmotePlayback) -> (&EmoteUrn, EmoteMask, i64) {
 
 // TODO this function is a POS
 // lots of magic numbers that don't even deserve to be constants, needs reworking
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn animate(
     mut commands: Commands,
     mut avatars: Query<(
@@ -1066,8 +1151,16 @@ struct PlayParams<'w, 's> {
     sounds: Res<'w, Assets<bevy_kira_audio::AudioSource>>,
     emitters: Query<'w, 's, &'static mut AudioEmitter>,
     prop_details: Query<'w, 's, (Option<&'static Name>, &'static Transform, &'static ChildOf)>,
-    prop_meshes: Query<'w, 's, &'static Mesh3d>,
+    prop_meshes: Query<
+        'w,
+        's,
+        (
+            &'static Mesh3d,
+            Option<&'static MeshMaterial3d<StandardMaterial>>,
+        ),
+    >,
     meshes: ResMut<'w, Assets<Mesh>>,
+    std_materials: Res<'w, Assets<StandardMaterial>>,
     #[cfg(feature = "explorer")]
     preloaded_gltfs: Query<'w, 's, &'static PreloadedGltf>,
     ipfas: IpfsAssetServer<'w, 's>,
@@ -1235,7 +1328,6 @@ enum PropState {
 
 /// The emote's prop scene, spawned under `avatar` on first sight and set up once loaded, held in
 /// `extras` (keyed by avatar) across frames.
-#[allow(clippy::too_many_arguments)]
 fn ensure_prop(
     commands: &mut Commands,
     params: &mut PlayParams,
@@ -1269,8 +1361,13 @@ fn ensure_prop(
     if fresh {
         for spawned_ent in params.scene_spawner.iter_instance_entities(instance) {
             // a scene's preloaded glb keeps its meshes cpu-side for GltfContainer to upload
-            if let Ok(mesh) = params.prop_meshes.get(spawned_ent) {
+            if let Ok((mesh, material)) = params.prop_meshes.get(spawned_ent) {
                 upload_cpu_mesh(&mut params.meshes, mesh);
+                // the hover glow follows the wearables' rule: blended meshes stay unlit
+                let glows = material
+                    .and_then(|material| params.std_materials.get(material))
+                    .is_some_and(|material| can_glow(material.alpha_mode));
+                set_hover_glows(&mut commands.entity(spawned_ent), glows);
             }
             if let Ok((maybe_name, transform, parent)) = params.prop_details.get(spawned_ent) {
                 // Reference, base and mask geometry is not part of the visible prop.
@@ -1417,7 +1514,6 @@ fn slot_sound(
 }
 
 /// Fire a slot's due sound once its playback reaches it.
-#[allow(clippy::too_many_arguments)]
 fn fire_slot_sound(
     commands: &mut Commands,
     params: &mut PlayParams,
@@ -1492,7 +1588,6 @@ const MAX_CLIP_NODES: usize = 16;
 /// `urn`'s clip node in the avatar graph, stamped as played at `now`. A new urn gets `clip` under
 /// `mask` on a new node or, at `MAX_CLIP_NODES`, on the least recently played node that's off the
 /// player. `None` if the graph isn't loaded.
-#[allow(clippy::too_many_arguments)]
 fn clip_node(
     nodes: &mut HashMap<String, (AnimationNodeIndex, f32)>,
     urn: &str,
@@ -1589,7 +1684,6 @@ struct Played {
 /// Play a slot for one frame: its clip on the avatar's player (started unless it's the one already
 /// running, and on a `restart`), with its loop, `speed` and `seek`, the prop clip alongside, and
 /// the sound due. `playback` gets the clip duration and end.
-#[allow(clippy::too_many_arguments)]
 fn play_slot(
     commands: &mut Commands,
     params: &mut PlayParams,
@@ -1817,7 +1911,6 @@ fn play_slot(
     })
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn play_current_emote(
     mut commands: Commands,
     mut q: Query<(
@@ -2068,7 +2161,6 @@ fn play_current_emote(
 ///
 /// The emote's prop and audio come along like a full-body emote's, and go the moment the request
 /// ends or is suspended; a resume brings them back from the top.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn play_masked_emote(
     mut commands: Commands,
     mut q: Query<(Entity, &mut MaskedEmote, &AvatarAnimPlayer, &Children)>,
@@ -2274,4 +2366,35 @@ fn play_scene_driven_sounds(
     }
     // Drop tracked state for avatars that no longer have the component.
     last_sounds.retain(|e, _| seen.contains(e));
+}
+
+#[cfg(all(test, feature = "explorer"))]
+mod stop_tests {
+    use super::*;
+
+    fn one_shot(duration_ms: u32) -> EmotePlayback {
+        EmotePlayback {
+            duration_ms: Some(duration_ms),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_one_shot_pulse_can_time_ends_without_a_stop() {
+        assert!(!ends_with_stop(&one_shot(2_000)));
+        assert!(!ends_with_stop(&one_shot(
+            comms::PULSE_MAX_EMOTE_DURATION_MS
+        )));
+    }
+
+    #[test]
+    fn a_loop_or_a_one_shot_too_long_for_pulse_ends_with_a_stop() {
+        assert!(ends_with_stop(&EmotePlayback {
+            repeat: true,
+            ..one_shot(2_000)
+        }));
+        assert!(ends_with_stop(&one_shot(
+            comms::PULSE_MAX_EMOTE_DURATION_MS + 1
+        )));
+    }
 }

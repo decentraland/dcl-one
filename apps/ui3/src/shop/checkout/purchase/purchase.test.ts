@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { decodeFunctionData, type Hex } from "viem";
+import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import { partitionCart, type CartGroup } from "@shop/cart/partition";
 import { createCartStore, type CartStorage, type CartStore } from "../../cart/store";
@@ -30,12 +33,13 @@ import {
   type FakeHandlers,
 } from "../fakes";
 import { getCouponManagerForTrade } from "../lib/marketplace";
-import type { ListingCoupon } from "./encoding";
-import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, type ResolvedLine, type SettlementResolvers } from "./cart";
-import { resumeCheckout, runGroup, watchGroup, type CheckoutDeps } from "./executor";
+import { ASSET_TYPE, type ListingCoupon } from "./encoding";
+import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, tradeManaPrice, type ResolvedLine, type SettlementResolvers } from "./cart";
+import { ACCOUNT_READ_MS, AFTER_PENDING, resumeCheckout, runGroup, runGroups, splitPriceOf, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
 import type { RailContext } from "./rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
+import { RefusedBeforeWallet } from "../chain/wallet";
 
 function memoryStorage(): CartStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -55,6 +59,15 @@ function cartWith(offers: Spec[], storage = memoryStorage()): { store: CartStore
 }
 
 const noop = () => {};
+
+
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPaymentForTests(true);
+});
+afterEach(() => undoSplit());
 
 describe("the settlement groups: a credits group never holds a restricted line", () => {
   const session = web3();
@@ -97,13 +110,32 @@ describe("the settlement groups: a credits group never holds a restricted line",
 
 describe("payment options come from the rule, not from balances", () => {
   it("an eligible line stays credits-first with an explicit top-up when short; MANA second with credits+MANA inside it", () => {
-    const view = presentPayment(creatorOrder(web3()), web3(), { creditsBalance: 30 as never, manaBalance: 5n * 10n ** 18n as never, report: noop });
+    const view = presentPayment(storeMint(web3()), web3(), { creditsBalance: 30 as never, manaBalance: 5n * 10n ** 18n as never, report: noop });
     const o = computePaymentOptions(view);
     expect(o.preferred).toBe("credits");
     expect(o.options.map((x) => x.method)).toEqual(["credits", "combined", "mana"]);
-    expect(o.topUp).toEqual({ short: 70, required: 100, balance: 30 });
+    expect(o.topUp).toEqual({ short: 90, required: 120, balance: 30 });
     expect(findOption(o, "credits")!.state.kind).toBe("topUpRequired");
     expect(hasPayableOption(o)).toBe(true);
+  });
+
+  it("a listing's MANA price is its ERC-20 amount after the coupon, as the contract takes it; a USD-pegged one has none", () => {
+    const erc20 = (amount: bigint) =>
+      creatorTrade({ received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: amount.toString(), extra: "0x", beneficiary: BOOK.creator }] });
+    const coupon = { discount: 300_000 } as ListingCoupon;
+    expect(tradeManaPrice(erc20(25n * 10n ** 17n), undefined)).toBe(25n * 10n ** 17n);
+    // 2.5 MANA less floor(2.5 * 30%): 1.75 MANA.
+    expect(tradeManaPrice(erc20(25n * 10n ** 17n), coupon)).toBe(175n * 10n ** 16n);
+    // An odd wei: the kept part rounds up, as `amount - floor(amount * ppm / 1e6)` does.
+    expect(tradeManaPrice(erc20(7n), coupon)).toBe(7n - (7n * 300_000n) / 1_000_000n);
+    expect(tradeManaPrice(creatorTrade(), undefined)).toBeNull();
+  });
+
+  it("a USD-pegged line has no credits+MANA rail: its MANA is only fixed at settlement", () => {
+    const view = presentPayment(creatorOrder(web3()), web3(), { creditsBalance: 30 as never, manaBalance: 5n * 10n ** 18n as never, report: noop });
+    const o = computePaymentOptions(view);
+    expect(o.options.map((x) => x.method)).toEqual(["credits", "mana"]);
+    expect(o.topUp).toEqual({ short: 70, required: 100, balance: 30 });
   });
 
   it("a resale is MANA only: no credit price, no top-up, no combined rail; web2 gets guidance", () => {
@@ -241,7 +273,7 @@ type Harness = {
 };
 
 async function harness(
-  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
+  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; resolvers?: Partial<SettlementResolvers>; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; refuseBody?: Record<string, unknown>; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
 ): Promise<Harness> {
   const session = opts.session ?? web3();
   const offer = opts.method === "mana" ? wearableResale(session) : creatorOrder(session);
@@ -252,6 +284,7 @@ async function harness(
     mode: opts.relay ?? "ok",
     refuseStatus: opts.refuseStatus,
     refuseEvidence: opts.refuseEvidence,
+    refuseBody: opts.refuseBody,
     failStatus: opts.failStatus,
     failBody: opts.failBody,
     onRelay: (hash) => {
@@ -285,7 +318,7 @@ async function harness(
     },
   };
   const part = partitionCart([{ line: lines[0]!, offer }], session, { report: noop });
-  const review = await reviewCart([{ line: lines[0]!, offer }], session, BOOK.buyer, resolvers());
+  const review = await reviewCart([{ line: lines[0]!, offer }], session, BOOK.buyer, resolvers(opts.resolvers));
   store.startCheckout(part.groups);
   return {
     deps: { ctx, store, guard: createSpendGuard() },
@@ -314,6 +347,78 @@ describe("running a credits group through the state machine", () => {
     expect(h.relay.posts).toHaveLength(1);
     await vi.waitFor(() => expect(h.shop.log.some((r) => r.name === "reportCreditSubmission")).toBe(true));
     expect(h.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+  });
+
+  it("hands the group's credit and useCredits as built to the caller before signing, on the relay and the wallet alike", async () => {
+    for (const gasless of [true, false]) {
+      const h = await harness();
+      const seen: { creditId: string; posts: number; sent: number; maxUncredited: bigint; target: string }[] = [];
+      const deps = {
+        ...h.deps,
+        ctx: { ...h.deps.ctx, gasless },
+        onCreditsCall: ({ creditId, built }: { creditId: string; built: { args: { maxUncreditedValue: bigint; externalCall: { target: string } } } }) => {
+          seen.push({ creditId, posts: h.relay.posts.length, sent: h.wallet.sent.length, maxUncredited: built.args.maxUncreditedValue, target: built.args.externalCall.target });
+        },
+      };
+      const result = await runGroup(deps, h.group, h.resolved);
+      expect(result.status).not.toBe("failed");
+      // Once, before anything went to the relay or the wallet, with the credit the node issued for it.
+      expect(seen).toEqual([{ creditId: `0x${"a1".repeat(32)}`, posts: 0, sent: 0, maxUncredited: 0n, target: expect.any(String) }]);
+      expect(gasless ? h.relay.posts.length : h.wallet.sent.length).toBe(1);
+    }
+  });
+
+  it("sends nothing and gives the credit back when the caller couldn't keep the group's call", async () => {
+    for (const gasless of [true, false]) {
+      const h = await harness();
+      const deps = { ...h.deps, ctx: { ...h.deps.ctx, gasless }, onCreditsCall: () => false };
+      const result = await runGroup(deps, h.group, h.resolved);
+      expect(result).toMatchObject({ status: "failed", failure: { kind: "refused", message: "This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged." } });
+      expect(h.relay.posts).toHaveLength(0);
+      expect(h.wallet.sent).toHaveLength(0);
+      expect(h.shop.log.find((r) => r.name === "cancelCreditAuthorizations")?.body).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+    }
+  });
+
+  it("a kept group's revert of the hash it was answered is its caller's to attribute: pending, nothing released", async () => {
+    const h = await harness({ confirm: "reverted" });
+    const deps = { ...h.deps, onCreditsCall: () => true, onCreditsEnvelope: () => true };
+    const result = await runGroup(deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "pending", txHash: expect.stringMatching(/^0x[0-9a-f]{64}$/) });
+    expect(h.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+  });
+
+  it("hands a kept group's bytes to the caller before they go: the relayed execution, or the wallet's useCredits", async () => {
+    for (const gasless of [true, false]) {
+      const h = await harness();
+      const seen: { bytes: string; posts: number; sent: number }[] = [];
+      const deps = {
+        ...h.deps,
+        ctx: { ...h.deps.ctx, gasless },
+        onCreditsCall: () => true,
+        onCreditsEnvelope: (bytes: string) => {
+          seen.push({ bytes, posts: h.relay.posts.length, sent: h.wallet.sent.length });
+        },
+      };
+      await runGroup(deps, h.group, h.resolved);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ posts: 0, sent: 0 });
+      // The very bytes that went: the wallet's transaction data, or what the relay was asked to send.
+      const went = gasless ? JSON.stringify(h.relay.posts[0]) : h.wallet.sent[0]!.data;
+      expect(went.toLowerCase()).toContain(seen[0]!.bytes.toLowerCase().slice(2));
+    }
+  });
+
+  it("sends nothing and gives the credit back when the caller couldn't keep a kept group's bytes", async () => {
+    for (const gasless of [true, false]) {
+      const h = await harness();
+      const deps = { ...h.deps, ctx: { ...h.deps.ctx, gasless }, onCreditsCall: () => true, onCreditsEnvelope: () => false };
+      const result = await runGroup(deps, h.group, h.resolved);
+      expect(result).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+      expect(h.relay.posts).toHaveLength(0);
+      expect(h.wallet.sent).toHaveLength(0);
+      expect(h.shop.log.find((r) => r.name === "cancelCreditAuthorizations")?.body).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+    }
   });
 
   it("wallet rejection: the group fails as rejected and its unbroadcast credit is released", async () => {
@@ -401,6 +506,102 @@ describe("running a credits group through the state machine", () => {
   });
 });
 
+/** Two credits groups through the one CreditsManager (a store mint and a creator order), each credit its own. */
+async function pairHarness(opts: { confirm?: "success" | "none" } = {}) {
+  const session = web3();
+  const offers = [
+    { offer: storeMint(session), name: "Hat" },
+    { offer: creatorOrder(session), tradeId: "trade-creator-1", name: "Order" },
+  ];
+  const { store, lines, storage } = cartWith(offers);
+  const chain = createFakeChain();
+  let confirm = opts.confirm ?? "success";
+  const relay = createFakeRelay({ mode: "ok", onRelay: (hash) => void (confirm === "success" && chain.receipts.set(hash.toLowerCase(), "success")) });
+  let credits = 0;
+  const shop = createFakeShop({
+    authorizeCreditBatch: ({ body }) => batchAuthorization((body as { items: { usdPriceCents: number }[] }).items, `0x${(++credits).toString(16).padStart(2, "0").repeat(32)}`),
+    cancelCreditAuthorizations: ({ body }) => ({ released: (body as { salts: string[] }).salts.length, retired: 0, spendableAtSeconds: null }),
+    reportCreditSubmission: () => ({ recorded: 1 }),
+  });
+  let clock = 0;
+  const ctx: RailContext = {
+    buyer: BOOK.buyer,
+    provider: createFakeWallet(),
+    reader: chain,
+    client: shop.client,
+    walletKind: "web3",
+    relayerUrl: "https://node.test/transactions-api/v1",
+    fetchImpl: relay.fetchImpl,
+    gasless: true,
+    wait: { timeoutMs: 30, pollMs: 10, now: () => clock, sleep: async (ms) => void (clock += ms) },
+  };
+  const pairs = lines.map((line, i) => ({ line, offer: offers[i]!.offer }));
+  const part = partitionCart(pairs, session, { report: noop });
+  const review = await reviewCart(pairs, session, BOOK.buyer, resolvers());
+  store.startCheckout(part.groups);
+  return {
+    deps: { ctx, store, guard: createSpendGuard() } as CheckoutDeps,
+    store,
+    groups: part.groups,
+    resolved: new Map(review.buyable.map((r) => [r.line.id, r])),
+    shop,
+    chain,
+    relay,
+    storage,
+    confirmFromNowOn: () => void (confirm = "success"),
+  };
+}
+
+const authorizations = (shop: ReturnType<typeof createFakeShop>) => shop.log.filter((r) => r.name === "authorizeCreditBatch").length;
+
+describe("a checkout's groups, while one of them is in flight", () => {
+  it("holds the next group while the first is handed off but not mined: no second credit, no second signature", async () => {
+    const h = await pairHarness({ confirm: "none" });
+    expect(h.groups.map((g) => g.key.method)).toEqual(["credits", "credits"]);
+    const [first, second] = h.groups as [CartGroup, CartGroup];
+    const seen: string[] = [];
+    const results = await runGroups(h.deps, h.groups, h.resolved, (group, result) => seen.push(`${group.keyId}:${result.status}`));
+    expect(results[first.keyId]).toMatchObject({ status: "pending" });
+    expect(results[second.keyId]).toEqual({ status: "skipped", reason: AFTER_PENDING });
+    expect(seen).toEqual([`${first.keyId}:pending`, `${second.keyId}:skipped`]);
+    expect(authorizations(h.shop)).toBe(1);
+    expect(h.relay.posts).toHaveLength(1);
+    // The held group is still ready to run: nothing was reserved for it.
+    expect(h.store.getSnapshot().checkout!.groups.find((g) => g.keyId === second.keyId)!.status).toBe("idle");
+
+    // Confirmed again while the first is still in flight, in either order: the held group waits again.
+    expect((await runGroups(h.deps, [second, first], h.resolved))[second.keyId]).toEqual({ status: "skipped", reason: AFTER_PENDING });
+    expect(authorizations(h.shop)).toBe(1);
+
+    // Once the first is mined and seen, the next confirmation runs the second.
+    const progress = h.store.getSnapshot().checkout!.groups.find((g) => g.keyId === first.keyId)!;
+    h.chain.receipts.set(progress.txHash!.toLowerCase(), "success");
+    expect(await watchGroup(h.deps, progress)).toMatchObject({ status: "confirmed" });
+    h.confirmFromNowOn();
+    expect((await runGroups(h.deps, [second], h.resolved))[second.keyId]).toMatchObject({ status: "confirmed" });
+    expect(authorizations(h.shop)).toBe(2);
+    expect(h.relay.posts).toHaveLength(2);
+  });
+
+  it("runs every group in turn when none is left in flight", async () => {
+    const h = await pairHarness();
+    const results = await runGroups(h.deps, h.groups, h.resolved);
+    expect(Object.values(results).map((r) => r.status)).toEqual(["confirmed", "confirmed"]);
+    expect(authorizations(h.shop)).toBe(2);
+  });
+
+  it("on resume, runs nothing new while a watched group is still in flight", async () => {
+    const h = await pairHarness({ confirm: "none" });
+    const [first, second] = h.groups as [CartGroup, CartGroup];
+    await runGroup(h.deps, first, h.resolved);
+    const results = await resumeCheckout(h.deps, h.store.getSnapshot().checkout!, h.groups, h.resolved);
+    expect(results[first.keyId]).toMatchObject({ status: "pending" });
+    expect(results[second.keyId]).toEqual({ status: "skipped", reason: AFTER_PENDING });
+    expect(authorizations(h.shop)).toBe(1);
+    expect(h.relay.posts).toHaveLength(1);
+  });
+});
+
 describe("process death between boundaries, then resume", () => {
   it("a reloaded page reads the persisted checkout; resume releases an authorizing group's credit and re-runs it", async () => {
     const h = await harness();
@@ -428,6 +629,113 @@ describe("process death between boundaries, then resume", () => {
   });
 });
 
+describe("a credits group the relay refuses for its limits", () => {
+  const released = (h: Harness) => h.shop.log.find((r) => r.name === "cancelCreditAuthorizations")?.body;
+
+  it("an in-app wallet's spent quota fails the group with the quota's copy and gives the credit back, whatever time it names", async () => {
+    // A time no date can hold must not stop the credit from being released.
+    const h = await harness({ session: web2(), relay: "refuse", refuseStatus: 429, refuseBody: { error: "quota_reached", message: "Quota: 30", quota: 30, retryAt: Number.MAX_SAFE_INTEGER } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later." } });
+    expect(released(h)).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+  });
+
+  it("reads a refusal marked as not sent by its code alone (upstream's shape)", async () => {
+    const h = await harness({ session: web2(), relay: "refuse", refuseStatus: 429, refuseBody: { error: undefined, code: "quota_reached", message: "Quota: 30", quota: 30 } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { message: "You've used all 30 fee-free transactions this account gets in 24 hours. Try again later." } });
+    expect(released(h)).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+  });
+
+  it("keeps the credit for a forwarded 429 not marked as not sent, whatever its code says", async () => {
+    const h = await harness({ session: web2(), relay: "refuse", refuseStatus: 429, refuseEvidence: false, refuseBody: { code: "quota_reached", message: "Quota: 30" } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "pending" });
+    expect(released(h)).toBeUndefined();
+  });
+});
+
+describe("a credits group of one unit paid with Credits and MANA together", () => {
+  // The harness's creator listing is quoted 100 cents; its MANA price is the sale's, read from the resolved line.
+  const PART = 40;
+  const relayedUseCredits = (body: unknown) => {
+    const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1];
+    const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data });
+    return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint };
+  };
+  /** A harness whose node signs `credit(share)` for the Credits part, and the split terms the buyer confirmed. */
+  async function splitHarness(opts: { credit?: (share: bigint) => bigint; confirmed?: (gap: bigint) => bigint; relay?: "ok" | "refuse" } = {}) {
+    let price = 0n;
+    // A creator listing priced in MANA itself (a USD-pegged one has no split): 2.3 MANA.
+    const listing = creatorTrade({ received: [{ assetType: ASSET_TYPE.ERC20, contractAddress: BOOK.mana, amount: (23n * 10n ** 17n).toString(), extra: "0x", beneficiary: BOOK.creator }] });
+    const h = await harness({
+      relay: opts.relay,
+      resolvers: { trade: async () => listing },
+      handlers: {
+        authorizeCreditBatch: ({ body }) => {
+          const share = (price * BigInt(PART)) / 100n;
+          const value = (opts.credit ?? ((x) => x))(share).toString();
+          const answer = batchAuthorization((body as { items: { usdPriceCents: number }[] }).items);
+          return { ...answer, credit: { ...answer.credit, amount: value, availableAmount: value }, maxCreditedValue: value };
+        },
+      },
+    });
+    const unit = [...h.resolved.values()][0]!;
+    price = splitPriceOf(unit)!;
+    const share = (price * BigInt(PART)) / 100n;
+    const gap = price - share;
+    h.deps.split = { creditsCents: PART, confirmedWei: (opts.confirmed ?? ((g) => g))(gap), session: { walletKind: "web3" } };
+    return { h, price, share, gap };
+  }
+
+  it("asks for a credit for the Credits part alone, at the whole price, and relays one useCredits with the credit and the gap as its caps", async () => {
+    const { h, share, gap } = await splitHarness();
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "confirmed" });
+    const auth = h.shop.log.find((r) => r.name === "authorizeCreditBatch")!;
+    expect(auth.body).toMatchObject({ items: [{ usdPriceCents: 100, creditsCents: PART }], source: "website" });
+    expect(h.relay.posts).toHaveLength(1);
+    expect(relayedUseCredits(h.relay.posts[0])).toMatchObject({ maxCreditedValue: share, maxUncreditedValue: gap });
+  });
+
+  it.each([
+    ["a credit above its share", (s: bigint) => s + 1n],
+    ["a credit below its share", (s: bigint) => s - 1n],
+  ])("refuses %s before anything is signed, and releases it", async (_, credit) => {
+    const { h } = await splitHarness({ credit });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.relay.posts).toHaveLength(0);
+    expect(h.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+  });
+
+  it("refuses a gap above what the buyer confirmed, before anything is signed", async () => {
+    const { h } = await splitHarness({ confirmed: (g) => g - 1n });
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.relay.posts).toHaveLength(0);
+  });
+
+  it("never falls back to the wallet when the relay refuses it", async () => {
+    const { h } = await splitHarness({ relay: "refuse" });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result.status).not.toBe("confirmed");
+    expect(h.wallet.requests.some((q) => q.method === "eth_sendTransaction")).toBe(false);
+  });
+
+  it("asks for no credit for a USD-pegged listing", async () => {
+    const h = await harness();
+    h.deps.split = { creditsCents: PART, confirmedWei: 10n ** 18n, session: { walletKind: "web3" } };
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+  });
+
+  it("asks for no credit without the fee-free relay", async () => {
+    const { h } = await splitHarness();
+    h.deps.ctx.gasless = false;
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+  });
+});
+
 describe("a credits group the relay refuses", () => {
   it("without the relay's evidence that nothing was sent, a refusal is not trusted: the credit is kept", async () => {
     // An earlier version of this relay answered a revert to the send as a 400, after sending.
@@ -448,6 +756,228 @@ describe("a credits group the relay refuses", () => {
     expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "confirmed" });
     expect(web3Wallet.wallet.sent).toHaveLength(1);
     expect(web3Wallet.shop.log.filter((r) => r.name === "authorizeCreditBatch")).toHaveLength(1);
+  });
+});
+
+describe("a kept credits group the wallet was handed", () => {
+  const kept = (h: Harness, over: Partial<CheckoutDeps["ctx"]> = {}) => ({ ...h.deps, ctx: { ...h.deps.ctx, ...over }, onCreditsCall: () => true, onCreditsEnvelope: () => true });
+  const cancels = (h: Harness) => h.shop.log.filter((r) => r.name === "cancelCreditAuthorizations").length;
+
+  it("sent, then a disconnect before its hash: held without a hash, its credit kept, nothing sent again", async () => {
+    // Its own transaction from the start, and the wallet's fallback after the relay proved it sent nothing.
+    const direct = await harness();
+    direct.wallet.next = "lost";
+    const fallback = await harness({ relay: "refuse", refuseStatus: 503 });
+    fallback.wallet.next = "lost";
+    for (const [h, deps] of [
+      [direct, kept(direct, { gasless: false })],
+      [fallback, kept(fallback)],
+    ] as const) {
+      expect(await runGroup(deps, h.group, h.resolved)).toMatchObject({ status: "pending", txHash: null });
+      expect(h.wallet.sent).toHaveLength(1);
+      expect(cancels(h)).toBe(0);
+      expect(h.shop.log.filter((r) => r.name === "authorizeCreditBatch")).toHaveLength(1);
+    }
+  });
+
+  /** The wallet sends the transaction, then answers `error` instead of its hash. */
+  const sendsThenThrows = (h: Harness, error: unknown) => {
+    const original = h.wallet.request.bind(h.wallet);
+    h.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+      const answer = await original(args as never);
+      if (args.method === "eth_sendTransaction") throw error;
+      return answer;
+    }) as typeof h.wallet.request;
+  };
+  const abort = () => Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+  const cancelledAfter = () => Object.assign(new Error("Request cancelled after broadcast"), { code: 4900 });
+  // A wallet's own 4100 after it sent proves nothing: only the page's guard refusing before the wallet does, and a wallet's
+  // error named as the guard's, with its code, is still the wallet's.
+  const walletUnauthorized = () => Object.assign(new Error("Unauthorized"), { code: 4100 });
+  const namedAsTheGuard = () => Object.assign(new Error("Refused"), { name: "WalletRefusal", code: 4100 });
+
+  it.each([
+    ["an abort", abort],
+    ["a 4900 that says cancelled", cancelledAfter],
+    ["a wallet's own 4100", walletUnauthorized],
+    ["a wallet's error named and coded as the guard's", namedAsTheGuard],
+    ["a disconnect whose cause says rejected", () => Object.assign(new Error("The wallet disconnected."), { code: 4900, cause: { code: 4001 } })],
+    ["an RPC error whose cause says rejected", () => Object.assign(new Error("Internal error"), { code: -32603, cause: { code: 4001 } })],
+  ])("sent, then %s instead of its hash: held, its credit kept, on its own transaction and after the relay's refusal", async (_, error) => {
+    const direct = await harness();
+    sendsThenThrows(direct, error());
+    const fallback = await harness({ relay: "refuse", refuseStatus: 503 });
+    sendsThenThrows(fallback, error());
+    for (const [h, deps] of [
+      [direct, kept(direct, { gasless: false })],
+      [fallback, kept(fallback)],
+    ] as const) {
+      expect(await runGroup(deps, h.group, h.resolved)).toMatchObject({ status: "pending", txHash: null });
+      expect(h.wallet.sent).toHaveLength(1);
+      expect(cancels(h)).toBe(0);
+    }
+  });
+
+  it("the page's guard refusing before the wallet still fails it and gives its credit back", async () => {
+    const h = await harness();
+    const original = h.wallet.request.bind(h.wallet);
+    h.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+      if (args.method === "eth_sendTransaction") throw Object.assign(new RefusedBeforeWallet("Your sign-in changed meanwhile."), { code: 4100 });
+      return original(args as never);
+    }) as typeof h.wallet.request;
+    expect(await runGroup(kept(h, { gasless: false }), h.group, h.resolved)).toMatchObject({ status: "failed" });
+    expect(h.wallet.sent).toHaveLength(0);
+    expect(cancels(h)).toBe(1);
+  });
+
+  it("a smart wallet's purchase is unkept before its wallet sends it: after the relay's refusal and on its own transaction", async () => {
+    for (const gasless of [true, false]) {
+      const h = await harness();
+      // A contract account: the relay refuses it, and its transaction is a call to itself.
+      h.chain.code = async () => "0x6080604052";
+      const calls: string[] = [];
+      const deps = {
+        ...h.deps,
+        ctx: { ...h.deps.ctx, gasless },
+        onCreditsCall: () => void calls.push(`kept:${h.wallet.sent.length}`),
+        onCreditsEnvelope: () => void calls.push("envelope"),
+        onCreditsUnkept: () => void calls.push(`unkept:${h.wallet.sent.length}`),
+      };
+      await runGroup(deps, h.group, h.resolved);
+      // Unkept before the wallet was handed anything, and never kept again for the wallet's own transaction.
+      expect(calls).toEqual(gasless ? ["kept:0", "unkept:0"] : ["unkept:0"]);
+      expect(h.wallet.sent).toHaveLength(1);
+      expect(h.relay.posts).toHaveLength(0);
+    }
+  });
+
+  it("takes the relay's word that the account is a contract: a later read that fails or says empty changes nothing", async () => {
+    for (const later of [async () => { throw new Error("rpc down"); }, async () => "0x"] as const) {
+      const h = await harness();
+      let reads = 0;
+      // The relay's read finds bytecode; any read after it fails, or answers empty.
+      h.chain.code = (async () => (++reads === 1 ? "0x6080604052" : later())) as typeof h.chain.code;
+      const calls: string[] = [];
+      const deps = {
+        ...h.deps,
+        onCreditsCall: () => void calls.push("kept"),
+        onCreditsEnvelope: () => void calls.push("envelope"),
+        onCreditsUnkept: () => void calls.push("unkept"),
+      };
+      await runGroup(deps, h.group, h.resolved);
+      expect(calls).toEqual(["kept", "unkept"]);
+      expect(reads).toBe(1);
+      expect(h.wallet.sent).toHaveLength(1);
+    }
+  });
+
+  it("stops before the wallet when its account can't be read, gives the credit back, and lets it be tried again", async () => {
+    const h = await harness();
+    h.chain.code = async () => {
+      throw new Error("rpc down");
+    };
+    const calls: string[] = [];
+    const deps = { ...h.deps, ctx: { ...h.deps.ctx, gasless: false }, onCreditsCall: () => void calls.push("kept"), onCreditsEnvelope: () => void calls.push("envelope"), onCreditsUnkept: () => void calls.push("unkept") };
+    // Not refused for good: an error, which the shell offers TRY AGAIN for.
+    expect(await runGroup(deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "error" } });
+    expect(calls).toEqual([]);
+    expect(h.wallet.sent).toHaveLength(0);
+    expect(cancels(h)).toBe(1);
+  });
+
+  it("stops the same way when the read of its account doesn't answer in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await harness();
+      h.chain.code = () => new Promise(() => {});
+      const deps = { ...h.deps, ctx: { ...h.deps.ctx, gasless: false }, onCreditsCall: () => true, onCreditsEnvelope: () => true, onCreditsUnkept: () => true };
+      const running = runGroup(deps, h.group, h.resolved);
+      await vi.advanceTimersByTimeAsync(ACCOUNT_READ_MS);
+      expect(await running).toMatchObject({ status: "failed", failure: { kind: "error" } });
+      expect(h.wallet.sent).toHaveLength(0);
+      expect(cancels(h)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never takes half a byte, or what isn't bytecode, for a smart wallet: stopped before the wallet, the credit given back", async () => {
+    for (const code of ["0x0", "not-bytecode"]) {
+      for (const route of ["direct", "fallback"] as const) {
+        // Fallback: the relay tries it as ever, then refuses it as not sent; the wallet's way reads the account again.
+        const h = await harness(route === "fallback" ? { relay: "refuse", refuseStatus: 503 } : {});
+        h.chain.code = (async () => code) as unknown as typeof h.chain.code;
+        const calls: string[] = [];
+        const deps = {
+          ...h.deps,
+          ctx: { ...h.deps.ctx, gasless: route === "fallback" },
+          onCreditsCall: () => void calls.push("kept"),
+          onCreditsEnvelope: () => void calls.push("envelope"),
+          onCreditsUnkept: () => void calls.push("unkept"),
+        };
+        expect(await runGroup(deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "error" } });
+        expect(calls).not.toContain("unkept");
+        expect(h.wallet.sent).toHaveLength(0);
+        expect(cancels(h)).toBe(1);
+      }
+    }
+  });
+
+  it("relays a group whose account read isn't bytecode as ever, kept and attributable", async () => {
+    const h = await harness();
+    h.chain.code = (async () => "not-bytecode") as unknown as typeof h.chain.code;
+    const calls: string[] = [];
+    const deps = { ...h.deps, onCreditsCall: () => void calls.push("kept"), onCreditsEnvelope: () => void calls.push("envelope"), onCreditsUnkept: () => void calls.push("unkept") };
+    expect(await runGroup(deps, h.group, h.resolved)).toMatchObject({ status: "confirmed" });
+    expect(calls).toEqual(["kept", "envelope"]);
+    expect(h.relay.posts).toHaveLength(1);
+    expect(h.wallet.sent).toHaveLength(0);
+  });
+
+  it("keeps an account read as empty as the buyer's own: kept, its bytes too", async () => {
+    const h = await harness();
+    const calls: string[] = [];
+    const deps = { ...h.deps, ctx: { ...h.deps.ctx, gasless: false }, onCreditsCall: () => void calls.push("kept"), onCreditsEnvelope: () => void calls.push("envelope"), onCreditsUnkept: () => void calls.push("unkept") };
+    await runGroup(deps, h.group, h.resolved);
+    expect(calls).toEqual(["kept", "envelope"]);
+    expect(h.wallet.sent).toHaveLength(1);
+  });
+
+  it("sends nothing when the caller couldn't unkeep a smart wallet's purchase", async () => {
+    const h = await harness();
+    h.chain.code = async () => "0x6080604052";
+    const deps = { ...h.deps, ctx: { ...h.deps.ctx, gasless: false }, onCreditsCall: () => true, onCreditsEnvelope: () => true, onCreditsUnkept: () => false };
+    expect(await runGroup(deps, h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "refused" } });
+    expect(h.wallet.sent).toHaveLength(0);
+    expect(cancels(h)).toBe(1);
+  });
+
+  it("a rejection WalletConnect reports as its own still fails it and gives its credit back", async () => {
+    for (const error of [Object.assign(new Error("User rejected."), { code: 5000 })]) {
+      const h = await harness();
+      const original = h.wallet.request.bind(h.wallet);
+      h.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === "eth_sendTransaction") throw error;
+        return original(args as never);
+      }) as typeof h.wallet.request;
+      expect(await runGroup(kept(h, { gasless: false }), h.group, h.resolved)).toMatchObject({ status: "failed" });
+      expect(cancels(h)).toBe(1);
+    }
+  });
+
+  it("an explicit refusal in the wallet still fails it and gives its credit back", async () => {
+    const h = await harness();
+    h.wallet.next = "reject";
+    expect(await runGroup(kept(h, { gasless: false }), h.group, h.resolved)).toMatchObject({ status: "failed", failure: { kind: "rejected" } });
+    expect(h.wallet.sent).toHaveLength(0);
+    expect(cancels(h)).toBe(1);
+  });
+
+  it("a group nobody kept keeps today's answer to the same disconnect", async () => {
+    const h = await harness();
+    h.wallet.next = "lost";
+    const result = await runGroup({ ...h.deps, ctx: { ...h.deps.ctx, gasless: false } }, h.group, h.resolved);
+    expect(result.status).toBe("failed");
   });
 });
 

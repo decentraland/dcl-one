@@ -51,7 +51,7 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   whatsOn: (data) => {
     const d = data as { tab?: "my" | null; dehydratedState?: DehydratedState | null } | undefined;
     if (!d) return null;
-    if (d.tab === "my") return whatsOnToMarkdown({ tab: "my" });
+    if (d.tab === "my") return whatsOnToMarkdown({ ...eventsAgentData(d.dehydratedState), tab: "my" });
     // An event link (`?id=`) describes that event, as its old `/whats-on/:id` page did.
     const event = eventsAgentDetail(d.dehydratedState);
     return event ? eventDetailToMarkdown(event) : whatsOnToMarkdown(eventsAgentData(d.dehydratedState));

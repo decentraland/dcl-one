@@ -1,7 +1,9 @@
 import { redirect } from "react-router";
 
 import NotFound from "@ui/shop/pages/NotFound";
-import { resolveShopAlias } from "@ui/shop/routes";
+import { resolveShopAlias } from "@shop/route-aliases";
+
+import { landAliasOptions } from "@/core/lib/shop/land-redirects";
 
 import { shopLoader } from "../shop/loader.server";
 import { ShopPage, shopHeaders, shopMeta } from "../shop/page";
@@ -13,14 +15,14 @@ import type { Route } from "./+types/shop.$";
 // redirect keeping identity, query and hash; anything else is the Shop's not-found page, with a 404.
 export async function loader({ request, params, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
-  const target = resolveShopAlias(url.pathname, url.search);
+  const target = resolveShopAlias(url.pathname, url.search, "", landAliasOptions());
   if (target) throw redirect(target, 308);
   return shopLoader("notFound", request, params, context);
 }
 
 export function clientLoader({ request }: Route.ClientLoaderArgs) {
   const url = new URL(request.url);
-  const target = resolveShopAlias(url.pathname, url.search, url.hash);
+  const target = resolveShopAlias(url.pathname, url.search, url.hash, landAliasOptions());
   if (target) throw redirect(target);
   return null;
 }

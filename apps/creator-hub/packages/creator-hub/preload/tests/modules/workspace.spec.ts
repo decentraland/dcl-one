@@ -64,7 +64,7 @@ describe('initializeWorkspace', () => {
 
       expect(getScenesPath).toHaveBeenCalled();
       expect(services.fs.stat).toHaveBeenCalledWith(mockAppHome);
-      expect(services.fs.mkdir).toHaveBeenCalledWith(mockAppHome);
+      expect(services.fs.mkdir).toHaveBeenCalledWith(mockAppHome, { recursive: true });
       expect(result).toBe(mockAppHome);
     });
   });
@@ -264,6 +264,42 @@ describe('initializeWorkspace', () => {
 
         expect(draftConfig.workspace.paths).toEqual(['/projects/b']);
       });
+    });
+  });
+
+  describe('duplicateProject', () => {
+    const sourcePath = `${mockAppHome}/My Scene`;
+
+    beforeEach(() => {
+      services.fs.exists.mockResolvedValue(false);
+      services.fs.stat.mockResolvedValue({
+        birthtime: new Date(0),
+        mtime: new Date(0),
+        size: 0,
+      } as any);
+      services.ipc.invoke.mockImplementation(async (_channel: string, path: string) => {
+        return `${path}/.editor`;
+      });
+      vi.mocked(getScene).mockResolvedValue({
+        display: { title: 'My Scene' },
+        scene: { parcels: [] },
+      } as unknown as Scene);
+    });
+
+    it("should drop the source project's id from the copy", async () => {
+      const copyInfo = {
+        getAll: vi.fn().mockResolvedValue({ id: 'source-id', uiDesignerOpen: true }),
+        setAll: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.mocked(FileSystemStorage.getOrCreate).mockResolvedValue(copyInfo as any);
+      const workspace = initializeWorkspace(services);
+
+      await workspace.duplicateProject(sourcePath);
+
+      expect(services.fs.cp).toHaveBeenCalledWith(sourcePath, expect.any(String), {
+        recursive: true,
+      });
+      expect(copyInfo.setAll).toHaveBeenCalledWith({ uiDesignerOpen: true });
     });
   });
 

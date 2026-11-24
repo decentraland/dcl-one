@@ -150,12 +150,14 @@ describe('when the checkbox renders on a desktop pointer', () => {
     }
   )
 
-  it('should show no hover or pressed state and stay unchanged when disabled', async () => {
-    const at = await read('outline-md-on-disabled')
-    await mouse('mouseMoved', at)
-    await mouse('mousePressed', at)
-    await mouse('mouseReleased', at)
-    await settle('outline-md-on-disabled', { halo: none, fill: disabledFill, checked: true })
+  describe('and the checkbox is disabled', () => {
+    it('should show no hover or pressed state and stay unchanged', async () => {
+      const at = await read('outline-md-on-disabled')
+      await mouse('mouseMoved', at)
+      await mouse('mousePressed', at)
+      await mouse('mouseReleased', at)
+      await settle('outline-md-on-disabled', { halo: none, fill: disabledFill, checked: true })
+    })
   })
 
   it('should keep the mixed state the caller set after a click', async () => {
@@ -189,14 +191,16 @@ describe('when the reader uses the keyboard', () => {
     await settle(id, { checked: false, check: false })
   })
 
-  it('should skip a disabled checkbox when tabbing', async () => {
-    await browser.evaluate(`document.getElementById('outline-lg-mixed').focus()`)
-    await browser.session.send('Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      key: 'Tab',
-      code: 'Tab'
+  describe('and Tab moves past a disabled checkbox', () => {
+    it('should skip the disabled checkbox', async () => {
+      await browser.evaluate(`document.getElementById('outline-lg-mixed').focus()`)
+      await browser.session.send('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Tab',
+        code: 'Tab'
+      })
+      expect(await browser.evaluate<string>('document.activeElement.id')).toBe('filled-sm-off')
     })
-    expect(await browser.evaluate<string>('document.activeElement.id')).toBe('filled-sm-off')
   })
 
   it('should draw no ring after a mouse click', async () => {
@@ -210,7 +214,7 @@ describe('when the reader uses the keyboard', () => {
 })
 
 describe('when the pointer is coarse', () => {
-  it('should widen every target to 44px, keep the box sizes and drop hover', async () => {
+  beforeEach(async () => {
     await browser.session.send('Emulation.setDeviceMetricsOverride', {
       width: 390,
       height: 844,
@@ -222,6 +226,9 @@ describe('when the pointer is coarse', () => {
       maxTouchPoints: 1
     })
     await ready()
+  })
+
+  it('should widen every target to 44px, keep the box sizes and drop hover', async () => {
     expect(await browser.evaluate(`matchMedia('(pointer:coarse)').matches`)).toBe(true)
     for (const [size, box, halo] of [
       ['sm', 16, 28],
@@ -237,11 +244,15 @@ describe('when the pointer is coarse', () => {
 })
 
 describe('when the system forces colours or reduces motion', () => {
-  it('should draw checked boxes in the system highlight and hide the halo', async () => {
-    await browser.session.send('Emulation.setEmulatedMedia', {
-      features: [{ name: 'forced-colors', value: 'active' }]
+  describe('and colours are forced', () => {
+    beforeEach(async () => {
+      await browser.session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'forced-colors', value: 'active' }]
+      })
     })
-    const system = await browser.evaluate<Record<string, string>>(`(()=>{
+
+    it('should draw checked boxes in the system highlight and hide the halo', async () => {
+      const system = await browser.evaluate<Record<string, string>>(`(()=>{
       const probe=document.createElement('span')
       probe.style.forcedColorAdjust='none'
       document.body.append(probe)
@@ -250,29 +261,35 @@ describe('when the system forces colours or reduces motion', () => {
       probe.remove()
       return colors
     })()`)
-    expect(system.Highlight).not.toBe(system.Canvas)
-    // Settled, because the colour change from the normal palette runs through the transition.
-    await settle('outline-md-on', {
-      haloDisplay: 'none',
-      fill: system.Highlight,
-      mark: system.HighlightText,
-      check: true
+      expect(system.Highlight).not.toBe(system.Canvas)
+      // Settled, because the colour change from the normal palette runs through the transition.
+      await settle('outline-md-on', {
+        haloDisplay: 'none',
+        fill: system.Highlight,
+        mark: system.HighlightText,
+        check: true
+      })
+      await settle('outline-md-off', { fill: system.Canvas, mark: system.CanvasText })
+      for (const id of [
+        'outline-md-on-disabled',
+        'outline-md-mixed-disabled',
+        'filled-md-on-disabled'
+      ])
+        // A disabled box never takes the selection colour.
+        await settle(id, { fill: system.Canvas, mark: system.GrayText })
     })
-    await settle('outline-md-off', { fill: system.Canvas, mark: system.CanvasText })
-    for (const id of [
-      'outline-md-on-disabled',
-      'outline-md-mixed-disabled',
-      'filled-md-on-disabled'
-    ])
-      // A disabled box never takes the selection colour.
-      await settle(id, { fill: system.Canvas, mark: system.GrayText })
   })
 
-  it('should drop the transitions', async () => {
-    await browser.session.send('Emulation.setEmulatedMedia', {
-      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+  describe('and motion is reduced', () => {
+    beforeEach(async () => {
+      await browser.session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+      })
     })
-    expect((await read('outline-md-on')).transition).toBe('0s')
+
+    it('should drop the transitions', async () => {
+      expect((await read('outline-md-on')).transition).toBe('0s')
+    })
   })
 })
 
@@ -412,7 +429,7 @@ async function escape() {
 }
 
 describe('when viewing the gallery on a phone', () => {
-  it('should keep the document within the viewport and scroll each matrix to its last state', async () => {
+  beforeEach(async () => {
     await browser.session.send('Emulation.setDeviceMetricsOverride', {
       width: 391,
       height: 915,
@@ -420,6 +437,9 @@ describe('when viewing the gallery on a phone', () => {
       mobile: true
     })
     await ready()
+  })
+
+  it('should keep the document within the viewport and scroll each matrix to its last state', async () => {
     const result = await browser.evaluate(`(()=>{
       const width = document.documentElement.clientWidth
       return {
@@ -437,61 +457,70 @@ describe('when viewing the gallery on a phone', () => {
 })
 
 describe('when the help opens near a viewport edge', () => {
-  it.each([320, 1440])('should keep the open text fully inside a %ipx viewport', async (width) => {
-    await browser.session.send('Emulation.setDeviceMetricsOverride', {
-      width,
-      height: 700,
-      deviceScaleFactor: 1,
-      mobile: false
+  describe.each([320, 1440])('and the viewport is %ipx wide', (width) => {
+    beforeEach(async () => {
+      await browser.session.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: 700,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      await ready('?edges')
     })
-    await ready('?edges')
-    expect(
-      await browser.evaluate(
-        `Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(input => input.getClientRects().length).map(input => input.id)`
-      )
-    ).toEqual(['label-edge-top', 'label-edge-right', 'label-edge-left'])
-    expect(await browser.evaluate('document.documentElement.scrollHeight')).toBe(700)
-    for (const [id, side] of [
-      ['label-edge-top', 'below'],
-      ['label-edge-right', 'above'],
-      ['label-edge-left', 'above']
-    ] as const) {
-      await pressHelp(id)
-      const open = await browser.evaluate<{
-        expanded: string
-        text: { left: number; right: number; top: number; bottom: number }
-        button: { top: number; bottom: number }
-        width: number
-        height: number
-      }>(`(()=>{
+
+    it(`should keep the open text fully inside a ${width}px viewport`, async () => {
+      expect(
+        await browser.evaluate(
+          `Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(input => input.getClientRects().length).map(input => input.id)`
+        )
+      ).toEqual(['label-edge-top', 'label-edge-right', 'label-edge-left'])
+      expect(await browser.evaluate('document.documentElement.scrollHeight')).toBe(700)
+      for (const [id, side] of [
+        ['label-edge-top', 'below'],
+        ['label-edge-right', 'above'],
+        ['label-edge-left', 'above']
+      ] as const) {
+        await pressHelp(id)
+        const open = await browser.evaluate<{
+          expanded: string
+          text: { left: number; right: number; top: number; bottom: number }
+          button: { top: number; bottom: number }
+          width: number
+          height: number
+        }>(`(()=>{
         const button=document.getElementById(${JSON.stringify(id)}).parentElement.parentElement.querySelector('button')
         const r=document.getElementById(button.getAttribute('aria-controls')).getBoundingClientRect()
         const b=button.getBoundingClientRect()
         return{expanded:button.getAttribute('aria-expanded'),text:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},button:{top:b.top,bottom:b.bottom},width:document.documentElement.clientWidth,height:document.documentElement.clientHeight}
       })()`)
-      expect(open.expanded).toBe('true')
-      expect(open.text.left).toBeGreaterThanOrEqual(8)
-      expect(open.text.right).toBeLessThanOrEqual(open.width - 8)
-      expect(open.text.top).toBeGreaterThanOrEqual(8)
-      expect(open.text.bottom).toBeLessThanOrEqual(open.height - 8)
-      if (side === 'below') expect(open.text.top).toBeGreaterThan(open.button.bottom)
-      else expect(open.text.bottom).toBeLessThan(open.button.top)
-      await escape()
-    }
+        expect(open.expanded).toBe('true')
+        expect(open.text.left).toBeGreaterThanOrEqual(8)
+        expect(open.text.right).toBeLessThanOrEqual(open.width - 8)
+        expect(open.text.top).toBeGreaterThanOrEqual(8)
+        expect(open.text.bottom).toBeLessThanOrEqual(open.height - 8)
+        if (side === 'below') expect(open.text.top).toBeGreaterThan(open.button.bottom)
+        else expect(open.text.bottom).toBeLessThan(open.button.top)
+        await escape()
+      }
+    })
   })
 })
 
 describe('when the help is inside a modal dialog', () => {
-  it.each([320, 1440])('should show the label and the full help text at %ipx', async (width) => {
-    await browser.session.send('Emulation.setDeviceMetricsOverride', {
-      width,
-      height: 700,
-      deviceScaleFactor: 1,
-      mobile: false
+  describe.each([320, 1440])('and the viewport is %ipx wide', (width) => {
+    beforeEach(async () => {
+      await browser.session.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: 700,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
     })
-    await browser.evaluate(`document.getElementById('open-dialog').click()`)
-    await pressHelp('label-dialog')
-    const result = await browser.evaluate(`(()=>{
+
+    it(`should show the label and the full help text at ${width}px`, async () => {
+      await browser.evaluate(`document.getElementById('open-dialog').click()`)
+      await pressHelp('label-dialog')
+      const result = await browser.evaluate(`(()=>{
       const dialog = document.getElementById('help-dialog')
       const button = dialog.querySelector('button')
       const bubble = document.getElementById(button.getAttribute('aria-controls'))
@@ -505,7 +534,8 @@ describe('when the help is inside a modal dialog', () => {
           bubble.contains(document.elementFromPoint(x, (line.top + line.bottom) / 2))))
       }
     })()`)
-    expect(result).toEqual({ background: 'rgb(45, 42, 51)', label: snow, readable: true })
+      expect(result).toEqual({ background: 'rgb(45, 42, 51)', label: snow, readable: true })
+    })
   })
 
   it('should close only the help on the first Escape and the dialog on the second', async () => {

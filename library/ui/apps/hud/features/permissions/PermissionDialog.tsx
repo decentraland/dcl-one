@@ -32,7 +32,7 @@ const PASSIVE: Record<string, string> = {
   Fetch: 'fetch data from a remote server',
   Websocket: 'open a web socket to communicate with a remote server',
   OpenUrl: 'open a url in your browser',
-  OpenExplorerUi: 'open an explorer menu panel (map, backpack, settings, ...)'
+  OpenExplorerUi: 'open an explorer menu panel (map, backpack, settings, ...) or the purchase confirmation for an item'
 }
 
 /** The "wants permission to …" clause for a permission type. */

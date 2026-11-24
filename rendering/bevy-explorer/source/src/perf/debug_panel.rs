@@ -15,6 +15,7 @@ use common::{
     },
     structs::{AppConfig, SessionGraphics},
 };
+use scene_runner::SceneLoopTiming;
 use serde_json::json;
 
 use super::{frame_inputs::FrameInputs, populating_sample::PerformancePopulatingSample};
@@ -28,7 +29,6 @@ const WAITING_FOR_FIRST_SNAPSHOT: &str = "Waiting for the first 15 s of sampled 
 #[command(name = "/performance_state")]
 pub(super) struct PerformanceStateCommand;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn performance_state(
     mut input: ConsoleCommand<PerformanceStateCommand>,
     diagnostics: Res<DiagnosticsStore>,
@@ -40,6 +40,7 @@ pub(super) fn performance_state(
     inputs: Res<FrameInputs>,
     snapshot: Option<Res<PerformanceSnapshot>>,
     breakdown: Res<FrameTimeBreakdown>,
+    scene_loop: Option<Res<SceneLoopTiming>>,
     #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
     system_info: Option<Res<bevy::diagnostic::SystemInfo>>,
 ) {
@@ -124,7 +125,12 @@ pub(super) fn performance_state(
             "version": crate::version(),
             "frameMs": tenths(time.delta_secs_f64() * 1000.0),
             "fps": fps.map(f64::round),
-            "targetFps": session.fps_target(&config),
+            // the rate the scene loop paces to, so with VSync on and Max picked, the monitor's
+            "targetFps": SessionGraphics::shown_fps(
+                Some(&session),
+                &config,
+                scene_loop.and_then(|timing| timing.refresh_hz),
+            ),
             "overrideFps": session.fps_target,
             "limit30": session.fps_target == Some(30),
             "gpuFrameMs": gpu_ms.map(tenths),

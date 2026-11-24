@@ -888,8 +888,8 @@ fn missing_ids_become_ranges_within_the_room() {
 
 async fn chain_ready(pool: &PgPool, indexer: &str, block: i64) {
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
-         VALUES ($1, 'matic', 0, $2, $2, $2, timezone('UTC', now()), true) \
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+         VALUES ($1, 'matic', 0, $2, $2, $2, timezone('UTC', now()), true, 137) \
          ON CONFLICT (indexer, network) DO UPDATE SET last_block = $2, fold_through = $2, folded_block = $2, folded_at = timezone('UTC', now())",
     )
     .bind(indexer)
@@ -969,6 +969,24 @@ async fn sales_count_each_transaction_once_per_category() {
         "past the published block"
     );
     chain_ready(&pool, "sales", 102).await;
+    // A cursor not bound to Polygon, or in quarantine, is not published.
+    for (sql, why) in [
+        (
+            "UPDATE shop.chain_cursor SET chain_id = NULL WHERE indexer = 'sales'",
+            "an unadopted cursor",
+        ),
+        (
+            "UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'sales'",
+            "a cursor in quarantine",
+        ),
+    ] {
+        sqlx::query(sql).execute(&pool).await.unwrap();
+        assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 0, "{why}");
+    }
+    sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'sales'")
+        .execute(&pool)
+        .await
+        .unwrap();
     assert_eq!(sales::batch(&p, Log::Sale).await.unwrap().0, 4);
     assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((102, 0)));
     let emotes = progress(&pool, b, "emotionista").await.unwrap();

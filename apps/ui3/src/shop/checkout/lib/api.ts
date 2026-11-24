@@ -234,8 +234,8 @@ export async function fetchUserSales(
 }
 
 /** Does `owner` hold a token of this item? (the success page's ownership check). */
-export async function fetchOwnsItem(owner: string, contractAddress: string, itemId: string, client: ShopClient): Promise<boolean> {
-  const body = await client.market.nfts<{ total?: number; data?: unknown[] }>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }).catch(() => null);
+export async function fetchOwnsItem(owner: string, contractAddress: string, itemId: string, client: ShopClient, signal?: AbortSignal): Promise<boolean> {
+  const body = await client.market.nfts<{ total?: number; data?: unknown[] }>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }, { signal }).catch(() => null);
   return (body?.total ?? body?.data?.length ?? 0) > 0;
 }
 

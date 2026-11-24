@@ -22,13 +22,16 @@ import {
   encodeExecuteMetaTransaction,
   GaslessUnavailableError,
   metaTxType,
+  NonceMovedError,
   normalizeSignature,
   refusedBeforeBroadcast,
   relayMetaTransaction,
+  relayRefusal,
+  relaySignedMetaTransaction,
   SignatureDeclinedError,
 } from "./metatx";
-import { createRpcReader, waitForReceipt, type ChainReader } from "./rpc";
-import { sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
+import { createRpcReader, defaultSleep, waitForReceipt, type ChainReader } from "./rpc";
+import { accountCodeKind, isWalletRefusal, sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
 
 const FIXTURES = join(__dirname, "../../../../../../services/catalyst/tests/fixtures/shop");
 const read = (p: string) => readFileSync(join(FIXTURES, p), "utf8");
@@ -220,6 +223,20 @@ describe("relaying a meta-transaction", () => {
   const target = { ...requireContracts(CHAIN.POLYGON).creditsManager!, metaTx: "functionData" as const };
   const from = "0x3f6b1d01b6823ab235fc343069b62b6472774cd1";
 
+  it("is refused as a contract account only for bytecode, whole bytes of it; anything else is tried as ever", async () => {
+    const provider = { request: async () => `0x${"22".repeat(64)}01` };
+    const fetchImpl = (async () => new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 })) as unknown as typeof fetch;
+    const relay = (code: ChainReader["code"]) =>
+      relayMetaTransaction({ provider, reader: fakeReader({ code }), target, from, functionData: "0x12", relayerUrl: "https://node.example/transactions-api/v1", fetchImpl });
+    await expect(relay(async () => "0x6080604052" as Hex)).rejects.toMatchObject({ reason: "contract-account" });
+    for (const code of ["0x", "0x0", "0x608", "not-bytecode", ""] as Hex[]) await expect(relay(async () => code)).resolves.toMatchObject({ nonce: 7n });
+    await expect(
+      relay(async () => {
+        throw new Error("rpc down");
+      }),
+    ).resolves.toMatchObject({ nonce: 7n });
+  });
+
   it("signs against the contract's nonce and posts the transactions-server shape", async () => {
     const signed: unknown[] = [];
     const provider = {
@@ -256,6 +273,25 @@ describe("relaying a meta-transaction", () => {
     expect((decoded.args[2] as Hex).slice(-2)).toBe("1c");
   });
 
+  it("sends an execution already signed as the relay request it was, and tells a refusal from a lost answer", async () => {
+    const posts: unknown[] = [];
+    const answer = { body: { ok: true, txHash: `0x${"ab".repeat(32)}` } as unknown, status: 200 };
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      posts.push({ url, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(answer.body), { status: answer.status });
+    }) as unknown as typeof fetch;
+    const data = encodeExecuteMetaTransaction("functionData", from, "0x1234", `0x${"22".repeat(64)}1c`);
+    const sent = { from, to: target.address, data, relayerUrl: "https://relay.example/v1/", fetchImpl };
+    expect(await relaySignedMetaTransaction(sent)).toBe(`0x${"ab".repeat(32)}`);
+    expect(posts[0]).toEqual({ url: "https://relay.example/v1/transactions", body: { transactionData: { from, params: [target.address, data] } } });
+    answer.body = { ok: false, not_sent: true, message: "quota" };
+    answer.status = 429;
+    await expect(relaySignedMetaTransaction(sent)).rejects.toMatchObject({ reason: "relayer-rejected" });
+    answer.body = { ok: false, message: "boom" };
+    answer.status = 500;
+    await expect(relaySignedMetaTransaction(sent)).rejects.toMatchObject({ reason: "relayer-unreachable" });
+  });
+
   it("a declined prompt is a cancellation; a refusal and a dead relay are told apart", async () => {
     const declineProvider = { request: async () => Promise.reject(Object.assign(new Error("User rejected the request"), { code: 4001 })) };
     await expect(
@@ -275,6 +311,81 @@ describe("relaying a meta-transaction", () => {
     await expect(
       relayMetaTransaction({ provider, reader: fakeReader({ code: async () => "0x6080" }), target, from, functionData: "0x12" }),
     ).rejects.toBeInstanceOf(GaslessUnavailableError);
+  });
+
+  it("with an exact nonce, a nonce that reads as any other (behind or ahead) asks the wallet nothing and sends nothing", async () => {
+    const asked: string[] = [];
+    const provider = {
+      request: async ({ method }: { method: string }) => {
+        asked.push(method);
+        return `0x${"22".repeat(65)}`;
+      },
+    };
+    const posts: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      posts.push(init?.body);
+      return new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // The contract's nonce reads 7.
+    for (const exactNonce of [6n, 8n]) {
+      const moved = relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce });
+      await expect(moved).rejects.toBeInstanceOf(NonceMovedError);
+      await expect(moved).rejects.toMatchObject({ expected: exactNonce, read: 7n });
+    }
+    expect(asked).toEqual([]);
+    expect(posts).toEqual([]);
+    expect(await relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce: 7n })).toMatchObject({ nonce: 7n });
+    expect(asked).toEqual(["eth_signTypedData_v4"]);
+  });
+
+  it("an exact nonce and a minimum, which the type keeps apart, passed both anyway: one above it is refused before the wallet is asked", async () => {
+    const asked: { method: string; params?: unknown[] }[] = [];
+    const provider = {
+      request: async (args: { method: string; params?: unknown[] }) => {
+        asked.push(args);
+        return `0x${"22".repeat(65)}`;
+      },
+    };
+    const posts: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      posts.push(init?.body);
+      return new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // The contract's nonce reads 7. Both options at once, as an untyped caller could pass them.
+    const both = (exactNonce: bigint, minNonce: bigint) =>
+      ({ provider, reader: fakeReader(), target, from, functionData: "0x12" as Hex, fetchImpl, exactNonce, minNonce }) as unknown as Parameters<typeof relayMetaTransaction>[0];
+    await expect(relayMetaTransaction(both(7n, 8n))).rejects.toBeInstanceOf(RangeError);
+    expect(asked).toEqual([]);
+    expect(posts).toEqual([]);
+    // A minimum at or below it is no conflict: the exact nonce is the one signed.
+    expect(await relayMetaTransaction(both(7n, 6n))).toMatchObject({ nonce: 7n });
+    expect(asked.map((r) => r.method)).toEqual(["eth_signTypedData_v4"]);
+    expect((JSON.parse(String(asked[0]!.params![1])) as { message: { nonce: string } }).message.nonce).toBe("7");
+    expect(posts).toHaveLength(1);
+  });
+
+  it("keeps the relay's own word for a refusal: its error code, and when a spent quota frees up", async () => {
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    const quota = { ok: false, error: "quota_reached", message: "Max amount of transactions reached for address. Quota: 30", not_sent: true, retryAt: 1_767_230_000, quota: 30 };
+    await expect(relay(answering(429, quota))).rejects.toMatchObject({ reason: "relayer-rejected", refusal: { error: "quota_reached", retryAt: 1_767_230_000, quota: 30 } });
+    await expect(relay(answering(429, { ok: false, error: "relay_budget_spent", message: "spent", not_sent: true }))).rejects.toMatchObject({ refusal: { error: "relay_budget_spent" } });
+    // Each field only in its own shape: no code without a string, no time or count but a positive whole number.
+    const odd = { ok: false, error: 7, retryAt: "soon", quota: -1, not_sent: true };
+    await expect(relay(answering(429, odd))).rejects.toMatchObject({ refusal: {} });
+    expect(relayRefusal({ error: "", retryAt: 1.5, quota: -1 })).toEqual({});
+    // A quota of none is kept: the account gets no fee-free transactions.
+    expect(relayRefusal({ error: "quota_reached", quota: 0 })).toEqual({ error: "quota_reached", quota: 0 });
+    // The code from `code` (upstream's, and dcl-one's relay too), else `error` (dcl-one's, before it answered `code`).
+    expect(relayRefusal({ code: "quota_reached" })).toEqual({ error: "quota_reached" });
+    expect(relayRefusal({ code: "quota_reached", error: "invalid_transaction" })).toEqual({ error: "quota_reached" });
+    expect(relayRefusal({ code: "", error: "relay_budget_spent" })).toEqual({ error: "relay_budget_spent" });
+    // Marked as not sent, a code-only refusal (upstream's shape) is a refusal like any; unmarked, a forwarded 429
+    // proves nothing was sent no more than any other status does.
+    await expect(relay(answering(429, { ok: false, code: "quota_reached", message: "quota", not_sent: true }))).rejects.toMatchObject({ reason: "relayer-rejected", refusal: { error: "quota_reached" } });
+    await expect(relay(answering(429, { ok: false, code: "quota_reached", message: "quota" }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    expect(relayRefusal(null)).toEqual({});
   });
 
   it("only the relay's explicit evidence proves nothing was sent", async () => {
@@ -344,6 +455,27 @@ describe("relaying a meta-transaction", () => {
   });
 });
 
+describe("a request the buyer turned down in the wallet", () => {
+  it("is the request's own 4001, ACTION_REJECTED or WalletConnect's 5000; never a cause under another error", () => {
+    for (const code of [4001, "ACTION_REJECTED", 5000]) {
+      expect(isWalletRefusal({ code })).toBe(true);
+      expect(isWalletRefusal({ code: 4900, cause: { code } })).toBe(false);
+      expect(isWalletRefusal({ code: -32603, cause: { code } })).toBe(false);
+    }
+    for (const e of [{ code: 4900 }, { code: 4100 }, { name: "AbortError" }, new Error("User rejected the request"), null, undefined]) {
+      expect(isWalletRefusal(e)).toBe(false);
+    }
+  });
+});
+
+describe("what an account is by its bytecode", () => {
+  it("is an EOA only for exactly 0x, a contract for whole bytes of hex, and unknown for anything else", () => {
+    expect(accountCodeKind("0x")).toBe("eoa");
+    for (const code of ["0x60", "0xAB", "0x6080604052"]) expect(accountCodeKind(code)).toBe("contract");
+    for (const code of ["0x0", "0x608", "not-bytecode", "", "0xzz", null, undefined, 96]) expect(accountCodeKind(code)).toBe("unknown");
+  });
+});
+
 describe("the buyer-submitted rail", () => {
   const provider = (chainId: number) => ({
     request: async ({ method }: { method: string }) => {
@@ -397,5 +529,83 @@ describe("the RPC reader", () => {
       },
     });
     expect(await waitForReceipt(flaky, 137, "0x02", { sleep: async () => {} })).toMatchObject({ transactionHash: "0x02" });
+  });
+
+  it("reads a transaction's sender, target and input; one the chain doesn't know is null", async () => {
+    const answers: Record<string, unknown> = { "0x01": { hash: "0x01", from: "0xab", to: "0xcd", input: "0x1234", nonce: "0x1" }, "0x02": null };
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: [string] };
+      expect(method).toBe("eth_getTransactionByHash");
+      return new Response(JSON.stringify({ result: answers[params[0]] }));
+    }) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    expect(await reader.transaction!(137, "0x01")).toEqual({ from: "0xab", to: "0xcd", input: "0x1234" });
+    expect(await reader.transaction!(137, "0x02")).toBeNull();
+  });
+
+  it("reads the finalized block's time, in seconds; a finalized block it can't read is an error, never a time", async () => {
+    const answers: unknown[] = [{ number: "0x10", timestamp: "0x6553f100" }, null, { number: "0x11" }];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: [string, boolean] };
+      expect(method).toBe("eth_getBlockByNumber");
+      expect(params).toEqual(["finalized", false]);
+      return new Response(JSON.stringify({ result: answers.shift() }));
+    }) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    expect(await reader.finalizedTime!(137)).toBe(0x6553f100);
+    await expect(reader.finalizedTime!(137)).rejects.toThrow(/finalized block has no time/);
+    await expect(reader.finalizedTime!(137)).rejects.toThrow(/finalized block has no time/);
+  });
+
+  it("lets an error answer's body go instead of leaving it open, so polling through errors leaks nothing", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({ pull: () => new Promise<void>(() => {}), cancel: () => void (cancelled = true) });
+    const fetchImpl = (async () => new Response(body, { status: 502 })) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    await expect(reader.balance(137, "0x00")).rejects.toThrow(/HTTP 502/);
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+  });
+
+  it("polls every 500 ms for the first 15 s, then every 2 s, unless the caller sets the interval", async () => {
+    const waits = async (pollMs?: number) => {
+      let clock = 0;
+      const slept: number[] = [];
+      const reader = fakeReader({ receipt: async () => (clock >= 20_000 ? { transactionHash: "0x03", status: "success", blockNumber: 1n } : null) });
+      const sleep = async (ms: number) => {
+        slept.push(ms);
+        clock += ms;
+      };
+      expect(await waitForReceipt(reader, 137, "0x03", { pollMs, now: () => clock, sleep })).toMatchObject({ transactionHash: "0x03" });
+      return slept;
+    };
+    expect(await waits()).toEqual([...Array(30).fill(500), 2_000, 2_000, 2_000]);
+    expect(new Set(await waits(5_000))).toEqual(new Set([5_000]));
+  });
+});
+
+describe("the wait between reads", () => {
+  afterEach(() => void vi.useRealTimers());
+
+  it("ends after its time and takes its abort listener with it", async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    const added = vi.spyOn(stop.signal, "addEventListener");
+    const removed = vi.spyOn(stop.signal, "removeEventListener");
+    const waited = defaultSleep(3_000, stop.signal);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(waited).resolves.toBeUndefined();
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]![1]);
+  });
+
+  it("ends at once with an AbortError when its signal aborts, or already has", async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    const waited = defaultSleep(3_000, stop.signal);
+    stop.abort();
+    await expect(waited).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(defaultSleep(3_000, stop.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

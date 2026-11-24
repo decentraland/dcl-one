@@ -21,10 +21,21 @@ BADGES_ASSET_CAP = "16m"
 # One report evidence file (the gatekeeper reports `MAX_FILE_BYTES`); a
 # gateway test pins it.
 REPORT_EVIDENCE_CAP = "5m"
-# The content server's `POST /entities` route limit at the default field
-# count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
-# multipart framing), rounded up, so its own 413 is the one a client meets.
-CONTENT_DEPLOY_CAP = "248m"
+# A Cast presentation upload: the presenter's `MAX_FILE_SIZE` (100 MiB, the whole
+# multipart body) plus 1 MiB, so its own JSON 413 is the one a client meets; a
+# gateway test pins it.
+CAST_PRESENTATION_CAP = "101m"
+# A camera reel multipart upload: the app's field budget (`MAX_MULTIPART_MEMORY_BYTES`,
+# 6 MiB) plus 1 MiB of framing, so its own error is the one a client meets; a gateway
+# test pins it. The 15 MiB JSON upload keeps the 1m cap.
+CAMERA_REEL_UPLOAD_CAP = "7m"
+# The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
+CAMERA_REEL_ALIAS = "^~ /camera-reel/"
+# The content server's `POST /entities` route limit at the default
+# `MAX_UPLOAD_*` values (`max_deployment_body_bytes`: 2 GiB of files and
+# fields plus multipart framing), rounded up, so its own 413 is the one a
+# client meets. A node that changes those values changes this too.
+CONTENT_DEPLOY_CAP = "2096m"
 # World storage bodies: the largest storage route maximum at the deployed
 # defaults (config/src/worlds.rs: WORLD_STORAGE_MAX_VALUE_SIZE_BYTES, 512 KiB,
 # plus the 1 KiB envelope slack; the export body's 256 KiB + 1 KiB is below
@@ -40,9 +51,10 @@ STORAGE_TOO_LARGE = {"error": "Payload Too Large",
 # budget (reads and trusted callers are not counted): each body is buffered in
 # the gateway's temp space before the service answers.
 STORAGE_UPLOADS_PER_ADDRESS = 10
-# Uploads one address may have in flight on a deploy route: nginx buffers each
-# body before proxying it, and the app's limits only answer after that. Above
-# upstream catalyst's 4 per source, so it stays a coarse guard.
+# Uploads one address may have in flight on a deploy route: each holds a
+# connection to the app (content deploys stream through) or a body in the
+# gateway's temp space (worlds deploys are buffered). Above upstream
+# catalyst's 4 per source, so it stays a coarse guard.
 DEPLOY_CONNECTIONS_PER_ADDRESS = 10
 # The gateway's own answers on a worlds deploy: named location, status,
 # Retry-After seconds (0 for none) and the worlds service's {error, message} body.
@@ -257,8 +269,11 @@ def render(table, cfg, mime):
         locations += (location("= " + row["path"], proxy("apis", extra))
                       + location("= " + row["path"] + "/", proxy("apis", extra))
                       if row.get("exact") else pair(row["path"], "apis", True, extra))
+    def alias_rewrite(row):
+        return row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
+
     for row in table["aliases"]:
-        rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
+        rewrite = alias_rewrite(row)
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
@@ -266,16 +281,20 @@ def render(table, cfg, mime):
     # The content deploy zone is only a coarse abuse guard: 200 at once, then
     # 5 r/s per address, above the content server's own per-client burst limit
     # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
-    # client within that limit never meets nginx's HTML 429. Concurrent
-    # uploads per address are capped on both deploy routes, since each body
-    # is buffered in the gateway's temp space before the app sees it.
+    # client within that limit never meets nginx's HTML 429. Content deploys
+    # are not buffered: the body streams to the app, which spools it to disk
+    # under its own budgets (holding only the bytes received), upload
+    # timeout and unread-body drain (with its own deadline), so a body
+    # of up to CONTENT_DEPLOY_CAP never lands in the gateway's temp space (a
+    # tmpfs in the documented run). Concurrent uploads per address are
+    # capped on both deploy routes.
     deploy = "|".join(re.escape(path) for path in table["deploy"])
     uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
     # Case-insensitive, as nginx would otherwise pass /content/Entities to the
     # /content/ location and its looser limits.
     locations += location(f'~* "^({deploy})/*$"', proxy("apis",
         f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
-        f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+        f"proxy_request_buffering off; limit_req zone=deploy burst=200 nodelay; {uploads}"))
     # Upstream caps the POST /entities/active body at 10 MiB and answers its
     # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
     # nginx's HTML 413 first. The content server's case rewrite routes any
@@ -324,6 +343,22 @@ def render(table, cfg, mime):
     # /report-user request takes `location /` and the server-wide cap.
     locations += location('~ "^/report-user/api/reports/(players/)?[^/]+/evidence/[^/]+$"', proxy("apis",
         f"client_max_body_size {REPORT_EVIDENCE_CAP}; {uploads}"))
+    # A Cast presentation (`cast-presenter-service.<domain>/presentations` arrives
+    # rewritten under its prefix): one PDF in the body, which the app reads only after
+    # nginx buffers it, so concurrent uploads are capped as on the deploy routes.
+    locations += location('~ "^/cast-presenter-service/presentations/*$"', proxy("apis",
+        f"client_max_body_size {CAST_PRESENTATION_CAP}; client_body_timeout 300s; {uploads}"))
+    # A camera reel photo upload, on its prefix and its host (rewritten under it). The app
+    # reads the signature after nginx buffers the body, so concurrent uploads are capped as
+    # on the deploy routes.
+    camera_upload = f"client_max_body_size {CAMERA_REEL_UPLOAD_CAP}; {uploads}"
+    locations += location('~ "^/camera-reel-service/api/images/*$"', proxy("apis", camera_upload))
+    # The root alias is a `^~` prefix, which skips regex locations; exact matches win.
+    for row in table["aliases"]:
+        if row["key"] == CAMERA_REEL_ALIAS:
+            for path in ("/camera-reel/api/images", "/camera-reel/api/images/"):
+                locations += location("= " + path, f"rewrite {alias_rewrite(row)} break;\n"
+                                      + proxy("apis", camera_upload))
     # Both badges host forms reach this already rewritten under /badges. The admin
     # check is a bearer token the app reads after nginx buffers the body, so
     # concurrent uploads are capped as on the deploy routes.
@@ -351,7 +386,7 @@ def render(table, cfg, mime):
         if prefix == "/cast":
             for page in ("/cast/s/", "/cast/w/"):
                 locations += location("^~ " + page, proxy("sites"))
-    for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
+    for path in ("/", "/favicon.ico", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
                  "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
                  "/brand"):
@@ -359,8 +394,11 @@ def render(table, cfg, mime):
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.
     locations += location("= /content", proxy("$content_root"))
-    for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
+    for path in ("/assets/", "/fonts/", "/errors/"):
         locations += location("^~ " + path, proxy("sites"))
+    # The hosted component gallery: static files the Sites image carries (infra/packages/sites.nix),
+    # with no route file to claim the prefix.
+    locations += pair("/ui-gallery", "sites", True)
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
@@ -382,15 +420,17 @@ def render(table, cfg, mime):
         # A host rewrite also marks a request internal in nginx. Require an
         # upstream response header as well; client headers cannot supply it.
         # nginx keeps the app's Content-Type, Accept-Ranges and Cache-Control on
-        # the redirect and drops its other headers, so ETag and the expose list
-        # are copied back. The app answers every Range it supports itself; one it
-        # does not (multi-range, `bytes=-`) gets the whole file, as upstream.
+        # the redirect and drops its other headers, so ETag, the expose list and
+        # the Content-Security-Policy are copied back. The app answers every
+        # Range it supports itself; one it does not (multi-range, `bytes=-`)
+        # gets the whole file, as upstream.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
                    'max_ranges 0;\n'
                    'if ($upstream_http_x_accel_redirect = "") { return 404; }\n'
                    'add_header ETag $upstream_http_etag always;\n'
                    'add_header Access-Control-Expose-Headers $upstream_http_access_control_expose_headers always;\n'
                    'add_header Access-Control-Allow-Origin "*" always;\n'
+                   'add_header Content-Security-Policy $upstream_http_content_security_policy always;\n'
                    + security_headers)
     locations += location("= /__protected_storage", "return 404;")
     locations += location("^~ /__protected_storage/", storage)
@@ -457,6 +497,7 @@ http {{
         "~^badges:/badges/({badges_mounts})(/|$)" "";
         "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
+        "~^(worlds-content-server|realm-provider(-ea)?):/(comms-gatekeeper|cast-presenter-service)/" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
     }}
@@ -584,6 +625,12 @@ http {{
 """
 
 
+def check_table(table):
+    # Without this alias row, render() would emit no camera reel upload locations.
+    if not any(row["key"] == CAMERA_REEL_ALIAS for row in table["aliases"]):
+        raise ValueError(f"root-aliases.nix has no {CAMERA_REEL_ALIAS} alias")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--table", required=True, type=Path)
@@ -592,7 +639,9 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     try:
-        text = render(json.loads(args.table.read_text()), settings(os.environ), args.mime)
+        table = json.loads(args.table.read_text())
+        check_table(table)
+        text = render(table, settings(os.environ), args.mime)
     except ValueError as error:
         parser.error(str(error))
     folder = Path("/tmp/gateway")

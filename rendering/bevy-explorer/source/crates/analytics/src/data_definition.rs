@@ -92,6 +92,7 @@ pub enum SegmentEvent {
     ScreenViewed(SegmentEventScreenViewed),
     OpenCamera(SegmentEventOpenCamera),
     TakePhoto(SegmentEventTakePhoto),
+    FeatureFlagsResolved(SegmentEventFeatureFlagsResolved),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -135,6 +136,9 @@ impl SegmentEvent {
             SegmentEvent::ScreenViewed(event) => ("Screen Viewed", serde_json::to_value(event)),
             SegmentEvent::OpenCamera(event) => ("open_camera", serde_json::to_value(event)),
             SegmentEvent::TakePhoto(event) => ("take_photo", serde_json::to_value(event)),
+            SegmentEvent::FeatureFlagsResolved(event) => {
+                ("Feature Flags Resolved", serde_json::to_value(event))
+            }
             SegmentEvent::Page { .. } => return None,
         };
         Some((name.to_string(), properties.unwrap()))
@@ -220,6 +224,17 @@ pub struct SegmentGpuFrameTimes {
     pub gpu_p90_frame_time: f32,
     pub gpu_p95_frame_time: f32,
     pub gpu_p99_frame_time: f32,
+}
+
+/// The session's rollout flags once the read settled.
+#[derive(Serialize)]
+pub struct SegmentEventFeatureFlagsResolved {
+    /// The flags that are on, as an `--ff` / `?ff=` value that reproduces them.
+    pub feature_flags: String,
+    /// The launch option's own overrides, empty without any.
+    pub feature_flags_override: String,
+    /// `service`, `unavailable`, `ignored` or `other-domain`.
+    pub feature_flags_source: String,
 }
 
 #[derive(Serialize)]
@@ -335,7 +350,7 @@ pub fn build_segment_event_batch_item(
     event_data: &SegmentEvent,
     queued_at: DateTime<Utc>,
     message_id: String,
-) -> SegmentMetricEventBody {
+) -> Result<SegmentMetricEventBody, serde_json::Error> {
     let mut timestamp = queued_at.to_rfc3339_opts(SecondsFormat::Millis, true);
     let override_position = match event_data {
         SegmentEvent::ExplorerMoveToParcel(current_position, _) => Some(current_position.clone()),
@@ -355,7 +370,7 @@ pub fn build_segment_event_batch_item(
             .expect("the engine's events are named above"),
     };
 
-    let mut properties = serde_json::to_value(common).unwrap();
+    let mut properties = serde_json::to_value(common)?;
     // merge specific event properties with common properties
     for (k, v) in event_properties.as_object().unwrap().iter() {
         properties[k] = v.clone();
@@ -365,14 +380,14 @@ pub fn build_segment_event_batch_item(
         properties["position"] = serde_json::Value::String(position);
     }
 
-    SegmentMetricEventBody {
+    Ok(SegmentMetricEventBody {
         r#type: "track".to_string(),
         event: event_name,
         user_id,
         timestamp,
         message_id,
         properties,
-    }
+    })
 }
 
 /// Photo mode opened, from the key or a button.

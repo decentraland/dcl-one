@@ -43,7 +43,7 @@ fn hashed_payload(content: &[ContentMapping], entity_file: &[u8]) -> Option<Vec<
 /// The CIDv0 and CIDv1 an item's `contentHash` may equal; `None` when the
 /// entity file is not among the deployment's files or does not parse.
 pub(super) fn deployment_hashes(deployment: &Deployment<'_>) -> Option<[String; 2]> {
-    let file = deployment.files.get(&deployment.entity.id)?;
+    let file = deployment.files.get(&deployment.entity.id)?.bytes()?;
     let payload = hashed_payload(&deployment.entity.content, file)?;
     Some([
         crate::auth::hash_bytes(&payload),
@@ -124,7 +124,7 @@ mod tests {
             let entity = super::super::entity_parser::parse_entity_from_bytes(file, id).unwrap();
             let files = std::collections::HashMap::from([(
                 id.to_string(),
-                bytes::Bytes::copy_from_slice(file),
+                bytes::Bytes::copy_from_slice(file).into(),
             )]);
             let auth_chain = Default::default();
             let deployment = Deployment {

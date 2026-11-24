@@ -50,7 +50,13 @@ module.exports.walkPlayerTo = async function (body) {
 
 module.exports.teleportTo = async function (body) {
     const parcel = body.worldCoordinates;
-    await Deno.core.ops.op_teleport_to(parcel ? Number(parcel.x) : null, parcel ? Number(parcel.y) : null, body.realm ?? null);
+    // spawnPoint: the name (compared in lowercase) of the spawn point of the scene landed in to use
+    await Deno.core.ops.op_teleport_to(
+        parcel ? Number(parcel.x) : null,
+        parcel ? Number(parcel.y) : null,
+        body.realm ?? null,
+        body.spawnPoint ?? null,
+    );
     return {} 
 }
 
@@ -90,7 +96,11 @@ module.exports.openNftDialog = async function (body) {
     return { success: true }
 }
 module.exports.openExplorerUi = async function (body) {
-    const openResult = await Deno.core.ops.op_open_explorer_ui(Number(body.ui ?? 0))
+    const openResult = await Deno.core.ops.op_open_explorer_ui(
+        Number(body.ui ?? 0),
+        Number(body.requestId ?? 0),
+        body.itemPurchase?.urn ?? null,
+    )
     return { openResult }
 }
 module.exports.setCommunicationsAdapter = async function (body) { 

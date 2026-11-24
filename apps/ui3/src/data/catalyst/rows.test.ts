@@ -25,8 +25,8 @@ import {
   normalizeEventAttendee,
 } from "./events";
 import { isUsableNotification, parseNotifications } from "./notifications";
-import { categoryForType, humanizeType, unreadCount } from "./notificationsView";
-import type { Notification } from "./notificationsView";
+import { categoryForType, humanizeType, unreadCount } from "@web-core/notifications/notificationsView";
+import type { Notification } from "@web-core/notifications/notificationsView";
 import {
   isRenderablePlace,
   isRenderablePlaceCategory,

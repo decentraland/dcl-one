@@ -1,0 +1,68 @@
+.root[data-site-layout] {
+  --site-header-h: 92px;
+  --site-nav-pad: 54px;
+  --site-nav-bg: var(--dcl-bg-navbar);
+  --site-nav-line: transparent;
+  background: var(--dcl-bg-page);
+  color: #f0f0f0;
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+}
+@media (max-width: 991px) {
+  .root[data-site-layout] { --site-header-h: 64px; --site-nav-pad: var(--dcl-space-16); --site-nav-bg: var(--dcl-bg-navbar-mobile); }
+  .mobileOverlay > [data-site-layout-navigation] { margin-bottom: calc(-1 * var(--site-header-h)); }
+}
+/* The nav floats over the page's top (decentraland.org's is fixed): a page that asks for it starts under the nav. */
+.overlay > [data-site-layout-navigation] { margin-bottom: calc(-1 * var(--site-header-h)); }
+
+
+.body {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  background: transparent;
+  font-family: inherit;
+  text-underline-offset: 3px;
+}
+
+.skip {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.skip:focus-visible {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 21;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--dcl-bg-page);
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  font-size: var(--dcl-font-size-button-sm);
+  font-weight: 700;
+  text-decoration: none;
+  padding: 6px var(--dcl-space-12);
+  border-radius: var(--dcl-radius-sm);
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+
+.page {
+  flex: 1 1 auto;
+  min-height: 0;
+}

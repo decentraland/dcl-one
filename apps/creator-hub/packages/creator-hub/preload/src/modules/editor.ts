@@ -3,10 +3,10 @@ import { ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { DeployOptions } from '/shared/types/deploy';
 import {
   BEVY_REALM_BUILD_EVENT,
-  BEVY_REALM_EXIT_EVENT,
+  BEVY_REALM_SUPERVISION_EVENT,
   PROJECT_ASSETS_CHANGED_EVENT,
   type BevyRealmBuildEvent,
-  type BevyRealmExitEvent,
+  type BevyRealmSupervisionEvent,
   type ProjectAssetsChangedEvent,
 } from '/shared/types/ipc';
 import type { MobileDebugSessionInfo } from '/shared/types/ipc';
@@ -47,6 +47,14 @@ export async function killBevyRealm(path: string) {
 }
 
 /**
+ * Get a serving Bevy realm for a project: the running one when it is healthy, a new one
+ * when it stopped or lost its Multiplayer Server. Starts main's restart count over.
+ */
+export async function ensureBevyRealm(path: string) {
+  return invoke('bevyRealm.ensure', path);
+}
+
+/**
  * Subscribe to the Bevy realm bundler's build events (a rebuild trigger naming its file,
  * or the bundle landing). Events for every running realm arrive; filter by `path`.
  */
@@ -58,12 +66,14 @@ export function onBevyRealmBuildEvent(callback: (event: BevyRealmBuildEvent) => 
   };
 }
 
-/** Subscribe to unexpected Bevy realm exits for every project; filter by `path`. */
-export function onBevyRealmExit(callback: (event: BevyRealmExitEvent) => void): () => void {
-  const handler = (_event: IpcRendererEvent, event: BevyRealmExitEvent) => callback(event);
-  ipcRenderer.on(BEVY_REALM_EXIT_EVENT, handler);
+/** Subscribe to main's restarts of the Bevy realm of every project; filter by `path`. */
+export function onBevyRealmSupervision(
+  callback: (event: BevyRealmSupervisionEvent) => void,
+): () => void {
+  const handler = (_event: IpcRendererEvent, event: BevyRealmSupervisionEvent) => callback(event);
+  ipcRenderer.on(BEVY_REALM_SUPERVISION_EVENT, handler);
   return () => {
-    ipcRenderer.removeListener(BEVY_REALM_EXIT_EVENT, handler);
+    ipcRenderer.removeListener(BEVY_REALM_SUPERVISION_EVENT, handler);
   };
 }
 

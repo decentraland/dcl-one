@@ -49,6 +49,7 @@ pub struct Settings {
     pub metrics_bearer_token: Option<String>,
     /// Base of `/hot-scenes` thumbnails. `serve` sets it from `CONTENT_URL` or this
     /// node's own `/content` (`stats_content_url`); the default serves tests.
+    /// Never ends in `/`: thumbnails append `/contents/<hash>` literally.
     pub content_url: String,
 }
 impl Default for Settings {
@@ -57,7 +58,7 @@ impl Default for Settings {
             commit_hash: None,
             metrics_path: "/metrics".into(),
             metrics_bearer_token: None,
-            content_url: "https://peer.decentraland.org/content/".into(),
+            content_url: "https://peer.decentraland.org/content".into(),
         }
     }
 }

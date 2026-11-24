@@ -79,7 +79,7 @@ impl<T: DclProtoComponent + Sync + Send + 'static> FromDclReader for T {
 
 impl<T: DclProtoComponent + Sync + Send + 'static> ToDclWriter for T {
     fn to_writer(&self, buf: &mut super::DclWriter) {
-        self.encode(buf).unwrap()
+        self.encode(buf.buffer_mut()).unwrap()
     }
 }
 

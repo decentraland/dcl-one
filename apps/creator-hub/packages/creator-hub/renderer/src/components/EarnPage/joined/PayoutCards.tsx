@@ -1,199 +1,202 @@
-import { useId, useRef, useState } from 'react';
+import { useId } from 'react';
 
 import Button from '@ui/atoms/Button';
-import Tooltip from '@ui/atoms/Tooltip';
 
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';
 
-import { misc } from '#preload';
+import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
 import { CopyToClipboard } from '../../CopyToClipboard';
 
-import { CopyIcon, InfoIcon, WarningIcon } from '../icons';
+import { CopyIcon, WarningIcon } from '../icons';
 
-import { EARN_TOOLTIP } from './parts';
+import { InfoTip } from './InfoTip';
 import { shortAddress } from './wallet';
 import parts from './parts.module.css';
 import styles from './PayoutsTab.module.css';
 
 const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/get-a-wallet';
 
-/**
- * The payout-wallet info button and its interactive tooltip. The tooltip is drawn at the end of the
- * page, so Tab is moved by hand: from the button into "Learn More", and from "Learn More" on from
- * the button. It stays open while focus is in either.
- */
-function WalletInfo() {
-  const [open, setOpen] = useState(false);
-  const [button, setButton] = useState<HTMLButtonElement | null>(null);
-  const linkRef = useRef<HTMLAnchorElement>(null);
-  const returning = useRef(false);
-  const onOpenChange = (next: boolean) => {
-    if (returning.current) return;
-    if (!next && linkRef.current?.contains(document.activeElement)) {
-      returning.current = true;
-      button?.focus();
-      returning.current = false;
-    }
-    setOpen(next);
-  };
+/** A Payouts card's title; `titleRef` makes it a focus target after a modal closes. */
+function CardTitle({
+  id,
+  titleRef,
+  children,
+}: {
+  id: string;
+  titleRef?: React.Ref<HTMLHeadingElement>;
+  children: React.ReactNode;
+}) {
   return (
-    <span className={styles.infoGroup}>
-      <Tooltip
-        {...EARN_TOOLTIP}
-        open={open}
-        onOpenChange={onOpenChange}
-        interactive
-        anchor={button}
-        content={
-          <>
-            {t('earn.joined.payouts.wallet.info')}{' '}
-            <a
-              ref={linkRef}
-              className={styles.learnMore}
-              href={GET_A_WALLET_URL}
-              onClick={event => {
-                event.preventDefault();
-                void misc.openExternal(GET_A_WALLET_URL);
-              }}
-              onKeyDown={event => {
-                if (event.key !== 'Tab') return;
-                if (event.shiftKey) event.preventDefault();
-                button?.focus();
-              }}
-            >
-              {t('earn.joined.payouts.wallet.learn_more')}
-              <span aria-hidden> →</span>
-            </a>
-          </>
-        }
-      >
-        <button
-          ref={setButton}
-          className={parts.infoButton}
-          type="button"
-          aria-label={t('earn.joined.payouts.wallet.info_label')}
-          onKeyDown={event => {
-            if (event.key !== 'Tab' || event.shiftKey || !open || !linkRef.current) return;
-            event.preventDefault();
-            linkRef.current.focus();
-          }}
-        >
-          <InfoIcon />
-        </button>
-      </Tooltip>
-    </span>
+    <h2
+      className={styles.cardTitle}
+      id={id}
+      ref={titleRef}
+      tabIndex={titleRef ? -1 : undefined}
+    >
+      {children}
+    </h2>
   );
 }
 
+/** Why the payout wallet step is locked. */
+export type WalletLock = 'unverified_email' | 'no_active_place';
+
+const WALLET_LOCK_HINT: Record<WalletLock, TranslationPath> = {
+  unverified_email: 'earn.joined.payouts.wallet.unavailable',
+  no_active_place: 'earn.joined.payouts.wallet.no_active_place',
+};
+
 /**
- * The payout wallet: its short address as a chip that copies it, and EDIT; ADD WALLET when none is set.
+ * The payout wallet, the second setup step: its short address as a chip that copies it, and EDIT; ADD WALLET when
+ * none is set. While `lock` is set the buttons are disabled and a line beside them says why.
  * @param props.wallet - `undefined` while it loads.
+ * @param props.lock - why the step is locked, or `null` when it is open.
  */
 export function WalletCard({
   wallet,
+  lock,
   editRef,
   onAdd,
   onChange,
 }: {
   wallet: PayoutWallet | null | undefined;
+  lock: WalletLock | null;
   editRef?: React.Ref<HTMLButtonElement>;
   onAdd: () => void;
   onChange: () => void;
 }) {
   const titleId = useId();
+  const hintId = useId();
+  const locked = lock !== null;
+  const describedBy = locked ? hintId : undefined;
   return (
     <section
       className={styles.card}
       aria-labelledby={titleId}
+      data-locked={locked || undefined}
       data-testid="payouts-wallet-card"
     >
-      <div className={styles.cardHeader}>
-        <h2
-          className={styles.cardTitle}
-          id={titleId}
-        >
-          {t('earn.joined.payouts.wallet.title')}
-        </h2>
-        <WalletInfo />
-      </div>
-      {wallet && (
-        <>
-          <CopyToClipboard
-            className={styles.addressChip}
-            text={wallet.address}
-            label={t('earn.joined.payouts.wallet.copy')}
-            showPopup
-          >
-            <span
-              className={styles.address}
-              title={wallet.address}
-            >
-              {shortAddress(wallet.address)}
-            </span>
-            <CopyIcon />
-          </CopyToClipboard>
+      <div className={styles.cardTop}>
+        <div className={styles.cardHeader}>
+          <CardTitle id={titleId}>{t('earn.joined.payouts.wallet.title')}</CardTitle>
+          <InfoTip
+            label="earn.joined.payouts.wallet.info_label"
+            text="earn.joined.payouts.wallet.info"
+            href={GET_A_WALLET_URL}
+          />
+        </div>
+        {wallet && (
           <Button
             ref={editRef}
             className={styles.cornerButton}
             variant="outline"
+            disabled={locked}
+            aria-describedby={describedBy}
             onClick={onChange}
           >
             {t('earn.joined.payouts.wallet.edit')}
           </Button>
-        </>
-      )}
-      {wallet === null && (
-        <Button
-          className={styles.addWalletButton}
-          variant="primary"
-          onClick={onAdd}
-        >
-          {t('earn.joined.payouts.wallet.add')}
-        </Button>
+        )}
+      </div>
+      {wallet !== undefined && (
+        <div className={styles.setupRow}>
+          {wallet ? (
+            <CopyToClipboard
+              className={styles.addressChip}
+              text={wallet.address}
+              label={t('earn.joined.payouts.wallet.copy')}
+              showPopup
+            >
+              <span
+                className={styles.address}
+                title={wallet.address}
+              >
+                {shortAddress(wallet.address)}
+              </span>
+              <CopyIcon />
+            </CopyToClipboard>
+          ) : (
+            <Button
+              className={parts.setupButton}
+              variant="primary"
+              disabled={locked}
+              aria-describedby={describedBy}
+              onClick={onAdd}
+            >
+              {t('earn.joined.payouts.wallet.add')}
+            </Button>
+          )}
+          {lock && (
+            <p
+              id={hintId}
+              className={styles.setupHint}
+            >
+              {t(WALLET_LOCK_HINT[lock])}
+            </p>
+          )}
+        </div>
       )}
     </section>
   );
 }
 
-/** The enrollment's name and read-only email, with VERIFY EMAIL until the email is verified. */
+/**
+ * The enrollment's name and read-only email, the first setup step, with VERIFY EMAIL until the email is verified.
+ * Locked while none of the creator's places is in the program, since the service sends no code then: VERIFY EMAIL is
+ * disabled and a line says why: beside it when the line fits there on one line, otherwise on its own row under it.
+ */
 export function ContactCard({
   enrollment,
+  locked,
   titleRef,
   onVerify,
 }: {
   enrollment: Enrollment | null;
+  locked: boolean;
   titleRef?: React.Ref<HTMLHeadingElement>;
   onVerify: () => void;
 }) {
   const titleId = useId();
+  const hintId = useId();
   const unverified = !!enrollment && !enrollment.email_verified_at;
   return (
     <section
       className={styles.card}
       aria-labelledby={titleId}
+      data-locked={locked || undefined}
       data-testid="payouts-contact-card"
     >
-      <div className={styles.cardHeader}>
-        <h2
-          className={styles.cardTitle}
-          id={titleId}
-          ref={titleRef}
-          tabIndex={-1}
-        >
-          {t('earn.joined.payouts.contact.title')}
-        </h2>
+      <div className={styles.contactTop}>
+        <div className={styles.cardHeader}>
+          <CardTitle
+            id={titleId}
+            titleRef={titleRef}
+          >
+            {t('earn.joined.payouts.contact.title')}
+          </CardTitle>
+        </div>
+        {unverified && (
+          <Button
+            className={`${parts.setupButton} ${styles.verifyEmailButton}`}
+            variant="primary"
+            disabled={locked}
+            aria-describedby={locked ? hintId : undefined}
+            onClick={onVerify}
+          >
+            {t('earn.joined.payouts.contact.verify')}
+          </Button>
+        )}
+        {locked && (
+          <p
+            id={hintId}
+            className={styles.setupHint}
+          >
+            {t('earn.joined.payouts.contact.unavailable')}
+          </p>
+        )}
       </div>
-      {unverified && (
-        <Button
-          className={styles.cornerButton}
-          variant="outline"
-          onClick={onVerify}
-        >
-          {t('earn.joined.payouts.contact.verify')}
-        </Button>
-      )}
       {enrollment && (
         <div className={styles.contactValues}>
           <div className={styles.contactValue}>

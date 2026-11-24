@@ -5,6 +5,12 @@ the code. The one idea behind most of it: lean into the ECS. Bevy already gives 
 change tracking, ownership and cleanup. Code that reinvents those in a resource, a `Local` or a
 side map is not allowed and will fail a review.
 
+Unused code is deleted, used, or gated with `#[cfg]` to the builds that use it. No `allow`,
+`expect` or `warn` covers `dead_code`, `unused` or `warnings`, except the ShaderType derive's
+never-called check fns: a module that holds only `use` items and ShaderType-derived structs
+takes `#![expect(dead_code, reason = …)]` with the reason that
+`tooling/bevy-dead-code-check.py` accepts. Their `impl` blocks and constants live outside it.
+
 ## State lives on the entity it describes
 
 - A fact about an entity is a component on that entity. Not a `HashMap<Entity, T>` in a
@@ -75,7 +81,9 @@ side map is not allowed and will fail a review.
 ## Async work
 
 - IO goes on `IoTaskPool`; the result comes back through a channel or a `Task<T>` polled from
-  a system, and lands in a component. Systems never block.
+  a system, and lands in a component. Systems never block. The scene loop is the one exception:
+  it paces the frame, and sleeps for a bounded wait between passes (see
+  [the scene loop](scheduling.md#the-scene-loop)).
 - The worker that knows the outcome reports it, per item and structured: `Vec<Result<T, E>>`
   in request order with a small named error enum. The caller relays; it does not re-derive
   failures by diffing what it asked for against what came back.
@@ -95,6 +103,11 @@ side map is not allowed and will fail a review.
   engine invariants and compiles out of release builds unless the `dcl-assert` feature is on.
 - `SceneMeta` is parsed for every scene, so a field added to it parses leniently: a malformed
   value reads as absent and the scene still loads. Add a field only with the code that reads it.
+- A `std::sync` `Mutex` or `RwLock` is acquired through `common::sync::{MutexExt, RwLockExt}`
+  (`lock_ignore_poison`, `read_ignore_poison`, `write_ignore_poison` and their `try_` forms),
+  never `.lock().unwrap()`: a panic while another thread held the lock then does not spread to
+  every later caller. The guard comes back as the panicking thread left the data. Crates that do
+  not depend on `common` recover with `unwrap_or_else(PoisonError::into_inner)`.
 - `anyhow` at boundaries (ops, loaders, fetches). A named error enum where a caller branches
   on the kind.
 - When one variant of a `match` is filtered by a flag, the guard goes inside that arm, not in

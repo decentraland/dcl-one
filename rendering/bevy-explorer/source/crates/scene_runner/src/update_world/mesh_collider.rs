@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{f64::consts::FRAC_1_SQRT_2, marker::PhantomData};
 
 use bevy::{
     diagnostic::FrameCount,
@@ -29,6 +29,7 @@ use crate::{
 use common::{
     dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
     sets::PostUpdateSets,
+    structs::ShowOutOfBounds,
 };
 use console::DoAddConsoleCommand;
 use dcl_component::{
@@ -36,8 +37,14 @@ use dcl_component::{
     SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::ComponentPosition;
+use scene_material::BoundRegion;
 
 use super::AddCrdtInterfaceExt;
+
+mod bounds;
+use bounds::ColliderBounds;
+mod volume;
+use volume::SceneVolume;
 
 pub struct MeshColliderPlugin;
 
@@ -169,6 +176,7 @@ impl Plugin for MeshColliderPlugin {
             propagate_disabled::<CtCollider>.in_set(SceneSets::Init),
         );
 
+        app.init_resource::<ShowOutOfBounds>();
         app.add_systems(
             Update,
             update_scene_collider_data.in_set(SceneSets::PostInit),
@@ -214,6 +222,10 @@ struct ColliderState {
     translation: Vec3,
     rotation: Quat,
     scale: Vec3,
+    /// its scaled size was at least `COLLIDER_DISABLE_SIZE` at its last rescale
+    large_enough: bool,
+    /// it lies within the scene's bounds
+    in_bounds: bool,
 }
 
 #[derive(Component, Default)]
@@ -226,14 +238,45 @@ pub struct SceneColliderData {
     removed_colliders: HashSet<ColliderHandle>,
     dummy_rapier_structs: (IslandManager, RigidBodySet),
     disabled: HashSet<ColliderHandle>,
+    bounds: ColliderBounds,
+    volume: SceneVolume,
 }
 
 impl SceneColliderData {
     pub(crate) fn collider_count(&self) -> usize {
         self.collider_set.len()
     }
+
+    /// Collider data of a scene of `parcels` parcels in `regions`. A collider placed with
+    /// [`Self::update_collider_transform`] is on only while it lies within the rectangle around
+    /// them and under their height limit; triggers are exempt. The `in_scene` casts and
+    /// [`Self::reaches_avatar`] answer only in the space over the regions. No regions: no limit.
+    pub fn for_regions(regions: &[BoundRegion], parcels: usize) -> Self {
+        Self {
+            bounds: ColliderBounds::new(regions, parcels),
+            volume: SceneVolume::new(regions),
+            ..Default::default()
+        }
+    }
+
+    /// The height above which the scene's colliders are off; none when they have no limit.
+    pub(crate) fn height_limit(&self) -> Option<f64> {
+        self.bounds.height()
+    }
+
+    /// Colliders that are off because they reach outside the scene's bounds.
+    pub(crate) fn out_of_bounds_count(&self) -> usize {
+        self.collider_state
+            .values()
+            .filter(|state| !state.in_bounds)
+            .count()
+    }
 }
 
+/// A scene flushes its bvh by itself once this many removed colliders wait for it. Queries
+/// flush, but nothing may query a scene the player is far from, and one that keeps replacing its
+/// colliders would gather their handles without limit.
+const PENDING_REMOVALS_BEFORE_FLUSH: usize = 1024;
 // max world-space size change (metres) before we rebuild the scaled shape
 const COLLIDER_RESCALE_SIZE: f32 = 0.01;
 // disable colliders whose largest scaled extent falls below this (metres)
@@ -300,6 +343,8 @@ impl SceneColliderData {
                 translation: Vec3::ZERO,
                 rotation: Quat::IDENTITY,
                 scale: Vec3::ONE,
+                large_enough: true,
+                in_bounds: true,
             },
         );
 
@@ -409,10 +454,12 @@ impl SceneColliderData {
                     translation: init_translation,
                     scale: init_scale,
                     rotation: init_rotation,
+                    large_enough,
                     ..
                 } = self.collider_state.get(id).unwrap();
+                let mut large_enough = *large_enough;
 
-                if (&req_scale, &req_rotation, &req_translation)
+                let initial_transform = if (&req_scale, &req_rotation, &req_translation)
                     != (init_scale, init_rotation, init_translation)
                 {
                     self.changed_colliders.insert(handle);
@@ -434,7 +481,7 @@ impl SceneColliderData {
                         let size_change = (extents * (req_scale - *init_scale).abs()).max_element();
                         if size_change > COLLIDER_RESCALE_SIZE {
                             let scaled_max = (extents * req_scale.abs()).max_element();
-                            collider.set_enabled(scaled_max >= COLLIDER_DISABLE_SIZE);
+                            large_enough = scaled_max >= COLLIDER_DISABLE_SIZE;
                             new_scale = req_scale;
                             // colliders don't have a scale, we have to modify the shape directly when scale changes (significantly)
                             collider.set_shape(base_collider.shape().scale_ext(req_scale));
@@ -450,8 +497,26 @@ impl SceneColliderData {
                         req_translation.as_dvec3().into(),
                         req_rotation.as_dquat().into(),
                     ));
-                    return Some(initial_transform);
+                    Some(initial_transform)
+                } else {
+                    None
+                };
+
+                let state_mut = self.collider_state.get_mut(id).unwrap();
+                state_mut.large_enough = large_enough;
+                state_mut.in_bounds = collider.is_sensor() || self.bounds.contains(collider);
+                let enabled = state_mut.large_enough && state_mut.in_bounds;
+                if enabled != collider.is_enabled() {
+                    collider.set_enabled(enabled);
+                    // the bvh skips a collider that is off, so one turned off has to leave it
+                    if enabled {
+                        self.removed_colliders.remove(&handle);
+                        self.changed_colliders.insert(handle);
+                    } else {
+                        self.removed_colliders.insert(handle);
+                    }
                 }
+                return initial_transform;
             }
         }
 
@@ -732,24 +797,18 @@ impl SceneColliderData {
         include_sensors: bool,
         size_adjust: f32,
     ) -> Vec<RaycastResult> {
-        let mut results = Vec::new();
-        let mut ignore = HashSet::new();
-
-        while let Some(result) = self.cast_avatar_nearest_flushed(
-            origin,
-            direction,
-            distance,
-            collision_mask,
-            skip_inside,
-            include_sensors,
-            ignore.iter().collect(),
-            size_adjust,
-        ) {
-            ignore.insert(result.id.clone());
-            results.push(result);
-        }
-
-        results
+        each_nearest(|ignore| {
+            self.cast_avatar_nearest_flushed(
+                origin,
+                direction,
+                distance,
+                collision_mask,
+                skip_inside,
+                include_sensors,
+                ignore,
+                size_adjust,
+            )
+        })
     }
 
     pub fn cast_avatar_nearest(
@@ -979,10 +1038,7 @@ impl SceneColliderData {
     pub fn avatar_constraints(&mut self, translation: DVec3) -> (DVec3, DVec3) {
         self.update_bvh();
 
-        let avatar_inner_segment = parry::shape::Segment::new(
-            (DVec3::Y * PLAYER_COLLIDER_RADIUS as f64).into(),
-            (DVec3::Y * (PLAYER_COLLIDER_HEIGHT - PLAYER_COLLIDER_RADIUS) as f64).into(),
-        );
+        let avatar_inner_segment = avatar_centre_line();
 
         let mut constraint_min = DVec3::NEG_INFINITY;
         let mut constraint_max = DVec3::INFINITY;
@@ -1062,7 +1118,7 @@ impl SceneColliderData {
             let Some(collider) = self.collider_set.get(*handle) else {
                 continue;
             };
-            if !collider.collision_groups().test(groups) {
+            if !collider.is_enabled() || !collider.collision_groups().test(groups) {
                 continue;
             }
             let proj = collider
@@ -1110,6 +1166,10 @@ impl SceneColliderData {
 
         self.scaled_collider.remove_by_left(id);
         self.collider_state.remove(id);
+
+        if self.removed_colliders.len() >= PENDING_REMOVALS_BEFORE_FLUSH {
+            self.update_bvh();
+        }
     }
 
     pub fn get_collider_handle(&self, id: &ColliderId) -> Option<ColliderHandle> {
@@ -1169,6 +1229,293 @@ impl SceneColliderData {
     }
 }
 
+/// The centre line of the avatar's capsule, from its feet.
+fn avatar_centre_line() -> parry::shape::Segment {
+    parry::shape::Segment::new(
+        (DVec3::Y * PLAYER_COLLIDER_RADIUS as f64).into(),
+        (DVec3::Y * (PLAYER_COLLIDER_HEIGHT - PLAYER_COLLIDER_RADIUS) as f64).into(),
+    )
+}
+
+/// Every hit of a cast that returns its nearest hit outside the colliders it is given: the
+/// nearest, then the nearest of the rest.
+fn each_nearest(
+    mut nearest: impl FnMut(HashSet<&ColliderId>) -> Option<RaycastResult>,
+) -> Vec<RaycastResult> {
+    let mut results = Vec::new();
+    let mut ignore = HashSet::new();
+
+    while let Some(result) = nearest(ignore.iter().collect()) {
+        ignore.insert(result.id.clone());
+        results.push(result);
+    }
+
+    results
+}
+
+/// A sweep stopped at the edge of a scene stops this far from it, in metres: more than the
+/// rounding of the player's position, so the next frame finds the scene out of the player's
+/// reach. One let into the scene goes this far on along its path.
+const SCENE_EDGE_MARGIN: f64 = 0.001;
+
+impl SceneColliderData {
+    /// Whether the scene's colliders apply to an avatar that stands at `translation`: its
+    /// capsule touches the space the scene is drawn in. Always, for collider data without
+    /// regions.
+    pub fn reaches_avatar(&self, translation: DVec3) -> bool {
+        self.volume
+            .reaches(translation, f64::from(PLAYER_COLLIDER_RADIUS))
+    }
+
+    /// Whether the scene's colliders can be the ground under an avatar that stands at
+    /// `translation`: [`Self::reaches_avatar`], or the avatar rests on the top of the space the
+    /// scene is drawn in, where [`Self::cast_avatar_nearest_in_scene`] stops one that comes down
+    /// onto a collider.
+    pub fn grounds_avatar(&self, translation: DVec3) -> bool {
+        // it rests one margin above the top; the rounding of its position adds less than another
+        self.reaches_avatar(translation - DVec3::Y * (2.0 * SCENE_EDGE_MARGIN))
+    }
+
+    /// [`Self::cast_ray_nearest_flushed`] over the stretches of the ray inside the space the
+    /// scene is drawn in. A stretch does not hit a collider it starts inside, as the ray does
+    /// not at its origin.
+    pub(crate) fn cast_ray_nearest_in_scene_flushed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        specific_collider: Option<&ColliderId>,
+    ) -> Option<RaycastResult> {
+        self.volume
+            .stretches(
+                origin.as_dvec3(),
+                direction.as_dvec3(),
+                f64::from(distance),
+                0.0,
+            )
+            .find_map(|stretch| {
+                let start = stretch.start as f32;
+                let mut hit = self.cast_ray_nearest_flushed(
+                    origin + direction * start,
+                    direction,
+                    (stretch.end - stretch.start) as f32,
+                    collision_mask,
+                    skip_inside,
+                    include_sensors,
+                    specific_collider,
+                )?;
+                hit.toi += start;
+                Some(hit)
+            })
+    }
+
+    /// [`Self::cast_ray_all_flushed`] over the stretches of the ray inside the space the scene is
+    /// drawn in. A collider the ray meets in two stretches is hit where it meets it first.
+    pub(crate) fn cast_ray_all_in_scene_flushed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+        collision_mask: u32,
+        skip_inside: bool,
+    ) -> Vec<RaycastResult> {
+        let mut hits: Vec<RaycastResult> = Vec::new();
+        for stretch in self.volume.stretches(
+            origin.as_dvec3(),
+            direction.as_dvec3(),
+            f64::from(distance),
+            0.0,
+        ) {
+            let start = stretch.start as f32;
+            let earlier = hits.len();
+            for mut hit in self.cast_ray_all_flushed(
+                origin + direction * start,
+                direction,
+                (stretch.end - stretch.start) as f32,
+                collision_mask,
+                skip_inside,
+            ) {
+                if hits[..earlier].iter().all(|prior| prior.id != hit.id) {
+                    hit.toi += start;
+                    hits.push(hit);
+                }
+            }
+        }
+        hits
+    }
+
+    pub fn cast_avatar_nearest_in_scene(
+        &mut self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        exclude_colliders: HashSet<&ColliderId>,
+        size_adjust: f32,
+    ) -> Option<RaycastResult> {
+        // a scene the sweep does not touch is not flushed for it
+        if !self.volume.touches(
+            origin,
+            direction,
+            distance,
+            f64::from(PLAYER_COLLIDER_RADIUS),
+        ) {
+            return None;
+        }
+
+        self.update_bvh();
+        self.cast_avatar_nearest_in_scene_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            exclude_colliders,
+            size_adjust,
+        )
+    }
+
+    /// [`Self::cast_avatar_nearest_flushed`] over the stretches of the sweep during which the
+    /// capsule touches the space the scene is drawn in.
+    ///
+    /// A capsule that comes into the scene already overlapping a collider is stopped at the
+    /// scene's edge, with the edge as the contact, when its centre line is inside the collider or
+    /// the overlap pushes it back out of the scene: the part of a collider inside its scene is
+    /// solid from every side. Any other overlap lets it just into the scene, where the push-out
+    /// resolves it: ground a little higher than the ground it comes from, or a wall met side-on.
+    ///
+    /// `skip_inside` covers what the sweep starts inside, not what the capsule overlaps where it
+    /// comes into the scene.
+    pub(crate) fn cast_avatar_nearest_in_scene_flushed(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        exclude_colliders: HashSet<&ColliderId>,
+        size_adjust: f32,
+    ) -> Option<RaycastResult> {
+        if !direction.is_finite() {
+            return None;
+        }
+
+        for stretch in self.volume.stretches(
+            origin,
+            direction,
+            distance,
+            f64::from(PLAYER_COLLIDER_RADIUS),
+        ) {
+            let start = origin + direction * stretch.start;
+            let Some(mut hit) = self.cast_avatar_nearest_flushed(
+                start,
+                direction,
+                stretch.end - stretch.start,
+                collision_mask,
+                skip_inside && stretch.entered.is_none(),
+                include_sensors,
+                exclude_colliders.clone(),
+                size_adjust,
+            ) else {
+                continue;
+            };
+
+            match stretch.entered {
+                Some(edge) if hit.toi == 0.0 => {
+                    // the contact faces back out of the scene more than along its edge
+                    let pushed_back = hit.normal.as_dvec3().dot(edge) > FRAC_1_SQRT_2;
+                    if pushed_back
+                        || self.avatar_centre_is_inside(
+                            start,
+                            collision_mask,
+                            include_sensors,
+                            &exclude_colliders,
+                        )
+                    {
+                        // the margin is kept from the edge itself, however shallow the path
+                        let margin = SCENE_EDGE_MARGIN / direction.dot(edge).abs();
+                        hit.toi = (stretch.start - margin).max(0.0) as f32;
+                        hit.normal = edge.as_vec3();
+                    } else {
+                        let margin = SCENE_EDGE_MARGIN / direction.length();
+                        hit.toi = (stretch.start + margin).min(stretch.end) as f32;
+                    }
+                }
+                _ => hit.toi += stretch.start as f32,
+            }
+            return Some(hit);
+        }
+
+        None
+    }
+
+    /// Whether the centre line of an avatar that stands at `translation` crosses a collider.
+    fn avatar_centre_is_inside(
+        &self,
+        translation: DVec3,
+        collision_mask: u32,
+        include_sensors: bool,
+        exclude_colliders: &HashSet<&ColliderId>,
+    ) -> bool {
+        let centre_line = avatar_centre_line();
+        let predicate = |handle, _: &Collider| {
+            !self.disabled.contains(&handle)
+                && self
+                    .get_id(handle)
+                    .is_none_or(|id| !exclude_colliders.contains(id))
+        };
+        let filter = QueryFilter::default()
+            .groups(InteractionGroups::new(
+                Group::from_bits_truncate(collision_mask),
+                Group::from_bits_truncate(collision_mask),
+                InteractionTestMode::And,
+            ))
+            .predicate(&predicate);
+        let filter = if include_sensors {
+            filter
+        } else {
+            filter.exclude_sensors()
+        };
+
+        let pipeline = self.query_pipeline(filter);
+        let mut crossed = pipeline.intersect_shape(translation.into(), &centre_line);
+        crossed.next().is_some()
+    }
+
+    /// [`Self::cast_avatar_all_flushed`] with each hit cast as
+    /// [`Self::cast_avatar_nearest_in_scene_flushed`] casts it.
+    pub(crate) fn cast_avatar_all_in_scene_flushed(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        size_adjust: f32,
+    ) -> Vec<RaycastResult> {
+        each_nearest(|ignore| {
+            self.cast_avatar_nearest_in_scene_flushed(
+                origin,
+                direction,
+                distance,
+                collision_mask,
+                skip_inside,
+                include_sensors,
+                ignore,
+                size_adjust,
+            )
+        })
+    }
+}
+
 pub const GROUND_COLLISION_MASK: u32 = 1 << 31;
 
 /// Collision shapes, e.g. from `mesh_to_parry_shape`, for `set_physics_shape`.
@@ -1181,9 +1528,15 @@ pub struct GlobalGroundCollider;
 fn update_scene_collider_data(
     mut commands: Commands,
     scenes: Query<(Entity, &RendererSceneContext), Without<SceneColliderData>>,
+    show_out_of_bounds: Res<ShowOutOfBounds>,
 ) {
     for (scene_ent, ctx) in scenes.iter() {
-        let mut scene_data = SceneColliderData::default();
+        // a run that draws what reaches out of bounds keeps it solid and selectable too
+        let mut scene_data = if show_out_of_bounds.0 {
+            SceneColliderData::default()
+        } else {
+            SceneColliderData::for_regions(&ctx.bounds, ctx.parcels.len())
+        };
         for (index, parcel) in ctx.parcels.iter().enumerate() {
             let floor_panel = ColliderBuilder::cuboid(8.0, 8.0, 8.0)
                 .translation(
@@ -1221,8 +1574,7 @@ pub struct HasCollider<T: ColliderType>(pub ColliderId, PhantomData<fn() -> T>);
 #[derive(Component)]
 pub struct HasTrigger(pub ColliderId);
 
-#[allow(clippy::type_complexity)]
-fn update_colliders<T: ColliderType>(
+pub(crate) fn update_colliders<T: ColliderType>(
     mut commands: Commands,
     // add colliders
     // any entity with a mesh collider that we're not already using, or where the mesh collider has changed
@@ -1242,7 +1594,9 @@ fn update_colliders<T: ColliderType>(
         (Entity, &ContainerEntity, &HasCollider<T>),
         Without<MeshCollider<T>>,
     >,
-    mut scene_data: Query<(&RendererSceneContext, &mut SceneColliderData)>,
+    // a scene's stand-in (`scene_lod`) has collider data and no context: its colliders are its
+    // glTF nodes', which need none
+    mut scene_data: Query<(Option<&RendererSceneContext>, &mut SceneColliderData)>,
     mut gltf_mesh_resolver: GltfMeshResolver,
     meshes: Res<Assets<Mesh>>,
     gltfs_in_progress: Query<(), With<GltfProcessing>>,
@@ -1298,7 +1652,7 @@ fn update_colliders<T: ColliderType>(
             MeshColliderShape::Sphere => ColliderBuilder::ball(0.5),
             MeshColliderShape::Shape(shape, _) => ColliderBuilder::new(shape.clone()),
             MeshColliderShape::GltfShape { gltf_src, name } => {
-                let Ok((scene, _)) = scene_data.get(container.root) else {
+                let Ok((Some(scene), _)) = scene_data.get(container.root) else {
                     continue;
                 };
                 let Ok(Some(h_mesh)) = gltf_mesh_resolver.resolve_mesh(gltf_src, &scene.hash, name)
@@ -1370,7 +1724,6 @@ fn on_collider_removed<T: ColliderType>(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn propagate_disabled<T: ColliderType>(
     mut scene_datas: Query<(Entity, &mut SceneColliderData)>,
     q: Query<
@@ -1424,7 +1777,6 @@ pub struct PreviousColliderTransform {
     pub updated: u32,
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_collider_transforms<T: ColliderType>(
     mut commands: Commands,
     changed_colliders: Query<
@@ -1486,7 +1838,6 @@ fn debug_colliders(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_debug_colliders<T: ColliderType>(
     mut commands: Commands,
     debug: Res<DebugColliders>,
@@ -1642,11 +1993,17 @@ fn waits_for_reveal(
 }
 
 #[cfg(test)]
+mod bounds_tests;
+#[cfg(test)]
+pub(crate) use bounds_tests::regions as regions_of_parcels;
+#[cfg(test)]
 mod initial_transform_tests;
 #[cfg(test)]
 mod ownership_tests;
 #[cfg(test)]
 mod reveal_tests;
+#[cfg(test)]
+mod scene_cut_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1659,6 +2016,17 @@ mod tests {
             half_extents,
             Quat::IDENTITY,
         );
+    }
+
+    #[test]
+    fn a_scene_that_nothing_queries_does_not_gather_replaced_colliders_without_limit() {
+        let mut colliders = SceneColliderData::default();
+        for index in 0..10 * PENDING_REMOVALS_BEFORE_FLUSH as u32 {
+            wall(&mut colliders, index, Vec3::ZERO, Vec3::ONE);
+            colliders.remove_collider(&ColliderId::new(SceneEntityId::ROOT, None, index));
+        }
+        assert!(colliders.removed_colliders.len() < PENDING_REMOVALS_BEFORE_FLUSH);
+        assert!(colliders.changed_colliders.len() < PENDING_REMOVALS_BEFORE_FLUSH);
     }
 
     #[test]

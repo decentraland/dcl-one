@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useMachine } from "@xstate/react";
 import { useSearchParams } from "react-router";
 
-import StCastStreamer from "@ui/web/pages/StCastStreamer";
-import StCastNotFound from "@ui/web/pages/StCastNotFound";
+import { StCastStreamer as CastStreamerView } from "@dcl/one-ui";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
+import SitesLayout from "../../components/chrome/SitesLayout";
+import { CastNotFoundScreen } from "../cast-not-found/CastNotFound";
 import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type GoLiveFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type StopShareFn, type TrackFn } from "./machine";
 
 /** What a real session adds to the console; the story pages leave it out. */
@@ -17,12 +18,18 @@ export type LiveBindings = {
   bindShareEnded: (onEnded: () => void) => () => void;
   /** Calls `onLost` when the room goes away while live; answers the unsubscribe. */
   bindConnectionLost: (onLost: () => void) => () => void;
-  /** Shown over the live view, e.g. an "enable audio" control. */
-  notice?: ReactNode;
-  /** The published media, shown in the live view. */
-  stage?: ReactNode;
-  /** Microphone and camera toggles next to the share and leave buttons. */
-  liveControls?: ReactNode;
+  /** The published media and the room's audio, shown in the live view; `muted` mutes the audio. */
+  stage?: (muted: boolean) => ReactNode;
+  /** The microphone and camera as published, and their toggles. */
+  micOn: boolean;
+  cameraOn: boolean;
+  toggleMicrophone: () => void;
+  toggleCamera: () => void;
+  /** A toggle is under way. */
+  devicesBusy: boolean;
+  /** The browser blocked playback until a click; `enableAudio` is that click. */
+  audioBlocked: boolean;
+  enableAudio: () => void;
   participants?: number;
 };
 
@@ -164,6 +171,11 @@ function CastConsoleInner({
   const placeName = state.context.info?.placeName ?? "Genesis Plaza";
   const displayName = state.context.identity || identity || "";
 
+  // The story pages have no session: their microphone and camera switch only on screen.
+  const [simMic, setSimMic] = useState(true);
+  const [simCamera, setSimCamera] = useState(true);
+  const [tabMuted, setTabMuted] = useState(false);
+
   return (
     <div className="cast-console" data-step={step}>
       {value === "tokenCheck" && (
@@ -171,171 +183,107 @@ function CastConsoleInner({
       )}
 
       {value === "deviceSelect" && (
-        <>
-          <StCastStreamer
-            state="onboarding"
-            streamName={placeName}
-            displayName={name}
-            onNameChange={setName}
-            toasts={[]}
-          />
-          <ConsoleControls label="Devices">
-            <button
-              type="button"
-              className="cast-console__btn cast-console__btn--primary"
-              onClick={() =>
-                send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name })
-              }
-            >
-              Continue with these devices
-            </button>
-          </ConsoleControls>
-        </>
+        <StCastStreamer
+          state="onboarding"
+          streamName={placeName}
+          displayName={name}
+          onNameChange={setName}
+          devices={state.context.devices}
+          // One click runs the whole join: devices, then access, then the room.
+          onJoin={() => send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name, join: true })}
+          toasts={[]}
+        />
       )}
 
       {value === "permissions" && (
-        <>
-          <StCastStreamer
-            state="joining"
-            streamName={placeName}
-            toasts={
-              state.context.permissionsDenied
-                ? [
-                    {
-                      id: "perm",
-                      title: "Camera & microphone blocked",
-                      message:
-                        "Allow access to your camera and microphone, then retry to continue.",
-                      action: { label: "Retry", onClick: () => {} },
-                    },
-                  ]
-                : []
-            }
-          />
-          <ConsoleControls label="Permissions">
-            {state.context.permissionsDenied ? (
-              <>
-                <button
-                  type="button"
-                  className="cast-console__btn"
-                  onClick={() => send({ type: "BACK" })}
-                >
-                  Change devices
-                </button>
-                <button
-                  type="button"
-                  className="cast-console__btn cast-console__btn--primary"
-                  onClick={() => send({ type: "RETRY_PERMISSIONS" })}
-                >
-                  Allow access
-                </button>
-              </>
-            ) : (
-              <span className="cast-console__hint">Requesting camera & microphone&#x2026;</span>
-            )}
-          </ConsoleControls>
-        </>
+        <StCastStreamer
+          state="joining"
+          streamName={placeName}
+          toasts={
+            state.context.permissionsDenied
+              ? [
+                  {
+                    id: "perm",
+                    title: "Camera & microphone blocked",
+                    message: "Allow access to your camera and microphone, then retry to continue.",
+                    action: { label: "Retry", onClick: () => send({ type: "RETRY_PERMISSIONS" }) },
+                    onDismiss: () => send({ type: "BACK" }),
+                  },
+                ]
+              : []
+          }
+        />
       )}
 
       {value === "preview" && (
-        <>
-          <StCastStreamer
-            state="onboarding"
-            streamName={placeName}
-            displayName={displayName}
-            toasts={
-              state.context.joinError
-                ? [
-                    {
-                      id: "join",
-                      title: "Could not join the cast",
-                      message: state.context.joinError,
-                      action: { label: "Retry", onClick: () => send({ type: "JOIN" }) },
-                    },
-                  ]
-                : []
-            }
-          />
-          <ConsoleControls label="Preview">
-            <button
-              type="button"
-              className="cast-console__btn"
-              onClick={() => send({ type: "BACK" })}
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              className="cast-console__btn cast-console__btn--primary"
-              onClick={() => send({ type: "JOIN" })}
-            >
-              Join now
-            </button>
-          </ConsoleControls>
-        </>
+        <StCastStreamer
+          state="onboarding"
+          streamName={placeName}
+          displayName={name}
+          onNameChange={setName}
+          devices={state.context.devices}
+          onJoin={() => send({ type: "JOIN", name })}
+          toasts={
+            state.context.joinError
+              ? [
+                  {
+                    id: "join",
+                    title: "Could not join the cast",
+                    message: state.context.joinError,
+                    action: { label: "Retry", onClick: () => send({ type: "JOIN", name }) },
+                  },
+                ]
+              : []
+          }
+        />
       )}
 
       {value === "joining" && (
         <StCastStreamer state="joining" streamName={placeName} toasts={[]} />
       )}
 
-      {value === "live" &&
-        (() => {
-          const sharing = state.matches({ live: "sharing" });
-          const publishing = state.matches({ live: "publishingShare" });
-          return (
-            <>
-              <StCastStreamer
-                state="live"
-                streamName={placeName}
-                displayName={displayName || "Streamer"}
-                participants={live?.participants ?? 1}
-                stage={live?.stage}
-                toasts={
-                  state.context.screenShareFailed
-                    ? [
-                        {
-                          id: "ss",
-                          title: "Screen sharing failed",
-                          message:
-                            "Your screen share stopped. Click retry to share again.",
-                          action: {
-                            label: "Retry",
-                            onClick: () => send({ type: "TOGGLE_SCREENSHARE" }),
-                          },
-                        },
-                      ]
-                    : []
-                }
-              />
-              <ConsoleControls label="Live">
-                {live?.notice}
-                {live?.liveControls}
-                <button
-                  type="button"
-                  className={
-                    "cast-console__btn" + (sharing ? " cast-console__btn--active" : "")
-                  }
-                  disabled={publishing}
-                  onClick={() => send({ type: "TOGGLE_SCREENSHARE" })}
-                >
-                  {sharing
-                    ? "Stop sharing"
-                    : publishing
-                      ? "Starting share\u{2026}"
-                      : "Share screen"}
-                </button>
-                <button
-                  type="button"
-                  className="cast-console__btn cast-console__btn--primary"
-                  onClick={() => send({ type: "LEAVE" })}
-                >
-                  Leave stream
-                </button>
-              </ConsoleControls>
-            </>
-          );
-        })()}
+      {value === "live" && (
+        <StCastStreamer
+          state="live"
+          streamName={placeName}
+          displayName={displayName || "Streamer"}
+          participants={live?.participants ?? 1}
+          stage={live?.stage?.(tabMuted)}
+          micOn={live ? live.micOn : simMic}
+          cameraOn={live ? live.cameraOn : simCamera}
+          onToggleMic={live ? live.toggleMicrophone : () => setSimMic((on) => !on)}
+          onToggleCamera={live ? live.toggleCamera : () => setSimCamera((on) => !on)}
+          devicesBusy={live?.devicesBusy}
+          sharing={state.matches({ live: "sharing" })}
+          shareBusy={state.matches({ live: "publishingShare" })}
+          onToggleShare={() => send({ type: "TOGGLE_SCREENSHARE" })}
+          onLeaveStream={() => send({ type: "LEAVE" })}
+          tabMuted={tabMuted}
+          onToggleTabMute={() => setTabMuted((muted) => !muted)}
+          toasts={[
+            ...(state.context.screenShareFailed
+              ? [
+                  {
+                    id: "ss",
+                    title: "Screen sharing failed",
+                    message: "Your screen share stopped. Click retry to share again.",
+                    action: { label: "Retry", onClick: () => send({ type: "TOGGLE_SCREENSHARE" }) },
+                  },
+                ]
+              : []),
+            ...(live?.audioBlocked && live.enableAudio
+              ? [
+                  {
+                    id: "audio",
+                    title: "Audio is paused",
+                    message: "Your browser needs a click before the Cast can play sound.",
+                    action: { label: "Enable audio", onClick: live.enableAudio },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
 
       {value === "ending" && (
         <StCastStreamer
@@ -346,7 +294,6 @@ function CastConsoleInner({
               id: "ending",
               title: "Ending your cast\u{2026}",
               message: "Closing the room and releasing your devices.",
-              action: { label: "OK", onClick: () => {} },
             },
           ]}
         />
@@ -364,44 +311,31 @@ function CastConsoleInner({
               ? "The connection to the scene was lost. Open the stream link again to rejoin."
               : "Thanks for casting. Start a new cast from the Admin Smart Item in your scene."
           }
+          // Opening the stream link again is a reload of this page.
+          onRetry={
+            live && state.context.connectionLost ? () => window.location.reload() : undefined
+          }
+          retryLabel="Rejoin"
           toasts={[]}
         />
       )}
 
       {value === "invalid" && (
-        <>
-          <StCastNotFound
-            description={
-              (state.context.invalidReason ?? "Invalid streaming key") +
-              ". Stream links are generated on-demand by the Admin Smart Item in Decentraland scenes."
-            }
-          />
-          <ConsoleControls label="Invalid link">
-            <button
-              type="button"
-              className="cast-console__btn cast-console__btn--primary"
-              onClick={() => send({ type: "RETRY" })}
-            >
-              Try again
-            </button>
-          </ConsoleControls>
-        </>
+        <CastNotFoundScreen
+          description={
+            (state.context.invalidReason ?? "Invalid streaming key") +
+            ". Stream links are generated on-demand by the Admin Smart Item in Decentraland scenes."
+          }
+        />
       )}
     </div>
   );
 }
 
-function ConsoleControls({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function StCastStreamer(props: ComponentProps<typeof CastStreamerView>) {
   return (
-    <div className="cast-console__controls" role="group" aria-label={label}>
-      {children}
-    </div>
+    <SitesLayout active="legal">
+      <CastStreamerView {...props} />
+    </SitesLayout>
   );
 }
-

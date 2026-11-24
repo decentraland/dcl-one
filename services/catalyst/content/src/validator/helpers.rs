@@ -4,10 +4,21 @@ use super::types::*;
 
 pub(super) fn should_validate_face_thumbnail(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, UploadedFile>,
+) -> bool {
+    validates_up_to_adr290_optionality(entity, files, adr_timestamps::ADR_45)
+}
+
+/// Upstream `validateUpToADR290OptionalityTimestamp(from, ..)`: from `from`
+/// until ADR-290 is optional, then in the optional window only for profiles
+/// that still carry content, uploads or snapshots.
+pub(super) fn validates_up_to_adr290_optionality(
+    entity: &Entity,
+    files: &HashMap<String, UploadedFile>,
+    from: Timestamp,
 ) -> bool {
     let ts = entity.timestamp;
-    if (adr_timestamps::ADR_45..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {
+    if (from..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {
         return true;
     }
     if (adr_timestamps::ADR_290_OPTIONAL..adr_timestamps::ADR_290_REJECTED).contains(&ts) {
@@ -41,25 +52,19 @@ pub(super) fn validate_profile_wearable_urns(
                         if is_old_emote(pointer) {
                             continue;
                         }
-                        if !pointer.starts_with("urn:") && !pointer.starts_with("dcl://") {
+                        let Some(parsed) = super::urn::parse(pointer) else {
                             return Err(format!(
                                 "Each profile wearable pointer should be a urn, for example \
                                  (urn:decentraland:{{protocol}}:collections-v2:\
                                  {{contract(0x[a-fA-F0-9]+)}}:{{name}}). Invalid pointer: ({pointer})"
                             ));
-                        }
+                        };
 
-                        if timestamp >= adr_timestamps::ADR_244 {
-                            let lower = pointer.to_lowercase();
-                            let is_asset = (lower.contains("collections-v1:")
-                                || lower.contains("collections-v2:"))
-                                && count_urn_segments(&lower) <= 6;
-                            if is_asset {
-                                return Err(format!(
-                                    "Wearable pointer {pointer} should be an item, not an asset. \
-                                     The URN must include the tokenId."
-                                ));
-                            }
+                        if timestamp >= adr_timestamps::ADR_244 && parsed.is_collection_asset() {
+                            return Err(format!(
+                                "Wearable pointer {pointer} should be an item, not an asset. \
+                                 The URN must include the tokenId."
+                            ));
                         }
                     }
                 }
@@ -71,7 +76,7 @@ pub(super) fn validate_profile_wearable_urns(
 
 pub(super) fn validate_profile_emote_urns(
     metadata: &serde_json::Value,
-    _timestamp: Timestamp,
+    timestamp: Timestamp,
 ) -> Result<(), String> {
     if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
         for avatar in avatars {
@@ -85,17 +90,23 @@ pub(super) fn validate_profile_emote_urns(
                         if is_old_emote(urn) {
                             continue;
                         }
-                        if !urn.starts_with("urn:") && !urn.starts_with("dcl://") {
+                        let Some(parsed) = super::urn::parse(urn) else {
                             return Err(format!(
                                 "Each profile emote pointer should be a urn, for example \
                                  (urn:decentraland:{{protocol}}:collections-v2:\
                                  {{contract(0x[a-fA-F0-9]+)}}:{{name}}). Invalid pointer: ({urn})"
                             ));
+                        };
+                        if timestamp >= adr_timestamps::ADR_244 && parsed.is_collection_asset() {
+                            return Err(format!(
+                                "Emote pointer {urn} should be an item, not an asset. \
+                                 The URN must include the tokenId."
+                            ));
                         }
                     }
 
-                    if let Some(slot) = emote.get("slot").and_then(|s| s.as_i64())
-                        && !(0..=9).contains(&slot)
+                    if let Some(slot) = emote.get("slot").and_then(|s| s.as_f64())
+                        && !(0.0..=9.0).contains(&slot)
                     {
                         return Err(format!(
                             "The slot {slot} of the emote must be a number between \
@@ -109,12 +120,30 @@ pub(super) fn validate_profile_emote_urns(
     Ok(())
 }
 
+/// A slot's identity in a uniqueness set: `1`, `1.0` and `1e0` are one slot.
+pub(super) fn slot_key(slot: f64) -> u64 {
+    (slot + 0.0).to_bits()
+}
+
 /// Whether `avatar.snapshots` is truthy as the reference reads it
 /// (`if (avatar.avatar?.snapshots)`): absent, `null`, `false`, `0` and `""`
 /// are not snapshots, so a profile that serializes `"snapshots": null` passes.
 pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
+    is_truthy(avatar.get("avatar").and_then(|a| a.get("snapshots")))
+}
+
+/// Whether `avatar.snapshots.face256` and `.body` are both truthy.
+pub(super) fn avatar_has_face_and_body(avatar: &serde_json::Value) -> bool {
+    let snapshots = avatar.get("avatar").and_then(|a| a.get("snapshots"));
+    ["face256", "body"]
+        .into_iter()
+        .all(|key| is_truthy(snapshots.and_then(|s| s.get(key))))
+}
+
+/// JS truthiness of an optional JSON value.
+fn is_truthy(value: Option<&serde_json::Value>) -> bool {
     use serde_json::Value;
-    match avatar.get("avatar").and_then(|a| a.get("snapshots")) {
+    match value {
         None | Some(Value::Null) | Some(Value::Bool(false)) => false,
         Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
         Some(Value::String(s)) => !s.is_empty(),
@@ -122,23 +151,51 @@ pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
     }
 }
 
+/// Upstream `profileHasEmotes`: some avatar's `emotes` is truthy, so
+/// `"emotes": null` on every avatar has none while `[]` counts.
 pub(super) fn profile_has_emotes(metadata: &serde_json::Value) -> bool {
-    if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
-        for avatar in avatars {
-            if avatar.get("avatar").and_then(|a| a.get("emotes")).is_some() {
-                return true;
-            }
-        }
-    }
-    false
+    metadata
+        .get("avatars")
+        .and_then(|v| v.as_array())
+        .is_some_and(|avatars| {
+            avatars
+                .iter()
+                .any(|avatar| is_truthy(avatar.get("avatar").and_then(|a| a.get("emotes"))))
+        })
+}
+
+/// Upstream `correspondsToASnapshot`: the file name without its last
+/// extension (`/\.[^/.]+$/`) is a snapshot key of some avatar whose value is
+/// `hash`.
+pub(super) fn corresponds_to_a_snapshot(
+    file: &str,
+    hash: &str,
+    metadata: &serde_json::Value,
+) -> bool {
+    let name = match file.rfind('.') {
+        Some(dot) if dot + 1 < file.len() && !file[dot + 1..].contains('/') => &file[..dot],
+        _ => file,
+    };
+    metadata
+        .get("avatars")
+        .and_then(|v| v.as_array())
+        .is_some_and(|avatars| {
+            avatars.iter().any(|avatar| {
+                avatar
+                    .get("avatar")
+                    .and_then(|a| a.get("snapshots"))
+                    .and_then(|s| s.as_object())
+                    .is_some_and(|snapshots| {
+                        snapshots
+                            .get(name)
+                            .is_some_and(|v| v.as_str() == Some(hash))
+                    })
+            })
+        })
 }
 
 fn is_old_emote(s: &str) -> bool {
-    s.len() <= 20 && s.chars().all(|c| c.is_ascii_alphabetic())
-}
-
-pub(super) fn count_urn_segments(urn: &str) -> usize {
-    urn.split(':').count()
+    (1..=20).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 /// The scene `display.navmapThumbnail` rule shared by Content and Worlds deploys:
@@ -290,6 +347,8 @@ mod tests {
         assert!(!is_relative_thumbnail_path("thumb\u{0}nail.png"));
         assert!(!is_relative_thumbnail_path("thumb\u{1b}nail.png"));
         assert!(!is_relative_thumbnail_path("\u{feff}thumbnail.png"));
+        assert!(!is_relative_thumbnail_path("\u{a0}thumbnail.png"));
+        assert!(!is_relative_thumbnail_path("thumbnail.png\u{3000}"));
     }
 
     #[test]
@@ -321,5 +380,91 @@ mod schema_27_2_tests {
         let mut invalid = metadata;
         invalid["avatars"][0]["avatar"]["emotes"][0]["slot"] = serde_json::json!(10);
         assert!(validate_profile_emote_urns(&invalid, 1_800_000_000_000).is_err());
+    }
+}
+
+#[cfg(test)]
+mod urn_rule_tests {
+    use super::*;
+
+    const C: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
+    const AFTER_244: Timestamp = adr_timestamps::ADR_244 + 1;
+    const BEFORE_244: Timestamp = adr_timestamps::ADR_244 - 1;
+
+    fn wearing(urn: &str) -> serde_json::Value {
+        serde_json::json!({"avatars": [{"avatar": {"wearables": [urn]}}]})
+    }
+
+    fn emoting(urn: &str) -> serde_json::Value {
+        serde_json::json!({"avatars": [{"avatar": {"emotes": [{"slot": 0, "urn": urn}]}}]})
+    }
+
+    #[test]
+    fn profile_urns_must_resolve() {
+        for urn in [
+            "urn:foo:bar",
+            "",
+            "urn:decentraland:matic:collections-v2:0x1:1:2:3",
+            "dcl://base-avatars/a/b",
+            "urn:decentraland:polygon:collections-v2:0x1:1:2",
+        ] {
+            assert!(
+                validate_profile_wearable_urns(&wearing(urn), AFTER_244).is_err(),
+                "{urn:?}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(urn), AFTER_244).is_err(),
+                "{urn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolvable_forms_are_accepted() {
+        for urn in [
+            format!("URN:decentraland:matic:collections-v2:{C}:1:5"),
+            format!("urn:decentraland:matic:collections-v2:{C}"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:col:hat:matic:{C}:5"),
+            "urn:decentraland:matic:collections-thirdparty:tp:col:hat".to_string(),
+            "urn:decentraland:off-chain:base-avatars:BaseMale".to_string(),
+            "dcl://base-avatars/f_sweater".to_string(),
+            "hat".to_string(),
+        ] {
+            assert!(
+                validate_profile_wearable_urns(&wearing(&urn), AFTER_244).is_ok(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(&urn), AFTER_244).is_ok(),
+                "{urn}"
+            );
+        }
+    }
+
+    #[test]
+    fn assets_need_a_token_id_after_adr_244() {
+        for urn in [
+            format!("urn:decentraland:matic:collections-v2:{C}:1"),
+            format!("urn:decentraland:matic:collections-v2:{C}:1?x:2"),
+            format!("urn:decentraland:ethereum:collections-v1:{C}:hat"),
+            "dcl://halloween_2019/bride_of_frankie_earring".to_string(),
+        ] {
+            assert!(
+                validate_profile_wearable_urns(&wearing(&urn), AFTER_244).is_err(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(&urn), AFTER_244).is_err(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_wearable_urns(&wearing(&urn), BEFORE_244).is_ok(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(&urn), BEFORE_244).is_ok(),
+                "{urn}"
+            );
+        }
     }
 }

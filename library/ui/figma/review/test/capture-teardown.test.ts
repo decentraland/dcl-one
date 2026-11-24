@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test'
+import { describe, it, afterEach, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, request, type Server } from 'node:http'
@@ -57,55 +57,109 @@ afterEach(() => {
 })
 
 describe('when a Review capture tears down', () => {
-  it('should stop a browser that honours SIGTERM without waiting for the grace period', async () => {
-    const child = await browser(false)
-    started.push(child)
-    const server = await serverWithOpenConnection()
-    const isClosed = closed(server)
-    const begin = Date.now()
+  let child: ChildProcess
 
-    await stopBrowser({ browser: child, graceMs: 5000 })
-    closeServer(server)
+  describe('and the browser honours SIGTERM', () => {
+    let isClosed: Promise<boolean>
+    let elapsed: number
 
-    assert.equal(child.signalCode, 'SIGTERM')
-    assert.ok(Date.now() - begin < 2000)
-    assert.equal(await isClosed, true)
+    beforeEach(async () => {
+      child = await browser(false)
+      started.push(child)
+      const server = await serverWithOpenConnection()
+      isClosed = closed(server)
+      const begin = Date.now()
+
+      await stopBrowser({ browser: child, graceMs: 5000 })
+      closeServer(server)
+      elapsed = Date.now() - begin
+    })
+
+    it('should stop the browser with SIGTERM', () => {
+      assert.equal(child.signalCode, 'SIGTERM')
+    })
+
+    it('should not wait for the grace period', () => {
+      assert.ok(elapsed < 2000)
+    })
+
+    it('should close the server with its open connection', async () => {
+      assert.equal(await isClosed, true)
+    })
   })
 
-  it('should SIGKILL a hung browser that ignores SIGTERM, so the capture error is not hidden', async () => {
-    const child = await browser(true)
-    started.push(child)
+  describe('and the browser hangs ignoring SIGTERM', () => {
+    beforeEach(async () => {
+      child = await browser(true)
+      started.push(child)
 
-    await stopBrowser({ browser: child, graceMs: 200 })
+      await stopBrowser({ browser: child, graceMs: 200 })
+    })
 
-    assert.equal(child.signalCode, 'SIGKILL')
+    it('should SIGKILL it, so the capture error is not hidden', () => {
+      assert.equal(child.signalCode, 'SIGKILL')
+    })
   })
 
-  it('should return at once when the browser already exited', async () => {
-    const child = await browser(false)
-    started.push(child)
-    child.kill('SIGKILL')
-    await once(child, 'exit')
-    const server = await serverWithOpenConnection()
-    const isClosed = closed(server)
-    const begin = Date.now()
+  describe('and the browser already exited', () => {
+    let isClosed: Promise<boolean>
+    let elapsed: number
 
-    await stopBrowser({ browser: child, graceMs: 5000 })
-    closeServer(server)
+    beforeEach(async () => {
+      child = await browser(false)
+      started.push(child)
+      child.kill('SIGKILL')
+      await once(child, 'exit')
+      const server = await serverWithOpenConnection()
+      isClosed = closed(server)
+      const begin = Date.now()
 
-    assert.ok(Date.now() - begin < 1000)
-    assert.equal(await isClosed, true)
+      await stopBrowser({ browser: child, graceMs: 5000 })
+      closeServer(server)
+      elapsed = Date.now() - begin
+    })
+
+    it('should return at once', () => {
+      assert.ok(elapsed < 1000)
+    })
+
+    it('should close the server with its open connection', async () => {
+      assert.equal(await isClosed, true)
+    })
   })
 
-  it('should close the DevTools socket before stopping the browser', async () => {
-    const child = await browser(false)
-    started.push(child)
-    const calls: string[] = []
+  describe('and a DevTools socket is open', () => {
+    let calls: string[]
+    let signalAtSocketClose: NodeJS.Signals | null | undefined
 
-    await stopBrowser({ socket: { close: () => calls.push('socket') }, browser: child })
+    beforeEach(async () => {
+      child = await browser(false)
+      started.push(child)
+      calls = []
+      signalAtSocketClose = undefined
 
-    assert.deepEqual(calls, ['socket'])
-    assert.equal(child.signalCode, 'SIGTERM')
+      await stopBrowser({
+        socket: {
+          close: () => {
+            calls.push('socket')
+            signalAtSocketClose = child.signalCode
+          }
+        },
+        browser: child
+      })
+    })
+
+    it('should close the DevTools socket', () => {
+      assert.deepEqual(calls, ['socket'])
+    })
+
+    it('should close the socket while the browser is still running', () => {
+      assert.equal(signalAtSocketClose, null)
+    })
+
+    it('should stop the browser with SIGTERM', () => {
+      assert.equal(child.signalCode, 'SIGTERM')
+    })
   })
 })
 
@@ -119,45 +173,86 @@ describe('when a Review capture removes its browser profile', () => {
     return { remove, calls: () => calls }
   }
 
-  it('should retry while a browser helper still holds the profile, then remove it', async () => {
-    const { remove, calls } = failing('ENOTEMPTY', 3)
+  let remover: ReturnType<typeof failing>
 
-    await removeProfile('/tmp/profile', { remove, delay: 1 })
+  describe('and a browser helper still holds the profile', () => {
+    beforeEach(async () => {
+      remover = failing('ENOTEMPTY', 3)
 
-    assert.equal(calls(), 4)
+      await removeProfile('/tmp/profile', { remove: remover.remove, delay: 1 })
+    })
+
+    it('should retry, then remove it', () => {
+      assert.equal(remover.calls(), 4)
+    })
   })
 
   for (const code of ['EBUSY', 'ENOTEMPTY', 'EPERM', 'EMFILE', 'ENFILE'])
-    it(`should retry ${code}`, async () => {
-      const { remove, calls } = failing(code, 1)
+    describe(`and the removal fails once with ${code}`, () => {
+      beforeEach(async () => {
+        remover = failing(code, 1)
 
-      await removeProfile('/tmp/profile', { remove, delay: 1 })
+        await removeProfile('/tmp/profile', { remove: remover.remove, delay: 1 })
+      })
 
-      assert.equal(calls(), 2)
+      it(`should retry ${code}`, () => {
+        assert.equal(remover.calls(), 2)
+      })
     })
 
-  it('should fail loudly once the retry budget is spent', async () => {
-    const { remove, calls } = failing('EBUSY', Infinity)
+  describe('and the retry budget is spent', () => {
+    let outcome: Promise<void>
 
-    await assert.rejects(removeProfile('/tmp/profile', { remove, retries: 10, delay: 1 }), {
-      message: 'Could not remove the capture profile after 11 attempts (EBUSY): /tmp/profile'
+    beforeEach(() => {
+      remover = failing('EBUSY', Infinity)
+      outcome = removeProfile('/tmp/profile', { remove: remover.remove, retries: 10, delay: 1 })
+      // Handled here so the rejection is not reported before the it() awaits it.
+      outcome.catch(() => {})
     })
-    assert.equal(calls(), 11)
+
+    it('should fail loudly with the attempt count, code and profile', async () => {
+      await assert.rejects(outcome, {
+        message: 'Could not remove the capture profile after 11 attempts (EBUSY): /tmp/profile'
+      })
+    })
+
+    it('should stop after the budgeted attempts', async () => {
+      await outcome.catch(() => undefined)
+      assert.equal(remover.calls(), 11)
+    })
   })
 
-  it('should not retry an error that waiting cannot fix', async () => {
-    const { remove, calls } = failing('EACCES', Infinity)
+  describe('and the error is one that waiting cannot fix', () => {
+    let outcome: Promise<void>
 
-    await assert.rejects(removeProfile('/tmp/profile', { remove, delay: 1 }), { code: 'EACCES' })
-    assert.equal(calls(), 1)
+    beforeEach(() => {
+      remover = failing('EACCES', Infinity)
+      outcome = removeProfile('/tmp/profile', { remove: remover.remove, delay: 1 })
+      outcome.catch(() => {})
+    })
+
+    it('should rethrow the original error', async () => {
+      await assert.rejects(outcome, { code: 'EACCES', message: 'EACCES' })
+    })
+
+    it('should not retry', async () => {
+      await outcome.catch(() => undefined)
+      assert.equal(remover.calls(), 1)
+    })
   })
 
-  it('should remove a real profile directory', async () => {
-    const profile = await mkdtemp(path.join(os.tmpdir(), 'review-profile-'))
-    await writeFile(path.join(profile, 'Cookies'), 'x')
+  describe('and the profile is a real directory', () => {
+    let profile: string
 
-    await removeProfile(profile)
+    beforeEach(async () => {
+      profile = await mkdtemp(path.join(os.tmpdir(), 'review-profile-'))
+      await writeFile(path.join(profile, 'Cookies'), 'x')
 
-    await assert.rejects(stat(profile), { code: 'ENOENT' })
+      await removeProfile(profile)
+    })
+
+    it('should remove it', async () => {
+      await assert.rejects(stat(profile), { code: 'ENOENT' })
+    })
   })
 })

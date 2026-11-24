@@ -7,13 +7,15 @@
 // differing only in the message field's name. A relay refusal is an answer with its code; a declined
 // signature is the owner's answer and is never retried as a gas-paying transaction.
 
-import { encodeFunctionData, parseAbi } from "viem";
+import { encodeFunctionData, parseAbi, recoverTypedDataAddress } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { catalystBase } from "../../../data/catalyst/client";
+import { relayRefusal, type RelayRefusal } from "../../checkout/chain/metatx";
+import { pageOverride } from "../../pageOverride";
 import type { ContractData } from "@shop/market/lib/contracts";
 import { rpc } from "./rpc";
-import { chainSalt, signTypedData, walletAccount } from "./tx";
+import { bounded, chainSalt, signTypedData, walletAccount, WalletAccountChangedError } from "./tx";
 
 const NONCE_ABI = parseAbi(["function getNonce(address user) view returns (uint256 nonce)"]);
 const EXECUTE_ABI = parseAbi([
@@ -29,17 +31,20 @@ export class MetaTransactionError extends Error {
     /** The relay's HTTP status, and whether it answered with an explicit refusal (`ok: false`). */
     readonly status?: number,
     readonly refused?: boolean,
+    /** The relay's own word for the refusal (its daily limits), when it answered one. */
+    readonly refusal: RelayRefusal = {},
   ) {
     super(message);
   }
 }
 
-type RelayWindow = Window & { __SHOP_RELAY__?: string };
-
-/** The relay's base; POSTs go to `${relayBase()}/transactions` (decentraland-transactions `serverURL`). */
+/**
+ * The relay's base; POSTs go to `${relayBase()}/transactions` (decentraland-transactions `serverURL`). A test or a
+ * local build may repoint it from the page (../../pageOverride).
+ */
 export function relayBase(): string {
-  const fromWindow = typeof window !== "undefined" ? (window as RelayWindow).__SHOP_RELAY__ : undefined;
-  return fromWindow ?? `${catalystBase()}/transactions-api/v1`;
+  const fromPage = pageOverride<unknown>("__SHOP_RELAY__");
+  return typeof fromPage === "string" ? fromPage : `${catalystBase()}/transactions-api/v1`;
 }
 
 /** Ledger answers v as 0/1; the contracts recover only 27/28. */
@@ -102,19 +107,37 @@ export async function sendMetaTransaction(opts: {
   fetchImpl?: typeof fetch;
   /** The nonce to sign instead of the contract's current one (a retry that must replace, never add to, a signed one). */
   nonce?: bigint;
+  /**
+   * The account this write was decided for. Another one on the wallet throws WalletAccountChangedError before any
+   * prompt, and a signature by another account is never posted.
+   */
+  account?: string;
+  /** Bound on the account and nonce reads before the prompt: a late answer ends the write unprompted and unposted. */
+  readTimeoutMs?: number;
 }): Promise<string> {
-  const from = await walletAccount(opts.provider);
-  const nonce = opts.nonce ?? (await readNonce(opts.contract, from));
-  const signature = await signTypedData(opts.provider, from, metaTransactionTypedData(opts.contract, opts.kind, from, nonce, opts.functionData));
+  const read = <T>(r: Promise<T>) => (opts.readTimeoutMs !== undefined ? bounded(r, opts.readTimeoutMs) : r);
+  const from = await read(walletAccount(opts.provider));
+  const expected = opts.account?.toLowerCase();
+  if (expected && from !== expected) throw new WalletAccountChangedError();
+  const nonce = opts.nonce ?? (await read(readNonce(opts.contract, from)));
+  const typed = metaTransactionTypedData(opts.contract, opts.kind, from, nonce, opts.functionData);
+  const signature = await signTypedData(opts.provider, from, typed);
+  if (expected) {
+    const signer = await recoverTypedDataAddress({ ...typed, signature } as Parameters<typeof recoverTypedDataAddress>[0]);
+    if (signer.toLowerCase() !== expected) throw new WalletAccountChangedError();
+  }
   const txData = executeMetaTransactionData(opts.kind, from, signature, opts.functionData);
   const res = await (opts.fetchImpl ?? fetch)(`${relayBase()}/transactions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ transactionData: { from, params: [opts.contract.address, txData] } }),
   });
-  const body = (await res.json().catch(() => null)) as { ok?: boolean; txHash?: string; message?: string; code?: string } | null;
+  const body = (await res.json().catch(() => null)) as { ok?: boolean; txHash?: string; message?: string; code?: string; error?: unknown } | null;
   if (!body || body.ok === false || !body.txHash) {
-    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, body?.code ?? String(res.status), res.status, body?.ok === false);
+    // The refusal's code: `code` (the upstream transactions-server's, which dcl-one's relay also answers), else
+    // dcl-one's own `error` (its only one before), else the status.
+    const code = relayRefusal(body).error ?? String(res.status);
+    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, code, res.status, body?.ok === false, relayRefusal(body));
   }
   return body.txHash;
 }

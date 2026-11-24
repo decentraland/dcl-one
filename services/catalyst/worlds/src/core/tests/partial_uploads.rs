@@ -1917,15 +1917,17 @@ async fn a_blob_failure_keeps_committed_reservations_resumable() {
     let manifest = scratch.join("failed-batch-manifest");
     tokio::fs::write(&manifest, &u.entity_bytes).await.unwrap();
     let files = [
-        super::super::upload_spool::SpooledFile {
+        catalyst_storage::upload_spool::SpooledFile {
             name: u.entity_id.clone(),
             hash: u.entity_id.clone(),
+            hash_v0: None,
             len: u.entity_bytes.len(),
             path: manifest.clone(),
         },
-        super::super::upload_spool::SpooledFile {
+        catalyst_storage::upload_spool::SpooledFile {
             name: u.files[0].0.clone(),
             hash: u.files[0].0.clone(),
+            hash_v0: None,
             len: u.files[0].1.len(),
             path: scratch.join("missing-batch-content"),
         },

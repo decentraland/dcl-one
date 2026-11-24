@@ -2,14 +2,18 @@
 // creator-sales switch, and the Ethereum network with its reader. This holds them to that: none reaches the browser
 // host's wiring (api/host.ts, or the api barrel that re-exports it), the page's switches (discovery/flags,
 // lib/remoteFlags, discovery/reads), the host's network and readers (land/chain, land/evm, checkout/chain, wallet),
-// the NAME registration or its host reads (names/names, names/offer, names/reads), ui3's catalyst or auth modules, or
-// the page itself; nor a component, the purchase's encoding or the wallet's MANA. It follows what each module names
-// through ui3, so a module that only passes one of those on is caught too.
+// the NAME registration or its host reads (names/names, names/offer, names/reads), ui3's catalyst or auth modules,
+// shared web auth, the page itself, a component, the purchase's encoding or the wallet's MANA. It follows imports
+// through ui3, web-core and library/ui so indirect dependencies count too.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(__dirname, "..", "..");
+const WEB_CORE = resolve(SRC, "../../../library/web-core");
+const WEB_CORE_ALIAS = "@web-core/";
+const ONE_UI = resolve(SRC, "../../../library/ui");
+const ONE_UI_ALIAS = "@dcl/one-ui/";
 // The read modules still in ui3. Those already moved (the client, the catalogue, the item, credits, the flags file,
 // the LAND and NAME contracts, the NAME reads) are held by library/shop/boundary.test.ts, which compiles them without
 // a host at all.
@@ -108,15 +112,24 @@ function withoutComments(source: string): string {
   return out;
 }
 
-/** Where a relative specifier lands, from src/ and without its extension; the api folder lands on its index. */
+/** Where a relative or shared-library specifier lands, from src/ and without its extension. */
 function target(file: string, specifier: string): string | null {
-  if (!specifier.startsWith(".")) return null;
-  const path = relative(SRC, resolve(dirname(join(SRC, file)), specifier)).replace(/\.(ts|tsx|mts|js|mjs|jsx)$/, "");
+  let resolved: string;
+  if (specifier.startsWith(WEB_CORE_ALIAS)) {
+    resolved = resolve(WEB_CORE, specifier.slice(WEB_CORE_ALIAS.length));
+  } else if (specifier.startsWith(ONE_UI_ALIAS)) {
+    resolved = resolve(ONE_UI, specifier.slice(ONE_UI_ALIAS.length));
+  } else if (specifier.startsWith(".")) {
+    resolved = resolve(dirname(join(SRC, file)), specifier);
+  } else {
+    return null;
+  }
+  const path = relative(SRC, resolved).replace(/\.(ts|tsx|mts|js|mjs|jsx)$/, "");
   return path === "shop/api" ? "shop/api/index" : path;
 }
 
 const FORBIDDEN =
-  /^(shop\/api\/(host|index)|shop\/discovery\/(flags|reads|lib\/remoteFlags)|shop\/discovery\/components\/.*|shop\/checkout\/(purchase|chain)\/.*|shop\/land\/(chain|evm)|shop\/names\/(names|offer|reads)|shop\/market\/lib\/mana|shop\/wallet\/.*|data\/(auth|catalyst)(\/.*)?)$/;
+  /^(shop\/api\/(host|index)|shop\/discovery\/(flags|reads|lib\/remoteFlags)|shop\/discovery\/components\/.*|shop\/checkout\/(purchase|chain)\/.*|shop\/land\/(chain|evm)|shop\/names\/(names|offer|reads)|shop\/market\/lib\/mana|shop\/wallet\/.*|data\/(auth|catalyst)(\/.*)?|(?:\.\.\/){3}library\/web-core\/(auth(\/.*)?|shop-chain-env)|(?:\.\.\/){3}library\/ui\/apps\/shop\/(flags|remote-flags|capabilities|session|wallet-account))$/;
 
 function hostImports(file: string, source: string): string[] {
   const { named, opaque } = specifiers(source);
@@ -207,6 +220,7 @@ describe("the host seam of the Shop's read modules", () => {
     expect(hostImports(file, 'import { ASSET_TYPE } from "../purchase/encoding";')).toHaveLength(1);
     expect(hostImports(file, 'import { ethereumChainId } from "../chain/config";')).toHaveLength(1);
     expect(hostImports(file, 'import { landChainId } from "../../land/chain";')).toHaveLength(1);
+    expect(hostImports(file, 'import { shopChainEnvironment } from "@web-core/shop-chain-env";')).toHaveLength(1);
     expect(hostImports(file, 'import { rpcReader } from "../../land/evm";')).toHaveLength(1);
     expect(hostImports(file, 'import { parseManaInput } from "../../market/lib/mana";')).toHaveLength(1);
     expect(hostImports(file, 'import { readBannedNames } from "../../names/reads";')).toHaveLength(1);
@@ -218,6 +232,49 @@ describe("the host seam of the Shop's read modules", () => {
     expect(hostImports(file, 'import { hostApiOptions } from "../../api/host.js";')).toHaveLength(1);
     expect(hostImports(file, '// import { shopClient } from "../../api/host";')).toHaveLength(1);
     expect(hostImports(file, "const host = await import(where);")).toEqual(["import(where)"]);
+  });
+
+  describe("when a read module names shared auth", () => {
+    it.each([
+      'import { signAuthChain } from "@web-core/auth/signerCore";',
+      'import type { AuthIdentity } from "@web-core/auth/identity";',
+      'const auth = await import("@web-core/auth/walletconnect");',
+      'export { signAuthChain } from "../../../../../../library/web-core/auth/signerCore.ts";',
+    ])("should forbid %s", (source) => {
+      expect(hostImports("shop/checkout/lib/api.ts", source)).toHaveLength(1);
+    });
+
+    it("should find shared auth through a local helper", () => {
+      const tree: Record<string, string> = {
+        "shop/checkout/lib/api.ts": 'import "./helper";',
+        "shop/checkout/lib/helper.ts": 'export { signAuthChain } from "@web-core/auth/signerCore";',
+      };
+      expect(reach("shop/checkout/lib/api.ts", (path) => tree[path]).filter((path) => FORBIDDEN.test(path))).toEqual([
+        "../../../library/web-core/auth/signerCore",
+      ]);
+    });
+  });
+
+  describe("when a read module names the shared Shop browser host", () => {
+    it.each([
+      'import { shopFlags } from "@dcl/one-ui/apps/shop/flags";',
+      'import type { ShopWalletHost } from "@dcl/one-ui/apps/shop/session";',
+      'const flags = await import("@dcl/one-ui/apps/shop/remote-flags");',
+      'export { useWalletAccount } from "@dcl/one-ui/apps/shop/wallet-account";',
+      'import { useShopCapabilities } from "../../../../../../library/ui/apps/shop/capabilities.ts";',
+    ])("should forbid %s", (source) => {
+      expect(hostImports("shop/checkout/lib/api.ts", source)).toHaveLength(1);
+    });
+
+    it("should find the shared Shop host through a local helper", () => {
+      const tree: Record<string, string> = {
+        "shop/checkout/lib/api.ts": 'import "./helper";',
+        "shop/checkout/lib/helper.ts": 'export { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";',
+      };
+      expect(reach("shop/checkout/lib/api.ts", (path) => tree[path]).filter((path) => FORBIDDEN.test(path))).toEqual([
+        "../../../library/ui/apps/shop/remote-flags",
+      ]);
+    });
   });
 
   it("blanks comments only: a // or /* inside a string, a template or a regular expression hides nothing", () => {
