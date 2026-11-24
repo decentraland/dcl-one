@@ -66,7 +66,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 | Trailing slash | `path-to-regexp` non-strict: accepted | `NormalizePath::trim_trailing_slash` (`services/catalyst/src/serve.rs:1304`) | MATCH |
 | Path case | The lamb2 router uses `path-to-regexp` defaults (case-insensitive), but the production gateway answers its nginx `404` HTML page for a path whose case differs (`/lambdas/Status`, `/lambdas/Profiles/0x…01`, `captures/lambdas-profiles/LP-31-path-case-*.json`), so a client of the peer never reaches lamb2 with one | axum is case-sensitive, so 404 | MATCH in status (LL-23); the 404 body is the gateway page once `fix/p2-lambdas-profiles` lands |
 | 405 | `router.allowedMethods()` (`decentraland/lamb2:src/service.ts:15`) | axum 405 with `Allow` | MATCH (status) |
-| CORS | `cors: {maxAge: 36000}` (`decentraland/lamb2:src/components.ts:65`) | `cors_middleware` on both routers (`services/catalyst/land-authz/src/routes.rs:60`, `services/catalyst/shop/src/market/mod.rs:985`) | See the CORS area |
+| CORS | `cors: {maxAge: 36000}` (`decentraland/lamb2:src/components.ts:65`) | LAND and Shop Lambdas use the shared Lambdas policy (`services/catalyst/shared/src/cors.rs`) | See the CORS area |
 | Rate limit | None in lamb2 for these routes. The marketplace bulkhead only sheds names (503). | None in the app. Behind this tree's gateway, `/lambdas/*` takes the server-wide `limit_req zone=read` (30 r/s per client IP, burst 60, `nodelay`), answering nginx's 429 page (`infra/gateway/gateway.py:257,260,292`). | DIVERGENT behind the gateway (P2) |
 | Auth | None (no signed fetch) | None | MATCH |
 

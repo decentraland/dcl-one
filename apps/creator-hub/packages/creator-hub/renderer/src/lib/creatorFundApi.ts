@@ -101,20 +101,20 @@ export const getLeaderboard = (cycle: LeaderboardCycle) =>
 /** `GET /v3/creator-fund/banner` (public; hidden in v0). `data` is `null` on its 204. */
 export const getBanner = () => send<CreatorFundBanner>('GET', '/banner');
 
-/** `GET /v3/creator-fund/payouts` (signed; mock only), newest cycle first. */
+/** `GET /v3/creator-fund/payouts` (signed), newest cycle first. */
 export const getPayouts = () => send<CreatorFundPayouts>('GET', '/payouts', { signed: true });
 
-/** `GET /v3/creator-fund/payout-wallet` (signed; mock only); a 404 means none is set. */
+/** `GET /v3/creator-fund/payout-wallet` (signed); a 404 means none is set. */
 export const getPayoutWallet = () => send<PayoutWallet>('GET', '/payout-wallet', { signed: true });
 
-/** `PUT /v3/creator-fund/payout-wallet` (signed; mock only): 201 sets it, 200 changes it. */
+/** `PUT /v3/creator-fund/payout-wallet` (signed): 201 sets it, 200 changes it. */
 export const putPayoutWallet = (wallet: PayoutWalletRequest) =>
   send<PayoutWallet>('PUT', '/payout-wallet', { signed: true, body: wallet });
 
-/** `POST /v3/creator-fund/enrollment/email-verification` (signed; mock only): sends a code. */
+/** `POST /v3/creator-fund/enrollment/email-verification` (signed): sends a code. */
 export const postEmailVerification = () =>
   send<EmailVerification>('POST', '/enrollment/email-verification', { signed: true });
 
-/** `PUT /v3/creator-fund/enrollment/email-verification` (signed; mock only): confirms a code. */
+/** `PUT /v3/creator-fund/enrollment/email-verification` (signed): confirms a code. */
 export const putEmailVerification = (verification: EmailVerificationRequest) =>
   send<Enrollment>('PUT', '/enrollment/email-verification', { signed: true, body: verification });

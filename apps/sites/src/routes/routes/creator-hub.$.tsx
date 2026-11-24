@@ -25,7 +25,7 @@ function moved({ request, params, context }: Route.LoaderArgs | Route.ActionArgs
   const cookies = ownedSessionCookies(request, session);
   const url = new URL(request.url);
   const to = createPathFor(url, params["*"]);
-  track("creator_builder_redirect", { from: url.pathname, to }, { sid });
+  track("creator_builder_redirect", { from: url.pathname, to }, { sid, requestUserAgent: request.headers.get("user-agent") });
   return redirect(to, {
     status: 308,
     headers: cookies,

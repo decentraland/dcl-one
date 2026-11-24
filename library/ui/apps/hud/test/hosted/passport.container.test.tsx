@@ -9,6 +9,7 @@ import { setPublicReelFetcher } from '../../features/gallery/publicReels'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import type { Profile } from '@explorer-core/engine/protocol'
+import passportStyles from '../../features/profile/ProfilePassport.module.css'
 
 // COMPONENT: the smart <Passport userId> fetches the rich profile on open, renders identity-only from
 // the profile store until it lands, and shows the presentational ProfilePassport; openPassport mounts it.
@@ -62,6 +63,15 @@ describe('Passport container', () => {
     expect(screen.getByText('gm from the plaza')).toBeTruthy()
   })
 
+  it('openPassport puts the passport scrim on its backdrop', async () => {
+    receiveProfile('0xabc', RICH)
+    await renderWithSession(<PopupHost />)
+    act(() => {
+      openPassport('0xabc')
+    })
+    expect(document.getElementsByClassName(passportStyles.scrim)).toHaveLength(1)
+  })
+
   it('openPassport opens on the tab it is given', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<PopupHost />)
@@ -83,15 +93,21 @@ describe('Jump In from a passport photo', () => {
     receiveProfile('0xabc', RICH)
     setPublicReelFetcher(async () => ({ ok: true, photos: [{ id: 'p0', url: 'https://img/0.jpg', thumbnailUrl: 'https://img/0_t.jpg', dateTime: '1707000000', isPublic: true }], total: 1, max: 500 }))
     const onClose = vi.fn()
-    const s = await renderWithSession(<Passport userId="0xabc" initialTab="photos" onClose={onClose} />, (session) => {
-      session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
-      session.map.teleport = vi.fn(() => outcome)
-    })
+    const s = await renderWithSession(
+      <>
+        <Passport userId="0xabc" initialTab="photos" onClose={onClose} />
+        <PopupHost />
+      </>,
+      (session) => {
+        session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
+        session.map.teleportToPlace = vi.fn(() => outcome)
+      }
+    )
     const tile = await screen.findByRole('button', { name: 'Open photo' })
     fireEvent.load(tile.querySelector('img') as HTMLImageElement)
     await userEvent.click(tile)
-    await userEvent.click(screen.getByRole('button', { name: 'Jump In' }))
-    expect(s.map.teleport).toHaveBeenCalledWith(-9, 14)
+    await userEvent.click(screen.getByRole('button', { name: /Jump In/ }))
+    expect(s.map.teleportToPlace).toHaveBeenCalledWith(-9, 14)
     expect(onClose).toHaveBeenCalledTimes(closes)
     expect(screen.queryAllByRole('dialog', { name: 'Photo' })).toHaveLength(1 - closes)
   })

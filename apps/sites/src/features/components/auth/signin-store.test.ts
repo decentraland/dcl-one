@@ -62,7 +62,7 @@ describe("when listening for browser sign-in", () => {
 
   it("should pass the return path until the listener unsubscribes", () => {
     store.openSignIn({ redirectTo: "/report#evidence" });
-    expect(listener).toHaveBeenCalledExactlyOnceWith("/report#evidence");
+    expect(listener).toHaveBeenCalledExactlyOnceWith("/report#evidence", expect.any(Function));
     unsubscribe();
     store.openSignIn({ redirectTo: "/report" });
     expect(listener).toHaveBeenCalledTimes(1);

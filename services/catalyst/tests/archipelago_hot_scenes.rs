@@ -78,18 +78,19 @@ async fn active_content_updates_are_visible_without_a_tile_cache() {
     };
     let docs = source.fetch(&["0,0".into()]).await.unwrap();
     let scenes =
-        project_hot_scenes(&docs, &[("0,0".into(), 2)], "https://content.invalid/").unwrap();
+        project_hot_scenes(&docs, &[("0,0".into(), 2)], "https://content.invalid").unwrap();
     assert_eq!(scenes[0].users_total_count, 2);
     assert_eq!(
         scenes[0]
             .thumbnail
             .as_ref()
             .and_then(catalyst::content::OrderedJson::as_str),
-        Some("https://content.invalid//contents/hash")
+        Some("https://content.invalid/contents/hash")
     );
+    sqlx::query("INSERT INTO content.content_files (deployment,key,content_hash) VALUES ($1,'new.png','new-hash')").bind(id).execute(pool).await.unwrap();
     sqlx::query("UPDATE content.deployments SET entity_metadata=$1 WHERE id=$2")
         .bind(sqlx::types::Json(
-            json!({"v": scene_meta("0,0", &["0,0"], "https://new.invalid/image")}),
+            json!({"v": scene_meta("0,0", &["0,0"], "new.png")}),
         ))
         .bind(id)
         .execute(pool)
@@ -97,13 +98,13 @@ async fn active_content_updates_are_visible_without_a_tile_cache() {
         .unwrap();
     let docs = source.fetch(&["0,0".into()]).await.unwrap();
     let scenes =
-        project_hot_scenes(&docs, &[("0,0".into(), 2)], "https://content.invalid/").unwrap();
+        project_hot_scenes(&docs, &[("0,0".into(), 2)], "https://content.invalid").unwrap();
     assert_eq!(
         scenes[0]
             .thumbnail
             .as_ref()
             .and_then(catalyst::content::OrderedJson::as_str),
-        Some("https://new.invalid/image")
+        Some("https://content.invalid/contents/new-hash")
     );
     scratch.teardown().await;
 }

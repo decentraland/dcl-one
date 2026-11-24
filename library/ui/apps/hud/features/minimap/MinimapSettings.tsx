@@ -38,10 +38,10 @@ export function MinimapSettings({
   onStyle: (s: MinimapStyle) => void
   /** True outside Genesis City, where only the Camera style can render anything. */
   hideStyle: boolean
-  /** Set as Home: on where the player stands in their home. Home can be set, not cleared, so the
-   *  switch only turns on (turning it off does nothing, as the place panel's Home button); absent
-   *  where the place has no link (a preview, a local realm). */
-  home?: { on: boolean; onSet: () => void }
+  /** Set as Home: on where the player stands in their home; turning it off takes the home back,
+   *  as the place panel's Home button does. Absent where the place has no link (a preview, a
+   *  local realm). */
+  home?: { on: boolean; onSet: () => void; onClear: () => void }
   /** Copy the link to the place the player stands in; absent where the place has none. */
   onCopyLink?: () => void
   onReloadScene: () => void
@@ -55,7 +55,7 @@ export function MinimapSettings({
           {/* the switch is the one control; the row's label only gives it a bigger target */}
           <label className={`${styles.entry} ${styles.toggleEntry}`}>
             Set as Home
-            <Toggle size="sm" checked={home.on} onChange={(on) => on && home.onSet()} aria-label="Set as Home" />
+            <Toggle size="sm" checked={home.on} onChange={(on) => (on ? home.onSet() : home.onClear())} aria-label="Set as Home" />
           </label>
           <div className={styles.separator} />
         </>

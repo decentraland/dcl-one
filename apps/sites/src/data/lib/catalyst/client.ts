@@ -48,7 +48,7 @@ export function worldsBase(override?: string): string {
   return worldsUrl(override);
 }
 
-export type QueryValue = string | number | boolean | undefined | null;
+export type QueryValue = string | number | boolean | readonly string[] | undefined | null;
 export type Query = Record<string, QueryValue>;
 
 export function buildQuery(query?: Query): string {
@@ -56,7 +56,11 @@ export function buildQuery(query?: Query): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null || value === "") continue;
-    params.set(key, String(value));
+    if (Array.isArray(value)) {
+      for (const item of value) if (item) params.append(key, item);
+    } else {
+      params.set(key, String(value));
+    }
   }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
@@ -224,16 +228,24 @@ export async function signedGetJSON<T>(
 }
 
 /** An unsigned JSON `POST` for the node's public batch reads (`/lambdas/profiles`, `/content/entities/active`). */
-export async function postPublicJSON(path: string, body: unknown, opts: GetOptions = {}): Promise<unknown> {
+export async function postPublicJSON(
+  path: string,
+  body: unknown,
+  opts: GetOptions & { allowEmpty?: boolean } = {},
+): Promise<unknown> {
   const url = `${catalystBase(opts.base)}${path}`;
-  const res = await (opts.fetchImpl ?? fetch)(url, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
-  if (!res.ok) throw await errorFromResponse(res, url);
-  return res.json();
+  const { text } = await fetchText(
+    url,
+    {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    opts.fetchImpl ?? fetch,
+    true,
+  );
+  return opts.allowEmpty && !text ? undefined : JSON.parse(text);
 }
 
 export async function postJSON<T>(

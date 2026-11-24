@@ -26,16 +26,12 @@
   }
 }
 
-/* My Events: the review status over the cover's top right; an event still in review is dimmed. */
+/* My Events: the review status over the cover's top right; an event still in review has its cover dimmed. */
 .mine {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--dcl-space-8);
-}
-
-.mine[data-status='pending'] {
-  opacity: 0.5;
 }
 
 .status {

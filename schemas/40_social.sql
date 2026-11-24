@@ -214,6 +214,10 @@ CREATE TABLE social.private_voice_chat_participants (
 CREATE INDEX private_voice_chat_participants_status_idx
     ON social.private_voice_chat_participants (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes and current-call selection.
+CREATE INDEX private_voice_chat_participants_address_idx
+    ON social.private_voice_chat_participants (address);
+
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
@@ -419,6 +423,10 @@ CREATE TABLE social.community_voice_chat_users (
 CREATE INDEX community_voice_chat_users_status_idx
     ON social.community_voice_chat_users (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes before call admission.
+CREATE INDEX community_voice_chat_users_address_idx
+    ON social.community_voice_chat_users (address);
+
 -- ── scene moderation (comms-gatekeeper, place-scoped) ──────────────────────
 
 -- Ownership of a place is resolved through explore/worlds, not stored here.
@@ -492,6 +500,7 @@ CREATE TABLE social.scene_stream_access (
     streaming_key text NOT NULL,
     ingress_id text,
     room_id text,
+    admin_place_key text,
     generated_by text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     expiration_time timestamp without time zone,
@@ -528,7 +537,10 @@ CREATE TABLE social.scene_stream_cleanup (
  occurred_at timestamp without time zone NOT NULL, due_at timestamp without time zone NOT NULL,
  claim_token uuid, claim_until timestamp without time zone,
  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0), ingress_deleted boolean NOT NULL DEFAULT false,
- recipient text, metadata jsonb, source_context jsonb
+ recipient text, metadata jsonb, source_context jsonb,
+ recipients text[] NOT NULL DEFAULT '{}', recipients_resolved boolean NOT NULL DEFAULT false,
+ recipient_cursor integer NOT NULL DEFAULT 0 CHECK (recipient_cursor >= 0),
+ notification_started boolean NOT NULL DEFAULT false
 );
 -- Bounded ordered cleanup retries.
 CREATE INDEX scene_stream_cleanup_due_idx ON social.scene_stream_cleanup (due_at, access_id);
@@ -735,6 +747,11 @@ CREATE INDEX notifications_address_time_idx
 -- partial predicate, and carries the keyset tie-breaker).
 CREATE INDEX notifications_unread_idx
     ON social.notifications (address, occurred_at DESC, id DESC) WHERE NOT read;
+-- Event history adoption probes one wallet/type/event in created order.
+-- Keyed carriers leave this index; other producers without an eventId do not enter it.
+CREATE INDEX notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
@@ -1552,6 +1569,22 @@ CREATE TABLE social.worn_history (
     first_seen timestamp(3) without time zone NOT NULL,
     CONSTRAINT worn_history_pkey PRIMARY KEY (address, urn)
 );
+
+-- Notification preparation can fail after the wear is claimed. The claim and
+-- obligation commit together; completion deletes this row with its notices.
+CREATE TABLE social.first_wear_outbox (
+    address text NOT NULL,
+    urn text NOT NULL,
+    wearer text,
+    attempts integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    retry_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    CONSTRAINT first_wear_outbox_pkey PRIMARY KEY (address, urn),
+    CONSTRAINT first_wear_outbox_history_fkey FOREIGN KEY (address, urn)
+        REFERENCES social.worn_history (address, urn) ON DELETE CASCADE
+);
+CREATE INDEX first_wear_outbox_due_idx
+    ON social.first_wear_outbox (retry_at, address, urn);
 
 -- A wallet with a row is eligible; its first profile seen seeds worn_history
 -- silently (an empty outfit still gets a row, or its real first wear would be

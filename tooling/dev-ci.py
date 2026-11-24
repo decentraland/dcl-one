@@ -251,6 +251,11 @@ def web_plan(event, base, head):
                    for path in paths for reference in references):
                 return {'run-web-unit-tests': True,
                         'reason': 'Frontend sources or helpers reference changed backend inputs'}
+        # Observation only: both suites still run. UI3 is not skippable for these paths yet, since
+        # apps/ui3/src/play/test/shellSitesKeys.test.ts reads Sites auth sources from disk.
+        if all(path.startswith('apps/sites/src/') for path in paths):
+            return {'run-web-unit-tests': True,
+                    'reason': 'Sites source only; both suites still run'}
         return {
             'run-web-unit-tests': not backend_only,
             'reason': ('Known backend implementation changes only; contracts and smoke still run'

@@ -22,7 +22,7 @@ export type PendingEventCardProps = {
 
 /**
  * A card of the moderation queue, as decentraland.org's PendingEventCard: the events page's day card
- * with the start day and the review status over its cover. A pending event shows faded.
+ * with the start day and the review status over its cover. A pending event's cover shows faded.
  */
 export function PendingEventCard({
   title,
@@ -53,6 +53,7 @@ export function PendingEventCard({
         byLabel={adminCopy.pending.by}
         time={time}
         linkComponent={linkComponent}
+        dimmed={status === 'pending'}
       />
     </div>
   )

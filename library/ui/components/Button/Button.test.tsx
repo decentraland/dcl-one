@@ -153,7 +153,7 @@ describe('when a native Button becomes unavailable', () => {
 })
 
 describe('when using the native Button contract', () => {
-  it.each(['primary', 'secondary', 'tertiary', 'quaternary', 'inverse'] as const)(
+  it.each(['primary', 'secondary', 'secondaryLight', 'tertiary', 'quaternary', 'inverse'] as const)(
     'should render %s with consumer content and a leading icon',
     (variant) => {
       render(

@@ -1,6 +1,6 @@
 # `library/web-core`
 
-The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-18-shared-web-logic-library.md)). Sites and ui3 import it as `@web-core/*`; ui3 may import it, it never imports an app.
+The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-18-shared-web-logic-library.md)). Sites and ui3 import it as `@web-core/*`; ui3 may import it, it never imports an app. The app-scoped UI in `library/ui/apps/` (the Sites flow map, and the in-world Shop session and wallet account) imports it too; `library/ui/components/` and `library/ui/foundations/` do not.
 
 | Path | What |
 | --- | --- |
@@ -20,8 +20,10 @@ The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-1
 | `shop-chain-env.ts` | The Shop's chain selection from the build environment, with page overrides in development builds only |
 | `place-view.ts` | Whether a place has a thumbnail of its own, and the viewer's relation to a place |
 | `freshness/` | How old a cached copy is: its stamp, the older of two copies, a coarse duration, the per-section freshness model and the page's store of the newest stamp per domain |
-| `flow-map.ts` | The node, edge and section model of the flow map and its statistics |
+| `flow-map/` | The node, edge and section model of the flow map and its statistics, and the Explorer's (`/play`) map built on it |
+| `status-copy.ts` | The copy and art of the HTTP error screens, shared by the Sites status page and the static error pages |
 | `creator-hub-host.ts` | The Creator Hub host contract: its paths, scope and the installed host |
+| `multiplayer-test/` | The Creator Hub multiplayer test: its lanes, launch rules and limits (`rules.ts`), the sidecar's run, report and event types with their normalizers (`types.ts`), and the client of the local sidecar (`sidecar.ts`) |
 | `catalyst/client.ts` | The catalyst HTTP client: node and service bases (Vite env, page globals or the node's own paths), JSON reads and writes, and its error. Signed requests through the engine bridge stay in ui3 |
 | `catalyst/rows.ts`, `catalyst/schemas/` | The row guards and the zod schemas of the places, events and backpack replies |
 | `catalyst/places.ts`, `catalyst/placesSchema.ts` | The place and category views and the places, worlds and categories reads |

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DetectedPlatform } from "../download/options";
+import { googlePlayHref } from "../download/google-play";
 import { homeDownloadActions } from "./actions";
 
 const WINDOWS = { kind: "desktop", os: "windows", arch: "amd64" } as const;
@@ -185,5 +186,26 @@ describe("home download actions", () => {
         });
       },
     );
+  });
+});
+
+describe("Google Play links", () => {
+  const tagged = googlePlayHref("?utm_source=Partner");
+  const googlePlayHrefs = (platform: DetectedPlatform, href?: string) => {
+    const { hero, hangOut, store, alternateStore } = homeDownloadActions(platform, "+438K", true, undefined, href);
+    return [
+      ...[hero, hangOut].flatMap((a) => a.alternativeGroups!.flat().filter((alt) => alt.icon === "android").map((alt) => alt.href)),
+      ...[store, alternateStore].filter((s) => s?.badge === "google_play").map((s) => s!.href),
+    ];
+  };
+
+  it("carries the visitor's campaign on every Google Play control", () => {
+    expect(googlePlayHrefs(ANDROID, tagged)).toEqual([tagged, tagged, tagged]);
+    expect(googlePlayHrefs(WINDOWS, tagged)).toEqual([tagged, tagged, tagged]);
+    expect(new URL(tagged).searchParams.get("utm_source")).toBe("partner");
+  });
+
+  it("uses the site's own tag by default", () => {
+    expect(new Set(googlePlayHrefs(WINDOWS))).toEqual(new Set([googlePlayHref()]));
   });
 });

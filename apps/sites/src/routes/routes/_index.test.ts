@@ -39,6 +39,21 @@ describe("/ loader session", () => {
     vi.resetAllMocks();
   });
 
+  it("tags the Google Play link with the visitor's campaign from the request URL", async () => {
+    const context = new RouterContextProvider();
+    context.set(requestSessionContext, { sid: "s", created: false });
+    const result = (await loader({
+      request: new Request("https://sites.example/?utm_source=Partner&utm_term=Avatars"),
+      context,
+    } as never)) as unknown as { data: { googlePlay: string } };
+    expect(Object.fromEntries(new URL(result.data.googlePlay).searchParams)).toMatchObject({
+      utm_org: "dclrgl",
+      utm_source: "partner",
+      utm_term: "avatars",
+      referrer: "utm_org=dclrgl&utm_source=partner&utm_medium=qr&utm_campaign=dclpage&utm_content=android&utm_term=avatars",
+    });
+  });
+
   describe("when the root middleware set the session", () => {
     let result: Wrapped;
 
