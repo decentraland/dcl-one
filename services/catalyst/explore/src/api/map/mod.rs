@@ -1051,20 +1051,32 @@ pub enum Tick {
 }
 
 /// The build job's decisions, one [`Self::tick`] every [`WATCH_INTERVAL`]:
-/// a pass ([`run_pass`]) when the marks moved since the ones read before the
-/// last pass, when a held-back publication or a retry is due, or after
-/// [`SAFETY_INTERVAL`] without one; otherwise, while every source is ready
-/// and the last pass left a revision current, a record that it still is
-/// (`checked_at`, at most every [`CHECK_RECORD_INTERVAL`]), guarded on that
-/// revision. The marks are read before the pass, so a change that lands
-/// during it moves them for the next tick.
+/// a pass ([`run_pass`]) when it is due (a held-back publication, a retry,
+/// a pass that another publisher overtook, or [`SAFETY_INTERVAL`] without
+/// one), or when the marks moved since the ones read before the last pass.
+/// Moved marks wait while a change is held back by the floor (the pass at
+/// its end reads every input) and while a failed pass waits for its retry,
+/// unless every source turned ready meanwhile; marks that cannot be read
+/// move nothing. So a failing read or pass backs off from [`RETRY`] to
+/// [`RETRY_MAX`] instead of building every tick. Otherwise, while every
+/// source is ready and the last pass left a revision current, it records
+/// that the revision still is (`checked_at`, at most every
+/// [`CHECK_RECORD_INTERVAL`]), guarded on that revision. The marks are read
+/// before the pass, so a change that lands during it moves them for the
+/// next tick.
 #[derive(Debug)]
 pub struct Watcher {
     /// The marks read before the last pass.
     seen: Option<String>,
+    /// Every source was ready when those marks were read.
+    ready_seen: bool,
     /// When a pass is due whatever the marks say; `None`: right away.
     due: Option<Instant>,
     retry: Duration,
+    /// The last pass failed: moved marks wait for its retry.
+    failing: bool,
+    /// When the change the last pass held back may publish.
+    held_until: Option<Instant>,
     /// The revision the last pass left current, built from inputs whose
     /// marks are `seen`; `None` after a failed, held-back or overtaken pass.
     current: Option<Current>,
@@ -1075,8 +1087,11 @@ impl Default for Watcher {
     fn default() -> Self {
         Self {
             seen: None,
+            ready_seen: false,
             due: None,
             retry: RETRY,
+            failing: false,
+            held_until: None,
             current: None,
             last_checked: None,
         }
@@ -1094,18 +1109,32 @@ impl Watcher {
             }
         };
         let marks = watched.as_ref().map(|w| w.marks.clone());
-        let moved = marks.is_none() || marks != self.seen;
+        let ready = watched.as_ref().is_some_and(|w| w.ready);
+        // Unreadable marks move nothing: `due` decides.
+        let moved = marks.is_some() && marks != self.seen;
         let due = self.due.is_none_or(|d| now >= d);
-        if moved || due {
-            self.seen = marks;
+        let holding = self.held_until.is_some_and(|h| now < h);
+        let recovered = self.failing && ready && !self.ready_seen;
+        if due || recovered || (moved && !holding && !self.failing) {
+            if marks.is_some() {
+                self.seen = marks;
+            }
+            self.ready_seen = ready;
             *state.map.held_until.lock() = None;
             *state.map.confirmed.lock() = None;
             return match run_pass(state, ctx).await {
                 Ok(()) => {
                     self.retry = RETRY;
-                    let held = state.map.held_until.lock().take();
+                    self.failing = false;
+                    self.held_until = state.map.held_until.lock().take();
                     self.current = state.map.confirmed.lock().take();
-                    self.due = Some(held.unwrap_or(now + SAFETY_INTERVAL));
+                    self.due = match (self.held_until, &self.current) {
+                        (Some(held), _) => Some(held),
+                        (None, Some(_)) => Some(now + SAFETY_INTERVAL),
+                        // Another publisher stored a revision during the
+                        // pass: compare the inputs with it now.
+                        (None, None) => None,
+                    };
                     if self.current.is_some() {
                         self.last_checked = Some(now);
                     }
@@ -1113,6 +1142,8 @@ impl Watcher {
                 }
                 Err(e) => {
                     tracing::warn!(error = %format!("{e:#}"), "map grid pass failed");
+                    self.failing = true;
+                    self.held_until = None;
                     self.current = None;
                     self.due = Some(now + self.retry);
                     self.retry = (self.retry * 2).min(RETRY_MAX);

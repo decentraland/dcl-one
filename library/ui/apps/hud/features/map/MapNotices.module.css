@@ -125,7 +125,7 @@
 /* The parcels map's age, beside the zoom controls and under the layers panel when that is open. It
    mirrors the shared library's `updated` tag (library/ui/components/Tag) on purpose: the HUD's build
    admits only that library's foundations, so the HUD draws it with its own styles. 23px high, radius
-   6px, a 14px clock and 12px text on Transparencies/Overlay 80, which has no HUD token. */
+   6px, a 14px clock and 12px text on Transparencies/Overlay 80 (`--map-age`). */
 .age {
   position: absolute;
   left: 64px;
@@ -137,7 +137,7 @@
   height: 23px;
   padding: 0 8px 0 4px;
   border-radius: var(--r-xs);
-  background: rgba(38, 38, 38, 0.8);
+  background: var(--map-age);
   color: var(--text);
   font-size: var(--type-12);
   font-weight: var(--fw-regular);

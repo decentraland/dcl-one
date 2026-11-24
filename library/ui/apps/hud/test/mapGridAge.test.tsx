@@ -8,12 +8,13 @@ const BASE = 'https://map.test'
 
 /** What the map API answers: its grid's checkedAt, none, an error status or no answer at all. */
 let answer: { checkedAt: number } | { status: number } | 'offline' | 'none'
-const fetch = vi.fn(async (_url: string, _init?: RequestInit): Promise<Response> => {
+const answering = async (_url: string, _init?: RequestInit): Promise<Response> => {
   if (answer === 'offline') throw new TypeError('Failed to fetch')
   if (answer === 'none') return Response.json({ lastUpdatedAt: NOW - 600 * MINUTE })
   if ('status' in answer) return new Response(null, { status: answer.status })
   return Response.json({ lastUpdatedAt: NOW - 600 * MINUTE, checkedAt: answer.checkedAt })
-})
+}
+const fetch = vi.fn(answering)
 
 const advance = (ms: number): Promise<void> =>
   act(async () => {
@@ -23,14 +24,21 @@ const advance = (ms: number): Promise<void> =>
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW })
   vi.stubGlobal('fetch', fetch)
-  fetch.mockClear()
+  fetch.mockReset()
+  fetch.mockImplementation(answering)
   answer = 'none'
 })
 
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  setVisibility('visible')
 })
+
+function setVisibility(state: 'visible' | 'hidden'): void {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
 
 describe('the parcel map age', () => {
   it("labels a grid the map API last found current over five minutes ago", async () => {
@@ -116,5 +124,44 @@ describe('the parcel map age', () => {
     release()
     await advance(0)
     expect(result.current).toBeNull()
+  })
+
+  it("measures the age on the server's clock, so a device clock ahead shows no stale label", async () => {
+    // This device runs six minutes ahead of the server, whose grid was checked a minute ago.
+    vi.setSystemTime(NOW + 6 * MINUTE)
+    fetch.mockImplementation(async () =>
+      Response.json({ checkedAt: NOW - MINUTE }, { headers: { date: new Date(NOW).toUTCString() } })
+    )
+    const { result } = renderHook(() => useMapGridAge(BASE, true))
+    await advance(0)
+    expect(result.current).toBeNull()
+  })
+
+  it('gives up a read still pending when the next starts, so a late answer never lands', async () => {
+    let lateAnswer: (response: Response) => void = () => {}
+    fetch.mockImplementationOnce(() => new Promise<Response>((resolve) => (lateAnswer = resolve)))
+    answer = { checkedAt: NOW - 30 * MINUTE }
+    const { result } = renderHook(() => useMapGridAge(BASE, true))
+    await advance(MINUTE)
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    expect(result.current).toBe('Updated 31 min ago')
+    lateAnswer(Response.json({ checkedAt: NOW + MINUTE }))
+    await advance(0)
+    expect(result.current).toBe('Updated 31 min ago')
+  })
+
+  it('reads nothing while the page is hidden, and reads at once when it is shown again', async () => {
+    answer = { checkedAt: NOW - 30 * MINUTE }
+    const { result } = renderHook(() => useMapGridAge(BASE, true))
+    await advance(0)
+    expect(result.current).toBe('Updated 30 min ago')
+    act(() => setVisibility('hidden'))
+    expect(result.current).toBeNull()
+    await advance(5 * MINUTE)
+    expect(fetch).toHaveBeenCalledOnce()
+    act(() => setVisibility('visible'))
+    await advance(0)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(result.current).toBe('Updated 35 min ago')
   })
 })

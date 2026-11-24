@@ -1939,6 +1939,61 @@ impl map::LandMarket for RewindingLandMarket {
 
 /// A Shop side whose next call, once armed, signals `pinned` on the build's
 /// snapshot and holds the build there until `release`.
+/// Shop's side for the build job's scheduling: its marks can fail to read
+/// (`marks_fail`) or move on every read (`churning`).
+#[derive(Default)]
+struct ScriptedLandMarket {
+    answer: Mutex<Option<crate::chain_index::source::Source>>,
+    marks_fail: std::sync::atomic::AtomicBool,
+    churning: std::sync::atomic::AtomicBool,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl map::LandMarket for ScriptedLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        let answer = match *self.answer.lock() {
+            None => Ok(map::LandMarketSnapshot::default()),
+            Some(source) => Err(map::LandMarketError::Unready(
+                source,
+                "fixture not published".into(),
+            )),
+        };
+        Box::pin(async move { answer })
+    }
+
+    fn marks<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::build::Marks, map::LandMarketError>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let unready = *self.answer.lock();
+        let read = self.reads.fetch_add(1, SeqCst);
+        let result = if self.marks_fail.load(SeqCst) {
+            Err(map::LandMarketError::Failed(anyhow::anyhow!(
+                "canceling statement due to statement timeout"
+            )))
+        } else {
+            let turn = if self.churning.load(SeqCst) { read } else { 0 };
+            Ok(map::build::Marks {
+                ready: unready.is_none(),
+                marks: format!("{unready:?}|{turn}"),
+            })
+        };
+        Box::pin(async move { result })
+    }
+}
+
 struct GatedLandMarket {
     answer: Mutex<map::LandMarketSnapshot>,
     gate: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
@@ -3157,6 +3212,146 @@ async fn a_check_vouches_only_for_the_revision_it_compared() {
     db.teardown().await;
 }
 
+/// Marks that cannot be read move nothing, and a failed pass waits for its
+/// retry while the marks keep moving: the job backs off instead of building
+/// every tick. A source that publishes again is read at once.
+#[tokio::test]
+async fn a_failing_marks_read_or_pass_waits_for_its_retry() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    market.marks_fail.store(true, SeqCst);
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+
+    // The marks cannot be read: the first pass is due, then none until the
+    // safety interval.
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let passes = map_marker(&db.pool).await.0;
+    for s in [5, 10, 15, 20] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle,
+            "an unreadable read is no move"
+        );
+    }
+    assert_eq!(map_marker(&db.pool).await.0, passes);
+
+    // Readable again and moving on every read, while a source is not
+    // published: one failed pass, then the retry wait.
+    market.marks_fail.store(false, SeqCst);
+    market.churning.store(true, SeqCst);
+    *market.answer.lock() = Some(crate::chain_index::source::Source::NftIndex);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(25)).await,
+        map::Tick::Failed
+    );
+    for s in [30, 35, 40, 80] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle,
+            "moving marks wait for the retry"
+        );
+    }
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(85)).await,
+        map::Tick::Failed,
+        "the retry"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(150)).await,
+        map::Tick::Idle,
+        "the next retry waits twice as long"
+    );
+
+    // The source publishes again: a pass at once.
+    *market.answer.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(155)).await,
+        map::Tick::Built
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A pass that another publisher overtakes (a revision stored after its
+/// snapshot began) leaves nothing current, and the next tick compares the
+/// inputs with the stored revision at once, not after the safety interval.
+#[tokio::test]
+async fn a_pass_overtaken_by_another_publisher_compares_again_at_once() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(GatedLandMarket {
+        answer: Mutex::new(map::LandMarketSnapshot::default()),
+        gate: Mutex::new(None),
+    });
+    node.state.attach_land_market(market.clone());
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // The safety pass is held in its snapshot while another publisher stores
+    // a revision; its body equals the one its snapshot saw.
+    let (pinned, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *market.gate.lock() = Some((pinned.clone(), release.clone()));
+    let overtake = async {
+        pinned.notified().await;
+        sqlx::query(
+            "UPDATE explore_api.map_grid SET last_updated_at = last_updated_at + 1000, etag = 'another' WHERE id = 1",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        release.notify_one();
+    };
+    let (tick, ()) = tokio::join!(
+        w.tick(&node.state, &ctx, t0 + map::SAFETY_INTERVAL),
+        overtake
+    );
+    assert_eq!(tick, map::Tick::Built);
+    let (another, _, _) = grid_checked(&db.pool).await;
+    assert_eq!(
+        w.tick(
+            &node.state,
+            &ctx,
+            t0 + map::SAFETY_INTERVAL + Duration::from_secs(5)
+        )
+        .await,
+        map::Tick::Built,
+        "compared again at once"
+    );
+    assert!(
+        grid_checked(&db.pool).await.0 > another,
+        "its own body, against the other etag"
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
 /// A change the publication floor holds back is published by the pass the
 /// build job runs once the floor has passed, with no other change.
 #[tokio::test]
@@ -3197,6 +3392,12 @@ async fn a_held_back_change_publishes_when_the_floor_passes() {
         map::Tick::Idle,
         "no check while a change waits"
     );
+    *market.0.lock() = Ok(priced(1700));
+    assert_eq!(
+        w.tick(&node.state, &ctx, Instant::now()).await,
+        map::Tick::Idle,
+        "another change waits for the floor too, without a build"
+    );
     tokio::time::sleep(Duration::from_millis(2200)).await;
     assert_eq!(
         w.tick(&node.state, &ctx, Instant::now()).await,
@@ -3208,7 +3409,8 @@ async fn a_held_back_change_publishes_when_the_floor_passes() {
     );
     assert_eq!(
         node.state.map.snapshot().unwrap().tiles["11,13"].price,
-        Some(1500.0)
+        Some(1700.0),
+        "the pass at the end of the floor reads every input"
     );
 
     jobs.shutdown(Duration::from_secs(1)).await;

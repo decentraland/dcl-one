@@ -6916,7 +6916,7 @@
     },
     {
       "path": "library/explorer-core/features/map/gridAge.ts",
-      "sha256": "7842adf0fcd291daf35106e8d76c1a2aa67474f83d2a69fae01b6c9c64eec91c"
+      "sha256": "195e5e25b1cfd876d56ccb8e7b7748bc53f24994069d993ccdd7a95cdf798d3b"
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
@@ -6924,7 +6924,7 @@
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "ba429af5dec910d65365c6db6454be6f5d157231c44a5680c9cae741a85f90ff"
+      "sha256": "23237352bc3e1931ac4f06b81b99a3039de2a0616336780d7f65a8d994f39c70"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -7236,7 +7236,7 @@
     },
     {
       "path": "library/explorer-core/test/gridAge.test.ts",
-      "sha256": "904df0935c7203766dcf34184299f60b6bcea0eac974b6434e1494ff2d9b94c7"
+      "sha256": "87c2fec00a57c56104335f6a55b76b1dbc9c0c3d25ccd9f35a8294fba6f9e8cf"
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
@@ -9996,7 +9996,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
-      "sha256": "ff9060b4a5449c2825c86faab4740b53253ea38d6bbfeea6b32e4d430df262e7"
+      "sha256": "d998017b70100675521c9cfb971c423721bacb404921471046532e321566574f"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
@@ -10064,7 +10064,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapGridAge.ts",
-      "sha256": "afa661cd33aae31011af8d53fb3f0ce009dddf54a59d2303781f845844f3bebf"
+      "sha256": "4a6835ad30ca390fc4bc95e2f903a87f0a9cd07d8ca403bbd048df211c1ae167"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
@@ -10608,7 +10608,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "a3a01ef22ddaabed51a1a4659b992b410d4b485ebdc72ba189bebc8edc3e2e2e"
+      "sha256": "1494e2143959891fb90107af4fd28bcc9c214909987a5d812daa4535c11059f6"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10964,7 +10964,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "1c0507582394e5ca17d991d72b48619d2d409556e405d83b0552eaa6d68e408d"
+      "sha256": "25101f816971b7c159bb5e5b4b0301cc3879cf628fee1ecf580b358b19443402"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -11164,7 +11164,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/mapGridAge.test.tsx",
-      "sha256": "2e09763db12b3c0f01c328eb697cc90431b3f381d288e44a448e25fcb5df3846"
+      "sha256": "0f1f7f0de64c0ea5e33754b7a5e53f444fba96b177cba14da8aca01671eb0f2a"
     },
     {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",
@@ -12308,6 +12308,21 @@
     },
     {
       "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "native:runtime"
     },
@@ -13384,6 +13399,21 @@
     {
       "from": "library/explorer-core/test/gridAge.test.ts",
       "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "test:runtime"
     },
     {

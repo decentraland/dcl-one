@@ -2900,10 +2900,14 @@ builds it from its own indexes.
   change, not on a timer: every 5 s it reads their marks (`Watcher`), and a
   pass (`run_pass`) runs when they moved since the ones read before the
   last pass, when a change held back by the publication floor may publish,
-  when a failed pass's retry is due (1 minute, doubling to 5), or after 10
-  minutes without one (a safety net for any change the marks miss). The
-  marks are read before the pass, so a change during it moves them for the
-  next one.
+  when a failed pass's retry is due (1 minute, doubling to 5), when another
+  publisher stored a revision during the last pass, or after 10 minutes
+  without one (a safety net). Moved marks wait while a change is held back
+  (the pass at the floor's end reads every input) and while a failed pass
+  waits for its retry, unless every source turned ready meanwhile; marks
+  that cannot be read move nothing. So a failing read or pass backs off
+  instead of building every 5 s. The marks are read before the pass, so a
+  change during it moves them for the next one.
   Each mark is a durable counter raised in the statement that rewrites
   rows in place, a position in an append-only log, or a digest of the very
   rows the build reads, so equal marks mean equal inputs:
@@ -3039,8 +3043,7 @@ builds it from its own indexes.
   and parse, 50 to 130 MB of transient memory) and, for every map client
   that fetches `/v2/tiles` again, 36.5 MB (the node does not compress it).
   The 1-minute floor allows at most 60 revisions an hour (about 290 MB of
-  WAL and 60 reloads per process); the earlier 5-minute floor allowed 12
-  (about 58 MB). The live atlas published no revision in 80 minutes on
+  WAL and 60 reloads per process). The live atlas published no revision in 80 minutes on
   2026-11-24 (its `landVersion` and `overlayVersion` held), so the floor
   bounds bursts, not the usual rate. Watching costs the marks every 5 s
   (about 7 ms for land-authz and 27 ms for Shop, under 25 s of database
