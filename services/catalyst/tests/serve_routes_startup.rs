@@ -70,8 +70,8 @@ async fn serve_joins_every_areas_routes_and_answers() {
         answered.clear();
         for path in [
             "/builder-api/ping",
-            "/builder-api/v1/items",
-            "/v1/items",
+            "/builder-api/v1/info",
+            "/v1/info",
             "/shop-api/v1/campaign-collections?tag=x",
         ] {
             if let Ok(response) = client

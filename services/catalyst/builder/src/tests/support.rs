@@ -22,6 +22,21 @@ use crate::storage::Storage;
 /// fixtures' key.
 pub const OWNER_KEY: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
+/// Whether a request of this database waits for the blob store's lock
+/// ([`crate::storage::gc::STORE_LOCK_KEY`]), held by a collector's unlink
+/// batch.
+pub async fn waiting_for_the_store(pool: &sqlx::PgPool) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_database d ON d.oid = l.database \
+         WHERE l.locktype = 'advisory' AND NOT l.granted AND d.datname = current_database() \
+           AND l.objsubid = 1 AND ((l.classid::bigint << 32) | l.objid::bigint) = $1)",
+    )
+    .bind(crate::storage::gc::STORE_LOCK_KEY)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 pub async fn temp_storage() -> Arc<Storage> {
     let dir = std::env::temp_dir().join(format!("catalyst-builder-test-{}", Uuid::new_v4()));
     tokio::fs::create_dir_all(&dir).await.unwrap();
@@ -220,6 +235,23 @@ pub async fn save_item(
         .await
 }
 
+/// [`save_item`]'s body as JSON.
+pub async fn saved_item(
+    store: &ItemsComponent,
+    signer: &str,
+    item: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::to_value(save_item(store, signer, item).await.unwrap()).unwrap()
+}
+
+/// Item `id` as its owner side reads it, as JSON.
+pub async fn read_item(
+    store: &ItemsComponent,
+    id: Uuid,
+) -> Result<serde_json::Value, crate::http::ApiError> {
+    Ok(serde_json::to_value(store.item(&crate::access::granted::item(id)).await?).unwrap())
+}
+
 /// The contents map naming each `(file, bytes)` by its content hash.
 pub fn contents_of(files: &[(&str, &[u8])]) -> serde_json::Value {
     files
@@ -227,6 +259,49 @@ pub fn contents_of(files: &[(&str, &[u8])]) -> serde_json::Value {
         .map(|(file, bytes)| (file.to_string(), dcl_auth::hash_bytes_v1(bytes).into()))
         .collect::<serde_json::Map<_, _>>()
         .into()
+}
+
+/// Uploads each of `files` for item `id` as `signer`, under its content
+/// hash; a file the item names only as its `video.mp4` is left as a video
+/// upload leaves it (its bytes stored and recorded), whatever its bytes.
+pub async fn upload(
+    store: &ItemsComponent,
+    signer: &str,
+    id: Uuid,
+    files: &[&[u8]],
+) -> Result<(), crate::http::ApiError> {
+    let videos: Vec<String> = sqlx::query_scalar(
+        "SELECT hash FROM builder.item_contents WHERE item_id = $1 GROUP BY hash \
+         HAVING bool_and(file = 'video.mp4')",
+    )
+    .bind(id)
+    .fetch_all(store.pool())
+    .await
+    .unwrap();
+    let mut others = Vec::new();
+    for bytes in files {
+        let hash = dcl_auth::hash_bytes_v1(bytes);
+        let bytes = bytes::Bytes::copy_from_slice(bytes);
+        if !videos.contains(&hash) {
+            others.push((hash, bytes));
+            continue;
+        }
+        let size = bytes.len() as i64;
+        store.blobs.store(&hash, bytes).await.unwrap();
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by, video) VALUES ($1, $2, $3, true) \
+             ON CONFLICT (hash, uploaded_by) DO UPDATE SET video = true",
+        )
+        .bind(&hash)
+        .bind(size)
+        .bind(signer)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    }
+    store
+        .save_item_files(&crate::access::granted::change(signer, id), others)
+        .await
 }
 
 /// Undoes [`on_chain`].
@@ -273,6 +348,12 @@ pub async fn cleanup(store: &ItemsComponent, collections: &[Uuid], hashes: &[Str
             .await
             .unwrap();
     }
+}
+
+/// Bytes no other test hashes to: the old fixtures reused `b"model"`, which
+/// two tests sharing one database would race on through `uploaded_contents`.
+pub fn unique(label: &str) -> Vec<u8> {
+    format!("{label}-{}", Uuid::new_v4()).into_bytes()
 }
 
 pub fn wallet(key: &str) -> PrivateKeySigner {
@@ -382,9 +463,34 @@ impl FakeCommittee {
         fake
     }
 
+    pub fn down() -> Self {
+        Self::default()
+    }
+
     /// Changes the committee the subgraph answers.
     pub fn set(&self, members: Option<&[&str]>) {
         *self.members.lock().unwrap() = members.map(|m| m.iter().map(|a| a.to_string()).collect());
+    }
+
+    /// The `rarities` the subgraph answers, each `(name, usd price, max
+    /// supply)`; `None` answers a GraphQL error.
+    pub fn set_rarities(&self, rarities: Option<&[(&str, &str, &str)]>) {
+        *self.rarities.lock().unwrap() = rarities.map(|r| {
+            r.iter()
+                .map(|(name, price, max_supply)| {
+                    serde_json::json!({ "id": name, "name": name, "price": price, "maxSupply": max_supply })
+                })
+                .collect()
+        });
+    }
+
+    pub fn rarity_hits(&self) -> usize {
+        self.rarity_hits.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn committee_hits(&self) -> usize {
+        self.committee_hits
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn answer(
@@ -570,4 +676,196 @@ pub fn market_without_db(
 alloy_sol_types::sol! {
     struct OracleRarity { string name; uint256 maxSupply; uint256 price; }
     function getRarityByName(string rarity) external view returns (OracleRarity);
+}
+
+/// A loopback JSON-RPC of a Polygon chain (mainnet unless [`FakeOracle::on`])
+/// that answers its chain id and `eth_call`s of `getRarityByName` on that
+/// chain's rarities-with-oracle contract with the MANA price it holds for
+/// the name (an unknown name reverts, `None` answers HTTP 502),
+/// and records the names it was asked.
+#[derive(Clone, Default)]
+pub struct FakeOracle {
+    prices: Arc<std::sync::Mutex<Option<BTreeMap<String, String>>>>,
+    asked: Arc<std::sync::Mutex<Vec<String>>>,
+    deployed: Arc<std::sync::Mutex<BTreeMap<String, u64>>>,
+    code_reads: Arc<std::sync::atomic::AtomicUsize>,
+    down: Arc<std::sync::atomic::AtomicBool>,
+    other_chain: Arc<std::sync::atomic::AtomicBool>,
+    rarity_calls: Arc<RarityCalls>,
+    network: crate::network::Network,
+}
+
+#[derive(Default)]
+struct RarityCalls {
+    open: std::sync::atomic::AtomicUsize,
+    most_open: std::sync::atomic::AtomicUsize,
+    hold_until: std::sync::atomic::AtomicUsize,
+    opened: tokio::sync::Notify,
+}
+
+impl FakeOracle {
+    /// Holds each rarity answer, for at most two seconds, until `open`
+    /// rarity calls are open at once.
+    pub fn hold_rarities_until(&self, open: usize) {
+        self.rarity_calls
+            .hold_until
+            .store(open, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The most rarity calls that were open at once.
+    pub fn most_rarities_at_once(&self) -> usize {
+        self.rarity_calls
+            .most_open
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn with(prices: &[(&str, &str)]) -> Self {
+        let fake = Self::default();
+        fake.set(Some(prices));
+        fake
+    }
+
+    pub fn set(&self, prices: Option<&[(&str, &str)]>) {
+        *self.prices.lock().unwrap() = prices.map(|p| {
+            p.iter()
+                .map(|(name, price)| (name.to_string(), price.to_string()))
+                .collect()
+        });
+    }
+
+    pub fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
+    }
+
+    /// The fake of `network`'s chain, its chain id and oracle.
+    pub fn on(mut self, network: crate::network::Network) -> Self {
+        self.network = network;
+        self
+    }
+
+    /// Answers another network's chain id (Ethereum's) while `other`.
+    pub fn set_other_chain(&self, other: bool) {
+        self.other_chain
+            .store(other, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    async fn answer(
+        axum::extract::State(fake): axum::extract::State<Self>,
+        axum::Json(body): axum::Json<serde_json::Value>,
+    ) -> axum::response::Response {
+        use alloy_sol_types::SolCall;
+        use axum::response::IntoResponse;
+        if fake.down.load(std::sync::atomic::Ordering::SeqCst) {
+            return axum::http::StatusCode::BAD_GATEWAY.into_response();
+        }
+        let id = body["id"].clone();
+        let call = &body["params"][0];
+        let target = call["to"].as_str().map(str::to_ascii_lowercase);
+        let deployed = |address: Option<String>| {
+            address.and_then(|a| fake.deployed.lock().unwrap().get(&a).copied())
+        };
+        match body["method"].as_str().unwrap_or_default() {
+            "eth_chainId" => {
+                let chain = if fake.other_chain.load(std::sync::atomic::Ordering::SeqCst) {
+                    "0x1".to_string()
+                } else {
+                    format!("{:#x}", fake.network.chain_id)
+                };
+                return axum::Json(
+                    serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": chain }),
+                )
+                .into_response();
+            }
+            "eth_getCode" => {
+                fake.code_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let code = match deployed(body["params"][0].as_str().map(str::to_ascii_lowercase)) {
+                    Some(_) => "0x6080",
+                    None => "0x",
+                };
+                return axum::Json(
+                    serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": code }),
+                )
+                .into_response();
+            }
+            "eth_call"
+                if call["data"].as_str().is_some_and(|d| {
+                    d.eq_ignore_ascii_case(&alloy_primitives::hex::encode_prefixed(
+                        crate::publication_chain::itemsCountCall::SELECTOR,
+                    ))
+                }) =>
+            {
+                let answer = match deployed(target) {
+                    Some(items) => serde_json::json!({ "jsonrpc": "2.0", "id": id,
+                        "result": format!("0x{items:064x}") }),
+                    None => serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": "0x" }),
+                };
+                return axum::Json(answer).into_response();
+            }
+            _ => {}
+        }
+        let Some(prices) = fake.prices.lock().unwrap().clone() else {
+            return axum::http::StatusCode::BAD_GATEWAY.into_response();
+        };
+        let data = call["data"].as_str().unwrap_or_default();
+        let decoded = alloy_primitives::hex::decode(data)
+            .ok()
+            .and_then(|bytes| getRarityByNameCall::abi_decode(&bytes).ok());
+        let answer = match decoded {
+            Some(asked)
+                if body["method"] == "eth_call"
+                    && call["to"].as_str().map(str::to_ascii_lowercase).as_deref()
+                        == Some(fake.network.rarities_with_oracle) =>
+            {
+                use std::sync::atomic::Ordering::SeqCst;
+                let calls = &fake.rarity_calls;
+                let open = calls.open.fetch_add(1, SeqCst) + 1;
+                calls.most_open.fetch_max(open, SeqCst);
+                calls.opened.notify_waiters();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    loop {
+                        let opened = calls.opened.notified();
+                        tokio::pin!(opened);
+                        opened.as_mut().enable();
+                        if calls.open.load(SeqCst) >= calls.hold_until.load(SeqCst) {
+                            break;
+                        }
+                        opened.await;
+                    }
+                })
+                .await;
+                calls.open.fetch_sub(1, SeqCst);
+                fake.asked.lock().unwrap().push(asked.rarity.clone());
+                match prices.get(&asked.rarity) {
+                    Some(price) => {
+                        serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": alloy_primitives::hex::encode_prefixed(
+                        getRarityByNameCall::abi_encode_returns(&OracleRarity {
+                            name: asked.rarity.clone(),
+                            maxSupply: alloy_primitives::U256::from(1u8),
+                            price: price.parse().unwrap(),
+                        }),
+                    ) })
+                    }
+                    None => {
+                        serde_json::json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 3, "message": "execution reverted" } })
+                    }
+                }
+            }
+            _ => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "not faked" } })
+            }
+        };
+        axum::Json(answer).into_response()
+    }
+
+    /// The fake's URL, serving from now on.
+    pub async fn url(&self) -> String {
+        let app = axum::Router::new()
+            .route("/rpc", axum::routing::post(Self::answer))
+            .with_state(self.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}/rpc")
+    }
 }

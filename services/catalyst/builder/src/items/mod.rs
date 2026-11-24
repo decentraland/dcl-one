@@ -16,9 +16,12 @@ mod catalyst_state_tests;
 pub mod hash;
 pub mod listing;
 pub mod minted;
+pub mod places;
 pub mod save;
 pub mod schema;
+pub mod upload;
 pub mod urn;
+pub mod video;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

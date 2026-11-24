@@ -2183,6 +2183,156 @@ fn public_file_sql(hash: &str) -> String {
         .replace("{hash}", hash)
 }
 
+/// The bytes and files of every upload record of `wallet`'s
+/// (`uploaded_contents_uploaded_by_idx` alone), or of every wallet's.
+pub(crate) async fn uploaded(
+    pool: &sqlx::PgPool,
+    wallet: Option<&str>,
+) -> Result<crate::limits::Held<i64>, ApiError> {
+    let sql = match wallet {
+        Some(_) => {
+            "SELECT COALESCE(sum(size), 0)::bigint, count(*) FROM builder.uploaded_contents WHERE uploaded_by = $1"
+        }
+        None => {
+            "SELECT COALESCE(sum(size), 0)::bigint, count(*) FROM builder.uploaded_contents WHERE $1::text IS NULL"
+        }
+    };
+    let (bytes, files): (i64, i64) = sqlx::query_as(sql).bind(wallet).fetch_one(pool).await?;
+    Ok(crate::limits::Held { bytes, files })
+}
+
+/// The hashes a published item names in a name whose writer holds an upload
+/// record for them ([`PUBLIC_FILE`] as a set): from each collection to its
+/// items' names, so a count is linear in the names and the records, however
+/// many wallets hold one hash.
+const PUBLIC_HASHES: &str = "SELECT ic.hash FROM builder.collections c {chain_join} \
+       JOIN builder.items i ON i.collection_id = c.id \
+       JOIN builder.item_contents ic ON ic.item_id = i.id \
+       JOIN builder.uploaded_contents u ON u.hash = ic.hash AND u.uploaded_by = ic.named_by \
+       WHERE CASE WHEN c.third_party_id IS NOT NULL THEN {curated} ELSE {published} END \
+     UNION SELECT i.video FROM builder.collections c {chain_join} \
+       JOIN builder.items i ON i.collection_id = c.id \
+       JOIN builder.uploaded_contents u ON u.hash = i.video AND u.uploaded_by = i.video_named_by \
+       WHERE CASE WHEN c.third_party_id IS NOT NULL THEN {curated} ELSE {published} END";
+
+/// Bytes and files of upload records per wallet listed (`None`: the rest)
+/// and of all of them (the grouping flag set).
+type Sums = Vec<(Option<String>, bool, i64, i64)>;
+
+/// The node's upload records counted whole: the bytes and files of every
+/// wallet's unpublished ones (whose hash no published item names,
+/// [`PUBLIC_FILE`]), and, of each wallet whose records pass `near_wallet`
+/// in bytes or files, its unpublished ones and all of its records. The
+/// unpublished ones are counted only when a wallet is listed or every
+/// record together reaches `half_node`; else all of them count, as they do
+/// when that count can't finish within its statement timeout.
+pub(crate) async fn tally_uploads(
+    pool: &sqlx::PgPool,
+    near_wallet: crate::limits::Held<u64>,
+    half_node: crate::limits::Held<u64>,
+) -> Result<
+    (
+        crate::limits::Held<i64>,
+        std::collections::HashMap<String, (crate::limits::Held<i64>, crate::limits::Held<i64>)>,
+    ),
+    ApiError,
+> {
+    use crate::limits::Held;
+    let held = |bytes, files| Held { bytes, files };
+    let sums: Sums = sqlx::query_as(
+        "SELECT uploaded_by, GROUPING(uploaded_by) = 1, COALESCE(sum(size), 0)::bigint, count(*) \
+         FROM builder.uploaded_contents GROUP BY GROUPING SETS ((uploaded_by), ()) \
+         HAVING GROUPING(uploaded_by) = 1 OR sum(size) > $1 OR count(*) >= $2",
+    )
+    .bind(i64::try_from(near_wallet.bytes).unwrap_or(i64::MAX))
+    .bind(i64::try_from(near_wallet.files).unwrap_or(i64::MAX))
+    .fetch_all(pool)
+    .await?;
+    let mut all = Held::default();
+    let mut wallets = std::collections::HashMap::new();
+    for (wallet, whole, bytes, files) in sums {
+        match (whole, wallet) {
+            (true, _) => all = held(bytes, files),
+            (false, Some(wallet)) => {
+                wallets.insert(wallet, (held(bytes, files), held(bytes, files)));
+            }
+            (false, None) => {}
+        }
+    }
+    let reaches = |n: i64, bound: u64| u64::try_from(n).unwrap_or(0) >= bound;
+    if wallets.is_empty()
+        && !reaches(all.bytes, half_node.bytes)
+        && !reaches(all.files, half_node.files)
+    {
+        return Ok((all, wallets));
+    }
+    let listed: Vec<String> = wallets.keys().cloned().collect();
+    match unpublished_sums(pool, &listed).await {
+        Ok(sums) => {
+            let mut node = Held::default();
+            for (unpublished, _) in wallets.values_mut() {
+                *unpublished = Held::default();
+            }
+            for (wallet, whole, bytes, files) in sums {
+                match (whole, wallet.and_then(|w| wallets.get_mut(&w))) {
+                    (true, _) => node = held(bytes, files),
+                    (false, Some((unpublished, _))) => *unpublished = held(bytes, files),
+                    (false, None) => {}
+                }
+            }
+            Ok((node, wallets))
+        }
+        Err(error) => {
+            tracing::warn!(%error, "builder: the unpublished uploads could not be counted; all records count");
+            Ok((all, wallets))
+        }
+    }
+}
+
+async fn unpublished_sums(pool: &sqlx::PgPool, listed: &[String]) -> Result<Sums, sqlx::Error> {
+    let (chain_join, published) = chain_state::published_by_any_pass();
+    let public = PUBLIC_HASHES
+        .replace("{chain_join}", chain_join)
+        .replace("{published}", published)
+        .replace("{curated}", ITEM_CURATED);
+    let mut tx = pool.begin().await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SET LOCAL statement_timeout = '{}s'",
+        crate::limits::UNPUBLISHED_COUNT_TIMEOUT.as_secs()
+    )))
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+    let sums = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "WITH public AS MATERIALIZED ({public}) \
+         SELECT w, GROUPING(w) = 1, COALESCE(sum(size), 0)::bigint, count(*) FROM ( \
+           SELECT CASE WHEN own.uploaded_by = ANY($1) THEN own.uploaded_by END AS w, own.size \
+           FROM builder.uploaded_contents own \
+           WHERE NOT EXISTS (SELECT 1 FROM public p WHERE p.hash = own.hash)) unpublished \
+         GROUP BY GROUPING SETS ((w), ())"
+    )))
+    .bind(listed)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(sums)
+}
+
+/// The bytes and files of `wallet`'s upload records whose hash no published
+/// item names ([`PUBLIC_FILE`]).
+#[cfg(test)]
+pub(crate) async fn unpublished(
+    pool: &sqlx::PgPool,
+    wallet: &str,
+) -> Result<crate::limits::Held<i64>, ApiError> {
+    let sums = unpublished_sums(pool, &[wallet.to_string()]).await?;
+    Ok(sums
+        .into_iter()
+        .find(|(w, whole, _, _)| !whole && w.as_deref() == Some(wallet))
+        .map(|(_, _, bytes, files)| crate::limits::Held { bytes, files })
+        .unwrap_or_default())
+}
+
 /// [`FILE_READ`] with the published rule of [`chain_state::published_by_any_pass`].
 pub(crate) fn file_read_sql() -> String {
     FILE_READ.replace("{public}", &public_file_sql("$1"))
@@ -2304,6 +2454,13 @@ pub async fn public_entries(
 pub(crate) mod granted {
     use super::*;
 
+    pub fn wallet(address: &str) -> Wallet {
+        Wallet {
+            address: address.to_string(),
+            providers: Vec::new(),
+        }
+    }
+
     pub fn managing(address: &str, providers: &[&str]) -> Wallet {
         Wallet {
             address: address.to_string(),
@@ -2336,6 +2493,10 @@ pub(crate) mod granted {
         }
     }
 
+    pub fn item(id: Uuid) -> ItemRead {
+        ItemRead { id, full: true }
+    }
+
     pub fn save(signer: &str, id: Uuid, collection: Option<Uuid>) -> ItemSave {
         ItemSave {
             id,
@@ -2347,12 +2508,28 @@ pub(crate) mod granted {
         }
     }
 
+    pub fn change(signer: &str, id: Uuid) -> ItemChange {
+        ItemChange {
+            id,
+            signer: signer.to_string(),
+            at: Utc::now(),
+            registry: no_registry(),
+        }
+    }
+
     pub fn third_party_publish(signer: &str, id: Uuid, provider: &str) -> ThirdPartyPublish {
         ThirdPartyPublish {
             id,
             signer: signer.to_string(),
             provider: provider.to_string(),
             registry: Registry::default(),
+        }
+    }
+
+    pub fn publisher(signer: &str, id: Uuid) -> Publisher {
+        Publisher {
+            id,
+            signer: signer.to_string(),
         }
     }
 }

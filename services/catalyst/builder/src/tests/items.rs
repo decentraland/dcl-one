@@ -19,9 +19,13 @@ use crate::shared::signed_fetch::test_support::signed_headers_by;
 
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:items-test";
+const BOUNDARY: &str = "items-test-boundary";
+
 struct App {
     pool: PgPool,
+    state: crate::SharedState,
     router: Router,
+    content: Router,
 }
 
 async fn app() -> Option<App> {
@@ -46,6 +50,11 @@ async fn app() -> Option<App> {
 
 async fn over(pool: PgPool) -> App {
     let storage = temp_storage().await;
+    let content = crate::content::build_router(Arc::new(crate::content::ContentState::new(
+        pool.clone(),
+        crate::content::Settings::for_tests(),
+        storage.clone(),
+    )));
     let state = Arc::new(
         crate::State::new(
             pool.clone(),
@@ -64,7 +73,9 @@ async fn over(pool: PgPool) -> App {
     state.content_sync.set_own_content_authority(true);
     App {
         pool,
-        router: crate::router(state),
+        router: crate::router(state.clone()),
+        content,
+        state,
     }
 }
 
@@ -153,6 +164,386 @@ async fn put(app: &App, key: &str, path: &str, body: &Value) -> (u16, Value) {
     .await
 }
 
+fn multipart(parts: &[(&str, &[u8])]) -> Body {
+    let mut body = Vec::new();
+    for (name, bytes) in parts {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\ncontent-disposition: form-data; name=\"{name}\"; filename=\"blob\"\r\n\
+                 content-type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+    Body::from(body)
+}
+
+async fn upload(app: &App, key: &str, id: Uuid, parts: &[(&str, &[u8])]) -> (u16, Value) {
+    send(
+        app,
+        key,
+        "POST",
+        &format!("/v1/items/{id}/files"),
+        multipart(parts),
+        &format!("multipart/form-data; boundary={BOUNDARY}"),
+    )
+    .await
+}
+
+async fn uploaders(pool: &PgPool, hash: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT uploaded_by FROM builder.uploaded_contents WHERE hash = $1 ORDER BY uploaded_by",
+    )
+    .bind(hash)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn an_upload_past_a_bound_or_unlike_its_item_stores_nothing() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let model = b"items test model".to_vec();
+    let hash = dcl_auth::hash_bytes_v1(&model);
+    let id = Uuid::new_v4();
+    let saved = put(
+        &app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    let (status, body) = send(
+        &app,
+        OWNER_KEY,
+        "POST",
+        &format!("/v1/items/{id}/files"),
+        Body::from("{}"),
+        "application/json",
+    )
+    .await;
+    assert_eq!(status, 400, "an upload that is not multipart: {body}");
+
+    let other = b"a file the item doesn't name".to_vec();
+    let other_hash = dcl_auth::hash_bytes_v1(&other);
+    let big = vec![7u8; crate::items::upload::MAX_BYTES + 1];
+    let big_hash = dcl_auth::hash_bytes_v1(&big);
+    let many: Vec<(&str, &[u8])> = (0..=crate::items::upload::MAX_FILES)
+        .map(|_| (hash.as_str(), model.as_slice()))
+        .collect();
+    let empty_hash = dcl_auth::hash_bytes_v1(b"");
+    let many_empty: Vec<(&str, &[u8])> = (0..=crate::items::upload::MAX_FILES)
+        .map(|_| (empty_hash.as_str(), b"".as_slice()))
+        .collect();
+    for (label, parts, status, error) in [
+        ("one file more than the bound", many, 400, "Too many files"),
+        (
+            "one empty part more than the bound",
+            many_empty,
+            400,
+            "Too many files",
+        ),
+        (
+            "more bytes than the bound",
+            vec![(big_hash.as_str(), big.as_slice())],
+            413,
+            "The upload is too large",
+        ),
+        (
+            "bytes under another hash",
+            vec![(hash.as_str(), other.as_slice())],
+            400,
+            "The file does not match its hash",
+        ),
+        (
+            "a hash the item doesn't name",
+            vec![(other_hash.as_str(), other.as_slice())],
+            400,
+            "The item does not name this file",
+        ),
+        (
+            "a field name that isn't a hash",
+            vec![("../../model.glb", model.as_slice())],
+            400,
+            "Each file is sent under its content hash",
+        ),
+    ] {
+        let (got, body) = upload(&app, OWNER_KEY, id, &parts).await;
+        assert_eq!(
+            (got, body["error"].as_str()),
+            (status, Some(error)),
+            "{label}: {body}"
+        );
+    }
+    for refused in [&hash, &other_hash, &big_hash] {
+        assert!(
+            uploaders(&app.pool, refused).await.is_empty(),
+            "{refused} recorded"
+        );
+        assert!(
+            !app.state.items.blobs.exist(refused).await.unwrap(),
+            "{refused} stored"
+        );
+    }
+
+    let (got, body) = upload(&app, STRANGER_KEY, id, &[(&hash, &model)]).await;
+    assert_eq!(got, 401, "{body}");
+    let (got, body) = upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await;
+    assert_eq!((got, &body), (200, &json!({ "ok": true })));
+    assert_eq!(uploaders(&app.pool, &hash).await, vec![address(OWNER_KEY)]);
+    assert!(app.state.items.blobs.exist(&hash).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_draft_file_is_not_served_or_announced_by_the_content_server() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let model = format!("a draft model {}", Uuid::new_v4()).into_bytes();
+    let hash = dcl_auth::hash_bytes_v1(&model);
+    let id = Uuid::new_v4();
+    let saved = put(
+        &app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await.0, 200);
+
+    let ask = async |method: &str, path: String| {
+        let response = app
+            .content
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, bytes)
+    };
+    for mount in ["", "/content"] {
+        for method in ["GET", "HEAD"] {
+            let (status, bytes) = ask(method, format!("{mount}/contents/{hash}")).await;
+            assert_eq!(status, 404, "{method} {mount}/contents");
+            assert_ne!(&bytes[..], &model[..]);
+        }
+        let (status, bytes) = ask("GET", format!("{mount}/available-content?cid={hash}")).await;
+        assert_eq!(status, 200);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!([{ "cid": hash, "available": false }]),
+            "{mount}/available-content"
+        );
+    }
+    let (status, bytes) = send(
+        &app,
+        OWNER_KEY,
+        "GET",
+        &format!("/v1/storage/contents/{hash}"),
+        Body::empty(),
+        "application/json",
+    )
+    .await;
+    assert_eq!((status, bytes), (200, Value::Null));
+}
+
+#[tokio::test]
+async fn a_forgotten_file_the_collector_unlinks_during_its_upload_is_refused_until_sent_again() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let model = format!("a model forgotten then sent again {}", Uuid::new_v4()).into_bytes();
+    let hash = dcl_auth::hash_bytes_v1(&model);
+    let id = Uuid::new_v4();
+    let saved = put(
+        &app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await.0, 200);
+    sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+        .bind(&hash)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&app.pool)
+        .await
+        .unwrap();
+    let again = tokio::spawn({
+        let router = app.router.clone();
+        let (pool, state) = (app.pool.clone(), app.state.clone());
+        let model = model.clone();
+        let hash = hash.clone();
+        async move {
+            let app = App {
+                pool,
+                state,
+                router,
+                content: Router::new(),
+            };
+            upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !super::support::waiting_for_the_store(&app.pool).await {
+        assert!(
+            !again.is_finished(),
+            "the upload committed while the collector's unlink batch held the store"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the upload never asked for the store"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    app.state.items.blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+
+    let refused = again.await.unwrap();
+    assert_eq!(
+        (refused.0, refused.1["error"].as_str()),
+        (
+            503,
+            Some("The content store is being collected; retry shortly")
+        )
+    );
+    assert!(uploaders(&app.pool, &hash).await.is_empty());
+    assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await.0, 200);
+    assert_eq!(uploaders(&app.pool, &hash).await, vec![address(OWNER_KEY)]);
+    assert!(app.state.items.blobs.exist(&hash).await.unwrap());
+}
+
+#[tokio::test]
+async fn an_uploads_bytes_are_stored_before_it_takes_the_items_lock() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let model = format!("a model stored before its lock {}", Uuid::new_v4()).into_bytes();
+    let hash = dcl_auth::hash_bytes_v1(&model);
+    let id = Uuid::new_v4();
+    let saved = put(
+        &app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    let mut holder = app.pool.begin().await.unwrap();
+    let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *holder)
+        .await
+        .unwrap();
+    sqlx::query("SELECT 1 FROM builder.items WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let uploading = tokio::spawn({
+        let router = app.router.clone();
+        let (pool, state) = (app.pool.clone(), app.state.clone());
+        let (model, hash) = (model.clone(), hash.clone());
+        async move {
+            let app = App {
+                pool,
+                state,
+                router,
+                content: Router::new(),
+            };
+            upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+            )
+            .bind(holder_pid)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+            if waiting > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the upload waits on the item's row");
+    assert!(
+        app.state.items.blobs.exist(&hash).await.unwrap(),
+        "the bytes were written before the upload took the item's lock"
+    );
+    assert!(uploaders(&app.pool, &hash).await.is_empty());
+    holder.rollback().await.unwrap();
+    assert_eq!(uploading.await.unwrap().0, 200);
+    assert_eq!(uploaders(&app.pool, &hash).await, vec![address(OWNER_KEY)]);
+}
+
+#[tokio::test]
+async fn item_files_behind_a_long_unlink_batch_answer_503() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let model = format!("a model behind a long unlink batch {}", Uuid::new_v4()).into_bytes();
+    let hash = dcl_auth::hash_bytes_v1(&model);
+    let id = Uuid::new_v4();
+    let saved = put(
+        &app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+
+    let batch = crate::storage::gc::lock_store_exclusive(&app.pool)
+        .await
+        .unwrap();
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        upload(&app, OWNER_KEY, id, &[(&hash, &model)]),
+    )
+    .await
+    .expect("bounded wait");
+    batch.commit().await.unwrap();
+    assert_eq!(
+        (answered.0, answered.1["error"].as_str()),
+        (
+            503,
+            Some("The content store is being collected; retry shortly")
+        )
+    );
+    assert!(uploaders(&app.pool, &hash).await.is_empty());
+    assert!(
+        app.state.items.blobs.exist(&hash).await.unwrap(),
+        "the refused upload's bytes stay unrecorded for the collector"
+    );
+
+    assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await.0, 200);
+    assert_eq!(uploaders(&app.pool, &hash).await, vec![address(OWNER_KEY)]);
+}
+
 #[tokio::test]
 async fn mappings_past_their_bounds_are_refused_before_anything_is_decided() {
     let Some(app) = app().await else {
@@ -179,6 +570,101 @@ async fn mappings_past_their_bounds_are_refused_before_anything_is_decided() {
             .await
             .unwrap();
     assert!(!stored);
+}
+
+#[tokio::test]
+async fn naming_a_file_grants_nothing_and_its_records_go_when_no_item_names_it() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let model = format!("shared model {}", Uuid::new_v4()).into_bytes();
+    let hash = dcl_auth::hash_bytes_v1(&model);
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+    let save = async |id: Uuid, key: &str| {
+        let saved = put(
+            &app,
+            key,
+            &format!("/v1/items/{id}"),
+            &item(id, key, None, &[("model.glb", &hash)], None),
+        )
+        .await;
+        assert_eq!(saved.0, 200, "{saved:?}");
+    };
+    save(first, OWNER_KEY).await;
+    let referenced = async || {
+        let mut conn = app.pool.acquire().await.unwrap();
+        crate::storage::gc::referenced_rows_among_on(&mut conn, std::slice::from_ref(&hash))
+            .await
+            .unwrap()
+            .contains(&hash)
+    };
+    assert!(!referenced().await, "a name alone keeps the file");
+    assert_eq!(
+        upload(&app, OWNER_KEY, first, &[(&hash, &model)]).await.0,
+        200
+    );
+    assert!(referenced().await, "the upload record keeps the file");
+    save(second, STRANGER_KEY).await;
+    assert!(
+        referenced().await,
+        "a save naming an uploaded file keeps its record"
+    );
+    assert_eq!(
+        uploaders(&app.pool, &hash).await,
+        vec![address(OWNER_KEY)],
+        "naming the hash records nothing for the namer"
+    );
+    assert_eq!(
+        upload(&app, STRANGER_KEY, second, &[(&hash, &model)])
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        uploaders(&app.pool, &hash).await.len(),
+        2,
+        "a second wallet uploading the same bytes is recorded too"
+    );
+
+    let (got, _) = send(
+        &app,
+        OWNER_KEY,
+        "DELETE",
+        &format!("/v1/items/{first}"),
+        Body::empty(),
+        "application/json",
+    )
+    .await;
+    assert_eq!(got, 200);
+    assert_eq!(
+        uploaders(&app.pool, &hash).await.len(),
+        2,
+        "another item still names the file"
+    );
+    assert!(
+        referenced().await,
+        "the collector keeps a file another item names"
+    );
+
+    let (got, _) = put(
+        &app,
+        STRANGER_KEY,
+        &format!("/v1/items/{second}"),
+        &item(
+            second,
+            STRANGER_KEY,
+            None,
+            &[("other.glb", &dcl_auth::hash_bytes_v1(b"other"))],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(got, 200);
+    assert!(
+        uploaders(&app.pool, &hash).await.is_empty(),
+        "no item names the file any more"
+    );
+    assert!(!referenced().await, "the collector may take the file");
 }
 
 #[tokio::test]
@@ -753,6 +1239,157 @@ async fn an_item_part_is_taken_across_the_providers_collections_and_only_its_man
         (200, Some(cap.to_string().as_str())),
         "a save by URN reaches an item of a collection another wallet created: {body}"
     );
+}
+
+#[tokio::test]
+async fn an_upload_at_the_bound_is_stored_and_one_byte_more_or_a_larger_body_is_too_large() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let at_bound = vec![1u8; crate::items::upload::MAX_BYTES];
+    let over = vec![2u8; crate::items::upload::MAX_BYTES + 1];
+    let body_over = vec![3u8; 22 * 1024 * 1024];
+    let hashes = [&at_bound, &over, &body_over].map(|bytes| dcl_auth::hash_bytes_v1(bytes));
+    let id = Uuid::new_v4();
+    let contents: Vec<(&str, &str)> = vec![
+        ("at.bin", hashes[0].as_str()),
+        ("over.bin", hashes[1].as_str()),
+        ("body.bin", hashes[2].as_str()),
+    ];
+    let saved = put(
+        &app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &contents, None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    for (label, bytes, hash, status) in [
+        ("one byte over the bound", &over, &hashes[1], 413),
+        ("a body over the request bound", &body_over, &hashes[2], 413),
+        ("exactly the bound", &at_bound, &hashes[0], 200),
+    ] {
+        let (got, body) = upload(&app, OWNER_KEY, id, &[(hash.as_str(), bytes.as_slice())]).await;
+        assert_eq!(got, status, "{label}: {body}");
+        if status == 413 {
+            assert_eq!(body["error"], "The upload is too large", "{label}");
+            assert!(
+                uploaders(&app.pool, hash).await.is_empty(),
+                "{label} recorded"
+            );
+        }
+    }
+}
+
+const ITEM_DOCUMENTS_RELEASE: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/builder-item-documents-and-uploaders.sql"
+));
+
+async fn back_to_the_shape_before_the_release(pool: &PgPool) {
+    sqlx::raw_sql(
+        "ALTER TABLE builder.items DROP CONSTRAINT items_data_object_check; \
+         ALTER TABLE builder.items DROP CONSTRAINT items_metrics_object_check; \
+         ALTER TABLE builder.items ALTER COLUMN data DROP DEFAULT; \
+         ALTER TABLE builder.items ALTER COLUMN data TYPE jsonb USING data::jsonb; \
+         ALTER TABLE builder.items ALTER COLUMN data SET DEFAULT '{}'::jsonb; \
+         ALTER TABLE builder.items ALTER COLUMN metrics TYPE jsonb USING metrics::jsonb; \
+         ALTER TABLE builder.items ADD CONSTRAINT items_data_object_check CHECK (jsonb_typeof(data) = 'object'); \
+         ALTER TABLE builder.items ADD CONSTRAINT items_metrics_object_check \
+           CHECK (metrics IS NULL OR jsonb_typeof(metrics) = 'object'); \
+         ALTER TABLE builder.uploaded_contents DROP CONSTRAINT uploaded_contents_pkey; \
+         ALTER TABLE builder.uploaded_contents ADD CONSTRAINT uploaded_contents_pkey PRIMARY KEY (hash);",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn item_saves_and_uploads_wait_for_the_documents_release_and_reads_do_not() {
+    let Some(before) = app().await else {
+        return;
+    };
+    let bytes = b"waits for the release".as_slice();
+    let hash = dcl_auth::hash_bytes_v1(bytes);
+    let id = Uuid::new_v4();
+    let body = item(id, OWNER_KEY, None, &[("model.glb", &hash)], None);
+    let saved = put(&before, OWNER_KEY, &format!("/v1/items/{id}"), &body).await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    back_to_the_shape_before_the_release(&before.pool).await;
+    let app = over(before.pool.clone()).await;
+
+    let waits = |label: &str, (status, body): (u16, Value)| {
+        assert_eq!(status, 503, "{label}: {body}");
+        assert_eq!(body["ok"], false, "{label}");
+        assert!(
+            body["error"].as_str().is_some_and(
+                |e| e.contains("schemas/releases/builder-item-documents-and-uploaders.sql")
+            ),
+            "{label}: {body}"
+        );
+    };
+    waits(
+        "a save",
+        put(&app, OWNER_KEY, &format!("/v1/items/{id}"), &body).await,
+    );
+    let other = Uuid::new_v4();
+    waits(
+        "a new item",
+        put(
+            &app,
+            OWNER_KEY,
+            &format!("/v1/items/{other}"),
+            &item(other, OWNER_KEY, None, &[], None),
+        )
+        .await,
+    );
+    waits(
+        "an upload",
+        upload(&app, OWNER_KEY, id, &[(&hash, bytes)]).await,
+    );
+    assert!(
+        uploaders(&app.pool, &hash).await.is_empty(),
+        "an upload before the release recorded"
+    );
+
+    let read = send(
+        &app,
+        OWNER_KEY,
+        "GET",
+        &format!("/v1/items/{id}"),
+        Body::empty(),
+        "application/json",
+    )
+    .await;
+    assert_eq!(read.0, 200, "{read:?}");
+    assert_eq!(read.1["data"]["contents"]["model.glb"], hash.as_str());
+    let listed = send(
+        &app,
+        OWNER_KEY,
+        "GET",
+        &format!("/v1/{}/items", address(OWNER_KEY)),
+        Body::empty(),
+        "application/json",
+    )
+    .await;
+    assert_eq!(listed.0, 200, "{listed:?}");
+    assert_eq!(listed.1["data"][0]["id"], id.to_string());
+
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        ITEM_DOCUMENTS_RELEASE.replace("\\set ON_ERROR_STOP on\n", ""),
+    ))
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        put(&app, OWNER_KEY, &format!("/v1/items/{id}"), &body)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, bytes)]).await.0, 200);
+    assert_eq!(uploaders(&app.pool, &hash).await, vec![address(OWNER_KEY)]);
 }
 
 #[tokio::test]

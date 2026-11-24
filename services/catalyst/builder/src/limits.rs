@@ -35,6 +35,7 @@
 //! [`WALLET_UPLOAD_FILES`] ([`within_storage`], [`charge_upload`]). A
 //! wallet's drafts are bounded by [`Documents`].
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -204,12 +205,30 @@ impl Held<i64> {
             files: self.files.saturating_add(other.files),
         }
     }
+
+    fn minus(self, other: Held<i64>) -> Held<i64> {
+        Held {
+            bytes: self.bytes.saturating_sub(other.bytes).max(0),
+            files: self.files.saturating_sub(other.files).max(0),
+        }
+    }
 }
 
-/// What this process stored as unpublished uploads since it began.
+/// What the node's uploads held when last counted ([`Tallies`]).
+struct Tally {
+    at: Instant,
+    generation: u64,
+    node: Held<i64>,
+    wallets: HashMap<String, (Held<i64>, Held<i64>)>,
+}
+
+/// The node's count of unpublished uploads: one count at a time, kept
+/// [`UNPUBLISHED_KEPT`], with what this process stored since it began.
 #[derive(Default)]
 struct Tallies {
+    last: Mutex<Option<Arc<Tally>>>,
     added: Mutex<Held<i64>>,
+    counting: tokio::sync::Mutex<()>,
 }
 
 /// `per` tokens every `window`, refilled continuously.
@@ -480,6 +499,89 @@ impl Drop for Upload {
     }
 }
 
+/// Refuses an upload by `wallet` before its body is read. 429 while its
+/// source address ([`upload_source`]) has sent its day of
+/// [`SOURCE_UPLOAD_MIB`] or [`SOURCE_UPLOAD_FILES`], or the wallet its
+/// [`WALLET_UPLOAD_FILES`] (what it sends is charged when the [`Upload`]
+/// drops, at [`NEAR_BOUND_PRICE`] for the source once every
+/// wallet's unpublished uploads hold half the node's bound); 413 when the
+/// wallet's unpublished uploads hold its bound of files, or could take its
+/// bound of bytes with this body ([`WALLET_FILES`], [`WALLET_BYTES`]); 507
+/// when every wallet's together hold the node's ([`NODE_FILES`],
+/// [`NODE_BYTES`]). The body's declared length, else `most`, the route's
+/// largest body, counts as stored; the route refused a longer one first.
+/// The unpublished uploads are counted at most once every [`UNPUBLISHED_KEPT`], by one count at a time and never
+/// on the request's way unless none is kept or the wallet passes its bound
+/// by the sum of its records; meanwhile a wallet's count moves by what its
+/// records gained or lost, the node's by what this process stored.
+pub async fn within_storage(
+    state: &SharedState,
+    wallet: &str,
+    headers: &HeaderMap,
+    most: u64,
+) -> Result<Upload, ApiError> {
+    let incoming = declared_length(headers).unwrap_or(most);
+    let limits = &state.limits;
+    let node_bound = Held {
+        bytes: limits.node_bytes,
+        files: limits.node_files,
+    };
+    let wallet_bound = Held {
+        bytes: limits.wallet_bytes,
+        files: limits.wallet_files,
+    };
+    let tally = limits.tallies.latest(state).await?;
+    let node = tally.node.plus(*lock(&limits.tallies.added));
+    let price = if near(node, node_bound) {
+        NEAR_BOUND_PRICE
+    } else {
+        1
+    };
+    let source = upload_source(headers);
+    let now = (state.now)();
+    if let Some(source) = &source {
+        limits.probe(&limits.source_upload_mib, source, price, now)?;
+        limits.probe(&limits.source_upload_files, source, price, now)?;
+    }
+    limits.probe(&limits.wallet_upload_files, wallet, 1, now)?;
+    let records = crate::access::uploaded(state.items.pool(), Some(wallet)).await?;
+    if past(records, incoming, wallet_bound).is_some() {
+        let mut tally = if limits.fresh(&tally, now) {
+            tally
+        } else {
+            limits.tallies.fresh(state).await?
+        };
+        if !tally.wallets.contains_key(wallet) {
+            tally = limits.tallies.after(state, tally.generation).await?;
+        }
+        let held = tally
+            .wallets
+            .get(wallet)
+            .map_or(records, |(held, counted)| {
+                held.plus(records).minus(*counted)
+            });
+        if let Some(over) = past(held, incoming, wallet_bound) {
+            return Err(
+                ApiError::http(413, "The wallet's unpublished files reached their limit")
+                    .with_data(over),
+            );
+        }
+    }
+    if let Some(over) = past(node, incoming, node_bound) {
+        return Err(
+            ApiError::http(507, "The node's unpublished files reached their limit").with_data(over),
+        );
+    }
+    Ok(Upload {
+        state: state.clone(),
+        source,
+        wallet: wallet.to_string(),
+        price,
+        received: Arc::default(),
+        files: 1,
+    })
+}
+
 /// The body length a request declares in `Content-Length`.
 pub fn declared_length(headers: &HeaderMap) -> Option<u64> {
     headers
@@ -487,11 +589,128 @@ pub fn declared_length(headers: &HeaderMap) -> Option<u64> {
         .and_then(|v| v.to_str().ok()?.parse().ok())
 }
 
+/// The bound `held` passes with `incoming` more bytes, as `{maxBytes}` or
+/// `{maxFiles}`; `None` within it.
+fn past(held: Held<i64>, incoming: u64, bound: Held<u64>) -> Option<serde_json::Value> {
+    let (bytes, files) = (
+        u64::try_from(held.bytes).unwrap_or(0),
+        u64::try_from(held.files).unwrap_or(0),
+    );
+    if bytes.saturating_add(incoming) > bound.bytes {
+        Some(serde_json::json!({ "maxBytes": bound.bytes }))
+    } else if files >= bound.files {
+        Some(serde_json::json!({ "maxFiles": bound.files }))
+    } else {
+        None
+    }
+}
+
+/// Whether `held` reaches half of `bound` in bytes or files.
+fn near(held: Held<i64>, bound: Held<u64>) -> bool {
+    i128::from(held.bytes) * 2 >= i128::from(bound.bytes)
+        || i128::from(held.files) * 2 >= i128::from(bound.files)
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-impl Limits {}
+impl Limits {
+    /// 429 unless `budget` holds `cost` for `key` now; spends nothing.
+    fn probe(
+        &self,
+        budget: &RateLimiter,
+        key: &str,
+        cost: u32,
+        now: DateTime<Utc>,
+    ) -> Result<(), ApiError> {
+        self.take_cost(budget, key, cost, now)?;
+        budget.refund(key, cost);
+        Ok(())
+    }
+
+    fn fresh(&self, tally: &Tally, now: DateTime<Utc>) -> bool {
+        self.instant(now).saturating_duration_since(tally.at) < UNPUBLISHED_KEPT
+    }
+}
+
+impl Tallies {
+    /// The last count, counting when none is kept; a count past
+    /// [`UNPUBLISHED_KEPT`] still answers while a new one runs in a task of
+    /// its own.
+    async fn latest(&self, state: &SharedState) -> Result<Arc<Tally>, ApiError> {
+        let Some(last) = lock(&self.last).clone() else {
+            return self.fresh(state).await;
+        };
+        if !state.limits.fresh(&last, (state.now)()) && self.counting.try_lock().is_ok() {
+            let state = state.clone();
+            tokio::spawn(async move {
+                if let Err(error) = state.limits.tallies.fresh(&state).await {
+                    tracing::warn!(%error, "builder: counting the unpublished uploads failed");
+                }
+            });
+        }
+        Ok(last)
+    }
+
+    /// A count younger than [`UNPUBLISHED_KEPT`], waiting for the one
+    /// running or making one.
+    async fn fresh(&self, state: &SharedState) -> Result<Arc<Tally>, ApiError> {
+        let _counting = self.counting.lock().await;
+        if let Some(last) = lock(&self.last).clone()
+            && state.limits.fresh(&last, (state.now)())
+        {
+            return Ok(last);
+        }
+        self.count(state).await
+    }
+
+    /// A count made after the count `generation`, waiting for the one
+    /// running or making one.
+    async fn after(&self, state: &SharedState, generation: u64) -> Result<Arc<Tally>, ApiError> {
+        let _counting = self.counting.lock().await;
+        if let Some(last) = lock(&self.last).clone()
+            && last.generation > generation
+        {
+            return Ok(last);
+        }
+        self.count(state).await
+    }
+
+    async fn count(&self, state: &SharedState) -> Result<Arc<Tally>, ApiError> {
+        let limits = &state.limits;
+        let generation = lock(&self.last)
+            .as_ref()
+            .map_or(0, |last| last.generation + 1);
+        let at = limits.instant((state.now)());
+        let before = *lock(&self.added);
+        let near_wallet = Held {
+            bytes: limits
+                .wallet_bytes
+                .saturating_sub(crate::items::video::BODY_LIMIT as u64),
+            files: limits
+                .wallet_files
+                .saturating_sub(crate::items::upload::MAX_FILES as u64),
+        };
+        let half_node = Held {
+            bytes: limits.node_bytes / 2,
+            files: limits.node_files / 2,
+        };
+        let (node, wallets) =
+            crate::access::tally_uploads(state.items.pool(), near_wallet, half_node).await?;
+        let tally = Arc::new(Tally {
+            at,
+            generation,
+            node,
+            wallets,
+        });
+        *lock(&self.last) = Some(tally.clone());
+        let mut added = lock(&self.added);
+        *added = added.minus(before);
+        drop(added);
+        Ok(tally)
+    }
+}
 
 /// `bytes` in `files` this process stored as upload records, which count
 /// toward the node's bound until the next count.
@@ -567,4 +786,51 @@ pub fn charge(state: &SharedState, headers: &HeaderMap, signer: Option<&str>, to
 }
 
 #[cfg(test)]
-mod tally_tests {}
+mod tally_tests {
+    use std::sync::Arc;
+
+    use super::{Held, lock};
+
+    /// A count that fails keeps what this process stored since the last
+    /// one, so the node's figure still holds it.
+    #[tokio::test]
+    async fn a_failed_count_keeps_what_this_process_stored() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let state = Arc::new(
+            crate::State::new(
+                pool.clone(),
+                crate::tests::support::temp_storage().await,
+                Arc::default(),
+                dcl_http::Outbound::for_tests(),
+                None,
+                None,
+                crate::Settings::default(),
+            )
+            .unwrap(),
+        );
+        let tallies = &state.limits.tallies;
+        tallies.count(&state).await.unwrap();
+        super::stored(&state, 10, 1);
+        sqlx::query("ALTER TABLE builder.uploaded_contents RENAME TO uploaded_contents_away")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(tallies.count(&state).await.is_err());
+        let kept = *lock(&tallies.added);
+        sqlx::query("ALTER TABLE builder.uploaded_contents_away RENAME TO uploaded_contents")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            kept,
+            Held {
+                bytes: 10,
+                files: 1
+            }
+        );
+        tallies.count(&state).await.unwrap();
+        assert_eq!(*lock(&tallies.added), Held::default());
+    }
+}

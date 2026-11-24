@@ -171,6 +171,56 @@ async fn a_signer_over_its_write_budget_waits_before_its_body_is_read() {
 }
 
 #[tokio::test]
+async fn a_signer_over_its_read_budget_waits_and_a_failed_signature_spends_no_signers_budget() {
+    let app = app_over(lazy_pool(), |state| {
+        state.limits.wallet_reads = per_minute(2)
+    })
+    .await;
+    for mount in ["", "/builder-api"] {
+        assert_eq!(
+            send(&app, &file_read(Some(OWNER_KEY), None, mount)).await.0,
+            404
+        );
+    }
+    let (status, body, retry) = send(&app, &file_read(Some(OWNER_KEY), None, "")).await;
+    assert_eq!(
+        (status, body.as_str(), retry.as_deref()),
+        (429, TOO_MANY, Some("30"))
+    );
+    assert_eq!(
+        send(&app, &file_read(None, None, "")).await.0,
+        404,
+        "unsigned reads spend no signer's budget"
+    );
+    assert_eq!(
+        send(&app, &file_read(Some(OTHER_KEY), None, "")).await.0,
+        404
+    );
+
+    let mut forged = Request::builder().uri(format!("/v1/storage/contents/{NOT_A_CID}"));
+    for (name, value) in signed_map(OTHER_KEY, "get", "/v1/somewhere-else", "{}", false).await {
+        forged = forged.header(name, value);
+    }
+    for _ in 0..3 {
+        let response = app.clone().oneshot(forged_request(&forged)).await.unwrap();
+        assert_eq!(response.status().as_u16(), 401);
+    }
+    assert_eq!(
+        send(&app, &file_read(Some(OTHER_KEY), None, "")).await.0,
+        404,
+        "requests that claim a signer without its signature spend nothing of its budget"
+    );
+}
+
+fn forged_request(template: &axum::http::request::Builder) -> Request<Body> {
+    let mut request = Request::builder().uri(template.uri_ref().unwrap().clone());
+    for (name, value) in template.headers_ref().unwrap() {
+        request = request.header(name, value);
+    }
+    request.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
 async fn a_source_over_its_budget_waits_whoever_signs_and_an_internal_source_has_none() {
     let app = app_over(lazy_pool(), |state| {
         state.limits.source_reads = per_minute(4);
@@ -322,6 +372,104 @@ async fn seeded(state: &crate::SharedState, n: usize) -> Uuid {
     collection
 }
 
+async fn a_listing_charges_its_rows(
+    listing: impl Fn(Uuid) -> String,
+    committee: bool,
+    item_curations: bool,
+) {
+    for by_source in [false, true] {
+        let Some(pool) = super::validator::own_pool().await else {
+            return;
+        };
+        let registry = match committee {
+            true => {
+                super::support::committee_index(&super::support::FakeCommittee::with(&[
+                    &super::validator::address(OWNER_KEY),
+                ]))
+                .await
+            }
+            false => super::support::registry_only_index().await,
+        };
+        let (app, state) = node_over(pool, |state| {
+            state.market = Some(registry);
+            state.limits = crate::limits::Limits::unbounded();
+            if by_source {
+                state.limits.source_reads = per_minute(5);
+            } else {
+                state.limits.wallet_reads = per_minute(5);
+            }
+        })
+        .await;
+        let collection = seeded(&state, 60).await;
+        if item_curations {
+            sqlx::query(
+                "INSERT INTO builder.item_curations (id, item_id, status, content_hash) \
+                 SELECT gen_random_uuid(), id, 'pending', repeat('a', 64) FROM builder.items WHERE collection_id = $1",
+            )
+            .bind(collection)
+            .execute(state.items.pool())
+            .await
+            .unwrap();
+        }
+        let source = by_source.then_some(SOURCE);
+        let call = |path: String, key| Call {
+            key: Some(key),
+            source,
+            ..Call::get(path)
+        };
+        let (status, body, _) = send(&app, &call(listing(collection), OWNER_KEY)).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            send(
+                &app,
+                &call(format!("/v1/storage/contents/{NOT_A_CID}"), OWNER_KEY)
+            )
+            .await
+            .0,
+            404
+        );
+        let next = if by_source { OTHER_KEY } else { OWNER_KEY };
+        let (status, _, retry) = send(
+            &app,
+            &call(format!("/v1/storage/contents/{NOT_A_CID}"), next),
+        )
+        .await;
+        assert_eq!(
+            (status, retry.as_deref()),
+            (429, Some("12")),
+            "{}",
+            listing(collection)
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_collections_items_cost_their_reader_by_the_row() {
+    a_listing_charges_its_rows(|id| format!("/v1/collections/{id}/items"), false, false).await;
+}
+
+#[tokio::test]
+async fn an_addresss_items_cost_their_reader_by_the_row() {
+    let owner = super::validator::address(OWNER_KEY);
+    a_listing_charges_its_rows(
+        move |_| format!("/builder-api/v1/{owner}/items"),
+        false,
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn every_item_costs_the_committee_member_by_the_row() {
+    a_listing_charges_its_rows(|_| "/v1/items".to_string(), true, false).await;
+}
+
+#[tokio::test]
+async fn an_addresss_collections_cost_their_reader_by_the_row() {
+    let owner = super::validator::address(OWNER_KEY);
+    a_listing_charges_its_rows(move |_| format!("/v1/{owner}/collections"), false, false).await;
+}
+
 #[tokio::test]
 async fn the_public_collection_search_costs_its_source_as_fifty_reads() {
     let Some(pool) = super::validator::own_pool().await else {
@@ -342,6 +490,34 @@ async fn the_public_collection_search_costs_its_source_as_fifty_reads() {
             &Call {
                 source: Some(OTHER_SOURCE),
                 ..Call::get("/v1/collections?is_published=true&q=a")
+            }
+        )
+        .await
+        .0,
+        200
+    );
+}
+
+#[tokio::test]
+async fn the_addresses_listing_costs_its_source_as_fifty_reads() {
+    let Some(pool) = super::validator::own_pool().await else {
+        return;
+    };
+    let app = app_over(pool, |state| state.limits.source_reads = per_minute(102)).await;
+    let addresses = |query: &str| Call {
+        source: Some(SOURCE),
+        ..Call::get(format!("/v1/addresses{query}"))
+    };
+    assert_eq!(send(&app, &addresses("")).await.0, 200);
+    assert_eq!(send(&app, &addresses("?tag=hat")).await.0, 200);
+    let (status, _, retry) = send(&app, &addresses("?tag=other")).await;
+    assert_eq!((status, retry.as_deref()), (429, Some("1")));
+    assert_eq!(
+        send(
+            &app,
+            &Call {
+                source: Some(OTHER_SOURCE),
+                ..Call::get("/v1/addresses")
             }
         )
         .await
@@ -529,6 +705,60 @@ async fn every_item_answers_the_committee_member_at_most_its_cap() {
         answered["data"].as_array().unwrap().len(),
         crate::items::listing::EVERY_ITEM_CAP as usize
     );
+}
+
+#[tokio::test]
+async fn a_wallets_drafts_answer_at_most_their_cap_and_cost_it_by_the_row() {
+    let Some(pool) = super::validator::own_pool().await else {
+        return;
+    };
+    let owner = super::validator::address(OWNER_KEY);
+    sqlx::query(
+        "INSERT INTO builder.items (id, name, eth_address, type) \
+         SELECT gen_random_uuid(), 'Draft ' || g, $1, 'wearable' \
+         FROM generate_series(1, $2) g",
+    )
+    .bind(&owner)
+    .bind(crate::drafts::DRAFTS_CAP as i32 + 1)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reads = crate::limits::WALLET_READS;
+    let registry = super::support::registry_only_index().await;
+    let app = app_over(pool, |state| {
+        state.market = Some(registry);
+        state.limits = crate::limits::Limits::unbounded();
+        state.limits.wallet_reads = per_minute(reads);
+    })
+    .await;
+    let drafts = Call {
+        key: Some(OWNER_KEY),
+        ..Call::get("/v1/drafts/items")
+    };
+    let (status, body, _) = send(&app, &drafts).await;
+    assert_eq!(status, 200);
+    let answered: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        answered["data"].as_array().unwrap().len(),
+        crate::drafts::DRAFTS_CAP as usize
+    );
+    let spent = 1 + crate::drafts::DRAFTS_CAP as u32 / crate::limits::ROWS_PER_TOKEN as u32;
+    for _ in spent..reads {
+        assert_eq!(
+            send(
+                &app,
+                &Call {
+                    key: Some(OWNER_KEY),
+                    ..Call::get(format!("/v1/storage/contents/{NOT_A_CID}"))
+                }
+            )
+            .await
+            .0,
+            404
+        );
+    }
+    let (status, _, _) = send(&app, &drafts).await;
+    assert_eq!(status, 429);
 }
 
 /// Incompressible text of `len` characters, different for each `seed`.
