@@ -717,14 +717,15 @@ fn update_scene_priority(
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
             if let Some(rate) = context.tick_rate_cap {
-                // its scene host drops the oldest global updates past its capacity, so a scene
-                // that has many unread is due whatever its band
-                let unread = global_updates_sent.saturating_sub(context.global_updates_read);
-                if unread >= GLOBAL_UPDATE_BACKLOG_DUE {
+                if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
+                    // its scene host drops the oldest global updates past its capacity, so a
+                    // scene that has many unread is due whatever its band
+                    let unread = global_updates_sent.saturating_sub(context.global_updates_read);
+                    if unread < GLOBAL_UPDATE_BACKLOG_DUE {
+                        skipped_rate_capped += 1;
+                        return None;
+                    }
                     released_by_global_updates += 1;
-                } else if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
-                    skipped_rate_capped += 1;
-                    return None;
                 }
             }
             updates.eligible_jobs += 1;
@@ -1355,10 +1356,11 @@ mod player_scenes_tests {
         world.run_system_once(update_scene_priority).unwrap();
         assert!(!queued(&world).contains(&east));
 
+        // another scene spawns, and the host replays one update to every scene of the context
         world
             .get_mut::<GlobalCrdtState>(crdt)
             .unwrap()
-            .update_time(0.5);
+            .count_replayed(1);
         world.run_system_once(update_scene_priority).unwrap();
         assert!(queued(&world).contains(&east));
         assert_eq!(

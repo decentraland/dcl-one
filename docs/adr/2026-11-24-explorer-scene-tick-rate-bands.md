@@ -28,10 +28,14 @@ and main-thread time each frame there is spare time, whether or not the player c
   after tokio's rounding), which the scene drains only at a tick, and past which the oldest are
   dropped with no resynchronization: a lost join or leave shows a missing or ghost player when
   the player returns. A busy island can send more than that in two seconds, so a rate alone
-  does not bound the loss. `GlobalCrdtState::sent` counts the updates sent; each dispatch
-  records it on the scene (`global_updates_read`), and a capped scene with
-  `GLOBAL_UPDATE_BACKLOG_DUE` (500) or more sent since is due whatever its band. Only that scene
-  is released. The slow tick keeps a scene's other channels, such as scene comms, moving.
+  does not bound the loss. `GlobalCrdtState::sent` counts the updates delivered to each host:
+  every update sent, plus, when a scene spawns, the updates since its snapshot that the native
+  forwarder replays to every scene of the context (`count_replayed`). Each dispatch records the
+  count on the scene (`global_updates_read`), and a capped scene with `GLOBAL_UPDATE_BACKLOG_DUE`
+  (500) or more delivered since is due whatever its band. Only that scene is released. Updates
+  sent between a spawn and the forwarder's swap are replayed uncounted; the 524 entries between
+  the threshold and the hosts' capacity cover that window. The slow tick keeps a scene's other
+  channels, such as scene comms, moving.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, so the cap only removes ticks. Age grows a frame at a time, so

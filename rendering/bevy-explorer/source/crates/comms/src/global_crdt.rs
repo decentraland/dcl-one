@@ -1,10 +1,4 @@
-use std::{
-    f32::consts::TAU,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::{f32::consts::TAU, sync::Arc};
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -319,8 +313,8 @@ pub struct GlobalCrdtState {
     pub(crate) realm_bounds: (IVec2, IVec2),
     // per-component localizer registry (populated as components are first sent)
     localizers: HashMap<SceneComponentId, Localizer>,
-    // updates sent to scenes since the context was created
-    sent: AtomicU64,
+    // updates delivered to each scene host since the context was created (`sent`)
+    sent: u64,
 }
 
 impl GlobalCrdtState {
@@ -337,7 +331,7 @@ impl GlobalCrdtState {
             lookup: Default::default(),
             realm_bounds: (IVec2::MAX, IVec2::MIN),
             localizers: Default::default(),
-            sent: AtomicU64::new(0),
+            sent: 0,
         }
     }
 }
@@ -464,11 +458,19 @@ impl GlobalCrdtState {
         (store, self.int_sender.subscribe())
     }
 
-    /// The updates sent to this context's scenes since it was created. A scene host forwards
-    /// each to the scene, which reads them at its next tick: the count at a scene's dispatch
-    /// bounds what it has read.
+    /// The updates delivered to each of this context's scene hosts since it was created: every
+    /// update sent, plus those replayed to every scene when a scene spawns
+    /// (`count_replayed`). A scene reads what its host holds at its next tick, so the count at a
+    /// scene's dispatch bounds what it has read.
     pub fn sent(&self) -> u64 {
-        self.sent.load(Ordering::Relaxed)
+        self.sent
+    }
+
+    /// Counts `replayed` updates a scene host delivers to every scene of this context a second
+    /// time: the native IPC forwarder replays a spawning scene's receiver (the updates since
+    /// its snapshot) to the whole context.
+    pub fn count_replayed(&mut self, replayed: u64) {
+        self.sent += replayed;
     }
 
     pub fn set_bounds(&mut self, min: IVec2, max: IVec2) {
@@ -538,14 +540,12 @@ impl GlobalCrdtState {
 
     // a broadcast send fails exactly when there are no subscribers, which is the
     // normal state whenever no scenes are live — not an error, just nobody listening
-    fn send_update(&self, update: GlobalCrdtStateUpdate, what: &str) {
+    fn send_update(&mut self, update: GlobalCrdtStateUpdate, what: &str) {
         if self.int_sender.receiver_count() == 0 {
             return;
         }
         match self.int_sender.send(update) {
-            Ok(_) => {
-                self.sent.fetch_add(1, Ordering::Relaxed);
-            }
+            Ok(_) => self.sent += 1,
             Err(e) => error!("failed to send {what} update to scenes: {e}"),
         }
     }

@@ -709,6 +709,7 @@ pub(crate) fn initialize_scene(
     editor_mode: Res<EditorMode>,
     portable_scenes: Res<PortableScenes>,
     mobile_ui: Res<MobileUiEmulation>,
+    mut crdt_contexts: Query<&mut GlobalCrdtState>,
 ) {
     for (root, mut state, initial_data, mut context, super_user) in loading_scenes.iter_mut() {
         if !matches!(state.as_mut(), SceneLoading::Javascript { .. })
@@ -772,6 +773,14 @@ pub(crate) fn initialize_scene(
         );
         if mobile_ui.0 && super_user.is_none() {
             scene_context.platform = Some("mobile".to_owned());
+        }
+
+        // the native forwarder replays what this receiver holds to every scene of the context;
+        // the web relay does not, where counting it only makes a capped scene due sooner. An
+        // update sent between here and the forwarder's swap is replayed uncounted: the margin
+        // between `GLOBAL_UPDATE_BACKLOG_DUE` and the hosts' capacity covers it
+        if let Ok(mut crdt) = crdt_contexts.get_mut(crdt_context) {
+            crdt.count_replayed(global_updates.len() as u64);
         }
 
         let wake = SceneWake::default();

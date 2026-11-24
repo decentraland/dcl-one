@@ -72,7 +72,7 @@ pub struct RendererSceneContext {
     /// each frame; `None` at the full rate.
     pub(crate) tick_rate_cap: Option<f32>,
     /// `GlobalCrdtState::sent` of the scene loop's crdt contexts at this scene's last dispatch:
-    /// the scene has read every global update up to it.
+    /// the scene has read every global update its host held then, replays included.
     pub(crate) global_updates_read: u64,
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.
