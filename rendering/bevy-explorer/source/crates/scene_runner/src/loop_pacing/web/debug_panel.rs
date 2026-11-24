@@ -17,6 +17,7 @@ struct ModeView {
     name: &'static str,
     frame_deadline: bool,
     waits_for_replies: bool,
+    relay_wake: bool,
 }
 
 // milliseconds, to the microsecond
@@ -26,7 +27,8 @@ fn ms(duration: Duration) -> f64 {
 
 /// `/scene_loop_state`: `frame` is the frame target (None uncapped), `tail_measured` whether the
 /// pipelined-rendering diagnostics measure the frame's tail, `woken` the titles of the scenes the
-/// engine wakes.
+/// engine wakes. Only a mode that wakes the relays lists them: in any other, every relay keeps its
+/// poll, whatever its scene's flag.
 fn state(
     pacing: &LoopPacing,
     mode: ModeView,
@@ -66,6 +68,9 @@ fn state(
             "The legacy mode sleeps its waits for replies and records no lateness.",
         )
     };
+    let woken = mode
+        .relay_wake
+        .then(|| json!({"count": woken.len(), "scenes": woken}));
     json!({
         "mode": mode.name,
         "deadline": deadline,
@@ -74,12 +79,13 @@ fn state(
         "tail": reserve.zip(pacing.tail.p90()).map(|(reserve, p90)| [ms(p90), ms(reserve)]),
         "tailFrames": pacing.tail.len,
         "lateness": lateness.map(ms),
-        "woken": {"count": woken.len(), "scenes": woken},
+        "woken": woken,
         "unavailable": {
             "budget": "No scene loop has run yet.",
             "handoffGap": "No frame has handed over to the render worker after a scene loop yet.",
             "tail": tail_reason,
             "lateness": lateness_reason,
+            "woken": "This mode does not wake the relays: each keeps its poll.",
         },
     })
 }
@@ -171,6 +177,7 @@ mod commands {
             name: mode.name(),
             frame_deadline: mode.frame_deadline(),
             waits_for_replies: mode.loop_waits_for_replies(),
+            relay_wake: mode.relay_wake(),
         };
         let tail_measured = store.get(&WAIT_HANDOFF).is_some();
         input.reply_ok(
@@ -216,6 +223,7 @@ mod tests {
         name: "both",
         frame_deadline: true,
         waits_for_replies: true,
+        relay_wake: true,
     };
 
     #[test]
@@ -276,9 +284,37 @@ mod tests {
             name: "legacy",
             frame_deadline: false,
             waits_for_replies: false,
+            relay_wake: false,
         };
         let state = super::state(&pacing, legacy, Some(T), true, now, Vec::new());
         assert_eq!(state["deadline"], "Grid (this mode keeps it)");
         assert!(state["lateness"].is_null());
+    }
+
+    /// A scene's flag is set in every mode, but only `both` and `relay` wake its relay: the
+    /// others list no woken scene and say why.
+    #[test]
+    fn a_mode_that_does_not_wake_the_relays_lists_no_woken_scene() {
+        let now = Instant::now();
+        let pacing = LoopPacing::default();
+        let deadline = ModeView {
+            name: "deadline",
+            frame_deadline: true,
+            waits_for_replies: true,
+            relay_wake: false,
+        };
+        let state = state(
+            &pacing,
+            deadline,
+            Some(T),
+            true,
+            now,
+            vec!["Genesis Plaza".to_owned()],
+        );
+        assert!(state["woken"].is_null());
+        assert_eq!(
+            state["unavailable"]["woken"],
+            "This mode does not wake the relays: each keeps its poll."
+        );
     }
 }

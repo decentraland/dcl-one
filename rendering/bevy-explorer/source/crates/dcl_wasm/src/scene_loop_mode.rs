@@ -42,8 +42,7 @@ impl SceneLoopMode {
     }
 
     /// The relay waits for the engine's tick instead of sleeping.
-    #[cfg(any(target_arch = "wasm32", test))]
-    pub(crate) fn relay_wake(self) -> bool {
+    pub fn relay_wake(self) -> bool {
         matches!(self, Self::Relay | Self::Both)
     }
 
