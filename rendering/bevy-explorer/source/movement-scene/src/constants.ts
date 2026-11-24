@@ -8,10 +8,9 @@ export const WALK_SPEED = 1.5; // max walk speed
 export const JOG_SPEED = 8; // max run speed
 export const SPRINT_SPEED = 10; // max sprint speed
 
-// Horizontal input model. It is integrated in fixed steps inside each scene tick, so the result
-// does not depend on the frame rate or on how often the scene gets to answer.
-export const FIXED_STEP = 0.02; // s, length of one integration step (50 Hz)
-export const MAX_FIXED_STEPS = 13; // integration steps per tick at most (bounds a hitch)
+// Horizontal input model. It steps once per engine frame, by the frame's duration; each step integrates its
+// accelerations in closed form, so the result does not depend on the frame rate or on how often the scene answers.
+export const MAX_STEPS = 16; // steps per tick at most (a hitch longer than that takes longer steps)
 // Per input axis: a held key moves the axis speed toward its target at this acceleration (m/s^2).
 // The acceleration blends from the low to the high value as the input-hold weight goes from
 // ACCEL_CURVE_START to ACCEL_CURVE_END (smoothstep); the weight ramps over the accel time.
@@ -26,11 +25,14 @@ export const HORIZONTAL_ACCEL_TIME_GROUND = 0.5; // s for the input-hold weight 
 export const HORIZONTAL_DAMP_TIME_GROUND = 0;
 // Quadratic horizontal drag while airborne (1/m): dv/dt = -AIR_DRAG * |v| * v.
 export const AIR_DRAG = 0.2;
+// In the air the keys drive the move toward the gait speed v less AIR_SPEED_LOSS * v^2 (s/m): a jog 7.74 m/s, a run
+// 9.6 m/s, a glide 5.86 m/s.
+export const AIR_SPEED_LOSS = 0.004;
 // Linear damping of external (impulse/force) horizontal velocity (1/s): always, plus on ground.
 export const EXTERNAL_ENV_DRAG = 1.5;
 export const EXTERNAL_GROUND_FRICTION = 4;
 export const MAX_EXTERNAL_SPEED = 50;
-// Steps up to the current frame use the input of the previous tick.
+// The steps up to the current frame use the input of the previous tick.
 // Reply prediction: the engine applies a reply from the frame it lands on until the next one. The reply delay in frames
 // is estimated from previousStepTime / stepTime, and the reply carries the state predicted for the last frame it is held.
 export const FRAME_TIME_SMOOTHING = 0.1; // weight of the newest sample in the frame-time average
@@ -60,21 +62,27 @@ export const VERTICAL_STOP_DECEL = 5;
 // can't produce absurd speeds.
 export const MAX_SPEED = 30;
 
-// Jump: the player's own move on top of GRAVITY. It launches at the speed that reaches its height while slowing at
-// JUMP_RISE_DECEL, so a 1 m jump peaks after 0.22 s (1.5 m: 0.27 s, 2 m: 0.32 s); from the apex the avatar falls
-// under GRAVITY. Heights are those of a jump released at once (AvatarLocomotionSettings jumpHeight, runJumpHeight,
-// doubleJumpHeight); a key held into JUMP_HOLD_TIME adds height, and a running jump blends toward JUMP_HEIGHT_SPRINT with speed.
+// Jump: the player's own move on top of GRAVITY. It launches at the speed that reaches its height, less the takeoff
+// loss below, while slowing at JUMP_RISE_DECEL, so a 1 m jump peaks after 0.21 s (1.5 m: 0.26 s, 2 m: 0.31 s); from
+// the apex the avatar falls under GRAVITY. Heights are those of a jump released at once (AvatarLocomotionSettings
+// jumpHeight, runJumpHeight, doubleJumpHeight); a key held into JUMP_HOLD_TIME adds height, and a running jump blends
+// toward JUMP_HEIGHT_SPRINT with speed.
 export const JUMP_HEIGHT = 1;
 export const JUMP_HEIGHT_SPRINT = 1.5;
 export const JUMP_RISE_DECEL = 40; // m/s^2, the jump's own slowdown from the launch to the apex
+// Takeoff loss: a jump launches at the speed v that rises its height less v * JUMP_TAKEOFF_TIME / 2, 0.09 m of a 1 m
+// jump (s).
+export const JUMP_TAKEOFF_TIME: number = 0.02;
 // Held jump: while the key is held, for JUMP_HOLD_TIME after the press, the player's own vertical acceleration (the
 // jump's slowdown, then the fall) is scaled by JUMP_HOLD_SCALE. A held ground jump rises about twice as high in twice
 // the time.
-export const JUMP_HOLD_TIME = 0.52; // s (26 steps)
+export const JUMP_HOLD_TIME = 0.52; // s
 export const JUMP_HOLD_SCALE = 0.5;
-// Steps a press is buffered before landing, and steps after leaving the ground that a jump
-// is still allowed (one window for both; off while moving up).
-export const JUMP_GRACE_STEPS = 8;
+// A press is buffered before landing: it still jumps on a landing whose step starts up to JUMP_BUFFER_TIME after the
+// step the press was due on. After leaving the ground, a press due less than JUMP_COYOTE_TIME after the last step on
+// the ground still jumps from the ground. Both are off while moving up.
+export const JUMP_BUFFER_TIME = 0.16; // s
+export const JUMP_COYOTE_TIME = 0.14; // s
 // Air jump: one per airtime, by a fresh press in the air after the ground jump (or once the grace window of a fall
 // off an edge has passed). The avatar holds its height for AIR_JUMP_HOVER_TIME (a flat hover, no height tracking),
 // then launches to DOUBLE_JUMP_HEIGHT (any gait). A press whose step reaches the ground is lost: the landing cancels
@@ -82,8 +90,8 @@ export const JUMP_GRACE_STEPS = 8;
 // jump key held in it counts. Scenes turn it off with InputModifier disableDoubleJump.
 export const DOUBLE_JUMP_HEIGHT = 2; // in-air jump height (m), overridden by the locomotion settings
 export const AIR_JUMP_COUNT = 1; // air jumps per airtime
-export const AIR_JUMP_COOLDOWN = 0.32; // s from the previous jump's press before an air jump can start (16 steps)
-export const AIR_JUMP_HOVER_TIME = 0.2; // s the height is held between the press and the launch (whole steps)
+export const AIR_JUMP_COOLDOWN = 0.32; // s from the previous jump's press before an air jump can start
+export const AIR_JUMP_HOVER_TIME = 0.2; // s the height is held from the end of the press step to the launch step
 export const AIR_JUMP_HOVER_SPEED = 0; // vertical speed during the hover (m/s)
 // Horizontal speed at the launch (m/s): max(AIR_JUMP_IMPULSE, current speed) along the keys held on the launch step;
 // no movement key held stops the horizontal move. 0 keeps the current speed (turned toward the keys).
@@ -97,12 +105,11 @@ export const GLIDE_FALL_SPEED = 1; // max fall speed while gliding (m/s)
 export const GLIDE_DAMP_TIME = 0.1;
 export const GLIDE_HORIZONTAL_SPEED = 6; // horizontal speed limit while gliding (m/s)
 export const GLIDE_MIN_GROUND_DISTANCE = 0.12; // model height above the ground (m)
-export const JUMP_TO_GLIDE_TIME = 0.52; // s from the latest jump's press (26 steps)
-export const GLIDE_COOLDOWN = 0.22; // s after the prop has closed (11 steps)
-// s from the press that opens the prop to the first step that glides (18 steps: the 0.333 s opening clip, seen a frame
-// later)
+export const JUMP_TO_GLIDE_TIME = 0.52; // s from the latest jump's press
+export const GLIDE_COOLDOWN = 0.22; // s after the prop has closed
+// s from the press that opens the prop to the first step that glides (the 0.333 s opening clip, seen a frame later)
 export const GLIDE_OPEN_TIME = 0.36;
-export const GLIDE_CLOSE_TIME = 0.28; // s the prop takes to close (14 steps: the 0.283 s closing clip)
+export const GLIDE_CLOSE_TIME = 0.28; // s the prop takes to close (the 0.283 s closing clip)
 // A prop that starts opening opens fully: a tap opens it, then it closes without gliding; a landing while it opens lets
 // it open, and it closes on the next step.
 export const GLIDE_TILT_DAMP_TIME = 0.3; // time constant for the glide tilt (animation playback time) to drift toward its target
@@ -116,7 +123,7 @@ export const GLIDE_TILT_FULL_ANGLE = 20; // orientation delta (degrees) at which
 // The hard landing clips play only on a stunning landing out of the long fall loop (other stunning landings play the
 // usual landing clip).
 export const LANDING_STUN_DROP = 8; // m
-export const LANDING_STUN_TIME = 0.76; // s from the landing step (38 steps)
+export const LANDING_STUN_TIME = 0.76; // s from the landing step
 
 export const TURN_MAX_DEGREES_SEC = 1040; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
 export const TURN_FULL_TIME = 0.1; // time to turn fully towards target

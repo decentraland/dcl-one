@@ -1,10 +1,10 @@
-// Step clock shared by the horizontal and vertical models. Both integrate in fixed steps
-// (FIXED_STEP); this module turns the engine's tick timing into the time each tick covers
+// Step clock shared by the horizontal and vertical models. Both step once per engine frame, by the
+// frame's duration; this module turns the engine's tick timing into the time each tick covers
 // and the reply delay to predict over.
-import { FRAME_TIME_SMOOTHING, MAX_TICK_TIME } from './constants';
+import { FRAME_TIME_SMOOTHING, MAX_STEPS, MAX_TICK_TIME } from './constants';
 
-// Time to add to the step accumulators this tick: from the end of the previous tick's frame
-// to the end of this tick's frame.
+// Time the models advance this tick: from the end of the previous tick's frame to the end of
+// this tick's frame.
 export var tickAdvance = 0;
 // Duration of this tick's frame (AvatarMovementInfo.stepTime).
 export var frameTime = 0;
@@ -38,3 +38,16 @@ export function beginTick(tickTime: number, stepTime: number, previousStepTime: 
   replyDelay = Math.max(0, Math.min(2, Math.round(ratio) - 1));
   replyDelaySmooth = Math.max(0, Math.min(2, meanRatio - 1));
 }
+
+// Steps that cover `time`: one per frame of this tick's frame length, the time split evenly
+// between them (a tick that covers missed frames runs one step per frame).
+export function stepsFor(time: number): number {
+  if (time <= 1e-9) return 0;
+  return frameTime > 0 ? Math.max(1, Math.min(MAX_STEPS, Math.round(time / frameTime))) : 1;
+}
+
+// Step length when one step is due and no frame length is known yet.
+export function oneStep(): number {
+  return frameTime > 0 ? frameTime : DEFAULT_STEP;
+}
+const DEFAULT_STEP = 1 / 60;
