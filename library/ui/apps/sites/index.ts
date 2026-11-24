@@ -209,6 +209,7 @@ export {
   CommunitySections
 } from './social/CommunityDetail'
 export { CommunityError } from './social/CommunityError'
+export { default as LdCreateCommunityView } from './social/LdCreateCommunityView'
 export {
   CommunityEventsList,
   type CommunityListMore,
