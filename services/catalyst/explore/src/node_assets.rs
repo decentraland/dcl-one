@@ -275,13 +275,17 @@ mod tests {
     #[test]
     fn native_posters_follow_the_public_mount_and_the_canonical_bucket() {
         let base = url::Url::parse("https://node.example/base").unwrap();
-        for path in [
-            "https://node.example/base/events-assets-099ac00/poster/night.webp",
-            "https://node.example/base/events-assets-099ac00/poster-vertical/art.png",
-            "https://node.example/base/events/assets/event-default.webp",
-        ] {
-            assert!(super::is_event_poster_url(path, Some(&base)), "{path}");
-            assert!(!super::is_event_poster_url(path, None), "{path}");
+        let root = url::Url::parse("https://node.example/").unwrap();
+        for mount in [&root, &base] {
+            for path in [
+                "/events-assets-099ac00/poster/night.webp",
+                "/events-assets-099ac00/poster-vertical/art.png",
+                "/events/assets/event-default.webp",
+            ] {
+                let url = format!("{}{path}", mount.as_str().trim_end_matches('/'));
+                assert!(super::is_event_poster_url(&url, Some(mount)), "{url}");
+                assert!(!super::is_event_poster_url(&url, None), "{url}");
+            }
         }
         assert!(super::is_event_poster_url(
             "https://events-assets-099ac00.decentraland.org/poster/night.webp",

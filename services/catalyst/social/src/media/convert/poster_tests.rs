@@ -207,11 +207,19 @@ async fn denied_and_invalid_native_posters_do_not_populate_the_cache() {
 
 #[tokio::test]
 async fn poster_limits_reject_oversized_bodies_and_dimensions() {
+    use image::ImageEncoder;
+
+    // The JPEG pixel data is small. Its embedded profile puts the source over 8 MiB.
+    let mut jpeg = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut jpeg);
+    encoder
+        .set_icc_profile(vec![0; MAX_THUMBNAIL_SOURCE_BYTES])
+        .unwrap();
+    encoder
+        .write_image(&[20, 40, 60], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
     for (source, expected) in [
-        (
-            Bytes::from(vec![0; MAX_THUMBNAIL_SOURCE_BYTES + 1]),
-            StatusCode::PAYLOAD_TOO_LARGE,
-        ),
+        (Bytes::from(jpeg), StatusCode::PAYLOAD_TOO_LARGE),
         (webp(8193, 2, 255), StatusCode::UNPROCESSABLE_ENTITY),
     ] {
         let (base, hits) = poster_source(webp(24, 12, 255), Some(source)).await;
@@ -225,6 +233,22 @@ async fn poster_limits_reject_oversized_bodies_and_dimensions() {
         assert_jpeg(&bytes, (24, 12));
         assert_eq!(hits.load(Ordering::SeqCst), 2);
     }
+}
+
+#[tokio::test]
+async fn video_at_a_poster_url_keeps_the_native_video_contract() {
+    let original = video("mp4");
+    let (base, _) = poster_source(original.clone(), None).await;
+    let app = app_reading(crate::http::Outbound::for_tests(), sources(&base, true));
+    let uri = format!("{NATIVE}?url={}", q(&format!("{base}{LANDSCAPE}")));
+    let (status, headers, body) = get(&app, &uri).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "video/mp4");
+    assert_eq!(body, original);
+    assert_eq!(
+        get(&app, &format!("{uri}&width=640")).await.0,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
 }
 
 #[tokio::test]
