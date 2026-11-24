@@ -17,7 +17,7 @@ pub struct Partition(pub PartitionData);
 /// wearables. Scenes need none; their downloads carry the scene's own hash. Inserting it
 /// registers the hashes with the ipfs request slots and replacing or removing it (an outfit
 /// change, a despawn) releases them, so the slots know exactly which hashes have an owner.
-/// On the player (`PrimaryUser`) or a [`PlayerDownloads`] preview the hashes, and those of
+/// On the player (`PrimaryUser`) or a [`RankedAsOwnAvatar`] avatar the hashes, and those of
 /// `PartitionedEmoteDownloads`, rank first instead, ahead of the scenes the player stands in.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 #[component(
@@ -37,9 +37,9 @@ pub struct PartitionedDownloads(pub Vec<String>);
 )]
 pub struct PartitionedEmoteDownloads(pub Vec<String>);
 
-/// Marks an avatar that is not the player whose downloads rank with the player's avatar.
+/// Ranks this avatar's downloads in [`Tier::OwnAvatar`] with the player's own.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct PlayerDownloads;
+pub struct RankedAsOwnAvatar;
 
 fn register_partitioned_downloads(world: DeferredWorld, context: HookContext) {
     if let Some(downloads) = world.get::<PartitionedDownloads>(context.entity) {
@@ -74,7 +74,7 @@ fn register_avatar_hashes(world: &DeferredWorld, entity: Entity, hashes: &[Strin
     };
     let key = avatar_key(
         world.get::<PrimaryUser>(entity).is_some()
-            || world.get::<PlayerDownloads>(entity).is_some(),
+            || world.get::<RankedAsOwnAvatar>(entity).is_some(),
         world.get::<Partition>(entity),
     )
     .unwrap_or(LoadPriority::AVATAR_PENDING);

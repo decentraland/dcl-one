@@ -25,7 +25,7 @@ a dense area grows the engine until the platform kills it.
   each frame.
 - **Downloads.** While refusing, the request slots grant only tiers before `Avatar`: the
   player's own body, wearables and emotes, avatars that system scenes place (the backpack, a
-  passport: `PlayerDownloads`), the scenes the player stands in, portables, system scenes, and
+  passport: `RankedAsOwnAvatar`), the scenes the player stands in, portables, system scenes, and
   URL loads tagged as the player's: small files every scene shares (the SDK6 adaption layer,
   fonts) and profile pictures in UI the player opens. An NFT image or a profile picture a
   scene shows ranks under that scene's hash, and the NFT dialog a scene opens shares its

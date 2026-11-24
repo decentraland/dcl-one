@@ -14,7 +14,7 @@ use crate::{
     ContainingScene,
 };
 
-use ipfs::partition::PlayerDownloads;
+use ipfs::partition::RankedAsOwnAvatar;
 use ipfs::partition::{avatar_key, keyed};
 pub use ipfs::partition::{Partition, PartitionedDownloads, PartitionedEmoteDownloads};
 
@@ -145,13 +145,13 @@ pub fn publish_download_priorities(
         Option<&Partition>,
         &PartitionedDownloads,
         Has<PrimaryUser>,
-        Has<PlayerDownloads>,
+        Has<RankedAsOwnAvatar>,
     )>,
     partitioned_emotes: Query<(
         Option<&Partition>,
         &PartitionedEmoteDownloads,
         Has<PrimaryUser>,
-        Has<PlayerDownloads>,
+        Has<RankedAsOwnAvatar>,
     )>,
     lods: Query<(&Partition, &SceneLod)>,
     player: Query<Entity, With<PrimaryUser>>,
