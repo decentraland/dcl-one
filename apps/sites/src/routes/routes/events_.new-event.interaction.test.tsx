@@ -10,15 +10,17 @@ import { getIdentity } from "@/data/lib/auth/session";
 import * as authoring from "@/data/lib/catalyst/landings/submit-hangout";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { eventsPageKeys } from "@/data/lib/catalyst/places/events-page";
+import { ownedEventsKeys } from "@/data/lib/catalyst/places/event-management";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { openSignIn } from "@/features/components/auth/signin-store";
+import { saveHangoutSignInDraft } from "@/features/social/submit-hangout/sign-in-draft";
 import SubmitHangoutRoute from "./events_.new-event";
 
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
 
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: vi.fn() }));
 vi.mock("@/data/lib/auth/session", () => ({ getIdentity: vi.fn() }));
-vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
+vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn(), onBeforeBrowserSignIn: () => () => {} }));
 
 vi.mock("@/data/lib/catalyst/landings/hangout-options", async (original) => ({ ...await original<typeof import("@/data/lib/catalyst/landings/hangout-options")>(), loadHangoutOptions: vi.fn() }));
 
@@ -62,7 +64,7 @@ describe("when editing a hangout through its route", () => {
         featured_item: null, created_at: null, updated_at: null, approved_by: null, rejected_by: null, rejection_reason: null,
         deleted_by_user: false, deleted_by_admin: false, deleted_by: null, deleted_at: null, deleted_reason: null, previous_place_id: null,
       };
-    options = { profile: null, profileError: null, communities: [], communitiesError: null, schedules: [], schedulesError: null, worlds: [], worldsError: null };
+    options = { profile: null, profileError: null, communities: [], communitiesError: null, worlds: [], worldsError: null };
     vi.mocked(loadHangoutOptions).mockImplementationOnce(() => new Promise((resolve) => { resolveOptions = resolve; }));
     user = userEvent.setup();
     vi.mocked(useAuth).mockReturnValue({ identity, address: identity.signer, isConnected: true } as ReturnType<typeof useAuth>);
@@ -73,7 +75,16 @@ describe("when editing a hangout through its route", () => {
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(eventsPageKeys.detail(event.id), event);
   });
-  afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); vi.resetAllMocks(); router.dispose(); });
+  afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); vi.resetAllMocks(); router.dispose(); sessionStorage.clear(); });
+
+  const OTHER = "0x3333333333333333333333333333333333333333";
+  /** Signs the visitor out (`account` null) or in, and renders the route again as the auth context would. */
+  async function signAs(account: string | null) {
+    const next = account ? { ...identity, signer: account } : null;
+    vi.mocked(useAuth).mockReturnValue((next ? { identity: next, address: next.signer, isConnected: true } : { identity: null, address: null, isConnected: false }) as unknown as ReturnType<typeof useAuth>);
+    vi.mocked(getIdentity).mockReturnValue(next);
+    await act(() => router.revalidate());
+  }
 
   describe("and the event is still loading", () => {
     beforeEach(() => mount());
@@ -190,6 +201,151 @@ describe("when editing a hangout through its route", () => {
       expect(await screen.findByRole("heading", { level: 1 })).toBeTruthy();
       expect(openSignIn).not.toHaveBeenCalled();
     });
+
+    describe("and the session ends while they write the hangout", () => {
+      beforeEach(async () => {
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await act(async () => resolveOptions(options));
+        await user.type(screen.getByRole("textbox", { name: "Event Name" }), "Draft party");
+        await user.type(screen.getByRole("textbox", { name: "Event Description" }), "Draft notes");
+        await signAs(null);
+      });
+
+      it("should keep the editor behind its sign-in gate instead of leaving the page", () => {
+        expect(screen.getByRole("button", { name: "Sign In to continue" }).dataset).toMatchObject({ variant: "primary", size: "md" });
+        expect(screen.queryByRole("textbox", { name: "Event Name" })).toBeNull();
+        expect(screen.queryByRole("progressbar")).toBeNull();
+        expect(openSignIn).not.toHaveBeenCalled();
+      });
+
+      it("should open sign-in from the gate", async () => {
+        await user.click(screen.getByRole("button", { name: "Sign In to continue" }));
+        expect(openSignIn).toHaveBeenCalledOnce();
+      });
+
+      it("should give the same account its draft back when it signs in again", async () => {
+        await signAs(identity.signer);
+        expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Draft party");
+      });
+
+      it("should start another account on an empty editor", async () => {
+        await signAs(OTHER);
+        expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      });
+
+      it("should keep no copy of the draft once the same account is back in this editor", async () => {
+        await signAs(identity.signer);
+        expect(sessionStorage.length).toBe(0);
+      });
+
+      describe("and the page reloads before they sign in again", () => {
+        beforeEach(() => {
+          router.dispose();
+          cleanup();
+          mount(CREATE_PATH);
+        });
+
+        it("should send the visitor to sign-in with the draft still kept for this editor", () => {
+          expect(openSignIn).toHaveBeenCalledWith({ redirectTo: CREATE_PATH });
+          expect(sessionStorage.length).toBe(1);
+        });
+
+        it("should give the same account its draft back when it signs in", async () => {
+          await signAs(identity.signer);
+          expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Draft party");
+          expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("value", "Draft notes");
+        });
+
+        it("should start another account on an empty editor and drop the draft", async () => {
+          await signAs(OTHER);
+          expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+          expect(sessionStorage.length).toBe(0);
+        });
+      });
+    });
+
+    describe("and the session ends before they write anything", () => {
+      beforeEach(async () => {
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await act(async () => resolveOptions(options));
+        await signAs(null);
+      });
+
+      it("should keep nothing for the tab and open the same account on an empty editor", async () => {
+        expect(sessionStorage.length).toBe(0);
+        await signAs(identity.signer);
+        expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      });
+    });
+
+    describe("and the session ends while the browser refuses to store anything", () => {
+      beforeEach(async () => {
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await act(async () => resolveOptions(options));
+        await user.type(screen.getByRole("textbox", { name: "Event Name" }), "Draft party");
+        vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("denied", "QuotaExceededError"); });
+        await signAs(null);
+      });
+
+      it("should keep the editor behind its gate and give the same account its draft back", async () => {
+        expect(screen.getByRole("button", { name: "Sign In to continue" })).toBeTruthy();
+        await signAs(identity.signer);
+        expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Draft party");
+      });
+    });
+  });
+
+  describe("and the browser sign-in kept a draft for the create page", () => {
+    beforeEach(() => {
+      saveHangoutSignInDraft(CREATE_PATH, { account: identity.signer.toLowerCase(), draft: { ...authoring.emptyDraft(), name: "Saved before sign-in" } });
+      mount(CREATE_PATH);
+    });
+
+    it("should open the editor on that draft", async () => {
+      expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Saved before sign-in");
+    });
+
+    describe("and another account signs in on the same page", () => {
+      beforeEach(async () => {
+        await screen.findByDisplayValue("Saved before sign-in");
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await signAs(OTHER);
+      });
+
+      it("should open that account on an empty editor", async () => {
+        expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      });
+
+      it("should not give the draft back when the first account returns", async () => {
+        await signAs(identity.signer);
+        expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      });
+    });
+  });
+
+  describe("and the browser sign-in came back as another account than the one that kept the draft", () => {
+    beforeEach(() => {
+      saveHangoutSignInDraft(CREATE_PATH, { account: OTHER, draft: { ...authoring.emptyDraft(), name: "Another account's draft", contact: "private@example.test" } });
+      mount(CREATE_PATH);
+    });
+
+    it("should open an empty editor and drop that draft", async () => {
+      expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      expect(screen.queryByDisplayValue("private@example.test")).toBeNull();
+      expect(sessionStorage.length).toBe(0);
+    });
+  });
+
+  describe("and the browser sign-in kept a draft for another editor", () => {
+    beforeEach(() => {
+      saveHangoutSignInDraft(EDIT_PATH, { account: identity.signer.toLowerCase(), draft: { ...authoring.emptyDraft(), name: "Someone else's draft" } });
+      mount(CREATE_PATH);
+    });
+
+    it("should open an empty editor and leave that draft for its own page", async () => {
+      expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "");
+      expect(sessionStorage.length).toBe(1);
+    });
   });
 
   describe("and the edit link names a malformed event id, which the loader reads as no event", () => {
@@ -299,6 +455,27 @@ describe("when editing a hangout through its route", () => {
       expect(screen.getAllByRole("contentinfo")).toHaveLength(1);
     });
 
+    describe("and the owner's session ends while editing", () => {
+      beforeEach(async () => {
+        await user.clear(screen.getByRole("textbox", { name: "Event Name" }));
+        await user.type(screen.getByRole("textbox", { name: "Event Name" }), "Renamed series");
+        await signAs(null);
+      });
+
+      it("should keep the editor behind its sign-in gate, not the loading page", () => {
+        expect(screen.getByRole("button", { name: "Sign In to continue" })).toBeTruthy();
+        expect(screen.queryByRole("progressbar")).toBeNull();
+        expect(router.state.location.pathname).toBe(EDIT_PATH);
+      });
+
+      it("should give the owner the edited draft back after signing in again", async () => {
+        vi.mocked(authoring.loadEditableHangout).mockResolvedValue(event);
+        vi.mocked(loadHangoutOptions).mockResolvedValue(options);
+        await signAs(identity.signer);
+        expect(await screen.findByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Renamed series");
+      });
+    });
+
     describe("and the owner asks to delete it", () => {
       beforeEach(async () => { await user.click(screen.getByRole("button", { name: "Delete" })); });
 
@@ -355,6 +532,50 @@ describe("when editing a hangout through its route", () => {
         await act(async () => fail(new Error("Delete denied")));
         expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeTruthy();
         expect(document.activeElement).toBe(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete event" }));
+      });
+
+      it("should open My Events only after the event lists are invalidated", async () => {
+        let settle: () => void = () => {};
+        const pending = new Promise<void>((resolve) => { settle = resolve; });
+        vi.spyOn(client, "invalidateQueries").mockImplementation(() => pending);
+        await user.click(screen.getByRole("button", { name: "Delete event" }));
+        expect(authoring.deleteHangout).toHaveBeenCalledOnce();
+        expect(router.state.location.pathname).toBe(EDIT_PATH);
+        expect(within(screen.getByRole("dialog")).getByRole<HTMLButtonElement>("button", { name: "Deleting…" }).disabled).toBe(true);
+        await act(async () => settle());
+        await waitFor(() => expect(router.state.location.pathname).toBe("/events"));
+      });
+
+      it("should drop the cached My Events list so it opens on a fresh read", async () => {
+        client.setQueryData(ownedEventsKeys.mine(identity.signer), [event]);
+        await user.click(screen.getByRole("button", { name: "Delete event" }));
+        await waitFor(() => expect(router.state.location.search).toBe("?tab=my"));
+        expect(client.getQueryData(ownedEventsKeys.mine(identity.signer))).toBeUndefined();
+      });
+
+      it("should stay where the visitor went when they leave during the delete", async () => {
+        let settle: () => void = () => {};
+        const pending = new Promise<void>((resolve) => { settle = resolve; });
+        vi.spyOn(client, "invalidateQueries").mockImplementation(() => pending);
+        await user.click(screen.getByRole("button", { name: "Delete event" }));
+        await act(() => router.navigate("/events"));
+        await act(async () => settle());
+        expect(router.state.location.pathname).toBe("/events");
+        expect(router.state.location.search).toBe("");
+      });
+
+      describe.each([
+        ["another account signed in elsewhere", () => ({ ...identity, signer: OTHER })],
+        ["the session expired", () => null],
+      ])("and %s", (_, current) => {
+        beforeEach(() => { vi.mocked(getIdentity).mockReturnValue(current()); });
+
+        it("should not delete and ask to sign in again in the dialog", async () => {
+          await user.click(screen.getByRole("button", { name: "Delete event" }));
+          expect(authoring.deleteHangout).not.toHaveBeenCalled();
+          expect(within(screen.getByRole("dialog")).getByRole("alert").textContent).toBe("Your session changed. Sign in again to delete this event.");
+          expect(router.state.location.pathname).toBe(EDIT_PATH);
+        });
       });
 
       it("should keep the editor open and report a failed delete in the dialog", async () => {

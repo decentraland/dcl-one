@@ -7,7 +7,6 @@
   backdrop-filter: none;
 }
 .panel {
-  /* The Photos tab's viewer covers the panel. */
   position: relative;
   width: min(1650px, 100%);
   height: min(926px, 100%);

@@ -28,6 +28,7 @@ import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
+import { travelToPhoto } from './features/gallery/reelActions'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
@@ -441,7 +442,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
         <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
       </SurfaceBoundary>
       <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
-        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onTeleport={(x, y) => session.map.teleport(x, y)} onViewProfile={(u) => openPassport(u.address)} />
+        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onJumpIn={(place) => travelToPhoto(place, session.map)} onViewProfile={(u) => openPassport(u.address)} />
       </SurfaceBoundary>
     </>
   )
