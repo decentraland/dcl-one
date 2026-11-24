@@ -188,8 +188,8 @@ impl Plugin for VisualsDebugPanelPlugin {
                     kind: DebugInputKind::Select(&[
                         ("512", "512"),
                         ("1024", "1024"),
-                        ("2048", "2048"),
-                        ("4096 (default)", "4096"),
+                        ("2048 (default)", "2048"),
+                        ("4096", "4096"),
                     ]),
                 },
                 slider(

@@ -1,17 +1,21 @@
 import { useContext, useId, type ReactNode } from "react";
 import DclTopBar from "./DclTopBar";
 import SitesCreditsChip from "./SitesCreditsChip";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import {
+  SITES_NAV_AREAS,
+  type SitesNavId,
+  SitesFooter,
+  type FooterCopy,
+  ProfileNavigationContext,
+  useChromeAuth,
+  SiteLayout,
+} from "@dcl/one-ui";
 import "../../atoms/maskicon.css";
 import { docsUrl } from "@web-core/docs";
 import "./siteschrome.css";
-import { SITES_NAV_AREAS, type SitesNavId } from "@dcl/one-ui/apps/sites/chrome/sites-navigation";
-export type { SitesNavId } from "@dcl/one-ui/apps/sites/chrome/sites-navigation";
-import SitesFooter, { type FooterCopy } from "@dcl/one-ui/apps/sites/chrome/SitesFooter";
+export type { SitesNavId } from "@dcl/one-ui";
 import { subscribeSiteNewsletter } from "@web-core/newsletter";
-import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import SiteSectionNavigation from "./SiteSectionNavigation";
-import { ProfileNavigationContext } from "@dcl/one-ui/apps/sites/chrome/profile-navigation";
 
 type SitesChromeProps = {
   children?: ReactNode;

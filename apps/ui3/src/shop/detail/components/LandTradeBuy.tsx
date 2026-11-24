@@ -9,11 +9,12 @@ import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
-import { APPROVAL_STILL_PENDING, purchaseFailure, type PurchaseFailure } from "../../market/lib/tx";
+import { purchaseFailure, type PurchaseFailure } from "../../market/lib/tx";
 import { fetchTrade, TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { buyTradeWithMana, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";
 import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
+import ConfirmingNotice from "./ConfirmingNotice";
 import "./legacyorderbuy.css";
 
 type LandTradeBuyProps = {
@@ -118,16 +119,8 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, o
             <p role="status">Purchase complete. {name} is on its way to your wallet.</p>
             <Button onClick={onClose}>Done</Button>
           </>
-        ) : phase.kind === "pending" ? (
-          <>
-            <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your activity in a moment.</p>
-            <Button onClick={onClose}>Close</Button>
-          </>
-        ) : phase.kind === "approval-pending" ? (
-          <>
-            <p role="status">{APPROVAL_STILL_PENDING}</p>
-            <Button onClick={onClose}>Close</Button>
-          </>
+        ) : phase.kind === "pending" || phase.kind === "approval-pending" ? (
+          <ConfirmingNotice outcome={phase} chainId={chainId} onClose={onClose} />
         ) : (
           <>
             <dl className="shop-orderbuy__terms">

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DownloadOption, HeroDownloads } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip } from "@/data/lib/download/mac-chip";
@@ -16,7 +16,12 @@ vi.hoisted(() => {
     $RefreshSig$: () => (type: unknown) => type,
   });
 });
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+// A document whose analytics is ready: its page view has been sent.
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => fire(),
+}));
 vi.mock("@/data/lib/download/mac-chip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/data/lib/download/mac-chip")>()),
   detectMacChip: vi.fn(() => "unknown"),
@@ -131,4 +136,50 @@ it("does not leave for the install steps once the visitor has left the landing",
   unmount();
   act(() => vi.advanceTimersByTime(3000));
   expect(assign).not.toHaveBeenCalled();
+});
+
+describe("legacy Click (inventory 2.1.a)", () => {
+  const clicks = () => vi.mocked(track).mock.calls.filter(([event]) => event === "Click");
+
+  it("row 28: the main button sends Creators Hero / creator_hub, a conversion with no correlation and no os", async () => {
+    sessionStorage.clear();
+    render(<HeroDownload downloads={onWindows} sid="s1" />);
+    await user().click(main());
+    expect(clicks()).toHaveLength(1);
+    const [, props, ctx] = clicks()[0]!;
+    expect(props).toMatchObject({ place: "Creators Hero", event: "Download", download_target: "creator_hub" });
+    expect(props).not.toHaveProperty("os");
+    expect(props).not.toHaveProperty("click_id");
+    expect(sessionStorage.getItem("downloadFunnel:lastClick")).toBeNull();
+    expect(ctx).toEqual({ sid: "s1", legacy: true, conversion: true });
+  });
+
+  it("row 29: another build names its system", async () => {
+    render(<HeroDownload downloads={onWindows} sid="s1" />);
+    await user().click(screen.getByRole("link", { name: "Download for macOS (Intel)" }));
+    expect(clicks()[0]![1]).toMatchObject({ place: "Creators Hero", event: "Download", download_target: "creator_hub", os: "macOS" });
+  });
+
+  it("row 30: the link to the download page, while no installer is offered in place", async () => {
+    render(<HeroDownload downloads={null} sid="s1" />);
+    main().addEventListener("click", (e) => e.preventDefault());
+    await user().click(main());
+    expect(track).toHaveBeenCalledTimes(1);
+    const [, props, ctx] = clicks()[0]!;
+    expect(props).toMatchObject({ place: "Creators Hero", event: "Download", download_target: "creator_hub" });
+    expect(props).not.toHaveProperty("os");
+    expect(props).not.toHaveProperty("click_id");
+    expect(ctx).toEqual({ sid: "s1", legacy: true, conversion: true });
+  });
+
+  it("keeps lp_creatorhub_download_clicked unchanged beside it", async () => {
+    render(<HeroDownload downloads={onWindows} sid="s1" />);
+    await user().click(main());
+    expect(vi.mocked(track).mock.calls.map(([event]) => event)).toEqual(["lp_creatorhub_download_clicked", "Click"]);
+    expect(vi.mocked(track).mock.calls[0]).toEqual([
+      "lp_creatorhub_download_clicked",
+      { os: "windows", arch: "amd64", file_name: "hub-win-x64.exe", kind: "primary" },
+      { sid: "s1", story: "landings/creator-hub-download" },
+    ]);
+  });
 });

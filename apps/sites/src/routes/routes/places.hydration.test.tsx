@@ -20,7 +20,7 @@ import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
 import Places, { loader, clientLoader, resetPlacesFlagsRead } from "./places";
 
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ isConnected: false, identity: null }) }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn(), page: vi.fn() }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@/data/lib/catalyst/places/destinations", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/destinations")>()),

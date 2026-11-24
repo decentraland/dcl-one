@@ -186,8 +186,12 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    - The idle count leaves out presentation bots and the RTMP ingress. Upstream counts every remote
      participant, so two bots in one room keep each other alive.
    - A bot token runs one presentation: the same token again answers 409 `This token already has a
-     presentation` until the first stops. Upstream starts it, and LiveKit drops the first bot. With a
-     token each, a room holds several presentations, as upstream.
+     presentation` until the first stops. Upstream starts it, and LiveKit drops the first bot.
+   - A room runs one presentation: a new bot token of the room's active Cast credential stops the
+     room's running one when it takes its slot. Upstream runs both, each counted. The replaced bot
+     keeps its slot until it has shut down, and the new bot publishes only after every presentation
+     of the room that stopped before (replaced or stopped) sent `presentation:stopped`. A token of a revoked or rotated credential replaces nothing. An
+     upload to a full node is still answered 429 before it is read.
    - A bot whose process ends without leaving is removed from its room at once, after the node sends
      `presentation:stopped` through the room service. Upstream leaves it to LiveKit, which keeps the
      participant and its last slide about 20 s.
