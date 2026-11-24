@@ -22,6 +22,7 @@ use crate::failed_deployments_store::LiveFailedDeploymentsStore;
 use crate::jobs::{JobContext, Jobs};
 use crate::storage::Storage;
 use crate::sync::dao::{self, DaoSource};
+use crate::sync::item_coverage::{ITEM_TYPES, ItemHistoryReplay, LeaseOwner, Pacing};
 use crate::sync::orchestrator::{SyncControl, SyncDependencies, run_sync_job};
 use crate::sync::retry_failed::run_prune_loop;
 use crate::sync::snapshots::SnapshotScheduling;
@@ -89,6 +90,11 @@ pub struct SyncSettings {
     pub max_retries: u32,
     pub retry_concurrency: usize,
     pub prune_ttl_days: i64,
+    /// `SYNC_ITEM_REPLAY_INTERVAL_SECS`: the pause between item history
+    /// replay passes; none turns the replay off.
+    pub item_replay_interval: Option<Duration>,
+    /// `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS`: the pause between a pass's pages.
+    pub item_replay_page_pause: Duration,
     /// [`RetryFailedConfig::discard_overtaken`]: `CONTENT_HISTORY_PRUNE_ENABLED`.
     pub discard_overtaken: bool,
 }
@@ -147,6 +153,19 @@ impl SyncSettings {
                 anyhow::bail!("{name} must be at least 1 (0 would stall the worker forever)");
             }
         }
+        let interval = config.content.sync_item_replay_interval_secs;
+        if interval != 0 && !(600..=1440).contains(&interval) {
+            anyhow::bail!(
+                "SYNC_ITEM_REPLAY_INTERVAL_SECS must be 0 (off) or 600 to 1440: a pass starts at \
+                 most that long after the last one ends and its coverage lasts 30 minutes from its start"
+            );
+        }
+        let pause = config.content.sync_item_replay_page_pause_ms;
+        if !(50..=1000).contains(&pause) {
+            anyhow::bail!(
+                "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS must be 50 to 1000, so a pass of the item history ends well inside 30 minutes"
+            );
+        }
         *MEMORY_LIMITS.lock() = memory_limits_from_config(config)?;
         Ok(Some(Self {
             peers,
@@ -183,6 +202,13 @@ impl SyncSettings {
             max_retries: config.content.max_failed_deployment_retries,
             retry_concurrency: config.content.sync_retry_concurrency,
             prune_ttl_days: config.content.retry_failed_prune_ttl_days,
+            item_replay_interval: match config.content.sync_item_replay_interval_secs {
+                0 => None,
+                secs => Some(Duration::from_secs(secs)),
+            },
+            item_replay_page_pause: Duration::from_millis(
+                config.content.sync_item_replay_page_pause_ms,
+            ),
             discard_overtaken: config.content.content_history_prune_enabled,
         }))
     }
@@ -295,6 +321,7 @@ pub fn serve_unsynced(config: &Config, status: &SyncStatus) {
     }
     status.set_authority(true);
     status.set_unsynced_copy(copy);
+    status.set_own_content_authority(!copy);
     status.set_state(SyncState::Syncing);
 }
 
@@ -492,6 +519,7 @@ impl Leader {
             failed.clone(),
             bloom,
         ));
+        let replay_deployer = batch.clone();
         let orchestrator = Arc::new(SyncOrchestrator::new(
             SyncOrchestratorConfig {
                 from_timestamp: settings.from_timestamp_ms,
@@ -531,6 +559,8 @@ impl Leader {
         }
         let retry_peers = Arc::new(RwLock::new(initial));
         let (bootstrapped_tx, bootstrapped) = watch::channel(false);
+        self.spawn_item_history_replay(&ctx, replay_deployer, peers.clone(), bootstrapped.clone())
+            .await;
         spawn_failed_deployment_jobs(
             &self.jobs,
             &ctx,
@@ -555,6 +585,80 @@ impl Leader {
             let _ = bootstrapped_tx.send(true);
         })
         .await
+    }
+}
+
+impl Leader {
+    /// `item-history-replay` ([`ItemHistoryReplay`]), from the end of the
+    /// bootstrap, while this process holds the `sync` lease: none without
+    /// leases (no session to fence its writes on), when the operator turned
+    /// it off (`SYNC_ITEM_REPLAY_INTERVAL_SECS=0`) or when `SYNC_ENTITY_TYPES`
+    /// leaves out both wearables and emotes.
+    async fn spawn_item_history_replay(
+        &self,
+        ctx: &JobContext,
+        deployer: Arc<BatchDeployer>,
+        peers: watch::Receiver<HashSet<String>>,
+        mut bootstrapped: watch::Receiver<bool>,
+    ) {
+        let entity_types: Vec<String> = ITEM_TYPES
+            .iter()
+            .filter(|t| {
+                self.settings
+                    .entity_types
+                    .as_ref()
+                    .is_none_or(|allow| allow.contains(**t))
+            })
+            .map(|t| t.to_string())
+            .collect();
+        let Some(leases) = self.jobs.leases() else {
+            return;
+        };
+        let Some(pass_interval) = self.settings.item_replay_interval else {
+            return;
+        };
+        if entity_types.is_empty() {
+            return;
+        }
+        let Some(pid) = leases.backend_pid().await else {
+            return;
+        };
+        let replay = ItemHistoryReplay {
+            pool: self.pool.clone(),
+            client: self.client.clone(),
+            deployer,
+            peers,
+            entity_types,
+            history_floor_ms: self.settings.from_timestamp_ms,
+            owner: LeaseOwner {
+                namespace: leases.settings().namespace.clone(),
+                pid,
+            },
+            control: self.control.clone(),
+            pacing: Pacing {
+                pass_interval,
+                page_pause: self.settings.item_replay_page_pause,
+                ..Pacing::default()
+            },
+        };
+        self.jobs
+            .spawn_scoped(ctx, "item-history-replay", move |ctx| async move {
+                tokio::select! {
+                    _ = ctx.cancel.cancelled() => return Ok(()),
+                    _ = bootstrapped.wait_for(|done| *done) => {}
+                }
+                let trace = ctx.clone();
+                replay
+                    .run(ctx.cancel.clone(), move |outcome| {
+                        trace.pass_done();
+                        match outcome {
+                            Ok(done) => trace.progress(done),
+                            Err(e) => trace.error(e),
+                        }
+                    })
+                    .await;
+                Ok(())
+            });
     }
 }
 
@@ -854,6 +958,62 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(err.to_string().contains("plaintext"), "{err}");
+    }
+
+    #[test]
+    fn an_operator_paces_the_item_replay_within_its_bounds() {
+        let with = |extra: &[&str]| {
+            let mut args = vec![
+                "--sync-enabled",
+                "--sync-source",
+                "https://peer.example/content",
+            ];
+            args.extend_from_slice(extra);
+            SyncSettings::from_config(&config(&args))
+        };
+        let defaults = with(&[]).unwrap().unwrap();
+        assert_eq!(
+            defaults.item_replay_interval,
+            Some(Duration::from_secs(1200))
+        );
+        assert_eq!(defaults.item_replay_page_pause, Duration::from_millis(200));
+        let off = with(&["--sync-item-replay-interval-secs", "0"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(off.item_replay_interval, None);
+        for (flag, value) in [
+            ("--sync-item-replay-interval-secs", "600"),
+            ("--sync-item-replay-interval-secs", "1440"),
+            ("--sync-item-replay-page-pause-ms", "50"),
+            ("--sync-item-replay-page-pause-ms", "1000"),
+        ] {
+            assert!(with(&[flag, value]).is_ok(), "{flag} {value}");
+        }
+        for (flag, value, name) in [
+            (
+                "--sync-item-replay-interval-secs",
+                "599",
+                "SYNC_ITEM_REPLAY_INTERVAL_SECS",
+            ),
+            (
+                "--sync-item-replay-interval-secs",
+                "1441",
+                "SYNC_ITEM_REPLAY_INTERVAL_SECS",
+            ),
+            (
+                "--sync-item-replay-page-pause-ms",
+                "49",
+                "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS",
+            ),
+            (
+                "--sync-item-replay-page-pause-ms",
+                "1001",
+                "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS",
+            ),
+        ] {
+            let err = with(&[flag, value]).unwrap_err().to_string();
+            assert!(err.contains(name), "{flag} {value}: {err}");
+        }
     }
 
     #[test]

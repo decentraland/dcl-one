@@ -188,7 +188,10 @@ const UPSTREAM_CORS_METHODS: &str = "GET,HEAD,POST,OPTIONS";
 /// headers, lasts 600 s and varies on `Access-Control-Request-Headers`. A
 /// request without `Origin` gets no CORS header, as captured.
 ///
-/// The root mounts and this node's own
+/// The peer's gateway proxies [`ERC721_LAMBDAS_PREFIX`] to the content
+/// server, so it takes this rule too; `/lambdas/about` takes lamb2's rule
+/// ([`crate::cors::lambdas_cors`]); the root mounts, the other lambdas
+/// routes in this router and this node's own
 /// routes under `/content/`, which upstream does not serve (`scenes`, whose
 /// `DELETE` the upstream preflight would refuse, and the `forwarding`
 /// operator API), keep the shared rule. `every_route_outside_upstreams_cors_methods_is_exempt`
@@ -237,11 +240,16 @@ pub(crate) async fn content_cors(req: Request, next: Next) -> Response {
 }
 
 pub(crate) fn upstream_cors_path(path: &str) -> bool {
-    path.strip_prefix(CONTENT_PREFIX).is_some_and(|rest| {
-        let first = rest.split('/').next().unwrap_or("");
-        !first.eq_ignore_ascii_case("scenes") && !first.eq_ignore_ascii_case("forwarding")
-    })
+    path.starts_with(ERC721_LAMBDAS_PREFIX)
+        || path.strip_prefix(CONTENT_PREFIX).is_some_and(|rest| {
+            let first = rest.split('/').next().unwrap_or("");
+            !first.eq_ignore_ascii_case("scenes") && !first.eq_ignore_ascii_case("forwarding")
+        })
 }
+
+/// The lambdas path of `/queries/erc721/`, which `decentraland/catalyst-owner`'s
+/// gateway proxies to the content server (`local/nginx/include/lambdas.conf`).
+const ERC721_LAMBDAS_PREFIX: &str = "/lambdas/collections/standard/erc721/";
 
 /// `POST /entities/active`'s body cap, upstream's `MAX_ACTIVE_ENTITIES_BODY_SIZE`
 /// default (`decentraland/catalyst:src/Environment.ts:79`).

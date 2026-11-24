@@ -34,7 +34,8 @@
 //! [`VerificationProfile::node`]. A surface whose upstream verified with
 //! another middleware states its rules as a [`VerificationProfile`] instead
 //! ([`VerificationProfile::camera_reel_read`],
-//! [`VerificationProfile::camera_reel_write`]) and calls [`require_signer_with`];
+//! [`VerificationProfile::camera_reel_write`], [`VerificationProfile::builder`])
+//! and calls [`require_signer_with`];
 //! the chain shape, the path rule, the payload builders and the signature
 //! steps stay this module's.
 
@@ -254,6 +255,8 @@ enum TimestampWindow {
     /// MAX_FUTURE_SKEW_SECS)` ahead; an absent or empty header reads as 0 and
     /// expires ([`check_timestamp_window`]).
     AroundNow { secs: i64 },
+    /// [`Self::AroundNow`], and a duplicated header is refused.
+    SingleAroundNow { secs: i64 },
     /// Required, an unsigned integer, no more than this many milliseconds old
     /// and at most `MAX_FUTURE_SKEW_SECS` ahead
     /// ([`crate::auth::signed_fetch::check_past_window`]).
@@ -265,6 +268,9 @@ enum TimestampWindow {
 enum MetadataHeader {
     /// Absent reads as `{}`; present, it must be a JSON object (or `null`).
     OptionalJsonObject,
+    /// One header at most, a JSON object (or `null`) when present; a
+    /// duplicated or unusable header is a metadata refusal.
+    OptionalSingleJsonObject,
     /// Present, any string: the bytes are signed, never required to parse.
     RequiredRaw,
 }
@@ -328,6 +334,23 @@ impl VerificationProfile {
                 PayloadPolicy::V6Only => LegacyFallback::Refused,
                 PayloadPolicy::V6ThenLegacy => LegacyFallback::GuardedSigner,
             },
+        }
+    }
+
+    /// builder-server's `withAuthentication` as far as its `verify()` goes:
+    /// the 6.x payload alone (it passes no `canonicalMetadataKeys`, so the
+    /// folded one is never tried), within [`SIGNED_FETCH_WINDOW_SECS`] old and
+    /// ahead, a duplicated timestamp or metadata header refused, and metadata that is
+    /// not an object refused with the scene signer before any signature is
+    /// checked. Its timestamp-less `method:path` fallback is not accepted.
+    pub const fn builder() -> Self {
+        Self {
+            window: TimestampWindow::SingleAroundNow {
+                secs: SIGNED_FETCH_WINDOW_SECS,
+            },
+            metadata: MetadataHeader::OptionalSingleJsonObject,
+            scene_signer: SceneSignerRule::Gated,
+            legacy: LegacyFallback::Refused,
         }
     }
 
@@ -402,7 +425,16 @@ pub async fn require_signer_with(
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now = now_ms.div_euclid(1000);
     let ts = match profile.window {
-        TimestampWindow::AroundNow { secs } => {
+        TimestampWindow::SingleAroundNow { .. }
+            if headers
+                .get_all(AUTH_TIMESTAMP_HEADER)
+                .iter()
+                .nth(1)
+                .is_some() =>
+        {
+            return Err(SignedFetchError::InvalidTimestamp(String::new()));
+        }
+        TimestampWindow::AroundNow { secs } | TimestampWindow::SingleAroundNow { secs } => {
             let ts = core::timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
             check_timestamp_window(ts, now, secs)?;
             ts
@@ -415,10 +447,29 @@ pub async fn require_signer_with(
         }
     };
 
+    if profile.metadata == MetadataHeader::OptionalSingleJsonObject
+        && headers
+            .get_all(AUTH_METADATA_HEADER)
+            .iter()
+            .nth(1)
+            .is_some()
+    {
+        return Err(SignedFetchError::MalformedChain {
+            detail: format!("invalid metadata content: duplicated {AUTH_METADATA_HEADER}"),
+        });
+    }
     let (metadata_raw, metadata) = match profile.metadata {
         MetadataHeader::OptionalJsonObject => {
             let raw = header_str(headers, AUTH_METADATA_HEADER).unwrap_or("{}");
             (raw, Some(parse_metadata(raw)?))
+        }
+        MetadataHeader::OptionalSingleJsonObject => {
+            let raw = header_str(headers, AUTH_METADATA_HEADER).unwrap_or("{}");
+            let metadata =
+                core::parse_metadata(raw).ok_or_else(|| SignedFetchError::MalformedChain {
+                    detail: format!("invalid metadata content: \"{}\"", truncate_detail(raw)),
+                })?;
+            (raw, Some(metadata))
         }
         MetadataHeader::RequiredRaw => {
             let raw = header_str(headers, AUTH_METADATA_HEADER).ok_or_else(|| {
@@ -519,6 +570,11 @@ pub mod test_support {
         KEY.parse().unwrap()
     }
 
+    /// A verified signer for `address`, lowercased as the verifier answers it.
+    pub fn signer(address: &str) -> Signer {
+        Signer(address.to_lowercase())
+    }
+
     pub fn address() -> String {
         format!("{:#x}", wallet().address())
     }
@@ -581,6 +637,59 @@ pub mod test_support {
             AUTH_METADATA_HEADER,
             HeaderValue::from_str(metadata).unwrap(),
         );
+        for (i, link) in chain.iter().enumerate() {
+            headers.insert(
+                HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
+                    .unwrap(),
+                HeaderValue::from_str(&serde_json::to_string(link).unwrap()).unwrap(),
+            );
+        }
+        headers
+    }
+
+    /// The headers a pre-ADR-44 builder client sends: the chain's last link
+    /// signs `method:path` lowercased through an ephemeral key expiring at
+    /// `expiration` (ISO-8601), with no timestamp or metadata header.
+    pub async fn untimestamped_headers(method: &str, path: &str, expiration: &str) -> HeaderMap {
+        let ephemeral: PrivateKeySigner =
+            "0x1111111111111111111111111111111111111111111111111111111111111111"
+                .parse()
+                .unwrap();
+        let delegation = format!(
+            "Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}",
+            ephemeral.address()
+        );
+        let payload = format!("{method}:{path}").to_lowercase();
+        let chain = [
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: address(),
+                signature: None,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEphemeral,
+                signature: Some(
+                    wallet()
+                        .sign_message(delegation.as_bytes())
+                        .await
+                        .unwrap()
+                        .to_string(),
+                ),
+                payload: delegation,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                signature: Some(
+                    ephemeral
+                        .sign_message(payload.as_bytes())
+                        .await
+                        .unwrap()
+                        .to_string(),
+                ),
+                payload,
+            },
+        ];
+        let mut headers = HeaderMap::new();
         for (i, link) in chain.iter().enumerate() {
             headers.insert(
                 HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
@@ -1072,6 +1181,129 @@ mod tests {
                 }
             );
         }
+    }
+
+    const ROUTE: &str = "/v1/collections/c011ec71";
+
+    async fn builder(
+        headers: &HeaderMap,
+        method: &str,
+        path: &SignedPath,
+    ) -> Result<Signer, SignedFetchError> {
+        require_signer_with(headers, method, path, &VerificationProfile::builder(), None).await
+    }
+
+    #[tokio::test]
+    async fn no_profile_accepts_a_signature_over_method_and_path_alone() {
+        let local = SignedPath::local(ROUTE);
+        for path in ["/collections/c011ec71", ROUTE] {
+            let headers = untimestamped_headers("get", path, "2099-01-01T00:00:00.000Z").await;
+            assert!(matches!(
+                builder(&headers, "get", &local).await,
+                Err(SignedFetchError::Expired { .. })
+            ));
+            for policy in [PayloadPolicy::V6ThenLegacy, PayloadPolicy::V6Only] {
+                assert!(
+                    require_signer(&headers, "get", ROUTE, policy, None)
+                        .await
+                        .is_err()
+                );
+            }
+            for profile in [
+                VerificationProfile::camera_reel_read(),
+                VerificationProfile::camera_reel_write(),
+            ] {
+                assert!(
+                    require_signer_with(&headers, "get", &local, &profile, None)
+                        .await
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_builder_profile_verifies_timestamped_requests_as_the_node_does() {
+        let local = SignedPath::local(ROUTE);
+        {
+            let headers = signed_headers("get", ROUTE, r#"{"signer":"dcl:explorer"}"#, true).await;
+            assert!(builder(&headers, "get", &local).await.is_ok());
+            let headers = signed_headers(
+                "get",
+                ROUTE,
+                r#"{"signer":"decentraland-kernel-scene"}"#,
+                true,
+            )
+            .await;
+            assert!(
+                builder(&headers, "get", &local)
+                    .await
+                    .unwrap_err()
+                    .is_metadata_refusal()
+            );
+            for unusable in ["[1]", "not json", "1"] {
+                let headers = signed_headers("get", ROUTE, unusable, true).await;
+                let err = builder(&headers, "get", &local).await.unwrap_err();
+                assert!(err.is_metadata_refusal(), "{unusable}: {err}");
+            }
+            let mut duplicated = signed_headers("get", ROUTE, "{}", true).await;
+            duplicated.append(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+            let err = builder(&duplicated, "get", &local).await.unwrap_err();
+            assert!(err.is_metadata_refusal(), "{err}");
+            for inside in [-55_000, 55_000] {
+                let at = (chrono::Utc::now().timestamp_millis() + inside).to_string();
+                let headers = signed_headers_at("get", ROUTE, "{}", true, &at).await;
+                assert!(builder(&headers, "get", &local).await.is_ok(), "{inside}");
+            }
+            for outside in [-65_000, 65_000] {
+                let at = (chrono::Utc::now().timestamp_millis() + outside).to_string();
+                let headers = signed_headers_at("get", ROUTE, "{}", true, &at).await;
+                assert!(
+                    matches!(
+                        builder(&headers, "get", &local).await,
+                        Err(SignedFetchError::Expired { .. })
+                    ),
+                    "{outside}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_builder_profile_refuses_the_folded_payload_upstream_never_tries() {
+        let local = SignedPath::local(ROUTE);
+        let metadata = r#"{"origin":"https://Builder.Example.org"}"#;
+        let folded = signed_headers("get", ROUTE, metadata, false).await;
+        assert!(
+            require_signer_at(&folded, "get", &local, PayloadPolicy::V6ThenLegacy, None)
+                .await
+                .is_ok(),
+            "the node profile still takes it"
+        );
+        assert!(matches!(
+            builder(&folded, "get", &local).await,
+            Err(SignedFetchError::InvalidSignature(_))
+        ));
+        let standard = signed_headers("get", ROUTE, metadata, true).await;
+        assert!(builder(&standard, "get", &local).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_builder_profile_refuses_a_duplicated_timestamp() {
+        let local = SignedPath::local(ROUTE);
+        let mut headers = signed_headers("get", ROUTE, "{}", true).await;
+        let timestamp = headers[AUTH_TIMESTAMP_HEADER].clone();
+        headers.append(AUTH_TIMESTAMP_HEADER, timestamp);
+        assert!(matches!(
+            builder(&headers, "get", &local).await,
+            Err(SignedFetchError::InvalidTimestamp(_))
+        ));
+        assert!(
+            require_signer_at(&headers, "get", &local, PayloadPolicy::V6ThenLegacy, None)
+                .await
+                .is_ok(),
+            "the node profile keeps reading the first value"
+        );
     }
 
     #[test]

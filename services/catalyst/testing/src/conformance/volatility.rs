@@ -140,9 +140,25 @@ pub struct SectionRules {
 #[derive(Debug, Default, Clone)]
 pub struct Volatility {
     sections: HashMap<String, SectionRules>,
+    ignored_fields: Option<Vec<String>>,
 }
 
 impl Volatility {
+    /// These rules with `fields` as the key names the differ never compares,
+    /// in place of `diff::IGNORED_FIELDS`; `&[]` compares every key.
+    pub fn with_ignored_fields(mut self, fields: &[&str]) -> Self {
+        self.ignored_fields = Some(fields.iter().map(|f| f.to_string()).collect());
+        self
+    }
+
+    /// Whether the differ skips the key `leaf` at every depth.
+    pub fn ignores_field(&self, leaf: &str) -> bool {
+        match &self.ignored_fields {
+            Some(fields) => fields.iter().any(|f| f == leaf),
+            None => super::diff::IGNORED_FIELDS.contains(&leaf),
+        }
+    }
+
     #[allow(
         clippy::print_stderr,
         reason = "warns the test run of an unreadable volatility file"
@@ -250,7 +266,10 @@ impl Volatility {
                 ignore_whole_response: false,
             },
         );
-        Self { sections }
+        Self {
+            sections,
+            ignored_fields: None,
+        }
     }
 
     pub fn is_ignored(&self, section: &str, json_path: &str) -> bool {
@@ -383,7 +402,10 @@ fn parse_toml(input: &str) -> Result<Volatility, String> {
             }
         }
     }
-    Ok(Volatility { sections })
+    Ok(Volatility {
+        sections,
+        ignored_fields: None,
+    })
 }
 
 fn fold_arrays(input: &str) -> Vec<(usize, String)> {

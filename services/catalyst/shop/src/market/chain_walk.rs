@@ -991,18 +991,16 @@ pub async fn mark_folded(
     ix: &dyn ChainIndex,
     owner: &Owner,
     block: i64,
-    now: DateTime<Utc>,
 ) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4 \
+        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL \
            AND fold_through = $3 AND quarantine_reason IS NULL",
     )
     .bind(owner.indexer)
     .bind(owner.net.db_name())
     .bind(block)
-    .bind(now.naive_utc())
     .execute(&mut *tx)
     .await?;
     let published = updated.rows_affected() == 1;
@@ -2612,7 +2610,7 @@ pub(crate) async fn close(
         && u64::try_from(out.indexed_to)
             .is_ok_and(|b| b <= latest_safe && within_publish_lag(net, latest, b))
     {
-        out.published = mark_folded(pool, ix, owner, out.indexed_to, Utc::now()).await?;
+        out.published = mark_folded(pool, ix, owner, out.indexed_to).await?;
         if out.published {
             ix.published(pool, out.indexed_to).await;
         }

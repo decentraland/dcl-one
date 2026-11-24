@@ -76,7 +76,7 @@ impl CacheEntry {
 pub struct ValidationCache {
     inner: Arc<dyn Eip1654Validator>,
     cache: RwLock<HashMap<CacheKey, CacheEntry>>,
-    insertion_order: RwLock<Vec<CacheKey>>,
+    insertion_order: RwLock<std::collections::VecDeque<CacheKey>>,
     in_flight: Mutex<HashMap<CacheKey, Arc<Notify>>>,
     success_ttl: Duration,
     past_block_ttl: Duration,
@@ -104,7 +104,7 @@ impl ValidationCache {
         Self {
             inner,
             cache: RwLock::new(HashMap::new()),
-            insertion_order: RwLock::new(Vec::new()),
+            insertion_order: RwLock::new(std::collections::VecDeque::new()),
             in_flight: Mutex::new(HashMap::new()),
             success_ttl,
             past_block_ttl,
@@ -130,24 +130,24 @@ impl ValidationCache {
         let mut order = self.insertion_order.write();
         let mut map = self.cache.write();
 
-        while let Some(key) = order.first() {
+        while let Some(key) = order.front() {
             if let Some(entry) = map.get(key) {
                 if entry.is_expired() {
-                    let key = order.remove(0);
-                    map.remove(&key);
+                    if let Some(key) = order.pop_front() {
+                        map.remove(&key);
+                    }
                     continue;
                 }
             } else {
-                order.remove(0);
+                order.pop_front();
                 continue;
             }
             break;
         }
 
         if map.len() >= self.max_entries
-            && let Some(key) = order.first().cloned()
+            && let Some(key) = order.pop_front()
         {
-            order.remove(0);
             map.remove(&key);
         }
     }
@@ -169,7 +169,7 @@ impl ValidationCache {
         };
 
         self.cache.write().insert(key.clone(), entry);
-        self.insertion_order.write().push(key);
+        self.insertion_order.write().push_back(key);
     }
 }
 

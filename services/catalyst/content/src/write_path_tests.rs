@@ -482,6 +482,27 @@ async fn serve_unsynced_takes_deploys_only_with_no_sync_source() {
     }
 }
 
+/// Only a node serving unsynced with no `SYNC_SOURCE` (an island or a
+/// journey node) holds the whole of its content: a sync leader, a follower and
+/// an unsynced copy of a peer do not.
+#[test]
+fn only_an_unsynced_node_with_no_source_is_its_own_content_authority() {
+    for (source, own) in [
+        (None, false),
+        (Some("https://peer.example/content"), false),
+        (Some(""), true),
+    ] {
+        let mut argv = vec!["x", "--database-url", "postgres:///c", "--serve-unsynced"];
+        argv.extend(source.map(|s| ["--sync-source", s]).into_iter().flatten());
+        let config = crate::config::Config::parse_for_tests(&argv).unwrap();
+        let status = crate::SyncStatus::default();
+        status.set_authority(true);
+        assert!(!status.is_own_content_authority(), "{source:?}");
+        crate::sync::worker::serve_unsynced(&config, &status);
+        assert_eq!(status.is_own_content_authority(), own, "{source:?}");
+    }
+}
+
 /// `SERVE_UNSYNCED_DEPLOY_TYPES` opens an unsynced copy to the types it
 /// names (a development stack's own profiles): such a deploy passes the gate
 /// to the deployer's validation, any other type keeps the bootstrapping 503.

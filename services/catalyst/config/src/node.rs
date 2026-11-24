@@ -39,8 +39,10 @@ pub struct NodeConfig {
 
     /// Direct backend proxies allowed to supply a single, overwritten X-Real-IP
     /// for referral quotas, the `/contents` rate limit and the per-source budget
-    /// of contract-wallet signature checks. Empty trusts only the socket peer.
-    /// These are the backend proxy networks, not the proxy's own upstream CDN
+    /// of contract-wallet signature checks, and the `x-original-path` signed
+    /// requests are verified against. Empty trusts only a loopback peer; behind
+    /// an unlisted proxy, signed requests on paths it rewrote are refused. These
+    /// are the backend proxy networks, not the proxy's own upstream CDN
     /// networks.
     #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,

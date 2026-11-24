@@ -209,6 +209,7 @@ CREATE TABLE shop.items (
     minters text[] NOT NULL DEFAULT '{}',
     minter_allowances numeric(78,0)[] NOT NULL DEFAULT '{}',
     testnet_verified boolean NOT NULL DEFAULT false,
+    content_hash text,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -17147,8 +17148,7 @@ CREATE INDEX mana_transfer_recipient ON shop.mana_transfer (network, recipient, 
 -- the Polygon Committee contracts' MemberSet logs, appended with the cursor
 -- advance and deleted past a reorg rewind. Workload: tens of rows in all.
 -- A wallet is a member when its latest row (chain order, across both
--- contracts) has is_member; builder reads that set by shared SQL up to the
--- cursor's published block (DATABASE.md "Curation committee").
+-- contracts) has is_member.
 CREATE TABLE shop.committee_event (
     network text NOT NULL CHECK (network = 'matic'),
     block_number bigint NOT NULL CHECK (block_number >= 0),

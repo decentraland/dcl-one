@@ -50,40 +50,69 @@ pub fn client_ip(headers: &HeaderMap) -> String {
     String::new()
 }
 
+/// What [`pin_forwarding_headers`] changed that points at an unlisted
+/// backend proxy: a private peer's differing `X-Real-IP` was replaced, or a
+/// private peer's `x-original-path` was dropped.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Pinned {
+    pub real_ip_replaced: bool,
+    pub original_path_dropped: bool,
+}
+
+const REAL_IP_REPLACED: &str = "a private peer forwards X-Real-IP but is not in HTTP_TRUSTED_PROXY_CIDRS, \
+     so its clients are counted as the peer; list the backend proxy networks there";
+
+const ORIGINAL_PATH_DROPPED: &str = "a private peer forwards x-original-path but is not in HTTP_TRUSTED_PROXY_CIDRS, \
+     so the header is dropped and signed requests on paths that proxy rewrote are refused; \
+     list the backend proxy networks there";
+
 /// Makes the socket peer the client unless it is a trusted proxy (a loopback
 /// peer or one in `HTTP_TRUSTED_PROXY_CIDRS`): `X-Real-IP` becomes the peer and
-/// `X-Forwarded-For` is dropped, so [`client_ip`] never reads a direct
-/// caller's own header. Returns whether an internal peer's differing
-/// `X-Real-IP` was replaced (most likely an unlisted backend proxy).
+/// `X-Forwarded-For` and the proxy's `x-original-path` are dropped, so
+/// [`client_ip`] and the signed-fetch path rule never read a direct caller's
+/// own header.
 pub fn pin_forwarding_headers(
     headers: &mut HeaderMap,
     peer: IpAddr,
     trusted_proxies: &[ipnet::IpNet],
-) -> bool {
+) -> Pinned {
     let peer = peer.to_canonical();
     if peer.is_loopback() || is_trusted_proxy(peer, trusted_proxies) {
-        return false;
+        return Pinned::default();
     }
-    let replaced = is_internal(peer)
-        && headers.contains_key("x-real-ip")
-        && single_real_ip(headers) != Some(peer);
+    let internal = is_internal(peer);
+    let pinned = Pinned {
+        real_ip_replaced: internal
+            && headers.contains_key("x-real-ip")
+            && single_real_ip(headers) != Some(peer),
+        original_path_dropped: internal
+            && headers.contains_key(crate::auth::signed_fetch::ORIGINAL_PATH_HEADER),
+    };
     headers.remove("x-forwarded-for");
+    headers.remove(crate::auth::signed_fetch::ORIGINAL_PATH_HEADER);
     headers.insert(
         "x-real-ip",
         axum::http::HeaderValue::from_str(&peer.to_string()).expect("an address is a header value"),
     );
-    replaced
+    pinned
+}
+
+fn first_time(happened: bool, warned: &std::sync::atomic::AtomicBool) -> bool {
+    happened && !warned.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Applies [`pin_forwarding_headers`] to every request `router` answers that
 /// carries the server's `ConnectInfo`; in-process callers pass untouched.
+/// Each kind of [`Pinned`] change is logged the first time, with the peer
+/// and never the header's value.
 pub fn pin_client_headers(
     router: axum::Router,
     trusted_proxies: Vec<ipnet::IpNet>,
 ) -> axum::Router {
     use axum::extract::{ConnectInfo, Request};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static WARNED: AtomicBool = AtomicBool::new(false);
+    use std::sync::atomic::AtomicBool;
+    static WARNED_REAL_IP: AtomicBool = AtomicBool::new(false);
+    static WARNED_ORIGINAL_PATH: AtomicBool = AtomicBool::new(false);
     router.layer(axum::middleware::map_request(move |mut req: Request| {
         let trusted_proxies = trusted_proxies.clone();
         async move {
@@ -91,14 +120,14 @@ pub fn pin_client_headers(
                 .extensions()
                 .get::<ConnectInfo<std::net::SocketAddr>>()
                 .copied()
-                && pin_forwarding_headers(req.headers_mut(), peer.ip(), &trusted_proxies)
-                && !WARNED.swap(true, Ordering::Relaxed)
             {
-                tracing::warn!(
-                    peer = %peer.ip(),
-                    "a private peer forwards X-Real-IP but is not in HTTP_TRUSTED_PROXY_CIDRS, \
-                     so its clients are counted as the peer; list the backend proxy networks there"
-                );
+                let pinned = pin_forwarding_headers(req.headers_mut(), peer.ip(), &trusted_proxies);
+                if first_time(pinned.real_ip_replaced, &WARNED_REAL_IP) {
+                    tracing::warn!(peer = %peer.ip(), "{REAL_IP_REPLACED}");
+                }
+                if first_time(pinned.original_path_dropped, &WARNED_ORIGINAL_PATH) {
+                    tracing::warn!(peer = %peer.ip(), "{ORIGINAL_PATH_DROPPED}");
+                }
             }
             req
         }
@@ -243,31 +272,65 @@ mod tests {
         let trusted: [ipnet::IpNet; 1] = ["10.0.0.0/8".parse().unwrap()];
 
         let mut direct = forged();
-        assert!(!pin_forwarding_headers(
-            &mut direct,
-            "198.51.100.4".parse().unwrap(),
-            &trusted
-        ));
+        assert!(
+            !pin_forwarding_headers(&mut direct, "198.51.100.4".parse().unwrap(), &trusted)
+                .real_ip_replaced
+        );
         assert_eq!(client_ip(&direct), "198.51.100.4");
         assert!(direct.get("x-forwarded-for").is_none());
 
         let mut unlisted = forged();
-        assert!(pin_forwarding_headers(
-            &mut unlisted,
-            "172.18.0.2".parse().unwrap(),
-            &trusted
-        ));
+        assert!(
+            pin_forwarding_headers(&mut unlisted, "172.18.0.2".parse().unwrap(), &trusted)
+                .real_ip_replaced
+        );
         assert_eq!(client_ip(&unlisted), "172.18.0.2");
 
         for proxy in ["127.0.0.1", "::1", "::ffff:127.0.0.1", "10.0.0.5"] {
             let mut via = forged();
-            assert!(!pin_forwarding_headers(
-                &mut via,
-                proxy.parse().unwrap(),
-                &trusted
-            ));
+            assert!(
+                !pin_forwarding_headers(&mut via, proxy.parse().unwrap(), &trusted)
+                    .real_ip_replaced
+            );
             assert_eq!(client_ip(&via), "203.0.113.9", "{proxy}");
         }
+    }
+
+    #[test]
+    fn only_a_trusted_or_loopback_peer_names_the_original_path() {
+        let trusted: [ipnet::IpNet; 1] = ["10.0.0.0/8".parse().unwrap()];
+        let sent = || headers(&[("x-original-path", "/builder-api/v1/collections")]);
+        for (direct, internal) in [("198.51.100.4", false), ("172.18.0.2", true)] {
+            let mut headers = sent();
+            let pinned = pin_forwarding_headers(&mut headers, direct.parse().unwrap(), &trusted);
+            assert!(headers.get("x-original-path").is_none(), "{direct}");
+            assert_eq!(pinned.original_path_dropped, internal, "{direct}");
+        }
+        let mut none = HeaderMap::new();
+        assert!(
+            !pin_forwarding_headers(&mut none, "172.18.0.2".parse().unwrap(), &trusted)
+                .original_path_dropped
+        );
+        for proxy in ["127.0.0.1", "10.0.0.5"] {
+            let mut headers = sent();
+            let pinned = pin_forwarding_headers(&mut headers, proxy.parse().unwrap(), &trusted);
+            assert_eq!(
+                headers["x-original-path"], "/builder-api/v1/collections",
+                "{proxy}"
+            );
+            assert!(!pinned.original_path_dropped, "{proxy}");
+        }
+    }
+
+    #[test]
+    fn a_dropped_original_path_is_reported_once_without_its_value() {
+        use std::sync::atomic::AtomicBool;
+        let warned = AtomicBool::new(false);
+        assert!(first_time(true, &warned));
+        assert!(!first_time(true, &warned), "reported once");
+        assert!(!first_time(false, &AtomicBool::new(false)));
+        assert!(ORIGINAL_PATH_DROPPED.contains("HTTP_TRUSTED_PROXY_CIDRS"));
+        assert!(ORIGINAL_PATH_DROPPED.contains("refused"));
     }
 
     #[test]

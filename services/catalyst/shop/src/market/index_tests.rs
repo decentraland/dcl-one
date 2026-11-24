@@ -4694,7 +4694,7 @@ async fn the_object_pass_installs_nft_order_proof_for_an_existing_cursor() {
         "a committed order fold needs its publication"
     );
     assert!(
-        chain_walk::mark_folded(pool, &index, &owner, block, chrono::Utc::now())
+        chain_walk::mark_folded(pool, &index, &owner, block)
             .await
             .unwrap()
     );
@@ -4832,7 +4832,7 @@ async fn order_filtered_collections_refuse_a_committed_unpublished_nft_fold() {
     );
 
     assert!(
-        chain_walk::mark_folded(pool, &index, &owner, next, chrono::Utc::now())
+        chain_walk::mark_folded(pool, &index, &owner, next)
             .await
             .unwrap()
     );
@@ -9241,7 +9241,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
         chain_walk::record_fold(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
-        chain_walk::mark_folded(&db.pool, &ix, &a, before.0, chrono::Utc::now())
+        chain_walk::mark_folded(&db.pool, &ix, &a, before.0)
             .await
             .unwrap_err(),
         chain_walk::unpublish(&db.pool, &a, before.0)
