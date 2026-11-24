@@ -21,7 +21,7 @@ use super::render::{Coord, MapView, render_estate_minimap, render_minimap, rende
 
 const RENDER_DURATION: HistogramFamily<1> = HistogramFamily::new(
     "dcl_map_render_duration_seconds",
-    "Time spent rendering a map PNG on the blocking pool.",
+    "Time spent successfully rendering a map PNG on the blocking pool.",
     Some(Unit::Seconds),
     &["kind"],
     &[0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10.],
@@ -218,7 +218,9 @@ where
         let _permit = permit;
         let start = Instant::now();
         let result = render(&grid);
-        duration.record(start.elapsed().as_secs_f64());
+        if result.is_ok() {
+            duration.record(start.elapsed().as_secs_f64());
+        }
         if result
             .as_ref()
             .is_err_and(|response| response.status().is_server_error())
@@ -291,6 +293,7 @@ where
                     return resp;
                 }
                 None => {
+                    IMAGE_CACHE.handle([kind, "miss"]).increment(1);
                     RENDER_ERRORS.handle([kind, "busy"]).increment(1);
                     return *renderer_busy();
                 }
@@ -674,6 +677,8 @@ mod tests {
     async fn a_waiter_past_its_deadline_answers_an_uncached_503() {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let key = "busy-test".to_string();
         let flight = render_flight(&png_cache_key(&state.map.snapshot().unwrap(), &key));
         let _held = flight.lock().await;
@@ -691,6 +696,16 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(resp.headers()[header::RETRY_AFTER], "5");
+        let scrape = recorder.handle().render();
+        assert!(
+            scrape.lines().any(|line| {
+                line.starts_with("dcl_map_image_cache_total{")
+                    && line.contains("kind=\"map\"")
+                    && line.contains("result=\"miss\"")
+                    && line.ends_with(" 1")
+            }),
+            "{scrape}"
+        );
     }
 
     #[tokio::test(start_paused = true)]

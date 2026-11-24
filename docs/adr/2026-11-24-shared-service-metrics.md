@@ -68,14 +68,17 @@ Review histogram thresholds when migrating latency alerts.
 
 - Replace Atlas's map and minimap render-time queries with
   `dcl_map_render_duration_seconds{kind}`. Filter by `map`, `parcel`, `estate`, `minimap` or
-  `estatemap`. The timer covers rendering and encoding on the blocking pool. The
+  `estatemap`. The timer covers successful rendering and encoding on the blocking pool. The
   `dcl_map_render_errors_total{kind,reason}` counter distinguishes worker failures, render
   errors and waits that timed out. Use `dcl_map_image_cache_total{kind,result}` for hits, misses,
-  shared renders and conditional responses.
+  shared renders and conditional responses. A PNG cache lookup that finds no image and
+  times out waiting for a render counts as a miss.
 - Use `dcl_registry_backend_requests_total{backend,outcome}` for Registry reads forwarded to a
   local native service or public upstream. The outcome distinguishes successful responses,
   upstream client and server errors, other HTTP responses, a full queue and request failures.
-  Use shared HTTP metrics for local answers and route-level error rates.
+  An oversized backend body counts as a request failure. A cancelled forward before the
+  backend body has been read produces no backend outcome. Use shared HTTP metrics for
+  local answers, cancellations and route-level error rates.
   The Registry worker's own processing metrics belong on that worker's scrape.
 
 ## Recording and querying
