@@ -1,5 +1,5 @@
-import { getJSON, sendSignedJSON, type QueryParams, type RequestOpts } from "./client";
-import { noteCopy } from "../copyAsOf";
+import { getJSON, type QueryParams, type RequestOpts } from "./client";
+import { noteCopy } from "../freshness/copyAsOf";
 import {
   PLACES_LIMIT,
   isRenderablePlace,
@@ -23,10 +23,9 @@ export { PlaceSchema };
 
 export async function fetchPlaces(
   params: QueryParams = {},
-  opts: RequestOpts & { authenticated?: boolean } = {},
+  opts: RequestOpts = {},
 ): Promise<PlaceView[]> {
-  const env = await (opts.authenticated ? sendSignedJSON : getJSON)("/api/places", {
-    method: "GET",
+  const env = await getJSON("/api/places", {
     service: "places",
     ...opts,
     query: { limit: PLACES_LIMIT, ...params, ...(opts.query ?? {}) },
