@@ -44,7 +44,14 @@ pub async fn nft_by_contract_token(
     .await?
     .ok_or(NftReadError::Unavailable)?;
 
-    let row = sqlx::query_as(
+    #[derive(sqlx::FromRow)]
+    struct IndexedAsset {
+        #[sqlx(flatten)]
+        asset: LandNft,
+        data_block: Option<i64>,
+    }
+
+    let row = sqlx::query_as::<_, IndexedAsset>(
         "SELECT tr.token_address || '-' || tr.token_id AS nft_id,
                 CASE WHEN tr.token_address = $3 THEN 'parcel' ELSE 'estate' END AS category,
                 tr.owner AS owner_address,
@@ -54,7 +61,8 @@ pub async fn nft_by_contract_token(
                 coalesce(p.adjacent_to_road, members.adjacent, false) AS adjacent_to_road,
                 members.size AS estate_size,
                 coalesce(mint.block_time, 0) AS created_at,
-                greatest(transfer.block_time, doc.block_time, 0) AS updated_at
+                greatest(transfer.block_time, doc.block_time, 0) AS updated_at,
+                d.updated_block AS data_block
          FROM land_authz.token_right tr
          LEFT JOIN shop.land_data d ON d.token_address = tr.token_address AND d.token_id = tr.token_id
          LEFT JOIN shop.nft_event doc ON doc.network = 'ethereum' AND doc.block_number = d.updated_block
@@ -85,5 +93,13 @@ pub async fn nft_by_contract_token(
     .bind(net.estate_registry)
     .fetch_optional(&mut *snapshot.tx)
     .await?;
-    Ok(row)
+    let Some(row) = row else { return Ok(None) };
+    // A newer document cannot date the owner or estate membership beyond the rights fold.
+    if row
+        .data_block
+        .is_some_and(|block| block > snapshot.cursor.last_block)
+    {
+        return Err(NftReadError::Unavailable);
+    }
+    Ok(Some(row.asset))
 }

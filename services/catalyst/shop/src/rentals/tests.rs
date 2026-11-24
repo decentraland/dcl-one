@@ -736,7 +736,8 @@ async fn create_refresh_and_list_from_the_published_land_index() {
     .unwrap();
     sqlx::query("INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,emitter,contract_address,token_id)
                  VALUES ('ethereum',4,1,1700000050,'land_data',$1,$1,$2::numeric)").bind(LAND).bind(&token).execute(&pool).await.unwrap();
-    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=NULL")
+    // The owner is published through block 3. A block-4 name must not date that owner.
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=3, last_block=3")
         .execute(&pool)
         .await
         .unwrap();
@@ -751,7 +752,7 @@ async fn create_refresh_and_list_from_the_published_land_index() {
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{envelope}");
     assert_eq!(envelope["source"], "land-authz-index");
     assert_eq!(headers.get(header::RETRY_AFTER).unwrap(), "60");
-    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=last_block")
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=100, last_block=100")
         .execute(&pool)
         .await
         .unwrap();
