@@ -618,7 +618,10 @@ fn update_scene_priority(
     updates.eligible_jobs = 0;
     updates.frames += 1;
 
-    let (active_scenes, wake_scenes) = player_scenes(
+    let PlayerScenes {
+        active: active_scenes,
+        wake: wake_scenes,
+    } = player_scenes(
         player.single().ok(),
         &containing_scene,
         &updates.priority_scenes,
@@ -714,22 +717,34 @@ fn update_scene_priority(
     updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
 }
 
-/// The scenes the player is in, which tick first ([`ContainingScene::get`]), and the scenes whose
-/// runtimes the engine wakes when it sends them something ([`SceneWake`]; the web relays wait for
-/// it, the others keep their poll): the parcel scene under the player, also while they are kept
-/// out of the world arriving at a teleport's destination ([`ContainingScene::get_oow`]), every
-/// portable experience, and the named priority scenes (the movement scene).
+/// The scenes the player is in and the scenes the engine wakes ([`player_scenes`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PlayerScenes {
+    /// The scenes the player is in, which tick first ([`ContainingScene::get`]).
+    pub active: HashSet<Entity>,
+    /// The scenes whose runtimes the engine wakes when it sends them something ([`SceneWake`]; the
+    /// web relays wait for it, the others keep their poll).
+    pub wake: HashSet<Entity>,
+}
+
+/// The scenes the player is in and the scenes the engine wakes: the parcel scene under the player,
+/// also while they are kept out of the world arriving at a teleport's destination
+/// ([`ContainingScene::get_oow`]), every portable experience, and the named priority scenes (the
+/// movement scene). Without a player, or before it has a position, the player is in no scene and
+/// the portable experiences and the priority scenes wake.
 fn player_scenes(
     player: Option<Entity>,
     containing_scene: &ContainingScene,
     priority_scenes: &HashMap<&'static str, Entity>,
-) -> (HashSet<Entity>, HashSet<Entity>) {
-    let (active, mut wake) = match player {
-        Some(player) => containing_scene.get_and_oow(player),
-        None => (HashSet::default(), containing_scene.get_portables(false)),
-    };
-    wake.extend(priority_scenes.values());
-    (active, wake)
+) -> PlayerScenes {
+    let mut scenes = player
+        .and_then(|player| containing_scene.get_in_and_at(player))
+        .unwrap_or_else(|| PlayerScenes {
+            active: HashSet::default(),
+            wake: containing_scene.get_portables(false),
+        });
+    scenes.wake.extend(priority_scenes.values());
+    scenes
 }
 
 /// The queue key of a scene due this frame: its distance over the time since it was last
@@ -868,14 +883,22 @@ impl ContainingScene<'_, '_> {
     pub fn get(&self, ent: Entity) -> HashSet<Entity> {
         self.transforms
             .get(ent)
-            .map(|(gt, oow)| {
-                if oow {
-                    self.get_portables(true)
-                } else {
-                    self.get_position(gt.translation())
-                }
-            })
+            .map(|(gt, oow)| self.scenes_in(oow, || self.get_position(gt.translation())))
             .unwrap_or_default()
+    }
+
+    // the scenes an entity is in, given the scenes at its position: out of world, only the
+    // super-user portables
+    fn scenes_in(
+        &self,
+        out_of_world: bool,
+        at_position: impl FnOnce() -> HashSet<Entity>,
+    ) -> HashSet<Entity> {
+        if out_of_world {
+            self.get_portables(true)
+        } else {
+            at_position()
+        }
     }
 
     // the parcel at the entity's position, even if they are out of world (arriving: the player
@@ -888,18 +911,16 @@ impl ContainingScene<'_, '_> {
             .unwrap_or_default()
     }
 
-    // `get` and `get_oow`, from one lookup of the entity's position
-    pub fn get_and_oow(&self, ent: Entity) -> (HashSet<Entity>, HashSet<Entity>) {
-        let Ok((gt, oow)) = self.transforms.get(ent) else {
-            return Default::default();
-        };
-        let at_position = self.get_position(gt.translation());
-        let scenes = if oow {
-            self.get_portables(true)
-        } else {
-            at_position.clone()
-        };
-        (scenes, at_position)
+    /// [`Self::get`] and [`Self::get_oow`] of the player from one lookup of its position: the
+    /// scenes it is in (`active`) and the scenes at its position even while it is out of world
+    /// (`wake`). None while it has no position.
+    pub(crate) fn get_in_and_at(&self, player: Entity) -> Option<PlayerScenes> {
+        let (gt, oow) = self.transforms.get(player).ok()?;
+        let wake = self.get_position(gt.translation());
+        Some(PlayerScenes {
+            active: self.scenes_in(oow, || wake.clone()),
+            wake,
+        })
     }
 
     // get all scenes within radius of the given entity, plus any global scenes
@@ -1068,11 +1089,7 @@ mod player_scenes_tests {
         }
     }
 
-    fn player_scenes_of(
-        world: &mut World,
-        player: Entity,
-        priority: Entity,
-    ) -> (HashSet<Entity>, HashSet<Entity>) {
+    fn player_scenes_of(world: &mut World, player: Entity, priority: Entity) -> PlayerScenes {
         world
             .run_system_once(move |containing: ContainingScene| {
                 let priority = HashMap::from_iter([("movement_controller", priority)]);
@@ -1092,11 +1109,13 @@ mod player_scenes_tests {
         } = scenes(&mut world);
         let movement = world.spawn_empty().id();
 
-        let active = |scene| HashSet::from_iter([scene, portable]);
-        let wake = |scene| HashSet::from_iter([scene, portable, movement]);
+        let in_scene = |scene| PlayerScenes {
+            active: HashSet::from_iter([scene, portable]),
+            wake: HashSet::from_iter([scene, portable, movement]),
+        };
         assert_eq!(
             player_scenes_of(&mut world, player, movement),
-            (active(here), wake(here))
+            in_scene(here)
         );
 
         // onto the next parcel: its scene replaces the one left
@@ -1104,7 +1123,7 @@ mod player_scenes_tests {
             GlobalTransform::from_translation(EAST);
         assert_eq!(
             player_scenes_of(&mut world, player, movement),
-            (active(east), wake(east))
+            in_scene(east)
         );
 
         // a teleport's arrival: out of the world at the destination, whose scene wakes already;
@@ -1114,8 +1133,36 @@ mod player_scenes_tests {
             GlobalTransform::from_translation(HERE);
         assert_eq!(
             player_scenes_of(&mut world, player, movement),
-            (HashSet::default(), wake(here))
+            PlayerScenes {
+                active: HashSet::default(),
+                wake: HashSet::from_iter([here, portable, movement]),
+            }
         );
+    }
+
+    /// Before the player has a position, as without a player, it is in no scene, and the
+    /// portables and the movement scene wake.
+    #[test]
+    fn without_a_position_the_portables_and_the_movement_scene_wake() {
+        let mut world = World::new();
+        let Scenes {
+            portable, player, ..
+        } = scenes(&mut world);
+        let movement = world.spawn_empty().id();
+        let no_position = PlayerScenes {
+            active: HashSet::default(),
+            wake: HashSet::from_iter([portable, movement]),
+        };
+
+        world.entity_mut(player).remove::<GlobalTransform>();
+        assert_eq!(player_scenes_of(&mut world, player, movement), no_position);
+        let no_player = world
+            .run_system_once(move |containing: ContainingScene| {
+                let priority = HashMap::from_iter([("movement_controller", movement)]);
+                player_scenes(None, &containing, &priority)
+            })
+            .unwrap();
+        assert_eq!(no_player, no_position);
     }
 
     // a running scene with its engine handle
