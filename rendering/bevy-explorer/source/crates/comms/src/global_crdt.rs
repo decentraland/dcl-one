@@ -1,4 +1,10 @@
-use std::{f32::consts::TAU, sync::Arc};
+use std::{
+    f32::consts::TAU,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -313,15 +319,14 @@ pub struct GlobalCrdtState {
     pub(crate) realm_bounds: (IVec2, IVec2),
     // per-component localizer registry (populated as components are first sent)
     localizers: HashMap<SceneComponentId, Localizer>,
+    // updates sent to scenes since the context was created
+    sent: AtomicU64,
 }
-
-/// Updates a scene's receiver holds before the oldest are dropped.
-pub const GLOBAL_CRDT_SCENE_CAPACITY: usize = 1000;
 
 impl GlobalCrdtState {
     pub fn new(room: Option<String>) -> Self {
         let (ext_sender, ext_receiver) = mpsc::channel(1000);
-        let (int_sender, _) = broadcast::channel(GLOBAL_CRDT_SCENE_CAPACITY);
+        let (int_sender, _) = broadcast::channel(1000);
         Self {
             room,
             ext_receiver,
@@ -332,6 +337,7 @@ impl GlobalCrdtState {
             lookup: Default::default(),
             realm_bounds: (IVec2::MAX, IVec2::MIN),
             localizers: Default::default(),
+            sent: AtomicU64::new(0),
         }
     }
 }
@@ -458,9 +464,11 @@ impl GlobalCrdtState {
         (store, self.int_sender.subscribe())
     }
 
-    /// The updates sent that the slowest scene has not read yet.
-    pub fn backlog(&self) -> usize {
-        self.int_sender.len()
+    /// The updates sent to this context's scenes since it was created. A scene host forwards
+    /// each to the scene, which reads them at its next tick: the count at a scene's dispatch
+    /// bounds what it has read.
+    pub fn sent(&self) -> u64 {
+        self.sent.load(Ordering::Relaxed)
     }
 
     pub fn set_bounds(&mut self, min: IVec2, max: IVec2) {
@@ -534,8 +542,11 @@ impl GlobalCrdtState {
         if self.int_sender.receiver_count() == 0 {
             return;
         }
-        if let Err(e) = self.int_sender.send(update) {
-            error!("failed to send {what} update to scenes: {e}");
+        match self.int_sender.send(update) {
+            Ok(_) => {
+                self.sent.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => error!("failed to send {what} update to scenes: {e}"),
         }
     }
 }

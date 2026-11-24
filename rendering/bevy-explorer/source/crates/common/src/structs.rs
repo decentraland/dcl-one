@@ -2344,6 +2344,10 @@ pub struct DebugInfo {
     pub info: HashMap<&'static str, String>,
 }
 
+/// The global updates a scene host holds for a scene between its ticks; past it, the oldest are
+/// dropped.
+pub const SCENE_GLOBAL_UPDATE_CAPACITY: usize = 1000;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GlobalCrdtStateUpdate {
     Crdt(Vec<u8>, dcl_component::Localizer),

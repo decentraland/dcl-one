@@ -71,6 +71,9 @@ pub struct RendererSceneContext {
     /// The most ticks a second the scene loop sends this scene (`scene_tick_rate`), refreshed
     /// each frame; `None` at the full rate.
     pub(crate) tick_rate_cap: Option<f32>,
+    /// `GlobalCrdtState::sent` of the scene loop's crdt contexts at this scene's last dispatch:
+    /// the scene has read every global update up to it.
+    pub(crate) global_updates_read: u64,
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.
     pub portable_experiences: PortableExperiencesToggle,
@@ -278,6 +281,7 @@ impl RendererSceneContext {
             state: SceneState::Init,
             priority,
             tick_rate_cap: None,
+            global_updates_read: 0,
             crdt_store: Default::default(),
             initial_crdt: None,
             blocked: Default::default(),

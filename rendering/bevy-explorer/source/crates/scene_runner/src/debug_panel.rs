@@ -168,6 +168,10 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Scenes at the full rate", "full"),
                     (CAPPED_LABEL, "capped"),
                     ("Scene-frames skipped by the cap", "skipped"),
+                    (
+                        "Scene-frames due early on unread global updates",
+                        "released",
+                    ),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -613,7 +617,13 @@ fn tick_rate_state(
         }
     }
     input.reply_ok(
-        json!({"full": full, "capped": capped, "skipped": updates.skipped_rate_capped}).to_string(),
+        json!({
+            "full": full,
+            "capped": capped,
+            "skipped": updates.skipped_rate_capped,
+            "released": updates.released_by_global_updates,
+        })
+        .to_string(),
     );
 }
 

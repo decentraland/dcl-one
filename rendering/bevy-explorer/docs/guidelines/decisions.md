@@ -160,7 +160,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   rendering camera counts four times farther in the tick queue. On top of the queue each scene
   has a maximum tick rate by distance band, at most once a second behind the camera, and once
   every two seconds from 80 m on, where unity-explorer stops ticking: a scene here drains its
-  message channels only while ticking, and a global CRDT backlog makes every capped scene due
+  message channels only while ticking, and unread global updates make a capped scene due
   ([scheduling](scheduling.md#tick-rate-bands),
   [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md)). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests

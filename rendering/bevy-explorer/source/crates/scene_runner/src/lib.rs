@@ -61,7 +61,7 @@ use crate::{
     initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
         publish_download_priorities, scene_tick_rate, tick_rate_allows, update_scene_partitions,
-        Partition, BEHIND_SCENE_TICK_PENALTY, GLOBAL_CRDT_BACKLOG_DUE,
+        Partition, BEHIND_SCENE_TICK_PENALTY, GLOBAL_UPDATE_BACKLOG_DUE,
     },
 };
 use common::partition::PartitionData;
@@ -126,6 +126,9 @@ pub struct SceneUpdates {
     /// Scene-frames skipped because the scene's distance band allowed no tick yet
     /// (`scene_tick_rate`).
     pub skipped_rate_capped: u64,
+    /// Scene-frames a capped scene was due before its band allowed, because of the global
+    /// updates it had not read (`GLOBAL_UPDATE_BACKLOG_DUE`).
+    pub released_by_global_updates: u64,
     /// Named scene entities that must be scheduled every frame (e.g. the
     /// movement controller). These scenes bypass the `scene_threads` limit
     /// but still occupy slots, preventing non-priority scenes from running.
@@ -415,6 +418,7 @@ impl Plugin for SceneRunnerPlugin {
             skipped_in_flight: 0,
             skipped_already_sent: 0,
             skipped_rate_capped: 0,
+            released_by_global_updates: 0,
         });
 
         app.add_event::<LoadSceneEvent>();
@@ -602,7 +606,6 @@ fn update_scene_priority(
     rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
     crdt_contexts: Query<&GlobalCrdtState>,
     imposter_scene: Res<CurrentImposterScene>,
-    live_scenes: Res<LiveScenes>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
     containing_scene: ContainingScene,
@@ -619,19 +622,13 @@ fn update_scene_priority(
         &updates.priority_scenes,
     );
 
-    // mark scenes that have been in-flight past the timeout as broken and free their
-    // slot, so a wedged scene worker can't hold a scene thread forever
     let elapsed = time.elapsed_secs_f64();
     // the distance bands cap tick rates only where a camera renders: the headless server ticks
     // every scene it runs
     let rate_capped = !rendering_camera.is_empty();
-    // a scene reads the global CRDT channel only while ticking: once the slowest reader falls
-    // half its capacity behind, capped scenes tick so none drops an update
-    let crdt_backlog_due = crdt_contexts
-        .iter()
-        .any(|crdt| crdt.backlog() >= GLOBAL_CRDT_BACKLOG_DUE);
-    let imposter_scene = match &imposter_scene.0 {
-        Some((PointerResult::Exists { hash, .. }, _)) => live_scenes.scenes.get(hash).copied(),
+    let global_updates_sent = global_updates_sent(&crdt_contexts);
+    let imposter_hash = match &imposter_scene.0 {
+        Some((PointerResult::Exists { hash, .. }, _)) => Some(hash.as_str()),
         _ => None,
     };
     for (ent, maybe_partition, mut context, maybe_super) in scenes.iter_mut() {
@@ -644,10 +641,12 @@ fn update_scene_priority(
             || wake_scenes.contains(&ent)
             || maybe_super.is_some()
             || context.inspected
-            || imposter_scene == Some(ent)
+            || imposter_hash == Some(&*context.hash)
             || context.tick_number < SCENE_LOADED_TICK;
         let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
         context.tick_rate_cap = (!full_rate).then(|| scene_tick_rate(&partition));
+        // mark scenes that have been in-flight past the timeout as broken and free their
+        // slot, so a wedged scene worker can't hold a scene thread forever
         if not_responding(
             context.in_flight(),
             context.inspected,
@@ -676,6 +675,7 @@ fn update_scene_priority(
     let mut skipped_in_flight = 0u64;
     let mut skipped_already_sent = 0u64;
     let mut skipped_rate_capped = 0u64;
+    let mut released_by_global_updates = 0u64;
 
     // sort eligible scenes
     updates.scene_queue = scenes
@@ -716,13 +716,16 @@ fn update_scene_priority(
                 return None;
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
-            if !crdt_backlog_due
-                && context
-                    .tick_rate_cap
-                    .is_some_and(|rate| !tick_rate_allows(rate, age, time.delta_secs_f64()))
-            {
-                skipped_rate_capped += 1;
-                return None;
+            if let Some(rate) = context.tick_rate_cap {
+                // its scene host drops the oldest global updates past its capacity, so a scene
+                // that has many unread is due whatever its band
+                let unread = global_updates_sent.saturating_sub(context.global_updates_read);
+                if unread >= GLOBAL_UPDATE_BACKLOG_DUE {
+                    released_by_global_updates += 1;
+                } else if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
+                    skipped_rate_capped += 1;
+                    return None;
+                }
             }
             updates.eligible_jobs += 1;
             Some((ent, scene_tick_key(partition, active, age)))
@@ -731,6 +734,7 @@ fn update_scene_priority(
     updates.skipped_in_flight += skipped_in_flight;
     updates.skipped_already_sent += skipped_already_sent;
     updates.skipped_rate_capped += skipped_rate_capped;
+    updates.released_by_global_updates += released_by_global_updates;
     updates
         .scene_queue
         .make_contiguous()
@@ -768,6 +772,12 @@ fn player_scenes(
         });
     scenes.wake.extend(priority_scenes.values());
     scenes
+}
+
+/// The global updates sent to scenes, summed over the crdt contexts (the client has one). A
+/// scene's host forwards each to it as it is sent, and the scene reads them at its next tick.
+fn global_updates_sent(crdt_contexts: &Query<&GlobalCrdtState>) -> u64 {
+    crdt_contexts.iter().map(GlobalCrdtState::sent).sum()
 }
 
 /// The queue key of a scene due this frame: its distance over the time since it was last
@@ -1236,6 +1246,7 @@ mod player_scenes_tests {
             skipped_in_flight: 0,
             skipped_already_sent: 0,
             skipped_rate_capped: 0,
+            released_by_global_updates: 0,
         });
         world.init_resource::<Time>();
         world.init_resource::<CurrentImposterScene>();
@@ -1310,6 +1321,50 @@ mod player_scenes_tests {
         assert!(!queued(&world).contains(&east));
         frame(&mut world, 1.0);
         assert!(queued(&world).contains(&east));
+    }
+
+    /// A capped scene whose host holds many global updates it has not read is due before its
+    /// band allows, so the host drops none.
+    #[test]
+    fn a_far_scene_with_unread_global_updates_is_due() {
+        let mut world = World::new();
+        let Scenes { east, .. } = scenes(&mut world);
+        live_scene(&mut world, east, IVec2::new(3, 2));
+        world
+            .get_mut::<RendererSceneContext>(east)
+            .unwrap()
+            .tick_number = SCENE_LOADED_TICK;
+        world.entity_mut(east).insert(Partition(PartitionData {
+            sqr_distance: 100.0 * 100.0,
+            parcel_distance: 6,
+            is_behind: false,
+        }));
+        world.spawn((PrimaryCamera::default(), Camera::default()));
+        let mut crdt = GlobalCrdtState::new(None);
+        // a scene host's subscription: without one nothing is sent
+        let (_, _host) = crdt.subscribe(Vec3::ZERO);
+        for _ in 0..GLOBAL_UPDATE_BACKLOG_DUE - 1 {
+            crdt.update_time(0.5);
+        }
+        let crdt = world.spawn(crdt).id();
+        scene_loop_resources(&mut world);
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(0.1));
+
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(!queued(&world).contains(&east));
+
+        world
+            .get_mut::<GlobalCrdtState>(crdt)
+            .unwrap()
+            .update_time(0.5);
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(queued(&world).contains(&east));
+        assert_eq!(
+            world.resource::<SceneUpdates>().released_by_global_updates,
+            1
+        );
     }
 
     fn wakes(world: &World, scene: Entity) -> bool {
@@ -1679,8 +1734,11 @@ fn send_scene_updates(
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
     preview_mode: Res<PreviewMode>,
-    mut buf: Local<Vec<u8>>,
-    mut realm_info_cache: Local<RealmInfoCache>,
+    (mut buf, mut realm_info_cache, crdt_contexts): (
+        Local<Vec<u8>>,
+        Local<RealmInfoCache>,
+        Query<&GlobalCrdtState>,
+    ),
 ) {
     let updates = &mut *updates;
     let buf = &mut *buf;
@@ -1935,6 +1993,7 @@ fn send_scene_updates(
     } else {
         context.set_in_flight(true);
         context.last_sent = now;
+        context.global_updates_read = global_updates_sent(&crdt_contexts);
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
     }

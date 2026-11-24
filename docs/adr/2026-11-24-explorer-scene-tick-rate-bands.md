@@ -21,14 +21,17 @@ and main-thread time each frame there is spare time, whether or not the player c
   (`FAR_SCENE_TICK_RATE`). Distance is the partition's, from the player to the nearest point of
   the scene's nearest parcel.
 - **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`).
-- **The farthest band keeps a slow tick, and a global CRDT backlog overrides every cap.** A
-  scene reads its global CRDT channel only while ticking, and the channel drops its oldest
-  updates past 1,000 (`GLOBAL_CRDT_SCENE_CAPACITY`) with no resynchronization: a lost join or
-  leave shows a missing or ghost player when the player returns. A busy island can send more
-  than 500 updates in two seconds, so a rate alone does not bound the backlog. While any crdt
-  context's slowest reader is half its capacity behind (`GlobalCrdtState::backlog`,
-  `GLOBAL_CRDT_BACKLOG_DUE`), every capped scene is due. The slow tick keeps a scene's other
-  channels, such as scene comms, moving between backlogs.
+- **The farthest band keeps a slow tick, and unread global updates make a scene due.** The
+  engine sends every global update (player joins, leaves, identities, avatars, movement) to each
+  scene's host as it happens: the IPC forwarder on native, the relay pump on the web. The host
+  holds them for the scene in a channel of 1,000 entries (`SCENE_GLOBAL_UPDATE_CAPACITY`, 1,024
+  after tokio's rounding), which the scene drains only at a tick, and past which the oldest are
+  dropped with no resynchronization: a lost join or leave shows a missing or ghost player when
+  the player returns. A busy island can send more than that in two seconds, so a rate alone
+  does not bound the loss. `GlobalCrdtState::sent` counts the updates sent; each dispatch
+  records it on the scene (`global_updates_read`), and a capped scene with
+  `GLOBAL_UPDATE_BACKLOG_DUE` (500) or more sent since is due whatever its band. Only that scene
+  is released. The slow tick keeps a scene's other channels, such as scene comms, moving.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, so the cap only removes ticks. Age grows a frame at a time, so
@@ -42,8 +45,9 @@ and main-thread time each frame there is spare time, whether or not the player c
 - **Only where a camera renders.** Without a `PrimaryCamera` that has a `Camera`, as on the
   headless authoritative server, no scene is capped.
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and
-  `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped; the runtime debug
-  panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) shows both.
+  `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped and
+  `released_by_global_updates` those due early on unread global updates; the runtime debug
+  panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) shows them.
 
 ## Consequences
 
