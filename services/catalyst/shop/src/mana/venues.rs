@@ -1,4 +1,4 @@
-// from: shop@94584a5c:app/src/lib/marketplace.ts and marketplace@f3956826:webapp/src/modules/vendor/decentraland/contracts.ts (which contract a purchase settles on, per chain), decentraland-transactions 3.3.0 (the addresses and EIP-712 domains, as library/shop/market/lib/contracts.ts and ui3/src/shop/land/contracts.ts carry them), docs/shop/CONTRACTS.md ("Addresses")
+// from: shop@94584a5c:app/src/lib/marketplace.ts and marketplace@f3956826:webapp/src/modules/vendor/decentraland/contracts.ts (which contract a purchase settles on, per chain), decentraland-transactions 3.3.0 (the addresses and EIP-712 domains, as library/shop/market/lib/contracts.ts and library/shop/land/contracts.ts carry them), docs/shop/CONTRACTS.md ("Addresses")
 //! The settlement venues of a chain: where a MANA purchase, listing, bid,
 //! rental or NAME registration executes and what it pays with. One book
 //! per process ([`Book::production`]); a controlled deployment (the anvil
@@ -75,6 +75,12 @@ impl Chain {
     pub fn is_estate_registry(&self, address: Address) -> bool {
         self.estate == Some(address)
     }
+
+    /// The network of this chain's LAND registry, whose land-authz index
+    /// confirms its parcels and estates; `None` without LAND.
+    pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
+        crate::land_authz::land_network_of_registry(&format!("{:#x}", self.land?))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -104,6 +110,7 @@ impl Book {
                 listings::offchain_marketplace_v3(1),
                 listings::offchain_marketplace_v2(1),
                 Some(listings::OffChainMarketplace {
+                    contract: "OffChainMarketplaceV1",
                     name: "DecentralandMarketplaceEthereum",
                     version: "1.0.0",
                     address: "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff",
@@ -131,6 +138,7 @@ impl Book {
                 listings::offchain_marketplace_v3(137),
                 listings::offchain_marketplace_v2(137),
                 Some(listings::OffChainMarketplace {
+                    contract: "OffChainMarketplaceV1",
                     name: "DecentralandMarketplacePolygon",
                     version: "1.0.0",
                     address: "0x540fb08edb56aae562864b390542c97f562825ba",
@@ -246,6 +254,11 @@ mod tests {
             crate::land_authz::LAND_REGISTRY_MAINNET
         );
         assert_eq!(
+            ethereum.land_network(),
+            Some(crate::land_authz::LAND_MAINNET)
+        );
+        assert_eq!(polygon.land_network(), None);
+        assert_eq!(
             format!("{:#x}", ethereum.legacy_marketplace.unwrap()),
             crate::market::nft_index::legacy_marketplaces(ChainNet::Ethereum)[0].0
         );
@@ -270,6 +283,7 @@ mod tests {
         let amoy = book.chain(ChainId::AMOY).unwrap();
         assert_eq!(amoy.rpc_url.as_deref(), Some("rpc-80002"));
         assert_eq!(amoy.net, Some(ChainNet::Matic));
+        assert_eq!(amoy.land_network(), None);
         let pinned: serde_json::Value =
             serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
         assert_eq!(

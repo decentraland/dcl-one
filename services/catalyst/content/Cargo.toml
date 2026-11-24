@@ -29,10 +29,12 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+rand.workspace = true
 ipnet.workspace = true
 tokio-util.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
+hashlink.workspace = true
 libc.workspace = true
 urlencoding.workspace = true
 base64.workspace = true
@@ -44,7 +46,7 @@ reqwest.workspace = true
 flate2.workspace = true
 url.workspace = true
 regex.workspace = true
-image.workspace = true
+image = { workspace = true, features = ["gif"] }
 metrics.workspace = true
 
 [features]
@@ -60,7 +62,8 @@ catalyst-storage = { path = "../storage", features = ["test-support"] }
 catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-land-authz = { path = "../land-authz", features = ["test-support"] }
 catalyst-testing = { path = "../testing" }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+metrics-exporter-prometheus.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

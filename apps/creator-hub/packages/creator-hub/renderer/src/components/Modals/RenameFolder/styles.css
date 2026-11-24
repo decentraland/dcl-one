@@ -1,0 +1,12 @@
+.RenameFolderModal .RenameFolderFormControl {
+  display: flex;
+  flex-direction: column;
+}
+
+.RenameFolderModal .RenameFolderField + * {
+  margin-top: 16px;
+}
+
+.RenameFolderModal .error {
+  color: var(--error);
+}

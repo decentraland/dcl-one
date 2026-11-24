@@ -106,33 +106,35 @@
   "event_approved": {
     "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
     "metadata": {
-      "link": "https://play.decentraland.org/?position=14%2C100&realm=main",
+      "link": "https://decentraland.org/jump/events?id=ev-1&position=14%2C100",
       "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
       "title": "Live DJ Music and Dancing in the Unity Café",
       "description": "Your event Live DJ Music and Dancing in the Unity Café has been approved.",
-      "myHangouts": "https://decentraland.org/whats-on?tab=my",
+      "myHangouts": "https://decentraland.org/events?tab=my",
       "userName": "TestUser"
     }
   },
   "event_deleted": {
     "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
     "metadata": {
+      "link": "https://decentraland.org/events?tab=my",
       "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
       "title": "Live DJ Music and Dancing in the Unity Café",
       "description": "Your hangout Live DJ Music and Dancing in the Unity Café was deleted.",
       "reason": "Hangout was removed by an admin.",
-      "myHangouts": "https://decentraland.org/whats-on?tab=my",
+      "myHangouts": "https://decentraland.org/events?tab=my",
       "userName": "TestUser"
     }
   },
   "event_rejected": {
     "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
     "metadata": {
+      "link": "https://decentraland.org/events/edit-event/ev-1",
       "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
       "title": "Live DJ Music and Dancing in the Unity Café",
       "description": "Your event Live DJ Music and Dancing in the Unity Café was not approved.",
       "reason": "Submission did not meet the event guidelines.",
-      "myHangouts": "https://decentraland.org/whats-on?tab=my",
+      "myHangouts": "https://decentraland.org/events?tab=my",
       "userName": "TestUser"
     }
   },

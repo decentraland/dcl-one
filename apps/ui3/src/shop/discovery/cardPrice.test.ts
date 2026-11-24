@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { manaWei } from "@shop/model/money";
 import { SIGNED_OUT, web2, web3 } from "@shop/payment/fixtures";
-import { shopListingToItem, unifiedListingToItem } from "./api";
-import { cardEligibility, cardPrice } from "@shop/discovery/cardPrice";
+import { shopListingToItem, unifiedListingToItem } from "@shop/discovery/api";
+import { cardEligibility, cardPrice, isSoldOutPrimary } from "@shop/discovery/cardPrice";
 import { catalogRow, L1_MINT, PRIMARY_WEARABLE, RESALE_WEARABLE, STORE_EMOTE, UNPRICED_WEARABLE, saleWearable } from "./fixtures";
 import { toCatalogItem, type CatalogItem } from "@shop/discovery/lib/catalogItem";
 
@@ -74,6 +74,15 @@ describe("a MANA-only card", () => {
 describe("cards with nothing to buy", () => {
   it("a primary with no stock left is sold out", () => {
     expect(cardPrice({ ...unifiedListingToItem(PRIMARY_WEARABLE, false), available: 0 }, web3()).kind).toBe("soldOut");
+  });
+
+  it("only a primary with exactly zero copies left is sold out", () => {
+    expect(isSoldOutPrimary({ available: 0 })).toBe(true);
+    expect(isSoldOutPrimary({ available: 1 })).toBe(false);
+    expect(isSoldOutPrimary({ available: null })).toBe(false);
+    expect(isSoldOutPrimary({})).toBe(false);
+    expect(isSoldOutPrimary({ available: 0, tokenId: "7" })).toBe(false);
+    expect(isSoldOutPrimary({ available: 0, listingType: "secondary" })).toBe(false);
   });
 
   it("a catalogue row not on sale is not for sale", () => {

@@ -1,6 +1,6 @@
 # signed-login
 
-The Signed Login transport can be used by servers that want to customize the way they assign clients to islands, replacing or wrapping Archipelago in their architecture.
+The Signed Login transport lets a server choose a room for a client through an HTTP endpoint.
 
 Instead of connecting directly to a real-time backend, Signed Login makes a [signed fetch](/docs/contributor/authentication/signed-fetch/) to obtain the connection string. This intermediate step allows servers to employ whatever assignment strategy they want.
 

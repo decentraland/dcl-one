@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "noUncheckedSideEffectImports": false,
+    "resolveJsonModule": true,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationDir": "dist",
+    "outDir": "dist",
+    "jsx": "react-jsx",
+    "sourceMap": true,
+    "rootDir": "src/",
+    "types": ["node"],
+    "paths": {
+      "@ui/*": ["../../../ui3/src/*"]
+    }
+  },
+  "exclude": ["**/*.spec.ts"],
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.ui3.json" }]
+}

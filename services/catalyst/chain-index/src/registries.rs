@@ -27,29 +27,62 @@ pub struct LandNetwork {
     pub start_block: u64,
 }
 
+/// The mainnet registries.
+pub const LAND_MAINNET: LandNetwork = LandNetwork {
+    network: NETWORK_MAINNET,
+    land_registry: LAND_REGISTRY_MAINNET,
+    estate_registry: ESTATE_REGISTRY_MAINNET,
+    start_block: LAND_START_BLOCK_MAINNET,
+};
+
+/// The Sepolia registries.
+pub const LAND_SEPOLIA: LandNetwork = LandNetwork {
+    network: NETWORK_SEPOLIA,
+    land_registry: LAND_REGISTRY_SEPOLIA,
+    estate_registry: ESTATE_REGISTRY_SEPOLIA,
+    start_block: LAND_START_BLOCK_SEPOLIA,
+};
+
 /// The registries of `eth_network` (`mainnet` | `sepolia`, the
 /// `ETH_NETWORK` spellings); `None` for another network.
 pub fn land_network(eth_network: &str) -> Option<LandNetwork> {
-    let (network, land_registry, estate_registry, start_block) =
-        match eth_network.trim().to_ascii_lowercase().as_str() {
-            "mainnet" | "ethereum" | "ethereum-mainnet" => (
-                NETWORK_MAINNET,
-                LAND_REGISTRY_MAINNET,
-                ESTATE_REGISTRY_MAINNET,
-                LAND_START_BLOCK_MAINNET,
-            ),
-            "sepolia" | "ethereum-sepolia" => (
-                NETWORK_SEPOLIA,
-                LAND_REGISTRY_SEPOLIA,
-                ESTATE_REGISTRY_SEPOLIA,
-                LAND_START_BLOCK_SEPOLIA,
-            ),
-            _ => return None,
-        };
-    Some(LandNetwork {
-        network,
-        land_registry,
-        estate_registry,
-        start_block,
+    match eth_network.trim().to_ascii_lowercase().as_str() {
+        "mainnet" | "ethereum" | "ethereum-mainnet" => Some(LAND_MAINNET),
+        "sepolia" | "ethereum-sepolia" => Some(LAND_SEPOLIA),
+        _ => None,
+    }
+}
+
+/// The network whose LAND or estate registry is `address` (any case);
+/// `None` for another contract.
+pub fn land_network_of_registry(address: &str) -> Option<LandNetwork> {
+    [LAND_MAINNET, LAND_SEPOLIA].into_iter().find(|net| {
+        address.eq_ignore_ascii_case(net.land_registry)
+            || address.eq_ignore_ascii_case(net.estate_registry)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_registry_names_its_network_in_any_case() {
+        for (address, net) in [
+            (LAND_REGISTRY_MAINNET, LAND_MAINNET),
+            (ESTATE_REGISTRY_MAINNET, LAND_MAINNET),
+            (LAND_REGISTRY_SEPOLIA, LAND_SEPOLIA),
+            (ESTATE_REGISTRY_SEPOLIA, LAND_SEPOLIA),
+        ] {
+            assert_eq!(land_network_of_registry(address), Some(net));
+            assert_eq!(
+                land_network_of_registry(&address.to_ascii_uppercase().replace("0X", "0x")),
+                Some(net)
+            );
+        }
+        assert_eq!(
+            land_network_of_registry("0x2a187453064356c898cae034eaed119e1663acb8"),
+            None
+        );
+    }
 }

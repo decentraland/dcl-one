@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { SetIdentityPayload } from "../../generated/bridge/SetIdentityPayload";
-import type { AuthIdentity } from "./identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import {
   AUTO_JUMP_IN_MIN_VALIDITY_MS,
   IDENTITY_STORAGE_KEY,

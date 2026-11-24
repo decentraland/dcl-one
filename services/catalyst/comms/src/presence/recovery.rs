@@ -27,6 +27,19 @@ pub enum RecoveryFailure {
     RoomDisappeared,
 }
 
+impl RecoveryFailure {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Deadline => "deadline",
+            Self::Changed => "changed",
+            Self::Budget => "budget",
+            Self::Unresolved => "unresolved",
+            Self::RoomDisappeared => "room_disappeared",
+        }
+    }
+}
+
 #[derive(Default)]
 struct ScanBudget {
     rooms: usize,
@@ -57,6 +70,8 @@ impl ScanBudget {
 
 /// One observation's result before it is published.
 struct Candidate {
+    /// Before enumeration: an event applied after it is newer than this read.
+    started: Instant,
     rooms: Vec<RecoveredRoom>,
     refused: Vec<String>,
     observed: Observation,
@@ -69,6 +84,7 @@ struct Classified {
     source: OccupancyRoom,
     realm: String,
     is_world: bool,
+    legacy: bool,
     scene: Option<String>,
 }
 impl Classified {
@@ -135,7 +151,12 @@ impl Presence {
             .await?;
         let mut out = Vec::new();
         let mut refused = Vec::new();
+        // A scoped read classifies only the names that could hold its
+        // participants; every other name is left out of it either way.
         for source in rooms {
+            if scope.is_some_and(|scope| !scope.may_hold(&source.name)) {
+                continue;
+            }
             let classification = self
                 .operation(background, async {
                     crate::rooms::classify_room_name(scenes, &source.name)
@@ -143,48 +164,45 @@ impl Presence {
                         .map_err(|_| RecoveryFailure::Source)
                 })
                 .await?;
-            match classification {
-                RoomClassification::Canonical(room) if room.room != source.name => {
-                    if scope.is_some_and(|scope| scope.may_hold(&source.name)) {
+            let (realm, scene, legacy) = match classification {
+                RoomClassification::Canonical(room) if room.room == source.name => {
+                    (room.realm, room.scene_id, false)
+                }
+                RoomClassification::LegacyWorldScene { world, scene } if background => (
+                    crate::world_identity::RealmId::World(world),
+                    Some(scene),
+                    true,
+                ),
+                RoomClassification::Unrelated => continue,
+                _ => {
+                    // A scoped read reaches here only for a room that could
+                    // affect its admission count.
+                    if scope.is_some() {
                         return Err(RecoveryFailure::Unresolved);
                     }
                     refused.push(source.name);
+                    continue;
                 }
-                RoomClassification::Canonical(room) => {
-                    let realm = room
-                        .realm
-                        .world()
-                        .map(|world| world.key())
-                        .unwrap_or_else(|| room.realm.as_str());
-                    if realm.len() > 512
-                        || room
-                            .scene_id
-                            .as_ref()
-                            .is_some_and(|scene| scene.as_str().len() > 512)
-                    {
-                        return Err(RecoveryFailure::Budget);
-                    }
-                    let classified = Classified {
-                        source,
-                        realm: realm.to_owned(),
-                        is_world: room.realm.is_world(),
-                        scene: room.scene_id.map(|scene| scene.as_str().to_owned()),
-                    };
-                    if classified.selected(scope) {
-                        out.push(classified);
-                    }
-                }
-
-                // A refused name never counts, and never resolves through the
-                // lossy event projection; it keeps undetermined only the scope
-                // whose participants it could hold.
-                RoomClassification::RelevantRefused { .. } => {
-                    if scope.is_some_and(|scope| scope.may_hold(&source.name)) {
-                        return Err(RecoveryFailure::Unresolved);
-                    }
-                    refused.push(source.name);
-                }
-                RoomClassification::Unrelated => {}
+            };
+            let realm_key = realm
+                .world()
+                .map_or_else(|| realm.as_str(), |world| world.key());
+            if realm_key.len() > 512
+                || scene
+                    .as_ref()
+                    .is_some_and(|scene| scene.as_str().len() > 512)
+            {
+                return Err(RecoveryFailure::Budget);
+            }
+            let classified = Classified {
+                source,
+                realm: realm_key.to_owned(),
+                is_world: realm.is_world(),
+                legacy,
+                scene: scene.map(|scene| scene.as_str().to_owned()),
+            };
+            if classified.selected(scope) {
+                out.push(classified);
             }
         }
         out.sort_by(|a, b| a.source.cmp(&b.source));
@@ -221,6 +239,9 @@ impl Presence {
         // previously untracked room during the read cannot be lost at commit.
         let unknown_generation = self.state.lock().unknown_generation;
         let started = Observation::now();
+        if background {
+            *self.partial.lock() = Some((started.mono, Vec::new()));
+        }
         let (before, refused) = self
             .inventory(&source, state.scenes.as_ref(), background, scope)
             .await?;
@@ -264,6 +285,7 @@ impl Presence {
                         sid: room.source.sid.clone(),
                         realm: room.realm.clone(),
                         is_world: room.is_world,
+                        legacy: room.legacy,
                         scene: room.scene.clone(),
                         participants,
                         observed,
@@ -294,6 +316,18 @@ impl Presence {
                     .map(|p| p.identity.len() + p.sid.len())
                     .sum::<usize>();
             budget.include(room.participants.len(), bytes)?;
+            if background
+                && room.is_world
+                && !room.legacy
+                && let Some((_, seen)) = self.partial.lock().as_mut()
+            {
+                seen.extend(
+                    room.participants
+                        .iter()
+                        .filter(|p| counts_as_player(&p.identity))
+                        .map(|p| (p.sid.clone(), p.identity.clone())),
+                );
+            }
             rooms.push(room);
         }
         drop(reads);
@@ -305,6 +339,7 @@ impl Presence {
                 a.source != b.source
                     || a.realm != b.realm
                     || a.is_world != b.is_world
+                    || a.legacy != b.legacy
                     || a.scene != b.scene
             })
         {
@@ -317,8 +352,9 @@ impl Presence {
             .map(|r| &r.observed)
             .min_by_key(|o| o.mono)
             .cloned()
-            .unwrap_or(started);
+            .unwrap_or_else(|| started.clone());
         Ok(Candidate {
+            started: started.mono,
             rooms,
             refused,
             observed,
@@ -336,7 +372,27 @@ impl Presence {
 
     /// One complete pass. On error, retain membership AND original source time.
     pub async fn recover_complete(&self, state: &CommsState) -> Result<(), RecoveryFailure> {
+        let result = self.recover_complete_attempt(state).await;
+        let partial = self.partial.lock().take();
+        // A read that failed for any reason but LiveKit itself still saw these sessions
+        // live: confirm them, ending nothing it did not reach.
+        if let Err(error) = &result
+            && !matches!(error, RecoveryFailure::Source)
+            && let (Some(topology), Some((started, seen))) = (self.topology.get(), partial)
+        {
+            topology.observe_world(
+                started,
+                seen.iter()
+                    .map(|(sid, identity)| (sid.as_str(), identity.as_str())),
+                false,
+            );
+        }
+        result
+    }
+
+    async fn recover_complete_attempt(&self, state: &CommsState) -> Result<(), RecoveryFailure> {
         let Candidate {
+            started,
             rooms,
             refused,
             observed,
@@ -353,6 +409,10 @@ impl Presence {
                 "LiveKit rooms this node does not resolve are left out of the occupancy"
             );
         }
+        // Social needs no admission certification: events newer than `started` win
+        // over this read, and the next pass corrects the rest.
+        self.observe_world(&rooms, started, true);
+        self.partial.lock().take();
         let mut current = self.state.lock();
         if !Self::clean(&current, unknown, &generations) {
             return Err(RecoveryFailure::Changed);
@@ -535,16 +595,23 @@ impl Presence {
     pub(crate) fn spawn_recovery(
         self: &Arc<Self>,
         state: Arc<CommsState>,
+        events: crate::gatekeeper::bus::NatsSubscription,
         jobs: &crate::jobs::Jobs,
     ) {
         let presence = self.clone();
         jobs.spawn("comms-occupancy-recovery", move |ctx| async move {
+            let _events = events;
             let mut retry = Duration::from_secs(1);
             loop {
                 let result = tokio::select! {
                     _ = ctx.cancel.cancelled() => return Ok(()),
                     result = presence.recover_complete(&state) => result,
                 };
+                metrics::counter!(
+                    "comms_presence_recovery_passes_total",
+                    "result" => result.as_ref().map_or_else(RecoveryFailure::reason, |()| "ok")
+                )
+                .increment(1);
                 let delay = match result {
                     Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); retry = Duration::from_secs(1); Duration::from_secs(30) },
                     Err(error) => { ctx.error(error.to_string()); let delay = retry + Duration::from_millis(rand::random::<u64>() % 1001); retry = retry.saturating_mul(2).min(Duration::from_secs(5)); delay },

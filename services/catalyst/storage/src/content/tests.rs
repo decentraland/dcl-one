@@ -839,6 +839,7 @@ async fn store_file_links_a_spooled_file_and_leaves_the_source() {
         Bytes::from_static(b"spooled bytes")
     );
     assert!(src.is_file(), "the caller owns the spooled source");
+    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let stored = storage.file_path(HASH).await.unwrap().unwrap();
@@ -858,6 +859,63 @@ async fn store_file_links_a_spooled_file_and_leaves_the_source() {
         strings(&[HASH]),
         "no staging file, nothing from tmp"
     );
+
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+#[tokio::test]
+async fn touch_restarts_a_present_blobs_age_and_reports_an_absent_one() {
+    let (tmp, storage) = fresh("touch").await;
+    storage.store(HASH, Bytes::from_static(b"x")).await.unwrap();
+    let path = storage.file_path(HASH).await.unwrap().unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+
+    assert!(storage.touch(HASH).await.unwrap());
+    let age = std::fs::metadata(&path)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .elapsed()
+        .unwrap_or_default();
+    assert!(age < std::time::Duration::from_secs(60), "{age:?}");
+    assert_eq!(storage.retrieve(HASH).await.unwrap().unwrap(), "x");
+    assert!(!storage.touch(OTHER).await.unwrap());
+
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+/// A blob the process may not write (blobs are stored `0644`, and a copy may be read-only) is
+/// still touched by its owner: setting the times to now needs write permission or ownership.
+#[cfg(unix)]
+#[tokio::test]
+async fn touch_needs_no_write_permission_on_an_owned_blob() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (tmp, storage) = fresh("touch-read-only").await;
+    storage.store(HASH, Bytes::from_static(b"x")).await.unwrap();
+    let path = storage.file_path(HASH).await.unwrap().unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200))
+        .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    assert!(storage.touch(HASH).await.unwrap());
+    let age = std::fs::metadata(&path)
+        .unwrap()
+        .modified()
+        .unwrap()
+        .elapsed()
+        .unwrap_or_default();
+    assert!(age < std::time::Duration::from_secs(60), "{age:?}");
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }

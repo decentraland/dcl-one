@@ -1,4 +1,5 @@
-// Communities: browse list, joining, per-community detail (members/posts/places), and the chat
+// Communities: the browse grid (a page at a time, searched on the server), My Communities, joining,
+// per-community detail (members/places), the announcements (a page at a time), and the chat
 // channels: the communities the user is a member of, who is online in one, and presence.
 //   from: social-api communities service via BevyApi.kernelFetch (signed GETs / POST join)
 //       + the engine's profile cache (profile.ts) for the names and faces those reads no
@@ -9,14 +10,36 @@
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
 import { dataUrlBytes, getJson, HttpError, serviceBase, signed, signedForm } from '../http'
+import { destinationsByIds, type DestinationRaw } from '../destinations'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPlaceOption, CommunityPlaceOptionsMessage, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
+import type {
+  Community,
+  CommunityAction,
+  CommunityBrowseMessage,
+  CommunityChannel,
+  CommunityEvent,
+  CommunityInvitesMessage,
+  CommunityMember,
+  CommunityMemberSection,
+  CommunityPhoto,
+  CommunityPlace,
+  CommunityPlaceOption,
+  CommunityPlaceOptionsMessage,
+  CommunityPost,
+  CommunityRequestAction,
+  CommunityRequestMember,
+  CommunityRequestsGroup,
+  CommunitySaveResultMessage,
+  DiscoverPlace,
+  ManageCommunityRequestRequest
+} from '@explorer-core/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
-// live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
+// are the camera-reel photos taken in the community's places (as unity-explorer's card: a signed
+// POST /api/places/images with the place ids). Community thumbnails are NOT
 // in the upstream list response — Unity builds them from the id against the assets CDN
 // (DecentralandUrl.CommunityThumbnail); a dcl-one deployment sends `thumbnailUrl`, which wins.
 // Some 404 (no thumbnail set) → the React <img> falls back to the initial.
@@ -33,11 +56,14 @@ type CommunityRaw = {
   pendingActionType?: string
   pendingInviteOrRequestId?: string
   thumbnailUrl?: string
+  voiceChatStatus?: { isActive?: boolean; participantCount?: number; moderatorCount?: number }
+  /** The signed user's friends who are members, by address (only on a signed list read). */
+  friends?: string[]
 }
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
-type MemberRaw = { memberAddress?: string; role?: string; friendshipStatus?: number }
-type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number }
+type MemberRaw = { memberAddress?: string; role?: string }
+type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number; isLikedByUser?: boolean; isOfficial?: boolean }
 type PlaceRaw = {
   id: string
   title?: string
@@ -53,9 +79,6 @@ type PlaceRaw = {
 type EventRaw = { id: string; name?: string; image?: string; next_start_at?: string; start_at?: string }
 type PhotoRaw = { id: string; url?: string; thumbnailUrl?: string }
 
-// FriendshipStatus enum: request_sent=0 … friend=3 … none=7. Hide "Add Friend" once friends.
-const FRIEND = 3
-
 // Reads take the v2 endpoints, which answer with addresses instead of embedding a profile the
 // service had to resolve per row. Writes (and /places, which carries no profile) have no v2.
 async function base(version: 'v1' | 'v2'): Promise<string> {
@@ -66,8 +89,67 @@ async function thumbnail(c: CommunityRaw): Promise<string> {
   return c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
 }
 
+// The browse card shows the first three of the user's friends who are members.
+const CARD_FRIENDS = 3
+
+// The list and the GET by id carry no pending request or invite, so the user's own are read and
+// matched by community id: join requests when the grid's first page loads and when a closed
+// community's card opens, invites when the grid's first page loads and when any card opens. A request's POST answers with the new request's id, which is kept so
+// the card can cancel it; a cancel, an accept or a reject forgets it. Kept for the signed-in user
+// only.
+type PendingType = 'request_to_join' | 'invite'
+const pending = { owner: '', ids: { request_to_join: new Map<string, string>(), invite: new Map<string, string>() } }
+const signedInAddress = (): string => (getPlayer()?.userId ?? '').toLowerCase()
+function pendingFor(type: PendingType): Map<string, string> {
+  const owner = signedInAddress()
+  if (pending.owner !== owner) pending.ids = { request_to_join: new Map(), invite: new Map() }
+  pending.owner = owner
+  return pending.ids[type]
+}
+
+// A pending invite or request as the user's own requests read answers it: the request's id and its
+// community, with the community's fields alongside.
+type MemberRequestRaw = Omit<CommunityRaw, 'id'> & { id?: string; communityId?: string; type?: string }
+
+async function memberRequests(type: PendingType): Promise<MemberRequestRaw[]> {
+  const owner = signedInAddress()
+  if (owner === '') return []
+  const url = `${await serviceBase('socialApi')}/v2/members/${encodeURIComponent(owner)}/requests?type=${type}`
+  const res = await signed<{ results?: MemberRequestRaw[] }>(url)
+  const rows = res?.results
+  if (!Array.isArray(rows)) throw new Error(`${type} answer has no results list`)
+  const ids = pendingFor(type)
+  ids.clear()
+  // a read that started before an answer can still list the request it settled: it stays settled
+  for (const r of rows) if (typeof r.id === 'string' && typeof r.communityId === 'string' && !answered.has(r.id)) ids.set(r.communityId.toLowerCase(), r.id)
+  return rows
+}
+// A failed read keeps the ones known before it; the card still offers Request to Join.
+const tryLoadPending = async (type: PendingType): Promise<void> => {
+  await memberRequests(type).catch((e: unknown) => console.error(`[communities] ${type} read failed`, e))
+}
+// The requests the user answered (accepted, rejected or cancelled) this session, by id, so a read
+// that was already on its way does not bring one back. Bounded: the oldest are forgotten.
+const answered = new Set<string>()
+const ANSWERED_KEPT = 200
+function markAnswered(requestId: string): void {
+  answered.add(requestId)
+  if (answered.size > ANSWERED_KEPT) answered.delete(answered.values().next().value as string)
+}
+function setPending(type: PendingType, communityId: string, requestId: string | undefined): void {
+  const ids = pendingFor(type)
+  if (requestId != null && requestId !== '') ids.set(communityId.toLowerCase(), requestId)
+  else ids.delete(communityId.toLowerCase())
+}
+function pendingId(type: PendingType, c: CommunityRaw): string | undefined {
+  const known = pending.owner !== '' && pending.owner === signedInAddress() ? pending.ids[type].get(c.id.toLowerCase()) : undefined
+  return known ?? (c.pendingActionType === type ? c.pendingInviteOrRequestId : undefined)
+}
+
 async function communities(raw: CommunityRaw[]): Promise<Community[]> {
-  const identity = await fetchIdentities(raw.map((c) => c.ownerAddress ?? ''))
+  const friendsOf = (c: CommunityRaw): string[] => (Array.isArray(c.friends) ? c.friends.filter((a) => typeof a === 'string' && a !== '').slice(0, CARD_FRIENDS) : [])
+  // one batch for the owners and the friends of every community on the page
+  const identity = await fetchIdentities([...raw.map((c) => c.ownerAddress ?? ''), ...raw.flatMap(friendsOf)])
   const thumbs = await Promise.all(raw.map(thumbnail))
   return raw.map((c, i) => ({
     id: c.id,
@@ -79,21 +161,40 @@ async function communities(raw: CommunityRaw[]): Promise<Community[]> {
     ownerName: identity(c.ownerAddress ?? '').name,
     privacy: c.privacy,
     visibility: c.visibility,
-    pendingRequestId: c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined
+    pendingRequestId: pendingId('request_to_join', c),
+    pendingInviteId: pendingId('invite', c),
+    voiceChatStatus: c.voiceChatStatus == null ? undefined : {
+      isActive: c.voiceChatStatus.isActive === true,
+      participantCount: c.voiceChatStatus.participantCount ?? 0,
+      moderatorCount: c.voiceChatStatus.moderatorCount ?? 0
+    },
+    // a read without the friends list (the GET by id) leaves them unset, so the card keeps its own
+    friends: Array.isArray(c.friends) ? friendsOf(c).map((address) => ({ address, ...identity(address) })) : undefined
   }))
 }
 
-// The page's list: the first 50 of the browse order, then the user's own communities it left out,
-// so My Communities holds every one the user is a member of, however far down the browse order it
-// is. A failed member-of read leaves the browse list as it is.
+// My Communities: every community the user is a member of.
 async function list(): Promise<Community[]> {
-  const [browse, member] = await Promise.all([
-    signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`),
-    memberOfRaw().catch((): CommunityRaw[] => [])
+  return await communities(await memberOfRaw())
+}
+
+// The browse grid: 20 a page, the name searched on
+// the server, never only the user's own. An answer without a results list is a failed read.
+export const BROWSE_PAGE = 20
+async function browse(search: string, page: number): Promise<Omit<CommunityBrowseMessage, 'kind'>> {
+  const offset = (Math.max(1, Math.floor(page)) - 1) * BROWSE_PAGE
+  const url = `${await base('v2')}?search=${encodeURIComponent(search)}&onlyMemberOf=false&offset=${offset}&limit=${BROWSE_PAGE}`
+  // the grid's first page reads the user's join requests and invites too; later pages match against those
+  const [res] = await Promise.all([
+    signed<{ results?: CommunityRaw[]; total?: number }>(url),
+    offset === 0 ? tryLoadPending('request_to_join') : undefined,
+    offset === 0 ? tryLoadPending('invite') : undefined
   ])
-  const raw = browse?.results ?? []
-  const listed = new Set(raw.map((c) => c.id))
-  return await communities([...raw, ...member.filter((c) => !listed.has(c.id))])
+  const rows = res?.results
+  if (!Array.isArray(rows)) throw new Error('browse answer has no results list')
+  const listed = await communities(rows)
+  listed.forEach(remember)
+  return { search, page, communities: listed, total: typeof res?.total === 'number' ? res.total : offset + rows.length }
 }
 
 async function rawOne(id: string): Promise<CommunityRaw | undefined> {
@@ -102,15 +203,22 @@ async function rawOne(id: string): Promise<CommunityRaw | undefined> {
   return raw?.id != null ? raw : undefined
 }
 
-// The names of the communities seen, for the chat bubbles' community line: a message names its
-// community by id only.
+// The names of the communities seen: the engine shows a community's name with its messages over
+// their authors' nametags, and a message names its community by id only.
 const names = new Map<string, string>()
-export function communityName(id: string): string | undefined {
-  return names.get(id.toLowerCase())
+// The communities the engine listens to, as the HUD last named them.
+let listened: string[] = []
+
+function listen(): void {
+  BevyApi.social.setCommunityChannels(listened.map((id) => ({ id, name: names.get(id.toLowerCase()) ?? null })))
 }
 
 function remember(c: { id: string; name: string }): void {
-  names.set(c.id.toLowerCase(), c.name)
+  const key = c.id.toLowerCase()
+  if (names.get(key) === c.name) return
+  names.set(key, c.name)
+  // a listened community was renamed, or its name is known only now: the engine hears of it
+  if (listened.some((id) => id.toLowerCase() === key)) listen()
 }
 
 async function channel(c: CommunityRaw): Promise<CommunityChannel> {
@@ -164,71 +272,83 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
     name,
     role: m.role ?? 'member',
     picture,
-    hasClaimedName,
-    isFriend: m.friendshipStatus === FRIEND
+    hasClaimedName
   }
 }
 
-async function detail(id: string): Promise<{ members: CommunityMember[]; posts: CommunityPost[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
+/** A places-service row as the card's actions and Place Detail read it: a World is one with a name
+ *  even when the row leaves out `world`, and the texts and parcels are never missing. */
+function placeDetail(row: PlaceRaw & Partial<DiscoverPlace>): DiscoverPlace {
+  const worldName = row.world_name ?? ''
+  return {
+    ...row,
+    title: row.title ?? row.name ?? '',
+    description: row.description ?? '',
+    image: row.image ?? '',
+    owner: row.owner ?? null,
+    positions: row.positions ?? (row.base_position != null ? [row.base_position] : []),
+    world: row.world ?? worldName !== '',
+    world_name: worldName !== '' ? worldName : undefined
+  }
+}
+
+async function detail(id: string): Promise<{ members: CommunityMember[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
   const b = await base('v2')
   const placesBase = await base('v1')
   const eventsBase = `${await serviceBase('events')}/api/events`
-  const reelBase = `${await serviceBase('cameraReel')}/api/communities`
   // The id reaches us from the service (a uuid), but it lands in a URL — encode it so it
   // can only ever be one path segment / one query value.
   const cid = encodeURIComponent(id)
-  const [membersRes, postsRes, placesRes, eventsRes, photosRes] = await Promise.all([
+  const [membersRes, placesRes, eventsRes] = await Promise.all([
     signed<{ results?: MemberRaw[] }>(`${b}/${cid}/members?limit=100`).catch(() => undefined),
-    signed<{ posts?: PostRaw[] }>(`${b}/${cid}/posts?limit=20`).catch(() => undefined),
-    signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places?limit=20`).catch(() => undefined),
-    getJson<{ data?: { events?: EventRaw[] } }>(`${eventsBase}?community_id=${cid}&list=upcoming`).catch(() => undefined),
-    signed<{ images?: PhotoRaw[] }>(`${reelBase}/${cid}/images?limit=30`).catch(() => undefined)
+    // as unity-explorer's card: no limit, so the service's full page (100); the photos query and
+    // the PLACES tab both take every id it lists
+    signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places`).catch(() => undefined),
+    getJson<{ data?: { events?: EventRaw[] } }>(`${eventsBase}?community_id=${cid}&list=upcoming`).catch(() => undefined)
   ])
   const memberRows = membersRes?.results ?? []
-  const postRows = postsRes?.posts ?? []
-  // One batch for every address both tabs reference — the members list alone would otherwise
-  // be up to 100 separate profile fetches.
-  const identity = await fetchIdentities([
-    ...memberRows.map((m) => m.memberAddress ?? ''),
-    ...postRows.map((p) => p.authorAddress ?? '')
-  ])
+  // One batch for every member's name and face — the list alone would otherwise be up to 100
+  // separate profile fetches.
+  const identity = await fetchIdentities(memberRows.map((m) => m.memberAddress ?? ''))
   const members = memberRows.map((m) => mapMember(m, identity))
-  const posts: CommunityPost[] = postRows.map((p) => {
-    const address = p.authorAddress ?? ''
-    const { name, picture } = identity(address)
-    return {
-      id: p.id,
-      author: name,
-      authorAddress: address,
-      authorPicture: picture,
-      text: p.content ?? '',
-      timestamp: p.createdAt != null ? Date.parse(p.createdAt) : 0,
-      likes: p.likesCount ?? 0
-    }
-  })
   // As unity-explorer's card: the community's place ids, then each place from the places service
   // (title, picture, owner). The social service's own row is the fallback when that read fails.
   const placeRows = placesRes?.results ?? []
-  const destinations =
+  const [destinations, photosRes] = await Promise.all([
     placeRows.length > 0
-      ? await serviceBase('places')
-          .then((b) => signed<PlaceRaw[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
+      ? serviceBase('places')
+          .then((b) => signed<(PlaceRaw & Partial<DiscoverPlace>)[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
           .catch((e: unknown) => {
             console.error('[communities] places details failed', e)
             return undefined
           })
+      : undefined,
+    placeRows.length > 0
+      ? serviceBase('cameraReel')
+          .then((b) =>
+            signed<{ images?: PhotoRaw[] }>(`${b}/api/places/images?limit=30&offset=0`, 'POST', {
+              placesIds: placeRows.map((pl) => pl.id)
+            })
+          )
+          .catch((e: unknown) => {
+            console.error('[communities] photos failed', e)
+            return undefined
+          })
       : undefined
+  ])
   const byId = new Map((destinations ?? []).map((d) => [d.id, d]))
   const me = (getPlayer()?.userId ?? '').toLowerCase()
   const places: CommunityPlace[] = placeRows.map((row) => {
-    const pl = byId.get(row.id) ?? row
+    const read = byId.get(row.id)
+    const pl = read ?? row
     return {
       id: pl.id,
       title: pl.title ?? pl.name ?? '',
       thumbnail: pl.image,
       positions: (pl.world_name ?? '') !== '' ? (pl.world_name ?? undefined) : (pl.base_position ?? pl.positions?.[0]),
       likeRate: pl.like_rate ?? pl.likeRate,
-      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me
+      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me,
+      ...(read != null ? { detail: placeDetail(read) } : {})
     }
   })
   const events: CommunityEvent[] = (eventsRes?.data?.events ?? []).map((e) => ({
@@ -242,14 +362,127 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
     url: ph.url ?? '',
     thumbnail: ph.thumbnailUrl ?? ph.url
   }))
-  return { members, posts, places, events, photos }
+  return { members, places, events, photos }
+}
+
+// The announcements, POSTS_PAGE at a time, newest first, with their authors' names and faces. The
+// official mark is the service's own `isOfficial` (this node's social API names the official
+// wallets from the explorer flags; a service that sends no such field marks no one).
+export const POSTS_PAGE = 10
+async function postsPage(id: string, page: number): Promise<{ posts: CommunityPost[]; total: number }> {
+  const b = await base('v2')
+  const res = await signed<{ posts?: PostRaw[]; total?: number }>(
+    `${b}/${encodeURIComponent(id)}/posts?offset=${(page - 1) * POSTS_PAGE}&limit=${POSTS_PAGE}`
+  )
+  const rows = res?.posts ?? []
+  const identity = await fetchIdentities(rows.map((p) => p.authorAddress ?? ''))
+  const posts = rows.map((p): CommunityPost => {
+    const address = p.authorAddress ?? ''
+    const { name, picture, hasClaimedName } = identity(address)
+    return {
+      id: p.id,
+      author: name,
+      authorAddress: address,
+      authorPicture: picture,
+      hasClaimedName,
+      official: p.isOfficial === true,
+      text: p.content ?? '',
+      timestamp: p.createdAt != null ? Date.parse(p.createdAt) : 0,
+      likes: p.likesCount ?? 0,
+      likedByMe: p.isLikedByUser === true
+    }
+  })
+  return { posts, total: res?.total ?? posts.length }
+}
+
+// A community's pending join requests or invites, or its banned members, as member rows: one read
+// of up to `limit` rows, with the members' names and faces in one batch.
+type SectionRowRaw = { id?: string; memberAddress?: string }
+async function sectionRows(url: string): Promise<{ members: CommunityRequestMember[]; total: number }> {
+  const res = await signed<{ results?: SectionRowRaw[]; total?: number }>(url)
+  const rows = res?.results
+  if (!Array.isArray(rows)) throw new Error('section answer has no results list')
+  const identity = await fetchIdentities(rows.map((r) => r.memberAddress ?? ''))
+  const members = rows.map((r) => ({ ...mapMember({ memberAddress: r.memberAddress, role: 'none' }, identity), requestId: r.id ?? '' }))
+  return { members, total: typeof res?.total === 'number' ? res.total : rows.length }
+}
+
+// The Members tab's sections beyond Members, read 100 at a time (the service's page cap), as the
+// Members list is.
+const SECTION_LIMIT = 100
+async function sectionUrl(id: string, section: CommunityMemberSection, limit = SECTION_LIMIT): Promise<string> {
+  const b = `${await base('v2')}/${encodeURIComponent(id)}`
+  if (section === 'banned') return `${b}/bans?limit=${limit}&offset=0`
+  return `${b}/requests?type=${section === 'requests' ? 'request_to_join' : 'invite'}&limit=${limit}&offset=0`
+}
+async function memberSection(id: string, section: CommunityMemberSection): Promise<{ members: CommunityRequestMember[]; total: number }> {
+  return await sectionRows(await sectionUrl(id, section))
+}
+
+/** The communities whose join requests the user answers: those they own or moderate. Only a
+ *  private community takes join requests, so a public one is never read. */
+const answersRequests = (c: CommunityRaw): boolean => (c.role === 'owner' || c.role === 'moderator') && c.privacy === 'private'
+
+// The browser's Invites & Requests section: the user's invites, the join requests each private
+// community they own or moderate received (the first 100 each), and their own join requests. A list
+// that cannot be read is named in `failed`; a community whose requests cannot be read is left out,
+// and the list is failed only when none could be read.
+async function invitesAndRequests(): Promise<CommunityInvitesMessage> {
+  const failed: CommunityInvitesMessage['failed'] = []
+  const asCommunities = async (type: PendingType, list: 'invites' | 'requestsSent'): Promise<Community[]> => {
+    const rows = await memberRequests(type).catch((e: unknown) => {
+      console.error(`[communities] ${type} read failed`, e)
+      failed.push(list)
+      return []
+    })
+    // a request answered here is gone, whatever an older read still lists
+    const raw = rows.filter((r) => typeof r.communityId === 'string' && !answered.has(r.id ?? '')).map((r): CommunityRaw => ({ ...r, id: r.communityId ?? '' }))
+    return await communities(raw)
+  }
+  const received = async (): Promise<CommunityRequestsGroup[]> => {
+    const managed = (await memberOfRaw()).filter(answersRequests)
+    const reads = await Promise.allSettled(managed.map(async (c) => ({ raw: c, ...(await memberSection(c.id, 'requests')) })))
+    const groups = reads.flatMap((r) => (r.status === 'fulfilled' ? [{ raw: r.value.raw, requests: r.value.members, total: r.value.total }] : []))
+    if (managed.length > 0 && groups.length === 0) throw new Error('no community’s requests could be read')
+    const withRequests = groups.filter((g) => g.total > 0)
+    const listed = await communities(withRequests.map((g) => g.raw))
+    return withRequests.map((g, i) => ({ community: listed[i], requests: g.requests, total: g.total }))
+  }
+  const [invites, requestsReceived, requestsSent] = await Promise.all([
+    asCommunities('invite', 'invites'),
+    received().catch((e: unknown) => {
+      console.error('[communities] requests received read failed', e)
+      failed.push('requestsReceived')
+      return []
+    }),
+    asCommunities('request_to_join', 'requestsSent')
+  ])
+  return { kind: 'communityInvites', invites, requestsReceived, requestsSent, failed }
+}
+
+// The sidebar's counter alone, read when the Communities page opens: how many invites the user has
+// and how many join requests their owned or moderated communities received, from each read's total
+// (one row asked for). A read that fails counts nothing.
+async function invitesCount(): Promise<number> {
+  const owner = signedInAddress()
+  if (owner === '') return 0
+  const total = async (url: string): Promise<number> => {
+    const res = await signed<{ total?: number }>(url).catch((e: unknown) => {
+      console.error('[communities] count read failed', e)
+      return undefined
+    })
+    return typeof res?.total === 'number' ? res.total : 0
+  }
+  const invites = total(`${await serviceBase('socialApi')}/v2/members/${encodeURIComponent(owner)}/requests?type=invite&limit=1`)
+  const managed = (await memberOfRaw().catch(() => [])).filter(answersRequests)
+  const received = managed.map(async (c) => await total(await sectionUrl(c.id, 'requests', 1)))
+  return (await Promise.all([invites, ...received])).reduce((n, t) => n + t, 0)
 }
 
 // The form's places picker, as unity-explorer's CommunityCreationEditionController: the places
 // the user owns or operates (one destinations read by owner), and, when editing, the community's
 // linked places (their ids from the social service, their details from the places service by id).
 // Each is labelled "title (world name)" or "title (x,y)" and carries its owner's name.
-type DestinationRaw = { id: string; title?: string; world_name?: string | null; base_position?: string; owner?: string | null }
 
 const GET_PLACES_ERROR = 'There was an error getting places. Please try again.'
 const GET_OWNERS_NAMES_ERROR = 'There was an error getting owners names. Please try again.'
@@ -301,14 +534,6 @@ async function linkedPlaceIds(communityId: string): Promise<string[]> {
     if (rows.length < PAGE || (res?.total != null && ids.length >= res.total)) return ids
   }
   throw new Error(`more than ${PAGE * LINKED_PAGES} linked places`)
-}
-
-/** The places' details by id, a page at a time. A place the service does not return (a disabled
- *  one, say) is left out. */
-async function destinationsByIds(destinations: string, ids: string[]): Promise<DestinationRaw[]> {
-  const rows: DestinationRaw[] = []
-  for (let i = 0; i < ids.length; i += PAGE) rows.push(...((await signed<DestinationRaw[]>(destinations, 'POST', ids.slice(i, i + PAGE))) ?? []))
-  return rows
 }
 
 async function placeOptionsFor(communityId: string | undefined): Promise<CommunityPlaceOptionsMessage> {
@@ -377,6 +602,14 @@ export function registerCommunities(ctx: Ctx): void {
     communities.forEach(remember)
     ctx.send({ kind: 'communities', communities })
   })
+  // A failed read answers too, so the page stops loading and shows the error toast.
+  ctx.on('browseCommunities', async (msg) => {
+    const page = await browse(msg.search, msg.page).catch((e: unknown): Omit<CommunityBrowseMessage, 'kind'> => {
+      console.error('[communities] browse failed', e)
+      return { search: msg.search, page: msg.page, communities: [], total: 0, failed: true }
+    })
+    ctx.send({ kind: 'communityBrowse', ...page })
+  })
   ctx.on('getCommunity', async (msg) => {
     const raw = await rawOne(msg.id).catch((e: unknown) => {
       console.error('[communities] community fetch failed', e)
@@ -385,6 +618,10 @@ export function registerCommunities(ctx: Ctx): void {
     })
     if (raw == null) return
     remember(raw)
+    // for a community the user is not in: is an invite of theirs pending? Then, for one they can't
+    // enter and have no invite to, is a join request of theirs pending?
+    if (raw.role === 'none') await tryLoadPending('invite')
+    if (raw.privacy === 'private' && raw.role === 'none' && pendingId('invite', raw) == null) await tryLoadPending('request_to_join')
     const [community] = await communities([raw])
     if (community != null) ctx.send({ kind: 'community', community })
   })
@@ -399,17 +636,31 @@ export function registerCommunities(ctx: Ctx): void {
     if (communities != null) ctx.send({ kind: 'communityChannels', communities })
   }
   ctx.on('getCommunityChannels', sendChannels)
-  // After a create, update or delete: the list and the chat channels, each on its own, so a failed
-  // list read never skips the channels.
+  // After a write: My Communities and the chat channels, from one member-of read. A failed read
+  // sends neither (see sendChannels).
   const refreshLists = async (): Promise<void> => {
-    await list().then(
-      (communities) => ctx.send({ kind: 'communities', communities }),
-      (e: unknown) => console.error('[communities] list failed', e)
-    )
-    await sendChannels()
+    const raw = await memberOfRaw().catch((e: unknown) => {
+      console.error('[communities] member-of list failed', e)
+      return undefined
+    })
+    if (raw == null) return
+    const [mine, channels] = await Promise.all([communities(raw), Promise.all(raw.map(channel))])
+    ctx.send({ kind: 'communities', communities: mine })
+    ctx.send({ kind: 'communityChannels', communities: channels })
+  }
+  // The community a write changed, read again and sent alone, so the browse card, My Communities
+  // and an open card show its new role and buttons without reloading the grid.
+  const sendOne = async (id: string): Promise<void> => {
+    const raw = await rawOne(id).catch((e: unknown) => {
+      console.error('[communities] community fetch failed', e)
+      return undefined
+    })
+    const [community] = raw != null ? await communities([raw]) : []
+    if (community != null) ctx.send({ kind: 'community', community })
   }
   ctx.on('setCommunityChannels', (msg) => {
-    BevyApi.social.setCommunityChannels(msg.ids)
+    listened = msg.ids
+    listen()
   })
   // The community whose members the page last asked for: the one shown, whose list its presence
   // updates keep current.
@@ -502,11 +753,7 @@ export function registerCommunities(ctx: Ctx): void {
     ctx.send(result)
     if (result.id == null) return
     // the card, the browse list and My Communities all show the saved values
-    const raw = await rawOne(msg.id).catch(() => undefined)
-    if (raw != null) {
-      const [community] = await communities([raw])
-      if (community != null) ctx.send({ kind: 'community', community })
-    }
+    await sendOne(msg.id)
     // the card stays open behind the form: its Places tab shows the places just saved
     if (msg.placeIds != null) {
       const fresh = await detail(msg.id).catch((e: unknown) => {
@@ -517,27 +764,16 @@ export function registerCommunities(ctx: Ctx): void {
     }
     await refreshLists()
   })
-  // Every write reports a rejection to the page (the modal shows it) and then re-reads the list,
-  // so the buttons always reflect the server.
+  // Every write reports a rejection to the page (the modal shows it) and then re-reads the
+  // community it acted on, so the buttons always reflect the server, and My Communities and the
+  // chat channels, which joining or leaving changes.
   const write = async (id: string, action: CommunityAction, run: () => Promise<unknown>): Promise<void> => {
     await run().catch((e: unknown) => {
       console.error(`[communities] ${action} failed`, e)
       ctx.send({ kind: 'communityActionFailed', id, action, message: e instanceof Error ? e.message : String(e) })
     })
-    const listed = await list()
-    ctx.send({ kind: 'communities', communities: listed })
-    // a card for a community past the list's first page shows the community fetched by id, so
-    // that copy is refreshed too (its role and buttons follow the write)
-    if (!listed.some((c) => c.id === id)) {
-      const raw = await rawOne(id).catch((e: unknown) => {
-        console.error('[communities] community fetch failed', e)
-        return undefined
-      })
-      const [community] = raw != null ? await communities([raw]) : []
-      if (community != null) ctx.send({ kind: 'community', community })
-    }
-    // joining or leaving changes the chat channels too
-    await sendChannels()
+    await sendOne(id)
+    await refreshLists()
   }
   ctx.on('deleteCommunity', async (msg) => {
     // unity-explorer's delete: DELETE /v1/communities/{id}; on success the card closes. Not through
@@ -561,14 +797,136 @@ export function registerCommunities(ctx: Ctx): void {
   ctx.on('requestToJoinCommunity', async (msg) => {
     await write(msg.id, 'requestToJoin', async () => {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests`
-      return await signed(url, 'POST', { targetedAddress: getPlayer()?.userId ?? '', type: 'request_to_join' })
+      const res = await signed<{ id?: string }>(url, 'POST', { targetedAddress: getPlayer()?.userId ?? '', type: 'request_to_join' })
+      setPending('request_to_join', msg.id, typeof res?.id === 'string' ? res.id : undefined)
+      // an answer without the request's id: the user's requests are read for it
+      if (pendingFor('request_to_join').get(msg.id.toLowerCase()) == null) await tryLoadPending('request_to_join')
+      // the buttons show the request at once, whether or not the community can be read again
+      ctx.send({ kind: 'communityJoinRequest', id: msg.id, requestId: pendingFor('request_to_join').get(msg.id.toLowerCase()) })
     })
   })
   ctx.on('cancelJoinRequest', async (msg) => {
     await write(msg.id, 'cancelJoinRequest', async () => {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests/${encodeURIComponent(msg.requestId)}`
-      return await signed(url, 'PATCH', { intention: 'cancelled' })
+      await signed(url, 'PATCH', { intention: 'cancelled' })
+      markAnswered(msg.requestId)
+      setPending('request_to_join', msg.id, undefined)
+      ctx.send({ kind: 'communityJoinRequest', id: msg.id })
     })
+    // the Invites & Requests section lists the user's requests: a cancelled one leaves it
+    await sendInvitesOrCount()
+  })
+  // The browser's Invites & Requests section and its counter.
+  // Answers even when the read throws, so the section never waits on a reply that will not come.
+  const sendInvites = async (): Promise<void> => {
+    const message = await invitesAndRequests().catch((e: unknown): CommunityInvitesMessage => {
+      console.error('[communities] invites and requests failed', e)
+      return { kind: 'communityInvites', invites: [], requestsReceived: [], requestsSent: [], failed: ['invites', 'requestsReceived', 'requestsSent'] }
+    })
+    ctx.send(message)
+  }
+  // Whether the page has read the section: until then, a change sends only the counter.
+  let sectionRead = false
+  const sendInvitesOrCount = async (): Promise<void> => {
+    if (sectionRead) await sendInvites()
+    else ctx.send({ kind: 'communityInvitesCount', count: await invitesCount() })
+  }
+  ctx.on('getCommunityInvites', async () => {
+    sectionRead = true
+    await sendInvites()
+  })
+  ctx.on('getCommunityInvitesCount', async () => {
+    ctx.send({ kind: 'communityInvitesCount', count: await invitesCount() })
+  })
+  const sendSection = async (id: string, section: CommunityMemberSection): Promise<void> => {
+    const read = await memberSection(id, section).catch((e: unknown) => {
+      console.error(`[communities] ${section} read failed`, e)
+      return undefined
+    })
+    ctx.send({ kind: 'communityMemberSection', id, section, members: read?.members ?? [], total: read?.total ?? 0, ...(read == null ? { failed: true } : {}) })
+  }
+  ctx.on('getCommunityMemberSection', async (msg) => {
+    await sendSection(msg.id, msg.section)
+  })
+  // An answer to an invite or a request. The user's own invite, accepted or rejected, changes the community and the user's lists. An owner's
+  // or moderator's answer changes the card's Requests and Invites sections, and its members when a
+  // request is accepted. Either way the Invites & Requests section is read again for its counter.
+  ctx.on('manageCommunityRequest', async (msg) => {
+    try {
+      await manageRequest(msg)
+    } finally {
+      // whatever happened, the page releases this request's buttons, and only this one's
+      ctx.send({ kind: 'communityRequestSettled', id: msg.id, requestId: msg.requestId })
+    }
+  })
+  const manageRequest = async (msg: ManageCommunityRequestRequest): Promise<void> => {
+    const action: CommunityRequestAction = msg.address != null ? 'manageRequest' : msg.intention === 'accepted' ? 'acceptInvite' : 'rejectInvite'
+    const done = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/requests/${encodeURIComponent(msg.requestId)}`, 'PATCH', { intention: msg.intention }))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error(`[communities] ${action} failed`, e)
+          ctx.send({ kind: 'communityActionFailed', id: msg.id, action, message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+      )
+    // a failed answer on a member's row: the rows are read again, which releases them
+    if (!done) {
+      if (msg.address != null) {
+        await Promise.all([sendSection(msg.id, 'requests'), sendSection(msg.id, 'invites')])
+        await sendInvitesOrCount()
+      }
+      return
+    }
+    markAnswered(msg.requestId)
+    if (msg.address == null) {
+      setPending('invite', msg.id, undefined)
+      await sendOne(msg.id)
+      await refreshLists()
+    } else {
+      await Promise.all([sendSection(msg.id, 'requests'), sendSection(msg.id, 'invites')])
+      if (msg.intention === 'accepted') {
+        const fresh = await detail(msg.id).catch(() => undefined)
+        if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
+        await sendOne(msg.id)
+      }
+    }
+    await sendInvitesOrCount()
+  }
+  // The Invite to Community submenu: the communities the user owns or moderates that the person is
+  // not in, and the invite itself.
+  const sendInvitable = async (address: string): Promise<void> => {
+    const list = await serviceBase('socialApi')
+      .then((b) => signed<Array<{ id?: string; name?: string }>>(`${b}/v1/members/${encodeURIComponent(address)}/invites`))
+      .then(
+        (rows) => {
+          if (!Array.isArray(rows)) throw new Error('invites answer is not a list')
+          return rows.filter((r) => typeof r.id === 'string').map((r) => ({ id: r.id ?? '', name: r.name ?? '' }))
+        }
+      )
+      .catch((e: unknown) => {
+        console.error('[communities] invitable communities failed', e)
+        return undefined
+      })
+    ctx.send({ kind: 'invitableCommunities', address, communities: list ?? [], ...(list == null ? { failed: true } : {}) })
+  }
+  ctx.on('getInvitableCommunities', async (msg) => {
+    await sendInvitable(msg.address)
+  })
+  ctx.on('inviteToCommunity', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/requests`, 'POST', { targetedAddress: msg.address, type: 'invite' }))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] invite failed', e)
+          return false
+        }
+      )
+    ctx.send({ kind: 'communityInviteSent', id: msg.id, address: msg.address, ok })
+    // the community just used is no longer offered for that person
+    if (ok) await sendInvitable(msg.address)
   })
   ctx.on('leaveCommunity', async (msg) => {
     await write(msg.id, 'leave', async () => {
@@ -594,6 +952,111 @@ export function registerCommunities(ctx: Ctx): void {
     const fresh = await detail(msg.id).catch(() => undefined)
     if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
   })
+  // The card's member menu, as unity-explorer's MembersListController: promote and demote set the
+  // member's role, a transfer sets it to owner (the service makes the old owner a moderator), a
+  // kick removes the member and a ban bans them. A failure (the service url included) is shown on
+  // the card; on success the card's members are read again. A kick, a ban or a transfer also
+  // changes the community (its member count, or the user's own role), so the community and the
+  // lists are read again too.
+  ctx.on('communityMemberAction', async (msg) => {
+    const run = async (): Promise<unknown> => {
+      const member = `${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}`
+      switch (msg.action) {
+        case 'promote':
+          return await signed(member, 'PATCH', { role: 'moderator' })
+        case 'demote':
+          return await signed(member, 'PATCH', { role: 'member' })
+        case 'transfer':
+          return await signed(member, 'PATCH', { role: 'owner' })
+        case 'kick':
+          return await signed(member, 'DELETE')
+        case 'ban':
+          return await signed(`${member}/bans`, 'POST')
+        default: {
+          const unknown: never = msg.action
+          throw new Error(`unknown member action ${String(unknown)}`)
+        }
+      }
+    }
+    const done = await run().then(
+      () => true,
+      (e: unknown) => {
+        console.error(`[communities] ${msg.action} failed`, e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: msg.action, message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+    )
+    if (!done) return
+    // a ban adds the member to the Banned section
+    const fresh = await detail(msg.id).catch(() => undefined)
+    if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
+    if (msg.action === 'ban') await sendSection(msg.id, 'banned')
+    if (msg.action === 'promote' || msg.action === 'demote') return
+    await sendOne(msg.id)
+    await refreshLists()
+  })
+  // The Banned section's UNBAN. A failure is toasted, not shown on the card; either way the section
+  // is read again, which releases the row.
+  ctx.on('unbanCommunityMember', async (msg) => {
+    await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}/bans`, 'DELETE'))
+      .catch((e: unknown) => {
+        console.error('[communities] unban failed', e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'unban', message: e instanceof Error ? e.message : String(e) })
+      })
+    await sendSection(msg.id, 'banned')
+  })
+  // The Announcements tab. A failed read, delete or like is toasted; a post or delete reads the
+  // first page again, as the list starts over.
+  const sendPosts = async (id: string, page: number): Promise<void> => {
+    const read = await postsPage(id, page).catch((e: unknown) => {
+      console.error('[communities] posts read failed', e)
+      return undefined
+    })
+    if (read == null) ctx.send({ kind: 'communityActionFailed', id, action: 'fetchPosts', message: 'posts read failed' })
+    else ctx.send({ kind: 'communityPosts', id, page, ...read })
+  }
+  ctx.on('getCommunityPosts', async (msg) => {
+    await sendPosts(msg.id, msg.page)
+  })
+  ctx.on('createCommunityPost', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/posts`, 'POST', { content: msg.content }))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] post failed', e)
+          return false
+        }
+      )
+    ctx.send({ kind: 'communityPostCreated', id: msg.id, ok })
+    if (ok) await sendPosts(msg.id, 1)
+  })
+  ctx.on('deleteCommunityPost', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/posts/${encodeURIComponent(msg.postId)}`, 'DELETE'))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] post delete failed', e)
+          ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'deletePost', postId: msg.postId, message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+      )
+    if (ok) await sendPosts(msg.id, 1)
+  })
+  ctx.on('likeCommunityPost', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/posts/${encodeURIComponent(msg.postId)}/like`, msg.like ? 'POST' : 'DELETE'))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] post like failed', e)
+          return false
+        }
+      )
+    ctx.send({ kind: 'communityPostLiked', id: msg.id, postId: msg.postId, liked: msg.like, ok })
+  })
   ctx.on('getCommunityPlaceOptions', async (msg) => {
     const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {
       // the places service could not even be located: nothing could be read
@@ -604,7 +1067,7 @@ export function registerCommunities(ctx: Ctx): void {
     ctx.send(options)
   })
   ctx.on('getCommunityDetail', async (msg) => {
-    const { members, posts, places, events, photos } = await detail(msg.id).catch(() => ({ members: [], posts: [], places: [], events: [], photos: [] }))
-    ctx.send({ kind: 'communityDetail', id: msg.id, members, posts, places, events, photos })
+    const { members, places, events, photos } = await detail(msg.id).catch(() => ({ members: [], places: [], events: [], photos: [] }))
+    ctx.send({ kind: 'communityDetail', id: msg.id, members, places, events, photos })
   })
 }

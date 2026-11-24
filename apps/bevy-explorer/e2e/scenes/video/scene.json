@@ -1,0 +1,47 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "video",
+    "description": "Media retry: a video whose source recovers after failures, one that never loads and a paused one that fails once"
+  },
+  "owner": "",
+  "contact": {
+    "name": "bevy-explorer-e2e",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "0,26"
+    ],
+    "base": "0,26"
+  },
+  "requiredPermissions": [],
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          4
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 2,
+        "z": 12
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

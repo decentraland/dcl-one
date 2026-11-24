@@ -5,7 +5,7 @@ vi.mock("../auth/signer", () => ({
 }));
 
 import { signedFetch } from "../auth/signer";
-import { CatalystError, getJSON, postJSON, signedGetJSON } from "./client";
+import { buildQuery, CatalystError, getJSON, postJSON, signedGetJSON } from "./client";
 import type { AuthIdentity } from "../auth/types";
 
 const mSignedFetch = vi.mocked(signedFetch);
@@ -142,6 +142,37 @@ describe("getJSON per-request in-flight dedupe", () => {
     expect(b).toBe(a);
   });
 
+  describe("when only one caller requests the server error body", () => {
+    let signal: AbortSignal;
+    let fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>;
+
+    beforeEach(() => {
+      signal = new AbortController().signal;
+      fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () =>
+        jsonResponse(503, { error: "Index is synchronizing" }),
+      );
+    });
+
+    it("should keep the default error generic", async () => {
+      const error = await catchErr(getJSON("/index", { fetchImpl, signal }));
+      expect(error).toMatchObject({ status: 503, serverMessage: false });
+    });
+
+    it("should read the body only for the caller that requested it", async () => {
+      const [generic, detailed] = await Promise.all([
+        catchErr(getJSON("/index", { fetchImpl, signal })),
+        catchErr(getJSON("/index", { fetchImpl, signal, readErrorBody: true })),
+      ]);
+
+      expect(generic.serverMessage).toBe(false);
+      expect(detailed).toMatchObject({
+        status: 503,
+        serverMessage: true,
+        message: "Index is synchronizing",
+      });
+    });
+  });
+
   it("keeps the network and invalid-JSON error shapes", async () => {
     const down = vi.fn(async () => {
       throw new Error("ECONNREFUSED");
@@ -166,5 +197,16 @@ describe("signedGetJSON surfaces the server message on authenticated reads", () 
     expect(err).toBeInstanceOf(CatalystError);
     expect(err.status).toBe(403);
     expect(err.message).toBe("checkout does not belong to signer");
+  });
+});
+
+
+describe("buildQuery", () => {
+  describe("when a filter takes repeated values", () => {
+    it("should keep the nonempty values in order", () => {
+      expect(buildQuery({ id: ["one + two", "", "three"], first: 2, ignored: [] })).toBe(
+        "?id=one+%2B+two&id=three&first=2",
+      );
+    });
   });
 });

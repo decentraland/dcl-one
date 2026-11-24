@@ -3,7 +3,7 @@
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 //
 // The seller and marketplace reads, mapped from the wire onto what the pages render, over the ONE client
-// (api/shop.ts). One deliberate change from upstream's `toMyAsset`: an owned token's open listing is a
+// (@shop/api/shop). One deliberate change from upstream's `toMyAsset`: an owned token's open listing is a
 // RESALE, so its price is kept as the MANA (or USD-pegged) amount the order signed, never converted into
 // a credit price. A 503 unavailable envelope (a route whose indexer has not caught up) is surfaced as
 // `DataUnavailable`, with the missing source, never as an empty page.
@@ -15,9 +15,9 @@ import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
 import type { Owner } from "@catalyst-api/market/Owner";
 import type { Sale } from "@catalyst-api/market/Sale";
-import { isShopApiError } from "../../api/client";
-import { catalogCategoryParams } from "../../discovery/lib/categories";
-import { type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { catalogCategoryParams } from "@shop/discovery/lib/categories";
+import { type ShopClient } from "@shop/api/shop";
 import { parseManaWei, type ManaWei } from "@shop/model/money";
 import { shopClient } from "../../api/host";
 

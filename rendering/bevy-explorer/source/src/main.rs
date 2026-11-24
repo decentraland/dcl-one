@@ -15,7 +15,6 @@ use bevy::{
     prelude::*,
 };
 use clap::Parser;
-use common::structs::AppConfig;
 use dcl_deno_ipc::init_runtime;
 use mimalloc::MiMalloc;
 use perf_output::{
@@ -24,10 +23,15 @@ use perf_output::{
 };
 use system_ui::crash_report;
 use webgpu_build::{
-    DecentralandApp, DecentralandAppConfig, DecentralandArguments, CONFIG_READ_ATTEMPTS,
-    CONFIG_READ_RETRY_PAUSE,
+    serialized_app_config, DecentralandApp, DecentralandAppConfig, DecentralandArguments,
 };
 
+// mimalloc; with the profiler, wrapped to count every allocation and its bytes
+#[cfg(feature = "performance-profiler")]
+#[global_allocator]
+static GLOBAL: webgpu_build::perf::allocation_counter::CountingAllocator<MiMalloc> =
+    webgpu_build::perf::allocation_counter::CountingAllocator(MiMalloc);
+#[cfg(not(feature = "performance-profiler"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 static SESSION_LOG: OnceLock<String> = OnceLock::new();
@@ -64,12 +68,14 @@ fn main() {
                     .unwrap(),
             );
             Box::leak(guard.into());
-            Some(Box::new(
-                bevy::log::tracing_subscriber::fmt::layer()
-                    .with_writer(non_blocking)
-                    .with_ansi(false)
-                    .and_then(PerfLogLayer::new(&BENCHMARK_LOG)),
-            ))
+            let layer = bevy::log::tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false)
+                .and_then(PerfLogLayer::new(&BENCHMARK_LOG));
+            #[cfg(feature = "performance-profiler")]
+            let layer =
+                layer.and_then(webgpu_build::perf::profiled_scopes::profiled_scopes_layer());
+            Some(Box::new(layer))
         },
         ..default()
     });
@@ -121,7 +127,7 @@ fn decentraland_app_config() -> Result<DecentralandAppConfig, UserError> {
         arguments.client.autopilot,
     )?;
     check_csv_folder(arguments.csv.as_deref(), arguments.client.autopilot)?;
-    let app_config = decentraland_serialized_app_config();
+    let app_config = serialized_app_config();
     let crash_file = decentraland_crash_file();
 
     // the analytics session, in the crash marker so the next run reports a crash under it
@@ -136,39 +142,6 @@ fn decentraland_app_config() -> Result<DecentralandAppConfig, UserError> {
     Ok(DecentralandAppConfig::new(
         app_config, arguments, crash_file,
     ))
-}
-
-fn decentraland_serialized_app_config() -> AppConfig {
-    let config_file = platform::project_directories()
-        .unwrap()
-        .config_dir()
-        .join("config.json");
-    let mut base_config = read_config_file(&config_file)
-        .map(|f| {
-            info!("config file loaded from {config_file:?}");
-            AppConfig::from_json(&f)
-        })
-        .unwrap_or_else(|| {
-            warn!("config file not read from {config_file:?}, generating default");
-            Default::default()
-        });
-    base_config.reset_outdated_settings();
-
-    base_config
-}
-
-fn read_config_file(config_file: &std::path::Path) -> Option<Vec<u8>> {
-    for _ in 0..CONFIG_READ_ATTEMPTS {
-        match std::fs::read(config_file) {
-            Ok(f) => return Some(f),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(e) => {
-                warn!("failed to read config.json: {e}");
-                std::thread::sleep(CONFIG_READ_RETRY_PAUSE);
-            }
-        }
-    }
-    None
 }
 
 /// `--log-file`: the whole session in the benchmark harness's line format.
@@ -314,7 +287,7 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
 }
 
 /// react HUD builds default to the bundled bridge-scene static export (a file realm, loaded with
-/// no server; `npm run bundle:native` in react-web generates it). Checked against the cwd
+/// no server; `pnpm run bundle:native` in react-web generates it). Checked against the cwd
 /// (packaged runs) and the compile-time checkout dir (dev `cargo run` from any directory). If
 /// absent there is NO ui scene — the react HUD's built-in fallback relay covers login/chat/loading.
 fn default_ui_scene() -> Option<String> {
@@ -329,9 +302,7 @@ fn default_ui_scene() -> Option<String> {
         None
     }
     #[cfg(not(feature = "react-hud-cef"))]
-    Some(String::from(
-        "https://dcl-regenesislabs.github.io/bevy-ui-scene/BevyUiScene",
-    ))
+    None
 }
 
 #[inline(always)]

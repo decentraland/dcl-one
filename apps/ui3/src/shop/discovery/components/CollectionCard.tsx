@@ -4,10 +4,10 @@ import { useNavigate } from "react-router";
 
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
-import { fetchCollectionItems, type CollectionSummary } from "../api";
+import { fetchCollectionItems, type CollectionSummary } from "@shop/discovery/api";
 import { useCreatorProfile } from "../hooks";
 import { t } from "@shop/discovery/intl";
-import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";
+import { addressAvatarColor, avatarInitial } from "@web-core/profile/avatarColor";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { rarityMedia } from "@shop/discovery/lib/rarity";
 import { useShopQuery } from "../query";

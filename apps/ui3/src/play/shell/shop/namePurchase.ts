@@ -1,4 +1,4 @@
-// The web shell's side of BUY NAME (lib/shopProtocol shop.buyName). The HUD names the NAME; the shell reads
+// The web shell's side of BUY NAME (library/ui/apps/shop/shopProtocol shop.buyName). The HUD names the NAME; the shell reads
 // everything that decides the purchase itself (the NAME's price in Credits, the buyer's balance, whether
 // the NAME is free), shows the design's Buy Name dialog in the one dialog the item purchases use too
 // (./purchase's DialogSlot), and on BUY NAME runs it. Its operation moves as the item purchases' do
@@ -13,8 +13,8 @@
 // are still Amoy and Sepolia (namesModeFor). Registering a NAME for real (`live`) needs a guarded rail of
 // its own, and durable operations, and isn't here.
 
-import type { ShopClient } from '../../../shop/api/shop'
-import type { UsdBalance } from '../../../shop/credits/credits'
+import type { ShopClient } from '@shop/api/shop'
+import type { UsdBalance } from '@shop/credits/credits'
 import { CHAIN } from '@shop/model/chain'
 import { creditsCeil, type UsdCents } from '@shop/model/money'
 import {
@@ -28,7 +28,7 @@ import {
   type ShopNamesMode,
   type ShopOperationEvent,
   type ShopOperationState
-} from '../../lib/shopProtocol'
+} from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { DialogSlot, ShellPurchaseHandlers, ShellPurchaseItem, ShellPurchaseView } from './purchase'
 
 /** How long the simulation's Processing shows, as a purchase's would. */

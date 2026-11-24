@@ -13,9 +13,9 @@ separate from the current runtime described here.
 - One crate, not four, evolved in place from the moved dcl-one modules.
 - Client-facing contracts (HTTP paths, room names, client wire protocol) stay compatible; NATS subjects are internal and change with both ends in one commit.
 - Services talk over core NATS, at most once; it was kept over gRPC, Zenoh and Postgres NOTIFY because it alone covers per-key events, snapshots, fan-out and request/reply.
-- The gatekeeper runs inside the primary `catalyst serve`; only the primary serves `/ws`. Pulse runs as `catalyst pulse`.
+- The gatekeeper runs inside the primary `catalyst serve`; only the primary serves `/ws`. Pulse runs as `catalyst pulse`. The community chat message router runs as its own binary, `catalyst-message-router` (crate `services/catalyst/message-router`), outside `catalyst`, so a libwebrtc fault cannot stop `serve`.
 - The shared vocabulary lives in comms; ban status has one answer, comms moderation; the MLS delivery service stays in social.
-- Friends' online status comes from Pulse's islands snapshot. Room occupancy and capacity stay on LiveKit as an interim; the target is Pulse.
+- Friends' and community co-members' online status comes from Pulse's islands snapshot united with World presence: room joins and leaves applied on every replica as they arrive, corrected by each replica's complete LiveKit reads ([ADR](../../../../docs/adr/2026-11-21-world-presence-counts-as-online.md)). Room occupancy and capacity stay on LiveKit as an interim; the target is Pulse.
 - Pulse retains unfinished takeover work in memory; gatekeeper alone applies LiveKit cleanup, confirms completion and mints under the authoritative token floor.
 - Pulse and the native Bevy client use one pinned, patched ENet source in `library/vendor/rusty_enet`. Each keeps its own transport driver; channel 1 explicitly bypasses local sender throttling while retaining sequenced-unreliable semantics. Pulse implements the opt-in 8192 payload/65536 charged queued bytes/256 command native receive boundary, with typed terminal early reason 16 and exact release; shared Explorer defaults/outgoing limits remain. Ordinary/connected event adapters preserve session ownership. No service/process/channel is added. Check current acceptance evidence in the task report before making runtime claims.
 - Public Pulse V4 and Archipelago native/negotiated V4 authentication are separate proposed capabilities, deferred pending a separate user verdict. Ordinary signed `/ws` and its configured ownership remain supported. Profile announcements require nonnegative, strictly increasing versions but do not consume the teleport/emote budget; emote IDs follow the baseline without a separate 512-character cap.
@@ -26,20 +26,26 @@ separate from the current runtime described here.
 | Module | Runs in | Owns |
 |---|---|---|
 | `pulse` | `catalyst pulse` | avatar sync over ENet UDP (default `:9000`) and WebTransport (`:7743`); islands (`cluster`); the dormant [application relay implementation](../../comms/src/pulse/application_relay/README.md); ban snapshots (`bans`, ETag poll of `GET /bans`); remote flags and per-IP admission (`flags`) |
-| `archipelago` | primary `serve` | `/ws`; peer, island and hot-scene stats; the `/about` comms block (`CommsCore`) |
+| `archipelago` | primary `serve` | `/ws`, authenticated observations, socket registrations and enforcement room assignments |
+| `stats` | every `serve` | complete read-only Pulse statistics snapshots, HTTP projections, `CommsCore` and archive views; uncached enrichment through the existing content pool |
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
-| `gatekeeper::moderation`, `removal` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup, room metadata repair |
-| `gatekeeper::voice`, `streaming`, `streaming_jobs` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; `/cast/*` answers 501 |
-| `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` |
+| `gatekeeper::message_router` | `serve` | the message router's join token, `POST /internal/message-router/token/v1` |
+| `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
+| `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata. Unlike the pinned comms-gatekeeper, a stream key is revoked once the wallet that generated it would no longer be given it (scene admin removed, platform ban, world permission or ownership lost): publisher tokens check it, and the key job checks every active key. The same checks, and `GET /scene-stream-access`, revoke a key once the scene of its room is redeployed or gone, where the pinned comms-gatekeeper answers that key and publishes into the old room until the next stream link. The `streaming` flag follows LiveKit's ingress state where the pinned comms-gatekeeper applies `ingress_started` and `ingress_ended` in arrival order: the streaming job raises and lowers it, an `ingress_ended` is ignored while the ingress is live, and a stream link asks before it replaces an idle credential |
+| `cast_presenter` | `serve`, one `cast-bot` process per session | Cast presentations at `/cast-presenter-service/presentations`: PDF slides rendered in `serve` and published into the scene room by a `cast-bot` process (`services/catalyst/cast-bot`, the only LiveKit participant code outside the Explorer), commands from the room's presenters over the data channel, sessions in memory |
+| `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
+| `gatekeeper::webhook`, `events` | `serve` | the LiveKit webhook; a typed `RoomEvent` to `RoomEventSink` and `RoomEventStore`, with canonical room events published on `comms.room_events.v1` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
-| `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
+| `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology united with World join/leave events and LiveKit reads |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
-| `rooms`, `world_identity`, `access`, `limits`, `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds, social and shop use |
+| `rooms`, `world_identity`, `access`, `limits` (from `shared`), `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds and social use |
+| `catalyst-message-router` (its own crate) | `catalyst-message-router` | community chat: a LiveKit participant on the private messages room that relays a member's message to the community's members (§ Message router) |
 
 Outside: access, room resolution and storage (worlds); privacy, friendships, roles, notification
 records and `/mls/*` (social); the scene runtime; LiveKit. Dropped: the relay to Decentraland's
 Pulse (a mirror advertises Decentraland's Pulse in `/about`),
-player report routes, `POST /auth/challenge`, `/auth/livekit-token` and
+the player report routes under the gatekeeper's own mount (the intake is the
+`/report-user` area), `POST /auth/challenge`, `/auth/livekit-token` and
 `/heartbeat`. Room recovery uses `cluster_change`, `cluster_lookup` and
 `takeover_completed`; hints do not own unfinished work.
 
@@ -50,13 +56,16 @@ player report routes, `POST /auth/challenge`, `/auth/livekit-token` and
 | `interfaces::AccessPolicy` | `worlds::policy::Policy` | may this wallet enter this world, scene or parcel |
 | `interfaces::SceneIdentity` | `worlds::rooms::SceneResolver` | a world's active scene and the resolved room; room names are `comms::rooms` |
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
-| `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
+| `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
+| `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
+| `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
+| `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
 |---|---|
 | `CommsState::revoke(RoomRevocation)`, the one revocation entry point | worlds permission edits |
-| `explore::places::live::Participants` for `CommsState` | explore live counts, the presence archive |
+| `CommsState::live_participants`, as Explore's `places::live::Participants` through root `serve_adapters::CommsParticipants` | explore live counts, the presence archive |
 | ban status, presence, voice rooms | worlds policy and publish; social, `/worlds/status`; social call signalling |
 | signed `POST /get-server-scene-adapter`, `GET /scene-participants` | scene hosts |
 
@@ -70,8 +79,95 @@ World aggregate discovery, upstream catalogue IDs, Genesis storage scopes and
 comms room-name contracts remain unchanged. The periodic catalogue job refreshes
 metadata; it does not own identity lifecycle.
 
+Scene admin grants (`social.scene_admins`) use the same place: the world scene's
+UUID, or the base parcel of a Genesis scene (`ActiveDeployment::place_key`). A
+redeploy of the same place keeps the admins, their stream key access and their
+presenter control. A scene on a different place starts without them.
+
+Streaming notices retain one normalized recipient snapshot: owner, applicable
+LAND/World permission holders and explicit scene admins. Explore captures the
+Genesis admins, and each World scene admin with its granter, in the catalogue
+removal event before a pre-maintenance re-grant can overwrite grant timing or
+granter; World admins are told only after their saved granter's authority is
+checked; fallback enrichment reads retained grants after safety
+cleanup commits. External lookup outages leave notification resolution pending.
+Each accepted recipient has a durable cursor so bounded retries resume without
+starving later wallets. Credential issuance
+saves the bound `admin_place_key`; Explore freezes exact active/retiring world
+keys into removal events before delayed catalogue cleanup. Scene insertion
+clears catalogue evidence, while queued events and their recipients stay fixed.
+Historical feed seeding performs cleanup without notifying old removals.
+Explore's identity trigger retains displaced exact bindings in
+`explore.world_scene_binding` (`world_name`, `entity_id`, `identity`) without
+Social writes or row locks. Comms reads that evidence after a failed legacy
+binding lookup, even if the scene retires before retry. Saved exact
+credential/context keys take precedence. Original place context is captured
+before binding recovery and checkpointed before further fallible deferred work;
+a saved snapshot survives catalogue deletion and is never replaced by live data.
+SQL failures and timeouts remain pending. A successful missing or ambiguous
+canonical World binding instead records an unresolvable state and completes
+for independently established owner/permission holders and preserved recipients,
+skipping local-admin enrichment. No admin authority is inferred from overlapping
+parcels.
+
+A stream key is checked again at once when PostgreSQL announces a deployment
+or a change of a world's scenes, owner or grants (`streaming::cast::listen`;
+`DATABASE.md`, "Stream key notifications"). The key job stays for lost messages.
+
 `comms = 8` in `docs/module-layers.toml` (above explore, below worlds, social and shop), enforced by
-the repository structure checks. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
+the repository structure checks. Comms links no Explore code: it reads Explore's tables by shared SQL and the root adapts its participants to Explore. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
+
+## Deployment generation ownership
+
+The root `pulse_generation` module owns one existing `jobs::Leases` PostgreSQL
+session lease per deployment audience. On that exact held session it allocates from
+`social.archipelago_v4_connection_epoch` and commits a fresh UUID/epoch binding in
+`social.pulse_authority_generation` before starting Pulse. The row contains only
+`deployment_audience`, `epoch`, `source_incarnation` and a naive UTC `updated_at`;
+root alone writes it. Pulse receives `interfaces::PulseGeneration`, retains its
+assignments and unfinished work in memory and imports no Gatekeeper implementation.
+Gatekeeper reads the binding through its existing pool. The metadata is local
+authority, outside catalogue mirrors and content snapshots.
+
+A successor row commit is the logical authority cutover. The current row remains
+valid until that commit; session keepalive does not periodically update it.
+Gatekeeper takes a generation share lock before wallet safety and realm locks for
+selected mutations and credential authorization. Unregistered source UUIDs allocate
+no selected-state slots. Mint and final socket delivery are separate fresh,
+exact-stamp, single-use permissions, each bounded by its original two-second deadline
+including pool checkout. A stale source cannot renew that deadline after cutover.
+Already issued credentials and accepted transport bytes keep their existing finite
+validity. Local lease-loss detection cancels source work; it does not synchronously
+stop every physical byte or SQL-fence statistics/topology publication per message.
+
+The configured HTTP room authority requires `X-Pulse-Authority-Source`, a canonical
+UUID from the client's immutable root capability. The dedicated-key HMAC preimage
+is method, exact path, timestamp, nonce, source UUID and body hash, separated by
+newlines. Missing, unregistered or stale sources fail closed before policy evaluation;
+a final generation share lock after policy guards lease issuance and renewal.
+Nonce replay protection and the original two-second room-lease lifetime remain.
+The bound HTTP client refuses cached admission and late responses after local loss.
+The endpoint is mounted when configured; the application relay's production client
+activation remains absent. Public native packets and protobuf shapes are unchanged.
+
+`catalyst pulse` requires `DATABASE_URL` and an explicit audience matching serve's
+`ARCHIPELAGO_CONTROL_V4_AUDIENCE`; Pulse also accepts `PULSE_V4_AUDIENCE`, with
+conflicting values rejected. Apply the schema first. The dev launcher supplies the
+same local database/audience and waits for the schema-ready API. Stop admissions
+and upgrade all incompatible writers together: older binaries lack generation guards.
+Restore with writers stopped and admissions closed, then acquire a fresh UUID/epoch
+before reopening; restored metadata alone does not authorize an old capability.
+This is a deployment requirement, not an automated restore orchestrator. See the
+[generation fencing decision](../../../../docs/adr/2026-11-16-pulse-generation-fencing.md).
+Runtime admission under complete generation churn and rollout readiness remain
+unverified pending acceptance evidence.
+
+On SIGTERM or SIGINT, `catalyst pulse` sends one ENet disconnect with reason
+`Graceful` (1) to each connected ENet peer, including peers still authenticating.
+If the datagram is lost or the process is killed, the client detects the loss
+on its own timer. While Pulse is running, it sets both ENet timeout bounds to
+five seconds on each connection. ENet measures outstanding reliable traffic,
+including pings, when deciding that a peer is unreachable.
 
 ## Services and how they talk
 
@@ -79,22 +175,167 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 |---|---|
 | connector ↔ gatekeeper | calls inside the primary `serve` (`CommsState::announce_session`, `IslandSockets`); `peer.*.connect`, `peer.*.disconnect`, `engine.peer.*.island_changed` are retired |
 | Pulse ↔ `serve` | core NATS, § Bus messages |
-| Pulse → gatekeeper | `GET /bans` (moderator bearer, ETag); `POST /internal/pulse/room-authority/v1` with an HMAC key |
-| gatekeeper → `multiplayer-hosting` | `RoomEvent` on `comms.room_events.v1` (defined, not yet published) |
+| Pulse → gatekeeper | `GET /bans` (moderator bearer, ETag); configured `POST /internal/pulse/room-authority/v1` with dedicated HMAC key and authenticated source UUID; relay client activation remains dormant |
+| message router → gatekeeper | `POST /internal/message-router/token/v1` with the dedicated HMAC key `MESSAGE_ROUTER_KEY`, at start and on every reconnect |
+| message router → social tables | shared SQL reads of `social.communities` and `social.community_members` on its own pool (`DATABASE.md` "Message router workload") |
+| Explorer ↔ message router | data packets on the private messages room, topic `community:<id>` |
+| gatekeeper → every `serve`, `multiplayer-hosting` | `RoomEvent` on `comms.room_events.v1`: each replica applies World joins and leaves to its social online view |
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
-re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; positions coalesce
-to one per 500 ms; a flooding socket closes with 1008; a 64-frame send queue in which a newer
-`island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
-with 1013; undecodable frames 1007; restart closes every socket with 1012.
+re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
+completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter).
+A full pending share makes room for an otherwise admissible socket by closing the oldest
+pending handshake without a close frame, as at the handshake deadline. The Bevy Explorer
+treats an eviction or an HTTP 429 or 503 on upgrade as transient. It reconnects after 1, 2, 4,
+then 5 s and ignores `Retry-After` on `/ws`.
+`comms_ws_pending_evictions_total` counts evictions (a steady rate under normal load means the
+share is too small for the join rate) and `comms_ws_pending_handshakes` the sockets in the
+handshake. Each client source, counted like the per-source socket cap, holds at most
+`WS_MAX_PENDING_HANDSHAKES_PER_IP` pending handshakes (default 8, 0 unlimited), beyond that 429;
+a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
+within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
+`WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) limits sockets per attributable client
+source (IPv4 address or IPv6 /64), with 429 beyond the limit. Catalyst uses a valid `X-Real-IP`
+from a proxy in `HTTP_TRUSTED_PROXY_CIDRS` or the address of an unlisted public TCP peer.
+Both per-source limits skip upgrades without an attributable address. With
+`WS_MAX_SOCKETS_PER_IP` enabled, the first such upgrade logs a warning and each increments
+`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_`
+series on `SERVE_METRICS_BIND`). Positions coalesce for ownership control to
+one per 500 ms. Statistical observations retain every decoded position. A flooding socket
+closes with 1008. Assignment mailboxes, validation and the physical writer share one
+64-item output budget. Accepted assignments retain arrival order. Exhaustion rejects new
+mailbox assignments, and `kicked` has a separate terminal slot. Full for 10 s closes
+with 1013, including when accepted mailbox work cannot advance during handler stalls,
+not only when the wire is slow. Direct output waiting for credit advances accepted mailbox
+work into the writer without taking another credit. Rejected assignments remain eligible
+for the short reconciliation rounds even after older accepted assignments flush.
+`/stats/health` appends `feed_assignment_full`, counting rejected mailbox assignments;
+`feed_assignment_coalesced` remains zero for response compatibility.
+Undecodable frames close with 1007; restart closes every socket with 1012.
+
+**Connector capacity.** All connector mounts share the primary's socket budget.
+API replicas add read capacity for statistics. The pinned
+[standalone Archipelago connector](https://github.com/decentraland/archipelago-workers/blob/47d92d5621862a38e7fb35a733b668880a9e5375/ws-connector/src/controllers/handlers/ws-handler.ts#L43-L60)
+supports distributing sockets across replicas and has no equivalent socket admission
+caps. Catalyst bounds total socket use and the share each attributable client source
+can hold. Attributed players behind a shared NAT count against the same per-source
+limits and can receive 429 with `Retry-After: 5` while the primary still has free slots.
+
+Peak-load sizing remains open in [#1543](https://github.com/decentraland/dcl-one/issues/1543).
+Size the limits using a mounted primary behind the deployment's gateway. Verify that the
+gateway is in `HTTP_TRUSTED_PROXY_CIDRS` and supplies each client's `X-Real-IP`. With
+`WS_MAX_SOCKETS_PER_IP` enabled, confirm `comms_ws_unattributed_upgrades_total` stays flat
+during the run. Cover the expected peak of connected clients and bursts of joins and
+reconnects, including clients behind a shared NAT. Record the active socket count,
+handshake success and latency, upgrade 429 and 503 responses, and pending-handshake evictions.
 
 **Deployment.**
-- One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). The proxy sends `/ws`, `/parcels`, `/peers`, `/peers/{id}`, `/islands`, `/islands/{id}` (at the root and under `/comms` and `/stats`), `/hot-scenes`, `/stats/health` (root and `/archipelago-ea-stats`) and `/lambdas/explore/realms` to the primary alone; a replica answers 404 for all but the last. Stop the primary before its successor starts.
-- Key separation: only the gatekeeper holds the LiveKit secret; the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
+- One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.
+- The gateway's subdomain-prefix mapping sends `archipelago-ea-stats.<domain>` to `/archipelago-ea-stats/*` and `archipelago-ea-ws-connector.<domain>` to `/archipelago-ea-ws-connector/*`. Route both connector hosts and WebSockets to the primary. Additional host aliases require explicit proxy mappings. The complete standalone mounts sit outside shared path normalization and CORS; root content `/status` remains unchanged. Existing `/ws` and `/archipelago-ea-stats/ws` entrypoints remain, with `/archipelago-ea-ws-connector/ws` available at the connector mount. No public Pulse listener is added. Shared-root `/stats/*` aliases, including `/stats/health`, remain available at the root and are excluded from the standalone Stats mount. Optional WebSocket subprotocol names are echoed in offered order; they never select authentication or enable extended control fields.
+- Key separation: only the gatekeeper holds the LiveKit secret (the message router asks it for a token); the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
 - Configured legacy ownership uses `ARCHIPELAGO_CONTROL_V4_AUDIENCE`. Pulse accepts that audience or `PULSE_V4_AUDIENCE` for its shared NATS control-position bridge; conflicting values fail startup. Neither setting enables public V4 authentication.
 - `DENY_LIST_URL` (or upstream's name `DENYLIST_JSON_URL`) is required in production; `NODE_POSTURE=mirror` defaults it to `https://config.decentraland.org/denylist.json`. Unset, the node warns at start and runs with the list off.
+- `BAN_SWEEP_INTERVAL_MS` (CLI `--ban-sweep-interval-ms`, default 30,000 ms) schedules connected-wallet ban checks after the first interval and on subsequent timer ticks. A tick during an unfinished pass is skipped; passes never overlap and skipped ticks do not accumulate. Checks retain a maximum concurrency of 20. Numeric prefixes are accepted, fractional milliseconds are truncated, and values below 1 or above 2,147,483,647 become 1 ms; an empty or nonnumeric value fails startup. Shutdown stops new passes while the current pass remains owned by the existing job shutdown deadline.
+- `JOBS_FIRST_PASS_NOW=true` also bypasses the ban sweep's initial delay for development/test startup; subsequent ticks retain the configured cadence.
 - `PULSE_FLAGS_URL` (HTTPS or numeric-loopback HTTP, polled every 60 s) may set only the four `PULSE_IP_LIMITER_*` values (`ENABLED` false, `MAX_CONCURRENCY` 10, `SCENE_LISTENER_MAX_CONCURRENCY` 2, `WHITELIST` empty by default).
+
+## Message router
+
+`catalyst-message-router` ports Decentraland's `comms-message-sfu` (revision
+d38ccd0885ad23028604e9a9fcc788cdfcbb81fe). It joins the private messages room
+(`PRIVATE_MESSAGES_ROOM_ID`, default `private-messages`) as
+`<MESSAGE_ROUTER_IDENTITY_PREFIX>-<MESSAGE_ROUTER_REPLICA>`. The Explorer
+(`rendering/bevy-explorer/source/crates/comms/src/community_chat.rs`) sends community chat to
+`message-router-dev-0`, or `message-router-prd-0` when its base domain is decentraland.org,
+and trusts the stamped author only from that identity. `serve` refuses to start with
+`MESSAGE_ROUTER_KEY` and no `MESSAGE_ROUTER_IDENTITY_PREFIX`; the replica defaults to 0, the
+one the Explorer addresses.
+
+For each data packet: no sender, its own packets and no topic are dropped; more than
+`MESSAGE_ROUTER_MAX_PACKET_SIZE_BYTES` (8192) counts `rejected_oversized`; a sender past its
+token bucket (`shared::limits::RateLimiter`, `MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS` 10,
+`_REFILL_PER_SECOND` 5) counts `rate_limited`. At most `MESSAGE_ROUTER_DB_MAX_CONNECTIONS`
+packets are routed at once; the event loop never waits for a slot, and a packet that finds every
+slot taken counts `overloaded`. The rfc4 `Packet` must be a `chat` or `chat_reaction` on topic
+`community:<uuid>`, the room connected and the sender a member (one read answers membership
+and recipients); it goes, with `Chat.forwarded_from` (or `ChatReaction.address`) set to the
+sender, to the other members of the community, if active and not suspended, on
+`community:<id>`, reliable, 100 destination identities per publish. A publish that fails or
+does not answer within 5 s is logged and counted in `message_batch_failures_total{reason}`
+(`error`, `timeout`), and the rest still go; the packet counts `delivered` only when at least
+one batch was published. Anything else counts `failed`.
+
+Its token comes from the gatekeeper: `POST /internal/message-router/token/v1`
+(`shared::message_router`), an HMAC-SHA256 over method, path, timestamp (±30 s), nonce
+(replay-refused) and body hash with `MESSAGE_ROUTER_KEY` (32 base64url bytes, not the LiveKit
+secret, set on both sides; unset on `serve`, the route is not mounted). The body names only the
+replica; the gatekeeper's `MESSAGE_ROUTER_IDENTITY_PREFIX` fixes the identity, and the grant is
+join, subscribe and publish data on the private messages room, with no track publishing and no
+metadata update. The gateway keeps `/internal/message-router` private.
+
+Connections take a fresh token, `MESSAGE_ROUTER_CONNECT_ATTEMPTS` (5) tries
+`MESSAGE_ROUTER_CONNECT_DELAY_MS` (1,000) apart; exhausting them exits the process for its
+supervisor to restart. After a final disconnect it connects again, except for a client-initiated
+disconnect, a duplicate identity, a deleted room and the SIP reasons, after which the process
+exits non-zero for its supervisor to restart. A reconnect aborts the packets still routing for
+the old connection; SIGINT or SIGTERM lets them finish for up to 5 s, then aborts the rest and
+leaves the room.
+
+The router reads `DATABASE_URL`, `MESSAGE_ROUTER_TOKEN_URL` (https, or http to a loopback or
+private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optionally
+`MESSAGE_ROUTER_LIVEKIT_URL` (dialed instead of the URL the gatekeeper hands out),
+`MESSAGE_ROUTER_DB_MAX_CONNECTIONS` (4) and `MESSAGE_ROUTER_METRICS_BIND`
+(`127.0.0.1:5007`: `/metrics`, `/health/live`, `/health/ready` while in the room). Under
+`NODE_POSTURE` island or journey its URLs must name loopback or `PUBLIC_URL`'s host. Series:
+`message_delivery_total{outcome}` (`delivered`, `failed`, `rejected_oversized`,
+`rate_limited`, `overloaded`), `message_batch_failures_total{reason}`,
+`message_delivery_latency` (milliseconds) and `livekit_connection_status`.
+Build it with `cargo build -p catalyst-message-router --features livekit`; without the
+feature the crate's library and tests build without libwebrtc.
+
+## Statistics ownership and runtime
+
+Pulse owns a separate legacy statistics population. Authenticated decoded positions enter a
+bounded 1,024-event connector queue before ownership, realm and finite-position filtering.
+A serialized publisher assigns a process UUID and increasing sequence; each socket disconnect
+emits a removal, including duplicate devices and replaced sockets. Publish rejection or timeout
+is counted and logged without retry. These observations cannot authorize room ownership.
+Connector assignments exist only for moderation and participant removal; fenced delivery records
+the issued room under the existing local ownership guard after Pulse and SQL authorization.
+
+Every serve subscribes to ordered statistical changes and complete recovery frames.
+Contiguous changes become visible at subscription callback completion; no periodic
+timer delays the healthy change path. A gap retains the previous view until a
+watermarked complete recovery arrives. HTTP, about/realms and each archive pass
+retain one immutable snapshot across projection and content I/O. Cold state remains an empty
+successful view, and an outage retains the last complete snapshot without public peer expiry.
+Social keeps its existing topology subscription, united with World presence, and LiveKit keeps occupancy authority.
+Hot-scene HTTP and archive enrichment use serve's existing content pool and shared
+content denylist, preserving selected local document order before projection,
+stable count sorting and top-100 selection. Thumbnails name `CONTENT_URL`, or
+this node's own `/content` when it is unset; local SQL determines the corpus and
+dependency failures. The
+[local content source ADR](../../../../docs/adr/2026-11-12-stats-local-content-source.md)
+records the accepted source semantics and preserved rendering and snapshot obligations.
+The discovery subscription and original frame validation remain for transport compatibility;
+they no longer maintain a connector statistics cache.
+
+Recovery deadlines are checked between transfers. One captured checkpoint follows
+its finite queued revision prefix before later changes; ongoing observations cannot
+postpone it. The five-second recovery cadence excludes the current transfer, prefix
+drain, encoding and checkpoint send time. Each send has a 15-second deadline;
+encoding is outside it. Overflow or failed publication discards the pending prefix
+and checkpoint in favor of a new complete recovery. Sequential encoding awaits do
+not prevent an already-started blocking encode from outliving publisher cancellation.
+
+Stats and connector hosts have separate real request registries, bearer-protected scrapes,
+optional operating-system collectors, and reset after the first successful scrape strictly
+past the previous reset's local midnight plus 24 hours. Histogram maintenance runs
+at each recording boundary, independent of successful scrapes. Readiness reports
+the original `server` check from the actual listener lifecycle;
+NATS and content add no probes. Rust exposes actual available process measurements rather than
+invented Node/V8 series. Node-specific default runtime metrics remain a compatibility gap.
 
 ## Bus messages
 
@@ -104,11 +345,17 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 |---|---|---|---|---|---|
 | Cluster change | Pulse → primary island subscriber (one unqueued subscription) | `peer.{wallet}.cluster_change` | 64 KiB; coalescing outbox | fresh lookup; rotating retained-pending hints | Pulse pub, `serve` sub |
 | Cluster lookup | `serve` → Pulse, reply on private `_INBOX.` | `peer.{wallet}.cluster_lookup` | exact session request; complete reply ≤64 KiB; 2 s deadline | active re-announcement and retained pending cleanup | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
+| Fenced selection lookup | `serve` → current Pulse, reply on private `_INBOX.` | `pulse.{source_uuid_without_hyphens}.selection_lookup` | audience/epoch/source plus exact wallet/session; complete reply ≤64 KiB; 2 s request budget | fresh registered source; no stale responder on another source subject | `serve` pub, Pulse sub on its own UUID; both pub/sub `_INBOX.>` |
+| Complete selection discovery | `serve` → current Pulse, reply on private `_INBOX.` | `pulse.{source_uuid_without_hyphens}.selection_view` | one immutable view shared for 30 s; ≤49,146 targets and 8 MiB canonical entries; ≤256 entries and 64 KiB per reply | exact source/epoch/request/view IDs, ordered pages, count and digest; incomplete transfer seeds nothing | `serve` pub, Pulse sub on its own UUID; both pub/sub `_INBOX.>` |
+| Selection retirement | gatekeeper → Pulse, reply on private `_INBOX.` | `peer.{wallet}.selection_retirement` | exact source/session/version and optional observed identity; each direction ≤64 KiB; 2 s deadline | negative-only complete-view proof; unknown retains retry | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
 | Takeover completion | gatekeeper → Pulse | `peer.{wallet}.takeover_completed` | 1–4096 bytes; ID 1–64 bytes | resend identical ID/cutoff until authoritative acknowledgment | `serve` pub, Pulse sub |
-| Islands snapshot | Pulse → connector stats, `presence` | `engine.islands` | 1 MiB, 1 s | next snapshot; online expires 5 s after the last valid one | Pulse pub, `serve` sub |
-| Discovery beacon | Pulse → `/core-status`, `/about` | `engine.discovery` | 10 s | healthy while < 90 s old | Pulse pub, `serve` sub |
+| Islands snapshot | Pulse → social topology in every `serve` | `engine.islands` | 1 MiB, 1 s | next snapshot; online expires 5 s after the last valid one | Pulse pub, `serve` sub |
+| Discovery beacon | Pulse → retained connector discovery subscription | `engine.discovery` | 10 s | next beacon; no statistics cache | Pulse pub, `serve` sub |
+| Statistics producer control | connector ↔ Pulse | `archipelago.statistics.producer.v2`, private `_INBOX` replies | ≤64 KiB and broker limit; existing bounded request queue/deadline | lazy incarnation probe, candidate grant, exact confirmation; idempotent registration only | `serve` request/private reply sub, Pulse sub/private reply pub |
+| Statistics observation | connector → Pulse | `archipelago.statistics.observations.v2` | ≤64 KiB and broker limit; queue 1,024; 2 s including registration | Pulse incarnation/generation and increasing cursor; at most once; no event retry | `serve` pub, Pulse sub |
+| Statistics changes and recovery | Pulse → every `serve` | `archipelago.statistics.snapshots.v1` | each frame ≤min(64 KiB, broker limit); transfer ≤64 MiB; changes on observation; recovery requested every 5 s at transfer boundaries | finite queued prefix, then complete checkpoint; retain last complete view on gaps | Pulse pub, `serve` sub |
 | Control position | connector → Pulse | `archipelago.control.position.v1` | 640 B | next heartbeat | `serve` pub, Pulse sub |
-| Room event | webhook → `multiplayer-hosting` | `comms.room_events.v1` | 4 KiB | reconcile via `GET /scene-participants` | `serve` pub, `multiplayer-hosting` sub only |
+| Room event | webhook → every `serve`, `multiplayer-hosting` | `comms.room_events.v1` | 4 KiB; never fails the webhook | duplicates and disorder are harmless (per-sid, leave is final); each replica's 30 s complete LiveKit read; `GET /scene-participants` | `serve` pub and sub, `multiplayer-hosting` sub |
 
 A publish returns after bounded local SDK acceptance: `Submitted` proves neither broker authorization nor delivery. Require per-process NATS credentials and subject permissions matching the producer/consumer table. Verify deployment enforcement through the private release review.
 
@@ -127,8 +374,13 @@ its protobuf types belong above Comms in the module layers.
 The version-1 envelope contains a process UUID and a tagged event: a normalized
 recipient plus friendship, block or private-call protobuf; community voice plus
 scope and optional excluded creator; community membership status; community
-deletion; or an immutable payload reference. The decoder checks version, kind,
-UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
+deletion; an accepted friendship's two wallets, which each replica announces to
+its own sockets from its own topology; or an immutable payload reference. The
+decoder checks version, kind, UUIDs, normalized wallet identities, status enums
+and the permitted protobuf arm. A message it rejects increments
+`social_event_delivery_dropped` (`undecodable_inbound`). During a rolling
+upgrade, a replica that predates an event kind rejects it, so its sockets miss
+that event until the replica is upgraded.
 Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
 and neither private parties nor closure notices can be added by another arm.
 Private acceptance reads the caller's credential before publishing ACCEPTED, then
@@ -196,22 +448,38 @@ Both Social socket protocols read `WS_AUTH_TIMEOUT_IN_MS` and
 `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` separately using the source environment
 provider's numeric-prefix parser. The authentication timer follows Node's
 millisecond timer conversion: values outside 1..=2,147,483,647 schedule one
-millisecond, and valid fractions are truncated. Signature age checks retain the
-configured numeric value and the original signed timestamp text; timestamp
-conversion accepts the source's finite JavaScript Number forms. Idle timeout
-uses the pinned native binding's unsigned-short conversion, accepting zero or
-8..=960 seconds after conversion. The source-executed numeric fixtures exercise
-these conversions and native option admission; they do not measure native idle
-timer scheduling or kernel buffering.
+millisecond, and valid fractions are truncated. Idle timeout uses the pinned
+native binding's unsigned-short conversion, accepting zero or 8..=960 seconds
+after conversion. The source-executed numeric fixtures exercise these
+conversions and native option admission; they do not measure native idle timer
+scheduling or kernel buffering.
+
+Both handshakes verify through `dcl_auth::request::verify_request`, the
+node's one signed-request verifier ([ADR](../../../../docs/adr/2026-11-18-one-request-verifier.md)):
+current payload only, the scene signer refused (400), EIP-1654 links through
+the node's validator (503 when it cannot be asked). The signature window is
+`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` milliseconds, else `AUTH_WINDOW_SECS`
+(300 s by default, as the source service). The window bounds both sides of
+now, as the source's crypto-middleware does: a timestamp up to the whole window
+ahead passes (300 s by default), not only up to the 60 s cap of the
+[signed-fetch window ADR](../../../../docs/adr/2026-11-13-signed-fetch-window.md),
+which records this exception (`future_bound_follows_window`). A zero, negative
+or NaN value accepts only the current millisecond and an infinite one bounds
+neither side. A timestamp equal to the current time passes under any of them,
+where the source refuses it under a negative window. The timestamp is digits only, where the source reads it as a
+JavaScript Number: the `timestamps` cases of `ws-numbers-source-cases.json`
+are replayed against these rules, and the other forms the source accepts
+(`0x…`, `…e0`, padded) are refused.
 
 Social signatures bind the source protocol paths: `/` for RPC, and `/v1/stream`
 for both JSON handshakes. Connecting through `/social-rpc` or
-`/social-rpc/v1/stream` keeps those signed paths; `x-original-path` does not
-expand them. Actual source verifier captures and real socket replays cover
-81 combinations. The Bevy Social client normalizes only its signed URI to `/`
-while keeping its configured connection URL. Clients signing a mounted alias
-must sign the source path; deployed web artifacts need the corresponding client
-build at cutover. Other shared handshake callers keep their chosen alias policy.
+`/social-rpc/v1/stream` keeps those signed paths; `x-original-path`, in the
+upgrade request or the frame, does not expand them. A signature over the
+mounted alias itself (`/social-rpc`, `/social-rpc/v1/stream`) is also accepted,
+checked only after the source path answered 401; the source refuses it.
+Actual source verifier captures and real socket replays cover 81
+combinations. The Bevy Social client, the Unity explorer and
+`social-rpc-client-js` sign `/`.
 
 When the shared bus is enabled, Social registers its event subscription before
 checking the existing NATS subscription readiness fence. Until the first ready
@@ -285,6 +553,64 @@ and expiry; unchanged passes preserve identity. Live registration and control-ow
 invalidate stale active lookups between passes. Ready snapshots record potential credential
 exposure, so an intermediate assignment blocked by cleanup does not invent another predecessor.
 
+Snapshots and persisted admission stamps retain selected origin and exact identity. Native
+registration reserves precedence even without usable coordinates and invalidates earlier legacy
+evidence until a completed pass installs a fresh version. Unknown and cleanup-only evidence
+cannot mint or refresh credentials. Legacy v1/v2 readers share the wallet capacity; mixed
+authority is withheld without a grounded common allocator-domain proof. The ordinary connector
+emits v2 intents after independent verified-session registration. The newest completed live
+transport with a fresh valid heartbeat supplies the wallet candidate; replacement or promotion
+allocates a new sequence-backed candidate epoch. Gatekeeper acquires and renews only positively
+selected realm bindings, including native selection without `/ws`. It replaces only a known
+exact owned predecessor or a lapsed row. Fresh unknown same-session rows are borrowed read-only;
+fresh foreign sessions remain conflicts. Socket delivery retains the exact transport, immutable
+admission stamp and committed SQL fence. SQL timeouts retain before/after identities and their
+existing queue credit until conditional reconciliation. No old row is restored or broadly released.
+Ownership loss stops renewal; the existing 90-second lease bounds residual authority. These
+paths require the coordinated maintenance cutover in the
+[selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md);
+source implementation alone does not establish rollout readiness.
+
+Borrowing, conflict and unknown lookup retain a bounded selected retry obligation.
+An explicit current-source retirement reply from Pulse's fresh complete selection
+view can end it only when no current owner, blocked/pending cleanup, native
+reservation or newly ingested candidate is present. Missing positive snapshots and
+cache or SQL expiry do not prove absence. The complete view retains every current
+and unfinished record. Gatekeeper settles exact SQL attempts and their credits
+before retiring the unchanged local slot; desired generation, selected identity
+and outstanding lease guards preserve concurrent successors. Retirement neither
+writes a foreign row nor releases a settled owner. Either retirement keeps the slot's
+exact owned fact inside the selected bound; the wallet's next selection then replaces
+its own fresh row without waiting for the lease.
+
+A registered older epoch can instead retire after a complete newer-generation
+discovery pass, a final current-binding check and the original operation-grant
+window. Exact uncertain SQL settlement and unchanged epoch/source/generation/map
+identity with no extra slot handles remain required. Unidentified historical source
+UUIDs stay retained; UUID inequality alone proves no supersession. Independent
+cleanup and takeover obligations keep their existing owners. Wallets present in the
+sorted complete current view keep their exact predecessors until reseeding; absent
+old wallets can still retire to free capacity.
+
+Discovery runs as a cooperative future inside the existing subscriber job. It
+retains one complete bounded target vector and rotates through 128-target batches,
+reclaims eligible obsolete slots and seeds ordinary reconciliation. This reconstructs
+unchanged targets after restart or dropped hints without requiring a native reconnect.
+Entries remain hints: fresh per-target selection and SQL authority still decide
+admission. Runtime recovery duration and admission under full generation churn
+remain unverified. Slot occupancy and cap refusals are exposed as
+`comms_cluster_selected_slots` and `comms_cluster_selected_slot_refused_total`.
+
+Maintenance retries rotate with bounded item, lifetime-credit and running reservations;
+event and durable takeover lanes retain headroom. Cold hint-only work is limited to
+112 of 128 maintenance items and lifetime credits and eight of 16 maintenance runners;
+known-owned and unfinished targets retain the remaining reserve, run first and rotate
+separately without overtaking earlier work in the same wallet. Healthy exact owned targets wait
+until their 30-second renewal is due, while unknown or unfinished targets retry after
+five seconds. Capacity notifications refill batches without a global five-second
+throughput limit. The full shutdown settlement scan remains independent of due filtering.
+These bounds do not establish measured recovery duration or useful throughput.
+
 Pulse budgets 24,573 simultaneous distinct transport/control wallets and one equally sized
 churn cohort, for 49,146 retained wallet records, with at most 32 pending operations per
 wallet. Complete plans are bounded to 64 KiB; overflow never becomes a truncated ready reply.
@@ -356,8 +682,10 @@ as `authoritative-server`):
 - `multiplayer-hosting`, a comms service run as one instance, starts a server on the first joined event for a scene with `authoritativeMultiplayer`, stops it 60 s after the room empties, reconciles against `GET /scene-participants`, keys servers by canonical room and entity hash (a redeploy drains the old one), allows 6 starts per 60 s, and pushes room tokens and 60-minute storage delegations to the engine. Metadata comes from `/content/entities/active` and `/content/contents/{hash}` (5 s timeout, verdict cached per entity hash). `/debug/*` answers only signed fetches from configured admin wallets, otherwise 403; local preview is deferred (503).
 - The runtime is upstream bevy-explorer `headless --orchestrated`, unpatched and keyless, one engine per world. The one engine change left, as an upstream PR: report a room joined only once LiveKit confirms it.
 - Presence, world capacity and the room-empty rule exclude `authoritative-server`.
-- Pulse scene listeners must chain to the authoritative address, scoped to their parcels. Verify this requirement through the private acceptance review.
+- Pulse scene listeners must chain to the authoritative address, scoped to their parcels. Pulse admits a listener handshake only from `AUTHORITATIVE_SERVER_ADDRESS` and any `PULSE_SCENE_LISTENER_WALLETS` (`catalyst secrets init` copies the address into Pulse's file), and refuses every listener with neither; the parcel scope is not yet enforced. Verify this requirement through the private acceptance review.
 
 ## Acceptance evidence
 
 Read the architecture decisions, divergence findings and readiness evidence supplied for the task before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.
+
+Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. `WKC_METRICS_COLLECT_DEFAULT=false` disables these collectors.

@@ -165,6 +165,26 @@ for section in automation inworld; do
 done
 pass "on-demand sections appended on update and on create"
 
+# --- 3c. sdk: appended to an explorer comment, alone on a pull request with no explorer build ---
+reset_store
+run_upsert build "BUILD-FIRST" >/dev/null
+run_upsert sdk "SDK-PREVIEW" >/dev/null
+[ "$(count)" = 1 ] || fail "sdk append: expected 1 comment"
+BODY="$(body_of)"
+grep -q 'BUILD-FIRST' <<< "$BODY" || fail "sdk append: build content lost"
+grep -q 'SDK-PREVIEW' <<< "$BODY" || fail "sdk append: content missing"
+reset_store
+OUT="$(run_upsert sdk "SDK-ALONE")"
+grep -q 'updated (attempt 1)' <<< "$OUT" || fail "sdk create: did not settle on attempt 1"
+BODY="$(body_of)"
+grep -q 'SDK-ALONE' <<< "$BODY" || fail "sdk create: content missing"
+grep -q '<!-- ci:build:start -->' <<< "$BODY" && fail "sdk create: seeded explorer sections that will never report"
+run_upsert build "BUILD-LATER" >/dev/null
+BODY="$(body_of)"
+grep -q 'BUILD-LATER' <<< "$BODY" || fail "sdk create: a later build section did not land"
+grep -q 'SDK-ALONE' <<< "$BODY" || fail "sdk create: a later build section wiped the sdk one"
+pass "sdk section appended to an explorer comment, and alone without explorer sections"
+
 # --- 4. marker-shaped body lines are stripped ------------------------------------------------
 reset_store
 run_upsert build "$(printf 'SAFE\n<!-- ci:tests:start -->\nALSO-SAFE')" >/dev/null
@@ -195,6 +215,45 @@ for bogus in bogus lint; do
   [ "$RC" = 2 ] || fail "allowlist: expected exit 2 for '$bogus', got $RC"
 done
 pass "unknown section exits 2"
+
+# --- 6b. the Creator Hub's comment is a second comment with its own sections ------------------
+reset_store
+run_upsert build "EXPLORER-BUILD" >/dev/null
+EXPLORER_BODY="$(body_of 0)"
+COMMENT=creator-hub run_upsert inspector "INSPECTOR-CONTENT" >/dev/null
+[ "$(count)" = 2 ] || fail "creator-hub: expected its own comment beside the Explorer's"
+[ "$(body_of 0)" = "$EXPLORER_BODY" ] || fail "creator-hub: the Explorer's comment changed"
+BODY="$(body_of 1)"
+[ "$(head -n 1 <<< "$BODY")" = '<!-- creator-hub-test-builds -->' ] || fail "creator-hub: marker missing"
+grep -q 'Creator Hub test builds' <<< "$BODY" || fail "creator-hub: header missing"
+grep -q 'ci:desktop' <<< "$BODY" || fail "creator-hub: desktop default missing"
+grep -q 'INSPECTOR-CONTENT' <<< "$BODY" || fail "creator-hub: inspector content missing"
+grep -q '<!-- ci:asset-packs:start -->' <<< "$BODY" && fail "creator-hub: asset-packs fence in skeleton"
+grep -q '<!-- ci:build:start -->' <<< "$BODY" && fail "creator-hub: an Explorer fence in skeleton"
+COMMENT=creator-hub run_upsert asset-packs "ASSET-PACKS-CONTENT" >/dev/null
+COMMENT=creator-hub run_upsert desktop "DESKTOP-CONTENT" >/dev/null
+run_upsert tests "EXPLORER-TESTS" >/dev/null
+[ "$(count)" = 2 ] || fail "creator-hub: later writes added a comment"
+BODY="$(body_of 1)"
+for want in INSPECTOR-CONTENT ASSET-PACKS-CONTENT DESKTOP-CONTENT; do
+  grep -q "$want" <<< "$BODY" || fail "creator-hub: $want lost"
+done
+grep -q 'To build the desktop app' <<< "$BODY" && fail "creator-hub: desktop default left after a write"
+grep -q 'EXPLORER-TESTS' <<< "$BODY" && fail "creator-hub: an Explorer write landed in it"
+grep -q 'EXPLORER-TESTS' <<< "$(body_of 0)" || fail "creator-hub: the Explorer write missed its comment"
+[ "$(grep -c '^<!-- ci:desktop:start -->$' <<< "$BODY")" = 1 ] || fail "creator-hub: duplicate desktop fence"
+for bad in "creator-hub build" "bevy-explorer desktop" "bogus build"; do
+  set -- $bad
+  set +e
+  (cd "$WORK" && COMMENT=$1 SECTION=$2 SECTION_BODY=X bash "$UPSERT") >/dev/null 2>&1
+  RC=$?
+  set -e
+  [ "$RC" = 2 ] || fail "creator-hub: expected exit 2 for comment '$1' section '$2', got $RC"
+done
+COMMENT=creator-hub run_upsert desktop $'kept\n<!-- bevy-explorer-ci-status -->\n<!-- creator-hub-test-builds -->' >/dev/null
+[ "$(count)" = 2 ] || fail "creator-hub: a marker in a body changed the comment count"
+[ "$(grep -c 'creator-hub-test-builds\|bevy-explorer-ci-status' <<< "$(body_of 1)")" = 1 ] || fail "creator-hub: a marker line in a body was kept"
+pass "the Creator Hub comment is separate, with its own sections"
 
 # --- 7. oversized body from a file truncates and re-closes constructs ------------------------
 reset_store

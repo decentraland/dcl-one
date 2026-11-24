@@ -8,20 +8,21 @@
 // registrar) re-checks it, and a credits quote the server cannot give is shown as unavailable, never
 // replaced by MANA.
 
-import { isShopApiError } from "../api/client";
 import { missingOfferRoute, type OfferSource } from "../detail/offers";
-import { type ShopClient } from "../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import { evmAddress } from "@shop/model/address";
 import { nameAsset, parseNameLabel, type NameLabel } from "@shop/model/asset";
 import { CHAIN, type ChainId } from "@shop/model/chain";
-import { centsFromCredits, manaWei, type UsdCents } from "@shop/model/money";
+import { manaWei } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import type { MissingFact, PaymentMethod, Quote, Session, SettlementGroupKey } from "@shop/model/settlement";
 import { decodePurchaseOffer } from "@shop/model/wire";
 import { present, restrictions } from "@shop/payment/rule";
-import { landChainId, landNetwork } from "../land/contracts";
-import type { ChainReader } from "../land/evm";
-import { checkNameAvailability, creditsChainFor, NAME_PRICE_IN_WEI, NAME_PRICE_WEI } from "./names";
+import { landChainId } from "../land/chain";
+import { landNetwork } from "@shop/land/contracts";
+import { rpcReader, type ChainReader } from "../land/evm";
+import { quoteNameCredits } from "@shop/names/api";
+import { checkNameAvailability, creditsChainFor, NAME_PRICE_WEI } from "./names";
 import { shopClient } from "../api/host";
 
 export type NameOfferSource = (label: NameLabel, session: Session, signal: AbortSignal) => Promise<PurchaseOffer>;
@@ -66,21 +67,6 @@ export const NAME_CREDITS_EXECUTOR: Record<number, string> = {
   [CHAIN.POLYGON]: "0xc9a9c416fbfd424d09e3f905142799abb10c2fa7",
 };
 
-/** The credits price of 100 MANA in cents (whole credits), or the reason it cannot be given. */
-export async function quoteNameCredits(client: ShopClient, signal?: AbortSignal): Promise<{ quoted: UsdCents } | { missing: MissingFact }> {
-  try {
-    const body = await client.credits.quotes({ amounts: [NAME_PRICE_IN_WEI] }, { signal });
-    const raw = body?.amounts?.[0];
-    const credits = raw != null && /^[0-9]+$/.test(raw) ? Number(raw) : null;
-    const cents = credits !== null && credits > 0 ? centsFromCredits(credits) : null;
-    return cents !== null ? { quoted: cents } : { missing: "manaUsdRate" };
-  } catch (e) {
-    if ((e as { name?: string } | null)?.name === "AbortError") throw e;
-    if (isShopApiError(e) || e instanceof Error) return { missing: "manaUsdRate" };
-    throw e;
-  }
-}
-
 export function interimNameOffer(opts: { client?: ShopClient; reader?: ChainReader; chainId?: ChainId; now?: () => number } = {}): NameOfferSource {
   return async (label, session, signal) => {
     const chainId = opts.chainId ?? landChainId();
@@ -88,7 +74,7 @@ export function interimNameOffer(opts: { client?: ShopClient; reader?: ChainRead
     const creditsChain = creditsChainFor(chainId);
     const client = opts.client ?? shopClient();
     const [availability, credits] = await Promise.all([
-      checkNameAvailability(label, { signal, reader: opts.reader, chainId }),
+      checkNameAvailability(label, { signal, reader: opts.reader ?? rpcReader(chainId), chainId }),
       quoteNameCredits(client, signal),
     ]);
     if (availability === "taken") throw new NameAlreadyRegisteredError(label);

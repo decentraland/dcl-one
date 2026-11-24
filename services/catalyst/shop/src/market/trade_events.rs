@@ -22,10 +22,11 @@
 //! the unavailable envelope and the feeds keep the expiry and local
 //! cancellation rule.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol};
 use anyhow::Context;
 use axum::Json;
@@ -40,8 +41,9 @@ use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_TRADE_EVENTS, LogGro
 use super::listings::{
     self, OffChainMarketplace, TradeAssetInput, TradeChecksInput, TradeCreation,
 };
+use super::wire::format_ether;
 use super::{MarketplaceState, SharedState, Source, unavailable};
-use crate::land_authz::indexer::RpcLog;
+use crate::chain_index::rpc::RpcLog;
 
 pub const TOPIC_TRADED: &str = "0xaaecdfa7e74e704650fcb273f630f42f68974eff42bfffc1732cf30db9e4685b";
 /// V3 adds `bytes32 indexed _tradeDigest`; the data is the same Trade tuple.
@@ -73,16 +75,20 @@ pub fn marketplaces(net: ChainNet) -> &'static [(&'static str, u64, bool)] {
     deployments(net.chain_id())
 }
 
+/// A marketplace contract, its deployment block and whether it cancels by digest (V3).
+type Deployment = (&'static str, u64, bool);
+
 /// The off-chain marketplace deployments of a chain, oldest first, with the
 /// block each was deployed in and whether it cancels by digest (V3).
 /// Mainnet blocks: `eth_getCode` bisection on rpc.decentraland.org,
 /// 2026-09-25; V1 is the squid's `OffChainMarketplace`, still holding the
 /// most mirrored trades. Testnet blocks (Amoy, Sepolia, the addresses of
 /// `listings::offchain_marketplaces` and the dApps' `OffChainMarketplace`):
-/// the same bisection, 2026-11-02. Sepolia has no V1. Empty for any other chain.
-pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
-    match chain_id {
-        137 => &[
+/// the same bisection, 2026-11-02. Sepolia has no V1.
+const DEPLOYMENTS: [(i64, &[Deployment]); 4] = [
+    (
+        listings::MATIC_MAINNET,
+        &[
             (
                 "0x540fb08edb56aae562864b390542c97f562825ba",
                 62_349_044,
@@ -99,7 +105,10 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        1 => &[
+    ),
+    (
+        listings::ETHEREUM_MAINNET,
+        &[
             (
                 "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff",
                 20_843_699,
@@ -116,7 +125,10 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        80002 => &[
+    ),
+    (
+        listings::MATIC_AMOY,
+        &[
             (
                 "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
                 12_490_079,
@@ -133,7 +145,10 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        11155111 => &[
+    ),
+    (
+        listings::ETHEREUM_SEPOLIA,
+        &[
             (
                 "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
                 9_455_328,
@@ -145,8 +160,26 @@ pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        _ => &[],
+    ),
+];
+
+/// Every chain [`deployments`] lists.
+pub const OFFCHAIN_MARKETPLACE_CHAINS: [i64; DEPLOYMENTS.len()] = {
+    let mut chains = [0; DEPLOYMENTS.len()];
+    let mut i = 0;
+    while i < chains.len() {
+        chains[i] = DEPLOYMENTS[i].0;
+        i += 1;
     }
+    chains
+};
+
+/// The [`DEPLOYMENTS`] of a chain; empty for any other chain.
+pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
+    DEPLOYMENTS
+        .iter()
+        .find(|(chain, _)| *chain == chain_id)
+        .map_or(&[], |(_, d)| *d)
 }
 
 /// The deployment `address` names on `net`, as the EIP-712 domain the
@@ -209,17 +242,6 @@ pub struct TradeEvent {
     pub signer: Option<String>,
     pub assets: Option<Value>,
     pub tx_hash: String,
-}
-
-fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 fn assets_json(assets: &[AssetTuple]) -> Value {
@@ -424,7 +446,12 @@ const DIGEST_BATCH: i64 = 2_000;
 /// trade against its marketplace's domain. A trade whose row cannot be
 /// rebuilt gets a NULL digest and is logged (its V3 cancellation cannot be
 /// matched; the other legs still apply).
-async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow::Result<usize> {
+async fn fill_v3_digests(
+    pool: &PgPool,
+    net: ChainNet,
+    chain_id: i64,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<usize> {
     let v3: Vec<String> = deployments(chain_id)
         .iter()
         .filter(|(_, _, v3)| *v3)
@@ -463,6 +490,8 @@ async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow:
         });
     }
     if !rows.0.is_empty() {
+        // Each batch commits on its own, after the owner check.
+        let mut tx = pool.begin().await?;
         sqlx::query(
             "INSERT INTO shop.trade_chain_state (trade_id, network, digest, status, folded_block) \
              SELECT id, $1, d, 'open', -1 FROM UNNEST($2::uuid[], $3::text[]) AS u(id, d) \
@@ -471,8 +500,10 @@ async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow:
         .bind(net.db_name())
         .bind(&rows.0)
         .bind(&rows.1)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        owner.check(&mut tx).await?;
+        tx.commit().await?;
     }
     Ok(ids.len())
 }
@@ -561,8 +592,9 @@ pub async fn fold(
     chain_id: i64,
     since: Option<i64>,
     upto: i64,
+    owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
-    while fill_v3_digests(pool, net, chain_id).await? as i64 >= DIGEST_BATCH {}
+    while fill_v3_digests(pool, net, chain_id, owner).await? as i64 >= DIGEST_BATCH {}
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '1800s'")
         .execute(&mut *tx)
@@ -575,6 +607,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -600,6 +633,9 @@ impl TradeEventsIndex {
 impl ChainIndex for TradeEventsIndex {
     fn indexer(&self) -> &'static str {
         INDEXER_TRADE_EVENTS
+    }
+    fn chain_id(&self) -> i64 {
+        self.chain_id
     }
 
     fn net(&self) -> ChainNet {
@@ -646,6 +682,16 @@ impl ChainIndex for TradeEventsIndex {
         Ok(insert_events(conn, self.net, &rows).await?)
     }
 
+    async fn clear(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
+        self.rewind(conn, to).await?;
+        // A rebuild trusts nothing derived: the digests are recomputed from
+        // the stored trades and every verdict refolded.
+        sqlx::query("DELETE FROM shop.trade_chain_state WHERE network = $1")
+            .bind(self.net.db_name())
+            .execute(&mut *conn)
+            .await?;
+        Ok(())
+    }
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         sqlx::query("DELETE FROM shop.trade_event WHERE network = $1 AND block_number > $2")
             .bind(self.net.db_name())
@@ -661,17 +707,28 @@ impl ChainIndex for TradeEventsIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, upto: i64) -> anyhow::Result<bool> {
-        fold(pool, self.net, self.chain_id, since, upto).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        fold(pool, self.net, self.chain_id, since, upto, owner).await?;
         Ok(true)
     }
 }
 
-/// The networks whose trade verdicts readers may use at `now`.
-pub async fn ready_networks(pool: &PgPool, now: chrono::DateTime<Utc>) -> Vec<ChainNet> {
+/// The networks whose trade verdicts readers may use at `now`, each read on
+/// the chain `indexes` configures for it.
+pub async fn ready_networks(
+    pool: &PgPool,
+    indexes: &chain_walk::IndexSettings,
+    now: chrono::DateTime<Utc>,
+) -> Vec<ChainNet> {
     let mut out = Vec::new();
     for net in ChainNet::ALL {
-        if chain_walk::ready_cursor(pool, INDEXER_TRADE_EVENTS, net, now)
+        if chain_walk::ready_cursor_on(pool, INDEXER_TRADE_EVENTS, net, indexes.chain_id(net), now)
             .await
             .is_some()
         {
@@ -683,14 +740,25 @@ pub async fn ready_networks(pool: &PgPool, now: chrono::DateTime<Utc>) -> Vec<Ch
 
 /// The SQL predicate "the chain closed trade `t`" for the open-listing
 /// feeds, with the readiness rule inline (a bound `now_p`): a verdict of a
-/// network whose index is not published is ignored.
+/// network whose index is not published, or is bound to another chain than
+/// this process serves, is ignored ([`verdicts_ready_sql`]).
 pub fn closed_on_chain_sql(t: &str, now_p: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
                  JOIN shop.chain_cursor tcc ON tcc.indexer = 'trade_events' AND tcc.network = tcs.network \
                  WHERE tcs.trade_id = {t}.id AND tcs.status <> 'open' AND {ready})",
-        ready = chain_walk::ready_sql("tcc", now_p)
+        ready = verdicts_ready_sql("tcc", now_p)
     )
+}
+
+/// The readiness rule of the trade-events cursor as the verdict SQL reads
+/// it: [`chain_walk::ready_sql_on`] with the chains this process serves
+/// ([`super::catalog::served_chains`], the trade-events walk's
+/// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
+/// lends its verdicts.
+fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
+    let (ethereum, matic) = super::catalog::served_chains();
+    chain_walk::ready_sql_on(alias, now_p, ethereum, matic)
 }
 
 /// The chain verdict of trade `t` (`sold` | `cancelled`), NULL when open or
@@ -700,7 +768,7 @@ pub fn chain_status_sql(t: &str, now_p: &str) -> String {
         "(SELECT tcs.status FROM shop.trade_chain_state tcs \
           JOIN shop.chain_cursor tcc ON tcc.indexer = 'trade_events' AND tcc.network = tcs.network \
           WHERE tcs.trade_id = {t}.id AND tcs.status <> 'open' AND {ready})",
-        ready = chain_walk::ready_sql("tcc", now_p)
+        ready = verdicts_ready_sql("tcc", now_p)
     )
 }
 
@@ -743,25 +811,6 @@ fn insert_opt(map: &mut serde_json::Map<String, Value>, key: &str, v: &Option<St
     }
 }
 
-/// `format_ether` (catalyrst-market logic/numeric.rs, ethers v6): wei as a
-/// decimal MANA amount, the fraction trimmed to at least one digit.
-fn format_ether(wei: &str) -> String {
-    let trimmed = wei.trim();
-    let digits = if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        "0".to_string()
-    } else {
-        trimmed.trim_start_matches('0').to_string()
-    };
-    let padded = format!("{digits:0>19}");
-    let split = padded.len() - 18;
-    let fraction = padded[split..].trim_end_matches('0');
-    format!(
-        "{}.{}",
-        &padded[..split],
-        if fraction.is_empty() { "0" } else { fraction }
-    )
-}
-
 pub(crate) fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
     let price = trade.sent_amount.clone().unwrap_or_default();
     let mut m = serde_json::Map::new();
@@ -802,14 +851,44 @@ pub(super) async fn bid_asset(
     let net = network.to_ascii_lowercase();
     let contract = asset.contract_address.to_ascii_lowercase();
     Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
-        (listings::ASSET_TYPE_ERC721, Some(token), _) => {
+        (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
             nft_meta(pool, land_image_base, &net, &contract, token).await?
         }
-        (listings::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
+        (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
             item_meta(pool, &net, &contract, item).await?
         }
         _ => None,
     })
+}
+
+/// The stored metadata of a `bid_received` notification, local or on-chain:
+/// the asset's seller is the recipient, `amount` the price as the
+/// description shows it.
+pub(crate) fn bid_received_metadata(
+    meta: &AssetMeta,
+    link: String,
+    price: &str,
+    amount: &str,
+    network: &str,
+) -> Value {
+    let mut m = serde_json::Map::new();
+    m.insert("image".into(), json!(meta.image));
+    m.insert("seller".into(), json!(meta.seller));
+    m.insert("category".into(), json!(meta.category));
+    insert_opt(&mut m, "rarity", &meta.rarity);
+    m.insert("link".into(), json!(link));
+    insert_opt(&mut m, "nftName", &meta.name);
+    m.insert("price".into(), json!(price));
+    m.insert("title".into(), json!("Bid Received"));
+    m.insert(
+        "description".into(),
+        json!(format!(
+            "You received a bid of {amount} MANA for this {}.",
+            meta.name.as_deref().unwrap_or_default()
+        )),
+    );
+    m.insert("network".into(), json!(network));
+    Value::Object(m)
 }
 
 /// marketplace-server's BID_RECEIVED event of a local bid as the old parser
@@ -821,38 +900,21 @@ pub(super) fn bid_received_notification(
     trade_id: &str,
     network: &str,
     bid: &listings::TradeCreation,
-) -> Option<catalyst_social::notifications::NewNotification> {
+) -> Option<crate::shared::notifications::NewNotification> {
     let price = bid.sent.first().and_then(|a| a.amount.as_ref())?;
     if meta.seller.eq_ignore_ascii_case(&bid.signer) {
         return None;
     }
-    let recipient = catalyst_social::Address::parse(&meta.seller).ok()?;
-    let mut m = serde_json::Map::new();
-    m.insert("image".into(), json!(meta.image));
-    m.insert("seller".into(), json!(meta.seller));
-    m.insert("category".into(), json!(meta.category));
-    insert_opt(&mut m, "rarity", &meta.rarity);
-    m.insert(
-        "link".into(),
-        json!(format!("{marketplace_base}/account?section=bids")),
+    let recipient = crate::shared::identity::Address::parse(&meta.seller).ok()?;
+    let metadata = bid_received_metadata(
+        meta,
+        format!("{marketplace_base}/account?section=bids"),
+        price,
+        &format_ether(price),
+        network,
     );
-    insert_opt(&mut m, "nftName", &meta.name);
-    m.insert("price".into(), json!(price));
-    m.insert("title".into(), json!("Bid Received"));
-    m.insert(
-        "description".into(),
-        json!(format!(
-            "You received a bid of {} MANA for this {}.",
-            format_ether(price),
-            meta.name.as_deref().unwrap_or_default()
-        )),
-    );
-    m.insert("network".into(), json!(network));
-    let mut n = catalyst_social::notifications::NewNotification::now(
-        recipient,
-        "bid_received",
-        Value::Object(m),
-    );
+    let mut n =
+        crate::shared::notifications::NewNotification::now(recipient, "bid_received", metadata);
     n.id = uuid::Uuid::new_v5(
         &BID_NOTIFICATION_NS,
         format!("bid-created:{trade_id}").as_bytes(),
@@ -1098,7 +1160,7 @@ async fn accepted_event(
     let mut metas = Vec::new();
     for (asset_type, contract, token_id, item_id) in &trade.assets {
         let meta = match (*asset_type, token_id, item_id) {
-            (listings::ASSET_TYPE_ERC721, Some(token), _) => {
+            (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
                 nft_meta(
                     &state.pool,
                     &state.settings.land_image_base_url,
@@ -1108,7 +1170,7 @@ async fn accepted_event(
                 )
                 .await
             }
-            (listings::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
+            (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
                 item_meta(&state.pool, &network, contract, item).await
             }
             _ => Ok(None),
@@ -1162,7 +1224,8 @@ pub async fn get_trade_accepted_event(
             format!("Trade with hashed signature {hashed_signature} not found"),
         );
     };
-    if chain_walk::ready_cursor(&state.pool, INDEXER_TRADE_EVENTS, net, Utc::now())
+    let chain = state.settings.market.indexes.chain_id(net);
+    if chain_walk::ready_cursor_on(&state.pool, INDEXER_TRADE_EVENTS, net, chain, Utc::now())
         .await
         .is_none()
     {
@@ -1204,8 +1267,9 @@ pub async fn get_trade_accepted_event(
     }
 }
 
-/// The index's state for the operator status route and the tests.
-pub async fn status(pool: &PgPool) -> Value {
+/// The index's state for the operator status route and the tests, each
+/// network read on the chain `indexes` configures for it.
+pub async fn status(pool: &PgPool, indexes: &chain_walk::IndexSettings) -> Value {
     let mut out = serde_json::Map::new();
     for net in ChainNet::ALL {
         let c = chain_walk::cursor(pool, INDEXER_TRADE_EVENTS, net)
@@ -1216,7 +1280,8 @@ pub async fn status(pool: &PgPool) -> Value {
             net.db_name().to_string(),
             json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready_on(&c, indexes.chain_id(net), Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+            "chainId": c.chain_id, "quarantine": c.quarantine_reason,
         }))),
         );
     }
@@ -1230,7 +1295,7 @@ pub fn parse_address(s: &str) -> Option<Address> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::{B256, FixedBytes, keccak256};
+    use alloy_primitives::{B256, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
 
     #[test]
@@ -1272,7 +1337,7 @@ pub(crate) mod tests {
 
     #[test]
     fn every_marketplace_the_listings_verify_against_is_walked() {
-        for chain_id in [1, 137, 11_155_111, 80_002] {
+        for chain_id in OFFCHAIN_MARKETPLACE_CHAINS {
             let walked = deployments(chain_id);
             for m in listings::offchain_marketplaces(chain_id) {
                 assert!(
@@ -1486,6 +1551,16 @@ pub(crate) mod tests {
         assert_eq!(format_ether("200000000000000000000"), "200.0");
         assert_eq!(format_ether("1"), "0.000000000000000001");
         assert_eq!(format_ether(""), "0.0");
+        for input in ["", "  ", "000000", "bad", "-1", "1.0", "é"] {
+            assert_eq!(format_ether(input), "0.0", "{input:?}");
+        }
+        assert_eq!(format_ether("  001000000000000000000 "), "1.0");
+        assert_eq!(format_ether("1000000000000000001"), "1.000000000000000001");
+        let oversized = "9".repeat(100);
+        assert_eq!(
+            format_ether(&oversized),
+            format!("{}.{}", "9".repeat(82), "9".repeat(18))
+        );
     }
 
     #[test]

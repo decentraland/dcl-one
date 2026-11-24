@@ -16,7 +16,8 @@ Explorer, is a separate package and cannot import `apps/ui3`.
 Place the Shop logic that depends on no host in `library/shop`. Every Shop host imports it as
 `@shop/*`: the web Shop and the `/play` HUD in `apps/ui3`, `apps/sites` and the Explorer HUD.
 
-- **No host.** Its modules compile against ES alone, plus `console` and `TextEncoder`
+- **No host.** Its modules compile against ES alone, plus `console`, `TextEncoder`, `URL`,
+  `URLSearchParams`, the type `AbortSignal` and the `DOMException` constructor
   (`library/shop/tsconfig.json`). Configuration, network access, storage, identity, signers and
   wallets stay in the hosts, which pass them to the core through explicit adapters.
 - **Allowed dependencies:** its modules import only the core, `@catalyst-api/*` and `viem`. No

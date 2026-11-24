@@ -1,35 +1,43 @@
 // Shop item preview with avatar, wearable, and emote states.
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { fetchProfile } from "../../../data/catalyst/profile";
 import type { AvatarStatus } from "../../../wearable-preview/avatar";
+import WearablePreview from "../../../wearable-preview/WearablePreview";
 import type { OutfitData } from "../../../wearable-preview/outfit";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { useShopWallet } from "../../wallet/context";
 import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { pickRenderer } from "../lib/pickRenderer";
-import { itemUrn } from "../lib/urn";
-import { fetchWearableRules, keepEquipped } from "../lib/wearable-rules";
+import { itemUrn } from "@shop/detail/lib/urn";
+import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
 import "./itempreview.css";
 
 const VIEW_TEXT = { previewMode: "Preview mode", onAvatar: "On avatar", itemView: "Item", playEmote: "Play emote" };
 
-const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
+// The three.js scene starts loading with the page, beside the outfit reads, not after them; only where this page
+// draws it (WebGL, and no Explorer preview host).
+if (typeof window !== "undefined" && pickRenderer().reason !== "no-webgl" && !window.dclAvatarPreviewExpected && !window.dclAvatarPreview) {
+  void import("../../../wearable-preview/avatar").catch(() => {});
+}
 
 const wornItemUrn = (urn: string) => {
   const p = urn.split(":");
   return p.length === 7 && /^collections-v[12]$/.test(p[3] ?? "") ? p.slice(0, 6).join(":") : urn;
 };
 
-async function fetchWornOutfit(account: string, tryOn: { urn: string; category: string } | null, signal: AbortSignal): Promise<OutfitData | null> {
-  const avatar = (await fetchProfile(account, { signal }))?.avatar;
+type WearerProfile = Awaited<ReturnType<typeof fetchProfile>>;
+
+async function fetchWornOutfit(profile: WearerProfile, tryOn: { urn: string; category: string } | null, base: string | undefined): Promise<OutfitData | null> {
+  const avatar = profile?.avatar;
   if (!avatar?.bodyShape) return null;
   const worn = [...new Set((avatar.wearables ?? []).map(wornItemUrn))];
-  const rules = await fetchWearableRules(worn, signal);
+  // The body and the item join this read; the preview, given the same base, mounts them next from the same entity cache.
+  const rules = await fetchWearableRules(worn, [avatar.bodyShape, ...(tryOn ? [tryOn.urn] : [])], base);
   const kept = new Set(keepEquipped(rules, tryOn ? [tryOn.category] : []).map((u) => u.toLowerCase()));
   const known = new Set(rules.map((r) => r.urn.toLowerCase()));
   const wearables = worn.filter((u) => kept.has(u.toLowerCase()) || !known.has(u.toLowerCase()));
@@ -62,8 +70,12 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const { account } = useShopWallet();
   const tryOn = isEmote ? null : { urn: urn!, category: item.wearableCategory ?? "" };
   const wearer = account ?? defaultProfileFor(urn ?? item.id);
-  const worn = useShopQuery(canPreview && show3d ? ["worn-outfit", wearer, urn, tryOn?.category ?? null] : null, (signal) => fetchWornOutfit(wearer, tryOn, signal), { staleMs: 5 * 60_000 });
-  const waiting = canPreview && show3d && worn.isLoading;
+  const profile = useShopQuery(canPreview && show3d ? ["wearer-profile", wearer] : null, (signal) => fetchProfile(wearer, { signal }), { staleMs: 5 * 60_000 });
+  // One Catalyst for the outfit's rules read and the scene, so the scene finds the entities that read cached, when one
+  // peer serves the whole outfit. Otherwise each keeps its own: the rules read its network's peer, the scene its default.
+  const base = urn && profile.data !== undefined ? sharedEntityBase([urn, profile.data?.avatar?.bodyShape ?? "", ...(profile.data?.avatar?.wearables ?? [])].filter(Boolean)) : undefined;
+  const worn = useShopQuery(profile.data !== undefined ? ["worn-outfit", wearer, urn, tryOn?.category ?? null] : null, () => fetchWornOutfit(profile.data!, tryOn, base), { staleMs: 5 * 60_000 });
+  const waiting = canPreview && show3d && (profile.isLoading || worn.isLoading);
   const wornShape = profileShape(worn.data ? { avatar: worn.data } : null);
   const shopperShape = avatarShape ?? (account ? wornShape : null);
   const shapes = itemShapes(item);
@@ -71,33 +83,42 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const mismatch = !!shopperShape && !shapes.includes(shopperShape);
   const outfit = worn.data && !mismatch && (!wornShape || shapes.includes(wornShape)) ? worn.data : undefined;
   const failed = status === "error" || status === "empty";
+  // The scene's WebGL start runs during the outfit's entity read (during the profile read the page still renders), and
+  // the scene loads its parts after that read; the thumbnail stays over the canvas until the first drawn frame.
+  const preview3d = show3d && canPreview && !failed && (isEmote || view === "avatar");
+  const scene = preview3d && !profile.isLoading;
+  // A scene unmounted while it was ready (a new wearer's profile loads, the item view is picked) starts over when it
+  // mounts again: until it draws, the thumbnail is back over the box instead of a blank canvas.
+  useEffect(() => {
+    if (!scene && !failed) setStatus("loading");
+  }, [scene, failed]);
+  const shownStatus: AvatarStatus = !scene && !failed ? "loading" : status;
   const clip = useShopQuery(isEmote && urn && show3d && !waiting ? ["emote-clip", urn, body] : null, (signal) => fetchEmoteClipUrl(urn!, body, signal), { staleMs: 30 * 60_000 });
 
   return (
-    <div className="shop-preview" data-status={show3d ? status : "thumbnail"}>
-      {!show3d || failed || !canPreview || (view === "item" && !isEmote) ? (
-        item.thumbnail ? <img className="shop-preview__thumb" src={item.thumbnail} alt={item.name} /> : null
-      ) : waiting ? (
-        <div className="shop-preview__loading" role="status">{t("itemDetail.previewLoading")}</div>
-      ) : (
-        <Suspense fallback={<div className="shop-preview__loading" role="status">{t("itemDetail.previewLoading")}</div>}>
-          <WearablePreview
-            urns={isEmote ? [] : [urn!]}
-            body={body}
-            outfit={outfit}
-            emote={isEmote ? (clip.data ?? "idle") : undefined}
-            emoteNonce={replay}
-            spin={!isEmote}
-            zoom={1.05}
-            onStatus={setStatus}
-          />
-          {status === "loading" ? (
-            <div className="shop-preview__loading" role="status">
-              {t("itemDetail.previewLoading")}
-            </div>
-          ) : null}
-        </Suspense>
-      )}
+    <div className="shop-preview" data-status={show3d ? shownStatus : "thumbnail"}>
+      {scene ? (
+        <WearablePreview
+          base={base}
+          urns={isEmote ? [] : [urn!]}
+          body={body}
+          outfit={outfit}
+          outfitPending={waiting}
+          emote={isEmote ? (clip.data ?? "idle") : undefined}
+          emoteNonce={replay}
+          spin={!isEmote}
+          zoom={1.05}
+          onStatus={setStatus}
+        />
+      ) : null}
+      {item.thumbnail && (!preview3d || shownStatus !== "ready") ? (
+        <img className={preview3d ? "shop-preview__thumb shop-preview__thumb--cover" : "shop-preview__thumb"} src={item.thumbnail} alt={item.name} />
+      ) : null}
+      {preview3d && shownStatus === "loading" && !item.thumbnail ? (
+        <div className="shop-preview__loading" role="status">
+          {t("itemDetail.previewLoading")}
+        </div>
+      ) : null}
       {show3d && failed ? (
         <p className="shop-preview__note" role="status">
           {t("itemDetail.previewUnavailable")}

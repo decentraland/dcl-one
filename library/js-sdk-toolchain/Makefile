@@ -41,21 +41,26 @@ TSC = node_modules/.bin/tsc
 ESLINT = node_modules/.bin/eslint
 SYNC_PACK = node_modules/.bin/syncpack
 JEST = node_modules/.bin/jest
+# library/hashing is a pnpm package; a machine with pnpm on its PATH can pass PNPM=pnpm
+PNPM ?= corepack pnpm@12.21.0
+export PNPM
 
 # this DEVELOPER_MODE is important to not send developer's events to the same segment
 # stream as the production ones. Look for it's usage on the analytics component
 export DEVELOPER_MODE=true
 
 install:
-	$(MAKE) -C ../protocol install
-	npm --prefix ../protocol run build
-	npm i --silent
+	cd ../protocol && $(PNPM) install --frozen-lockfile --ignore-scripts && $(PNPM) exec bash scripts/generate.sh
+	$(PNPM) install --frozen-lockfile --ignore-scripts
+	$(MAKE) sync-deps
+	$(PNPM) --filter @dcl/hashing run build
+	node ../../tooling/check-local-hashing.mjs packages/@dcl/sdk-commands
 ifndef SDK_PROTOC
 	test -x "$(PROTOC_DOWNLOADED)" || $(MAKE) install-protobuf
 endif
 
 lint:
-	npx tsx scripts/lint-packages.ts
+	$(PNPM) exec tsx scripts/lint-packages.ts
 
 sync-deps:
 	$(SYNC_PACK) format --config .syncpackrc.json --source "packages/*/package.json" --source "package.json"
@@ -66,7 +71,7 @@ lint-packages:
 	$(SYNC_PACK) format --config .syncpackrc.json  --source "packages/*/package.json" --source "package.json"
 
 lint-fix: sync-deps
-	npx tsx scripts/lint-packages.ts --fix
+	$(PNPM) exec tsx scripts/lint-packages.ts --fix
 
 test:
 	node_modules/.bin/jest --detectOpenHandles --forceExit --colors test/
@@ -84,7 +89,7 @@ init-test-scene:
 	cd test-scene && npm i ./../packages/@dcl/sdk  && npm i ./../packages/@dcl/sdk-commands  && npm i ./../packages/@dcl/js-runtime
 
 format:
-	npx prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
+	$(PNPM) exec prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
 
 install-protobuf:
 	curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOBUF_VERSION)/$(PROTOBUF_ZIP)
@@ -145,7 +150,7 @@ clean:
 	@rm -rf coverage/
 	@rm -rf packages/@dcl/sdk/*.js packages/@dcl/sdk/*.d.ts packages/@dcl/sdk/internal packages/@dcl/sdk/testing
 	@rm -rf packages/@dcl/ecs/dist/ packages/@dcl/sdk/dist/
-	@rm -rf packages/@dcl/sdk-commands/dist packages/@dcl/sdk-commands/src/generated
+	@rm -rf packages/@dcl/sdk-commands/dist
 	@rm -rf packages/@dcl/ecs/src/components/generated/ packages/@dcl/ecs/temp/
 	@rm -rf packages/@dcl/js-runtime/apis.d.ts
 	@rm -rf packages/@dcl/react-ecs/dist/ packages/@dcl/react-ecs/src/generated/ packages/@dcl/react-ecs/temp/

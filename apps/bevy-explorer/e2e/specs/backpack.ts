@@ -1,6 +1,6 @@
 // Shared by the Backpack specs (wearables, emotes, outfits, visibility): open the Backpack on a
 // view, find the item cards and the emote and outfit slots by their accessible names, equip, and
-// take the look to the engine. Names are the HUD's (react-web/src/features/backpack/BackpackPage.tsx,
+// take the look to the engine. Names are the HUD's (library/ui/apps/hud/features/backpack/BackpackPage.tsx,
 // design/WearableCard.tsx, design/Pager.tsx).
 //
 // Two facts about the HUD shape every equip check:
@@ -649,9 +649,15 @@ export async function restoreEmoteSlots(explorer: Explorer, record: EmoteSlotsRe
   }
   await closePage(explorer, 'backpack')
   if (stale.length === 0) return
+  // What the HUD can put back: a slot it showed empty and emptied here comes back empty, even where
+  // the engine held an emote there. The HUD lists an emote in one slot only, and a profile an
+  // earlier run deployed can hold one emote in two slots. A slot this restore never touched keeps
+  // what the engine held, a hidden second copy included.
+  const emptied = new Set(stale.filter((slot) => slot.emote === 'None').map((slot) => slot.slot))
+  const expected = record.selected.map((urn, index) => (emptied.has(index) ? '' : (urn ?? '')))
   await waitForPlayer(
     explorer,
-    (avatar) => record.selected.every((urn, index) => sameUrn(urn ?? '', avatar.selected.emotes[index] ?? '')),
+    (avatar) => expected.every((urn, index) => sameUrn(urn, avatar.selected.emotes[index] ?? '')),
     COMMIT_TIMEOUT_MS,
     'the engine to select the emotes it did before the scenario'
   )

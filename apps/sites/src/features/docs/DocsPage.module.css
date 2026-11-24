@@ -1,0 +1,14 @@
+.topbar[data-header-layout="native"] {
+  --site-header-h: 92px;
+}
+.root[data-header-layout="native"] {
+  --top-h: 92px;
+}
+@media (max-width: 991px) {
+  .topbar[data-header-layout="native"] {
+    --site-header-h: 64px;
+  }
+  .root[data-header-layout="native"] {
+    --top-h: 64px;
+  }
+}

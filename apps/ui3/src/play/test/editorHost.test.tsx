@@ -2,21 +2,22 @@
 // available, loads it only when the Create page opens, and what it hands the editor keeps the
 // engine on a short leash. What it signs for the editor is in editorHostSigning.test.tsx.
 import { describe, it, expect, vi } from 'vitest'
-import { act, render, renderHook, screen } from '@testing-library/react'
-import { ToastHost } from '../design'
+import { act, render, renderHook, screen, within } from '@testing-library/react'
+import { ToastHost } from '@hud/design'
 import userEvent from '@testing-library/user-event'
-import { editorFeatures, editorOffered, EditorOffered, PINNED_EDITOR } from '../features/editorHost/config'
-import { CreatePage } from '../features/editorHost/CreatePage'
-import EditorHost, { useEditorHost } from '../features/editorHost/EditorHost'
-import { type DclEditorHostV1, type EditorPackage } from '../features/editorHost/host/host'
-import { editorEntry, editorSource } from '../features/editorHost/source'
-import type { EngineSession } from '../features/session/useEngineSession'
-import { MainMenuShell } from '../features/menu/MainMenuShell'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { bridgeChannelName, type Envelope } from '../engine/protocol'
+import { editorFeatures, editorOffered, PINNED_EDITOR } from '@explorer-core/features/editorHost/config'
+import { EditorOffered } from '@hud/features/editorHost/EditorOffered'
+import { CreatePage } from '@hud/features/editorHost/CreatePage'
+import EditorHost, { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import { type DclEditorHostV1, type EditorPackage } from '@explorer-core/features/editorHost/host/host'
+import { editorEntry, editorSource } from '@explorer-core/features/editorHost/source'
+import type { EngineSession } from '@hud/features/session/useEngineSession'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { bridgeChannelName, type Envelope } from '@explorer-core/engine/protocol'
 import { PAGE_DIR } from '../lib/publicUrl'
-import { pending, sessionId } from '../lib/analytics'
-import { fakeSession } from './harness'
+import { pending, sessionId } from '@explorer-core/lib/analytics'
+import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1
@@ -144,8 +145,9 @@ describe('editor host', () => {
     expect(source!.base).toMatch(/^https:\/\/cdn\.jsdelivr\.net\/npm\/@dcl-regenesislabs\/web-editor@\d+\.\d+\.\d+\/$/)
   })
 
-  it('offers Create in the rail and the menu top bar only where an editor is available; both open the Create page', async () => {
+  it('offers Create in the rail\'s System panel and the menu top bar only where an editor is available; both open the Create page', async () => {
     const navigate = vi.fn()
+    const system = (): HTMLElement => within(screen.getByRole('navigation', { name: 'Main navigation' })).getByRole('button', { name: 'System' })
     const s = fakeSession()
     const surfaces = (
       <>
@@ -156,14 +158,16 @@ describe('editor host', () => {
       </>
     )
     const plain = render(surfaces)
+    await userEvent.click(system())
     expect(screen.queryAllByRole('button', { name: /Create/ })).toEqual([])
     plain.unmount()
 
     render(<EditorOffered.Provider value>{surfaces}</EditorOffered.Provider>)
-    const [rail, topBar] = screen.getAllByRole('button', { name: /Create/ })
-    await userEvent.click(rail)
+    await userEvent.click(system())
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'System' })).getByRole('button', { name: 'Create' }))
     expect(s.create.toggle).toHaveBeenCalledTimes(1)
-    await userEvent.click(topBar)
+    // the row closed its panel: the top bar's tab is the one Create left
+    await userEvent.click(screen.getByRole('button', { name: /Create/ }))
     expect(navigate).toHaveBeenCalledWith('create')
   })
 

@@ -21,6 +21,7 @@ import {
   manaUsdCentsCeil,
   manaUsdRate,
   manaWei,
+  parseManaInput,
   parseManaWei,
   usdCents,
   wholeCreditsFloor,
@@ -149,6 +150,15 @@ describe("bounds and formatting", () => {
     expect(addMana(manaWei(U256_MAX), manaWei(1n))).toBeNull();
     expect(() => usdCents(1.5)).toThrow();
     expect(chargeForQuote(c(Number.MAX_SAFE_INTEGER))).toBeNull();
+  });
+
+  it("reads a typed MANA amount as exact wei: positive, at most 18 decimals", () => {
+    expect(parseManaInput(" 12.5 ")).toBe(12_500n * 10n ** 15n);
+    expect(parseManaInput("1")).toBe(10n ** 18n);
+    expect(parseManaInput("0.000000000000000001")).toBe(1n);
+    for (const refused of ["", "0", "0.0", "-1", "1.", ".5", "1e3", "1,5", "0.0000000000000000001", "abc"]) {
+      expect(parseManaInput(refused), refused).toBeNull();
+    }
   });
 
   it("MANA is shown in exact units", () => {

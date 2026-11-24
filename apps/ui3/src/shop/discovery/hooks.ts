@@ -6,7 +6,7 @@ import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
 import { shortAddress } from "@shop/model/address";
-import { readMirrorFreshness, type IndexFreshness } from "./freshness";
+import { readMirrorFreshness, type IndexFreshness } from "@shop/discovery/freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
 import { fetchCampaignContracts } from "./lib/campaign";
 import { isSaleActive, saleTimeLeft, type SaleInfo } from "@shop/discovery/lib/sale";
@@ -90,7 +90,7 @@ const noSubscription = () => () => {};
  * False on the server and during hydration, true after: the profile cache lives in localStorage, which the server
  * cannot read, so reading it any earlier would render different markup on each side.
  */
-function useAfterHydration(): boolean {
+export function useAfterHydration(): boolean {
   return useSyncExternalStore(noSubscription, () => true, () => false);
 }
 

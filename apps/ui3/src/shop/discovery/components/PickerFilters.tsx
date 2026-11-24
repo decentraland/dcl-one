@@ -7,7 +7,7 @@
 import { useEffect, useId, useState, type KeyboardEvent } from "react";
 
 import { shortAddress } from "@shop/model/address";
-import { fetchCollection, searchCollections, searchCreators } from "../api";
+import { fetchCollection, searchCollections, searchCreators } from "@shop/discovery/api";
 import { useProfiles } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";

@@ -8,7 +8,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 
-import { fetchCatalogItems } from "../../discovery/api";
+import { fetchCatalogItems } from "@shop/discovery/api";
 import AssetCard from "../../discovery/components/AssetCard";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { parseEvmAddress, sameAddress } from "@shop/model/address";

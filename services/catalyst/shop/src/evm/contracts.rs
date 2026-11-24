@@ -34,7 +34,20 @@ use crate::shared::cache::TtlMap;
 const WHITELIST_BODY_CAP: usize = 4 * 1024 * 1024;
 
 /// The contract map the old main vhost served at `= /contracts/addresses.json`
-/// (`catalyrst/nixos/contracts/addresses.json`, a copy).
+/// (`catalyrst/nixos/contracts/addresses.json`, a copy), with dcl-one's own
+/// `CreditsManager_DCL_ONE` under `matic` and `amoy`. Those two entries are
+/// otherwise contracts.decentraland.org's as published, `matic` on 2026-11-19 and
+/// `amoy` on 2026-11-18 (MarketplaceV5, the current CouponManager and
+/// CollectionDiscountCoupon): a node with `CONTRACT_ADDRESSES_URL` unset relays to
+/// the `matic` entry's contracts on Polygon, and the testnet development profile
+/// relays through `amoy` when it signs with a relayer key of its own. The other
+/// entries are the old copy as it was.
+///
+/// Both are snapshots. A node that reads the published list live (the same profile
+/// without a key does) admits whatever contracts.decentraland.org lists, so once it
+/// changes `matic` or `amoy` (a new CouponManager, say) the two admit different
+/// contracts until the snapshot is refreshed: replace the entry with the published
+/// one, keep `CreditsManager_DCL_ONE`, and update its date above.
 pub const ADDRESSES_JSON: &[u8] = include_bytes!("addresses.json");
 const WHITELIST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Anchors are stable by construction (a beacon upgrade repoints the beacon,
@@ -306,7 +319,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_served_contract_map_is_the_old_one_and_feeds_the_default_whitelist() {
+    fn the_served_contract_map_covers_every_network_and_feeds_the_default_whitelist() {
         let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
         let keys: Vec<&str> = json
             .as_object()
@@ -320,7 +333,7 @@ mod tests {
             assert!(keys.contains(&key), "{key}");
         }
         let matic = chain_addresses(&json, "MATIC");
-        assert_eq!(matic.len(), 34);
+        assert_eq!(matic.len(), 41);
         assert!(
             matic
                 .iter()
@@ -335,6 +348,88 @@ mod tests {
         assert_eq!(name, "accept");
         assert_ne!(name, "content-type");
         assert_eq!(value, "application/json");
+    }
+
+    /// A `CreditsManager_DCL_ONE` this map admits to the relay is, on that chain, a
+    /// CreditsManager the guard judges and a contract with an audited domain, so the
+    /// map never widens the relay to a manager the policy doesn't decode. On Polygon
+    /// it is `DCL_ONE_POLYGON_MANAGER`, on Amoy `DCL_ONE_AMOY_MANAGER`.
+    #[test]
+    fn dcl_ones_managers_in_the_map_are_guarded_and_audited_on_their_chain() {
+        use crate::policy_entry::{
+            DCL_ONE_AMOY_MANAGER, DCL_ONE_POLYGON_MANAGER, is_credits_manager,
+        };
+        use crate::types::ChainId;
+        let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
+        for (key, chain, ours) in [
+            ("matic", ChainId::POLYGON, DCL_ONE_POLYGON_MANAGER),
+            ("amoy", ChainId::AMOY, DCL_ONE_AMOY_MANAGER),
+        ] {
+            let listed = json[key]["CreditsManager_DCL_ONE"].as_str().unwrap();
+            assert_eq!(listed, format!("{ours:#x}"), "{key}");
+            let manager: Address = listed.parse().unwrap();
+            assert!(is_credits_manager(chain, manager), "{key}: {listed}");
+            assert_eq!(
+                super::super::meta_tx::audited_domain_for(chain.0, manager).map(|d| d.label),
+                Some("CreditsManager_DCL_ONE"),
+                "{key}: {listed}"
+            );
+        }
+        for chain in ["mainnet", "sepolia", "arbitrum", "goerli", "mumbai"] {
+            assert!(
+                json[chain].get("CreditsManager_DCL_ONE").is_none(),
+                "{chain}"
+            );
+        }
+    }
+
+    /// With `CONTRACT_ADDRESSES_URL` unset the relay admits the `matic` entry on
+    /// Polygon, and the testnet development profile, with a relayer key, the `amoy`
+    /// one. Each admits dcl-one's manager on its chain, which the published list
+    /// never carries, and that chain's MarketplaceV5, whose `cancelSignature` the
+    /// Shop relays, under the domain the relay audits it with. Its coupon contracts
+    /// are the ones the Shop's coupons sign against, the newest marketplace's first.
+    #[test]
+    fn the_polygon_whitelists_admit_dcl_ones_manager_and_marketplace_v5() {
+        use crate::types::ChainId;
+        let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
+        for (key, chain, ours, v5) in [
+            (
+                "matic",
+                ChainId::POLYGON,
+                crate::policy_entry::DCL_ONE_POLYGON_MANAGER,
+                "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+            ),
+            (
+                "amoy",
+                ChainId::AMOY,
+                crate::policy_entry::DCL_ONE_AMOY_MANAGER,
+                "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
+            ),
+        ] {
+            let admitted = chain_addresses(&json, key);
+            assert!(admitted.contains(&format!("{ours:#x}")), "{key}: {ours:#x}");
+            assert!(admitted.contains(&v5.to_string()), "{key}: {v5}");
+            let listed = |name: &str| json[key][name].as_str().map(str::to_lowercase);
+            assert_eq!(listed("MarketplaceV5").as_deref(), Some(v5), "{key}");
+            assert_eq!(
+                super::super::meta_tx::audited_domain_for(chain.0, v5.parse().unwrap())
+                    .map(|d| d.label),
+                Some("MarketplaceV5"),
+                "{key}"
+            );
+            let newest = crate::coupons::contracts::coupon_contracts(chain.0 as i64)[0];
+            assert_eq!(
+                listed("CouponManager").as_deref(),
+                Some(newest.coupon_manager.address),
+                "{key}"
+            );
+            assert_eq!(
+                listed("CollectionDiscountCoupon").as_deref(),
+                Some(newest.collection_discount_coupon),
+                "{key}"
+            );
+        }
     }
 
     #[test]

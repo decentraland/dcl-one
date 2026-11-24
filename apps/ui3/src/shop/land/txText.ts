@@ -2,7 +2,7 @@
 // error; a transaction that may still land is pending, never "failed, try again"; a wrong network
 // names both networks. None of these ever points to credits.
 
-import { isShopApiError } from "../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { chainLabel } from "@shop/model/chain";
 import { isUserRejection, isWrongNetworkError, WrongNetworkError } from "../wallet/chain";
 import { AccountChangedError, TxPendingError, TxRevertedError } from "./evm";

@@ -8,14 +8,15 @@ import { useNavigate } from "react-router";
 import Button from "../../atoms/Button";
 import Modal from "../../components/Modal";
 import type { UnityCreditPack } from "@catalyst-api/credits/UnityCreditPack";
-import { isShopApiError } from "../api/client";
-import { type ShopClient } from "../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import { chainLabel } from "@shop/model/chain";
 import { creditsCeil, creditsFloor, formatMana, usdCents, type ManaWei } from "@shop/model/money";
 import { offerQuote, type PurchaseOffer } from "@shop/model/purchase";
 import { outageText, optionStateText } from "@shop/payment/copy";
 import { presentPayment } from "@shop/payment/present";
-import { landChainId, landNetwork } from "../land/contracts";
+import { landChainId } from "../land/chain";
+import { landNetwork } from "@shop/land/contracts";
 import { erc20Abi, readContract, rpcReader, txHref, TxPendingError, type ChainReader } from "../land/evm";
 import { useLandWallet } from "../land/useLandWallet";
 import { useResource } from "../land/useResource";
@@ -54,14 +55,13 @@ export type NameBuyModalProps = {
   iapMode?: boolean;
   portal?: boolean;
   timing?: { wait?: { pollMs?: number; timeoutMs?: number }; acrossPoll?: { intervalMs?: number; maxAttempts?: number; fetchImpl?: typeof fetch } };
-  use?: { href(name: string): string; label: string; onUse?(name: string): void };
 };
 
 function escapeName(name: string): string {
   return name.replace(/[^A-Za-z0-9]/g, "");
 }
 
-export default function NameBuyModal({ name, offer, onClose, client: givenClient, readerFor, submitUseCredits, iapMode = false, portal, timing, use }: NameBuyModalProps) {
+export default function NameBuyModal({ name, offer, onClose, client: givenClient, readerFor, submitUseCredits, iapMode = false, portal, timing }: NameBuyModalProps) {
   const client = givenClient ?? shopClient();
   const wallet = useLandWallet();
   const navigate = useNavigate();
@@ -397,9 +397,11 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
               <Button variant="secondary" onClick={() => navigate("/shop/my-items")}>
                 My items
               </Button>
-              <Button as="a" href={use ? use.href(name) : "/create/names"} onClick={() => use?.onUse?.(name)}>
-                {use ? use.label : "Use it for your World or avatar"}
-              </Button>
+              {iapMode ? null : (
+                <Button as="a" href="/download/creator-hub">
+                  Use it for your World
+                </Button>
+              )}
             </div>
           </>
         ) : null}

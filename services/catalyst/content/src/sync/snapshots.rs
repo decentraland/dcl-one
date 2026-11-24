@@ -45,6 +45,16 @@ const MAX_REPLACED_SNAPSHOT_HASHES: usize = 1000;
 /// How many invalid /snapshots entries are logged in detail per response before the rest
 /// collapse into one summary line -- the body is attacker-sized.
 const MAX_INVALID_SNAPSHOT_LOGS: usize = 5;
+/// Longest logged preview of an invalid snapshot entry, in bytes.
+const SNAPSHOT_PREVIEW_BYTES: usize = 512;
+
+/// The logged form of an invalid entry, cut on a character boundary at or
+/// below [`SNAPSHOT_PREVIEW_BYTES`].
+fn entry_preview(item: &serde_json::Value) -> String {
+    let mut preview = item.to_string();
+    preview.truncate(preview.floor_char_boundary(SNAPSHOT_PREVIEW_BYTES));
+    preview
+}
 
 static SPOOL_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -251,8 +261,7 @@ pub(crate) fn parse_snapshots_response(
             None => {
                 discarded += 1;
                 if discarded <= MAX_INVALID_SNAPSHOT_LOGS {
-                    let mut preview = item.to_string();
-                    preview.truncate(512);
+                    let preview = entry_preview(item);
                     warn!(server, entry = %preview, "Ignoring invalid snapshot metadata entry");
                 }
             }
@@ -331,7 +340,7 @@ pub async fn fetch_snapshots(
 }
 
 pub async fn download_snapshot_files(
-    client: &Client,
+    client: &crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     snapshots: &[(String, HashSet<String>)],
     max_retries: u32,
@@ -709,7 +718,7 @@ async fn schedule_records(
     reason = "source, filter and scheduling are already grouped; the rest are the caller's shared handles"
 )]
 pub async fn deploy_entities_from_snapshot(
-    client: &Client,
+    client: &crate::http::CheckedRedirectClient,
     storage: &Storage,
     deployer: &BatchDeployer,
     source: SnapshotSource<'_>,
@@ -923,7 +932,7 @@ async fn spool_snapshot(
 }
 
 async fn download_snapshot_file(
-    client: &Client,
+    client: &crate::http::CheckedRedirectClient,
     storage: &Storage,
     snapshot_hash: &str,
     servers: &HashSet<String>,
@@ -945,7 +954,13 @@ async fn download_snapshot_file(
         let server = server_list[retry as usize % server_list.len()];
         let url = format!("{}/contents/{}", server, snapshot_hash);
 
-        match client.get(&url).send().await {
+        match crate::http::get_following_checked_redirects(
+            client,
+            &url,
+            crate::deploy_remote_entity::MAX_FILE_REDIRECTS,
+        )
+        .await
+        {
             Ok(resp) => {
                 if resp.status().is_success() {
                     let expected_len = resp.content_length();
@@ -1010,7 +1025,7 @@ async fn download_snapshot_file(
             }
             Err(e) => {
                 warn!(snapshot_hash, %server, error = %e, retry, "Snapshot download request failed");
-                last_error = Some(SyncError::Http(e));
+                last_error = Some(SyncError::from(e));
             }
         }
 
@@ -1042,6 +1057,15 @@ mod tests {
     const GOOD_HASH: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
     const GOOD_HASH_2: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdH";
     const GOOD_HASH_3: &str = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdJ";
+
+    #[test]
+    fn a_long_invalid_entry_preview_is_cut_on_a_character_boundary() {
+        // `"` takes byte 0, so every `é` starts on an odd byte and byte 512 falls inside one.
+        let item = serde_json::Value::String("é".repeat(400));
+        let preview = entry_preview(&item);
+        assert_eq!(preview, format!("\"{}", "é".repeat(255)));
+        assert_eq!(preview.len(), 511);
+    }
 
     fn entry(hash: &str, init: i64, end: i64) -> serde_json::Value {
         serde_json::json!({
@@ -1183,9 +1207,16 @@ mod tests {
         let (storage, tmp) = temp_storage("snap-gzip").await;
         let servers: HashSet<String> = [base].into_iter().collect();
 
-        download_snapshot_file(&Client::new(), &storage, &cid, &servers, 1, 0)
-            .await
-            .expect("a gzip-labeled snapshot whose decoded bytes match the CID must be accepted");
+        download_snapshot_file(
+            &crate::sync::test_sync_client(Client::new()),
+            &storage,
+            &cid,
+            &servers,
+            1,
+            0,
+        )
+        .await
+        .expect("a gzip-labeled snapshot whose decoded bytes match the CID must be accepted");
 
         let stored = storage.retrieve(&cid).await.unwrap().unwrap();
         assert_eq!(
@@ -1208,9 +1239,16 @@ mod tests {
         let (storage, tmp) = temp_storage("snap-corrupt").await;
         let servers: HashSet<String> = [base].into_iter().collect();
 
-        let err = download_snapshot_file(&Client::new(), &storage, &cid, &servers, 1, 0)
-            .await
-            .expect_err("decoded bytes that mismatch the CID must still be rejected");
+        let err = download_snapshot_file(
+            &crate::sync::test_sync_client(Client::new()),
+            &storage,
+            &cid,
+            &servers,
+            1,
+            0,
+        )
+        .await
+        .expect_err("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("snapshot hash mismatch"), "{err}");
         assert!(!storage.exist(&cid).await.unwrap());
 

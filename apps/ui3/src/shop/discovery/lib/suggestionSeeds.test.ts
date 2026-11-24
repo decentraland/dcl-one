@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest"
 
 import { buildSuggestionSeeds, MAX_SEEDS, seedIdOf, seedsKey } from "./suggestionSeeds"
-import { compactEquipped } from "../api"
+import { compactEquipped } from "@shop/discovery/api"
 
 const item = (contractAddress: string, itemId: string | null) => ({ contractAddress, itemId })
 

@@ -33,6 +33,7 @@ fn controlled(
         wallet: wallet.to_string(),
         session: session.to_string(),
         epoch,
+        origin: 2,
         realm: realm.to_string(),
         position,
     }
@@ -48,13 +49,15 @@ fn control_owner(session: &str, closed: bool) -> ControlOwner {
 impl World {
     fn with(options: ClusterOptions) -> Self {
         let feed = Arc::new(RecordingClusterFeed::default());
-        World {
+        let mut world = World {
             grids: RealmSpatialGrids::new(SPATIAL_GRID_CELL_SIZE, CAP),
             board: SnapshotBoard::new(CAP, 4),
             identity: IdentityBoard::new(CAP),
             feed: feed.clone(),
             tracker: ClusterTracker::new(options, CAP, feed),
-        }
+        };
+        world.tracker.bind_identity(&mut world.identity);
+        world
     }
 
     /// Debounce off unless a test is about the debounce: every other scenario asserts the
@@ -192,30 +195,38 @@ fn native_position_wins_for_the_exact_control_session_without_double_counting() 
 }
 
 #[test]
-fn newer_control_owner_and_its_tombstone_suppress_a_stale_native_session() {
+fn native_reservation_survives_unusable_position_and_different_legacy_session() {
     let mut w = World::new();
-    w.place_session(0, "0xa", "0xold", "main", v3(1.0, 1.0), false);
+    w.identity
+        .set_with_session(0, "0xa".into(), "0xnative".into());
     w.feed.set_control_snapshot(ControlSnapshot {
-        members: vec![controlled(0, "0xa", "0xnew", 10, "main", v3(2.0, 2.0))],
-        owners: HashMap::from([("0xa".into(), control_owner("0xnew", false))]),
+        members: vec![controlled(0, "0xa", "0xlegacy", 9, "main", v3(1.0, 1.0))],
+        owners: HashMap::from([("0xa".into(), control_owner("0xlegacy", false))]),
     });
     w.pass();
-    assert_eq!(w.tracker.board().clusters[0].count, 1);
-    assert!(w.tracker.board().peers[0].peer as usize >= CAP);
-    assert!(w.feed.current("0xa", "0xnew").is_some());
-    assert!(w.feed.current("0xa", "0xold").is_none());
-
-    w.feed.set_control_snapshot(ControlSnapshot {
-        members: Vec::new(),
-        owners: HashMap::from([("0xa".into(), control_owner("0xnew", true))]),
-    });
-    w.pass();
+    assert!(w.feed.current("0xa", "0xlegacy").is_none());
     assert!(w.tracker.board().clusters.is_empty());
-    assert!(w.feed.current("0xa", "0xold").is_none());
+}
 
-    w.place_session(0, "0xa", "0xnew", "main", v3(1.0, 1.0), false);
-    w.pass();
-    assert!(w.tracker.board().clusters.is_empty());
+#[test]
+fn native_reservation_outweighs_legacy_owner_and_terminal_tombstone() {
+    let mut w = World::new();
+    w.place_session(0, "0xa", "0xnative", "main", v3(1.0, 1.0), false);
+    for closed in [false, true] {
+        w.feed.set_control_snapshot(ControlSnapshot {
+            members: if closed {
+                Vec::new()
+            } else {
+                vec![controlled(0, "0xa", "0xlegacy", 10, "main", v3(2.0, 2.0))]
+            },
+            owners: HashMap::from([("0xa".into(), control_owner("0xlegacy", closed))]),
+        });
+        w.pass();
+        assert_eq!(w.tracker.board().clusters[0].count, 1);
+        assert_eq!(w.tracker.board().peers[0].peer, 0);
+        assert!(w.feed.current("0xa", "0xnative").is_some());
+        assert!(w.feed.current("0xa", "0xlegacy").is_none());
+    }
 }
 
 #[test]
@@ -396,7 +407,38 @@ fn a_new_id_is_minted_per_cluster_and_carries_the_configured_prefix() {
 
     let mut ids: Vec<String> = vec![w.cluster_of(0).unwrap(), w.cluster_of(1).unwrap()];
     ids.sort();
-    assert_eq!(ids, vec!["pulse-1".to_string(), "pulse-2".to_string()]);
+    let (boot_id, first_number) = ids[0]
+        .strip_prefix("pulse-")
+        .unwrap()
+        .split_once('-')
+        .unwrap();
+    assert_eq!(first_number, "1");
+    assert_eq!(
+        boot_id,
+        uuid::Uuid::parse_str(boot_id).unwrap().simple().to_string()
+    );
+    assert_eq!(ids[1], format!("pulse-{boot_id}-2"));
+}
+
+#[test]
+fn restarting_pulse_does_not_reuse_an_island_room_name() {
+    let mut before = World::new();
+    before.place(0, "0xa", "r", v3(1.0, 1.0));
+    before.pass();
+    let old_assignment = before.feed.current("0xa", "0xa").unwrap();
+
+    let mut after = World::new();
+    after.place(0, "0xb", "r", v3(1.0, 1.0));
+    after.pass();
+    let new_assignment = after.feed.current("0xb", "0xb").unwrap();
+
+    let old_room = crate::rooms::island_room_name(&old_assignment.cluster_id);
+    let new_room = crate::rooms::island_room_name(&new_assignment.cluster_id);
+    assert_ne!(old_room, new_room);
+    assert!(matches!(
+        crate::rooms::room_scope(&new_room),
+        Some(crate::rooms::RoomScope::Island(_))
+    ));
 }
 
 #[test]
@@ -731,6 +773,7 @@ fn full_enet_house() -> (
     let mut board = SnapshotBoard::new(cap, 4);
     let mut identity = IdentityBoard::new(cap);
     let mut tracker = ClusterTracker::new(options, cap, feed);
+    tracker.bind_identity(&mut identity);
 
     let side = (FULL_HOUSE as f32 / REALMS as f32).sqrt().ceil();
     for peer in 0..FULL_HOUSE {
@@ -860,7 +903,7 @@ fn clusters_scale_past_the_pair_count() {
 }
 
 #[test]
-fn two_trackers_over_one_world_mint_the_same_ids() {
+fn two_trackers_over_one_world_mint_cluster_serials_in_the_same_order() {
     let cell = SPATIAL_GRID_CELL_SIZE;
     let build = || {
         let mut w = World::new();
@@ -872,13 +915,17 @@ fn two_trackers_over_one_world_mint_the_same_ids() {
         w.place(20, "0xz", "other-realm", v3(1.0, 1.0));
         w.pass();
         (0..12u32)
-            .map(|i| w.cluster_of(i).unwrap())
+            .chain([20])
+            .map(|i| {
+                let id = w.cluster_of(i).unwrap();
+                id.rsplit_once('-').unwrap().1.parse::<u64>().unwrap()
+            })
             .collect::<Vec<_>>()
     };
 
     assert_eq!(
         build(),
         build(),
-        "cell and realm iteration order is pinned, so minting is reproducible"
+        "cell and realm iteration order determines the cluster serials"
     );
 }

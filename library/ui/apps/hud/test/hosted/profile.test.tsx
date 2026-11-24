@@ -1,0 +1,454 @@
+import { expectConsoleOutput } from '@explorer-core/test/console'
+import { describe, it, expect } from 'vitest'
+import { act, waitFor } from '@testing-library/react'
+import type { Profile } from '@explorer-core/engine/protocol'
+import { renderSession, enterAsGuest } from '../harness'
+import { peekProfile, requestPassport, subscribeProfile } from '../../features/session/profileStore'
+
+// DOMAIN: profile — the local player's passport, fetched on world entry.
+describe('profile domain', () => {
+  const profile: Profile = {
+    address: '0xme',
+    name: 'Tester',
+    hasClaimedName: true,
+    isGuest: false,
+    description: 'hi'
+  }
+
+  it('requests the profile on world entry', async () => {
+    const h = renderSession()
+    await enterAsGuest(h, { keepSent: true })
+    expect(h.driver.sentOf('getProfile')).toHaveLength(1)
+  })
+
+  it('profile stream populates the passport', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    expect(h.session().profile.data).toMatchObject({ address: '0xme', name: 'Tester' })
+  })
+
+  it('recovers the initial session profile when the store already knows a newer version', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = profile.address
+    const unsubscribe = subscribeProfile(address, () => {})
+    h.driver.emit({ kind: 'profileChanged', address, version: 5 })
+    const newer = { ...profile, version: 5, description: 'latest' }
+    h.driver.emit({ kind: 'userProfile', address, requestId: h.driver.last('getUserProfile')?.requestId, profile: newer })
+    const reads = h.driver.sentOf('getProfile').length
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 4 } })
+    expect(h.session().profile.data?.address).toBe(address)
+    expect(peekProfile(address)?.version).toBe(5)
+    expect(h.driver.sentOf('getProfile')).toHaveLength(reads + 1)
+    h.driver.emit({ kind: 'profile', profile: newer })
+    expect(h.session().profile.data).toEqual(newer)
+    unsubscribe()
+  })
+
+  it('a passport request goes to the bridge with extras, and the reply lands in the profile store', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => requestPassport('0xKURD'))
+    const request = h.driver.last('getUserProfile')
+    expect(request).toEqual({ kind: 'getUserProfile', address: '0xkurd', extras: true, requestId: expect.any(Number) })
+    h.driver.emit({
+      kind: 'userProfile',
+      address: '0xKURD',
+      requestId: request?.requestId,
+      profile: { address: '0xkurd', name: 'kurd', hasClaimedName: true, isGuest: false, description: 'gm' }
+    })
+    expect(peekProfile('0xKURD')?.name).toBe('kurd')
+  })
+
+  it('keeps the latest passport read and both its badge replies for each address', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    const passport = { ...profile, address, version: 3 }
+    act(() => requestPassport(address))
+    const oldRequest = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address, requestId: oldRequest, profile: passport })
+
+    act(() => requestPassport(address))
+    const currentId = h.driver.last('getUserProfile')?.requestId
+    act(() => requestPassport('0xdef'))
+    const reply = (requestId: number | undefined, picture: string, badgeName: string): void => {
+      h.driver.emit({
+        kind: 'userProfile',
+        address: '0xABC',
+        requestId,
+        profile: { ...passport, picture, badges: [{ id: 'badge', name: badgeName }] }
+      })
+    }
+
+    reply(currentId, 'current.png', 'Current badge')
+    reply(oldRequest, 'old.png', 'Old tier')
+    expect(peekProfile(address)).toMatchObject({ picture: 'current.png', badges: [{ name: 'Current badge' }] })
+    reply(currentId, 'current.png', 'Current tier')
+    expect(peekProfile(address)?.badges).toMatchObject([{ name: 'Current tier' }])
+  })
+
+  it('discards the old badge tiers when a profile change refreshes an open passport', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    const passport = { ...profile, address, version: 3 }
+    const badge = { id: 'badge', name: 'Badge' }
+    const tier = (name: string) => ({ id: 'tier', name, description: '' })
+    const unsubscribe = subscribeProfile(address, () => {})
+    act(() => requestPassport(address))
+    const firstId = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address, requestId: firstId, profile: { ...passport, badges: [badge] } })
+    expect(peekProfile(address)?.badges).toEqual([badge])
+
+    h.driver.emit({ kind: 'profileChanged', address, version: 4 })
+    const refresh = h.driver.last('getUserProfile')
+    expect(refresh).toMatchObject({ address, extras: true, requestId: expect.any(Number) })
+    expect(refresh?.requestId).not.toBe(firstId)
+    h.driver.emit({
+      kind: 'userProfile', address, requestId: firstId,
+      profile: { ...passport, badges: [{ ...badge, tiers: [tier('Old tier')] }] }
+    })
+    expect(peekProfile(address)?.badges).toEqual([badge])
+
+    const updated = { ...passport, version: 4, picture: 'updated.png', badges: [badge] }
+    h.driver.emit({ kind: 'userProfile', address, requestId: refresh?.requestId, profile: updated })
+    expect(peekProfile(address)).toMatchObject({ version: 4, picture: 'updated.png', badges: [badge] })
+    h.driver.emit({
+      kind: 'userProfile', address, requestId: refresh?.requestId,
+      profile: { ...updated, badges: [{ ...badge, tiers: [tier('Current tier')] }] }
+    })
+    expect(peekProfile(address)?.badges).toMatchObject([{ tiers: [{ name: 'Current tier' }] }])
+    unsubscribe()
+  })
+
+  it('ignores a response after its unobserved profile was invalidated', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    act(() => requestPassport(address))
+    const request = h.driver.last('getUserProfile')
+    h.driver.emit({ kind: 'profileChanged', address, version: 3 })
+    h.driver.emit({
+      kind: 'userProfile',
+      address,
+      requestId: request?.requestId,
+      profile: { ...profile, address, version: 3 }
+    })
+    expect(peekProfile(address)).toBeUndefined()
+
+    subscribeProfile(address, () => {})
+    const next = h.driver.last('getUserProfile')
+    expect(next).toMatchObject({ address, requestId: expect.any(Number) })
+    expect(next?.requestId).not.toBe(request?.requestId)
+  })
+
+  it('lets a failed current profile read be retried without retiring other reads', async () => {
+    expectConsoleOutput('error', [
+      ['[bridge] getUserProfile failed:', 'legacy'],
+      ['[bridge] getUserProfile failed:', 'old'],
+      ['[bridge] getUserProfile failed:', 'current']
+    ])
+    const h = renderSession()
+    await enterAsGuest(h)
+    const address = '0xabc'
+    const other = '0xdef'
+    subscribeProfile(address, () => {})
+    const oldId = h.driver.last('getUserProfile')!.requestId!
+    h.driver.emit({ kind: 'profileChanged', address, version: 4 })
+    const currentId = h.driver.last('getUserProfile')!.requestId!
+    subscribeProfile(other, () => {})
+
+    h.driver.emit({ kind: 'requestFailed', request: 'getUserProfile', error: 'legacy' })
+    h.driver.emit({
+      kind: 'requestFailed', request: 'getUserProfile', error: 'old',
+      profileRead: { address, requestId: oldId }
+    })
+    subscribeProfile(address, () => {})
+    expect(h.driver.sentOf('getUserProfile')).toHaveLength(3)
+
+    h.driver.emit({
+      kind: 'requestFailed', request: 'getUserProfile', error: 'current',
+      profileRead: { address: address.toUpperCase(), requestId: currentId }
+    })
+    h.driver.emit({ kind: 'userProfile', address, requestId: oldId, profile: { ...profile, address, version: 3 } })
+    expect(peekProfile(address)).toBeUndefined()
+    subscribeProfile(other, () => {})
+    expect(h.driver.sentOf('getUserProfile')).toHaveLength(3)
+
+    subscribeProfile(address, () => {})
+    const retry = h.driver.last('getUserProfile')!
+    expect(h.driver.sentOf('getUserProfile')).toHaveLength(4)
+    expect(retry).toMatchObject({ address, requestId: expect.any(Number) })
+    expect(retry.requestId).not.toBe(currentId)
+    h.driver.emit({ kind: 'userProfile', address, requestId: retry.requestId, profile: { ...profile, address, version: 4 } })
+    expect(peekProfile(address)?.version).toBe(4)
+  })
+
+  it('saves an edit optimistically, and reverts it when the engine rejects the deploy', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => requestPassport('0xme'))
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile })
+
+    act(() => h.session().profile.save({ description: 'gm from the beach' }))
+    expect(h.driver.last('saveProfile')).toMatchObject({ kind: 'saveProfile', address: profile.address, description: 'gm from the beach' })
+    // Shown before the round trip — the deploy takes seconds, the catalyst reindex longer.
+    expect(h.session().profile.saving).toBe(true)
+    expect(h.session().profile.data?.description).toBe('gm from the beach')
+    expect(peekProfile('0xme')?.description).toBe('gm from the beach')
+
+    h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+    expect(h.session().profile.saving).toBe(false)
+    expect(h.session().profile.saveError).toBe('failed to deploy to server.')
+    expect(h.session().profile.data?.description).toBe('hi')
+    expect(peekProfile('0xme')?.description).toBe('hi')
+
+    act(() => h.session().profile.dismissSaveError())
+    expect(h.session().profile.saveError).toBeNull()
+  })
+
+  it('holds the local edit over reads and announcements, then restores the engine failure snapshot', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const before = { ...profile, version: 3 }
+    h.driver.emit({ kind: 'profile', profile: before })
+    const unsub = subscribeProfile('0xme', () => {})
+    act(() => requestPassport('0xme'))
+    const staleId = h.driver.last('getUserProfile')?.requestId
+    const committed = { ...before, version: 4, description: 'earlier save landed' }
+
+    act(() => h.session().profile.save({ description: 'my pending edit' }))
+    h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 4 })
+    h.driver.emit({ kind: 'profile', profile: committed })
+    h.driver.emit({ kind: 'userProfile', address: '0xme', requestId: staleId, profile: before })
+    expect(h.session().profile.data?.description).toBe('my pending edit')
+    expect(peekProfile('0xme')?.description).toBe('my pending edit')
+
+    h.driver.emit({ kind: 'profileSaved', ok: false, profile: committed, error: 'failed to deploy to server.' })
+    expect(h.session().profile.data).toEqual(committed)
+    expect(peekProfile('0xme')?.description).toBe('earlier save landed')
+    const currentId = h.driver.last('getUserProfile')?.requestId
+    expect(currentId).not.toBe(staleId)
+    h.driver.emit({ kind: 'userProfile', address: '0xme', requestId: staleId, profile: before })
+    expect(peekProfile('0xme')?.description).toBe('earlier save landed')
+    h.driver.emit({ kind: 'userProfile', address: '0xme', requestId: currentId, profile: { ...committed, badges: [] } })
+    expect(peekProfile('0xme')?.badges).toEqual([])
+    unsub()
+  })
+
+  it('clears the optimistic Passport when no profile has ever committed', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'first edit' }))
+    h.driver.emit({ kind: 'profileSaved', ok: false, profile: null })
+    expect(h.session().profile.data).toBeNull()
+    expect(peekProfile('0xme')).toBeUndefined()
+  })
+
+  it('keeps independent form edits and clears made while a previous save is pending', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const saved = { ...profile, description: 'server update', version: 4, info: { country: 'US', realName: 'old', birthdate: '2000-01-02' } }
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'rejected' }))
+    act(() => h.session().profile.save({ infoPatch: { realName: '' } }))
+    act(() => h.session().profile.save({ infoPatch: { language: 'French' } }))
+    h.driver.emit({ kind: 'profileSaved', ok: false, profile: saved })
+    const request = h.driver.last('saveProfile')
+    expect(request?.info).toEqual({ country: 'US', language: 'French', birthdate: '2000-01-02' })
+    expect(request?.infoPatch).toEqual({ realName: '', language: 'French' })
+    expect(h.session().profile.data).toMatchObject({ description: 'server update', info: { country: 'US', language: 'French' } })
+    expect(h.session().profile.data?.info?.realName).toBeUndefined()
+  })
+
+  it.each(['0xme', '0xother'])('releases an invalidated form and discards its queued edit before reading %s', async (address) => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'old session submit' }))
+    const requestId = h.driver.last('saveProfile')?.requestId
+    act(() => h.session().profile.save({ infoPatch: { realName: 'old queued value' } }))
+    const reads = h.driver.sentOf('getProfile').length
+    h.driver.emit({ kind: 'profileSaved', ok: false, accountChanged: true, requestId })
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(1)
+    expect(h.session().profile.saving).toBe(false)
+    expect(h.session().profile.data).toBeNull()
+    expect(peekProfile(profile.address)).toBeUndefined()
+    expect(h.session().profile.saveError).toBe('Your session changed before the save was confirmed.')
+    expect(h.driver.sentOf('getProfile')).toHaveLength(reads + 1)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, address, description: 'current account' } })
+    expect(peekProfile(address)?.description).toBe('current account')
+    act(() => h.session().profile.save({ description: 'fresh edit' }))
+    expect(h.driver.last('saveProfile')).toMatchObject({ address, description: 'fresh edit' })
+  })
+
+  it.each([true, false])('reports a discarded form behind a quiet color save only when queued (%s)', async (formQueued) => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 0 }))
+    const requestId = h.driver.last('saveProfile')?.requestId
+    if (formQueued) act(() => h.session().profile.save({ description: 'pending form edit' }))
+    h.driver.emit({ kind: 'profileSaved', ok: false, accountChanged: true, requestId })
+    expect(h.session().profile.saving).toBe(false)
+    expect(h.session().profile.saveError).toBe(formQueued ? 'Your session changed before the save was confirmed.' : null)
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(1)
+  })
+
+  it('discards a previous sign-in’s save rejection while the same player is saving again', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'old session edit' }))
+    const oldId = h.driver.last('saveProfile')?.requestId
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    expect(peekProfile(profile.address)).toBeUndefined()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'new session edit' }))
+    h.driver.emit({ kind: 'profileSaved', ok: false, profile, requestId: oldId })
+    expect(h.session().profile.saving).toBe(true)
+    expect(h.session().profile.data?.description).toBe('new session edit')
+    expect(h.session().profile.saveError).toBeNull()
+  })
+
+  it('a sign-out leaves no announced version behind to hold back the next session\'s profile', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
+    // a chat line of yours keeps your profile shown
+    subscribeProfile('0xme', () => {})
+    // a Backpack edit is announced and read, and the account signs out before its deploy result
+    h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 4 })
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: { ...profile, version: 4, description: 'edited' } })
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    // the same account signs in again, and the engine loads the version the failed deploy left
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
+    expect(peekProfile('0xme')).toMatchObject({ version: 3, description: 'hi' })
+  })
+
+  it('ignores badge enrichment from a previous sign-in with the same account', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => requestPassport('0xme'))
+    const oldId = h.driver.last('getUserProfile')?.requestId
+    h.driver.emit({ kind: 'userProfile', address: '0xme', requestId: oldId, profile })
+
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    h.driver.emit({
+      kind: 'userProfile', address: '0xme', requestId: oldId,
+      profile: { ...profile, badges: [{ id: 'old', name: 'Old tier' }] }
+    })
+    expect(peekProfile('0xme')?.badges).toBeUndefined()
+  })
+
+  it('keeps a successful edit and holds no error', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    h.driver.emit({ kind: 'ownedNames', names: ['Tester2'] })
+    act(() => h.session().profile.save({ name: 'Tester2' }))
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.session().profile.data).toMatchObject({ name: 'Tester2', hasClaimedName: true })
+    expect(h.session().profile.saveError).toBeNull()
+    expect(h.session().profile.saving).toBe(false)
+  })
+
+  it('saves a name colour quietly: shown at once, and a failure only puts the old colour back', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => requestPassport('0xme'))
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile })
+
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 0 }))
+    expect(h.driver.last('saveProfile')).toMatchObject({ kind: 'saveProfile', nameColor: { r: 1, g: 0, b: 0 } })
+    expect(h.session().profile.data?.nameColor).toEqual({ r: 1, g: 0, b: 0 })
+    expect(peekProfile('0xme')?.nameColor).toEqual({ r: 1, g: 0, b: 0 })
+    // Not the edit form's save: its SAVE button and error stay out of it.
+    expect(h.session().profile.saving).toBe(false)
+
+    h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+    expect(h.session().profile.saveError).toBeNull()
+    expect(h.session().profile.data?.nameColor).toBeUndefined()
+    expect(peekProfile('0xme')?.nameColor).toBeUndefined()
+  })
+
+  it('holds a save asked for while another deploys, so the engine never cancels the first', async () => {
+    const h = renderSession()
+    await enterAsGuest(h, { keepSent: true })
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 0, g: 1, b: 0 }))
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(1)
+    expect(h.session().profile.saving).toBe(true)
+
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(2)
+    expect(h.driver.last('saveProfile')).toMatchObject({ kind: 'saveProfile', nameColor: { r: 0, g: 1, b: 0 } })
+    expect(h.session().profile.data).toMatchObject({ description: 'gm', nameColor: { r: 0, g: 1, b: 0 } })
+    // The colour's own deploy is quiet: the form is no longer saving while it runs.
+    expect(h.session().profile.saving).toBe(false)
+
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.session().profile.saveError).toBeNull()
+  })
+
+  it('a rejected save is not carried into the save queued behind it', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 0, g: 0, b: 1 }))
+
+    h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+    expect(h.session().profile.saveError).toBe('failed to deploy to server.')
+    expect(h.session().profile.data).toMatchObject({ description: 'hi', nameColor: { r: 0, g: 0, b: 1 } })
+
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.session().profile.data).toMatchObject({ description: 'hi', nameColor: { r: 0, g: 0, b: 1 } })
+  })
+
+  it('a save the bridge failed to handle counts as failed, so the queue behind it still runs', async () => {
+    expectConsoleOutput('error', [['[bridge] saveProfile failed:', 'boom']])
+    const h = renderSession()
+    await enterAsGuest(h, { keepSent: true })
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 1 }))
+
+    h.driver.emit({ kind: 'requestFailed', request: 'saveProfile', error: 'boom' })
+    expect(h.session().profile.saveError).toBe('Could not save your profile.')
+    expect(h.session().profile.data?.description).toBe('hi')
+    expect(h.driver.last('saveProfile')).toMatchObject({ kind: 'saveProfile', nameColor: { r: 1, g: 0, b: 1 } })
+    expect(h.session().profile.saving).toBe(false)
+  })
+
+  it('relays the claimed names the picker offers', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().profile.requestOwnedNames())
+    expect(h.driver.last('getOwnedNames')).toEqual({ kind: 'getOwnedNames' })
+    h.driver.emit({ kind: 'ownedNames', names: ['Mojito'] })
+    expect(h.session().profile.ownedNames).toEqual(['Mojito'])
+  })
+
+  it('toggles the profile panel open/closed', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    expect(h.session().profile.open).toBe(false)
+    act(() => h.session().profile.toggle())
+    expect(h.session().profile.open).toBe(true)
+  })
+})

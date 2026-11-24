@@ -1,8 +1,8 @@
-// the loopback console server and the native input commands; the headless binary takes the same
-// launch options
-#[cfg(not(target_arch = "wasm32"))]
+// the input and scene pointer commands on every target, and the native loopback console server;
+// the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
+mod client_window_focus;
 mod commands;
 mod debug_panel;
 mod deep_link;
@@ -11,6 +11,7 @@ mod gpu_memory;
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod perf;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -26,10 +27,12 @@ use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
 use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
+use ban_block::BanBlockPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
+    core_pipeline::prepass::DepthPrepass,
     log::LogPlugin,
     prelude::*,
     render::view::RenderLayers,
@@ -47,9 +50,9 @@ use common::{
     inputs::InputMap,
     sets::SetupSets,
     structs::{
-        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, PointAtSync, PrimaryCamera,
-        PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance, ShowOutOfBounds,
-        StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
+        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, LandscapeDistance, PointAtSync,
+        PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance,
+        ShowOutOfBounds, StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
     },
     util::UtilsPlugin,
 };
@@ -78,12 +81,9 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
-use system_api_types::{
-    launch_options::{
-        help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
-        ClientOptions, LaunchOptions,
-    },
-    web_params::DEFAULT_PORTABLES,
+use system_api_types::launch_options::{
+    help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
+    ClientOptions, LaunchOptions,
 };
 use system_bridge::{settings::NewCameraEvent, NativeUi, SystemBridgePlugin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,8 +120,46 @@ pub const DISTRIBUTION: &str = "web";
 pub const CONFIG_READ_ATTEMPTS: u32 = 3;
 pub const CONFIG_READ_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The settings file of the Explorer's config directory, or the defaults where there is none.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn serialized_app_config() -> AppConfig {
+    let config_file = platform::project_directories()
+        .unwrap()
+        .config_dir()
+        .join("config.json");
+    let mut base_config = read_config_file(&config_file)
+        .map(|f| {
+            info!("config file loaded from {config_file:?}");
+            AppConfig::from_json(&f)
+        })
+        .unwrap_or_else(|| {
+            warn!("config file not read from {config_file:?}, generating default");
+            Default::default()
+        });
+    base_config.reset_outdated_settings();
+
+    base_config
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_config_file(config_file: &std::path::Path) -> Option<Vec<u8>> {
+    for _ in 0..CONFIG_READ_ATTEMPTS {
+        match std::fs::read(config_file) {
+            Ok(f) => return Some(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                warn!("failed to read config.json: {e}");
+                std::thread::sleep(CONFIG_READ_RETRY_PAUSE);
+            }
+        }
+    }
+    None
+}
+
 pub mod headless;
 pub mod launch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod offline_app;
 
 pub struct DecentralandApp(App);
 
@@ -217,6 +255,10 @@ pub struct DecentralandArguments {
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
+    /// Show the lower-right debug panel button in the HUD
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, help_heading = DEBUG)]
+    pub debug_panel: bool,
     /// Echo scene logs to the console
     #[arg(long = "scene_log_to_console", help_heading = DEBUG)]
     pub scene_log_to_console: bool,
@@ -224,7 +266,7 @@ pub struct DecentralandArguments {
     /// `--features inspect`
     #[arg(long, value_name = "scene_hash", help_heading = DEBUG)]
     pub inspect: Option<String>,
-    /// Target fps (default 60; overridden by the refresh rate when vsync is on). Also `/fps`
+    /// Target fps (default 60; 999 is Max; with vsync on, capped at the refresh rate). Also `/fps`
     #[arg(long = "fps", value_name = "n", help_heading = SETTINGS)]
     pub fps_target: Option<usize>,
     /// Run the portable/startup scenes in preview mode
@@ -240,7 +282,7 @@ pub struct DecentralandArguments {
     /// `/allowed/failures`
     #[arg(long = "test_scenes", value_name = "x,y;x,y", help_heading = DEBUG)]
     pub test_scenes: Option<TestScenes>,
-    /// Vsync (default off)
+    /// VSync (default on): caps the frame rate at the monitor's refresh rate, `--fps` still applies
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub vsync: Option<bool>,
     /// Scene load distance in meters (default 100). Also `/scene_distance`
@@ -287,6 +329,17 @@ pub struct DecentralandArguments {
     /// the performance harness parses
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub csv: Option<std::path::PathBuf>,
+    /// Benchmark walk-in (`--autopilot` with `--csv`): once measuring starts, walk from where the
+    /// run arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way
+    /// load during play, with no loading screen. Without it the run stands at spawn
+    #[arg(
+        long,
+        value_name = "x,y",
+        allow_hyphen_values = true,
+        value_parser = |value: &str| value.parse::<IVec2Arg>().map(|parcel| parcel.0),
+        help_heading = DEBUG
+    )]
+    pub autopilot_walk_to: Option<IVec2>,
     /// Write the whole session log here, in the performance harness's line format; the
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
@@ -349,11 +402,8 @@ impl DecentralandArguments {
 
     /// `--portables` / `?portables=`, else the default set.
     pub fn startup_scenes(&self) -> Vec<StartupScene> {
-        self.client
-            .portables
-            .as_deref()
-            .unwrap_or(DEFAULT_PORTABLES)
-            .split(';')
+        self.launch
+            .portable_sources()
             .map(|source| StartupScene {
                 source: source.to_owned(),
                 super_user: false,
@@ -424,6 +474,7 @@ impl DecentralandApp {
                 server,
                 position: launch.position.clone(),
                 guest: decentraland_app_config.arguments.guest,
+                debug_panel: decentraland_app_config.arguments.debug_panel,
                 autopilot,
             });
         }
@@ -440,9 +491,11 @@ impl DecentralandApp {
         };
         // Show out-of-bounds geometry in preview, on a loopback realm (local dev) and in
         // the editor, never on a public realm; the same runs are a local scene to analytics.
-        let show_out_of_bounds = decentraland_app_config.arguments.client.editor
-            || decentraland_app_config.arguments.launch.preview
-            || common::util::is_loopback_url(&boot_server);
+        let ShowOutOfBounds(show_out_of_bounds) = ShowOutOfBounds::for_run(
+            decentraland_app_config.arguments.client.editor,
+            decentraland_app_config.arguments.launch.preview,
+            Some(&boot_server),
+        );
 
         // Resources
         app.insert_resource(Version(version))
@@ -475,6 +528,9 @@ impl DecentralandApp {
                     .collect(),
             })
             .insert_resource(ShowOutOfBounds(show_out_of_bounds))
+            .insert_resource(LandscapeDistance::from_config(
+                decentraland_app_config.app_config.landscape_distance,
+            ))
             .insert_resource(SceneLoadDistance {
                 load: if decentraland_app_config.arguments.launch.preview {
                     1.0
@@ -488,27 +544,27 @@ impl DecentralandApp {
                         .app_config
                         .scene_unload_extra_distance
                 },
-                load_imposter: decentraland_app_config
-                    .app_config
-                    .scene_imposter_distances
-                    .last()
-                    .map(|last| {
-                        // actual distance we need is last + diagonal of the largest mip size
-                        let mip_size = (1
-                            << (decentraland_app_config
-                                .app_config
-                                .scene_imposter_distances
-                                .len()
-                                - 1)) as f32
-                            * 16.0;
-                        last + (2.0 * mip_size * mip_size).sqrt()
-                    })
-                    .unwrap_or(0.0)
-                    * if decentraland_app_config.arguments.launch.preview {
-                        0.0
-                    } else {
-                        1.0
-                    },
+                load_imposter: if decentraland_app_config.arguments.launch.preview {
+                    // preview renders no imposters; a far distance keeps the fog off the scene
+                    99999.0
+                } else {
+                    decentraland_app_config
+                        .app_config
+                        .scene_imposter_distances
+                        .last()
+                        .map(|last| {
+                            // actual distance we need is last + diagonal of the largest mip size
+                            let mip_size = (1
+                                << (decentraland_app_config
+                                    .app_config
+                                    .scene_imposter_distances
+                                    .len()
+                                    - 1)) as f32
+                                * 16.0;
+                            last + (2.0 * mip_size * mip_size).sqrt()
+                        })
+                        .unwrap_or(0.0)
+                },
             })
             // the host page's analytics session (web), else one per engine run
             .insert_resource(SegmentConfig::new(
@@ -608,12 +664,20 @@ impl DecentralandApp {
         );
         if decentraland_app_config.arguments.client.autopilot {
             let arguments = &decentraland_app_config.arguments;
-            app.insert_resource(common::autopilot::Autopilot {
-                measure: arguments.csv.is_some()
-                    || (arguments.perf_stream.is_some() && arguments.perf_csv),
-            })
-            .init_resource::<common::autopilot::AutopilotPhase>()
-            .add_plugins(autopilot::AutopilotPlugin);
+            let measure =
+                arguments.csv.is_some() || (arguments.perf_stream.is_some() && arguments.perf_csv);
+            app.insert_resource(common::autopilot::Autopilot { measure })
+                .init_resource::<common::autopilot::AutopilotPhase>()
+                .add_plugins(autopilot::AutopilotPlugin);
+            match arguments.autopilot_walk_to {
+                Some(to) if measure => {
+                    app.insert_resource(autopilot::walk::AutopilotWalk { to });
+                }
+                Some(_) => warn!(
+                    "--autopilot-walk-to has no effect without --csv: the run ends once it arrives"
+                ),
+                None => (),
+            }
             // the autopilot's CSV (perf_output follows its phase): `--csv`, or on the web the
             // page's `csv` stream, which `perfCsv` asks for
             #[cfg(not(target_arch = "wasm32"))]
@@ -624,8 +688,17 @@ impl DecentralandApp {
             if let Some(destination) = destination {
                 app.add_plugins(CsvPlugin { destination });
             }
-        } else if decentraland_app_config.arguments.csv.is_some() {
-            warn!("--csv has no effect without --autopilot: no CSV is written");
+        } else {
+            if decentraland_app_config.arguments.csv.is_some() {
+                warn!("--csv has no effect without --autopilot: no CSV is written");
+            }
+            if decentraland_app_config
+                .arguments
+                .autopilot_walk_to
+                .is_some()
+            {
+                warn!("--autopilot-walk-to has no effect without --autopilot: nothing walks");
+            }
         }
 
         // add AppConfig as a resource
@@ -640,6 +713,7 @@ impl DecentralandApp {
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)
             .add_plugins(InputManagerPlugin)
+            // before VisualsPlugin: its stars graph edge needs the highlight node SceneBoundPlugin adds
             .add_plugins(SceneBoundPlugin)
             .add_plugins(UserInputPlugin)
             .add_plugins(UiCorePlugin)
@@ -653,10 +727,7 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
-            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
-            // without an extension to the last image loader registered, which must stay
-            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
-            // registered before it, then only ever sees `.ktx2` paths.
+            .add_plugins(BanBlockPlugin)
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
@@ -689,9 +760,9 @@ impl DecentralandApp {
             }
         }
 
+        app.add_plugins(automation::AutomationPlugin);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            app.add_plugins(automation::AutomationPlugin);
             // only when a token is given, and then only the token-checked methods that run
             // console commands: Bevy's own remote methods (`bevy/query`, `bevy/insert`, ...)
             // check no token, so they are never served
@@ -715,6 +786,21 @@ impl DecentralandApp {
         // (the first render frame warns, under `gpu_time`, about any node they do not)
         app.add_plugins(GpuTimePlugin);
 
+        // what the explorer measures about itself: the sampler, the frame-time breakdown and their
+        // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
+        // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
+        // and its system information on Windows and Linux
+        app.add_plugins(client_window_focus::ClientWindowFocusPlugin);
+        app.add_plugins(perf::PerformanceMonitoringPlugin);
+        #[cfg(all(
+            feature = "performance-profiler",
+            not(feature = "tracy"),
+            not(target_arch = "wasm32")
+        ))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
+        app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
+
         // Systems
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
@@ -728,10 +814,33 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
-        debug_panel::register(&mut app);
+        app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
+
+        run_small_schedules_in_order(&mut app);
 
         app
     }
+}
+
+/// Runs the main schedules other than `PostUpdate` one system after another, on the thread that
+/// runs the schedule (the engine worker on the web). Most of their systems take microseconds, and
+/// handing each to a compute thread and waiting for it costs more than running it. `PostUpdate`
+/// stays multi-threaded: its systems (transform propagation, visibility) are large enough to gain
+/// from the compute threads.
+fn run_small_schedules_in_order(app: &mut App) {
+    use bevy::{
+        app::{RunFixedMainLoop, SpawnScene},
+        ecs::schedule::{ExecutorKind, Schedule},
+    };
+
+    let in_order = |schedule: &mut Schedule| {
+        schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+    };
+    app.edit_schedule(PreUpdate, in_order)
+        .edit_schedule(RunFixedMainLoop, in_order)
+        .edit_schedule(Update, in_order)
+        .edit_schedule(SpawnScene, in_order)
+        .edit_schedule(Last, in_order);
 }
 
 fn save_fresh_user_id(config: Res<AppConfig>) {
@@ -759,7 +868,7 @@ fn setup(
             )),
             Visibility::default(),
             config.player_settings.clone(),
-            OutOfWorld,
+            OutOfWorld::default(),
             AvatarDynamicState::default(),
             HeadSync::default(),
             PointAtSync::default(),
@@ -768,7 +877,10 @@ fn setup(
         ))
         .id();
     if boot_location.explicit {
-        commands.insert_resource(RealmInitialLocation::Parcel(boot_location.parcel));
+        commands.insert_resource(RealmInitialLocation::Parcel {
+            parcel: boot_location.parcel,
+            spawn_point: None,
+        });
     }
 
     // add a camera
@@ -783,6 +895,9 @@ fn setup(
                 ..Default::default()
             },
             default_camera_components(),
+            // the jump marker projects onto the depth prepass; the graphics settings add the
+            // normal prepass while the avatar outline is on
+            DepthPrepass,
             Projection::from(PerspectiveProjection {
                 far: 100000.0,
                 ..Default::default()
@@ -846,7 +961,13 @@ fn update_app_config_from_arguments(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> PluginGroupBuilder {
-    let compute_threads = decentraland_app_config.arguments.client.compute_threads;
+    // Compute runs both worlds' parallel systems and `par_iter` work, so it is sized from the core
+    // count, not from what IO and async leave over (bevy assigns those first).
+    let compute_threads = decentraland_app_config
+        .arguments
+        .client
+        .compute_threads
+        .unwrap_or_else(|| (bevy::tasks::available_parallelism() / 2).clamp(2, 8));
     DefaultPlugins
         .set(TaskPoolPlugin {
             task_pool_options: TaskPoolOptions {
@@ -865,8 +986,8 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
                     on_thread_destroy: None,
                 },
                 compute: TaskPoolThreadAssignmentPolicy {
-                    min_threads: compute_threads.unwrap_or(2),
-                    max_threads: compute_threads.unwrap_or(8),
+                    min_threads: compute_threads,
+                    max_threads: compute_threads,
                     percent: 0.25,
                     on_thread_spawn: None,
                     on_thread_destroy: None,

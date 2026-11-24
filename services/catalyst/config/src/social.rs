@@ -2,6 +2,30 @@
 
 use clap::Args;
 
+/// `CAST_PRESENTER_PUBLIC_URL` as upstream reads its `PUBLIC_BASE_URL`
+/// (`decentraland/cast-presenter-server` @ cae78612,
+/// `src/logic/presentation-manager/component.ts:181-187`): `https://`, or
+/// `http://` on this host, no credentials, query or fragment; the trailing
+/// `/` goes. A blank value stays blank: `Config::non_empty` reads it as unset.
+fn cast_presenter_public_url(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let url = url::Url::parse(raw).map_err(|e| e.to_string())?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    let plain = url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none();
+    if !plain || !(url.scheme() == "https" || url.scheme() == "http" && local) {
+        return Err(
+            "must be an https:// URL (http:// only for localhost) with no credentials, query or fragment"
+                .into(),
+        );
+    }
+    Ok(url.as_str().trim_end_matches('/').into())
+}
+
 // @well-known-components/env-config-provider getNumber uses parseFloat,
 // including numeric prefixes and Infinity, and rejects NaN.
 fn source_number(raw: &str) -> Result<f64, String> {
@@ -93,6 +117,24 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
         ));
     }
     Ok(value as usize)
+}
+
+/// Upstream's presence badge defaults (the badges processor's environment),
+/// shared with `badges::presence::Settings::default()`.
+pub mod presence_badges {
+    pub const GRANT_NOTIFICATIONS: bool = true;
+    pub const EARLY_JOIN_LOOKAHEAD_SECONDS: u64 = 21_600;
+    pub const OPEN_VISIT_CHECK_AFTER_SECONDS: u64 = 900;
+    pub const OPEN_VISIT_MAX_AGE_SECONDS: u64 = 86_400;
+    pub const APPLIED_EVENTS_TTL_SECONDS: u64 = 604_800;
+    pub const ABSENT_EXPIRE_AFTER_SECONDS: u64 = 3_600;
+    pub const SWEEP_INTERVAL_SECONDS: u64 = 60;
+    pub const SWEEP_BATCH_SIZE: u32 = 100;
+    pub const PRUNE_BATCH_SIZE: u32 = 1_000;
+    pub const SWEEPER_ENABLED: bool = true;
+    /// The longest a presence duration setting may be (30 days).
+    pub const MAX_SECONDS: u64 = 2_592_000;
+    pub const MAX_BATCH_SIZE: i64 = 100_000;
 }
 
 /// Social: communities, the social RPC, comms, notifications, badges, media and profile images.
@@ -189,13 +231,11 @@ pub struct SocialConfig {
     #[arg(long, env = "RESTRICTED_NAMES", default_value = "")]
     pub restricted_names: String,
 
-    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL.
+    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL. Emitted URLs carry
+    /// `?v=<hash>` and are long-cached: a caching CDN here must key on the `v` parameter only
+    /// and strip other query parameters.
     #[arg(long, env = "COMMUNITIES_CDN_URL")]
     pub communities_cdn_url: Option<String>,
-
-    /// Archipelago stats base URL for the onlyOnline member filter; unset renders everyone offline.
-    #[arg(long, env = "ARCHIPELAGO_STATS_URL")]
-    pub archipelago_stats_url: Option<String>,
 
     /// Require places added to a community to be owned by the caller per the mirrored places catalogue
     /// (on by default, as upstream always checks; `false` skips the check).
@@ -460,12 +500,34 @@ pub struct SocialConfig {
     #[arg(long, env = "LIVEKIT_ALLOW_DEV_CREDS", default_value_t = false, action = clap::ArgAction::Set)]
     pub livekit_allow_dev_creds: bool,
 
+    /// The `cast-bot` binary each Cast presentation runs (services/catalyst/cast-bot);
+    /// unset answers 503 on `/cast-presenter-service/presentations`.
+    #[arg(long, env = "CAST_BOT_BIN")]
+    pub cast_bot_bin: Option<std::path::PathBuf>,
+
+    /// Cast presentations running at once on this node; 0 is unlimited.
+    #[arg(long, env = "MAX_CONCURRENT_PRESENTATIONS", default_value_t = 10)]
+    pub max_concurrent_presentations: usize,
+
+    /// The Cast presenter's routes as clients reach them. With it, a
+    /// presentation serves its slides as pictures there and its bot names the
+    /// current one, for clients that compose: the Unity Explorer fetches only
+    /// from `https://cast-presenter-service.<its base domain>`. Unset or
+    /// blank, clients show the bot's slide track.
+    #[arg(long, env = "CAST_PRESENTER_PUBLIC_URL", value_parser = cast_presenter_public_url)]
+    pub cast_presenter_public_url: Option<String>,
+
     #[arg(
         long,
         env = "PRIVATE_MESSAGES_ROOM_ID",
         default_value = "private-messages"
     )]
     pub private_messages_room_id: String,
+
+    /// Give a local preview scene (a `b64-` id or a `preview`/`localpreview`
+    /// realm) a Genesis scene token without a deployed scene behind it.
+    #[arg(long, env = "ALLOW_LOCAL_PREVIEW", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_local_preview: bool,
 
     /// The one wallet that may mint the authoritative-server host token; unset refuses /get-server-scene-adapter.
     #[arg(long, env = "AUTHORITATIVE_SERVER_ADDRESS")]
@@ -475,9 +537,29 @@ pub struct SocialConfig {
     #[arg(long, env = "MODERATOR_TOKEN", hide_env_values = true)]
     pub moderator_token: Option<String>,
 
-    /// Comma/space-separated wallets allowed on the user-moderation routes by signed fetch.
+    /// Comma/space-separated wallets allowed on the user-moderation routes by signed fetch,
+    /// only while no `platform_user_moderators` flag document (`FF_URL`) is held.
     #[arg(long, env = "PLATFORM_USER_MODERATORS", default_value = "")]
     pub platform_user_moderators: String,
+
+    /// Report evidence the node accepts in 24 hours from all wallets and
+    /// addresses, in MiB of declared size: the files it holds and, for a
+    /// quarter hour each, the files a presign declared. At the cap a presign
+    /// is refused and 0 accepts none; one client address takes at most a
+    /// sixteenth of it. The default is a policy, not a measurement: it
+    /// is how much store space the operator gives to reports a day, and no
+    /// load test or disk size produced it.
+    #[arg(long, env = "REPORT_EVIDENCE_DAILY_MIB", default_value_t = 2048)]
+    pub report_evidence_daily_mib: u32,
+
+    /// The Cast 2.0 web app whose `/s/{key}` and `/w/{location}` pages the
+    /// stream links of `/cast/generate-stream-link` name.
+    #[arg(
+        long,
+        env = "CAST2_URL",
+        default_value = "https://cast2.decentraland.org"
+    )]
+    pub cast2_url: String,
 
     /// Service token in front of the voice routes, the DM privacy patch and
     /// the world ban status; unset answers 503 on them.
@@ -489,9 +571,11 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
-    /// The linker-server lease document (`[{addresses, plots}]`) whose
-    /// holders administer the scenes on their plots (the mirror posture's:
-    /// Decentraland's published list); empty lists no lease holder.
+    /// The linker-server lease document (`[{addresses, plots, startDate?,
+    /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
+    /// plots while an entry is within its dates (`onlyDev` entries only on a
+    /// Sepolia `ETH_NETWORK`; the mirror posture's: Decentraland's published
+    /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,
 
@@ -536,12 +620,30 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_API_KEY", hide_env_values = true)]
     pub sendgrid_api_key: Option<String>,
 
+    /// SendGrid's API origin; `/v3/mail/send` is appended. Empty means no SendGrid.
+    #[arg(
+        long,
+        env = "SENDGRID_API_URL",
+        default_value = "https://api.sendgrid.com"
+    )]
+    pub sendgrid_api_url: String,
+
+    /// Read through [`SocialConfig::sendgrid_sender`], which falls back to `SENDGRID_EMAIL_FROM`.
     #[arg(long, env = "SENDGRID_FROM_EMAIL")]
     pub sendgrid_from_email: Option<String>,
 
-    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset records every delivery as skipped.
+    /// Upstream's name for SENDGRID_FROM_EMAIL, used when that is unset.
+    #[arg(long, env = "SENDGRID_EMAIL_FROM")]
+    pub sendgrid_email_from: Option<String>,
+
+    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset holds every delivery pending.
+    /// Read through [`SocialConfig::sendgrid_template_id`], which falls back to `SENDGRID_EMAIL_TEMPLATE_ID`.
     #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
     pub sendgrid_notification_template_id: Option<String>,
+
+    /// Upstream's name for SENDGRID_NOTIFICATION_TEMPLATE_ID, used when that is unset.
+    #[arg(long, env = "SENDGRID_EMAIL_TEMPLATE_ID")]
+    pub sendgrid_email_template_id: Option<String>,
 
     /// The account confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
     #[arg(long, env = "SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID")]
@@ -593,11 +695,23 @@ pub struct SocialConfig {
     #[arg(long, env = "NOTIFICATIONS_REWARDS_TOKEN", hide_env_values = true)]
     pub notifications_rewards_token: Option<String>,
 
-    /// Cloudflare Turnstile secret for confirm-email; unset turns the check off.
+    /// Cloudflare Turnstile secret for confirm-email; the check runs while it is set and the
+    /// `dapps-turnstile-verification` flag is on.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]
     pub turnstile_secret_key: Option<String>,
 
-    /// Comma-separated email domains refused by set-email.
+    /// The disposable email domain list set-email and confirm-email refuse, fetched hourly; empty
+    /// (the default outside the mirror posture) fetches none.
+    #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_URL", default_value = "")]
+    pub disposable_email_domains_url: String,
+
+    /// A disposable list download with fewer domains is treated as broken and the previous list
+    /// kept. The upstream list holds thousands; lower it for a shorter list of your own.
+    #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_MIN", default_value_t = 1000)]
+    pub disposable_email_domains_min: usize,
+
+    /// Comma-separated email domains refused by set-email and confirm-email, on top of the
+    /// disposable-domain list and the `dapps-credits-blacklisted-domains` flag variant.
     #[arg(long, env = "EMAIL_DOMAIN_BLACKLIST", default_value = "")]
     pub email_domain_blacklist: String,
 
@@ -615,6 +729,14 @@ pub struct SocialConfig {
     #[arg(long, env = "FIRST_WEAR_IMAGE_BASE")]
     pub first_wear_image_base: Option<String>,
 
+    /// Base of the notification icons (upstream `CDN_URL`), e.g. `<base>/credits/notification-icon.png`.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_CDN_URL",
+        default_value = "https://assets-cdn.decentraland.org"
+    )]
+    pub notifications_cdn_url: String,
+
     /// Tick of the notification outbox worker.
     #[arg(
         long,
@@ -623,11 +745,11 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_interval_secs: u64,
 
-    /// Days a producer broadcast stays in every inbox before it is hidden and pruned.
+    /// Days a producer broadcast stays in every inbox before it is hidden and pruned; 0 keeps them forever.
     #[arg(
         long,
         env = "NOTIFICATIONS_BROADCAST_HORIZON_DAYS",
-        default_value_t = 90
+        default_value_t = 0
     )]
     pub notifications_broadcast_horizon_days: u64,
     /// Pending notification emails idle this long end skipped as expired (default 7 days;
@@ -639,21 +761,92 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_max_age_secs: u64,
 
-    // social/badges: the old catalyrst-badges settings (the art is embedded).
-    /// Bearer of the badge grant/revoke routes; unset refuses them.
+    // social/badges.
+    /// Bearer of the badge admin routes (read, grant, revoke); unset refuses them.
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_badges_admin_token: Option<String>,
 
+    /// The base every badge asset path resolves against: upstream's CDN, so
+    /// the URLs are upstream's. `<node>/badges/assets` serves BADGES_ASSETS_DIR.
     #[arg(
         long,
         env = "BADGES_PUBLIC_ASSET_BASE_URL",
-        default_value = "https://badges.decentraland.org"
+        default_value = "https://assets-cdn.decentraland.org"
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Files here override the embedded badge art one by one.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`)
+    /// or uploaded by the admin `PUT`, served at /badges/assets; a shared
+    /// volume when several processes serve the badges routes.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
+
+    /// Run the badge processor (leased: the primary only, and only while
+    /// social writes are enabled): it reads social.client_events,
+    /// content.deployments, the Polygon shop logs and mirrors and the accepted
+    /// referrals, and grants upstream's evaluated badges with their
+    /// badge_granted notifications. Off by default: a node opts in once its
+    /// sources are current (the cursors start at the head when it does).
+    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_processor_enabled: bool,
+
+    /// Rows (or recounted wallets) the badge processor writes per transaction.
+    #[arg(long, env = "BADGES_PROCESSOR_BATCH_SIZE", default_value_t = 200)]
+    pub badges_processor_batch_size: u32,
+
+    /// Upstream's EVENT_PROCESSING_MAX_AGE_IN_SECONDS: the badge processor
+    /// passes, without effect, an event (client event, deployment, sale)
+    /// older than this many seconds by its own time; 0 keeps every event.
+    #[arg(long, env = "BADGES_EVENT_MAX_AGE_SECS", default_value_t = 0)]
+    pub badges_event_max_age_secs: u64,
+
+    /// A deployment the node stored more than this many seconds after its
+    /// entity timestamp is history a syncing node caught up on: the badge
+    /// processor passes it without effect; 0 (the default, as upstream had
+    /// no such filter) keeps every deployment.
+    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 0)]
+    pub badges_deployment_max_lag_secs: u64,
+    /// A presence grant writes its badge_granted notification; false
+    /// grants without one.
+    #[arg(long, env = "BADGES_PRESENCE_GRANT_NOTIFICATIONS", default_value_t = presence_badges::GRANT_NOTIFICATIONS, action = clap::ArgAction::Set)]
+    pub badges_presence_grant_notifications: bool,
+
+    /// A join this long before a badge's window opens is kept (0: none).
+    #[arg(long, env = "BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", default_value_t = presence_badges::EARLY_JOIN_LOOKAHEAD_SECONDS, value_parser = clap::value_parser!(u64).range(0..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_early_join_lookahead_seconds: u64,
+
+    /// A visit open this long is checked against the LiveKit occupancy.
+    #[arg(long, env = "BADGES_PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS", default_value_t = presence_badges::OPEN_VISIT_CHECK_AFTER_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_open_visit_check_after_seconds: u64,
+
+    /// A connection open longer, or a join-to-leave stretch longer, proves no time.
+    #[arg(long, env = "BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", default_value_t = presence_badges::OPEN_VISIT_MAX_AGE_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_open_visit_max_age_seconds: u64,
+
+    /// How long applied events, pending leaves and absences are kept.
+    #[arg(long, env = "BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS", default_value_t = presence_badges::APPLIED_EVENTS_TTL_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_applied_events_ttl_seconds: u64,
+
+    /// How long a visit unconfirmed by the occupancy waits for a late leave.
+    #[arg(long, env = "BADGES_PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS", default_value_t = presence_badges::ABSENT_EXPIRE_AFTER_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_absent_expire_after_seconds: u64,
+
+    /// Interval of the badges-presence-sweep job.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS", default_value_t = presence_badges::SWEEP_INTERVAL_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_sweep_interval_seconds: u64,
+
+    /// Visits the sweeper checks per pass.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEP_BATCH_SIZE", default_value_t = presence_badges::SWEEP_BATCH_SIZE, value_parser = clap::value_parser!(u32).range(1..=presence_badges::MAX_BATCH_SIZE))]
+    pub badges_presence_sweep_batch_size: u32,
+
+    /// Rows pruned per table per batch.
+    #[arg(long, env = "BADGES_PRESENCE_PRUNE_BATCH_SIZE", default_value_t = presence_badges::PRUNE_BATCH_SIZE, value_parser = clap::value_parser!(u32).range(1..=presence_badges::MAX_BATCH_SIZE))]
+    pub badges_presence_prune_batch_size: u32,
+
+    /// false stops only the occupancy checks; the maximum age and the
+    /// pruning still run.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEPER_ENABLED", default_value_t = presence_badges::SWEEPER_ENABLED, action = clap::ArgAction::Set)]
+    pub badges_presence_sweeper_enabled: bool,
 
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
@@ -825,6 +1018,39 @@ pub struct RoomAuthorityConfig {
     pub pulse_room_authority_key: Option<String>,
 }
 
+/// The community-chat message router's token route (`comms::gatekeeper::message_router`).
+#[derive(Args, Clone)]
+pub struct MessageRouterConfig {
+    /// 32 base64url bytes without padding (or _FILE), distinct from the
+    /// LiveKit secret; the message router process holds the same value. Unset,
+    /// POST /internal/message-router/token/v1 is not mounted and community
+    /// chat is not routed.
+    #[arg(long, env = "MESSAGE_ROUTER_KEY", hide_env_values = true)]
+    pub message_router_key: Option<String>,
+
+    /// The router's LiveKit identity is `<prefix>-<replica>`. The Explorer
+    /// addresses `message-router-dev-0`, or `message-router-prd-0` when its
+    /// base domain is decentraland.org. Required with MESSAGE_ROUTER_KEY, so
+    /// a node never mints an identity its Explorers do not trust.
+    #[arg(long, env = "MESSAGE_ROUTER_IDENTITY_PREFIX")]
+    pub message_router_identity_prefix: Option<String>,
+}
+
+impl std::fmt::Debug for MessageRouterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageRouterConfig")
+            .field(
+                "message_router_key",
+                &self.message_router_key.as_ref().map(|_| "<set>"),
+            )
+            .field(
+                "message_router_identity_prefix",
+                &self.message_router_identity_prefix,
+            )
+            .finish()
+    }
+}
+
 /// A finite number above zero (upstream refuses to start otherwise).
 fn positive(raw: &str) -> Result<f64, String> {
     match raw.parse::<f64>() {
@@ -892,6 +1118,28 @@ impl SocialConfig {
     }
 }
 
+impl SocialConfig {
+    /// SENDGRID_FROM_EMAIL, else upstream's SENDGRID_EMAIL_FROM; empty counts as unset.
+    pub fn sendgrid_sender(&self) -> Option<&str> {
+        first_set(&self.sendgrid_from_email, &self.sendgrid_email_from)
+    }
+
+    /// SENDGRID_NOTIFICATION_TEMPLATE_ID, else upstream's SENDGRID_EMAIL_TEMPLATE_ID; empty counts as unset.
+    pub fn sendgrid_template_id(&self) -> Option<&str> {
+        first_set(
+            &self.sendgrid_notification_template_id,
+            &self.sendgrid_email_template_id,
+        )
+    }
+}
+
+fn first_set<'a>(primary: &'a Option<String>, alias: &'a Option<String>) -> Option<&'a str> {
+    [primary, alias]
+        .into_iter()
+        .filter_map(|v| v.as_deref())
+        .find(|v| !v.is_empty())
+}
+
 impl std::fmt::Debug for SocialConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SocialConfig").finish_non_exhaustive()
@@ -903,6 +1151,34 @@ mod tests {
     use crate::config::Config;
 
     const BASE: [(&str, &str); 1] = [("DATABASE_URL", "postgres:///catalyst")];
+
+    #[test]
+    fn the_cast_presenter_public_url_is_secure_and_plain() {
+        let read = super::cast_presenter_public_url;
+        for (raw, base) in [
+            ("https://Cast.example.org:443/", "https://cast.example.org"),
+            ("https://example.org/cast//", "https://example.org/cast"),
+            ("http://127.0.0.1:5141/x", "http://127.0.0.1:5141/x"),
+            ("http://localhost:5141", "http://localhost:5141"),
+            ("http://[::1]:5141", "http://[::1]:5141"),
+        ] {
+            assert_eq!(read(raw).as_deref(), Ok(base));
+        }
+        for raw in [
+            "http://example.org",
+            "https://user@example.org",
+            "https://example.org/?a=1",
+            "https://example.org/#slides",
+            "ftp://localhost",
+            "example.org",
+        ] {
+            assert!(read(raw).is_err(), "{raw}");
+        }
+        for blank in ["", " "] {
+            let set = social(&[("CAST_PRESENTER_PUBLIC_URL", blank)]).unwrap();
+            assert_eq!(Config::non_empty(&set.cast_presenter_public_url), None);
+        }
+    }
 
     #[test]
     fn http_body_cap_uses_executed_source_boot_rules() {
@@ -940,6 +1216,64 @@ mod tests {
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn presence_badge_settings_are_bounded() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(
+            defaults.badges_presence_early_join_lookahead_seconds,
+            super::presence_badges::EARLY_JOIN_LOOKAHEAD_SECONDS
+        );
+        assert_eq!(
+            social(&[("BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", "0")])
+                .unwrap()
+                .badges_presence_early_join_lookahead_seconds,
+            0
+        );
+        for (name, invalid) in [
+            ("BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", "2592001"),
+            (
+                "BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS",
+                "18446744073709551615",
+            ),
+            ("BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", "0"),
+            ("BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS", "2592001"),
+            ("BADGES_PRESENCE_PRUNE_BATCH_SIZE", "100001"),
+        ] {
+            assert!(social(&[(name, invalid)]).is_err(), "{name}={invalid}");
+        }
+    }
+
+    #[test]
+    fn sendgrid_accepts_upstreams_variable_names_as_fallbacks() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(defaults.sendgrid_sender(), None);
+        assert_eq!(defaults.sendgrid_template_id(), None);
+        assert_eq!(defaults.sendgrid_api_url, "https://api.sendgrid.com");
+        let upstream = social(&[
+            ("SENDGRID_EMAIL_FROM", "from@example.com"),
+            ("SENDGRID_EMAIL_TEMPLATE_ID", "d-upstream"),
+            ("SENDGRID_API_URL", "https://sendgrid.example"),
+        ])
+        .unwrap();
+        assert_eq!(upstream.sendgrid_sender(), Some("from@example.com"));
+        assert_eq!(upstream.sendgrid_template_id(), Some("d-upstream"));
+        assert_eq!(upstream.sendgrid_api_url, "https://sendgrid.example");
+        let both = social(&[
+            ("SENDGRID_FROM_EMAIL", "own@example.com"),
+            ("SENDGRID_EMAIL_FROM", "from@example.com"),
+            ("SENDGRID_NOTIFICATION_TEMPLATE_ID", ""),
+            ("SENDGRID_EMAIL_TEMPLATE_ID", "d-upstream"),
+        ])
+        .unwrap();
+        assert_eq!(both.sendgrid_sender(), Some("own@example.com"));
+        assert_eq!(both.sendgrid_template_id(), Some("d-upstream"));
+    }
+
+    #[test]
+    fn broadcasts_are_kept_forever_by_default() {
+        assert_eq!(social(&[]).unwrap().notifications_broadcast_horizon_days, 0);
     }
 
     #[test]

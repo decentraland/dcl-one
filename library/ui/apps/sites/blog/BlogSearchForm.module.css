@@ -1,0 +1,130 @@
+.form {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  border-radius: var(--dcl-radius-full);
+  color: var(--dcl-neutrals-gray);
+}
+
+.bar .field {
+  width: 362px;
+  padding: 7px var(--dcl-space-12);
+  border: 1px solid var(--dcl-neutrals-gray);
+  background: var(--dcl-transparencies-white-10);
+}
+
+.outline .field {
+  padding: 11px var(--dcl-space-16);
+  border: 1px solid var(--dcl-border-default);
+}
+
+.field:focus-within {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.icon {
+  flex: none;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dcl-text-primary);
+  font: inherit;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 26px;
+  letter-spacing: -0.2px;
+}
+
+.input::placeholder {
+  color: var(--dcl-neutrals-gray);
+  opacity: 1;
+}
+
+.input:focus {
+  outline: none;
+}
+
+@media (max-width: 1023px) {
+  .bar .field {
+    width: 200px;
+  }
+}
+
+.bar {
+  position: relative;
+}
+
+.enhanced::-webkit-search-cancel-button {
+  display: none;
+}
+
+.clear {
+  flex: none;
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  padding: 0;
+  background: transparent;
+  color: var(--dcl-text-primary);
+  font: inherit;
+  font-size: var(--dcl-font-size-body-lg);
+  cursor: pointer;
+}
+
+.clear:hover {
+  background: var(--dcl-transparencies-white-10);
+}
+
+.preview {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + var(--dcl-space-8));
+  right: 0;
+  width: min(420px, calc(100vw - var(--dcl-space-32)));
+  overflow: hidden;
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface-raised);
+}
+
+.option,
+.status {
+  display: block;
+  padding: var(--dcl-space-12);
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.option:hover,
+.option[aria-selected='true'] {
+  background: var(--dcl-transparencies-white-10);
+}
+
+.more {
+  border-top: 1px solid var(--dcl-border-default);
+  text-align: center;
+  font-weight: 600;
+}

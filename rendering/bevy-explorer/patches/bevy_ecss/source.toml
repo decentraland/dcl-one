@@ -1,0 +1,13 @@
+name       = "bevy_ecss"
+upstream   = "https://github.com/afonsolage/bevy_ecss"
+commit     = "ea1ef7bd5eab5fff289c7426018ecc8ab5669823"
+ref        = "main"
+origin     = "https://github.com/robtfm/bevy_ecss"
+origin_rev = "1192869a8a56d3fe9e7812215b71fcdcd1093d99"
+license    = "MIT OR Apache-2.0"
+paths      = ["."]
+exclude    = [".github"]
+base_tree  = "96903a095b805fa90ca471831b0c6cfb90c70539"
+tree       = "681075f5aaca044952b7bc7854855f8689ac251e"
+rev        = "da37b8fbfd7d2561257254f4ae9370ca33a71acb"
+nix_hash   = "sha256-aZ1zwsvBClX7+2fOWgxPzMvW8g/2FK9q6ZEWJ3/H/4s="

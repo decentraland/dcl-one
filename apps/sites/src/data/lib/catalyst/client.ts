@@ -1,5 +1,5 @@
 import type { AuthIdentity, SignedFetchMetadata } from "../auth/types";
-import { catalystUrl, publicWorldsUrl, worldsUrl } from "./bases";
+import { catalystUrl, worldsUrl } from "./bases";
 
 async function signedFetch(
   ...args: Parameters<typeof import("../auth/signer").signedFetch>
@@ -48,13 +48,7 @@ export function worldsBase(override?: string): string {
   return worldsUrl(override);
 }
 
-/** The worlds origin browsers can reach. `worldsBase()` may point the server at a loopback
-    twin (WORLDS_URL); links and thumbnails that ship to the page must not. */
-export function publicWorldsBase(): string {
-  return publicWorldsUrl();
-}
-
-export type QueryValue = string | number | boolean | undefined | null;
+export type QueryValue = string | number | boolean | readonly string[] | undefined | null;
 export type Query = Record<string, QueryValue>;
 
 export function buildQuery(query?: Query): string {
@@ -62,7 +56,11 @@ export function buildQuery(query?: Query): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null || value === "") continue;
-    params.set(key, String(value));
+    if (Array.isArray(value)) {
+      for (const item of value) if (item) params.append(key, item);
+    } else {
+      params.set(key, String(value));
+    }
   }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
@@ -73,6 +71,8 @@ export type GetOptions = {
   query?: Query;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /** Retain the server message for endpoints with a structured error contract. */
+  readErrorBody?: boolean;
   cache?: RequestCache;
   headers?: Record<string, string>;
 };
@@ -85,6 +85,7 @@ async function fetchText(
   url: string,
   init: RequestInit,
   doFetch: typeof fetch,
+  readErrorBody: boolean,
 ): Promise<Fetched> {
   let res: Response;
   try {
@@ -96,6 +97,7 @@ async function fetchText(
     );
   }
   if (!res.ok) {
+    if (readErrorBody) throw await errorFromResponse(res, url);
     await res.body?.cancel().catch(() => {});
     throw new CatalystError(
       `Catalyst returned ${res.status} ${res.statusText}`,
@@ -120,18 +122,19 @@ function fetchShared(
   init: RequestInit,
   doFetch: typeof fetch,
   signal: AbortSignal | undefined,
+  readErrorBody: boolean,
 ): Promise<Fetched> {
-  if (!signal) return fetchText(url, init, doFetch);
+  if (!signal) return fetchText(url, init, doFetch, readErrorBody);
   let perRequest = inflightByRequest.get(signal);
   if (!perRequest) {
     perRequest = new Map();
     inflightByRequest.set(signal, perRequest);
   }
-  const key = `${url}\0${init.cache ?? ""}\0${JSON.stringify(init.headers ?? {})}`;
+  const key = `${url}\0${init.cache ?? ""}\0${JSON.stringify(init.headers ?? {})}\0${readErrorBody}`;
   const pending = perRequest.get(key);
   if (pending) return pending;
   const map = perRequest;
-  const p = fetchText(url, init, doFetch).finally(() => {
+  const p = fetchText(url, init, doFetch, readErrorBody).finally(() => {
     map.delete(key);
   });
   map.set(key, p);
@@ -153,6 +156,7 @@ export async function getJSON<T>(path: string, opts: GetOptions = {}): Promise<T
     },
     doFetch,
     opts.signal,
+    opts.readErrorBody ?? false,
   );
 
   try {
@@ -168,7 +172,7 @@ export async function getJSON<T>(path: string, opts: GetOptions = {}): Promise<T
 
 export type PostOptions = {
   identity: AuthIdentity;
-  method?: "POST" | "PATCH" | "DELETE";
+  method?: "POST" | "PUT" | "PATCH" | "DELETE";
   base?: string;
   query?: Query;
   signal?: AbortSignal;
@@ -221,6 +225,27 @@ export async function signedGetJSON<T>(
       res.status,
     );
   }
+}
+
+/** An unsigned JSON `POST` for the node's public batch reads (`/lambdas/profiles`, `/content/entities/active`). */
+export async function postPublicJSON(
+  path: string,
+  body: unknown,
+  opts: GetOptions & { allowEmpty?: boolean } = {},
+): Promise<unknown> {
+  const url = `${catalystBase(opts.base)}${path}`;
+  const { text } = await fetchText(
+    url,
+    {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    opts.fetchImpl ?? fetch,
+    true,
+  );
+  return opts.allowEmpty && !text ? undefined : JSON.parse(text);
 }
 
 export async function postJSON<T>(

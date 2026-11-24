@@ -117,6 +117,22 @@ pub(crate) mod support {
         };
     }
     pub(crate) use require_test_db;
+
+    /// The transactions queued (not yet granted) on the store lock in `mode`
+    /// (`ShareLock` or `ExclusiveLock`) in `pool`'s database.
+    pub async fn store_lock_waiters(pool: &sqlx::PgPool, mode: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT virtualtransaction FROM pg_locks \
+             WHERE locktype = 'advisory' AND mode = $2 AND NOT granted \
+               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND (classid::bigint << 32 | objid::bigint) = $1",
+        )
+        .bind(crate::storage::gc::STORE_LOCK_KEY)
+        .bind(mode)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
 }
 
 /// Fixtures whose answer comes out of Postgres (an empty one): skipped
@@ -271,11 +287,13 @@ async fn edge_case_fixtures_replay_exactly() {
     // The write fixture is a node that takes deploys (upstream outside `READ_ONLY`).
     node.state.attach_writes(
         true,
-        std::sync::Arc::new(super::write_deployer::WriteDeployer::with_optional_eip1654(
-            node.state.pool.clone(),
-            node.state.storage.clone(),
-            None,
-        )),
+        std::sync::Arc::new(
+            super::write_deployer::WriteDeployer::with_partial_validation_for_tests(
+                node.state.pool.clone(),
+                node.state.storage.clone(),
+                None,
+            ),
+        ),
     );
 
     let mut failures = Vec::new();
@@ -300,6 +318,25 @@ async fn edge_case_fixtures_replay_exactly() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[tokio::test]
+async fn lambdas_about_uses_the_public_lambdas_policy() {
+    let node = TestNode::without_db("lambdas-about-cors").await;
+    for method in ["GET", "OPTIONS"] {
+        let (_, headers, _) = send(
+            node.router(),
+            Request::builder()
+                .method(method)
+                .uri("/lambdas/about")
+                .header(header::ORIGIN, "https://example.org")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+    }
 }
 
 async fn get_json(router: Router, uri: &str) -> (StatusCode, Value) {
@@ -403,6 +440,11 @@ async fn about_and_status_report_the_sync_state_honestly() {
         body["synchronizationStatus"]["synchronizationState"],
         "Failed"
     );
+    // `/about` is healthy only while `Syncing`: a failed sync is a 503 there.
+    let (status, body) = get_json(node.router(), "/about").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["healthy"], false);
+    assert_eq!(body["content"]["synchronizationStatus"], "Failed");
 }
 
 struct FakeCore(bool, u64);
@@ -512,8 +554,7 @@ async fn about_carries_the_comms_block_and_its_health_gates_the_realm() {
             "protocol": "v3",
             "commitHash": "abc",
             "usersCount": 4,
-            "adapter": "fixed-adapter:archipelago:wss://realm.example/ws",
-            "fixedAdapter": "archipelago:wss://realm.example/ws"
+            "adapter": "archipelago:archipelago:wss://realm.example/ws"
         })
     );
     assert_eq!(body["acceptingUsers"], true);
@@ -766,7 +807,7 @@ async fn every_route_outside_upstreams_cors_methods_is_exempt() {
 /// case rewrite.
 #[test]
 fn every_content_route_is_listed_once() {
-    let source = include_str!("lib.rs");
+    let source = include_str!("lib.rs").replace("\r\n", "\n");
     let body = source
         .split("fn content_routes(")
         .nth(1)
@@ -1023,8 +1064,27 @@ async fn seed_deployment_with_pointers(
     pointers: &[&str],
     ts_ms: i64,
 ) -> SeededEntity {
-    let id = format!("test-{tag}-{n}");
-    let hash = format!("test-{tag}-hash-{n}");
+    seed_deployment_as(
+        pool,
+        format!("test-{tag}-{n}"),
+        format!("test-{tag}-hash-{n}"),
+        entity_type,
+        pointers,
+        ts_ms,
+    )
+    .await
+}
+
+/// One deployment of entity `id` with one content file `hash`, active on
+/// every pointer of `pointers`.
+async fn seed_deployment_as(
+    pool: &sqlx::PgPool,
+    id: String,
+    hash: String,
+    entity_type: &str,
+    pointers: &[&str],
+    ts_ms: i64,
+) -> SeededEntity {
     let pointers: Vec<String> = pointers.iter().map(|p| p.to_string()).collect();
     let deployment_id: i32 = sqlx::query_scalar(
         "INSERT INTO content.deployments
@@ -1225,6 +1285,187 @@ async fn content_files_list_in_upstream_collation_order() {
     unseed(&pool, tag).await;
 }
 
+/// The collection listing accepts what `parseUrn` resolves to a v1 or v2
+/// collection, a third party by name or the base avatars or emotes, spelled as
+/// the client sent it; the prefix matches pointers in any letter case.
+#[tokio::test]
+async fn collection_listing_parses_the_urn_like_upstream() {
+    require_test_db!(Some(node) = TestNode::with_db("collections").await);
+    let pool = node.state.pool.clone();
+    let tag = "collections";
+    unseed(&pool, tag).await;
+    let v2 = "0x5e1c00000000000000000000000000000000beef";
+    let v1 = "0x5e1c00000000000000000000000000000000f00d";
+    let seeded = [
+        format!("urn:decentraland:matic:collections-v2:{v2}:0"),
+        format!("urn:decentraland:ethereum:collections-v1:{v1}:hat"),
+        "urn:decentraland:ethereum:collections-v1:halloween_2019:collectionstest_hat".to_string(),
+        "urn:decentraland:amoy:collections-thirdparty:collectionstest:winter:hat".to_string(),
+        "urn:decentraland:off-chain:base-avatars:collectionstest_eyes".to_string(),
+        "urn:decentraland:off-chain:base-emotes:collectionstest_wave".to_string(),
+    ];
+    let mut ids = Vec::new();
+    for (n, pointer) in seeded.iter().enumerate() {
+        let entity =
+            seed_deployment(&pool, tag, n as u32, "wearable", pointer, 1_700_000_000_000).await;
+        ids.push(entity.id);
+    }
+    let listed = |body: &Value| -> Vec<String> {
+        body["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    for (urn, id) in [
+        (
+            format!("urn:decentraland:matic:collections-v2:{v2}"),
+            &ids[0],
+        ),
+        (
+            "urn:decentraland:matic:collections-v2:0x5E1C00000000000000000000000000000000BeEf"
+                .to_string(),
+            &ids[0],
+        ),
+        (
+            format!("URN:decentraland:MATIC:collections-v2:{v2}"),
+            &ids[0],
+        ),
+        (
+            format!("urn:decentraland:ethereum:collections-v1:{v1}"),
+            &ids[1],
+        ),
+        (
+            "urn:decentraland:ethereum:collections-v1:0x5E1C00000000000000000000000000000000F00D"
+                .to_string(),
+            &ids[1],
+        ),
+        (
+            "urn:decentraland:amoy:collections-thirdparty:collectionstest".to_string(),
+            &ids[3],
+        ),
+        (
+            "urn:decentraland:off-chain:base-avatars:collectionstest_eyes".to_string(),
+            &ids[4],
+        ),
+        (
+            "urn:decentraland:off-chain:base-emotes:collectionstest_wave".to_string(),
+            &ids[5],
+        ),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{urn}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{urn}: {body}");
+        assert_eq!(body["total"], 1, "{urn}: {body}");
+        assert_eq!(listed(&body), std::slice::from_ref(id), "{urn}");
+    }
+    let (status, body) = get_json(
+        node.router(),
+        "/content/entities/active/collections/urn:decentraland:ethereum:collections-v1:halloween_2019",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(listed(&body).contains(&ids[2]), "{body}");
+
+    for urn in [
+        format!("URN:Decentraland:matic:Collections-V2:{v2}"),
+        format!("urn:decentraland:matic:collections-v2:{v2}:0"),
+        "urn:decentraland:ethereum:collections-v1:not_a_v1_collection".to_string(),
+        "urn:decentraland:ethereum:collections-thirdparty:collectionstest".to_string(),
+        "urn:decentraland:amoy:collections-thirdparty:collectionstest:winter".to_string(),
+        "urn:decentraland:off-chain:base-scene-emotes:collectionstest_wave".to_string(),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{urn}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{urn}");
+        assert_eq!(
+            body,
+            json!({"error": format!("Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '{urn}'")})
+        );
+    }
+    let (status, body) = get_json(
+        node.router(),
+        "/content/entities/active/collections/not-a-real-urn",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "Invalid URN format: not-a-real-urn"}));
+    unseed(&pool, tag).await;
+}
+
+/// A `%` or `_` in the collection URN is a literal in the pointer prefix, not
+/// a LIKE wildcard.
+#[tokio::test]
+async fn collection_listing_matches_percent_and_underscore_literally() {
+    require_test_db!(Some(node) = TestNode::with_db("likeescape").await);
+    let pool = node.state.pool.clone();
+    let tag = "likeescape";
+    unseed(&pool, tag).await;
+    let base = "urn:decentraland:off-chain:base-avatars:likeprefixtest";
+    let seeded = [
+        format!("{base}_eyes"),
+        format!("{base}xeyes"),
+        format!("{base}%25hat"),
+        format!("{base}x25hat"),
+    ];
+    let mut ids = Vec::new();
+    for (n, pointer) in seeded.iter().enumerate() {
+        let entity =
+            seed_deployment(&pool, tag, n as u32, "wearable", pointer, 1_700_000_000_000).await;
+        ids.push(entity.id);
+    }
+    // `_` sent as `%5F`, and the URN's `%25` sent as `%2525`.
+    for (path, id) in [
+        (format!("{base}%5F"), &ids[0]),
+        (format!("{base}%2525"), &ids[2]),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{path}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert_eq!(body["total"], 1, "{path}: {body}");
+        assert_eq!(body["entities"][0]["id"], json!(id), "{path}: {body}");
+    }
+    unseed(&pool, tag).await;
+}
+
+/// `parseUrn` throwing on a malformed escape inside a matched route answers
+/// "Invalid URN format"; a malformed escape in a path no route matches
+/// answers the collection sentence.
+#[tokio::test]
+async fn collection_listing_answers_a_malformed_escape_like_upstream() {
+    let node = TestNode::without_db("urnescape").await;
+    for (path, urn, error) in [
+        (
+            "urn:decentraland:off-chain:base-emotes:%25ZZ",
+            "urn:decentraland:off-chain:base-emotes:%ZZ",
+            "Invalid URN format: urn:decentraland:off-chain:base-emotes:%ZZ",
+        ),
+        (
+            "urn:decentraland:off-chain:base-emotes:%25ZZ:extra",
+            "urn:decentraland:off-chain:base-emotes:%ZZ:extra",
+            "Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: 'urn:decentraland:off-chain:base-emotes:%ZZ:extra'",
+        ),
+    ] {
+        let (status, body) = get_json(
+            node.router(),
+            &format!("/content/entities/active/collections/{path}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{urn}");
+        assert_eq!(body, json!({ "error": error }), "{urn}");
+    }
+}
+
 async fn unseed(pool: &sqlx::PgPool, tag: &str) {
     let like = format!("test-{tag}-%");
     sqlx::query("DELETE FROM content.content_files WHERE content_hash LIKE $1")
@@ -1341,7 +1582,7 @@ async fn entity_reads_over_seeded_rows() {
 
     let (status, body) = get_json(
         node.router(),
-        "/content/entities/active/collections/URN:Decentraland:matic:Collections-V2:0x000000000000000000000000000000000000CAFE",
+        "/content/entities/active/collections/URN:decentraland:MATIC:collections-v2:0x000000000000000000000000000000000000CAFE",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1439,6 +1680,89 @@ async fn a_remote_listed_entity_is_hidden_from_the_reads() {
     assert_eq!(answer["deployments"], json!([]));
 
     unseed(&pool, tag).await;
+}
+
+/// An entity id imported from the old content server's denylist file is
+/// hidden from the active-entity, `/pointer-changes` and `/deployments`
+/// reads once the projection loads the table (boot, or the reload job).
+#[tokio::test]
+async fn an_imported_entity_id_is_hidden_from_the_reads() {
+    require_test_db!(Some(node) = TestNode::with_db("filedeny").await);
+    let pool = node.state.pool.clone();
+    let id = format!("bafkreifiledeny{}", "a".repeat(44));
+    let clean = || async {
+        crate::denylist::remove(&pool, &id).await.unwrap();
+        for sql in [
+            "DELETE FROM content.active_pointers WHERE entity_id = $1",
+            "DELETE FROM content.content_files WHERE deployment IN \
+             (SELECT id FROM content.deployments WHERE entity_id = $1)",
+            "DELETE FROM content.deployments WHERE entity_id = $1",
+        ] {
+            sqlx::query(sql).bind(&id).execute(&pool).await.unwrap();
+        }
+    };
+    clean().await;
+    let ts = 1_650_000_123_000i64;
+    let scene = seed_deployment_as(
+        &pool,
+        id.clone(),
+        "test-filedeny-hash-1".into(),
+        "scene",
+        &["-7334,7334"],
+        ts,
+    )
+    .await;
+    let reads = || async {
+        let (_, by_id) = post_json(
+            node.router(),
+            "/content/entities/active",
+            json!({"ids": [id]}),
+        )
+        .await;
+        let (_, by_pointer) = post_json(
+            node.router(),
+            "/content/entities/active",
+            json!({"pointers": [scene.pointer]}),
+        )
+        .await;
+        let (_, changes) = get_json(
+            node.router(),
+            &format!("/content/pointer-changes?entityType=scene&from={ts}&to={ts}"),
+        )
+        .await;
+        let (_, deployments) = get_json(
+            node.router(),
+            &format!("/content/deployments?entityId={id}"),
+        )
+        .await;
+        [
+            by_id.as_array().unwrap().len(),
+            by_pointer.as_array().unwrap().len(),
+            changes["deltas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|d| d["entityId"] == id.as_str())
+                .count(),
+            deployments["deployments"].as_array().unwrap().len(),
+        ]
+    };
+    assert_eq!(reads().await, [1, 1, 1, 1]);
+
+    let out = crate::denylist::import_file(
+        &pool,
+        format!("{id}\n").as_bytes(),
+        "0x00000000000000000000000000000000000000aa",
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.imported, 1);
+    node.state.load_denylist().await.unwrap();
+    // The history reads' answers are cached for DEPLOYMENTS_CACHE_TTL.
+    node.state.deployments_cache.clear();
+    assert_eq!(reads().await, [0, 0, 0, 0]);
+
+    clean().await;
 }
 
 #[tokio::test]
@@ -1674,4 +1998,89 @@ async fn history_reads_over_seeded_rows() {
     assert!(body.as_array().unwrap().len() <= 1);
 
     unseed(&pool, tag).await;
+}
+
+#[tokio::test]
+async fn ordinary_content_routes_keep_value_metadata_projection() {
+    let node = TestNode::with_db("ordered-metadata")
+        .await
+        .expect("test database required");
+    let pool = &node.state.pool;
+    let id = format!("ordered-{}", uuid::Uuid::new_v4());
+    let pointer = id.to_lowercase();
+    let metadata = r#"{"v":{"z":1,"a":2,"nested":{"z":true,"a":null}}}"#;
+    sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2::json,to_timestamp(1),$3,to_timestamp(1),'[]'::json)")
+        .bind(&id).bind(metadata).bind(vec![pointer.clone()]).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(&pointer).bind(&id).execute(pool).await.unwrap();
+    let expected = format!(
+        r#"{{"id":"{id}","type":"scene","pointers":["{pointer}"],"content":[],"version":"v3","timestamp":1000,"metadata":{{"a":2,"nested":{{"a":null,"z":true}},"z":1}}}}"#
+    );
+    for selector in [
+        json!({"pointers":[pointer.to_uppercase(),pointer]}),
+        json!({"ids":[id]}),
+    ] {
+        for path in ["/entities/active", "/content/entities/active"] {
+            let (status, _, body) = send(
+                node.router(),
+                Request::post(path)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(selector.to_string()))
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(String::from_utf8(body).unwrap(), format!("[{expected}]"));
+        }
+    }
+    let ids = vec![id.clone()];
+    let pointers = vec![pointer.to_uppercase(), pointer.clone()];
+    let columns = crate::queries::MaskedColumns {
+        content: true,
+        metadata: true,
+    };
+    for docs in [
+        crate::queries::active_entity_docs_by_ids(pool, &ids)
+            .await
+            .unwrap(),
+        crate::queries::masked_entity_docs_by_ids(pool, &ids, columns)
+            .await
+            .unwrap(),
+        crate::queries::masked_entity_docs_by_pointers(pool, &pointers, columns)
+            .await
+            .unwrap(),
+        crate::queries::active_entity_docs_by_prefix(pool, &pointer, 0, 10)
+            .await
+            .unwrap()
+            .entities,
+    ] {
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].json.as_ref(), expected.as_bytes());
+    }
+    let ordered =
+        crate::queries::active_entity_docs_with_ordered_metadata_by_pointers(pool, &pointers)
+            .await
+            .unwrap();
+    assert_eq!(ordered.len(), 1);
+    assert_eq!(ordered[0].id, id);
+    assert!(
+        std::str::from_utf8(&ordered[0].json)
+            .unwrap()
+            .ends_with(r#""metadata":{"z":1,"a":2,"nested":{"z":true,"a":null}}}"#)
+    );
+    // Stored order is authoritative here: already normalized rows are not repaired.
+    sqlx::query("UPDATE content.deployments SET entity_metadata=$2::json WHERE entity_id=$1")
+        .bind(&id)
+        .bind(r#"{"v":{"a":2,"z":1}}"#)
+        .execute(pool)
+        .await
+        .unwrap();
+    let ordered =
+        crate::queries::active_entity_docs_with_ordered_metadata_by_pointers(pool, &pointers)
+            .await
+            .unwrap();
+    assert!(
+        std::str::from_utf8(&ordered[0].json)
+            .unwrap()
+            .ends_with(r#""metadata":{"a":2,"z":1}}"#)
+    );
 }

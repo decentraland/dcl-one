@@ -1,10 +1,12 @@
-import { sendSignedJSON, serviceBase } from "./client";
+import { serviceBase } from "./client";
 import { isRecord } from "./rows";
 import type { PlaceWire, PlaceCategoryWire } from "./schemas/places";
 import { publicImageUrl } from "../publicImage";
 import { hueFor } from "../format";
 
 export const PLACES_LIMIT = 40;
+
+export { isPlaceholderThumbnail, placeViewerOf, type PlaceViewer } from "@web-core/place-view";
 
 export function normalizePlace(p: PlaceWire) {
   return {
@@ -170,54 +172,6 @@ export function toPlaceView(p: Place) {
 }
 
 export type PlaceView = ReturnType<typeof toPlaceView>;
-
-export function toPlaceDetail(view: PlaceView | null | undefined) {
-  if (!view) return null;
-  return {
-    id: view.id,
-    title: view.title,
-    coords: view.coords,
-    parcels: view.parcels,
-    favorites: view.favorites,
-    views: view.visits,
-    approval: view.rating,
-    creator: view.creator,
-    creatorAddress: view.creatorAddress,
-    categories: view.categories,
-    updated: view.updated,
-    description: view.description || "No description provided.",
-    hue: view.hue,
-    image: view.image,
-    world: view.world,
-    worldName: view.worldName,
-  };
-}
-
-export type PlaceViewer = { liked: boolean | null; favorite: boolean };
-
-export function placeViewerOf(row: { user_like: boolean; user_dislike: boolean; user_favorite: boolean }): PlaceViewer {
-  return { liked: row.user_like ? true : row.user_dislike ? false : null, favorite: row.user_favorite };
-}
-
-export async function setPlaceFavorite(entityId: string, favorites: boolean): Promise<boolean> {
-  if (!entityId) return false;
-  await sendSignedJSON(`/api/places/${encodeURIComponent(entityId)}/favorites`, {
-    service: "places",
-    method: "PATCH",
-    body: { favorites },
-  });
-  return true;
-}
-
-export async function setPlaceLike(entityId: string, likes: boolean | null): Promise<boolean> {
-  if (!entityId) return false;
-  const res = await sendSignedJSON(`/api/places/${encodeURIComponent(entityId)}/likes`, {
-    service: "places",
-    method: "PATCH",
-    body: { like: likes },
-  });
-  return res != null;
-}
 
 export function toCategoryView(c: PlaceCategory) {
   const label = (c.i18n.en || c.name || "").trim();

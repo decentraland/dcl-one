@@ -6,7 +6,7 @@
 import { encodeFunctionData, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { isShopApiError } from "../../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { isPolygon, type ChainId } from "@shop/model/chain";
 import { requireChain } from "../../wallet/chain";
 import {
@@ -21,7 +21,7 @@ import {
 } from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "./metaTx";
 import { readContract } from "./rpc";
-import { chainSalt, declined, sendCall, signTypedData, waitForReceipt, walletAccount, type WaitOptions } from "./tx";
+import { chainSalt, declined, READ_TIMEOUT_MS, sendCall, signTypedData, waitForReceipt, walletAccount, type WaitOptions } from "./tx";
 import { shopClient } from "../../api/host";
 
 export const TRADE_ASSET = { ERC20: 1, USD_PEGGED_MANA: 2, ERC721: 3, COLLECTION_ITEM: 4 } as const;
@@ -494,8 +494,15 @@ export async function cancelTrade(opts: { provider: Eip1193Provider; trade: Trad
 
 export const cancelListing = cancelTrade;
 
-export async function acceptTrade(opts: { provider: Eip1193Provider; trade: Trade; wait?: WaitOptions; onSubmitted?: (hash: string) => void }): Promise<string> {
-  const caller = await walletAccount(opts.provider);
+export async function acceptTrade(opts: {
+  provider: Eip1193Provider;
+  trade: Trade;
+  wait?: WaitOptions;
+  onSubmitted?: (hash: string) => void;
+  /** The buyer the purchase is bound to: the trade names it, and a wallet on another account sends nothing. */
+  buyer?: string;
+}): Promise<string> {
+  const caller = opts.buyer?.toLowerCase() ?? (await walletAccount(opts.provider));
   const marketplace = tradeMarketplace(opts.trade);
   const hash = await sendCall(opts.provider, {
     chainId: opts.trade.chainId,
@@ -503,6 +510,7 @@ export async function acceptTrade(opts: { provider: Eip1193Provider; trade: Trad
     abi: MARKETPLACE_ABI,
     functionName: "accept",
     args: [[onChainTrade(opts.trade, caller)]],
+    ...(opts.buyer ? { account: caller, readTimeoutMs: opts.wait?.readTimeoutMs ?? READ_TIMEOUT_MS } : {}),
   });
   opts.onSubmitted?.(hash);
   return waitForReceipt(opts.trade.chainId, hash, "The trade", opts.wait);

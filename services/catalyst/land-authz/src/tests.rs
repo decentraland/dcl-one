@@ -26,10 +26,11 @@ use tower::ServiceExt;
 
 use super::events::*;
 use super::indexer::{
-    self, Rpc, begin_replay, cursor, fold, insert_events, mark_folded, set_cursor,
+    self, ReplayStart, begin_replay, cursor, fold, insert_events, mark_folded, set_cursor,
 };
 use super::routes::SOURCE_HEADER;
 use super::*;
+use crate::chain_index::rpc::{HEADER_BATCH, Rpc, hex_to_i64};
 use crate::jobs::{JobContext, Jobs};
 
 const LAND: &str = LAND_REGISTRY_MAINNET;
@@ -93,10 +94,7 @@ impl ScratchDb {
             "catalyst_test_laz_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -108,7 +106,6 @@ impl ScratchDb {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { name, pool, admin })
     }
 
@@ -202,6 +199,278 @@ async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_cal
     db.drop().await;
 }
 
+/// `data` as the ABI encodes the one `string` of a data log.
+fn abi_string(document: &str) -> String {
+    let bytes = document.as_bytes();
+    let mut padded = bytes.to_vec();
+    padded.resize(bytes.len().div_ceil(32) * 32, 0);
+    let body: String = padded.iter().map(|b| format!("{b:02x}")).collect();
+    format!("0x{:064x}{:064x}{body}", 32, bytes.len())
+}
+
+fn create_estate(block: u64, index: u32, owner: &str, estate: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address: ESTATE,
+        topics: vec![
+            TOPIC_CREATE_ESTATE.into(),
+            topic_addr(owner),
+            topic_uint(estate),
+        ],
+        data: abi_string(document),
+    }
+}
+
+fn data_update(block: u64, index: u32, address: &'static str, asset: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address,
+        topics: vec![
+            TOPIC_UPDATE.into(),
+            topic_token(asset),
+            topic_addr(ALICE),
+            topic_addr(ALICE),
+        ],
+        data: abi_string(document),
+    }
+}
+
+async fn estate_data_rows(pool: &PgPool) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT estate_id::text, name FROM land_authz.estate_data_event ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The indexer keeps the Estate registry's version-0 data documents (and
+/// not the LAND registry's, which share the `Update` topic, nor one that
+/// does not parse); a minted estate holding no LAND answers its latest
+/// document's name and description, or empty strings without one.
+#[tokio::test]
+async fn a_dissolved_estate_answers_its_latest_data_document() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            create_estate(s + 10, 1, ALICE, "501", "0,\"First\",\"first words\""),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            transfer(s + 12, 0, ESTATE, ZERO_ADDR, ALICE, "500"),
+            add_land(s + 12, 1, "500", TOKEN_37_55),
+            data_update(
+                s + 20,
+                0,
+                ESTATE,
+                "501",
+                "0,\"Dissolved\",\"Once an estate\"",
+            ),
+            data_update(s + 21, 0, ESTATE, "501", "not a document"),
+            data_update(s + 22, 0, LAND, TOKEN_37_55, "0,\"A parcel\",\"\""),
+            data_update(s + 23, 0, ESTATE, "500", "0,\"Kept\","),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "unready"
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![
+            ("501".into(), Some("First".into())),
+            ("501".into(), Some("Dissolved".into())),
+            ("500".into(), Some("Kept".into())),
+        ],
+        "the estates' version-0 documents only"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "Dissolved".into(),
+            description: "Once an estate".into(),
+        })
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        DissolvedEstate::Dissolved(EstateData::default()),
+        "no document: empty strings"
+    );
+    assert_eq!(
+        state.dissolved_estate("500").await,
+        DissolvedEstate::NotDissolved,
+        "holds LAND"
+    );
+    assert_eq!(
+        state.dissolved_estate("999").await,
+        DissolvedEstate::NotDissolved,
+        "never minted"
+    );
+
+    // A reorg past the documents drops them with the log.
+    reorg_from(&chain, s + 20, vec![]);
+    chain.head.store(s + 55, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.reorg_rewound_to.is_some(), "{out:?}");
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![("501".into(), Some("First".into()))]
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "First".into(),
+            description: "first words".into(),
+        })
+    );
+    db.drop().await;
+}
+
+/// A registry switch keeps the old registry's documents and never reads
+/// them: an estate id the configured registry minted without a document
+/// answers empty strings, not the name the old registry's estate of that id
+/// carried.
+#[tokio::test]
+async fn a_registry_switch_leaves_the_old_registrys_documents_unread() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            create_estate(s + 11, 1, ALICE, "502", "0,\"New\",\"new words\""),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let configured = Settings {
+        rpc_url: Some(serve(chain).await),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    // A published index of other registries, whose estates 501 and 502 are
+    // dissolved and named.
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: OLD_ESTATE.into(),
+        replay_from_block: None,
+        ..configured.clone()
+    };
+    let old_last = (s + 40) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true, \
+         full_replay_started = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
+         VALUES ($1, 501, $2, 0), ($1, 502, $2, 1)",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 2)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event \
+             (block_number, log_index, token_address, estate_id, name, description) \
+         VALUES ($2, 0, $1, 501, 'Old 501', 'old words'), ($2, 1, $1, 502, 'Old 502', 'old words')",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    let old_state = state_over(pool.clone(), old, None);
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "Old 501".into(),
+            description: "old words".into(),
+        }),
+        "the old registries' reader answers its own document"
+    );
+
+    let state = state_over(pool.clone(), configured, None);
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "not its cursor"
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    let kept: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT token_address, estate_id::text, name FROM land_authz.estate_data_event \
+         ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            (ESTATE.into(), "502".into(), Some("New".into())),
+            (OLD_ESTATE.into(), "501".into(), Some("Old 501".into())),
+            (OLD_ESTATE.into(), "502".into(), Some("Old 502".into())),
+        ],
+        "the old registry's rows stay"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData::default()),
+        "the old registry's later document names no estate of this one"
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "New".into(),
+            description: "new words".into(),
+        }),
+        "its own document, though the old registry's is later"
+    );
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown
+    );
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -251,8 +520,12 @@ async fn insert(pool: &PgPool, events: &[AuthzEvent]) -> usize {
     insert_events(&mut conn, events).await.unwrap()
 }
 
+/// The rebuild fold, under the cursor of the configured registries that a
+/// pass always holds before it folds (created here when the test has none).
 async fn fold_all(pool: &PgPool) -> indexer::FoldCounts {
-    fold(pool, &Settings::for_tests(), None).await.unwrap()
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(pool, &settings).await.unwrap();
+    fold(pool, &settings, None).await.unwrap()
 }
 
 async fn token_leg(pool: &PgPool, token: &str, column: &str) -> Option<String> {
@@ -762,6 +1035,7 @@ async fn folding_twice_is_idempotent_and_the_incremental_fold_matches_the_rebuil
         return;
     };
     let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     insert(
         &db.pool,
         &[
@@ -1318,12 +1592,16 @@ async fn update_operator_page_carries_the_total() {
 }
 
 async fn present(pool: &PgPool) -> bool {
-    indexer::ready_cursor(pool, NETWORK_MAINNET).await.is_some()
+    indexer::ready_cursor(pool, NETWORK_MAINNET, LAND, ESTATE)
+        .await
+        .is_some()
 }
 
 async fn set(pool: &PgPool, block: i64) {
     let mut conn = pool.acquire().await.unwrap();
-    set_cursor(&mut conn, NETWORK_MAINNET, block).await.unwrap();
+    set_cursor(&mut conn, &Settings::for_tests(), block, None)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1346,14 +1624,14 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "an unfolded cursor cannot grant rights"
     );
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 101) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
             .unwrap(),
         "partial sync cannot publish readiness"
     );
     assert!(!present(pool).await);
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap(),
         "an existing cursor does not prove its full history was scanned"
@@ -1385,7 +1663,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "repair must disable stale rights immediately"
     );
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap()
     );
@@ -1395,7 +1673,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         .await
         .unwrap();
     assert!(
-        mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap()
     );
@@ -1404,7 +1682,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
     set(pool, base + 101).await;
     assert!(!present(pool).await, "backfill invalidates the old fold");
     assert!(
-        mark_folded(pool, NETWORK_MAINNET, (base + 101) as u64)
+        mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
             .unwrap()
     );
@@ -1585,7 +1863,19 @@ struct FakeChain {
     batch_reverse: AtomicBool,
     batch_omit: AtomicU64,
     logs_reverse: AtomicBool,
+    /// Header requests for blocks in `header_block_from..header_block_until`
+    /// wait for `header_release`.
     header_block_from: AtomicU64,
+    header_block_until: AtomicU64,
+    /// Blocks from this one on are of another fork: their headers answer
+    /// [`forked_hash`] (a reorg).
+    fork_from: AtomicU64,
+    /// A reorg ([`reorg_from`]) applied right after the next `eth_getLogs`
+    /// answer whose range reaches its block: the chain moves under a read.
+    reorg_after_logs: Mutex<Option<(u64, Vec<Log>)>>,
+    /// `(block, fork, logs)`: a reorg from `fork` applied just before the
+    /// first single header request for `block` is answered.
+    reorg_on_header: Mutex<Option<(u64, u64, Vec<Log>)>>,
     header_started: tokio::sync::Notify,
     header_release: tokio::sync::Notify,
 }
@@ -1608,6 +1898,10 @@ impl FakeChain {
             batch_omit: AtomicU64::new(u64::MAX),
             logs_reverse: AtomicBool::new(false),
             header_block_from: AtomicU64::new(u64::MAX),
+            header_block_until: AtomicU64::new(u64::MAX),
+            fork_from: AtomicU64::new(u64::MAX),
+            reorg_after_logs: Mutex::new(None),
+            reorg_on_header: Mutex::new(None),
             header_started: tokio::sync::Notify::new(),
             header_release: tokio::sync::Notify::new(),
         })
@@ -1620,6 +1914,25 @@ impl FakeChain {
     fn answered_logs(&self) -> Vec<(u64, u64)> {
         self.calls.lock().clone()
     }
+
+    fn header_gated(&self, number: u64) -> bool {
+        (self.header_block_from.load(Ordering::SeqCst)
+            ..self.header_block_until.load(Ordering::SeqCst))
+            .contains(&number)
+    }
+
+    fn header_hash(&self, number: u64) -> String {
+        if number >= self.fork_from.load(Ordering::SeqCst) {
+            forked_hash(number)
+        } else {
+            format!("0x{number:064x}")
+        }
+    }
+}
+
+/// A block's hash on the fork a reorg switches to.
+fn forked_hash(number: u64) -> String {
+    format!("0x{:064x}", number | 1 << 60)
 }
 
 fn block_of(v: &Value) -> u64 {
@@ -1637,8 +1950,7 @@ async fn rpc(
     chain.requests.fetch_add(1, Ordering::SeqCst);
     if let Some(batch) = body.as_array() {
         if batch.iter().any(|request| {
-            indexer::hex_to_i64(request["params"][0].as_str().unwrap()).unwrap() as u64
-                >= chain.header_block_from.load(Ordering::SeqCst)
+            chain.header_gated(hex_to_i64(request["params"][0].as_str().unwrap()).unwrap() as u64)
         }) {
             chain.header_started.notify_one();
             chain.header_release.notified().await;
@@ -1651,12 +1963,12 @@ async fn rpc(
         }
         let mut replies: Vec<Value> = batch
             .iter()
-            .filter(|request| indexer::hex_to_i64(request["params"][0].as_str().unwrap()).unwrap() as u64 != chain.batch_omit.load(Ordering::SeqCst))
+            .filter(|request| hex_to_i64(request["params"][0].as_str().unwrap()).unwrap() as u64 != chain.batch_omit.load(Ordering::SeqCst))
             .take(chain.batch_limit.load(Ordering::SeqCst))
             .map(|request| {
-                let number = indexer::hex_to_i64(request["params"][0].as_str().unwrap()).unwrap();
+                let number = hex_to_i64(request["params"][0].as_str().unwrap()).unwrap();
                 json!({"jsonrpc": "2.0", "id": request["id"], "result": {
-                    "number": format!("0x{number:x}"), "hash": format!("0x{:064x}", number),
+                    "number": format!("0x{number:x}"), "hash": chain.header_hash(number as u64),
                     "timestamp": format!("0x{:x}", if chain.header_time.load(Ordering::SeqCst) == u64::MAX { 1_500_000_000 + number as u64 * 12 } else { chain.header_time.load(Ordering::SeqCst) })
                 }})
             })
@@ -1673,12 +1985,26 @@ async fn rpc(
             if chain.headers_missing.load(Ordering::SeqCst) {
                 return reply(Value::Null).into_response();
             }
-            let number = indexer::hex_to_i64(body["params"][0].as_str().unwrap()).unwrap();
-            if number as u64 >= chain.header_block_from.load(Ordering::SeqCst) {
+            let number = hex_to_i64(body["params"][0].as_str().unwrap()).unwrap();
+            let pending = {
+                let mut pending = chain.reorg_on_header.lock();
+                if pending
+                    .as_ref()
+                    .is_some_and(|(block, _, _)| *block == number as u64)
+                {
+                    pending.take()
+                } else {
+                    None
+                }
+            };
+            if let Some((_, fork, logs)) = pending {
+                reorg_from(&chain, fork, logs);
+            }
+            if chain.header_gated(number as u64) {
                 chain.header_started.notify_one();
                 chain.header_release.notified().await;
             }
-            reply(json!({"number": format!("0x{number:x}"), "hash": format!("0x{number:064x}"),
+            reply(json!({"number": format!("0x{number:x}"), "hash": chain.header_hash(number as u64),
                 "timestamp": format!("0x{:x}", if chain.header_time.load(Ordering::SeqCst) == u64::MAX { 1_500_000_000 + number as u64 * 12 } else { chain.header_time.load(Ordering::SeqCst) })
             })).into_response()
         }
@@ -1730,7 +2056,20 @@ async fn rpc(
             if chain.logs_reverse.load(Ordering::SeqCst) {
                 hits.reverse();
             }
-            reply(Value::Array(hits.into_iter().cloned().collect())).into_response()
+            let hits: Vec<Value> = hits.into_iter().cloned().collect();
+            drop(logs);
+            let pending = {
+                let mut pending = chain.reorg_after_logs.lock();
+                if pending.as_ref().is_some_and(|(block, _)| to >= *block) {
+                    pending.take()
+                } else {
+                    None
+                }
+            };
+            if let Some((block, logs)) = pending {
+                reorg_from(&chain, block, logs);
+            }
+            reply(Value::Array(hits)).into_response()
         }
         other => (
             StatusCode::BAD_REQUEST,
@@ -2200,7 +2539,7 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         Verdict::Denied
     );
 
-    // The freshness window: a stopped indexer falls back after 30 minutes,
+    // The freshness window: the deploy reader falls back after 30 minutes,
     // and a pass with nothing new re-publishes.
     sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '31 minutes'")
         .execute(&db.pool)
@@ -2215,8 +2554,17 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     assert!(out.published && out.requests == 0, "{out:?}");
     assert_eq!(
         chain.requests.load(Ordering::SeqCst) - requests_before,
-        2,
-        "two eth_blockNumber calls, no eth_getLogs"
+        5,
+        "the cursor block's header, the checkpoint's header between it and a \
+         second read of it, and two eth_blockNumber calls; no eth_getLogs"
+    );
+    let requests_before = chain.requests.load(Ordering::SeqCst);
+    let out = indexer::run_pass(&s2, &ctx).await.unwrap();
+    assert!(out.published && out.requests == 0, "{out:?}");
+    assert_eq!(
+        chain.requests.load(Ordering::SeqCst) - requests_before,
+        3,
+        "with a current checkpoint: the cursor block's header and two eth_blockNumber calls"
     );
     assert!(
         can_deploy(&s2, (37, 55), ALICE)
@@ -2302,6 +2650,916 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     let out = indexer::run_pass(&replay, &ctx2).await.unwrap();
     assert!(out.paused && out.requests == 0, "{out:?}");
     jobs2.shutdown(std::time::Duration::from_secs(1)).await;
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn the_index_stays_the_confirmation_depth_behind_the_head_and_publishes_there() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (chain, total_logs) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            confirmations: 12,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    // The last filler mint sits at START + 490; one more log lands within
+    // the confirmation depth and stays out of the log until confirmed.
+    chain.push(transfer(START + 995, 0, LAND, ALICE, BOB, TOKEN_37_55));
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(out.indexed_to, (START + 1_000 - 12) as i64);
+    assert_eq!(event_count(&db.pool).await, total_logs as i64);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    chain.head.store(START + 1_010, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(BOB)
+    );
+    db.drop().await;
+}
+
+/// Replaces every log from `block` on with `logs`, on the fork whose
+/// headers answer [`forked_hash`].
+fn reorg_from(chain: &FakeChain, block: u64, logs: Vec<Log>) {
+    chain.fork_from.store(block, Ordering::SeqCst);
+    let mut held = chain.logs.lock();
+    held.retain(|log| block_of(log) < block);
+    for log in logs {
+        let mut value = log.json();
+        value["blockHash"] = json!(forked_hash(log.block));
+        held.push(value);
+    }
+}
+
+#[tokio::test]
+async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_canonical_event_is_folded() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (chain, total_logs) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    // The head block carries a transfer to BOB and a grant only it ever made.
+    chain.push(transfer(START + 1_000, 0, LAND, ALICE, BOB, TOKEN_37_55));
+    chain.push(account_grant(
+        START + 1_000,
+        1,
+        LAND,
+        TOPIC_APPROVAL_FOR_ALL,
+        BOB,
+        DANA,
+        true,
+    ));
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(BOB)
+    );
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        vec![DANA]
+    );
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.last_block, (START + 1_000) as i64);
+    // A pass that finds the cursor hash on the chain records the checkpoint.
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    let checkpoint = START + 1_000 - indexer::CHECKPOINT_DEPTH_BLOCKS;
+    assert_eq!(
+        cursor_hashes(&db.pool).await,
+        (
+            Some(format!("0x{:064x}", START + 1_000)),
+            Some(checkpoint as i64),
+            Some(format!("0x{checkpoint:064x}"))
+        )
+    );
+
+    // The chain replaces that block: the same position now holds a transfer
+    // to CARL, and the grant was never mined.
+    reorg_from(
+        &chain,
+        START + 1_000,
+        vec![transfer(START + 1_000, 0, LAND, ALICE, CARL, TOKEN_37_55)],
+    );
+    chain.head.store(START + 1_005, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    let rewound = checkpoint as i64;
+    assert_eq!(out.reorg_rewound_to, Some(rewound), "{out:?}");
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.last_block, rewound);
+    assert_eq!(
+        cursor_hashes(&db.pool).await,
+        (Some(format!("0x{checkpoint:064x}")), None, None),
+        "the rewind stands on the verified checkpoint and keeps its hash"
+    );
+    assert!(
+        !index_ready(&row, Utc::now()),
+        "readers fall back until the refold publishes"
+    );
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        Vec::<String>::new(),
+        "a right only the abandoned fork decided is gone"
+    );
+
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(out.indexed_to, (START + 1_005) as i64);
+    assert_eq!(event_count(&db.pool).await, total_logs as i64 + 1);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(CARL),
+        "the canonical event at the same position is folded"
+    );
+    assert_eq!(
+        can_deploy(&state, (37, 55), CARL).await.unwrap().verdict,
+        Verdict::Granted(LandRightLeg::Owner)
+    );
+    assert_eq!(
+        can_deploy(&state, (37, 55), BOB).await.unwrap().verdict,
+        Verdict::Denied
+    );
+    // The next pass finds the recorded hash on the chain and goes on.
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    db.drop().await;
+}
+
+/// The cursor row's `(last_block_hash, checkpoint_block, checkpoint_hash)`.
+async fn cursor_hashes(pool: &PgPool) -> (Option<String>, Option<i64>, Option<String>) {
+    sqlx::query_as(
+        "SELECT last_block_hash, checkpoint_block, checkpoint_hash FROM land_authz.index_cursor WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_range_refuses_to_build_on_a_committed_block_the_chain_replaced() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = START;
+    let chain = FakeChain::new(
+        s + 200,
+        vec![
+            transfer(s + 10, 0, LAND, ZERO_ADDR, ALICE, TOKEN_37_55),
+            account_grant(s + 160, 0, LAND, TOPIC_APPROVAL_FOR_ALL, BOB, DANA, true),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        vec![DANA]
+    );
+
+    // The chain replaces the committed tail after this pass found the
+    // cursor hash on it and before the next range's first read: the new
+    // range's own bracket sees one fork throughout.
+    chain.head.store(s + 300, Ordering::SeqCst);
+    *chain.reorg_on_header.lock() = Some((s + 300, s + 150, vec![]));
+    let error = indexer::run_pass(&state, &ctx).await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("changed since it was indexed"),
+        "{error:#}"
+    );
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        row.last_block,
+        (s + 200) as i64,
+        "nothing is committed on top"
+    );
+
+    // The next pass finds the cursor hash gone, rewinds to the checkpoint
+    // below the fork point and drops the abandoned grant.
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert_eq!(
+        out.reorg_rewound_to,
+        Some((s + 200 - indexer::CHECKPOINT_DEPTH_BLOCKS) as i64),
+        "{out:?}"
+    );
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(out.indexed_to, (s + 300) as i64);
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_reorg_below_the_checkpoint_replays_from_the_start_block() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (chain, total_logs) = fixture_chain();
+    chain.push(transfer(START + 600, 0, LAND, ALICE, BOB, TOKEN_37_55));
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    let checkpoint = START + 1_000 - indexer::CHECKPOINT_DEPTH_BLOCKS;
+    assert_eq!(cursor_hashes(&db.pool).await.1, Some(checkpoint as i64));
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(BOB)
+    );
+
+    // The fork point is below the checkpoint: the chain no longer has the
+    // checkpoint's hash, so no indexed block above the start is trusted.
+    reorg_from(
+        &chain,
+        START + 600,
+        vec![transfer(START + 600, 0, LAND, ALICE, CARL, TOKEN_37_55)],
+    );
+    chain.head.store(START + 1_005, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert_eq!(out.reorg_rewound_to, Some(START as i64 - 1), "{out:?}");
+    assert_eq!(event_count(&db.pool).await, 0);
+    assert_eq!(cursor_hashes(&db.pool).await, (None, None, None));
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert!(!index_ready(&row, Utc::now()));
+
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(event_count(&db.pool).await, total_logs as i64 + 1);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(CARL),
+        "the canonical transfer below the old checkpoint is folded"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_fork_change_while_a_range_is_read_commits_nothing_from_the_abandoned_fork() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    // No log in the range's last block: only the header bracket can tell
+    // that the chain moved between the log read and the cursor's hash.
+    let s = START;
+    let chain = FakeChain::new(
+        s + 200,
+        vec![
+            transfer(s + 10, 0, LAND, ZERO_ADDR, ALICE, TOKEN_37_55),
+            add_land(s + 50, 0, "500", &land_token(2, 2)),
+            account_grant(s + 60, 0, LAND, TOPIC_APPROVAL_FOR_ALL, BOB, DANA, true),
+        ],
+        1_000,
+        1_000_000,
+    );
+    *chain.reorg_after_logs.lock() =
+        Some((s + 50, vec![add_land(s + 50, 0, "600", &land_token(2, 2))]));
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let error = indexer::run_pass(&state, &ctx).await.unwrap_err();
+    assert!(format!("{error:#}").contains("changed while"), "{error:#}");
+    assert_eq!(
+        event_count(&db.pool).await,
+        0,
+        "the abandoned fork's logs are not committed"
+    );
+
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(event_count(&db.pool).await, 2);
+    assert_eq!(
+        estate_of(&db.pool, &land_token(2, 2)).await.as_deref(),
+        Some("600")
+    );
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        Vec::<String>::new()
+    );
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.last_block, (s + 200) as i64);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_reorg_near_the_start_block_rewinds_to_it_and_drops_the_abandoned_estate_membership() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = START;
+    let chain = FakeChain::new(
+        s + 100,
+        vec![
+            transfer(s + 10, 0, LAND, ZERO_ADDR, ALICE, TOKEN_37_55),
+            add_land(s + 100, 0, "500", &land_token(2, 2)),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_of(&db.pool, &land_token(2, 2)).await.as_deref(),
+        Some("500")
+    );
+
+    // The block holding the AddLand is replaced by one without it, less
+    // than CHECKPOINT_DEPTH_BLOCKS above the start block (no checkpoint).
+    reorg_from(&chain, s + 100, vec![]);
+    chain.head.store(s + 105, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert_eq!(out.reorg_rewound_to, Some(s as i64 - 1), "{out:?}");
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        row.last_block,
+        s as i64 - 1,
+        "never rewound before the start block"
+    );
+    assert_eq!(estate_of(&db.pool, &land_token(2, 2)).await, None);
+    assert_eq!(event_count(&db.pool).await, 0);
+
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(event_count(&db.pool).await, 1);
+    assert_eq!(estate_of(&db.pool, &land_token(2, 2)).await, None);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (chain, _) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let configured = |replay_from_block: Option<u64>| Settings {
+        rpc_url: Some(url.clone()),
+        index_enabled: true,
+        requests_per_pass: 50,
+        replay_from_block,
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+
+    // A published index of other registries (a testnet stack before a
+    // redeploy), holding an estate link the configured estate registry never
+    // made: LAND (37, 55) in estate 500, which that registry gives ALICE.
+    const OLD_LAND: &str = "0x00000000000000000000000000000000000000aa";
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let old = Settings {
+        land_registry: OLD_LAND.into(),
+        estate_registry: OLD_ESTATE.into(),
+        ..configured(None)
+    };
+    let old_last = (START + 5_000) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 500, $2, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    // A pass of the old registries synced that link's event and stopped
+    // before its fold (it resumes below, after the rebind).
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: OLD_ESTATE.to_string(),
+            ..estate_ev(old_last - 1, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT land_token_id::text, estate_token_id::text FROM land_authz.estate_land ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    let kept = |why: &'static str| async move {
+        let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+        assert_eq!(
+            (
+                row.land_registry.as_str(),
+                row.estate_registry.as_str(),
+                row.last_block
+            ),
+            (OLD_LAND, OLD_ESTATE, old_last),
+            "{why}"
+        );
+        assert_eq!(links().await.len(), 1, "{why}");
+    };
+
+    // Without a replay, or with a partial one, the configured registries are
+    // refused with the remedy named, and nothing is rewound or consumed.
+    for replay_from_block in [None, Some(START + 100)] {
+        let state = state_over(pool.clone(), configured(replay_from_block), None);
+        let err = format!("{:#}", indexer::run_pass(&state, &ctx).await.unwrap_err());
+        assert!(
+            err.contains(&format!("LAND_AUTHZ_REPLAY_FROM_BLOCK={START}")),
+            "{err}"
+        );
+        assert!(!state.replay_requested.load(Ordering::SeqCst));
+        kept("a refused pass rewinds nothing").await;
+    }
+
+    // A full replay whose rewind fails is not consumed: the same state
+    // retries it, and the failed write changed nothing.
+    let full = state_over(pool.clone(), configured(Some(START)), None);
+    sqlx::query(
+        "CREATE FUNCTION land_authz.refuse_cursor_update() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'cursor write refused by the test'; END $$",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_cursor_update BEFORE UPDATE ON land_authz.index_cursor \
+         FOR EACH ROW EXECUTE FUNCTION land_authz.refuse_cursor_update()",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let err = format!("{:#}", indexer::run_pass(&full, &ctx).await.unwrap_err());
+    assert!(err.contains("cursor write refused by the test"), "{err}");
+    assert!(!full.replay_requested.load(Ordering::SeqCst));
+    kept("the failed rewind changed nothing").await;
+    sqlx::query("DROP TRIGGER refuse_cursor_update ON land_authz.index_cursor")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION land_authz.refuse_cursor_update()")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // The retry rebinds the cursor to the configured registries, re-reads
+    // their log from the start and publishes; the old estate link is gone
+    // and only the configured estate registry's own link is folded.
+    let out = indexer::run_pass(&full, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert!(full.replay_requested.load(Ordering::SeqCst));
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            row.land_registry.as_str(),
+            row.estate_registry.as_str(),
+            row.last_block
+        ),
+        (LAND, ESTATE, (START + 1_000) as i64)
+    );
+    assert_eq!(links().await, vec![(land_token(2, 2), "500".to_string())]);
+    assert_eq!(
+        token_leg(pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    // The decisions at LAND (37, 55), which ALICE holds directly; DANA
+    // manages ALICE's estates, not her LAND. A stale link from it into estate
+    // 500 would turn both into Unknown, locking the owner out.
+    let at_37_55 = || async {
+        let mut verdicts = Vec::new();
+        for actor in [ALICE, DANA] {
+            let decision = can_deploy(&full, (37, 55), actor).await.unwrap();
+            assert!(
+                matches!(decision.source, DecisionSource::Index { .. }),
+                "{:?}",
+                decision.source
+            );
+            verdicts.push(decision.verdict);
+        }
+        verdicts
+    };
+    let decisions = vec![Verdict::Granted(LandRightLeg::Owner), Verdict::Denied];
+    assert_eq!(at_37_55().await, decisions);
+
+    // The old pass resumes its fold: the cursor no longer names its
+    // registries, so it writes nothing, publishes nothing, and the new
+    // authorization stands.
+    let stale = fold(pool, &old, None).await;
+    assert_eq!(links().await, vec![(land_token(2, 2), "500".to_string())]);
+    assert_eq!(at_37_55().await, decisions);
+    assert!(matches!(stale, Err(sqlx::Error::RowNotFound)), "{stale:?}");
+    assert!(!mark_folded(pool, &old, old_last as u64).await.unwrap());
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.folded_block, Some((START + 1_000) as i64));
+
+    // A node still configured with the old registries (a rolling deploy)
+    // never reads the published index as its own: its rights rows are of
+    // the old registries, the estate links of the new one. It falls back
+    // (here there is no fallback reader), and its status shows why.
+    assert!(full.ready().await.is_some());
+    let stale_reader = state_over(pool.clone(), old.clone(), None);
+    assert!(stale_reader.ready().await.is_none());
+    let answer = can_deploy(&stale_reader, (37, 55), ALICE).await;
+    assert!(matches!(answer, Err(Unavailable::NoSource)), "{answer:?}");
+    let (_, _, body) = get_json(&router(stale_reader), "/lambdas/land-authz/status").await;
+    assert_eq!(body["ready"], false);
+    assert_eq!(
+        (
+            body["landRegistry"].as_str(),
+            body["cursor"]["landRegistry"].as_str(),
+            body["cursor"]["estateRegistry"].as_str(),
+        ),
+        (Some(OLD_LAND), Some(LAND), Some(ESTATE))
+    );
+    let (_, _, body) = get_json(&router(full.clone()), "/lambdas/land-authz/status").await;
+    assert_eq!(body["ready"], true);
+    db.drop().await;
+}
+
+/// The other order: an old registries' fold already running when a full
+/// replay rebinds the cursor. Its transaction holds the cursor row, so the
+/// rebind waits for it, and the links it wrote are deleted after it.
+#[tokio::test]
+async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dropped() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM land_authz.estate_land")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+
+    let mut folding = pool.begin().await.unwrap();
+    let fold_pid = backend_pid(&mut folding).await;
+    let counts = indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+    assert_eq!(counts.estate_lands, 1);
+    // The cursor's ordinary writers do not wait on a running fold (one left
+    // by a lost lease can run for many minutes).
+    let advanced = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut conn = pool.acquire().await.unwrap();
+        set_cursor(&mut conn, &old, (START + 20) as i64, None).await
+    })
+    .await;
+    assert!(
+        matches!(advanced, Ok(Ok(()))),
+        "set_cursor waited on the fold: {advanced:?}"
+    );
+    let rebind = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    wait_until_blocked_by(pool, fold_pid).await;
+    assert!(!rebind.is_finished(), "the rebind waits for the fold");
+    folding.commit().await.unwrap();
+    assert_eq!(rebind.await.unwrap().unwrap(), ReplayStart::Begun);
+
+    // The rebind's deletion landed after the old link, and the old
+    // registries can no longer fold.
+    assert_eq!(links().await, 0);
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.estate_registry.as_str()),
+        (LAND, ESTATE)
+    );
+    let stale = fold(pool, &old, None).await;
+    assert_eq!(links().await, 0);
+    assert!(matches!(stale, Err(sqlx::Error::RowNotFound)), "{stale:?}");
+    db.drop().await;
+}
+
+/// A request of a node still configured with the old registries that
+/// checked readiness before a rebind, then stalled while the new registries
+/// were rebound, folded and published, answers from the old registries'
+/// coherent state when it resumes, never from their rights joined to the
+/// new registries' estate links.
+#[tokio::test]
+async fn a_reader_that_checked_before_a_rebind_answers_from_its_registries_alone() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (chain, _) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let configured = Settings {
+        rpc_url: Some(url.clone()),
+        index_enabled: true,
+        requests_per_pass: 50,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+
+    // The old registries' published index: CARL holds LAND (2, 2) directly,
+    // and BOB holds their estate 500, which holds no LAND.
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    let old_block = (START + 10) as i64;
+    insert(
+        pool,
+        &[
+            AuthzEvent {
+                token_address: old.land_registry.clone(),
+                ..ev(
+                    old_block - 2,
+                    0,
+                    KIND_TRANSFER,
+                    Some(&land_token(2, 2)),
+                    Some(CARL),
+                    None,
+                    None,
+                )
+            },
+            AuthzEvent {
+                token_address: old.estate_registry.clone(),
+                ..ev(
+                    old_block - 1,
+                    0,
+                    KIND_TRANSFER,
+                    Some("500"),
+                    Some(BOB),
+                    None,
+                    None,
+                )
+            },
+        ],
+    )
+    .await;
+    fold(pool, &old, None).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()) WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_block)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // The old node's request passes readiness and stalls there.
+    let stale = state_over(pool.clone(), old.clone(), None);
+    let mut held = stale
+        .ready_snapshot()
+        .await
+        .expect("the old registries' index is published");
+
+    // Meanwhile the configured node rebinds, folds its registries (its
+    // estate 500 holds LAND (2, 2)) and publishes.
+    let full = state_over(pool.clone(), configured, None);
+    let out = indexer::run_pass(&full, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+
+    // The stalled request resumes on its snapshot: CARL holds the LAND
+    // directly, as the old registries say, and BOB holds nothing on it.
+    let rights = stale
+        .store()
+        .deploy_rights_batch_on(&mut held.tx, &[(2, 2)])
+        .await
+        .unwrap()
+        .pop()
+        .flatten()
+        .expect("the old registries' LAND (2, 2)");
+    assert_eq!(
+        (
+            rights.subject.belongs_to_estate,
+            rights.subject.owner.as_str()
+        ),
+        (false, CARL)
+    );
+    assert_eq!(
+        rights.deploy_flags_for(CARL).granting_leg(),
+        Some(LandRightLeg::Owner)
+    );
+    assert_eq!(rights.deploy_flags_for(BOB).granting_leg(), None);
+    drop(held);
+
+    // A new request of the old node is not ready, and the configured node
+    // answers from its own registries.
+    let answer = can_deploy(&stale, (2, 2), BOB).await;
+    assert!(matches!(answer, Err(Unavailable::NoSource)), "{answer:?}");
+    assert_eq!(
+        can_deploy(&full, (2, 2), ALICE).await.unwrap().verdict,
+        Verdict::Granted(LandRightLeg::Owner)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_never_crosses_one()
+{
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let other = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let base = START as i64;
+    let row = || async { cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap() };
+    let timestamps_ready = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT history_timestamps_ready FROM land_authz.index_cursor WHERE network = $1",
+        )
+        .bind(NETWORK_MAINNET)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+
+    // Another registries' cursor standing BEFORE the configured start: a
+    // switch still starts the new log exactly at the start, owes the
+    // timestamps again and drops the estate links.
+    indexer::ensure_cursor(pool, &other).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, history_timestamps_ready = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(base - 50)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Begun
+    );
+    let r = row().await;
+    assert_eq!(
+        (
+            r.land_registry.as_str(),
+            r.estate_registry.as_str(),
+            r.last_block,
+            r.folded_block
+        ),
+        (LAND, ESTATE, base - 1, None)
+    );
+    assert!(r.full_replay_started);
+    assert!(
+        !timestamps_ready().await,
+        "the new registries' timestamps are owed"
+    );
+    let estate_links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(estate_links, 0);
+
+    // On the same registries a rewind never moves the cursor forward, and the
+    // timestamps already repaired stay so.
+    sqlx::query("UPDATE land_authz.index_cursor SET history_timestamps_ready = true")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        begin_replay(pool, &configured, START + 95).await.unwrap(),
+        ReplayStart::Begun
+    );
+    assert_eq!(
+        row().await.last_block,
+        base - 1,
+        "a later rewind skips no block"
+    );
+    set(pool, base + 500).await;
+    assert_eq!(
+        begin_replay(pool, &configured, START + 95).await.unwrap(),
+        ReplayStart::Begun
+    );
+    assert_eq!(
+        row().await.last_block,
+        base + 94,
+        "a rewind goes back to the block asked"
+    );
+    assert!(timestamps_ready().await);
+
+    // A partial rewind for other registries writes nothing.
+    assert_eq!(
+        begin_replay(pool, &other, START + 95).await.unwrap(),
+        ReplayStart::Refused
+    );
+    let r = row().await;
+    assert_eq!((r.land_registry.as_str(), r.last_block), (LAND, base + 94));
+
+    // Nor can a pass for other registries advance or publish this cursor.
+    let mut conn = pool.acquire().await.unwrap();
+    assert!(matches!(
+        set_cursor(&mut conn, &other, base + 900, None).await,
+        Err(sqlx::Error::RowNotFound)
+    ));
+    drop(conn);
+    assert!(!mark_folded(pool, &other, (base + 94) as u64).await.unwrap());
+    assert_eq!(row().await.last_block, base + 94);
     db.drop().await;
 }
 
@@ -2496,10 +3754,18 @@ async fn live_rpc_reads_and_decodes_the_first_land_logs() {
     };
     let http = crate::http::Outbound::new(crate::http::HttpClientCfg::default()).unwrap();
     let settings = Settings::for_tests();
-    let rpc = Rpc::new(&http, &url, &settings);
+    let rpc = Rpc::at(&http, &url);
     let head = rpc.head_block().await.unwrap();
     assert!(head > START + 1_000_000, "head {head}");
-    let (logs, reached, requests) = rpc.get_logs(START, START + 20_000).await.unwrap();
+    let (logs, reached, requests) = rpc
+        .get_logs_matching(
+            START,
+            START + 20_000,
+            &json!([settings.land_registry, settings.estate_registry]),
+            &json!([ALL_TOPICS]),
+        )
+        .await
+        .unwrap();
     assert!(
         reached >= START && requests <= 3,
         "reached {reached} in {requests} requests"
@@ -2510,10 +3776,18 @@ async fn live_rpc_reads_and_decodes_the_first_land_logs() {
         logs.len(),
         events.len()
     );
+    let rights_logs = logs
+        .iter()
+        .filter(|log| {
+            !log.topics
+                .first()
+                .is_some_and(|t| crate::events::is_data_topic(t))
+        })
+        .count();
     assert_eq!(
         events.len(),
-        logs.len(),
-        "every log of the seven topics decodes"
+        rights_logs,
+        "every log of the rights topics decodes"
     );
 }
 
@@ -2988,7 +4262,7 @@ async fn repair_uses_spare_batches_scopes_registries_and_never_starves_live_head
     settings.requests_per_pass = 1;
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     let mut conn = db.pool.acquire().await.unwrap();
-    set_cursor(&mut conn, NETWORK_MAINNET, START as i64 + 204)
+    set_cursor(&mut conn, &Settings::for_tests(), START as i64 + 204, None)
         .await
         .unwrap();
     drop(conn);
@@ -3196,7 +4470,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         !allowed(pool, entity_time).await,
         "fold commit alone is not publication"
     );
-    mark_folded(pool, NETWORK_MAINNET, 103).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 103)
+        .await
+        .unwrap();
     assert!(allowed(pool, entity_time).await);
     let mut recent_membership = estate_ev(104, 0, KIND_ADD_LAND, "43", &token);
     recent_membership.block_time = cutoff;
@@ -3206,7 +4482,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         .await
         .unwrap();
     fold_all(pool).await;
-    mark_folded(pool, NETWORK_MAINNET, 104).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 104)
+        .await
+        .unwrap();
     assert!(
         !allowed(pool, entity_time).await,
         "membership timestamp independently revokes at the strict boundary"
@@ -3230,7 +4508,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         "even an old timestamp cannot bypass the pending estate transfer fence"
     );
     fold_all(pool).await;
-    mark_folded(pool, NETWORK_MAINNET, 105).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 105)
+        .await
+        .unwrap();
     assert!(allowed(pool, entity_time).await);
     let mut transferred = ev(
         106,
@@ -3254,6 +4534,18 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
     db.drop().await;
 }
 
+#[test]
+fn land_index_retry_waits_fit_inside_the_public_fold_window() {
+    let schedule = index_schedule(Duration::from_secs(240));
+    let after_two_failures =
+        schedule.interval + schedule.wait_after_failure(1) + schedule.wait_after_failure(2);
+    assert_eq!(
+        LAMBDAS_FOLD_WINDOW.to_std().unwrap() - after_two_failures,
+        Duration::from_secs(60)
+    );
+    assert_eq!(schedule.wait_after_failure(10), Duration::from_secs(150));
+}
+
 #[tokio::test]
 async fn readiness_and_status_use_database_freshness_boundaries() {
     let Some(db) = ScratchDb::create().await else {
@@ -3263,10 +4555,11 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     sqlx::query("UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())").execute(&db.pool).await.unwrap();
     assert!(
-        indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .is_some()
     );
+    seed_rights(&db.pool).await;
     let state = state_over(db.pool.clone(), settings, None);
     assert!(state.ready().await.is_some());
     let app = router(state.clone());
@@ -3284,7 +4577,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     .await
     .unwrap();
     assert!(
-        indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .is_none()
     );
@@ -3292,19 +4585,138 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
     assert_eq!(body["ready"], false);
     assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() < 0);
-    for (minutes, expected) in [(29, true), (31, false)] {
+    for (minutes, expected) in [(9, true), (11, false), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
-            indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+            indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
                 .await
                 .is_some(),
-            expected
+            minutes < 30
         );
-        assert_eq!(state.ready().await.is_some(), expected);
+        assert_eq!(state.ready().await.is_some(), minutes < 30);
         let (_, _, body) = get_json(&app, "/lambdas/land-authz/status").await;
         assert_eq!(body["ready"], expected);
+        assert_eq!(body["readyWindowSecs"], 600);
         assert!(body["cursor"]["foldAgeSecs"].as_i64().unwrap() >= minutes as i64 * 60);
+        let (status, _, _) = get_json(&app, "/lambdas/parcels/1/2/operators").await;
+        assert_eq!(
+            status,
+            if expected {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+        );
     }
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC',now()) - interval '11 minutes'")
+        .execute(&db.pool).await.unwrap();
+    let actor = DANA;
+    let decision = can_deploy(&state, (1, 1), actor).await.unwrap();
+    assert_eq!(
+        decision.verdict,
+        Verdict::Granted(LandRightLeg::UpdateManager)
+    );
+    let (status, headers, body) = post_json(
+        &app,
+        &format!("/lambdas/users/{actor}/parcels/permissions"),
+        json!({ "parcels": ["1,1"] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[crate::routes::SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["elements"][0]["permissions"]["updateManager"], true);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn public_land_routes_use_the_land_subgraph_only_after_the_fold_expires() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    seed_rights(&db.pool).await;
+
+    async fn graphql(axum::Json(request): axum::Json<Value>) -> axum::Json<Value> {
+        let query = request["query"].as_str().unwrap();
+        let variables = &request["variables"];
+        let data = if query.contains("fetchOperatorsOfParcel") {
+            assert_eq!(variables, &json!({ "x": 1, "y": 1 }));
+            json!({
+                "estates": [],
+                "parcels": [{ "owner": { "address": ALICE }, "updateOperator": DANA }]
+            })
+        } else if query.contains("fetchAuthorizations") {
+            assert_eq!(variables["address"], ALICE);
+            json!({ "authorizations": [] })
+        } else {
+            assert!(query.contains("fetchParcelsByUpdateOperator"));
+            assert_eq!(variables["updateOperator"], DANA);
+            json!({ "parcels": [{
+                "id": "0x1", "x": "1", "y": "1", "owner": { "id": ALICE }, "updateOperator": DANA
+            }] })
+        };
+        axum::Json(json!({ "data": data }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", post(graphql)))
+            .await
+            .unwrap();
+    });
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        crate::http::Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            land_subgraph_url: Some(url),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+    let app = router(state_over(db.pool.clone(), settings, Some(market)));
+    let operators = "/lambdas/parcels/1/1/operators";
+    let permissions = format!("/lambdas/users/{ALICE}/parcels/1/1/permissions");
+    let lands = format!("/lambdas/users/{DANA}/lands-permissions");
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], BOB);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["owner"], false);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["elements"][0]["x"], "3");
+
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-interval '11 minutes'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], ALICE);
+    assert_eq!(body["updateOperator"], DANA);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-subgraph");
+    assert_eq!(body["owner"], true);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["totalAmount"], 1);
+    assert_eq!(body["elements"][0]["id"], "0x1");
+
+    server.abort();
     db.drop().await;
 }
 
@@ -3348,7 +4760,7 @@ async fn transient_partial_batches_recover_without_restarting_the_indexer() {
         assert_eq!(out.requests, 2);
     }
     let recovered = indexer::run_pass(&state, &ctx).await.unwrap();
-    assert_eq!(recovered.events_written, indexer::HEADER_BATCH);
+    assert_eq!(recovered.events_written, HEADER_BATCH);
     assert_eq!(
         recovered.requests, 2,
         "batch throughput recovers on the same state"
@@ -3442,6 +4854,10 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
             u64::MAX,
         );
         chain.header_block_from.store(START + 100, Ordering::SeqCst);
+        // Only the legacy repair waits; the cursor-block headers answer.
+        chain
+            .header_block_until
+            .store(START + 200, Ordering::SeqCst);
         let mut settings = Settings::for_tests();
         settings.rpc_url = Some(serve(chain.clone()).await);
         settings.requests_per_pass = 8;
@@ -3462,7 +4878,7 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
         )
         .await
         .unwrap();
-        let published = indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        let published = indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .unwrap();
         assert_eq!(
@@ -3510,4 +4926,537 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
         jobs.shutdown(std::time::Duration::from_secs(1)).await;
         db.drop().await;
     }
+}
+
+async fn backend_pid(conn: &mut sqlx::PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Until a backend of `pool` waits on a lock `holder` (a backend pid) holds.
+async fn wait_until_blocked_by(pool: &PgPool, holder: i32) {
+    for _ in 0..500 {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if blocked {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited on backend {holder}");
+}
+
+/// What the lock-timeout tests wait instead of the production five seconds.
+const SHORT_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A fold of the old registries left running (by a lost lease, say) holds
+/// their cursor row: a switch waits for it at most `rebind_lock_timeout`,
+/// then defers without writing, and the pass ends without an error, so it
+/// is retried at the next interval, not after the error backoff. A rewind
+/// on the same registries never waits for the fold.
+#[tokio::test]
+async fn a_switch_defers_behind_a_fold_left_running_and_a_same_registries_rewind_never_waits() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        // Never asked: a deferred replay ends the pass before any request.
+        rpc_url: Some("http://127.0.0.1:9".into()),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        rebind_lock_timeout: SHORT_LOCK_TIMEOUT,
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM land_authz.estate_land")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let registries = || async {
+        let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+        (row.land_registry, row.estate_registry)
+    };
+    let old_registries = (old.land_registry.clone(), old.estate_registry.clone());
+
+    let mut folding = pool.begin().await.unwrap();
+    indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+
+    // A rewind on the same registries completes beside it.
+    let rewound = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        begin_replay(pool, &old, START + 5),
+    )
+    .await;
+    assert!(
+        matches!(rewound, Ok(Ok(ReplayStart::Begun))),
+        "the rewind waited on the fold: {rewound:?}"
+    );
+
+    // The switch gives up after the lock timeout and writes nothing.
+    let asked = std::time::Instant::now();
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Deferred
+    );
+    // It waited out the lock timeout (no other branch deferred it at once),
+    // and no longer than that.
+    let waited = asked.elapsed();
+    assert!(
+        waited >= SHORT_LOCK_TIMEOUT && waited < std::time::Duration::from_secs(30),
+        "{waited:?}"
+    );
+    assert_eq!(registries().await, old_registries);
+
+    // A pass asked for that switch ends without an error and keeps the
+    // replay requested.
+    let state = state_over(pool.clone(), configured.clone(), None);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(!out.published && out.folded.is_none(), "{out:?}");
+    assert!(!state.replay_requested.load(Ordering::SeqCst));
+    assert_eq!(registries().await, old_registries);
+
+    // Once the fold commits, its link stands, and the switch goes through.
+    folding.commit().await.unwrap();
+    assert_eq!(links().await, 1);
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Begun
+    );
+    assert_eq!(
+        registries().await,
+        (
+            configured.land_registry.clone(),
+            configured.estate_registry.clone()
+        )
+    );
+    assert_eq!(links().await, 0);
+    db.drop().await;
+}
+
+/// A rewind on the same registries takes no lock, so a switch can commit
+/// between its read and its write: the write then matches no row of its
+/// registries, and the switch, links deleted, is never undone.
+#[tokio::test]
+async fn a_same_registries_rewind_never_undoes_a_switch_committed_under_it() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let other = (
+        "0x00000000000000000000000000000000000000aa",
+        "0x00000000000000000000000000000000000000bb",
+    );
+    indexer::ensure_cursor(pool, &configured).await.unwrap();
+
+    let mut switching = pool.begin().await.unwrap();
+    let switch_pid = backend_pid(&mut switching).await;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = $2, estate_registry = $3 WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(other.0)
+    .bind(other.1)
+    .execute(&mut *switching)
+    .await
+    .unwrap();
+    let rewind = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START + 95).await })
+    };
+    wait_until_blocked_by(pool, switch_pid).await;
+    switching.commit().await.unwrap();
+    assert_eq!(rewind.await.unwrap().unwrap(), ReplayStart::Deferred);
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.estate_registry.as_str()),
+        other
+    );
+    db.drop().await;
+}
+
+/// `estate_land` holds one network's links (it is keyed by the LAND token
+/// alone), so a switch refuses to run beside another network's cursor,
+/// whose links it would delete; the pass names why.
+#[tokio::test]
+async fn a_switch_refuses_a_database_shared_with_another_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        rpc_url: Some("http://127.0.0.1:9".into()),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
+         VALUES ($1, $2, $3, 1, false)",
+    )
+    .bind(NETWORK_SEPOLIA)
+    .bind("0x00000000000000000000000000000000000000cc")
+    .bind("0x00000000000000000000000000000000000000dd")
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::SharedDatabase {
+            other: NETWORK_SEPOLIA.to_string()
+        }
+    );
+    let state = state_over(pool.clone(), configured.clone(), None);
+    let refused = indexer::run_pass(&state, &ctx).await.unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("shares this database"),
+        "{refused:#}"
+    );
+    assert!(!state.replay_requested.load(Ordering::SeqCst));
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.land_registry, old.land_registry);
+    let links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(links, 1, "the other network's links are kept");
+    db.drop().await;
+}
+
+/// The networks whose cursor this database holds, in order.
+async fn cursor_networks(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT network FROM land_authz.index_cursor ORDER BY network")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Until a backend of this test's database waits on an advisory lock.
+async fn wait_until_an_advisory_lock_is_awaited(pool: &PgPool) {
+    for _ in 0..500 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited on an advisory lock");
+}
+
+/// A switch admitted to the database, and still waiting on the old
+/// registries' fold, holds the admission: another network's cursor created
+/// meanwhile waits for it, then is refused, so the switch never deletes a
+/// link of a network that joined under it.
+#[tokio::test]
+async fn a_network_created_while_a_switch_waits_is_refused_once_the_switch_lands() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let sepolia = Settings::for_network("sepolia", None).unwrap();
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+
+    let mut folding = pool.begin().await.unwrap();
+    let fold_pid = backend_pid(&mut folding).await;
+    indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+    let switch = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    wait_until_blocked_by(pool, fold_pid).await;
+    let create = {
+        let (pool, sepolia) = (pool.clone(), sepolia.clone());
+        tokio::spawn(async move { indexer::ensure_cursor(&pool, &sepolia).await })
+    };
+    wait_until_an_advisory_lock_is_awaited(pool).await;
+    assert!(!create.is_finished(), "the creation waits on the switch");
+
+    folding.commit().await.unwrap();
+    assert_eq!(switch.await.unwrap().unwrap(), ReplayStart::Begun);
+    let refused = create.await.unwrap().unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("shares this database"),
+        "{refused:#}"
+    );
+    assert_eq!(
+        cursor_networks(pool).await,
+        vec![NETWORK_MAINNET.to_string()]
+    );
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.land_registry, configured.land_registry);
+    db.drop().await;
+}
+
+/// Two networks creating the first cursor of an empty database: whichever
+/// is admitted first holds it, and the other, whether through
+/// `ensure_cursor` or a replay that would create it, is refused.
+#[tokio::test]
+async fn the_first_cursor_of_an_empty_database_admits_one_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let sepolia = Settings::for_network("sepolia", None).unwrap();
+
+    // Mainnet's creation is admitted and holds the admission until it commits.
+    let mut creating = pool.begin().await.unwrap();
+    let creating_pid = backend_pid(&mut creating).await;
+    assert_eq!(
+        indexer::admit_network(&mut creating, NETWORK_MAINNET, indexer::REBIND_LOCK_TIMEOUT)
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
+         VALUES ($1, $2, $3, $4, true)",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(&configured.land_registry)
+    .bind(&configured.estate_registry)
+    .bind(START as i64 - 1)
+    .execute(&mut *creating)
+    .await
+    .unwrap();
+
+    let create = {
+        let (pool, sepolia) = (pool.clone(), sepolia.clone());
+        tokio::spawn(async move { indexer::ensure_cursor(&pool, &sepolia).await })
+    };
+    let replay = {
+        let (pool, sepolia) = (pool.clone(), sepolia.clone());
+        tokio::spawn(async move { begin_replay(&pool, &sepolia, sepolia.start_block).await })
+    };
+    wait_until_blocked_by(pool, creating_pid).await;
+    creating.commit().await.unwrap();
+
+    let refused = create.await.unwrap().unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("shares this database"),
+        "{refused:#}"
+    );
+    assert_eq!(
+        replay.await.unwrap().unwrap(),
+        ReplayStart::SharedDatabase {
+            other: NETWORK_MAINNET.to_string()
+        }
+    );
+    assert_eq!(
+        cursor_networks(pool).await,
+        vec![NETWORK_MAINNET.to_string()]
+    );
+    db.drop().await;
+}
+
+/// A pass whose network has no cursor yet waits on another pass's
+/// admission at most the lock timeout, then ends without an error (no
+/// error backoff), and creates the cursor once the admission is free.
+#[tokio::test]
+async fn a_pass_whose_new_cursor_waits_on_the_admission_ends_without_an_error() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        // Never asked: the pass ends before any request.
+        rpc_url: Some("http://127.0.0.1:9".into()),
+        index_enabled: true,
+        rebind_lock_timeout: SHORT_LOCK_TIMEOUT,
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+    let mut admitting = pool.begin().await.unwrap();
+    assert_eq!(
+        indexer::admit_network(
+            &mut admitting,
+            NETWORK_MAINNET,
+            indexer::REBIND_LOCK_TIMEOUT
+        )
+        .await
+        .unwrap(),
+        None
+    );
+
+    let state = state_over(pool.clone(), configured.clone(), None);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(!out.published && out.folded.is_none(), "{out:?}");
+    assert!(cursor(pool, NETWORK_MAINNET).await.unwrap().is_none());
+
+    admitting.rollback().await.unwrap();
+    let row = indexer::ensure_cursor(pool, &configured).await.unwrap();
+    assert_eq!(row.land_registry, configured.land_registry);
+    db.drop().await;
+}
+
+/// Two nodes overlapping after a lost lease both ask for the same switch.
+/// The second, admitted after the first committed, finds the cursor already
+/// of its registries under the row lock: it begins the replay without a
+/// second rewind, and keeps the links the first one's replay rebuilt.
+#[tokio::test]
+async fn a_switch_another_pass_already_made_is_begun_without_a_second_rewind() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    let progressed = (START + 50) as i64;
+
+    // The first node is admitted and switches: the cursor of the configured
+    // registries, its replay already past its start, and a link of theirs.
+    let mut first = pool.begin().await.unwrap();
+    let first_pid = backend_pid(&mut first).await;
+    assert_eq!(
+        indexer::admit_network(&mut first, NETWORK_MAINNET, indexer::REBIND_LOCK_TIMEOUT)
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = $2, estate_registry = $3, last_block = $4, \
+         folded_block = NULL, folded_at = NULL, full_replay_started = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(&configured.land_registry)
+    .bind(&configured.estate_registry)
+    .bind(progressed)
+    .execute(&mut *first)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(&mut *first)
+    .await
+    .unwrap();
+
+    // The second node read the old registries and waits for the admission.
+    let second = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    wait_until_blocked_by(pool, first_pid).await;
+    first.commit().await.unwrap();
+    assert_eq!(second.await.unwrap().unwrap(), ReplayStart::Begun);
+
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.last_block),
+        (configured.land_registry.as_str(), progressed),
+        "no second rewind"
+    );
+    let links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(links, 1, "the first replay's link is kept");
+    db.drop().await;
+}
+
+/// A lock timeout on the replay's write, not only on its admission or the
+/// cursor row, defers it: here the cursor it creates waits behind another
+/// writer's uncommitted row of the same network.
+#[tokio::test]
+async fn a_replay_whose_write_waits_past_the_lock_timeout_defers() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        rebind_lock_timeout: SHORT_LOCK_TIMEOUT,
+        ..Settings::for_tests()
+    };
+    let mut writer = pool.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
+         VALUES ($1, $2, $3, $4, true)",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(&configured.land_registry)
+    .bind(&configured.estate_registry)
+    .bind(START as i64 - 1)
+    .execute(&mut *writer)
+    .await
+    .unwrap();
+
+    let asked = std::time::Instant::now();
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Deferred
+    );
+    assert!(
+        asked.elapsed() >= SHORT_LOCK_TIMEOUT,
+        "{:?}",
+        asked.elapsed()
+    );
+    writer.rollback().await.unwrap();
+    assert!(cursor(pool, NETWORK_MAINNET).await.unwrap().is_none());
+    db.drop().await;
 }

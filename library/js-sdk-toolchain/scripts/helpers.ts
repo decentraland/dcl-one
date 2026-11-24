@@ -3,6 +3,8 @@ import { resolve, relative } from 'path'
 import { existsSync, readFileSync, writeFileSync, lstatSync, removeSync, copySync } from 'fs-extra'
 import { rmSync, globSync } from 'fs'
 
+export const PNPM = process.env.PNPM || 'corepack pnpm@12.21.0'
+
 /**
  * @returns the resolved absolute path
  */
@@ -68,26 +70,23 @@ export function patchJson(file: string, cwd: string, redux: (previous: any) => a
   return writeFileSync(path, JSON.stringify(redux(JSON.parse(readFileSync(path).toString())), null, 2))
 }
 
-// The key stays what the code imports (@dcl/ecs); while the packages publish under another scope,
-// the pinned spec is an npm alias to that name.
 export function itInstallsADependencyFromFolderAndCopiesTheVersion(
   cwd: string,
-  key: string,
   depPath: string,
   devDependency = false
 ) {
   const dependencies = devDependency ? 'devDependencies' : 'dependencies'
 
-  itExecutes(`npm install --silent ${key}@file:${depPath}`, cwd)
+  itExecutes(`${PNPM} add --ignore-scripts ${depPath}`, cwd)
 
   it(`update ${dependencies} version ${depPath} in ${cwd}`, () => {
-    const { name, version } = readJson('package.json', depPath)
+    const depPackageJson = readJson('package.json', depPath)
     patchJson('package.json', cwd, ($) => {
       return {
         ...$,
         [dependencies]: {
           ...($[dependencies] || {}),
-          [key]: name === key ? version : `npm:${name}@${version}`
+          [depPackageJson.name]: depPackageJson.version
         }
       }
     })
@@ -97,7 +96,7 @@ export function itInstallsADependencyFromFolderAndCopiesTheVersion(
           ...$,
           dependencies: {
             ...($[dependencies] || {}),
-            [key]: undefined
+            [depPackageJson.name]: undefined
           }
         }
       })

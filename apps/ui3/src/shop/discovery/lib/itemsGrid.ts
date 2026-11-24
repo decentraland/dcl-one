@@ -1,11 +1,10 @@
 
 import { parseEvmAddress } from "@shop/model/address";
-import { fetchCatalogItems, fetchShopItems, type EmoteAttributeFilters } from "../api";
+import { fetchCatalogItems, fetchShopItems, type EmoteAttributeFilters } from "@shop/discovery/api";
 import { DEALS_SORTS, RELEVANCE_SORT, SORTS, type FilterChip } from "../components/FilterBar";
 import { STATUSES, type FilterStatus } from "../components/Filters";
-import { shopFlags } from "../flags";
 import { t } from "@shop/discovery/intl";
-import { CATEGORIES, SUBCAT_MAP } from "./categories";
+import { CATEGORIES, SUBCAT_MAP } from "@shop/discovery/lib/categories";
 
 export const ITEMS_PAGE_SIZE = 48;
 
@@ -80,17 +79,16 @@ export function emoteAttributes(category: string, state: EmoteFilterState): Emot
 
 export type ItemsFilterState = ReturnType<typeof itemsFilterDefaults>;
 
-export const dealsRequestedIn = (searchParams: URLSearchParams): boolean => shopFlags().creatorSales && searchParams.get("deals") === "true";
+export const dealsRequestedIn = (searchParams: URLSearchParams, creatorSales: boolean): boolean => creatorSales && searchParams.get("deals") === "true";
 
-export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts, hideNames = false, lockStatus, marketplace = false }: ItemsGridScope = {}) {
-  const flags = shopFlags();
+export function itemsGrid(filterState: ItemsFilterState, q: string, creatorSales: boolean, { contracts, hideNames = false, lockStatus, marketplace = false }: ItemsGridScope = {}) {
   const { subCategory, rarities, priceMin, priceMax, smart, sort } = filterState;
   const defaultStatus = defaultStatusFor(!!q);
   const bodyShape = ["male", "female", "unisex"].includes(filterState.bodyShape) ? filterState.bodyShape : "all";
   // Without the Marketplace there is no listing-type choice: a `?listingType=` in the URL selects nothing, and the
   // reads ask for primary sales only.
   const listingType = marketplace && (filterState.listingType === "primary" || filterState.listingType === "secondary") ? filterState.listingType : undefined;
-  const deals = flags.creatorSales && filterState.deals;
+  const deals = creatorSales && filterState.deals;
   const offered = CATEGORIES.map((c) => c.key).filter((key) => !(hideNames && key === "names"));
   const category = offered.includes(filterState.category) ? filterState.category : "all";
   const status: FilterStatus = lockStatus ?? (STATUSES.includes(filterState.status as FilterStatus) ? (filterState.status as FilterStatus) : defaultStatus);

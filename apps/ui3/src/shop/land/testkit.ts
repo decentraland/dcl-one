@@ -1,8 +1,8 @@
 import { decodeFunctionData, encodeFunctionResult, toFunctionSelector, type Abi, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { createShopClient, type ShopClient } from "../api/shop";
-import type { TransportRequest } from "../api/signer";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
+import type { TransportRequest } from "@shop/api/signer";
 
 export type CallAnswer = (args: readonly unknown[], to: string) => unknown;
 

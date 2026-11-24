@@ -10,7 +10,7 @@ import { useState } from "react";
 import Button from "../../atoms/Button";
 import Modal from "../../components/Modal";
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { txHref } from "./evm";
 import { claimAsset, removeRental, type RentalListing, type RentalTxStage } from "./rentals";
 import { txOutcome, type TxOutcome } from "./txText";

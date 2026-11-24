@@ -1,0 +1,66 @@
+.root {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  /* a caller may set --avatar-border-width and --avatar-border on the avatar or around it */
+  border: var(--avatar-border-width, 2px) solid var(--avatar-border, rgba(255, 255, 255, 0.5));
+  box-sizing: border-box;
+  color: #161518;
+  font-weight: 700;
+  line-height: 1;
+}
+.img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-pill);
+  object-fit: cover;
+}
+.framed {
+  border: none;
+}
+/* a caller's container may set --avatar-inset-x / --avatar-inset-y (the picture's distance from
+   the circle), --avatar-ring-width and --avatar-ring for the framed avatars inside it */
+.framed .img {
+  inset: var(--avatar-inset-y, 1.65px) var(--avatar-inset-x, 1.65px);
+  width: calc(100% - 2 * var(--avatar-inset-x, 1.65px));
+  height: calc(100% - 2 * var(--avatar-inset-y, 1.65px));
+}
+.framed::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: var(--avatar-ring-width, 1px) solid var(--avatar-ring, var(--rail-avatar-ring));
+  border-radius: var(--r-pill);
+  pointer-events: none;
+}
+/* the status dot: --avatar-dot-ring (its ring's width), --avatar-dot-top and --avatar-dot-right (the
+   top dot's place), --avatar-online (the online colour) and --avatar-dot-z (1 puts the dot over a
+   framed avatar's ring) may be set the same way */
+.dot {
+  position: absolute;
+  z-index: var(--avatar-dot-z, auto);
+  right: 0;
+  bottom: 0;
+  border-radius: var(--r-pill);
+  border: var(--avatar-dot-ring, 2px) solid var(--panel);
+  box-sizing: content-box;
+}
+.dotTop {
+  top: var(--avatar-dot-top, 0);
+  right: var(--avatar-dot-right, 2px);
+  bottom: auto;
+}
+.online {
+  background: var(--avatar-online, var(--online));
+}
+.away {
+  background: var(--away);
+}
+.offline {
+  background: var(--offline);
+}

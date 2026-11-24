@@ -7,14 +7,14 @@ import { Link } from "react-router";
 import ManaMark from "../../../atoms/ManaMark";
 import { shortAddress } from "@shop/model/address";
 import { parseManaWei } from "@shop/model/money";
-import type { UnifiedListing } from "../../discovery/api";
+import type { UnifiedListing } from "@shop/discovery/api";
 import { ManaAmount } from "../../discovery/components/PriceTag";
 import { t } from "@shop/discovery/intl";
 import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import IndexNotice from "../../discovery/components/IndexNotice";
 import { useListingsFreshness } from "../../discovery/hooks";
-import { fetchResaleTokenInfos, type ClassicOrder } from "../api";
+import { fetchResaleTokenInfos, type ClassicOrder } from "@shop/detail/api";
 import { shopReads } from "../../discovery/reads";
 import "./resaleoffers.css";
 

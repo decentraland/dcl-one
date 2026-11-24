@@ -1,6 +1,5 @@
-use std::{path::PathBuf, sync::Mutex, time::Instant};
-
-use std::{collections::BTreeMap, fs::File, io::Write};
+use common::sync::MutexExt;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use bevy::{
     app::{PluginGroupBuilder, ScheduleRunnerPlugin},
@@ -21,7 +20,6 @@ use dcl_deno_ipc::init_runtime;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use scene_material::SceneBoundPlugin;
-use spin_sleep::SpinSleeper;
 use system_bridge::SystemBridgePlugin;
 use ui_core::{scrollable::ScrollTargetEvent, stretch_uvs_image::StretchUvMaterial};
 
@@ -40,9 +38,9 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed, PreviewMode,
-        PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance, ServerConfiguration,
-        TimeOfDay, ToolTips,
+        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed,
+        PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance,
+        ServerConfiguration, TimeOfDay, ToolTips,
     },
 };
 use comms::CommsPlugin;
@@ -69,7 +67,7 @@ impl PluginGroup for TestPlugins {
     fn build(self) -> PluginGroupBuilder {
         let builder = PluginGroupBuilder::start::<Self>();
 
-        let mut log_added = LOG_ADDED.lock().unwrap();
+        let mut log_added = LOG_ADDED.lock_ignore_poison();
         let builder = if !*log_added {
             *log_added = true;
             builder.add(LogPlugin::default())
@@ -121,6 +119,7 @@ fn init_test_app(entity_json: &str) -> App {
     let mut app = App::new();
 
     // Add our systems
+    app.insert_resource(ClientWindowFocus::Focused);
     app.insert_resource(AppConfig {
         graphics: GraphicsSettings {
             fps_target: 0,
@@ -219,8 +218,6 @@ fn init_test_app(entity_json: &str) -> App {
     });
     app.world_mut().insert_resource(SceneLoopSchedule {
         schedule: skip_loop_schedule,
-        next_frame_end: Instant::now(),
-        sleeper: SpinSleeper::default(),
     });
 
     // run app once to get the scene initialized
@@ -239,8 +236,6 @@ fn init_test_app(entity_json: &str) -> App {
 
     app.world_mut().insert_resource(SceneLoopSchedule {
         schedule: Schedule::new(SceneLoopLabel),
-        next_frame_end: Instant::now(),
-        sleeper: SpinSleeper::default(),
     });
 
     app
@@ -258,8 +253,10 @@ macro_rules! assert_output_eq {
 }
 
 // write output to file
-#[allow(dead_code)]
+#[cfg(feature = "gen-tests")]
 fn write_expected(expected: String, filename: &str) {
+    use std::{fs::File, io::Write, path::PathBuf};
+
     let mut path = PathBuf::from(file!());
     path.pop();
     path.push(filename);
@@ -569,12 +566,12 @@ fn lifecycle_cleans_dead_entities_from_crdt_store() {
             Some(&mut DclReader::new(&make_reparent_buffer(0))),
         );
         // grow-only entries are kept per entity too
-        for _ in 0..2 {
+        for sequence in 0..2u8 {
             context.crdt_store.force_update(
                 SceneComponentId::POINTER_RESULT,
                 CrdtType::GO_ENT,
                 id,
-                Some(&mut DclReader::new(&[1, 2, 3])),
+                Some(&mut DclReader::new(&[1, 2, sequence])),
             );
         }
     }

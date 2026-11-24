@@ -1,5 +1,11 @@
-//! Stars drawn over the finished frame after depth of field, so they stay pin sharp at screen
-//! resolution instead of being baked into the sky cubemap and blurred with it. See `stars.wgsl`.
+//! Stars drawn at screen resolution instead of being baked into the sky cubemap and blurred with
+//! it. See `stars.wgsl`.
+//!
+//! A view with depth of field draws them after depth of field, so they stay pin sharp, and dims
+//! them behind transparent geometry by its coverage in DoF's transparent focus texture. Any other
+//! view, which includes every MSAA view (depth of field yields to MSAA), has no such coverage, so
+//! it draws them before the transparent pass, into the multisampled target, and transparent
+//! geometry then covers them as it covers the sky.
 
 use bevy::{
     core_pipeline::{
@@ -45,6 +51,7 @@ use bevy::{
 };
 use bevy_atmosphere::{pipeline::AtmosphereImage, prelude::AtmosphereCamera};
 use common::structs::SceneGlobalLight;
+use scene_material::highlight::HighlightLabel;
 
 pub struct StarsPlugin;
 
@@ -68,10 +75,24 @@ impl Plugin for StarsPlugin {
                     prepare_stars_uniform.in_set(RenderSet::PrepareResources),
                 ),
             )
-            .add_render_graph_node::<ViewNodeRunner<StarsNode>>(Core3d, StarsLabel)
+            .add_render_graph_node::<ViewNodeRunner<StarsNode<true>>>(Core3d, StarsEarlyLabel)
             .add_render_graph_edges(
                 Core3d,
-                (Node3d::DepthOfField, StarsLabel, Node3d::Tonemapping),
+                (
+                    Node3d::MainTransmissivePass,
+                    StarsEarlyLabel,
+                    Node3d::MainTransparentPass,
+                ),
+            )
+            .add_render_graph_node::<ViewNodeRunner<StarsNode<false>>>(Core3d, StarsLabel)
+            .add_render_graph_edges(
+                Core3d,
+                (
+                    Node3d::DepthOfField,
+                    HighlightLabel,
+                    StarsLabel,
+                    Node3d::Tonemapping,
+                ),
             );
     }
 
@@ -83,8 +104,10 @@ impl Plugin for StarsPlugin {
 pub use settings::StarsSettings;
 
 mod settings {
-    // the ShaderType derive's layout check function is never called
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use super::*;
 
@@ -104,17 +127,17 @@ mod settings {
         /// seconds, for the twinkle
         pub time: f32,
     }
+}
 
-    impl Default for StarsSettings {
-        fn default() -> Self {
-            Self {
-                sun_position: Vec3::Y,
-                night: 0.0,
-                brightness: 4.0,
-                size: 1.0,
-                density: 0.65,
-                time: 0.0,
-            }
+impl Default for StarsSettings {
+    fn default() -> Self {
+        Self {
+            sun_position: Vec3::Y,
+            night: 0.0,
+            brightness: 4.0,
+            size: 1.0,
+            density: 0.65,
+            time: 0.0,
         }
     }
 }
@@ -122,6 +145,7 @@ mod settings {
 /// Stars fade in as the sun drops below the horizon, like the sky's night colour.
 fn update_stars_settings(
     light: Res<SceneGlobalLight>,
+    environment: Res<crate::environment::SceneEnvironment>,
     time: Res<Time>,
     mut settings: ResMut<StarsSettings>,
 ) {
@@ -129,7 +153,12 @@ fn update_stars_settings(
     let t = (light.sun_direction.y / 0.15).clamp(0.0, 1.0);
     let night = t * t * (3.0 - 2.0 * t);
     let sun_position = -light.sun_direction;
-    settings.night = night;
+    settings.night = if environment.texture.is_some() {
+        0.0
+    } else {
+        night
+    };
+    settings.brightness = environment.star_brightness.unwrap_or(4.0);
     settings.sun_position = sun_position;
     settings.time = time.elapsed_secs();
 }
@@ -248,7 +277,12 @@ impl SpecializedRenderPipeline for StarsPipeline {
             vertex: fullscreen_shader_vertex_state(),
             primitive: PrimitiveState::default(),
             depth_stencil: None,
-            multisample: MultisampleState::default(),
+            multisample: MultisampleState {
+                // without the focus texture the stars draw into the main pass's (multisampled)
+                // target; with it, onto the resolved frame after depth of field
+                count: if key.focus { 1 } else { key.samples },
+                ..default()
+            },
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs,
@@ -304,13 +338,20 @@ fn prepare_stars_pipelines(
     }
 }
 
+/// The stars after depth of field, for views with its transparent focus texture.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 struct StarsLabel;
 
-#[derive(Default)]
-struct StarsNode;
+/// The stars before the transparent pass, for views without it.
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct StarsEarlyLabel;
 
-impl ViewNode for StarsNode {
+/// Draws the stars of the views whose place is `EARLY` (see the module docs): a view draws them
+/// once, in one of the two nodes.
+#[derive(Default)]
+struct StarsNode<const EARLY: bool>;
+
+impl<const EARLY: bool> ViewNode for StarsNode<EARLY> {
     type ViewQuery = (
         Read<ViewUniformOffset>,
         Read<ViewTarget>,
@@ -329,8 +370,8 @@ impl ViewNode for StarsNode {
         >,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
-        // nothing to draw by day
-        if world.resource::<StarsSettings>().night <= 0.0 {
+        // nothing to draw by day, or in this node for a view that draws them in the other
+        if world.resource::<StarsSettings>().night <= 0.0 || EARLY == pipeline_id.key.focus {
             return Ok(());
         }
         let pipeline = world.resource::<StarsPipeline>();
@@ -375,19 +416,26 @@ impl ViewNode for StarsNode {
             ),
         };
 
+        let color_attachment = if EARLY {
+            // the main pass's target, multisampled under MSAA and resolved at the end of the
+            // pass; the main passes have drawn into it already, so it loads
+            view_target.get_color_attachment()
+        } else {
+            // drawn straight onto the resolved frame, no copy
+            RenderPassColorAttachment {
+                view: view_target.main_texture_view(),
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load,
+                    store: StoreOp::Store,
+                },
+            }
+        };
         let mut pass = render_context
             .command_encoder()
             .begin_render_pass(&RenderPassDescriptor {
-                label: Some("stars"),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    // drawn straight onto the frame, no copy
-                    view: view_target.main_texture_view(),
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Load,
-                        store: StoreOp::Store,
-                    },
-                })],
+                label: Some(if EARLY { "stars early" } else { "stars" }),
+                color_attachments: &[Some(color_attachment)],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,

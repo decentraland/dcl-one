@@ -2,7 +2,7 @@
 
 import type { ComponentPropsWithoutRef, CSSProperties } from "react";
 
-import type { IconName } from "../lib/iconName";
+import type { IconName } from "@shop/discovery/lib/iconName";
 import "./icon.css";
 
 const URLS = import.meta.glob<string>("../icons/*.svg", { eager: true, query: "?url&no-inline", import: "default" });

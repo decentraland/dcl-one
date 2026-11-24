@@ -51,7 +51,10 @@ fn main() {
         let name = path
             .strip_prefix(&repository)
             .expect("schema within repository")
-            .display();
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let body =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
         out.push_str(&format!("-- ════ {name} ════\n\n"));
@@ -66,6 +69,63 @@ fn main() {
     let target = out_dir.join("migrations.sql");
     fs::write(&target, render_migrations())
         .unwrap_or_else(|e| panic!("writing {}: {e}", target.display()));
+
+    let target = out_dir.join("release.sql");
+    fs::write(&target, render_release())
+        .unwrap_or_else(|e| panic!("writing {}: {e}", target.display()));
+}
+
+/// The release into this binary's schema version
+/// (`schemas/releases/v3-private-voice-pending.sql`) as statements
+/// `schema migrate --release` runs inside its own transaction: each `\ir` is
+/// replaced by the file it names, and the psql-only `\set ON_ERROR_STOP on`,
+/// `BEGIN;` and `COMMIT;` lines are dropped. Any other psql meta-command, in
+/// the release or in a file it includes, fails the build.
+fn render_release() -> String {
+    let dir = &root().join("schemas/releases");
+    let path = dir.join("v3-private-voice-pending.sql");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let source =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let mut out = String::new();
+    let mut dropped = Vec::new();
+    for line in source.lines() {
+        match line.trim() {
+            "\\set ON_ERROR_STOP on" | "BEGIN;" | "COMMIT;" => dropped.push(line.trim()),
+            include if include.starts_with("\\ir ") => {
+                let included = dir.join(include["\\ir ".len()..].trim());
+                println!("cargo:rerun-if-changed={}", included.display());
+                let body = fs::read_to_string(&included)
+                    .unwrap_or_else(|e| panic!("reading {}: {e}", included.display()));
+                if let Some(meta) = body.lines().find(|l| l.trim_start().starts_with('\\')) {
+                    panic!(
+                        "{}: psql meta-command {meta:?} has no SQL equivalent",
+                        included.display()
+                    )
+                }
+                out.push_str(body.trim_end_matches('\n'));
+                out.push('\n');
+            }
+            meta if meta.starts_with('\\') => {
+                panic!(
+                    "{}: psql meta-command {meta:?} has no SQL equivalent",
+                    path.display()
+                )
+            }
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    dropped.sort();
+    assert_eq!(
+        dropped,
+        ["BEGIN;", "COMMIT;", "\\set ON_ERROR_STOP on"],
+        "{}: the release sets ON_ERROR_STOP and opens and commits one transaction",
+        path.display()
+    );
+    out
 }
 
 const MIGRATIONS_HEADER: &str = "\
@@ -98,6 +158,7 @@ fn render_migrations() -> String {
     };
     files.sort();
     let mut out = String::from(MIGRATIONS_HEADER);
+    let mut numbers = std::collections::HashSet::new();
     for path in &files {
         println!("cargo:rerun-if-changed={}", path.display());
         let stem = path.file_stem().unwrap().to_string_lossy();
@@ -106,6 +167,10 @@ fn render_migrations() -> String {
                 && stem.as_bytes()[..4].iter().all(u8::is_ascii_digit)
                 && stem.as_bytes()[4] == b'_',
             "schemas/migrations/{stem}.sql: a step is named NNNN_<what_it_adds>.sql"
+        );
+        assert!(
+            numbers.insert(stem[..4].to_owned()),
+            "schemas/migrations/{stem}.sql: another step has this number; take the next free one"
         );
         let body =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));

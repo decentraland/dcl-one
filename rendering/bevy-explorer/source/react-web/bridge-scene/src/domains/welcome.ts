@@ -2,7 +2,7 @@
 // look its new profile deploys with. The looks come from the page (its fetches work before sign-in,
 // the scene's signed ones don't): before sign-in the stage wears one as a stand-in, signed in it is
 // the Backpack's draft (./avatarDraft), so the stage wears each pick before anything deploys.
-//   from: getWelcome / expectLook / showLook / acceptWelcome (the page), BevyApi.getWelcome
+//   from: getWelcome / showLook / acceptWelcome (the page), BevyApi.getWelcome
 //   to:   welcome / welcomeAccepted / wearables (the page), BevyApi.setAvatar + acceptTerms,
 //         RestrictedActions.openExternalUrl (openLegal)
 import { AvatarEquippedData, engine } from '@dcl/sdk/ecs'
@@ -11,8 +11,9 @@ import { openExternalUrl } from '~system/RestrictedActions'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { deployLookAs, editLook, hasDraft, setStandInLook } from './avatarDraft'
-import { expectLook, syncShape, waitFrames } from './avatarPreview'
-import type { AvatarLook } from '../../../src/engine/avatarEquip'
+import { identity } from '../identity'
+import { syncShape, waitFrames } from './avatarPreview'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { sendEquipped } from './wearables'
 
 const LEGAL = {
@@ -23,33 +24,30 @@ const LEGAL = {
 const PLAYER_LOOK_FRAMES = 600
 
 export function registerWelcome(ctx: Ctx): void {
-  ctx.on('getWelcome', async () => {
+  ctx.on('getWelcome', async (msg) => {
     const state = (await BevyApi.getWelcome?.().catch(() => undefined)) ?? { terms: false, newProfile: false }
-    ctx.send({ kind: 'welcome', ...state })
+    // with the ask's tag, so the page knows which ask this answers
+    ctx.send({ kind: 'welcome', ...state, ask: msg.ask })
   })
 
   // A curated default look, as the page fetched it, on the stage: signed in, on the draft (the
   // page's equipped set follows); not yet, as the stand-in. Applied a frame later, so the picks
-  // queued while the scene was not yet up (the page's rerolls before the engine ran) collapse to
-  // the last.
-  ctx.on('expectLook', () => {
-    expectLook()
-  })
-  let queuedShow: { look: number; avatar: AvatarLook } | null = null
+  // queued while the scene was not yet up (picks made before the engine ran) collapse to the last.
+  let queuedShow: AvatarLook | null = null
   ctx.on('showLook', (msg) => {
-    queuedShow = { look: msg.look, avatar: msg.avatar }
+    queuedShow = msg.avatar
   })
   ctx.push(() => {
     if (queuedShow == null) return
-    const { look: n, avatar: look } = queuedShow
+    const look = queuedShow
     queuedShow = null
     if (getPlayer() == null) {
       setStandInLook(look)
-      syncShape(n)
+      syncShape()
       return
     }
     editLook({ bodyShape: look.bodyShape, wearables: look.wearables, eyes: look.eyes, hair: look.hair, skin: look.skin, forceRender: [] })
-    syncShape(n)
+    syncShape()
     sendEquipped(ctx).catch((e: unknown) => {
       console.error('[welcome] equipped', e)
     })
@@ -62,6 +60,7 @@ export function registerWelcome(ctx: Ctx): void {
   })
 
   ctx.on('acceptWelcome', async (msg) => {
+    const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
     try {
       // The terms first: a held new profile deploys with the first setAvatar after them (the guest
       // start page's accept carries its name for that).
@@ -69,11 +68,16 @@ export function registerWelcome(ctx: Ctx): void {
       if (msg.name != null || hasDraft()) {
         // the look deploys as the player wears it, which reaches the scene after the player's
         // identity (the sign-in's accept can land between): deployed before, it would be bare
-        for (let waited = 0; !AvatarEquippedData.has(engine.PlayerEntity) && waited < PLAYER_LOOK_FRAMES; waited++) await waitFrames(1)
-        await deployLookAs(msg.name ?? getPlayer()?.name ?? '')
+        for (let waited = 0; isCurrent() && (getPlayer() == null || !AvatarEquippedData.has(engine.PlayerEntity)) && waited < PLAYER_LOOK_FRAMES; waited++) {
+          await waitFrames(1)
+        }
+        if (!isCurrent()) return
+        if (getPlayer() == null) throw new Error('Player is not ready yet. Try again.')
+        await deployLookAs(msg.name, isCurrent)
       }
-      ctx.send({ kind: 'welcomeAccepted', ok: true })
+      if (isCurrent()) ctx.send({ kind: 'welcomeAccepted', ok: true })
     } catch (e) {
+      if (!isCurrent()) return
       console.error('[welcome] accept failed', e)
       ctx.send({ kind: 'welcomeAccepted', ok: false, error: String(e) })
     }

@@ -56,10 +56,15 @@ pub mod accounts;
 pub mod activity;
 pub mod admin;
 pub mod base_wearables;
+pub mod bid_notices;
 pub mod bids;
 pub mod catalog;
+pub mod chain_group;
+pub mod chain_jobs;
 pub mod chain_walk;
 pub mod collections;
+pub mod committee_index;
+pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
 pub mod features;
@@ -77,8 +82,8 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
-pub mod notice_cursor;
 pub mod nfts;
+pub mod notice_cursor;
 pub mod orders;
 pub mod owners;
 pub mod prices;
@@ -114,12 +119,12 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{any, delete, erase, get, post};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -193,11 +198,12 @@ pub struct Settings {
     pub nft_worker_base_url: Option<String>,
     /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer backpack's on-chain
     /// items include this node's active escrow grants (`shop.usage_grants`);
-    /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
+    /// off unless the operator opts in, since lamb2 lists chain-owned tokens
+    /// only.
     pub explorer_escrow_grants: bool,
     /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
     /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and
-    /// `direction`; off under the mirror posture, where lamb2 ignores them.
+    /// `direction`; off by default, as lamb2 ignores them.
     pub lambdas_catalog_extensions: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
@@ -244,6 +250,12 @@ pub struct MarketSettings {
     pub indexes: chain_walk::IndexSettings,
     /// The tip forward's thresholds and pending cap.
     pub tips: tips::TipSettings,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client
+    /// (the tip forward's and the trade post's per-address limits).
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
+    /// `CHAIN_LOGS_SOURCE=shadow|portal`: the portal accepted windows are
+    /// compared with, or windows it admits are read from.
+    pub portal: Option<chain_jobs::PortalSettings>,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -267,6 +279,7 @@ impl std::fmt::Debug for MarketSettings {
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
             .field("tips", &self.tips)
+            .field("portal", &self.portal)
             .finish_non_exhaustive()
     }
 }
@@ -283,6 +296,8 @@ impl Default for MarketSettings {
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
+            portal: None,
         }
     }
 }
@@ -327,6 +342,8 @@ impl MarketSettings {
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
+            portal: None,
         })
     }
 
@@ -336,9 +353,20 @@ impl MarketSettings {
         self
     }
 
+    /// The portal and how the walks use it (`main.rs` fills it from `Config`).
+    pub fn with_portal(mut self, portal: Option<chain_jobs::PortalSettings>) -> Self {
+        self.portal = portal;
+        self
+    }
+
     /// The tip forward's knobs (`main.rs` fills them from `Config`).
     pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
         self.tips = tips;
+        self
+    }
+
+    pub fn with_trusted_proxies(mut self, cidrs: Vec<ipnet::IpNet>) -> Self {
+        self.trusted_proxy_cidrs = cidrs;
         self
     }
 }
@@ -468,7 +496,7 @@ impl Settings {
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
             nft_worker_base_url: None,
-            explorer_escrow_grants: true,
+            explorer_escrow_grants: false,
             lambdas_catalog_extensions: true,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
@@ -480,6 +508,15 @@ impl Settings {
             market: MarketSettings::default(),
         }
     }
+}
+
+/// This node's `/profile-images`, whose faces the profile responses warm;
+/// `serve` attaches social's renderer.
+pub trait ProfileFaces: Send + Sync {
+    /// Whether it serves a face the profile never uploaded: it has an origin or a renderer.
+    fn derives_faces(&self) -> bool;
+    /// Starts producing these profile entities' faces.
+    fn warm(&self, entities: Vec<String>);
 }
 
 pub struct MarketplaceState {
@@ -519,7 +556,7 @@ pub struct MarketplaceState {
     pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
-    pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    pub(crate) profile_images: std::sync::OnceLock<Arc<dyn ProfileFaces>>,
     /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
     pub(crate) dapps_flags: Arc<features::DappsFlags>,
     /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
@@ -533,6 +570,12 @@ pub struct MarketplaceState {
 pub type SharedState = Arc<MarketplaceState>;
 
 impl MarketplaceState {
+    /// The LAND and estate registries of `ETH_NETWORK`; `None` for a
+    /// network without them.
+    pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
+        crate::land_authz::land_network(&self.settings.eth_network)
+    }
+
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
         Self {
@@ -592,10 +635,7 @@ impl MarketplaceState {
 
     /// Attaches this node's `/profile-images`, whose faces the profile
     /// responses warm; `false` when one is already attached.
-    pub fn attach_profile_images(
-        &self,
-        images: crate::social::profile_images::SharedState,
-    ) -> bool {
+    pub fn attach_profile_images(&self, images: Arc<dyn ProfileFaces>) -> bool {
         self.profile_images.set(images).is_ok()
     }
 
@@ -606,7 +646,7 @@ impl MarketplaceState {
             || self
                 .profile_images
                 .get()
-                .is_some_and(|images| images.origin.is_some() || images.render_queue.is_some())
+                .is_some_and(|images| images.derives_faces())
     }
 
     /// Warms the faces of these profile entities when they point at this
@@ -616,7 +656,7 @@ impl MarketplaceState {
             return;
         }
         if let Some(images) = self.profile_images.get() {
-            images.warm(entities);
+            images.warm(entities.into_iter().collect());
         }
     }
 
@@ -631,8 +671,10 @@ impl MarketplaceState {
     /// and, with `MARKETPLACE_MIRRORS_ENABLED`, the `collections-mirror` and
     /// `items-mirror` jobs over every configured collections subgraph
     /// (`mirrors`): one pass per network per tick, the cursor persisted per
-    /// page, the pass marker the mirror-served routes require.
-    pub fn spawn_index_jobs(self: &Arc<Self>, jobs: &Jobs) {
+    /// page, the pass marker the mirror-served routes require. Then the chain
+    /// index supervisors, one per network ([`chain_jobs`]); `rentals` is the
+    /// rentals index's switch.
+    pub fn spawn_index_jobs(self: &Arc<Self>, jobs: &Jobs, rentals: Option<bool>) {
         match self.settings.trades_sync_upstream_url.clone() {
             Some(upstream) => {
                 let state = self.clone();
@@ -653,7 +695,7 @@ impl MarketplaceState {
             ),
         }
         mirrors::spawn_jobs(self, jobs);
-        spawn_index_jobs(self, jobs);
+        chain_jobs::spawn_jobs(self, jobs, rentals);
         neighbours::spawn_job(self, jobs);
     }
 
@@ -667,10 +709,23 @@ impl MarketplaceState {
             self.pool.clone(),
             self.settings.market.marketplace_base_url.clone(),
             self.settings.market.indexes.nft_enabled,
+            self.settings.market.indexes.sales_enabled,
+            self.settings.market.mirrors_enabled,
+            jobs,
+        );
+        bid_notices::spawn(
+            bid_notices::Settings {
+                marketplace: self.settings.market.marketplace_base_url.clone(),
+                land_images: self.settings.land_image_base_url.clone(),
+                items_mirror_enabled: self.settings.market.mirrors_enabled,
+            },
+            self.settings.market.indexes.sales_enabled,
+            self.pool.clone(),
             jobs,
         );
         transfer_notices::spawn(self, jobs);
         crate::rentals::notices::spawn(self, jobs);
+        crate::rentals::status::spawn(self, jobs);
     }
 
     /// The JSON-RPC endpoint the chain indexes and the coupon reader use on
@@ -717,6 +772,21 @@ impl MarketplaceState {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
     }
 
+    /// The endpoint the committee walk reads (Polygon only): the
+    /// `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`
+    /// (off mainnet it serves another chain); the walk checks the endpoint
+    /// serves chain 137 before each pass.
+    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        if net != chain_walk::ChainNet::Matic {
+            return None;
+        }
+        self.chain_rpc_url(net).or_else(|| {
+            (self.settings.eth_network.trim() == "mainnet")
+                .then(|| self.settings.polygon_rpc_url.clone())
+                .flatten()
+        })
+    }
+
     fn rpc_url_for(&self, net: chain_walk::ChainNet, chain_id: i64) -> Option<String> {
         self.settings
             .market
@@ -731,120 +801,17 @@ impl MarketplaceState {
     }
 }
 
-/// Refuses to walk an endpoint that serves another chain than `expected`:
+/// Refuses to walk a source that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
 pub(crate) async fn ensure_chain(
-    rpc: &crate::land_authz::indexer::Rpc<'_>,
+    source: &dyn chain_walk::LogSource,
     expected: i64,
 ) -> anyhow::Result<()> {
-    let v = rpc.call("eth_chainId", serde_json::json!([])).await?;
-    let served = v
-        .get("result")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-        .ok_or_else(|| anyhow::anyhow!("eth_chainId returned {v}"))?;
-    anyhow::ensure!(
-        served == expected,
-        "the endpoint serves chain {served}, not {expected}: refusing to index it"
-    );
-    Ok(())
-}
-
-/// Attaches `nft-index`, `trade-events-index` and `mana-transfers-index`
-/// when their switches are on: one periodic job each, a pass walking both
-/// networks in turn (the budget is per network), the nft walk of a network
-/// waiting for the collections mirror's first complete pass (its address
-/// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
-fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
-    sales_index::spawn_job(state, jobs);
-    let settings = state.settings.market.indexes.clone();
-    for (enabled, name) in [
-        (
-            settings.trade_events_enabled,
-            chain_walk::INDEXER_TRADE_EVENTS,
-        ),
-        (settings.nft_enabled, chain_walk::INDEXER_NFT),
-        (settings.mana_transfers_enabled, chain_walk::INDEXER_MANA),
-    ] {
-        let job = if name == chain_walk::INDEXER_NFT {
-            "nft-index"
-        } else if name == chain_walk::INDEXER_MANA {
-            "mana-transfers-index"
-        } else {
-            "trade-events-index"
-        };
-        if !enabled {
-            tracing::info!(
-                job,
-                "marketplace chain index off: its routes answer the unavailable envelope"
-            );
-            continue;
-        }
-        let trade_events = name == chain_walk::INDEXER_TRADE_EVENTS;
-        let rpc_url = move |state: &MarketplaceState, net: chain_walk::ChainNet| {
-            if trade_events {
-                state.trade_events_rpc_url(net)
-            } else {
-                state.chain_rpc_url(net)
-            }
-        };
-        let nets: Vec<chain_walk::ChainNet> = chain_walk::ChainNet::ALL
-            .into_iter()
-            .filter(|n| rpc_url(state, *n).is_some())
-            .collect();
-        if nets.is_empty() {
-            tracing::warn!(
-                job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
-            );
-            continue;
-        }
-        let state = state.clone();
-        let nft_indexes: Arc<Vec<nft_index::NftIndex>> =
-            Arc::new(nets.iter().map(|n| nft_index::NftIndex::new(*n)).collect());
-        jobs.spawn_periodic_leased(
-            job,
-            PeriodicCfg::every(settings.interval).with_jitter(Duration::from_secs(1)).with_error_backoff(Duration::from_secs(30)),
-            move |ctx| {
-                let (state, nets, nft_indexes) = (state.clone(), nets.clone(), nft_indexes.clone());
-                async move {
-                    let outcomes = futures::future::join_all(nets.iter().enumerate().map(|(i, net)| {
-                        let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
-                        async move {
-                            let Some(url) = rpc_url(state, *net) else { return Ok(()) };
-                            let rpc = crate::land_authz::indexer::Rpc::at(&state.http, &url);
-                            let progress = |m: String| ctx.progress(m);
-                            let outcome = if name == chain_walk::INDEXER_NFT {
-                                if !nft_index::mirror_complete(&state.pool, *net).await {
-                                    ctx.progress(format!("nft {}: waiting for the collections mirror's first complete pass", net.db_name()));
-                                    return Ok(());
-                                }
-                                chain_walk::run_pass(&state.pool, &rpc, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
-                            } else if name == chain_walk::INDEXER_MANA {
-                                chain_walk::run_pass(&state.pool, &rpc, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
-                            } else {
-                                let chain_id = state.settings.market.indexes.chain_id(*net);
-                                match ensure_chain(&rpc, chain_id).await {
-                                    Ok(()) => chain_walk::run_pass(&state.pool, &rpc, &trade_events::TradeEventsIndex { net: *net, chain_id }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
-                                    Err(e) => Err(e),
-                                }
-                            };
-                            match outcome {
-                                Ok(o) => {
-                                    tracing::info!(indexer = name, summary = %o.summary(), "marketplace chain index pass");
-                                    ctx.progress(o.summary());
-                                    Ok(())
-                                }
-                                Err(e) => Err(format!("{}: {e:#}", net.db_name())),
-                            }
-                        }
-                    })).await;
-                    let errors: Vec<String> = outcomes.into_iter().filter_map(Result::err).collect();
-                    if errors.is_empty() { Ok(()) } else { Err(anyhow::anyhow!(errors.join("; "))) }
-                }
-            },
-        );
+    let served = source.chain_id().await?.value as i64;
+    if served != expected {
+        return Err(chain_walk::WrongChain { served, expected }.into());
     }
+    Ok(())
 }
 
 /// The canonical operator paths (`/shop-api/admin/*`) of the moderation
@@ -856,7 +823,7 @@ pub fn shop_admin_router(state: SharedState) -> Router {
         .route("/admin/moderation/flags", get(admin::list_flags))
         .route(
             "/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/admin/disputes", get(admin::list_disputes))
         .route(
@@ -912,13 +879,8 @@ impl AssetKey {
 
     /// Parses `<contract>-<id>`; the network is the caller's (a URN or a query parameter).
     pub fn parse(network: &str, wire: &str) -> Option<Self> {
-        let (contract, id) = wire.trim().split_once('-')?;
-        let contract = contract.to_ascii_lowercase();
-        let is_addr = contract
-            .strip_prefix("0x")
-            .is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-        let is_id = !id.is_empty() && id.len() <= 78 && id.bytes().all(|b| b.is_ascii_digit());
-        (is_addr && is_id).then(|| Self::new(network, &contract, id))
+        let (contract, id) = self::wire::split_item_wire_id(wire)?;
+        Some(Self::new(network, &contract, &id))
     }
 }
 
@@ -937,7 +899,7 @@ async fn get_index_status(
 ) -> Json<Value> {
     Json(json!({
         "nft": nft_index::status(&state.pool).await,
-        "tradeEvents": trade_events::status(&state.pool).await,
+        "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
         "sales": sales_index::status(&state.pool).await,
         "neighbours": neighbours::status(&state.pool).await,
@@ -1060,6 +1022,7 @@ pub fn router(state: SharedState) -> Router {
             post(lambdas_crypto::validate_signature).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/status", get(lambdas_status))
+        .route("/lamb2/status", get(lambdas_status))
         .route("/lambdas/{*rest}", any(lambdas_http::not_found))
         .route("/v1/trades", get(trades::get_trades))
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
@@ -1153,7 +1116,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route(
             "/v1/trades",
             get(trades::get_trades)
-                .post(listings::post_trade)
+                .post(erase(listings::post_trade))
                 .layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
@@ -1162,37 +1125,40 @@ pub fn market_router(state: SharedState) -> Router {
             "/v1/trades/{hashed_signature}/accept",
             get(trade_events::get_trade_accepted_event),
         )
-        .route("/v1/lists", get(lists::get_lists).post(lists::create_list))
+        .route(
+            "/v1/lists",
+            get(lists::get_lists).post(erase(lists::create_list)),
+        )
         .route(
             "/v1/lists/{id}",
             get(lists::get_list_route)
-                .put(lists::update_list_route)
-                .delete(lists::delete_list_route),
+                .put(erase(lists::update_list_route))
+                .delete(erase(lists::delete_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks",
-            get(lists::get_list_picks).post(lists::add_pick_to_list_route),
+            get(lists::get_list_picks).post(erase(lists::add_pick_to_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks/{item_id}",
-            axum::routing::delete(lists::delete_pick_in_list_route),
+            delete(lists::delete_pick_in_list_route),
         )
         .route(
             "/v1/lists/{id}/access",
-            post(lists::create_access_route).delete(lists::delete_access_route),
+            post(lists::create_access_route).delete(erase(lists::delete_access_route)),
         )
         .route("/v1/picks/stats", get(lists::get_picks_stats))
         .route("/v1/picks/{item_id}/stats", get(lists::get_item_pick_stats))
         .route(
             "/v1/picks/{item_id}",
             get(lists::get_picks_by_item)
-                .post(lists::pick_unpick_in_bulk)
-                .delete(lists::unpick_everywhere),
+                .post(erase(lists::pick_unpick_in_bulk))
+                .delete(erase(lists::unpick_everywhere)),
         )
         .route(
             "/v1/coupons",
             get(crate::coupons::get_coupons)
-                .post(crate::coupons::add_coupon)
+                .post(erase(crate::coupons::add_coupon))
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/v1/coupons/{id}", get(crate::coupons::get_coupon))
@@ -1215,7 +1181,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/federation/market/changes", get(federation::changes))
         .route(
             "/v1/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/v1/admin/disputes", get(admin::list_disputes))
         .route(

@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { catalogClient, catalogTransport, COLLECTION, ITEM_ID, RESALE_WEARABLE } from "../../discovery/fixtures";
-import { createShopClient } from "../../api/shop";
-import { fetchShopListingForItem } from "../../detail/api";
-import { fetchTradeForItem } from "./api";
-
-/** Creator sales off, as a page has them until the switch says yes. */
-const OFF = () => false;
+import { catalogClient, catalogTransport, COLLECTION, ITEM_ID, PRIMARY_WEARABLE, RESALE_WEARABLE, STORE_EMOTE } from "../../discovery/fixtures";
+import { createShopClient } from "@shop/api/shop";
+import { fetchStoreMintState, fetchTradeForItem } from "./api";
 
 describe("an item line's live trade", () => {
   it("is the creator's primary sale only: an item whose only listing is a resale has none, and no trade is read", async () => {
@@ -29,17 +25,56 @@ describe("an item line's live trade", () => {
   });
 });
 
-describe("the in-world shell's item read", () => {
-  it("asks for the creator's listing only, and never takes a resale for the item", async () => {
+describe("a store mint's live state", () => {
+  /** The same item's creator trade in MANA, listed after the mint was created: newest first, it comes before the mint. */
+  const LEGACY_TRADE = { ...PRIMARY_WEARABLE, source: "legacy" as const, tradeId: "trade-legacy-mint-item", itemId: STORE_EMOTE.itemId, manaWei: "1000000000000000000" };
+
+  it("is found among the item's legacy rows, even when its creator's MANA trade comes first", async () => {
     const transport = catalogTransport("ok", {
-      "/v3/catalog/shop": (url: URL) => ({ data: url.searchParams.get("listingType") === "primary" ? [] : [RESALE_WEARABLE], total: 1 }),
+      "/v3/catalog/unified": (url: URL) => ({ data: url.searchParams.get("source") === "legacy" ? [LEGACY_TRADE, STORE_EMOTE] : [LEGACY_TRADE], total: 2 }),
     });
     const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
-    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client, creatorSales: OFF })).toBeNull();
-    const asked = transport.calls.map((c) => new URL(c.url, "http://shop.test")).filter((u) => u.pathname.endsWith("/v3/catalog/shop"));
-    expect(asked.length).toBeGreaterThan(0);
-    expect(asked.every((u) => u.searchParams.get("listingType") === "primary")).toBe(true);
-    const leaky = catalogClient("ok", { "/v3/catalog/shop": { data: [RESALE_WEARABLE], total: 1 } });
-    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client: leaky, creatorSales: OFF })).toBeNull();
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
+  });
+
+  it("reads an item's listings in one page of the node's largest size when they fit", async () => {
+    const rows = [...Array.from({ length: 20 }, (_, i) => ({ ...LEGACY_TRADE, tradeId: `trade-legacy-${i}` })), STORE_EMOTE];
+    const transport = catalogTransport("ok", {
+      "/v3/catalog/unified": (url: URL) => {
+        const skip = Number(url.searchParams.get("skip") ?? 0);
+        const first = Number(url.searchParams.get("first") ?? rows.length);
+        return { data: rows.slice(skip, skip + first), total: rows.length };
+      },
+    });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
+    const asked = transport.calls.map((c) => new URL(c.url, "http://shop.test").searchParams);
+    expect(asked.map((q) => [q.get("first"), q.get("skip")])).toEqual([["1000", "0"]]);
+  });
+
+  it("is found behind more MANA trades than a page holds, on the page the first answer's total names", async () => {
+    const rows = [...Array.from({ length: 1000 }, (_, i) => ({ ...LEGACY_TRADE, tradeId: `trade-legacy-${i}` })), STORE_EMOTE];
+    const transport = catalogTransport("ok", {
+      "/v3/catalog/unified": (url: URL) => {
+        const skip = Number(url.searchParams.get("skip") ?? 0);
+        const first = Number(url.searchParams.get("first") ?? rows.length);
+        return { data: rows.slice(skip, skip + first), total: rows.length };
+      },
+    });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
+    const skips = transport.calls.map((c) => new URL(c.url, "http://shop.test").searchParams.get("skip"));
+    expect(skips).toEqual(["0", "1000"]);
+  });
+
+  it("rejects a full page that names no total, rather than calling the mint gone", async () => {
+    const page = Array.from({ length: 1000 }, (_, i) => ({ ...LEGACY_TRADE, tradeId: `trade-legacy-${i}` }));
+    const client = catalogClient("ok", { "/v3/catalog/unified": { data: page } });
+    await expect(fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).rejects.toThrow(/total/);
+  });
+
+  it("is null when the item has no store mint any more", async () => {
+    const client = catalogClient("ok", { "/v3/catalog/unified": { data: [LEGACY_TRADE], total: 1 } });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toBeNull();
   });
 });

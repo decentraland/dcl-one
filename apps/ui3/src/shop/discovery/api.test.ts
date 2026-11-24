@@ -1,7 +1,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createShopClient } from "../api/shop";
+import { createShopClient } from "@shop/api/shop";
 import {
   fetchClassicItemOrders,
   fetchItemMeta,
@@ -10,7 +10,7 @@ import {
   fetchTokenById,
   fetchUnifiedListingForItem,
   pickItemListing,
-} from "../detail/api";
+} from "@shop/detail/api";
 import {
   compactEquipped,
   fetchCatalogByIds,
@@ -23,9 +23,9 @@ import {
   shopListingToItem,
   unifiedListingToItem,
   withoutSale,
-} from "./api";
+} from "@shop/discovery/api";
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ITEM_ID, PRIMARY_WEARABLE, RESALE_WEARABLE, RESELLER, saleWearable, STORE_EMOTE, TOKEN_ID } from "./fixtures";
-import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "./freshness";
+import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "@shop/discovery/freshness";
 
 /** Creator sales off, as a page has them until the switch says yes. */
 const OFF = () => false;
@@ -191,7 +191,14 @@ describe("the detail reads", () => {
 
   it("maps item metadata: utility trimmed, supply from a string, gender from body shapes", async () => {
     const meta = await fetchItemMeta(COLLECTION, ITEM_ID, { client: catalogClient(), creatorSales: OFF });
-    expect(meta).toMatchObject({ utility: "Glows at night", available: 10, gender: "unisex", wearableCategory: "hat", creator: CREATOR });
+    expect(meta).toMatchObject({ utility: "Glows at night", available: 10, gender: "unisex", wearableCategory: "hat", creator: CREATOR, description: "A hat for the discerning nacho." });
+  });
+
+  it("reads an emote's description from its metadata, and none as empty", async () => {
+    const row = (data: unknown) => catalogClient("ok", { "/v1/items": { data: [{ name: "Wave", data }], total: 1 } });
+    const emote = await fetchItemMeta(COLLECTION, ITEM_ID, { client: row({ emote: { description: " A friendly wave. ", category: "greetings" } }), creatorSales: OFF });
+    expect(emote).toMatchObject({ description: "A friendly wave.", wearableCategory: "greetings" });
+    expect(await fetchItemMeta(COLLECTION, ITEM_ID, { client: row({ wearable: { category: "hat" } }), creatorSales: OFF })).toMatchObject({ description: "" });
   });
 
   it("finds a token only when the row matches it, and counts ownership softly", async () => {

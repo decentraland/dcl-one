@@ -7,26 +7,45 @@
  #import bevy_pbr::prepass_io::FragmentOutput;
 #else
  #import bevy_pbr::forward_io::FragmentOutput;
+ #import bevy_pbr::{mesh_view_bindings::{lights, view}, shadows};
+ #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
 #endif
 
 #import boimp::shared::unpack_pbrinput;
 #import boimp::bindings::{sample_tile_material, UVSample};
 
-#ifdef ENVIRONMENT_MAP
-#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
-#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
+#ifndef PREPASS_PIPELINE
+// same softened sun shadows as scene materials (see bound_material.wgsl)
+override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
+    let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
+    // the far bound of the last cascade is the shadow distance for this light
+    let light = &lights.directional_lights[light_id];
+    let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
+}
 
-// the sky envmap, levelled towards the flat ambient light, is the only ambient light
-// (see sky_envmap_lookup.wgsl)
+#ifdef ENVIRONMENT_MAP
+#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
+
+// the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections
+// levelled towards the flat ambient light (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
     let upper = sky_envmap_input(input);
     let radiances = environment_map::compute_radiances(upper, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
     return sky_envmap_level(radiances, input, upper, lights.ambient_color);
 }
 
+// the ambient diffuse at full strength, the reflection added on top (see sky_envmap_lookup.wgsl)
+override fn environment_map::environment_map_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
+    return sky_envmap_light(input, clusterable_object_index_ranges, found_diffuse_indirect);
+}
+
 override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3<f32>, V: vec3<f32>, NdotV: f32, diffuse_color: vec3<f32>, specular_color: vec3<f32>, perceptual_roughness: f32, occlusion: vec3<f32>) -> vec3<f32> {
     return vec3(0.0);
 }
+#endif
 #endif
 
 @group(2) @binding(100)

@@ -1,0 +1,96 @@
+/* Navigation button: a 42px circle (black 70%) with a soft shadow, a right-side label on
+   #161518 (Shadow) and a Ruby notification badge. Hover shows the label only; selected draws a
+   2px white ring outside the circle, 46px across, and the ring casts the shadow. */
+.btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--rail-bg);
+  box-shadow: var(--shadow-rail-button);
+  color: var(--text); /* DCL/Snow — icons are full-white by default */
+  cursor: pointer;
+}
+.btn > * {
+  position: relative;
+  z-index: 1;
+}
+.active {
+  box-shadow: none;
+}
+.active::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--white);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-rail-button-selected);
+  pointer-events: none;
+}
+
+/* The Me button: the player's colour fills the circle, the picture sits 5px in from the sides and
+   3px from the top and bottom, under a 2px white ring at 70% that stays inside the selected ring. */
+.portrait {
+  --avatar-inset-x: 5px;
+  --avatar-inset-y: 3px;
+  --avatar-ring-width: 2px;
+  --avatar-ring: var(--rail-me-ring);
+}
+
+/* Ruby notification badge: 16px with its 2px Shadow ring, Inter 600 10px Snow, 5px in from the
+   circle's top and right as the design's HUD frame draws it; a caller's container may set
+   --rail-badge-top and --rail-badge-right for a button the design draws otherwise. */
+.badge {
+  position: absolute;
+  top: var(--rail-badge-top, 5px);
+  right: var(--rail-badge-right, 5px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border: 2px solid var(--panel);
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: var(--type-10);
+  font-weight: 600;
+  line-height: 12px;
+}
+
+.badgeLavender {
+  background: var(--lavender);
+}
+
+/* The green "connected" dot (nearby voice): 7.3px inside a 2.4px Shadow ring, on the circle's
+   edge at the top right. */
+.indicator {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  z-index: 2;
+  width: 7.3px;
+  height: 7.3px;
+  border-radius: var(--r-pill);
+  background: var(--voice-live);
+  box-shadow: 0 0 0 2.4px var(--panel);
+}
+
+.cornerArt {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  z-index: 2;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}

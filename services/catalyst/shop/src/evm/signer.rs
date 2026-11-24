@@ -28,6 +28,33 @@ fn within_gas_cap(estimate: u64, cap: u64) -> bool {
     cap == 0 || estimate <= cap
 }
 
+/// A signing key as every direct signer reads it (hex, with or without `0x`): a 32-byte
+/// secp256k1 scalar in range, so zero or the curve order are refused like malformed hex. The
+/// error carries no part of the key.
+pub(crate) fn parse_signing_key(key: &str) -> Result<PrivateKeySigner, ()> {
+    PrivateKeySigner::from_str(key.trim().trim_start_matches("0x")).map_err(|_| ())
+}
+
+/// The fee per gas a transaction is signed with: what it may pay per unit of gas at most,
+/// the EIP-1559 `max_fee_per_gas` (not its tip) or a legacy `gas_price`.
+fn signed_fee_per_gas(fees: &Fees) -> u128 {
+    match fees {
+        Fees::Eip1559 {
+            max_fee_per_gas, ..
+        } => *max_fee_per_gas,
+        Fees::Legacy { gas_price } => *gas_price,
+    }
+}
+
+/// `Err(fee)` when `fees` would be signed above `cap` (`RELAYER_MAX_FEE_PER_GAS_WEI`); no cap, any fee.
+fn within_fee_cap(fees: &Fees, cap: Option<u128>) -> Result<(), u128> {
+    let fee = signed_fee_per_gas(fees);
+    match cap {
+        Some(cap) if fee > cap => Err(fee),
+        _ => Ok(()),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptOutcome {
     Confirmed,
@@ -53,6 +80,8 @@ pub struct ReceiptLog {
 #[derive(Deserialize)]
 struct WireReceipt {
     status: Option<String>,
+    #[serde(rename = "blockNumber", default)]
+    block_number: Option<String>,
     #[serde(default)]
     logs: Vec<WireLog>,
 }
@@ -82,12 +111,36 @@ enum Fees {
     },
 }
 
+/// What [`DirectSigner::rebroadcast`] found for a recorded transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rebroadcast {
+    /// It already has a receipt.
+    Settled,
+    /// It had none and was re-sent (or the node already holds it).
+    Sent,
+    /// No receipt, but the node knows the transaction: alive, not re-sent.
+    Known,
+    /// On this look it can never mine: a finalized transaction holds its
+    /// nonce, and neither its receipt nor the transaction itself is found.
+    /// One look can be wrong (a lagging backend, a bounded transaction
+    /// index), so the caller acts only on two looks minutes apart.
+    Dead,
+}
+
+/// A signed transaction ready to send: its hash and its raw bytes as `0x` hex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignedTx {
+    pub hash: String,
+    pub raw: String,
+}
+
 pub struct DirectSigner {
     chain: Arc<ChainComponent>,
     signer: PrivateKeySigner,
     chain_id: u64,
     relayer_address: Address,
     max_gas_limit: u64,
+    max_fee_per_gas: Option<u128>,
     receipt_poll_interval: Duration,
     receipt_timeout: Duration,
     send_lock: tokio::sync::Mutex<()>,
@@ -113,7 +166,7 @@ impl DirectSigner {
         receipt_poll_interval: Duration,
         receipt_timeout: Duration,
     ) -> Result<Self, String> {
-        let signer = PrivateKeySigner::from_str(key.trim().trim_start_matches("0x"))
+        let signer = parse_signing_key(key)
             .map_err(|_| "invalid RELAYER_PRIVATE_KEY: not a 32-byte secp256k1 key".to_string())?;
         let relayer_address = signer.address();
         Ok(Self {
@@ -122,10 +175,25 @@ impl DirectSigner {
             chain_id,
             relayer_address,
             max_gas_limit,
+            max_fee_per_gas: None,
             receipt_poll_interval: receipt_poll_interval.max(Duration::from_millis(1)),
             receipt_timeout,
             send_lock: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Caps the fee per gas this signer signs (`RELAYER_MAX_FEE_PER_GAS_WEI`): a transaction
+    /// whose `max_fee_per_gas` (or legacy `gas_price`) would exceed it is refused before it is
+    /// signed or sent. `None` keeps it uncapped.
+    pub fn with_max_fee_per_gas(mut self, cap: Option<u128>) -> Self {
+        self.max_fee_per_gas = cap;
+        self
+    }
+
+    /// The fee-per-gas cap this signer signs under, if any.
+    #[cfg(test)]
+    pub(crate) fn max_fee_per_gas(&self) -> Option<u128> {
+        self.max_fee_per_gas
     }
 
     pub fn relayer_address(&self) -> Address {
@@ -162,7 +230,7 @@ impl DirectSigner {
         let mut delay = self.receipt_poll_interval;
         loop {
             match tokio::time::timeout_at(deadline, self.receipt(hash)).await {
-                Ok(Ok(Some((outcome, logs)))) => {
+                Ok(Ok(Some((outcome, logs, _)))) => {
                     tracing::info!(tx_hash = %tx_hash_hex, ?outcome, "broker tx receipt observed");
                     return Ok((outcome, logs));
                 }
@@ -190,25 +258,63 @@ impl DirectSigner {
         &self,
         tx_hash_hex: &str,
     ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>), ApiError> {
+        let (outcome, logs, _) = self.fetch_receipt_with_block(tx_hash_hex).await?;
+        Ok((outcome, logs))
+    }
+
+    /// [`Self::fetch_receipt_once`] plus the block the receipt was mined in.
+    pub async fn fetch_receipt_with_block(
+        &self,
+        tx_hash_hex: &str,
+    ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>), ApiError> {
         let hash = parse_tx_hash(tx_hash_hex)?;
         match self.receipt(hash).await {
             Ok(Some(found)) => Ok(found),
-            Ok(None) => Ok((ReceiptOutcome::Pending, Vec::new())),
+            Ok(None) => Ok((ReceiptOutcome::Pending, Vec::new(), None)),
             Err(e) => Err(ApiError::RelayerFailed(format!(
                 "receipt lookup failed for {tx_hash_hex}: {e}"
             ))),
         }
     }
 
+    /// The chain head and block `number`'s timestamp (unix seconds).
+    pub async fn head_and_block_time(&self, number: u64) -> Result<(u64, i64), ApiError> {
+        let rpc = self.chain.rpc();
+        let fail = |e: RpcError| ApiError::RelayerFailed(format!("block lookup failed: {e}"));
+        let head = rpc
+            .call_hex("eth_blockNumber", json!([]))
+            .await
+            .map_err(fail)
+            .and_then(|h| parse_quantity_u64(&h).map_err(fail))?;
+        let block = rpc
+            .call(
+                "eth_getBlockByNumber",
+                json!([format!("0x{number:x}"), false]),
+            )
+            .await
+            .map_err(fail)?;
+        let timestamp = block
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| ApiError::RelayerFailed(format!("block {number} has no timestamp")))
+            .and_then(|t| parse_quantity_u64(t).map_err(fail))?;
+        Ok((head, i64::try_from(timestamp).unwrap_or(i64::MAX)))
+    }
+
     async fn receipt(
         &self,
         hash: TxHash,
-    ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>)>, RpcError> {
+    ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>)>, RpcError> {
+        // Only an explicit `"result": null` means "no receipt": a reply
+        // without a result is an error, never evidence that nothing mined.
         let value = self
             .chain
             .rpc()
-            .call("eth_getTransactionReceipt", json!([format!("{hash:#x}")]))
-            .await?;
+            .call_result("eth_getTransactionReceipt", json!([format!("{hash:#x}")]))
+            .await?
+            .ok_or_else(|| {
+                RpcError::Transport("eth_getTransactionReceipt returned no result".into())
+            })?;
         if value.is_null() {
             return Ok(None);
         }
@@ -227,7 +333,11 @@ impl DirectSigner {
                 data: l.data,
             })
             .collect();
-        Ok(Some((classify_receipt(status), logs)))
+        let block_number = match receipt.block_number.as_deref() {
+            Some(n) => Some(parse_quantity_u64(n)?),
+            None => None,
+        };
+        Ok(Some((classify_receipt(status), logs, block_number)))
     }
 
     pub async fn send_meta_transaction(&self, tx: &TransactionData) -> Result<String, ApiError> {
@@ -251,7 +361,149 @@ impl DirectSigner {
         log_msg: &'static str,
     ) -> Result<String, ApiError> {
         let _guard = self.send_lock.lock().await;
+        let signed = self.sign_call(to, data).await?;
+        let tx_hash = self
+            .send_raw(&signed.raw)
+            .await
+            .map_err(|e| send_failure(&signed.hash, e))?;
+        tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
+        Ok(tx_hash)
+    }
 
+    /// Signs a contract call and hands it to `record` before anything is
+    /// sent: the caller persists the hash and the raw bytes, and only then
+    /// does the transaction go out. An `Err` from signing or from `record`
+    /// means nothing was broadcast. Once `record` succeeds, a failed send is
+    /// indeterminate (the node may hold the transaction) and answers
+    /// `RelayerTimeout`; the recorded bytes are re-sent with
+    /// [`Self::rebroadcast`], and replaced by a newly signed transaction
+    /// only once it provably can never mine ([`Rebroadcast::Dead`]).
+    /// The send lock is held from the nonce read through the send, so the
+    /// record step stays inside the nonce's critical section.
+    pub async fn send_direct_call_recorded<F, Fut>(
+        &self,
+        to: Address,
+        data: Bytes,
+        record: F,
+    ) -> Result<String, ApiError>
+    where
+        F: FnOnce(SignedTx) -> Fut,
+        Fut: std::future::Future<Output = Result<(), ApiError>>,
+    {
+        let _guard = self.send_lock.lock().await;
+        let signed = self.sign_call(to, data).await?;
+        let tx_hash = signed.hash.clone();
+        let raw = signed.raw.clone();
+        record(signed).await?;
+        if let Err(e) = self.send_raw(&raw).await {
+            log_an_unfunded_send(&tx_hash, &e);
+            tracing::warn!(tx_hash = %tx_hash, error = %e, "recorded transaction's broadcast failed; a resume re-sends it");
+            return Err(ApiError::RelayerTimeout(format!(
+                "transaction {tx_hash} is recorded but its broadcast failed ({e}); retry with the \
+                 same key to re-send it"
+            )));
+        }
+        tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "broadcast recorded contract call via JSON-RPC");
+        Ok(tx_hash)
+    }
+
+    /// Re-sends a recorded transaction's exact bytes unless a receipt for
+    /// `tx_hash` already exists. A send error is logged, not returned: the
+    /// node answering "already known" or "nonce too low" is expected, and the
+    /// receipt alone decides the outcome.
+    ///
+    /// A transaction whose nonce another transaction took can never mine. It
+    /// looks [`Rebroadcast::Dead`] only when that is final: the relayer's
+    /// `finalized` transaction count has passed the recorded nonce and,
+    /// read after it, neither the receipt nor the transaction is found, so no
+    /// reorg can mine it. The caller releases the leg only when a second look
+    /// minutes later agrees. When only the
+    /// `latest` count has passed, the answer is a retryable `RelayerTimeout`
+    /// until finality decides.
+    pub async fn rebroadcast(&self, tx_hash: &str, raw_hex: &str) -> Result<Rebroadcast, ApiError> {
+        let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
+        if outcome != ReceiptOutcome::Pending {
+            return Ok(Rebroadcast::Settled);
+        }
+        let raw = decode_hex(raw_hex.trim()).ok_or_else(|| {
+            ApiError::Internal(format!("recorded transaction {tx_hash} is not hex"))
+        })?;
+        let own = format!("{:#x}", alloy_primitives::keccak256(&raw));
+        if !own.eq_ignore_ascii_case(tx_hash.trim()) {
+            return Err(ApiError::Internal(format!(
+                "recorded transaction bytes hash to {own}, not {tx_hash}; not re-sending"
+            )));
+        }
+        if let Some(nonce) = signed_nonce(&raw)
+            && self.mined_count("latest").await? > nonce
+        {
+            // The count is read before the receipt, so a missing receipt
+            // means another transaction holds the nonce.
+            let finalized = self.mined_count("finalized").await.ok();
+            let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
+            if outcome != ReceiptOutcome::Pending {
+                return Ok(Rebroadcast::Settled);
+            }
+            if finalized.is_some_and(|count| count > nonce) {
+                // A second, independent lookup: a node that knows the
+                // transaction (mined or not) contradicts the missing receipt.
+                if self.transaction_unknown(tx_hash).await {
+                    tracing::warn!(
+                        tx_hash = %tx_hash,
+                        nonce,
+                        relayer = %self.relayer_address,
+                        "recorded transaction looks dead: a finalized transaction holds its nonce"
+                    );
+                    return Ok(Rebroadcast::Dead);
+                }
+                return Ok(Rebroadcast::Known);
+            }
+            tracing::warn!(tx_hash = %tx_hash, nonce, "another transaction holds the recorded nonce; waiting for finality");
+            return Err(ApiError::RelayerTimeout(format!(
+                "recorded transaction {tx_hash}'s nonce {nonce} is held by another transaction \
+                 that is not yet final; retry to settle"
+            )));
+        }
+        match self.send_raw(raw_hex.trim()).await {
+            Ok(_) => tracing::info!(tx_hash = %tx_hash, "re-sent recorded transaction"),
+            Err(e) => {
+                log_an_unfunded_send(tx_hash, &e);
+                tracing::warn!(tx_hash = %tx_hash, error = %e, "re-send of recorded transaction refused; its receipt decides")
+            }
+        }
+        Ok(Rebroadcast::Sent)
+    }
+
+    /// Whether `eth_getTransactionByHash` answers an explicit `"result":
+    /// null` for `tx_hash`; an error or a reply without a result proves
+    /// nothing and reads as known.
+    async fn transaction_unknown(&self, tx_hash: &str) -> bool {
+        matches!(
+            self.chain
+                .rpc()
+                .call_result("eth_getTransactionByHash", json!([tx_hash]))
+                .await,
+            Ok(Some(serde_json::Value::Null))
+        )
+    }
+
+    /// The relayer's transaction count at `block` (`latest`, `finalized`):
+    /// every nonce below it is used by a transaction mined at that block.
+    async fn mined_count(&self, block: &str) -> Result<u64, ApiError> {
+        self.chain
+            .rpc()
+            .call_hex(
+                "eth_getTransactionCount",
+                json!([format!("{:#x}", self.relayer_address), block]),
+            )
+            .await
+            .and_then(|hex| parse_quantity_u64(&hex))
+            .map_err(|e| ApiError::RelayerFailed(format!("eth_getTransactionCount failed: {e}")))
+    }
+
+    /// Estimates, reads the pending nonce and the fees, and signs. Callers
+    /// hold `send_lock`.
+    async fn sign_call(&self, to: Address, data: Bytes) -> Result<SignedTx, ApiError> {
         let estimate = self
             .chain
             .estimate_gas(Some(self.relayer_address), to, &data)
@@ -283,24 +535,30 @@ impl DirectSigner {
             .fees()
             .await
             .map_err(|e| ApiError::RelayerFailed(format!("fee lookup failed: {e}")))?;
+        if let Err(fee) = within_fee_cap(&fees, self.max_fee_per_gas) {
+            // Retryable like the relay's gas-price ceiling (`check_gas_price`): 503 HIGH_CONGESTION.
+            return Err(ApiError::HighCongestion(format!(
+                "the fee per gas {fee} wei exceeds RELAYER_MAX_FEE_PER_GAS_WEI {}: not sent",
+                self.max_fee_per_gas.unwrap_or_default()
+            )));
+        }
 
         let raw = self.sign(nonce, estimate, fees, to, data)?;
-        let hash = rpc
-            .call_hex(
-                "eth_sendRawTransaction",
-                json!([format!("0x{}", hex::encode(&raw))]),
-            )
-            .await
-            .map_err(|e| {
-                if e.is_execution_revert() {
-                    ApiError::RelayReverted(format!("transaction reverted: {}", e.message()))
-                } else {
-                    ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
-                }
-            })?;
+        Ok(SignedTx {
+            hash: format!("{:#x}", alloy_primitives::keccak256(&raw)),
+            raw: format!("0x{}", hex::encode(&raw)),
+        })
+    }
+
+    /// `eth_sendRawTransaction`; the answer is our own hash or an error.
+    async fn send_raw(&self, raw_hex: &str) -> Result<String, RpcError> {
+        let hash = self
+            .chain
+            .rpc()
+            .call_hex("eth_sendRawTransaction", json!([raw_hex]))
+            .await?;
         let tx_hash = parse_tx_hash(&hash)
-            .map_err(|_| ApiError::RelayerFailed(format!("node answered a non-hash {hash:?}")))?;
-        tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
+            .map_err(|_| RpcError::Transport(format!("node answered a non-hash {hash:?}")))?;
         Ok(format!("{tx_hash:#x}"))
     }
 
@@ -385,6 +643,53 @@ impl DirectSigner {
     }
 }
 
+/// What a failed `eth_sendRawTransaction` of a just-signed transaction (`hash`) tells the caller:
+/// never that it was not sent. The failure comes after the send was attempted, and nothing in it
+/// proves the transaction did not go out. No answer at all (a timeout, a cut connection, a gateway
+/// error, an unreadable body) can follow the node taking it. An error the node answers can be about
+/// a retry of a send it already took: a gateway that retried gets "already known", "nonce too low",
+/// or a revert from a node that simulates. So every send failure is `RelayerTimeout` (504): the
+/// buyer's quota slot is kept and a client follows the purchase instead of signing again. The
+/// refusals that prove nothing was sent come before this, from validation and gas estimation.
+fn send_failure(hash: &str, e: RpcError) -> ApiError {
+    log_an_unfunded_send(hash, &e);
+    ApiError::RelayerTimeout(format!(
+        "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
+    ))
+}
+
+/// Logs a send the relayer wallet could not fund (`cannot_pay_for_gas`) on its own, apart from a
+/// slow or unreachable node. Every path that sends a signed transaction calls it: a relayed call
+/// (`send_failure`), a recorded contract call, and the re-send of a recorded one. It changes no
+/// answer.
+fn log_an_unfunded_send(hash: &str, e: &RpcError) {
+    if cannot_pay_for_gas(e) {
+        tracing::error!(
+            tx_hash = %hash,
+            error = %e,
+            "economy: the relayer wallet could not fund this transaction's gas; check its balance"
+        );
+    }
+}
+
+/// Whether the node refused the send because the relayer's wallet held too little to pay for this
+/// transaction's gas. A relayed call still answers a 504 that keeps the slot (`send_failure`);
+/// this only lets the send be logged on its own (`log_an_unfunded_send`), so a wallet running dry
+/// is seen. Matched on the error message nodes answer for it ("insufficient funds for gas * price
+/// + value").
+fn cannot_pay_for_gas(e: &RpcError) -> bool {
+    matches!(e, RpcError::Response { message, .. } if message.to_ascii_lowercase().contains("insufficient funds"))
+}
+
+/// The nonce a signed EIP-2718 transaction carries.
+fn signed_nonce(raw: &[u8]) -> Option<u64> {
+    use alloy_consensus::Transaction;
+    use alloy_eips::eip2718::Decodable2718;
+    alloy_consensus::TxEnvelope::decode_2718(&mut &raw[..])
+        .ok()
+        .map(|tx| tx.nonce())
+}
+
 fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
     let bytes = decode_hex(tx_hash_hex.trim())
         .filter(|b| b.len() == 32)
@@ -397,6 +702,86 @@ fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No failure of the send itself proves the transaction never went out: no answer, an answer
+    /// that the node already holds it, a revert, or a plain refusal all keep the slot and answer 504.
+    #[test]
+    fn a_failed_send_is_indeterminate_never_a_refusal() {
+        use crate::evm::transaction::{ReservationDisposition, reservation_disposition};
+        let answered = |code: i64, message: &str| RpcError::Response {
+            code,
+            message: message.into(),
+        };
+        for failure in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered(3, "execution reverted"),
+            answered(-32000, "already known"),
+            answered(-32000, "nonce too low: next nonce 6, tx nonce 5"),
+            answered(-32000, "replacement transaction underpriced"),
+            answered(-32000, "insufficient funds for gas * price + value"),
+        ] {
+            let what = failure.to_string();
+            let error = send_failure("0x01", failure);
+            assert!(
+                matches!(error, ApiError::RelayerTimeout(_)),
+                "{what}: {error}"
+            );
+            assert_eq!(
+                error.status(),
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                "{what}"
+            );
+            assert_eq!(
+                reservation_disposition(&error),
+                ReservationDisposition::Keep,
+                "{what}"
+            );
+        }
+    }
+
+    /// An empty relayer wallet is the node's answer about the wallet, not about the network: it
+    /// is logged on its own. A timeout, a gateway error or another refusal is not.
+    #[test]
+    fn an_empty_relayer_wallet_is_told_apart_from_a_slow_node() {
+        let answered = |message: &str| RpcError::Response {
+            code: -32000,
+            message: message.into(),
+        };
+        assert!(cannot_pay_for_gas(&answered(
+            "insufficient funds for gas * price + value"
+        )));
+        assert!(cannot_pay_for_gas(&answered(
+            "Insufficient funds for gas * price + value: balance 0, tx cost 21000"
+        )));
+        for other in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered("nonce too low: next nonce 6, tx nonce 5"),
+            answered("already known"),
+            answered("execution reverted"),
+        ] {
+            assert!(!cannot_pay_for_gas(&other), "{other}");
+        }
+    }
+
+    /// The cap bounds the fee per gas a transaction may pay: an EIP-1559 `max_fee_per_gas`
+    /// (a tip under the cap is not enough) or a legacy `gas_price`, the cap itself included.
+    #[test]
+    fn the_fee_cap_bounds_the_fee_signed() {
+        let eip1559 = Fees::Eip1559 {
+            max_fee_per_gas: 3_500,
+            max_priority_fee_per_gas: 1_500,
+        };
+        assert_eq!(within_fee_cap(&eip1559, Some(3_500)), Ok(()));
+        assert_eq!(within_fee_cap(&eip1559, Some(3_499)), Err(3_500));
+        assert_eq!(within_fee_cap(&eip1559, Some(1_500)), Err(3_500));
+        let legacy = Fees::Legacy { gas_price: 2_000 };
+        assert_eq!(within_fee_cap(&legacy, Some(2_000)), Ok(()));
+        assert_eq!(within_fee_cap(&legacy, Some(1_999)), Err(2_000));
+        assert_eq!(within_fee_cap(&eip1559, None), Ok(()));
+        assert_eq!(within_fee_cap(&legacy, None), Ok(()));
+    }
 
     #[test]
     fn receipt_status_maps_to_outcome() {

@@ -11,7 +11,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -51,10 +51,7 @@ impl ScratchDb {
             "catalyst_z_lmb_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -66,7 +63,6 @@ impl ScratchDb {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { name, pool, admin })
     }
 
@@ -114,7 +110,9 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 fn matic_collections(query: &str) -> Value {
     if query.contains("urn_in") {
         // The ownership document of the profiles: the owner holds the hat, token 10.
-        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
+        let mut data = empty_owner_aliases(query);
+        data["o0"] = json!([{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }]);
+        data
     } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
@@ -130,8 +128,27 @@ fn matic_collections(query: &str) -> Value {
     }
 }
 
-fn eth_collections(_: &str) -> Value {
+fn eth_collections(query: &str) -> Value {
+    if query.contains("o0: nfts(") {
+        return empty_owner_aliases(query);
+    }
     json!({ "nfts": [] })
+}
+
+fn empty_owner_aliases(query: &str) -> Value {
+    let mut data = json!({});
+    for alias in query
+        .split_whitespace()
+        .filter_map(|word| word.strip_suffix(':'))
+    {
+        if alias
+            .strip_prefix('o')
+            .is_some_and(|n| n.parse::<usize>().is_ok())
+        {
+            data[alias] = json!([]);
+        }
+    }
+    data
 }
 
 fn marketplace_graph(query: &str) -> Value {
@@ -520,8 +537,8 @@ async fn seed_indexes(pool: &PgPool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(pool)
@@ -682,22 +699,13 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 
     // Comms consumes Shop's same name owner result, including the ready local
     // index when no subgraph exists and case-insensitive optional suffixes.
-    use crate::comms::interfaces::NameOwnerReader;
     for name in ["Alice", "ALICE.dcl.eth", "ALICE.DCL.ETH"] {
-        let owner = NameOwnerReader::name_owner(bare.as_ref(), name)
-            .await
-            .unwrap()
-            .unwrap();
+        let owner = bare.name_owner(name).await.unwrap().unwrap();
         assert_eq!(owner.as_str(), OWNER);
         let (status, body) = get(&bare, &format!("/lambdas/names/{name}/owner")).await;
         assert_eq!((status, body), (StatusCode::OK, json!({"owner":OWNER})));
     }
-    assert_eq!(
-        NameOwnerReader::name_owner(bare.as_ref(), "nobody")
-            .await
-            .unwrap(),
-        None
-    );
+    assert_eq!(bare.name_owner("nobody").await.unwrap(), None);
 
     let (status, body) = get(&state, "/lambdas/collections").await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -900,6 +908,12 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         (format!("thirdPartyCollectionId={tp_collection}"), 1),
         (
             format!(
+                "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId=urn:decentraland:amoy:collections-thirdparty:tp"
+            ),
+            1,
+        ),
+        (
+            format!(
                 "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId={tp_collection}"
             ),
             1,
@@ -1047,7 +1061,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     for uri in [
         format!("/lambdas/users/{OWNER}/third-party-wearables?pageSize=5000"),
         format!(
-            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp?pageSize=5000"
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:amoy:collections-thirdparty:tp?pageSize=5000"
         ),
     ] {
         let (status, body) = get(&state, &uri).await;
@@ -1219,8 +1233,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "{uri}"
     );
     // An active escrow grant joins the explorer's on-chain copies only where
-    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
-    // as lamb2 lists chain-owned tokens only).
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off unless the operator opts
+    // in, as lamb2 lists chain-owned tokens only).
     sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
         .bind(OWNER)
         .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
@@ -1531,6 +1545,23 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         crate::land_authz::Settings::for_tests(),
         Some(state.index.clone()),
     )));
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
+        .bind(LAND_REGISTRY_MAINNET)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        get_via(land.clone(), "/lambdas/parcels/0/0/operators")
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "the fresh local fold has no parcel"
+    );
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '11 minutes'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let (status, body) = get_via(land.clone(), "/lambdas/parcels/0/0/operators").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -1658,6 +1689,194 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     db.drop().await;
 }
 
+#[tokio::test]
+async fn profile_routes_answer_as_lamb2_when_content_is_unavailable() {
+    let state = crate::market::tests::support::state_without_db();
+    state.pool.close().await;
+    assert_lambdas_profile_dependency_failure(&state, "entities").await;
+}
+
+#[tokio::test]
+async fn profile_routes_answer_as_lamb2_when_ownership_is_unavailable() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    deploy(
+        &db.pool,
+        "bafyownershipfailureprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "Test", "avatar": { "wearables": [] } }] }),
+        &[],
+    )
+    .await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(serve_failing_graph().await),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_lambdas_profile_dependency_failure(&state, "ownership").await;
+    db.drop().await;
+}
+
+async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &str) {
+    let recorder = crate::comms::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let app = router(state.clone());
+    for modified_since in [None, Some("Wed, 21 Oct 2015 07:28:00 GMT")] {
+        let mut request = Request::post("/lambdas/profiles");
+        if let Some(date) = modified_since {
+            request = request.header("if-modified-since", date);
+        }
+        let resp = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(json!({ "ids": [OWNER] }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+            "[]"
+        );
+    }
+    assert_eq!(
+        get(state, &format!("/lambdas/profiles/{OWNER}")).await,
+        (
+            StatusCode::NOT_FOUND,
+            json!({ "error": "Not Found", "message": "Profile not found" })
+        )
+    );
+    assert_eq!(
+        get(state, &format!("/lambdas/profile/{OWNER}")).await,
+        (StatusCode::OK, json!({ "avatars": [], "timestamp": 0 }))
+    );
+    let rendered = recorder.handle().render();
+    for (route, count) in [
+        ("lambdas_profiles", 2),
+        ("lambdas_profile_by_id", 1),
+        ("lambdas_profile_alias", 1),
+    ] {
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.starts_with("profiles_lookup_failures_total{")
+                    && line.contains(&format!("route=\"{route}\""))
+                    && line.contains(&format!("layer=\"{layer}\""))
+                    && line.ends_with(&format!(" {count}"))),
+            "{rendered}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn catalogue_and_user_pages_fail_when_the_content_read_fails() {
+    let state = crate::market::tests::support::state_without_db_settings(Settings {
+        eth_collections_subgraph_url: Some(serve_graph(eth_collections).await),
+        matic_collections_subgraph_url: Some(serve_graph(matic_items).await),
+        ..Settings::for_tests()
+    });
+    state.pool.close().await;
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for path in [
+        "/lambdas/collections/wearables?textSearch=hat".to_string(),
+        "/lambdas/collections/emotes?textSearch=dance".to_string(),
+        format!("/lambdas/users/{OWNER}/wearables?includeDefinitions"),
+        format!("/lambdas/users/{OWNER}/wearables?includeEntities"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}?includeDefinitions"),
+    ] {
+        assert_eq!(
+            get(&state, &path).await,
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Internal Server Error" })
+            ),
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn user_item_entities_and_definitions_look_up_missing_pointers_on_peers() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let (asked, requests) = tokio::sync::mpsc::unbounded_channel();
+    let peer = serve(Router::new().route(
+        "/content/entities/active",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            asked.send(body).unwrap();
+            async { axum::Json(json!([])) }
+        }),
+    ))
+    .await;
+    let root = std::env::temp_dir().join(format!("catalyst-catalog-peer-{}", uuid::Uuid::new_v4()));
+    let storage = Arc::new(crate::storage::Storage::from_config(&root).await.unwrap());
+    let eth = serve_graph(eth_collections).await;
+    let matic = serve_graph(matic_collections).await;
+    let mut requests = requests;
+
+    for flag in ["includeDefinitions", "includeEntities"] {
+        // A separate read-through allows both flags to be tested before a
+        // negative result from the other request can enter the cache.
+        let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage.clone(),
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
+            vec![format!("{peer}content")],
+            None,
+            crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(5)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let state = Arc::new(
+            MarketplaceState::new(
+                pool.clone(),
+                crate::http::Outbound::for_tests(),
+                Settings {
+                    eth_collections_subgraph_url: Some(eth.clone()),
+                    matic_collections_subgraph_url: Some(matic.clone()),
+                    ..Settings::for_tests()
+                },
+            )
+            .with_read_through(Some(read_through)),
+        );
+        state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/wearables?{flag}")).await;
+        assert_eq!(status, StatusCode::OK, "{flag}: {body}");
+        let mut pointers = requests.try_recv().unwrap()["pointers"]
+            .as_array()
+            .unwrap()
+            .clone();
+        pointers.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+        assert_eq!(
+            pointers,
+            vec![
+                json!(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1")),
+                json!(format!("urn:decentraland:matic:collections-v2:{COFFEE}:9")),
+            ]
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// A configured subgraph that fails: the element routes answer lamb2's 502
 /// `FetcherError` naming the key as requested, `/operators` and
 /// `/permissions` lamb2's bare 500 (`errorHandler.ts`). No database: the
@@ -1724,6 +1943,26 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
     )
     .await;
     assert_eq!((status, body), (StatusCode::BAD_GATEWAY, fetcher(mixed)));
+    for method in [Method::GET, Method::OPTIONS] {
+        let response = land
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/lambdas/parcels/0/0/operators")
+                    .header(header::ORIGIN, "https://example.org")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+        );
+    }
     for uri in [
         "/lambdas/parcels/0/0/operators".to_string(),
         format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
@@ -1738,6 +1977,228 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
             "{uri}"
         );
     }
+}
+
+/// A LAND read that checked the land index before its cursor was rebound,
+/// then stalled while the new registries folded their links, reads its
+/// estates' parcels from its snapshot when it resumes: an estate keeps its
+/// own parcels, never the ones another registry's estate of the same id
+/// links. A new request after the rebind answers the index envelope.
+#[tokio::test]
+async fn estate_parcels_read_on_the_land_snapshot_never_join_a_rebound_registry() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let estate_5 = || vec!["5".to_string()];
+    let coordinates =
+        |parcels: std::collections::HashMap<String, Vec<super::nfts::EstateParcel>>| {
+            parcels
+                .get("5")
+                .map(|ps| ps.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+
+    // The read checks the seeded index (estate 5 holds LAND 2) and stalls.
+    let mut held = super::nft_reads::land_snapshot(&db.pool, crate::land_authz::LAND_MAINNET)
+        .await
+        .expect("the seeded land index is published");
+
+    // Another node rebinds the mainnet cursor to other registries, and their
+    // fold links LAND 9 into their own estate 5.
+    let other = crate::land_authz::Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..crate::land_authz::Settings::for_tests()
+    };
+    assert_eq!(
+        crate::land_authz::indexer::begin_replay(&db.pool, &other, other.start_block)
+            .await
+            .unwrap(),
+        crate::land_authz::indexer::ReplayStart::Begun
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, estate_id) \
+         VALUES (20, 0, 1600000020, $1, 'add_land', 9, 5)",
+    )
+    .bind(&other.estate_registry)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    crate::land_authz::indexer::fold(&db.pool, &other, None)
+        .await
+        .unwrap();
+
+    // Control: outside a snapshot, the shop's estate 5 now lists the other
+    // registry's LAND 9.
+    let mut conn = db.pool.acquire().await.unwrap();
+    let outside = super::nft_reads::estate_parcels(&mut conn, &estate_5())
+        .await
+        .unwrap();
+    assert_eq!(coordinates(outside), vec![(0, 9)]);
+    drop(conn);
+
+    // The stalled read resumes on its snapshot: estate 5 still holds LAND 2.
+    let resumed = super::nft_reads::estate_parcels(&mut held.tx, &estate_5())
+        .await
+        .unwrap();
+    assert_eq!(coordinates(resumed), vec![(0, 2)]);
+    drop(held);
+
+    let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/genesis-parcels")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    db.drop().await;
+}
+
+/// `/lambdas/users/{a}/lands` holds one connection, its land snapshot, and
+/// checks the nft index on it: with a pool of one connection and both
+/// indexes published, it answers the page at once, instead of waiting on a
+/// second connection and reading the timeout as an unpublished index.
+#[tokio::test]
+async fn user_lands_answer_on_a_pool_of_one_connection() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let one = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(MarketplaceState::new(
+        one.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let (status, body) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        get(&state, &format!("/lambdas/users/{OWNER}/lands")),
+    )
+    .await
+    .expect("the route answers well within the pool's acquire timeout");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tokens: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["tokenId"].as_str())
+        .collect();
+    assert_eq!(
+        (body["totalAmount"].as_i64(), tokens),
+        (Some(2), vec!["5", "1"])
+    );
+    one.close().await;
+    db.drop().await;
+}
+
+/// LL-15: `/lands`, `/genesis-parcels` and the marketplace `/v1/nfts`
+/// read the index of the registries `ETH_NETWORK` names. A Sepolia node answers from its Sepolia index; a
+/// mainnet node over the same database finds no mainnet cursor and does not
+/// read the Sepolia rows.
+#[tokio::test]
+async fn user_lands_read_the_registries_of_the_configured_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use crate::land_authz::{ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_SEPOLIA};
+    let now = chrono::Utc::now().naive_utc();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at) \
+         VALUES ('ethereum-sepolia', $1, $2, 10, 10, $3)",
+    )
+    .bind(LAND_REGISTRY_SEPOLIA)
+    .bind(ESTATE_REGISTRY_SEPOLIA)
+    .bind(now)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
+    )
+    .bind(now)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+         VALUES ($1, 7::numeric, 10, -3, $2, 5, 0)",
+    )
+    .bind(LAND_REGISTRY_SEPOLIA)
+    .bind(OWNER)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let state_for = |network: &str| {
+        Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            Settings {
+                eth_network: network.to_string(),
+                ..Settings::for_tests()
+            },
+        ))
+    };
+    let sepolia = state_for("sepolia");
+    let (status, body) = get(&sepolia, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            body["totalAmount"].as_i64(),
+            body["elements"][0]["contractAddress"].as_str(),
+            body["elements"][0]["tokenId"].as_str()
+        ),
+        (Some(1), Some(LAND_REGISTRY_SEPOLIA), Some("7")),
+        "{body}"
+    );
+    let (status, body) = get(&sepolia, &format!("/lambdas/users/{OWNER}/genesis-parcels")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["totalAmount"].as_i64(), Some(1), "{body}");
+
+    let mainnet = state_for("mainnet");
+    let (status, body) = get(&mainnet, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "no mainnet cursor: {body}"
+    );
+
+    // The marketplace LAND search (the index path of `/v1/nfts`) reads the
+    // same registries.
+    let (status, body) = get_via(
+        super::market_router(sepolia.clone()),
+        "/v1/nfts?category=parcel&search=10,-3",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            body["total"].as_i64(),
+            body["data"][0]["nft"]["contractAddress"].as_str(),
+            body["data"][0]["nft"]["tokenId"].as_str()
+        ),
+        (Some(1), Some(LAND_REGISTRY_SEPOLIA), Some("7")),
+        "{body}"
+    );
+    let (status, body) = get_via(
+        super::market_router(mainnet.clone()),
+        "/v1/nfts?category=parcel&search=10,-3",
+    )
+    .await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "no mainnet cursor: {body}"
+    );
+    db.drop().await;
 }
 
 /// LL-24: on a subgraph outage `/users/{a}/names` answers the last good list
@@ -1815,4 +2276,53 @@ async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
     let (status, body) = get(&state, &names_uri).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
+}
+
+/// The nft leg of `/v1/prices` reads after its gate; if the land index
+/// stops being ready in between, the route answers the land index's
+/// envelope, as `/v1/nfts` does, and any other failure stays internal.
+#[tokio::test]
+async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_after_the_gate() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let parcels = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Parcel),
+        ..Default::default()
+    };
+    let read = super::nft_reads::nft_prices(&state, &parcels).await;
+    assert!(read.is_ok(), "{read:?}");
+
+    // The mainnet cursor is rebound to other registries.
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = '0x00000000000000000000000000000000000000aa' \
+         WHERE network = 'ethereum-mainnet'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let refused = super::nft_reads::nft_prices(&state, &parcels)
+        .await
+        .unwrap_err();
+    assert_eq!(refused, super::nft_reads::NFT_PRICES_LAND_UNAVAILABLE);
+    let answer = |e: String| async move {
+        let response = super::prices::nft_prices_error(e);
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+    let (status, body) = answer(refused).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    let (status, body) = answer("statement timeout".into()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
 }

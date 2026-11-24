@@ -123,7 +123,6 @@ fn send_render_textures(mut ew: EventWriter<RenderTexture>, browsers: NonSend<Br
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn create_webview(
     mut browsers: NonSendMut<Browsers>,
     requester: Res<Requester>,

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { createShopClient, type ShopClient } from "../../api/shop";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { marketplaceOn } from "../../market/testing-flags";
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ShopHarness, type CatalogScenario, type SessionKind } from "../fixtures";
 import { invalidateShopQueries } from "../query";
@@ -313,6 +313,16 @@ describe("the creators and collection pickers", () => {
     fireEvent.click(await screen.findByRole("option", { name: "Nacho" }));
     await waitFor(() => expect(feedUrl(client).searchParams.get("creator")).toBe(CREATOR));
     expect(await screen.findByRole("button", { name: "Remove Nacho filter" })).toBeTruthy();
+  });
+
+  it("takes the top creators' names from the ranking when it carries their profiles", async () => {
+    const profile = { name: "Nacho", face: null, claimed: true };
+    const client = catalogClient("ok", { "/v3/catalog/creators": { data: [{ id: CREATOR, sales: 9, totalSales: 9, collections: 1, items: 3, profile }] } });
+    items("/shop/items", { client });
+    await screen.findAllByTestId("card");
+    fireEvent.focus(screen.getByRole("combobox", { name: "Creators" }));
+    // /lambdas/profiles answers nothing here: the name can only come from the ranking.
+    expect(await screen.findByRole("option", { name: "Nacho" })).toBeTruthy();
   });
 
   it("picks one collection by name, searching every collection while resales are in the grid", async () => {

@@ -5,7 +5,10 @@ use bevy::{
     math::FloatOrd,
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    render::mesh::{Indices, VertexAttributeValues},
+    render::{
+        mesh::{Indices, VertexAttributeValues},
+        primitives::Aabb,
+    },
     ui::{CameraCursorPosition, RelativeCursorPosition, UiSystem},
 };
 use bevy_console::ConsoleCommand;
@@ -13,6 +16,10 @@ use comms::global_crdt::ForeignPlayer;
 use console::DoAddConsoleCommand;
 use system_bridge::{HoverAction, HoverEvent, ProximityEvent, SystemApi};
 
+use super::synthetic_pointer::{
+    aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
+    LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+};
 use crate::{
     gltf_resolver::GltfMeshResolver,
     update_world::{
@@ -110,11 +117,14 @@ impl Plugin for PointerResultPlugin {
             .init_resource::<WorldPointerTarget>()
             .init_resource::<DebugPointers>()
             .init_resource::<ProximityCandidates>()
-            .init_resource::<MonotonicTimestamp<PbPointerEventsResult>>();
+            .init_resource::<MonotonicTimestamp<PbPointerEventsResult>>()
+            .init_resource::<SyntheticPointer>()
+            .init_resource::<PointerEventLog>();
 
         app.add_systems(
             PreUpdate,
             (
+                expire_synthetic_aim,
                 update_pointer_target,
                 update_manual_cursor,
                 collect_proximity_candidates,
@@ -156,6 +166,21 @@ pub struct PointerTargetInfo {
     pub normal: Option<Vec3>,
     pub face: Option<usize>,
     pub ty: PointerTargetType,
+}
+
+impl PointerTargetInfo {
+    /// Whether the cursor reaches `entry` on this target: the target is in a scene and `entry` is
+    /// a cursor entry within its distance limits. The hover CRDT, the hover stream's `enabled`
+    /// and the hover glow's colour all use this one gate.
+    pub fn cursor_reaches(&self, entry: &Entry) -> bool {
+        self.in_scene
+            && ActionCandidateMode::Cursor.matches_entry(entry)
+            && passes_distance_check(
+                entry.event_info.as_ref(),
+                self.camera_distance.0,
+                self.distance.0,
+            )
+    }
 }
 
 /// Returns true if the pointer-event entry's distance restrictions are satisfied.
@@ -273,7 +298,7 @@ impl UiPointerTargetValue {
 
     pub fn set_label(&mut self, label: Option<String>) {
         match self {
-            UiPointerTargetValue::None => todo!(),
+            UiPointerTargetValue::None => {}
             UiPointerTargetValue::Primary(_, ref mut l)
             | UiPointerTargetValue::World(_, ref mut l) => *l = label,
         }
@@ -313,7 +338,6 @@ pub struct ProximityCandidate {
     pub entity_position: Vec3,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_pointer_target(
     camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -323,6 +347,10 @@ fn update_pointer_target(
     mut avatar_colliders: ResMut<AvatarColliders>,
     mut world_target: ResMut<WorldPointerTarget>,
     mut pointer_ray: ResMut<PointerRay>,
+    synthetic: Res<SyntheticPointer>,
+    transforms: Query<&GlobalTransform>,
+    meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
+    children: Query<&Children>,
 ) {
     pointer_ray.0 = None;
 
@@ -335,25 +363,37 @@ fn update_pointer_target(
     };
     let player_translation = player_transform.translation();
 
-    // get new 3d hover target
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let cursor_position = if window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Locked
-    {
-        // if pointer locked, just middle
-        Vec2::new(window.width(), window.height()) / 2.0
-    } else {
-        let Some(cursor_position) = window.cursor_position() else {
-            // outside window
+    // get new 3d hover target: along the synthetic aim when one is active, else the cursor
+    let ray = if let Some(aim) = synthetic.0.as_ref() {
+        // an aimed entity that is gone or not placed yet has no target
+        let Some(ray) = anchor_point(aim.target, aim.anchor, &transforms, &meshes, &children)
+            .and_then(|point| aim_ray(camera_position.translation(), point))
+        else {
+            world_target.0 = None;
             return;
         };
-        cursor_position
-    };
+        ray
+    } else {
+        let Ok(window) = windows.single() else {
+            return;
+        };
+        let cursor_position =
+            if window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Locked {
+                // if pointer locked, just middle
+                Vec2::new(window.width(), window.height()) / 2.0
+            } else {
+                let Some(cursor_position) = window.cursor_position() else {
+                    // outside window
+                    return;
+                };
+                cursor_position
+            };
 
-    let Ok(ray) = camera.viewport_to_world(camera_position, cursor_position) else {
-        error!("no ray, not sure why that would happen");
-        return;
+        let Ok(ray) = camera.viewport_to_world(camera_position, cursor_position) else {
+            error!("no ray, not sure why that would happen");
+            return;
+        };
+        ray
     };
 
     pointer_ray.0 = Some(ray);
@@ -366,7 +406,8 @@ fn update_pointer_target(
         .fold(
             None,
             |maybe_prior_nearest, (scene_entity, _, mut collider_data)| {
-                let maybe_nearest = collider_data.cast_ray_nearest(
+                collider_data.update_bvh();
+                let maybe_nearest = collider_data.cast_ray_nearest_in_scene_flushed(
                     ray.origin,
                     ray.direction.into(),
                     f32::MAX,
@@ -822,11 +863,12 @@ fn resolve_pointer_target(
     mut target: ResMut<PointerTarget>,
     mut prev: Local<Option<Entity>>,
     tick: Res<FrameCount>,
+    synthetic: Res<SyntheticPointer>,
 ) {
-    if !ui_roots
+    let any_root_interacting = ui_roots
         .iter()
-        .any(|root| !matches!(root, Interaction::None))
-    {
+        .any(|root| !matches!(root, Interaction::None));
+    if !ui_gate_passes(any_root_interacting, synthetic.0.is_some()) {
         target.0 = None;
         if prev.is_some() {
             debug!("[{}] {prev:?} -> None", tick.0);
@@ -973,6 +1015,9 @@ fn send_hover_events(
     mut previously_entered: Local<HashSet<(Entity, Option<String>, PointerTargetType)>>,
     scene_ui_ent: Query<&UiLink>,
     linked: Query<(&ChildOf, &DespawnWith, Option<&RelativeCursorPosition>)>,
+    synthetic: Res<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+    frame: Res<FrameCount>,
 ) {
     debug!("hover target : {:?}", new_target);
 
@@ -1018,6 +1063,9 @@ fn send_hover_events(
                 ty: *ty,
             },
             PointerEventType::PetHoverLeave,
+            &synthetic,
+            &mut log,
+            frame.0,
         );
     }
 
@@ -1034,6 +1082,9 @@ fn send_hover_events(
                     ..info.clone()
                 },
                 PointerEventType::PetHoverEnter,
+                &synthetic,
+                &mut log,
+                frame.0,
             ) {
                 input_manager.priorities().reserve(
                     InputType::Action(Action::Scene(action.to_common())),
@@ -1168,7 +1219,6 @@ fn filtered_events<'a>(
 }
 
 /// Build and send a `PbPointerEventsResult` CRDT for a single matched entry.
-#[allow(clippy::too_many_arguments)]
 fn write_pointer_result(
     context: &mut RendererSceneContext,
     scene_transform: &GlobalTransform,
@@ -1178,8 +1228,21 @@ fn write_pointer_result(
     ev_type: PointerEventType,
     direction: Option<Vec2>,
     timestamp: &MonotonicTimestamp<PbPointerEventsResult>,
+    synthetic: &SyntheticPointer,
+    log: &mut PointerEventLog,
+    frame: u32,
 ) {
     let tick_number = context.tick_number;
+    if synthetic.0.is_some() {
+        log.0.push(LoggedPointerEvent {
+            container: info.container,
+            entity: scene_entity_id,
+            event: ev_type,
+            button,
+            tick: tick_number,
+            frame,
+        });
+    }
     context.update_crdt(
         SceneComponentId::POINTER_RESULT,
         CrdtType::GO_ENT,
@@ -1224,6 +1287,9 @@ fn send_hover_event(
     timestamp: &MonotonicTimestamp<PbPointerEventsResult>,
     info: &PointerTargetInfo,
     ev_type: PointerEventType,
+    synthetic: &SyntheticPointer,
+    log: &mut PointerEventLog,
+    frame: u32,
 ) -> Option<InputAction> {
     let mut action = None;
     let Ok((maybe_scene_entity, maybe_foreign_player, pe)) = pointer_requests.get(info.container)
@@ -1232,18 +1298,8 @@ fn send_hover_event(
     };
 
     for (scene, ev) in pe.iter_with_scene(maybe_scene_entity.map(|se| se.root)) {
-        if !info.in_scene {
-            continue;
-        }
-        // Hover is cursor-domain — skip entries flagged as proximity.
-        if !ActionCandidateMode::Cursor.matches_entry(ev) {
-            continue;
-        }
-        if !passes_distance_check(
-            ev.event_info.as_ref(),
-            info.camera_distance.0,
-            info.distance.0,
-        ) {
+        // Hover is cursor-domain: proximity entries never pass.
+        if !info.cursor_reaches(ev) {
             continue;
         }
         action = Some(
@@ -1270,6 +1326,9 @@ fn send_hover_event(
             ev_type,
             None,
             timestamp,
+            synthetic,
+            log,
+            frame,
         );
     }
 
@@ -1280,7 +1339,6 @@ fn send_hover_event(
 /// `interaction_type`, emitting a CRDT for each whose distance check passes.
 /// Returns the last-written scene as the "consuming" scene, which the caller uses
 /// to skip duplicate root-entity events.
-#[allow(clippy::too_many_arguments)]
 fn send_action_event(
     pointer_requests: &Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     scenes: &mut Query<(Entity, &mut RendererSceneContext, &GlobalTransform)>,
@@ -1291,6 +1349,9 @@ fn send_action_event(
     ev_type: PointerEventType,
     action: InputAction,
     direction: Option<Vec2>,
+    synthetic: &SyntheticPointer,
+    log: &mut PointerEventLog,
+    frame: u32,
 ) -> Option<Entity> {
     let Ok((maybe_scene_entity, maybe_foreign_player, _)) = pointer_requests.get(info.container)
     else {
@@ -1328,6 +1389,9 @@ fn send_action_event(
             ev_type,
             direction,
             timestamp,
+            synthetic,
+            log,
+            frame,
         );
         context.last_action_event = Some(time.elapsed_secs_f64());
         consumer = Some(scene);
@@ -1467,16 +1531,19 @@ fn send_proximity_events(
     mut scenes: Query<(&mut RendererSceneContext, &GlobalTransform)>,
     timestamp: Res<MonotonicTimestamp<PbPointerEventsResult>>,
     mut prev_in_range: Local<HashSet<Entity>>,
+    synthetic: Res<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+    frame: Res<FrameCount>,
 ) {
     let candidate_by_entity: HashMap<Entity, &ProximityCandidate> =
         candidates.0.iter().map(|c| (c.entity, c)).collect();
     let new_in_range: HashSet<Entity> = candidate_by_entity.keys().copied().collect();
 
-    let emit = |entity: Entity,
-                pet: PointerEventType,
-                dist: f32,
-                position: Option<Vec3>,
-                scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>|
+    let mut emit = |entity: Entity,
+                    pet: PointerEventType,
+                    dist: f32,
+                    position: Option<Vec3>,
+                    scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>|
      -> Option<()> {
         let (scene_entity, pe) = pointer_events.get(entity).ok()?;
         let pb_pe = pe.msg.get(&None)?;
@@ -1526,6 +1593,9 @@ fn send_proximity_events(
                 pet,
                 None,
                 &timestamp,
+                &synthetic,
+                &mut log,
+                frame.0,
             );
         }
         Some(())
@@ -1570,6 +1640,9 @@ fn send_action_events(
     mut locks: ResMut<CursorLocks>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scenes: ContainingScene,
+    synthetic: Res<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+    frame: Res<FrameCount>,
 ) {
     let mut events_and_consumers = Vec::default(); // (event type, button, option<consuming scene>)
 
@@ -1596,6 +1669,9 @@ fn send_action_events(
                     PointerEventType::PetDown,
                     down,
                     None,
+                    &synthetic,
+                    &mut log,
+                    frame.0,
                 );
                 // Capture the press winner so subsequent PetDrag/Locked CRDTs
                 // fire on the same entity even if cursor / proximity state
@@ -1669,6 +1745,9 @@ fn send_action_events(
                 PointerEventType::PetUp,
                 up,
                 None,
+                &synthetic,
+                &mut log,
+                frame.0,
             ),
             None => None,
         };
@@ -1695,6 +1774,9 @@ fn send_action_events(
                 },
                 *input,
                 Some(frame_delta),
+                &synthetic,
+                &mut log,
+                frame.0,
             );
         }
         any_drag_lock |= cap.lock;
@@ -1714,6 +1796,9 @@ fn send_action_events(
                 PointerEventType::PetDragEnd,
                 up,
                 None,
+                &synthetic,
+                &mut log,
+                frame.0,
             );
         }
     }
@@ -1801,16 +1886,10 @@ fn handle_hover_stream(
                 // surface separately on GetProximityStream. Filter so the same
                 // entity's proximity tooltips don't double-fire on the cursor
                 // stream when the player happens to be aiming at it.
-                pe.iter()
-                    .filter(|event| ActionCandidateMode::Cursor.matches_entry(event))
-                    .map(|event| HoverAction {
+                cursor_entries(t, pe)
+                    .map(|(event, reaches)| HoverAction {
                         event: event.clone(),
-                        enabled: t.in_scene
-                            && passes_distance_check(
-                                event.event_info.as_ref(),
-                                t.camera_distance.0,
-                                t.distance.0,
-                            ),
+                        enabled: reaches,
                     })
                     .collect()
             })
@@ -2014,5 +2093,129 @@ mod distance_tests {
         assert!(!check(info(Some(0.0), None, None)));
         // camera distance plays no part in proximity
         assert!(!check(info(Some(2.4), None, Some(100.0))));
+    }
+}
+
+#[cfg(test)]
+mod pointer_target_tests {
+    use super::*;
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        update_scene::synthetic_pointer::{Anchor, Hold, SyntheticAim},
+        update_world::mesh_collider::regions_of_parcels,
+    };
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_types::SceneId;
+    use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
+    use scene_material::SceneBounds;
+
+    #[test]
+    fn the_pointer_passes_a_scenes_collider_over_another_scenes_parcel() {
+        // A scene around a notch: parcels (0, 0) and (2, 0), joined by the row (0, 1), (1, 1),
+        // (2, 1). The notch at (1, 0), which is not the scene's, spans world x 16 to 32 and z
+        // -16 to 0; the scene's row behind it spans z -32 to -16.
+        let parcels = [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1)];
+        let regions = regions_of_parcels(&parcels);
+        let parcels = parcels.map(|(x, y)| IVec2::new(x, y));
+
+        let mut world = World::new();
+        let mut context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "scene".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            parcels.into_iter().collect(),
+            regions.clone(),
+            SceneBounds::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk7",
+            false,
+            false,
+        );
+        let mut colliders = SceneColliderData::for_regions(&regions, parcels.len());
+
+        // two posts of the scene on the line x = 24: one over the notch, one in the row behind
+        let [_in_the_notch, behind_the_notch] = [(1, -8.0), (2, -24.0)].map(|(index, z)| {
+            let entity = world.spawn_empty().id();
+            let scene_entity = SceneEntityId {
+                id: 512 + index,
+                generation: 0,
+            };
+            context.associate_bevy_entity(scene_entity, entity);
+            let id = ColliderId::new(scene_entity, None, 0);
+            let layers = Group::from_bits_truncate(ColliderLayer::ClPointer as u32);
+            let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+                .collision_groups(InteractionGroups::new(
+                    layers,
+                    layers,
+                    InteractionTestMode::And,
+                ))
+                .build();
+            colliders.set_collider(&id, collider, Some(entity));
+            colliders.update_collider_transform(
+                &id,
+                &GlobalTransform::from(
+                    Transform::from_xyz(24.0, 2.0, z).with_scale(Vec3::new(1.0, 4.0, 1.0)),
+                ),
+            );
+            entity
+        });
+        let scene = world.spawn((context, colliders)).id();
+
+        let mut pointers = ScenePointers::default();
+        for parcel in parcels {
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: "scene".to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        let mut live = LiveScenes::default();
+        live.scenes.insert("scene".to_owned(), scene);
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+        world.init_resource::<AvatarColliders>();
+        world.init_resource::<WorldPointerTarget>();
+        world.init_resource::<PointerRay>();
+
+        // the player stands in the notch and aims along -z at the post behind it
+        world.spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_xyz(24.0, 0.0, -2.0),
+        ));
+        world.spawn((
+            Camera::default(),
+            PrimaryCamera::default(),
+            GlobalTransform::from_xyz(24.0, 2.0, -2.0),
+        ));
+        let target = world
+            .spawn(GlobalTransform::from_xyz(24.0, 2.0, -24.0))
+            .id();
+        world.insert_resource(SyntheticPointer(Some(SyntheticAim {
+            scene,
+            entity: SceneEntityId {
+                id: 514,
+                generation: 0,
+            },
+            target,
+            anchor: Anchor::Origin,
+            hold: Hold::Open,
+            started_frame: 0,
+        })));
+
+        world.run_system_once(update_pointer_target).unwrap();
+
+        let hit = world.resource::<WorldPointerTarget>().0.clone().unwrap();
+        assert_eq!(hit.container, behind_the_notch);
+        assert!((hit.camera_distance.0 - 21.5).abs() < 1e-3);
     }
 }

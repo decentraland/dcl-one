@@ -1,0 +1,1202 @@
+//! Prototype: GPU-ready "Bevy variants" of the textures and models of scenes, wearables and
+//! emotes, published by abgen.
+//!
+//! The variants base is `--bevy-variants-url`, `?bevyVariants=` or the `bevy_variants_url` config
+//! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
+//! `off` in any of them turns the client off. For each scene, wearable and emote entity it loads, the
+//! explorer fetches
+//! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
+//! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
+//! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
+//! original CID has a variant of a class this client takes is answered with
+//! `{base}/{variantPath}` instead and cached under a digest of that url, never under the
+//! original's hash. abgen keeps a path's bytes fixed for the life of its generation, and the
+//! manifest names no hash for them, so a variant is trusted by its path and rejected only by
+//! what it decodes to. A texture variant is a BC KTX2 whose header names its BC format, handed
+//! to the image loaders as it is; they unwrap it to the DDS they decode (`ktx2`), inside the
+//! asset load. A `g` model variant is a GLB whose embedded images are BC KTX2, handed to the
+//! glTF loader as it is served: the loader decodes each embedded image through the same host
+//! KTX2 transcoder, which unwraps BC to DDS, so its textures stay BC in memory. Anything else,
+//! at any step, reads the original. A variant that fails to decode is marked bad for the
+//! session, its cached copy dropped, and its asset (a texture or a GLB) reloaded from the
+//! original. Manifests and variants are fetched in a single attempt with short timeouts: the
+//! original is their retry. An entity's files wait for its manifest for at most
+//! [`MANIFEST_DEADLINE`] from the request, then read their originals.
+//!
+//! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
+//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has: BC
+//! KTX2 textures and `glb` models with BC KTX2 images everywhere, and on web `glb-br` models,
+//! the original `.glb` byte for byte. A `glb` variant is fetched at its own path everywhere:
+//! its Brotli copy exists only when it is smaller, and the server sends it to a browser that
+//! accepts `br`. On web a `glb-br` variant is fetched as its Brotli copy (`{path}.br`, stored
+//! with `Content-Encoding: br`) which the browser decodes. Native leaves `glb-br` to a later
+//! change (it has no Brotli decoder on its http client), loading the original model.
+//!
+//! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
+//! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
+//! preview always shows the deployed files.
+//!
+//! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
+//! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
+//! [`IpfsIo::bevy_lod_descriptor`]), and its far LOD, abgen's one simplified mesh for the scene
+//! (`{base}/LOD/lods-bevy/lods/{sceneId}_1.glb`, [`IpfsIo::bevy_far_lod`]), the latter under the
+//! conditions of a manifest request, on a GPU with BC textures only. A far LOD the server has
+//! none for is not asked for again in the session, and far LODs pause while their requests fail
+//! (`far_lod`).
+
+mod debug_panel;
+mod far_lod;
+pub mod ktx2;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
+
+use common::sync::MutexExt;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::{atomic::Ordering, Arc, Mutex, OnceLock},
+};
+
+use bevy::{
+    asset::{io::AssetReaderError, AssetLoadFailedEvent},
+    gltf::Gltf,
+    image::CompressedImageFormats,
+    prelude::*,
+    render::renderer::RenderCapabilities,
+    tasks::IoTaskPool,
+};
+use common::util::{TaskCompat, UrlLoopbackExt};
+use serde::Deserialize;
+use tokio::sync::watch;
+use web_time::Duration;
+
+pub use far_lod::FarLodStatus;
+use far_lod::{BreakerChange, FarLodHealth, FAR_LOD_BREAKER_FAILURES, FAR_LOD_COOL_DOWN};
+
+use crate::{
+    content_hash,
+    download::FetchPolicy,
+    failed_remotes,
+    ipfs_path::{is_http_url, CacheKey, IpfsPath},
+    IpfsIo, IpfsResource, SharedBytes,
+};
+
+/// Image paths whose loader unwraps a BC KTX2 (`ktx2::bc_ktx2_dds`) before it decodes, so a
+/// texture variant loads at the original path. A path without an extension goes to the last
+/// image loader, which does too.
+const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
+/// Every variant class the manifest names by a path's prefix letter, taken or not.
+const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-br", "glb"];
+/// Model paths a model variant stands in for: only a binary glTF, which is what it holds.
+const MODEL_EXTENSIONS: [&str; 1] = ["glb"];
+const RECENT_FALLBACKS: usize = 20;
+
+/// What a supported variant's bytes are handed to the loaders as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decoded {
+    /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), which the image loaders unwrap
+    /// to the DDS they decode.
+    BcTexture,
+    /// A `glb-br` model: the original `.glb`, fetched as its Brotli copy that the browser
+    /// decodes, handed to the glTF loader of the original path. Web only.
+    #[cfg(target_arch = "wasm32")]
+    BrotliGlb,
+    /// A `glb` model: a GLB with its embedded images as BC KTX2, handed to the glTF loader of
+    /// the original path as it is; the loader decodes each image through the host KTX2
+    /// transcoder, which unwraps it to DDS (`ktx2::bc_ktx2_dds`).
+    BcGlb,
+}
+
+/// A variant class this client takes: its `kind`/`format` (from the path's prefix letter), the
+/// content files it may replace, what the GPU must support and what the bytes decode as.
+#[derive(Debug)]
+pub struct SupportedFormat {
+    pub kind: &'static str,
+    pub format: &'static str,
+    /// Lower-case extensions of the files the variant may stand in for.
+    pub extensions: &'static [&'static str],
+    /// Whether a file without an extension may be one of them (an image: its loader guesses the
+    /// format from the bytes).
+    pub without_extension: bool,
+    /// The GPU must decode BC textures.
+    pub needs_bc: bool,
+    pub decoded: Decoded,
+}
+
+impl SupportedFormat {
+    fn accepts_path(&self, file_path: &str) -> bool {
+        match extension(file_path) {
+            Some(ext) => self.extensions.contains(&ext.as_str()),
+            None => self.without_extension,
+        }
+    }
+}
+
+/// The variant classes this client takes. A variant is loaded only through a row here; the
+/// manifest's order of preference decides between rows.
+pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
+    SupportedFormat {
+        kind: "texture",
+        format: "ktx2-bc",
+        extensions: &TEXTURE_EXTENSIONS,
+        without_extension: true,
+        needs_bc: true,
+        decoded: Decoded::BcTexture,
+    },
+    SupportedFormat {
+        kind: "model",
+        format: "glb",
+        extensions: &MODEL_EXTENSIONS,
+        without_extension: false,
+        needs_bc: true,
+        decoded: Decoded::BcGlb,
+    },
+    // web only: the browser decodes the Brotli copy; native has no decoder on its http client
+    #[cfg(target_arch = "wasm32")]
+    SupportedFormat {
+        kind: "model",
+        format: "glb-br",
+        extensions: &MODEL_EXTENSIONS,
+        without_extension: false,
+        needs_bc: false,
+        decoded: Decoded::BrotliGlb,
+    },
+];
+
+/// The row for a manifest variant's `kind`/`format`, if this client takes it.
+pub fn supported_format(variant: &Variant) -> Option<&'static SupportedFormat> {
+    SUPPORTED_FORMATS
+        .iter()
+        .find(|row| row.kind == variant.kind && row.format == variant.format)
+}
+
+/// The formats this client takes and the schema's it does not, in the debug panel's words.
+pub fn taken_formats() -> String {
+    let taken: Vec<_> = SUPPORTED_FORMATS.iter().map(|row| row.format).collect();
+    let not_taken: Vec<_> = SCHEMA_FORMATS
+        .iter()
+        .copied()
+        .filter(|format| !taken.contains(format))
+        .collect();
+    // the formats grouped by what they are handed to the loaders as, in table order
+    let mut groups: Vec<(Vec<&str>, &str)> = Vec::new();
+    for row in SUPPORTED_FORMATS {
+        let how = match row.decoded {
+            Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
+            #[cfg(target_arch = "wasm32")]
+            Decoded::BrotliGlb => "Brotli, decoded by the browser",
+            Decoded::BcGlb => "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader",
+        };
+        match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
+            Some((formats, _)) => formats.push(row.format),
+            None => groups.push((vec![row.format], how)),
+        }
+    }
+    let mut words = groups
+        .iter()
+        .map(|(formats, how)| format!("{} ({how})", formats.join(", ")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if !not_taken.is_empty() {
+        words.push_str("; not ");
+        words.push_str(&not_taken.join(", "));
+    }
+    words
+}
+/// How long an entity's files wait for its manifest, from the moment it was requested. A file
+/// read after that goes to the original at once; a manifest that arrives later still serves
+/// the files read after it. Long enough for a first connection to the service (DNS, TLS), and
+/// short next to a cold scene load.
+pub const MANIFEST_DEADLINE: Duration = Duration::from_secs(2);
+/// How long a manifest request may wait for headers, or between body chunks, in its single
+/// attempt. Its files stop waiting for it at [`MANIFEST_DEADLINE`] anyway; this bounds how long
+/// a host that never answers holds a request slot.
+const MANIFEST_TIMEOUT: Duration = Duration::from_secs(3);
+/// A variant download: one attempt, with short timeouts, since the original is the retry.
+pub(crate) const VARIANT_FETCH: FetchPolicy = FetchPolicy {
+    headers_timeout: Duration::from_secs(5),
+    idle_timeout: Duration::from_secs(5),
+    max_attempts: 1,
+};
+/// Consecutive transport failures (manifest or variant) after which the service is treated as
+/// down for the rest of the session, so a dead host costs a few requests, not one per file.
+const BREAKER_FAILURES: u32 = 5;
+/// How long an avatar waits for a model reloading from its original after its `glb` variant
+/// failed, before it assembles without it. Long enough for the original's download on a slow
+/// link; past it the avatar is built as it was before variants.
+const MODEL_RELOAD_WAIT: Duration = Duration::from_secs(120);
+/// Where a scene's far LOD is under the variants base:
+/// `{base}{FAR_LOD_DIR}{sceneId}{FAR_LOD_SUFFIX}`.
+const FAR_LOD_DIR: &str = "/LOD/lods-bevy/lods/";
+const FAR_LOD_SUFFIX: &str = "_1.glb";
+
+/// One variant of an original: where it is served, and the class its path's prefix letter
+/// names. The path also identifies it (failed variants, caches): abgen keeps a path's bytes
+/// fixed for the life of its generation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Variant {
+    /// Relative to the base: `bevy/{prefix}/{name}`.
+    pub path: String,
+    pub kind: String,
+    pub format: String,
+}
+
+impl Variant {
+    /// The variant at `path`, when it is `bevy/{prefix}/{name}` with plain segments and its
+    /// prefix letter is a class the schema names; anything else is dropped.
+    pub fn from_path(path: &str) -> Option<Variant> {
+        if !is_variant_path(path) {
+            return None;
+        }
+        let prefix = path.split('/').nth(1)?;
+        let (kind, format) = match prefix.as_bytes().first()? {
+            b't' => ("texture", "ktx2-bc"),
+            b'm' => ("model", "glb-br"),
+            b'g' => ("model", "glb"),
+            _ => return None,
+        };
+        Some(Variant {
+            path: path.to_owned(),
+            kind: kind.to_owned(),
+            format: format.to_owned(),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct Manifest {
+    /// The generation each variant class was built from (`texture` → `t2`, …), for the debug
+    /// panel; the client does not act on it.
+    pub lanes: BTreeMap<String, String>,
+    /// Variants by original content CID, in the manifest's order of preference.
+    pub files: HashMap<String, Vec<Variant>>,
+}
+
+#[derive(Deserialize)]
+struct ManifestJson {
+    /// abgen's, and only shown: read as any JSON, so its shape never decides whether the
+    /// manifest is accepted.
+    #[serde(default)]
+    lanes: serde_json::Value,
+    files: HashMap<String, Vec<String>>,
+}
+
+/// A manifest: `lanes` and `files`, original content CID → variant paths. Its `v` and any other
+/// field are abgen's own (they tell it when to rebuild) and are not read: whatever a manifest
+/// lists is loaded, whichever generation built it. Of `lanes`, the entries that are strings are
+/// kept for the debug panel. It is fetched at the entity's own url, so it names no entity. Paths
+/// that are not `bevy/{prefix}/{name}` with plain segments (a path becomes part of a url) or
+/// whose prefix letter names no class are dropped, and so is an original left with none.
+pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
+    let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let files = json
+        .files
+        .into_iter()
+        .map(|(original, paths)| {
+            let variants: Vec<_> = paths
+                .iter()
+                .filter_map(|path| Variant::from_path(path))
+                .collect();
+            (original, variants)
+        })
+        .filter(|(_, variants)| !variants.is_empty())
+        .collect();
+    let lanes = json
+        .lanes
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(class, prefix)| Some((class.clone(), prefix.as_str()?.to_owned())))
+        .collect();
+    Ok(Manifest { lanes, files })
+}
+
+/// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
+/// alphanumeric or `_`. No dots, slashes or escapes can reach the url.
+fn is_variant_path(path: &str) -> bool {
+    let mut segments = path.split('/');
+    let (Some("bevy"), Some(prefix), Some(name), None) = (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) else {
+        return false;
+    };
+    path.len() <= 256
+        && prefix != "manifest"
+        && !prefix.is_empty()
+        && prefix.bytes().all(|b| b.is_ascii_alphanumeric())
+        && !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+fn extension(file_path: &str) -> Option<String> {
+    Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
+/// Whether a file of this type could be replaced by any supported format; others never wait on
+/// a manifest. A url a scene names (a far LOD's among them) never could: a manifest maps the
+/// scene's content files, by hash.
+pub fn could_have_variant(file_path: &str) -> bool {
+    !is_http_url(file_path)
+        && SUPPORTED_FORMATS
+            .iter()
+            .any(|row| row.accepts_path(file_path))
+}
+
+/// Whether this client can load `variant` at `file_path`: a supported format, for a file type
+/// it may replace, on a GPU that has what it needs (`bc`: BC texture support).
+pub fn supports(variant: &Variant, file_path: &str, bc: bool) -> bool {
+    supported_format(variant)
+        .is_some_and(|row| (bc || !row.needs_bc) && row.accepts_path(file_path))
+}
+
+/// The first variant this client supports that has not failed this session.
+pub fn select_variant<'a>(
+    variants: &'a [Variant],
+    file_path: &str,
+    bc: bool,
+    is_bad: impl Fn(&str) -> bool,
+) -> Option<&'a Variant> {
+    variants
+        .iter()
+        .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.path))
+}
+
+/// Why an entity (scene, wearable or emote) gets no manifest request, if it doesn't.
+pub fn scene_eligibility(
+    entity: &str,
+    contents_base_url: Option<&str>,
+    preview: bool,
+) -> Result<(), &'static str> {
+    if preview {
+        return Err("preview mode");
+    }
+    if entity.starts_with("b64-") {
+        return Err("local scene (b64- id)");
+    }
+    if entity.is_empty() || !entity.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("entity id is not a content id");
+    }
+    let Some(url) = contents_base_url else {
+        return Err("no content server");
+    };
+    let Ok(url) = url::Url::parse(url) else {
+        return Err("unparseable content server url");
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("not an http content server");
+    }
+    if url.is_loopback() {
+        return Err("loopback content server");
+    }
+    Ok(())
+}
+
+/// Where a scene's far LOD comes from ([`IpfsIo::bevy_far_lod`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FarLodSource {
+    /// abgen's mesh for the scene.
+    Url(String),
+    /// Not known yet: the GPU has not reported its BC support, or the content context is being
+    /// written. Ask again later.
+    NotYet,
+    /// None for this scene in this session, and why.
+    Unavailable(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum ManifestState {
+    Pending,
+    Ineligible(&'static str),
+    /// 404: abgen has no manifest for the entity (yet).
+    None,
+    Loaded(Arc<Manifest>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug)]
+struct ServedVariant {
+    scene: String,
+    file: String,
+    /// The variant's path, its identity.
+    variant: String,
+    format: String,
+    /// Where its bytes came from, the key of their cached copy.
+    url: String,
+}
+
+#[derive(Debug)]
+struct Fallback {
+    scene: String,
+    file: String,
+    reason: String,
+}
+
+#[derive(Default)]
+struct Session {
+    disabled: Option<String>,
+    transport_failures: u32,
+    bad: HashSet<String>,
+    served: HashMap<PathBuf, ServedVariant>,
+    downloaded: u64,
+    cached: u64,
+    /// [downloaded, from cache] by variant format.
+    served_by_format: BTreeMap<String, [u64; 2]>,
+    fallbacks: u64,
+    /// Fallbacks from a variant that was chosen, by its format.
+    fallbacks_by_format: BTreeMap<String, u64>,
+    recent: VecDeque<Fallback>,
+    /// Models reloading from their original after their `glb` variant failed, and since when.
+    reloading: HashMap<PathBuf, web_time::Instant>,
+}
+
+impl Session {
+    fn fallback(&mut self, scene: &str, file: &str, format: Option<&str>, reason: String) {
+        debug!("bevy variant fallback for `{file}` in {scene}: {reason}");
+        self.fallbacks += 1;
+        if let Some(format) = format {
+            *self
+                .fallbacks_by_format
+                .entry(format.to_owned())
+                .or_default() += 1;
+        }
+        if self.recent.len() == RECENT_FALLBACKS {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(Fallback {
+            scene: scene.to_owned(),
+            file: file.to_owned(),
+            reason,
+        });
+    }
+}
+
+#[derive(Default)]
+pub struct BevyVariants {
+    base: OnceLock<String>,
+    /// The GPU's BC support, once the renderer has reported it.
+    bc: OnceLock<bool>,
+    manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
+    /// When each entity's manifest was requested, for [`MANIFEST_DEADLINE`].
+    requested_at: Mutex<HashMap<String, web_time::Instant>>,
+    session: Mutex<Session>,
+    /// What the far LOD requests have answered: missing meshes and the breaker.
+    far_lods: Mutex<FarLodHealth>,
+}
+
+impl BevyVariants {
+    fn base(&self) -> Option<&str> {
+        self.base.get().map(String::as_str)
+    }
+
+    /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url), if it is one.
+    fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<&'a str> {
+        remote
+            .strip_prefix(self.base()?)?
+            .strip_prefix(FAR_LOD_DIR)?
+            .strip_suffix(FAR_LOD_SUFFIX)
+    }
+
+    fn bc(&self) -> bool {
+        self.bc.get().copied().unwrap_or(false)
+    }
+
+    fn set_base(&self, url: &str) {
+        let url = url.trim();
+        match url::Url::parse(url) {
+            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
+                // the serialised form, so a prefix match agrees with a re-serialised remote url
+                let url = parsed.as_str().trim_end_matches('/');
+                if self.base.set(url.to_owned()).is_ok() {
+                    info!("bevy variants: on, from `{url}`");
+                }
+            }
+            _ => warn!("bevy variants: ignoring `{url}`, not an http(s) url"),
+        }
+    }
+
+    /// A new pending manifest for `entity`, or None when one was already requested.
+    fn begin(&self, entity: &str) -> Option<watch::Sender<ManifestState>> {
+        let mut manifests = self.manifests.lock_ignore_poison();
+        if manifests.contains_key(entity) {
+            return None;
+        }
+        let (sender, receiver) = watch::channel(ManifestState::Pending);
+        manifests.insert(entity.to_owned(), receiver);
+        self.requested_at
+            .lock_ignore_poison()
+            .insert(entity.to_owned(), web_time::Instant::now());
+        Some(sender)
+    }
+
+    /// How much of [`MANIFEST_DEADLINE`] an entity's files may still wait for its manifest.
+    fn manifest_wait_left(&self, entity: &str) -> Duration {
+        self.requested_at
+            .lock_ignore_poison()
+            .get(entity)
+            .map_or(MANIFEST_DEADLINE, |at| {
+                MANIFEST_DEADLINE.saturating_sub(at.elapsed())
+            })
+    }
+
+    fn manifest(&self, entity: &str) -> Option<watch::Receiver<ManifestState>> {
+        self.manifests.lock_ignore_poison().get(entity).cloned()
+    }
+
+    fn disabled(&self) -> Option<String> {
+        self.session.lock_ignore_poison().disabled.clone()
+    }
+
+    fn transport_ok(&self) {
+        self.session.lock_ignore_poison().transport_failures = 0;
+    }
+
+    fn transport_failed(&self, reason: &str) {
+        let mut session = self.session.lock_ignore_poison();
+        session.transport_failures += 1;
+        if session.transport_failures >= BREAKER_FAILURES && session.disabled.is_none() {
+            warn!("bevy variants: off for this session, {BREAKER_FAILURES} failed requests ({reason})");
+            session.disabled = Some(format!(
+                "{BREAKER_FAILURES} consecutive failed requests, last: {reason}"
+            ));
+        }
+    }
+
+    fn is_bad(&self, variant: &str) -> bool {
+        self.session.lock_ignore_poison().bad.contains(variant)
+    }
+
+    fn fail(&self, scene: &str, file: &str, variant: Option<&Variant>, reason: String) {
+        let mut session = self.session.lock_ignore_poison();
+        if let Some(variant) = variant {
+            session.bad.insert(variant.path.clone());
+        }
+        session.fallback(scene, file, variant.map(|v| v.format.as_str()), reason);
+    }
+
+    fn served(&self, path: &Path, served: ServedVariant, cached: bool) {
+        let mut session = self.session.lock_ignore_poison();
+        if cached {
+            session.cached += 1;
+        } else {
+            session.downloaded += 1;
+        }
+        session
+            .served_by_format
+            .entry(served.format.clone())
+            .or_default()[usize::from(cached)] += 1;
+        session.served.insert(path.to_owned(), served);
+    }
+
+    /// Whether the asset at `path` was last read from a variant.
+    pub fn is_served(&self, path: &Path) -> bool {
+        self.session.lock_ignore_poison().served.contains_key(path)
+    }
+
+    /// Whether the model at `path`, which failed to load, will still come back from its
+    /// original: it was read from a `glb` variant, whose failure reloads it, or that reload is
+    /// under way. A reload stops counting after [`MODEL_RELOAD_WAIT`].
+    fn model_reload_pending(&self, path: &Path) -> bool {
+        let mut session = self.session.lock_ignore_poison();
+        session
+            .reloading
+            .retain(|_, since| since.elapsed() < MODEL_RELOAD_WAIT);
+        session.reloading.contains_key(path)
+            || session.served.get(path).is_some_and(|served| {
+                <Gltf as VariantAsset>::FORMATS.contains(&served.format.as_str())
+            })
+    }
+
+    fn reload_started(&self, path: &Path) {
+        self.session
+            .lock_ignore_poison()
+            .reloading
+            .insert(path.to_owned(), web_time::Instant::now());
+    }
+
+    fn reload_finished(&self, path: &Path) {
+        self.session.lock_ignore_poison().reloading.remove(path);
+    }
+
+    /// Marks the variant served for `path` bad, if there was one of `formats`, and returns the
+    /// url of its cached copy: the asset should be reloaded (from its original), and the copy
+    /// dropped.
+    fn decode_failed(&self, path: &Path, error: &str, formats: &[&str]) -> Option<String> {
+        let mut session = self.session.lock_ignore_poison();
+        if !session
+            .served
+            .get(path)
+            .is_some_and(|served| formats.contains(&served.format.as_str()))
+        {
+            return None;
+        }
+        let served = session.served.remove(path)?;
+        session.bad.insert(served.variant.clone());
+        session.fallback(
+            &served.scene,
+            &served.file,
+            Some(&served.format),
+            format!("{} variant failed to load: {error}", served.format),
+        );
+        Some(served.url)
+    }
+}
+
+/// What the loader reads for a variant (a BC texture's KTX2, a `glb` model or a `glb-br`
+/// model as served), and whether it came from the cache.
+pub(crate) struct VariantRead {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) cached: bool,
+}
+
+fn describe_fetch_error(error: &platform::FetchError<anyhow::Error>) -> String {
+    match error {
+        platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
+        platform::FetchError::Stalled => "stalled".to_owned(),
+        platform::FetchError::Send(e) => format!("request failed: {e}"),
+        platform::FetchError::Status(status, _) => format!("status {status}"),
+        platform::FetchError::Body(e) => format!("body stream error: {e}"),
+    }
+}
+
+impl IpfsIo {
+    /// Turns the variants client on for the session. Startup only: a second call is ignored.
+    pub fn set_bevy_variants_base(&self, url: &str) {
+        self.bevy_variants.set_base(url);
+    }
+
+    /// Whether the asset at `path` was last read from a variant (and so must not be
+    /// reprocessed as if it were the original).
+    pub fn served_bevy_variant(&self, path: &Path) -> bool {
+        self.bevy_variants.is_served(path)
+    }
+
+    /// Whether the model at `path`, which failed to load, is about to load again from its
+    /// original because its `glb` variant failed. An avatar waits for it instead of assembling
+    /// without that piece.
+    pub fn bevy_variant_model_reload_pending(&self, path: &Path) -> bool {
+        self.bevy_variants.model_reload_pending(path)
+    }
+
+    /// Drops the cached copy of the variant fetched from `url`: it was rejected, and must not be
+    /// read again in a later session.
+    async fn forget_variant(&self, url: &str) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let forgotten = self
+            .forget_disk_cache(&CacheKey::Url(content_hash::url_cache_name(url)))
+            .await
+            .map_err(|e| e.to_string());
+        #[cfg(target_arch = "wasm32")]
+        let forgotten = crate::web_cache::forget(url)
+            .await
+            .map_err(|e| format!("{e:?}"));
+        if let Err(error) = forgotten {
+            warn!("failed to drop the cached copy of `{url}`: {error}");
+        }
+    }
+
+    /// The asset pipeline's initial-scene-state descriptor for a scene, which places its near
+    /// LOD, under the variants base; `None` when variants are off.
+    pub fn bevy_lod_descriptor(&self, scene: &str) -> Option<String> {
+        let base = self.bevy_variants.base()?;
+        Some(format!(
+            "{base}/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            scene.to_lowercase()
+        ))
+    }
+
+    /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
+    /// the terms a manifest request has (variants on and not turned off for the session, the
+    /// scene eligible) and only on a GPU with BC textures: the mesh's atlases are BC KTX2 only.
+    /// Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
+    /// smaller, and the server sends it to a browser that accepts `br`.
+    ///
+    /// Not offered again for a scene the server answered a definitive status for (404) this
+    /// session. Naming a url does not spend the breaker's probe: whether its download may start
+    /// is [`IpfsIo::far_lod_may_request`].
+    pub fn bevy_far_lod(&self, scene: &str) -> FarLodSource {
+        let Some(base) = self.bevy_variants.base() else {
+            return FarLodSource::Unavailable("bevy variants off".to_owned());
+        };
+        if let Some(reason) = self.bevy_variants.disabled() {
+            return FarLodSource::Unavailable(format!("variants off: {reason}"));
+        }
+        match self.bevy_variants.bc.get() {
+            None => return FarLodSource::NotYet,
+            Some(false) => {
+                return FarLodSource::Unavailable("the GPU has no BC texture support".to_owned())
+            }
+            Some(true) => (),
+        }
+        let contents = match self.context.try_read() {
+            Ok(context) => context.contents_base_url(scene),
+            Err(_) => return FarLodSource::NotYet,
+        };
+        if let Err(reason) = scene_eligibility(scene, contents.as_deref(), self.is_preview) {
+            return FarLodSource::Unavailable(reason.to_owned());
+        }
+        let scene = scene.to_lowercase();
+        {
+            let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
+            if health.is_missing(&scene) {
+                return FarLodSource::Unavailable("the server has none for the scene".to_owned());
+            }
+            health.name(&scene);
+        }
+        FarLodSource::Url(format!("{base}{FAR_LOD_DIR}{scene}{FAR_LOD_SUFFIX}"))
+    }
+
+    /// Records what a download of `remote` came to when it is a far LOD's: the mesh (`Ok`), a
+    /// status (`Err(Some)`), or another failure: an error or a timeout (`Err(None)`). A
+    /// definitive status (`failed_remotes::is_definitive`, such as 404) means the server has no
+    /// mesh for the scene; any status other than that counts as a failure.
+    pub(crate) fn far_lod_fetched(
+        &self,
+        remote: &str,
+        result: Result<(), Option<reqwest::StatusCode>>,
+    ) {
+        let Some(scene) = self.bevy_variants.far_lod_scene(remote) else {
+            return;
+        };
+        let change = {
+            let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
+            // only a url this client named is a far LOD: a scene can make up any other
+            if !health.is_named(scene) {
+                return;
+            }
+            match result {
+                Ok(()) => health.answered(scene, false),
+                Err(Some(status)) if failed_remotes::is_definitive(status) => {
+                    health.answered(scene, true)
+                }
+                Err(_) => health.failed(scene, web_time::Instant::now()),
+            }
+        };
+        match change {
+            Some(BreakerChange::Tripped) => warn!(
+                "far LODs: paused, {FAR_LOD_BREAKER_FAILURES} requests in a row failed (last \
+                 `{remote}`); one is tried every {}s until it is answered",
+                FAR_LOD_COOL_DOWN.as_secs()
+            ),
+            Some(BreakerChange::Recovered) => info!("far LODs: answered again, resumed"),
+            None => (),
+        }
+    }
+
+    /// Whether a far LOD's download may start now. While far LODs are paused it is false, except
+    /// once per cool-down (the probe), which a true answer spends, so call it only right before
+    /// starting a download.
+    pub fn far_lod_may_request(&self) -> bool {
+        if self.bevy_variants.disabled().is_some() {
+            return false;
+        }
+        self.bevy_variants
+            .far_lods
+            .lock_ignore_poison()
+            .may_request(web_time::Instant::now())
+    }
+
+    /// Whether `remote` is a far LOD url this client named ([`IpfsIo::bevy_far_lod`]).
+    pub(crate) fn is_named_far_lod(&self, remote: &str) -> bool {
+        self.bevy_variants
+            .far_lod_scene(remote)
+            .is_some_and(|scene| {
+                self.bevy_variants
+                    .far_lods
+                    .lock_ignore_poison()
+                    .is_named(scene)
+            })
+    }
+
+    /// Whether no far LOD can be offered this session: no variants base, variants turned off,
+    /// a GPU known to have no BC textures, or preview.
+    pub fn far_lods_off(&self) -> bool {
+        self.is_preview
+            || self.bevy_variants.base().is_none()
+            || self.bevy_variants.disabled().is_some()
+            || self.bevy_variants.bc.get() == Some(&false)
+    }
+
+    /// The far LODs' missing meshes and breaker, for `/scene_lod_state`.
+    pub fn far_lod_status(&self) -> FarLodStatus {
+        self.bevy_variants
+            .far_lods
+            .lock_ignore_poison()
+            .status(web_time::Instant::now())
+    }
+
+    /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
+    /// no-op when variants are off.
+    pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
+        let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
+            return;
+        };
+        let Some(sender) = self.bevy_variants.begin(entity) else {
+            return;
+        };
+        let io = self.clone();
+        let entity = entity.to_owned();
+        IoTaskPool::get()
+            .spawn_compat(async move {
+                let state = io.fetch_bevy_variants_manifest(&base, &entity).await;
+                sender.send_replace(state);
+            })
+            .detach();
+    }
+
+    async fn fetch_bevy_variants_manifest(&self, base: &str, entity: &str) -> ManifestState {
+        let contents = self.context.read().await.contents_base_url(entity);
+        if let Err(reason) = scene_eligibility(entity, contents.as_deref(), self.is_preview) {
+            return ManifestState::Ineligible(reason);
+        }
+        if let Some(reason) = self.bevy_variants.disabled() {
+            return ManifestState::Failed(format!("variants off: {reason}"));
+        }
+        let url = format!("{base}/bevy/manifest/{entity}.json");
+        let request = match self.client.get(&url).build() {
+            Ok(request) => request,
+            Err(e) => return ManifestState::Failed(e.to_string()),
+        };
+        match self
+            .fetch_request_once(
+                request,
+                self.client.clone(),
+                MANIFEST_TIMEOUT,
+                MANIFEST_TIMEOUT,
+                Some(entity.to_owned()),
+            )
+            .await
+        {
+            Ok(response) => {
+                self.bevy_variants.transport_ok();
+                match parse_manifest(&response.body) {
+                    Ok(manifest) => ManifestState::Loaded(Arc::new(manifest)),
+                    Err(e) => ManifestState::Failed(format!("invalid manifest: {e}")),
+                }
+            }
+            Err(platform::FetchError::Status(status, _))
+                if status == reqwest::StatusCode::NOT_FOUND =>
+            {
+                self.bevy_variants.transport_ok();
+                ManifestState::None
+            }
+            Err(e) => {
+                let reason = describe_fetch_error(&e);
+                self.bevy_variants.transport_failed(&reason);
+                ManifestState::Failed(reason)
+            }
+        }
+    }
+
+    /// The variant's bytes for an entity's content file, or None to read the original.
+    pub(crate) async fn read_bevy_variant(
+        self: &Arc<Self>,
+        ipfs_path: &IpfsPath,
+        path: &Path,
+    ) -> Option<VariantRead> {
+        let variants = &self.bevy_variants;
+        let base = variants.base()?;
+        let (scene, file) = (ipfs_path.scene_hash()?, ipfs_path.content_path()?);
+        if !could_have_variant(file) {
+            return None;
+        }
+        let mut manifest = variants.manifest(scene)?;
+        let state = manifest.borrow().clone();
+        let state = if matches!(state, ManifestState::Pending) {
+            // wait for the manifest, but only until its deadline: a slow service must not
+            // hold the entity's files back
+            let left = variants.manifest_wait_left(scene);
+            let arrived = if left.is_zero() {
+                None
+            } else {
+                platform::within(left, async {
+                    manifest
+                        .wait_for(|state| !matches!(state, ManifestState::Pending))
+                        .await
+                        .ok()
+                        .map(|state| state.clone())
+                })
+                .await
+            };
+            match arrived {
+                Some(state) => state?,
+                None => {
+                    variants.fail(
+                        scene,
+                        file,
+                        None,
+                        format!(
+                            "the manifest was not there within {}s",
+                            MANIFEST_DEADLINE.as_secs()
+                        ),
+                    );
+                    return None;
+                }
+            }
+        } else {
+            state
+        };
+        let ManifestState::Loaded(manifest) = state else {
+            return None;
+        };
+        let original = self
+            .context
+            .read()
+            .await
+            .entities
+            .get(scene)?
+            .collection
+            .hash(file)?
+            .into_owned();
+        let options = manifest.files.get(&original)?;
+        if variants.disabled().is_some() {
+            return None;
+        }
+        let bc = variants.bc();
+        if !options.iter().any(|variant| supports(variant, file, bc)) {
+            let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
+            // a format this file type would take on a GPU with BC textures
+            let wants_bc = !bc && options.iter().any(|variant| supports(variant, file, true));
+            let reason = if wants_bc {
+                "the GPU has no BC texture support (or has not reported it yet)".to_owned()
+            } else {
+                format!(
+                    "no variant format this file type takes ({})",
+                    formats.join(", ")
+                )
+            };
+            variants.fail(scene, file, None, reason);
+            return None;
+        }
+        let variant = select_variant(options, file, bc, |path| variants.is_bad(path))?.clone();
+
+        let decoded = supported_format(&variant)?.decoded;
+
+        // the manifest names no hash for a variant, so its bytes are cached under a digest of
+        // the url they came from, never under a content hash
+        // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
+        // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
+        // own path is fetched and the server sends the copy to a client that accepts `br`
+        let url = match decoded {
+            Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+            #[cfg(target_arch = "wasm32")]
+            Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
+        };
+        let key = CacheKey::Url(content_hash::url_cache_name(&url));
+        let served = ServedVariant {
+            scene: scene.to_owned(),
+            file: file.to_owned(),
+            variant: variant.path.clone(),
+            format: variant.format.clone(),
+            url: url.clone(),
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let cached = self.read_disk_cache(&key).await.ok().flatten();
+        #[cfg(target_arch = "wasm32")]
+        let cached = crate::web_cache::read(&url).await;
+        let (fetched, from_cache) = match cached {
+            Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
+            None => {
+                let token = self.reqno.fetch_add(1, Ordering::SeqCst);
+                let (download, task) = self.share_download_with(
+                    key,
+                    token,
+                    path.to_owned(),
+                    url.clone(),
+                    Some(scene.to_owned()),
+                    VARIANT_FETCH,
+                );
+                if let Some(task) = task {
+                    IoTaskPool::get().spawn_compat(task).detach();
+                }
+                let mut result = download.result();
+                let fetched = result
+                    .wait_for(Option::is_some)
+                    .await
+                    .ok()
+                    .and_then(|result| result.clone());
+                match fetched {
+                    Some(Ok(bytes)) => {
+                        variants.transport_ok();
+                        (bytes, false)
+                    }
+                    Some(Err(AssetReaderError::Io(e))) if e.kind() == ErrorKind::Interrupted => {
+                        return None
+                    }
+                    Some(Err(e)) => {
+                        let reason = e.to_string();
+                        variants.transport_failed(&reason);
+                        variants.fail(scene, file, Some(&variant), format!("fetch: {reason}"));
+                        return None;
+                    }
+                    None => return None,
+                }
+            }
+        };
+
+        // checks that need no decoding; a copy that fails them is dropped from the cache too,
+        // so a later session does not read it again
+        let rejected = match decoded {
+            // the loaders unwrap the KTX2 (`ktx2::bc_ktx2_dds`), inside the asset load; here
+            // only its header is read, so a file that is not a BC KTX2 at all falls back
+            // before it reaches them
+            Decoded::BcTexture => ktx2::bc_format(&fetched)
+                .err()
+                .map(|reason| format!("invalid KTX2: {reason}")),
+            // the browser hands over the decoded bytes, which are the original `.glb` byte for
+            // byte: checked against the original's own content hash, a truncated or corrupt
+            // copy falls back here, and one that passes is the original, so a glTF loader
+            // failure on it is the original's own and needs no reload
+            #[cfg(target_arch = "wasm32")]
+            Decoded::BrotliGlb => {
+                (!content_hash::matches_content_hash(&original, &fetched)).then(|| {
+                    format!(
+                        "{} bytes from the Brotli copy are not the original `{original}`",
+                        fetched.len()
+                    )
+                })
+            }
+            // the glTF loader decodes each embedded KTX2 through the host transcoder, which
+            // unwraps BC to DDS inside the asset load; here only the GLB magic is read. An image
+            // that does not unwrap fails the `Gltf` load, which reloads the original
+            // (`fall_back_from_failed_variants::<Gltf>`)
+            Decoded::BcGlb => (!fetched.starts_with(b"glTF"))
+                .then(|| "invalid glb variant: not a binary glTF".to_owned()),
+        };
+        if let Some(reason) = rejected {
+            self.forget_variant(&served.url).await;
+            variants.fail(scene, file, Some(&variant), reason);
+            return None;
+        }
+        let bytes = Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone());
+        variants.served(path, served, from_cache);
+        Some(VariantRead {
+            bytes,
+            cached: from_cache,
+        })
+    }
+}
+
+pub(crate) struct BevyVariantsPlugin;
+
+impl Plugin for BevyVariantsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, detect_gpu_formats);
+        app.add_plugins(debug_panel::BevyVariantsDebugPanelPlugin);
+    }
+
+    /// After the asset plugins exist: an app without images or glTFs has nothing to fall back.
+    fn finish(&self, app: &mut App) {
+        if app
+            .world()
+            .contains_resource::<Events<AssetLoadFailedEvent<Image>>>()
+        {
+            // after the cache check, which skips a variant's failure only while it is marked served
+            app.add_systems(
+                Update,
+                fall_back_from_failed_variants::<Image>
+                    .after(crate::cache_heal::drop_failed_cached_entries),
+            );
+        }
+        if app
+            .world()
+            .contains_resource::<Events<AssetLoadFailedEvent<Gltf>>>()
+        {
+            app.add_systems(
+                Update,
+                (
+                    fall_back_from_failed_variants::<Gltf>
+                        .after(crate::cache_heal::drop_failed_cached_entries),
+                    finish_model_reloads.after(fall_back_from_failed_variants::<Gltf>),
+                ),
+            );
+        }
+    }
+}
+
+fn detect_gpu_formats(
+    capabilities: Option<Res<RenderCapabilities>>,
+    ipfs: Res<IpfsResource>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(capabilities) = capabilities else {
+        return;
+    };
+    *done = true;
+    let bc = CompressedImageFormats::from_features(capabilities.features())
+        .contains(CompressedImageFormats::BC);
+    let _ = ipfs.bevy_variants.bc.set(bc);
+}
+
+/// An asset type a variant can fail to load as, and the variant formats whose failure reloads
+/// it from the original.
+trait VariantAsset: Asset {
+    const FORMATS: &'static [&'static str];
+}
+
+impl VariantAsset for Image {
+    const FORMATS: &'static [&'static str] = &["ktx2-bc"];
+}
+
+/// Only `glb`: a `glb-br` variant is the original byte for byte, so a glTF loader failure on
+/// it is the original's own and a reload would fail the same way. A Draco original fails on the
+/// web through its `glb-br` copy too, and isn't repaired: image processing skips paths read
+/// from a variant, and the copy stays served. abgen decodes Draco before it builds a `glb`
+/// variant, so this only happens where the `glb` variant isn't taken (no BC on the GPU) or has
+/// failed.
+impl VariantAsset for Gltf {
+    const FORMATS: &'static [&'static str] = &["glb"];
+}
+
+/// Reloads from its original each texture or `glb` model whose variant failed to load. A GLB
+/// that never loaded reloads whole; a scene's container retries it (`retry_repaired_gltfs`),
+/// and an avatar waits for it (`bevy_variant_model_reload_pending`).
+fn fall_back_from_failed_variants<A: VariantAsset>(
+    mut failed: EventReader<AssetLoadFailedEvent<A>>,
+    ipfs: Res<IpfsResource>,
+    server: Res<AssetServer>,
+) {
+    for event in failed.read() {
+        match ipfs.bevy_variants.decode_failed(
+            event.path.path(),
+            &event.error.to_string(),
+            A::FORMATS,
+        ) {
+            Some(url) => {
+                ipfs.bevy_variants.reload_started(event.path.path());
+                server.reload(event.path.without_label().into_owned());
+                let io = ipfs.clone();
+                IoTaskPool::get()
+                    .spawn_compat(async move { io.forget_variant(&url).await })
+                    .detach();
+            }
+            // the original's own failure: a reload from it is over
+            None => ipfs.bevy_variants.reload_finished(event.path.path()),
+        }
+    }
+}
+
+/// Ends the wait on a model reloading from its original once it has loaded.
+fn finish_model_reloads(
+    mut events: EventReader<AssetEvent<Gltf>>,
+    ipfs: Res<IpfsResource>,
+    server: Res<AssetServer>,
+) {
+    for event in events.read() {
+        if let AssetEvent::LoadedWithDependencies { id } = event {
+            if let Some(path) = server.get_path(*id) {
+                ipfs.bevy_variants.reload_finished(path.path());
+            }
+        }
+    }
+}

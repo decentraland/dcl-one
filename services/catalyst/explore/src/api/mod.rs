@@ -1,7 +1,7 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the asset-bundle registry reads as a cached upstream
-//! reader ([`registry`]), and four mirrors with a local overlay and a
+//! ([`realm_provider`]), the asset-bundle Registry gateway
+//! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
 //! api.decentraland.org tile grid behind `map.png` ([`map`]), plus the
@@ -43,11 +43,11 @@ pub mod world_manifest;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde_json::json;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
@@ -67,8 +67,9 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// asset-bundle registry: `POST {registry}/entities/active`, `/profiles`, ...;
-    /// empty reads none.
+    /// Uncached Registry source reads (see [`registry`]): a loopback URL is the
+    /// local abgen runtime, any other a public Registry; empty serves `200 []`
+    /// to the boot reads.
     pub registry: String,
     /// atlas API: `GET {map}/v2/tiles/info`, `GET {map}/v2/tiles`.
     pub map: String,
@@ -128,6 +129,26 @@ impl Sources {
     }
 }
 
+/// The realm document's `comms.adapter`. `COMMS_ADAPTER` when it names one;
+/// left at its offline default while `COMMS_FIXED_ADAPTER` is set, the
+/// adapter this node's `/about` derives from that one setting
+/// (`content::about_comms::build_comms_config`), as upstream's realm provider
+/// derives its own from the connector URL alone. Otherwise the two documents
+/// of one node disagree and a client reading `adapter` first joins no room.
+fn realm_comms_adapter(adapter: &str, fixed_adapter: Option<&str>) -> String {
+    const OFFLINE: &str = "offline:offline";
+    let adapter = value_or(adapter, OFFLINE.into());
+    let fixed = value_or(fixed_adapter.unwrap_or_default(), String::new());
+    let fixed = fixed.as_str();
+    if adapter != OFFLINE || fixed.is_empty() || fixed == OFFLINE {
+        adapter
+    } else if fixed.starts_with("archipelago:") {
+        format!("archipelago:{fixed}")
+    } else {
+        format!("fixed-adapter:{fixed}")
+    }
+}
+
 fn value_or(value: &str, default: String) -> String {
     let v = value.trim().trim_end_matches('/');
     if v.is_empty() { default } else { v.to_string() }
@@ -160,7 +181,7 @@ pub struct Settings {
     /// one of them is a mirror feeding itself.
     pub own_hosts: Vec<String>,
     /// `EXPLORER_MIRRORS_ENABLED`: whether `spawn_jobs` starts the four
-    /// mirrors. The sources are validated either way (the registry reader
+    /// mirrors. The sources are validated either way (the Registry gateway
     /// uses its on demand).
     pub mirrors_enabled: bool,
     /// What the LAND/Estate metadata's `image` points at (`MAP_IMAGE_BASE_URL`;
@@ -169,6 +190,9 @@ pub struct Settings {
     /// `MAP_EXTERNAL_BASE_URL`: the marketplace the metadata's `external_url`
     /// links to; unset yields no link rather than one to production.
     pub map_external_base_url: Option<String>,
+    /// `MAP_DISSOLVED_ESTATE_IMAGE_URL`: where an estate's `map.png`
+    /// redirects when the grid holds none of its parcels.
+    pub map_dissolved_estate_image_url: String,
     /// The LAND and Estate registries of `ETH_NETWORK`, lowercase (the
     /// `/v2/contracts/{address}/tokens/{id}` dispatch and `external_url`).
     pub land_contract_address: String,
@@ -202,6 +226,9 @@ pub struct Settings {
     pub opensea: opensea::Settings,
     /// `ONBOARDING_API_KEY`: the bearer of `/onboarding/*`; unset, both routes answer 401.
     pub onboarding_api_key: Option<String>,
+    pub(crate) magic_deletion: Option<auth_api::MagicDeletion>,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Settings {
@@ -228,7 +255,10 @@ impl Settings {
                 .unwrap_or("main")
                 .to_string(),
             network_id: network_id(&config.node.eth_network),
-            comms_adapter: value_or(&config.explore.comms_adapter, "offline:offline".into()),
+            comms_adapter: realm_comms_adapter(
+                &config.explore.comms_adapter,
+                config.explore.comms_fixed_adapter.as_deref(),
+            ),
             comms_fixed_adapter: value_or(
                 config.explore.comms_fixed_adapter.as_deref().unwrap_or(""),
                 "offline:offline".into(),
@@ -245,6 +275,7 @@ impl Settings {
             mirrors_enabled: config.explore.explorer_mirrors_enabled,
             map_image_base_url: format!("{public_url}/api/v1"),
             map_external_base_url: None,
+            map_dissolved_estate_image_url: config.ab_cdn.map_dissolved_estate_image_url.clone(),
             land_contract_address: land.land_registry,
             estate_contract_address: land.estate_registry,
             ab_cdn_enabled: true,
@@ -314,6 +345,8 @@ impl Settings {
                 .onboarding_api_key
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
+            magic_deletion: auth_api::MagicDeletion::from_config(config),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -335,6 +368,7 @@ impl Settings {
             mirrors_enabled: true,
             map_image_base_url: "http://localhost/api/v1".into(),
             map_external_base_url: None,
+            map_dissolved_estate_image_url: "http://localhost/dissolved_estate.png".into(),
             land_contract_address: crate::land_authz::LAND_REGISTRY_MAINNET.into(),
             estate_contract_address: crate::land_authz::ESTATE_REGISTRY_MAINNET.into(),
             ab_cdn_enabled: true,
@@ -354,6 +388,8 @@ impl Settings {
                 ..opensea::Settings::defaults()
             },
             onboarding_api_key: None,
+            magic_deletion: None,
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 
@@ -370,6 +406,16 @@ impl Settings {
         );
         for (name, source) in self.sources.all() {
             if source.is_empty() {
+                continue;
+            }
+            if name == "EXPLORER_REGISTRY_SOURCE_URL"
+                && matches!(
+                    registry::Backend::parse(source).with_context(|| format!("{name}={source}"))?,
+                    registry::Backend::Native(_)
+                )
+            {
+                // The local abgen runtime: loopback by construction, never an
+                // SSRF target; a public Registry takes the checks below.
                 continue;
             }
             let parsed = self
@@ -465,25 +511,33 @@ pub struct State {
     /// Sync status and public URLs for the realm doc; the profiles reader's
     /// local-first path arrives with the lambdas module.
     pub content: Arc<ContentState>,
-    pub registry: registry::Cache,
     /// Shared with social's referral checks, which read it in place.
     pub denylist: Arc<denylist::Snapshot>,
-    pub flags: feature_flags::Snapshot,
+    /// Shared with social, which marks official posts from it (`communities::features`).
+    pub flags: Arc<feature_flags::Snapshot>,
     pub map: map::MapState,
     pub ab_cdn: ab_cdn::Cache,
     pub satellite: satellite::SatelliteState,
     pub world_manifest: world_manifest::WorldManifestState,
     pub posters: posters::PosterState,
     pub opensea: opensea::Runtime,
-    /// The `/auth-api` sign-in relay's requests and identities (process state).
-    pub auth_api: auth_api::AuthApiState,
     /// The operator's runtime key/value map (process state).
     pub runtime_config: runtime_config::RuntimeConfigState,
-    /// The onboarding checkpoints (process state), shared with the Segment
-    /// webhooks that forward them (`social::segment_webhooks`).
+    /// The onboarding checkpoints (`explore_api.onboarding_checkpoints` over
+    /// this pool), shared with the Segment webhooks that forward them
+    /// (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
+    /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
+    pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    /// The auth relay's budget of contract-wallet (`isValidSignature`) calls,
+    /// per network and per replica.
+    pub contract_checks: auth_api::ContractChecks,
+    pub(crate) auth_sockets: auth_api::SocketBindings,
+    /// The LAND index, attached after construction (`attach_land_authz`):
+    /// the Estate metadata of estates the grid no longer holds.
+    pub land_authz: std::sync::OnceLock<Arc<crate::land_authz::LandAuthzState>>,
 }
 
 pub type Shared = Arc<State>;
@@ -507,33 +561,37 @@ impl State {
             settings.ab_cdn_cache_dir.clone(),
             settings.ab_cdn_cache_max_bytes,
         )?;
+        let onboarding = Arc::new(onboarding::OnboardingState::new(pool.clone()));
         let state = Arc::new(Self {
             settings,
             pool,
             http,
             content,
-            registry: registry::Cache::new(),
             denylist: Arc::default(),
-            flags: feature_flags::Snapshot::default(),
+            flags: Arc::new(feature_flags::Snapshot::from_document(
+                feature_flags::embedded_document(),
+                false,
+            )),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
             world_manifest: world_manifest::WorldManifestState::default(),
             posters: posters::PosterState::default(),
             opensea: opensea::Runtime::default(),
-            auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
-            onboarding: Arc::default(),
+            onboarding,
+            registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
+            contract_checks: Default::default(),
+            auth_sockets: Default::default(),
+            land_authz: std::sync::OnceLock::new(),
         });
         state
             .denylist
             .reload(&state.pool)
             .await
             .context("loading the mirrored denylist")?;
-        state
-            .flags
-            .reload(&state.pool, &app)
+        feature_flags::reload(&state.flags, &state.pool, &app)
             .await
             .context("loading the mirrored feature flags")?;
         state
@@ -560,7 +618,13 @@ impl State {
     /// maintenance and denylist snapshot reload run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
-        denylist::spawn_reload(self, jobs, denylist::RELOAD_INTERVAL);
+        self.auth_sockets.spawn(self, jobs);
+        denylist::spawn_reload(
+            self,
+            jobs,
+            denylist::RELOAD_INTERVAL,
+            denylist::RELOAD_TIMEOUT,
+        );
         let pool = self.pool.clone();
         jobs.spawn_periodic_leased(
             "opensea-cache-expiry",
@@ -692,6 +756,9 @@ impl State {
     }
 }
 
+/// The Registry's service key; it keeps its own CORS ([`registry::cors`]).
+const REGISTRY_PREFIX: &str = "asset-bundle-registry";
+
 /// One router per upstream service, keyed by the subdomain the explorer
 /// derives it from (`realm-provider-ea.<domain>`, `api.<domain>`, ...), for
 /// a deployment that serves the raw-subdomain form.
@@ -703,10 +770,7 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
         ),
         ("auth-api", auth_api::routes().with_state(state.clone())),
         ("onboarding", onboarding::routes().with_state(state.clone())),
-        (
-            "asset-bundle-registry",
-            registry::routes().with_state(state.clone()),
-        ),
+        (REGISTRY_PREFIX, registry::routes(state.clone())),
         ("dcl-lists", lists::routes().with_state(state.clone())),
         ("config", denylist::routes().with_state(state.clone())),
         (
@@ -729,6 +793,7 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
 /// the statics the main vhost served at the root: `/world-manifest.json`,
 /// `/satellite/{z}/{x}/{y}` (web.nix's `/satellite/` location) and the
 /// poster bucket's `/poster[-vertical]/{file}` (the vhost's own paths).
+/// The Registry and sign-in relay keep their own CORS policies.
 pub fn router(state: Shared) -> Router {
     let mut app = Router::new()
         .route("/mirrors", get(mirror::status))
@@ -736,10 +801,18 @@ pub fn router(state: Shared) -> Router {
         .route("/satellite/{z}/{x}/{y}", get(satellite::tile))
         .merge(posters::routes())
         .with_state(state.clone());
-    for (prefix, service) in service_routers(state) {
+    let socket_state = state.clone();
+    let (own_cors, services): (Vec<_>, Vec<_>) = service_routers(state)
+        .into_iter()
+        .partition(|(prefix, _)| matches!(*prefix, REGISTRY_PREFIX | "auth-api"));
+    for (prefix, service) in services {
         app = app.nest(&format!("/{prefix}"), service);
     }
-    app.layer(CorsLayer::permissive())
+    let mut app = app.layer(CorsLayer::permissive());
+    for (prefix, service) in own_cors {
+        app = app.nest(&format!("/{prefix}"), service);
+    }
+    app.merge(auth_api::socket_router(socket_state))
 }
 
 /// The unavailable envelope (`marketplace::unavailable`'s shape) for a
@@ -766,18 +839,27 @@ impl State {
     ) -> bool {
         validator.is_some_and(|v| self.eip1654.set(v).is_ok())
     }
+
+    /// The attached EIP-1654 validator, if any.
+    pub fn eip1654_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        self.eip1654.get().map(|v| &**v)
+    }
+
+    /// Attaches the LAND index; `false` if one was attached already.
+    pub fn attach_land_authz(&self, land: Arc<crate::land_authz::LandAuthzState>) -> bool {
+        self.land_authz.set(land).is_ok()
+    }
 }
 
 pub(crate) fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
     (status, axum::Json(json!({ "error": message.into() }))).into_response()
 }
 
+/// A 500 whose body names only `context`, a fixed text: `err` (a database or
+/// pool error, say) goes to the log, never to the caller.
 pub(crate) fn internal_error(context: &str, err: impl std::fmt::Display) -> Response {
     tracing::error!(%err, "{context}");
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("{context}: {err}"),
-    )
+    json_error(StatusCode::INTERNAL_SERVER_ERROR, context)
 }
 
 #[cfg(test)]
@@ -786,5 +868,47 @@ pub(crate) mod tests_support {
     pub async fn state_without_db() -> super::Shared {
         super::tests::node_without_db_state(super::Settings::for_tests(super::Sources::defaults()))
             .await
+    }
+
+    /// A state over `pool` (the auth-api DB tests; one per replica).
+    pub async fn state_on_pool(pool: sqlx::PgPool) -> super::Shared {
+        super::tests::node_on_pool_state(
+            super::Settings::for_tests(super::Sources::defaults()),
+            pool,
+        )
+        .await
+    }
+
+    pub(crate) use super::tests::{ScratchDb, scratch_database};
+}
+
+#[cfg(test)]
+mod realm_comms_adapter_tests {
+    use super::realm_comms_adapter;
+
+    #[test]
+    fn the_realm_adapter_follows_the_fixed_adapter_when_only_that_is_set() {
+        let derived = |adapter, fixed| realm_comms_adapter(adapter, fixed);
+        assert_eq!(derived("offline:offline", None), "offline:offline");
+        assert_eq!(derived("", Some("  ")), "offline:offline");
+        assert_eq!(
+            derived("offline:offline", Some("archipelago:wss://node.example/ws")),
+            "archipelago:archipelago:wss://node.example/ws"
+        );
+        assert_eq!(
+            derived(
+                "offline:offline",
+                Some("livekit:wss://sfu.example?access_token=t")
+            ),
+            "fixed-adapter:livekit:wss://sfu.example?access_token=t"
+        );
+        // An adapter that names one is advertised as set.
+        assert_eq!(
+            derived(
+                "fixed-adapter:archipelago:wss://node.example/ws",
+                Some("archipelago:wss://node.example/ws")
+            ),
+            "fixed-adapter:archipelago:wss://node.example/ws"
+        );
     }
 }

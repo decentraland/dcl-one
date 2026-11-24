@@ -242,6 +242,16 @@ async fn active(pool: &PgPool, id: Uuid) -> bool {
         .unwrap()
 }
 
+async fn last_complete_pass_at(pool: &PgPool, cfg: &MirrorConfig) -> Option<NaiveDateTime> {
+    sqlx::query_scalar(
+        "SELECT last_complete_pass_at FROM social.community_mirror_state WHERE source_url = $1",
+    )
+    .bind(cfg.source.base())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -411,7 +421,12 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     shared.lock().unwrap().rows[3]["name"] = json!(format!("{tag} renamed"));
     shared.lock().unwrap().offsets.clear();
 
-    // 5. An interrupted pass resumes at its cursor.
+    // 5. An interrupted pass resumes at its cursor and finishes, but
+    // incomplete: the cursor cannot prove the interrupted run skipped no
+    // page. With no grace, a complete pass would sweep the 100 rows before
+    // the cursor (and its fuse would refuse); the resumed one never tries.
+    let before = last_complete_pass_at(&pool, &cfg).await;
+    assert!(before.is_some());
     sqlx::query(
         "UPDATE social.community_mirror_state SET pass_started_at = $2, next_offset = 100, pass_rows = 100 \
          WHERE source_url = $1",
@@ -421,11 +436,36 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     .execute(&pool)
     .await
     .unwrap();
-    let out = run_pass(&client, &pool, &cfg, hour, &cancel).await.unwrap();
+    let out = run_pass(&client, &pool, &cfg, Duration::ZERO, &cancel)
+        .await
+        .unwrap();
     assert_eq!(out.resumed_from, Some(100));
     assert_eq!(shared.lock().unwrap().offsets, vec![100]);
+    assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
+    assert!(!out.complete, "a resumed pass never counts as complete");
+    assert!(out.fetched_all && !pass_failed(&out), "{out:?}");
+    assert!(!out.sweep_refused && out.deactivated == 0, "{out:?}");
+    assert_eq!(last_complete_pass_at(&pool, &cfg).await, before);
+    let (pass_complete, error): (Option<bool>, Option<String>) = sqlx::query_as(
+        "SELECT last_pass_complete, last_error FROM social.community_mirror_state WHERE source_url = $1",
+    )
+    .bind(cfg.source.base())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pass_complete, Some(false));
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|e| e.contains("resumed at offset 100")),
+        "{error:?}"
+    );
     let out = run_pass(&client, &pool, &cfg, hour, &cancel).await.unwrap();
     assert!(out.complete && out.resumed_from.is_none());
+    assert!(
+        last_complete_pass_at(&pool, &cfg).await > before,
+        "the next fresh pass restores the marker"
+    );
     let suspended: bool =
         sqlx::query_scalar("SELECT suspended FROM social.communities WHERE id = $1")
             .bind(ids[2])
@@ -440,12 +480,38 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
         .unwrap();
     assert_eq!(renamed, format!("{tag} renamed"));
 
+    // A resumed pass that stops at the offset ceiling saw no failed page,
+    // but it did not reach the listing's end: the job reports it.
+    sqlx::query(
+        "UPDATE social.community_mirror_state SET pass_started_at = $2, next_offset = $3, pass_rows = 100 \
+         WHERE source_url = $1",
+    )
+    .bind(cfg.source.base())
+    .bind(Utc::now().naive_utc())
+    .bind(MAX_OFFSET)
+    .execute(&pool)
+    .await
+    .unwrap();
+    shared.lock().unwrap().offsets.clear();
+    let out = run_pass(&client, &pool, &cfg, Duration::ZERO, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(out.resumed_from, Some(MAX_OFFSET));
+    assert!(shared.lock().unwrap().offsets.is_empty());
+    assert_eq!(out.failed_pages, 0);
+    assert!(
+        !out.complete && !out.fetched_all && pass_failed(&out),
+        "{out:?}"
+    );
+    assert!(!out.sweep_refused && out.deactivated == 0, "{out:?}");
+
     // 6. An upstream fault: incomplete, nothing deactivated.
     shared.lock().unwrap().fail = true;
     let out = run_pass(&client, &pool, &cfg, Duration::ZERO, &cancel)
         .await
         .unwrap();
     assert!(!out.complete && out.failed_pages > 0 && out.deactivated == 0);
+    assert!(!out.fetched_all && pass_failed(&out));
     let error: Option<String> = sqlx::query_scalar(
         "SELECT last_error FROM social.community_mirror_state WHERE source_url = $1",
     )

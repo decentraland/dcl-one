@@ -1,0 +1,36 @@
+import { RoleType } from '/@/lib/land';
+import { WorldRoleType } from '/@/lib/worlds';
+import { t } from '/@/modules/store/translation/utils';
+import type { ManagedProject } from '/shared/types/manage';
+
+import type { RoleTagVariant } from './types';
+
+import styles from './RoleTag.module.css';
+
+const TAG_BY_ROLE: Partial<Record<ManagedProject['role'], RoleTagVariant>> = {
+  [RoleType.OPERATOR]: 'collaborator',
+  [RoleType.MANAGER]: 'collaborator',
+  [RoleType.TENANT]: 'tenant',
+  [WorldRoleType.COLLABORATOR]: 'collaborator',
+};
+
+const LABELS = {
+  collaborator: 'manage.cards.roles.collaborator',
+  tenant: 'manage.cards.roles.tenant',
+} as const satisfies Record<RoleTagVariant, string>;
+
+/** The tag a card shows for the account's role; owners and lessors get none. */
+export function getRoleTag(role: ManagedProject['role']): RoleTagVariant | undefined {
+  return TAG_BY_ROLE[role];
+}
+
+export function RoleTag({ variant }: { variant: RoleTagVariant }) {
+  return (
+    <span
+      className={styles.tag}
+      data-variant={variant}
+    >
+      {t(LABELS[variant])}
+    </span>
+  );
+}

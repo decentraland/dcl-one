@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use prost::Message as _;
 use sha2::{Digest, Sha256};
 
@@ -15,10 +16,9 @@ use crate::pulse::hardening::{
     BanList, CorruptedPacketLimiter, DEFAULT_DISCRETE_BURST, DEFAULT_DISCRETE_RATE_PER_SEC,
     DEFAULT_INPUT_BURST, DEFAULT_INPUT_MAX_HZ, DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP,
     DEFAULT_MAX_EMOTE_DURATION_MS, DEFAULT_MAX_HANDSHAKE_ATTEMPTS, DEFAULT_MAX_REALM_LENGTH,
-    DEFAULT_PRE_AUTH_BUDGET, DEFAULT_PRE_AUTH_BUDGET_WT, DEFAULT_SCENE_LISTENER_MAX_PARCELS,
-    DisconnectReason, GameplayRateLimiter, HandshakeAttemptPolicy, HandshakeReplayPolicy,
-    PreAuthAdmission, ReplayRejection, SCENE_LISTENER_EXEMPT_MAX_AOI_BYTES,
-    SCENE_LISTENER_REALM_BUDGET_COST,
+    DEFAULT_PRE_AUTH_BUDGET, DEFAULT_SCENE_LISTENER_MAX_PARCELS, DisconnectReason,
+    GameplayRateLimiter, HandshakeAttemptPolicy, HandshakeReplayPolicy, PreAuthAdmission,
+    ReplayRejection, SCENE_LISTENER_EXEMPT_MAX_AOI_BYTES, SCENE_LISTENER_REALM_BUDGET_COST,
 };
 use crate::pulse::interest::{
     ParcelEncoder, ParcelEncoderOptions, SPATIAL_GRID_CELL_SIZE, SceneListenerCellMapper,
@@ -52,10 +52,10 @@ pub const DEFAULT_RING_CAPACITY: usize = 20;
 
 pub const ENET_CAPACITY: usize = 4095;
 pub const WT_CAPACITY: usize = 4096;
-const DEFAULT_MAX_PEERS: usize = ENET_CAPACITY + WT_CAPACITY;
+pub(super) const PEER_SLOT_CAPACITY: usize = ENET_CAPACITY + WT_CAPACITY;
+pub(super) const DEFAULT_MAX_PEERS: usize = ENET_CAPACITY;
 
-const _: () = assert!(ENET_CAPACITY + WT_CAPACITY <= u16::MAX as usize);
-const _: () = assert!(DEFAULT_MAX_PEERS == ENET_CAPACITY + WT_CAPACITY);
+const _: () = assert!(PEER_SLOT_CAPACITY <= u16::MAX as usize);
 
 pub const FEATURE_DELTA_BATCH: u32 = 1 << 0;
 pub const FEATURE_DELTA_BATCH_BASELINE: u32 = 1 << 1;
@@ -116,6 +116,32 @@ struct Admitted {
 enum Admission {
     Ok(Admitted),
     Deny(Box<Action>),
+}
+
+/// What a peer may send while its handshake answer waits for the replay journal. A peer that
+/// sends more is refused once the answer is released, and nothing more of it is kept.
+const MAX_HELD_PACKETS: usize = 64;
+const MAX_HELD_BYTES: usize = 16 * 1024;
+
+/// A handshake outcome held until the replay journal has synced every job up to `journaled`,
+/// with the packets its peer sent meanwhile, replayed in order once it is applied.
+#[derive(Debug)]
+struct HeldHandshake {
+    journaled: u64,
+    peer: u32,
+    action: Action,
+    now: u32,
+    packets: Vec<HeldPacket>,
+    held_bytes: usize,
+    overflowed: bool,
+}
+
+#[derive(Debug)]
+struct HeldPacket {
+    channel: u8,
+    data: Vec<u8>,
+    now_ms: i64,
+    now: u32,
 }
 
 fn scene_listener_max_parcels_from_env() -> usize {
@@ -187,6 +213,8 @@ pub struct PulseServer {
     pub simulation: PeerSimulation,
 
     pub replay_policy: HandshakeReplayPolicy,
+    /// Handshake outcomes waiting for their replay record to be durable, in journal order.
+    held_handshakes: std::collections::VecDeque<HeldHandshake>,
 
     pub application_relay: Option<crate::pulse::application_relay::ApplicationRelay>,
 
@@ -195,8 +223,11 @@ pub struct PulseServer {
 
     pub attempt_policy: HandshakeAttemptPolicy,
 
-    pub pre_auth_enet: PreAuthAdmission,
-    pub pre_auth_wt: PreAuthAdmission,
+    // Keep the transport reservation after early application cleanup, until the
+    // driver actually releases the peer ID.
+    admitted_connections: HashSet<u32>,
+    pub(super) max_admitted_connections: usize,
+    pre_auth: PreAuthAdmission,
 
     pub max_emote_duration_ms: u32,
 
@@ -207,6 +238,10 @@ pub struct PulseServer {
     pub max_realm_length: usize,
 
     pub max_scene_listener_parcels: usize,
+
+    /// Wallets (lowercase) that may hold a scene listener; `None` admits any
+    /// authenticated wallet and is for embedded use only.
+    pub scene_listener_wallets: Option<std::collections::HashSet<String>>,
 
     /// Live connection limits and trusted source IPs. The whitelist also exempts the parcel
     /// budget and is read on every listener announcement, including established sessions.
@@ -232,11 +267,19 @@ impl Default for PulseServer {
 impl PulseServer {
     pub fn new() -> Self {
         Self::with_config(
-            DEFAULT_MAX_PEERS,
+            PEER_SLOT_CAPACITY,
             DEFAULT_RING_CAPACITY,
             &DEFAULT_SIMULATION_STEPS,
             false,
         )
+    }
+
+    /// Replaces the pre-auth admission limits. For a server that has admitted no connection yet:
+    /// the replacement starts with nothing in flight.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_pre_auth_limits(mut self, per_ip_cap: i64, global_budget: i64) -> Self {
+        self.pre_auth = PreAuthAdmission::new(per_ip_cap, global_budget);
+        self
     }
 
     pub fn with_config(
@@ -264,17 +307,16 @@ impl PulseServer {
                 crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
                 max_peers,
             ),
+            held_handshakes: std::collections::VecDeque::new(),
             application_relay: None,
             ban_list: BanList::new(),
             ban_snapshots: None,
             attempt_policy: HandshakeAttemptPolicy::new(DEFAULT_MAX_HANDSHAKE_ATTEMPTS),
-            pre_auth_enet: PreAuthAdmission::new(
+            admitted_connections: HashSet::new(),
+            max_admitted_connections: DEFAULT_MAX_PEERS,
+            pre_auth: PreAuthAdmission::new(
                 DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP,
                 DEFAULT_PRE_AUTH_BUDGET,
-            ),
-            pre_auth_wt: PreAuthAdmission::new(
-                DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP,
-                DEFAULT_PRE_AUTH_BUDGET_WT,
             ),
             max_emote_duration_ms: DEFAULT_MAX_EMOTE_DURATION_MS,
             corrupted_limiter: CorruptedPacketLimiter::new(
@@ -289,6 +331,7 @@ impl PulseServer {
             ),
             max_realm_length: DEFAULT_MAX_REALM_LENGTH,
             max_scene_listener_parcels: scene_listener_max_parcels_from_env(),
+            scene_listener_wallets: None,
             ip_limiter_options: IpLimiterOptions::default(),
             ip_limiter: IpLimiter::default(),
             flag_snapshots: None,
@@ -515,10 +558,20 @@ impl PulseServer {
             }));
         }
 
-        match self
-            .replay_policy
-            .try_admit(now_ms, &user_address, &timestamp)
-        {
+        // Trusted infrastructure is not held to the per-source share of the replay table; its
+        // handshakes share the one whitelisted bucket instead.
+        let ip = self
+            .peers
+            .get(&peer)
+            .and_then(|state| state.ip.as_deref())
+            .filter(|ip| !self.ip_limiter_options.whitelist.contains(ip))
+            .map(str::to_string);
+        match self.replay_policy.try_admit(
+            now_ms,
+            ip.as_deref(),
+            &user_address,
+            &timestamp,
+        ) {
             Ok(()) => {}
             Err(ReplayRejection::Forgotten) => {
                 return Admission::Deny(Box::new(Action::Reply(handshake_response(
@@ -532,7 +585,7 @@ impl PulseServer {
                 return Admission::Deny(Box::new(Action::Reply(handshake_response(
                     false,
                     Some(
-                        "timestamp is ahead of this server; synchronize the clock and sign a new handshake"
+                        "timestamp is too far ahead of this server; synchronize the clock and sign a new handshake"
                             .into(),
                     ),
                 ))))
@@ -546,6 +599,30 @@ impl PulseServer {
                     reason: match rejection {
                         ReplayRejection::Capacity | ReplayRejection::Storage => {
                             DisconnectReason::ServerFull
+                        }
+                        ReplayRejection::SourceQuota => {
+                            crate::pulse::metrics::handshake("legacy", "replay_source_quota");
+                            tracing::debug!(
+                                source = crate::shared::client_ip::source_key(ip.as_deref().unwrap_or_default()),
+                                "Pulse handshake refused: source holds its replay-table quota"
+                            );
+                            DisconnectReason::PreAuthIpLimitExhausted
+                        }
+                        ReplayRejection::WhitelistedQuota => {
+                            crate::pulse::metrics::handshake("legacy", "replay_whitelisted_quota");
+                            tracing::debug!(
+                                "Pulse handshake refused: whitelisted sources hold their replay-table quota"
+                            );
+                            DisconnectReason::PreAuthBudgetExhausted
+                        }
+                        // A retryable pre-auth refusal: the wallet's entries leave the table
+                        // within two freshness windows, and its client is then admitted again.
+                        ReplayRejection::WalletQuota => {
+                            crate::pulse::metrics::handshake("legacy", "replay_wallet_quota");
+                            tracing::debug!(
+                                "Pulse handshake refused: wallet holds its replay-table quota"
+                            );
+                            DisconnectReason::PreAuthBudgetExhausted
                         }
                         _ => DisconnectReason::HandshakeReplayRejected,
                     },
@@ -581,6 +658,21 @@ impl PulseServer {
             Admission::Ok(a) => a,
             Admission::Deny(action) => return *action,
         };
+
+        if self
+            .scene_listener_wallets
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(&admitted.wallet.to_ascii_lowercase()))
+        {
+            crate::pulse::metrics::handshake("legacy", "listener_not_allowed");
+            if let Some(state) = self.peers.get_mut(&peer) {
+                state.connection_state = PeerConnectionState::PendingDisconnect;
+            }
+            return Action::Reject {
+                reply: None,
+                reason: DisconnectReason::AuthFailed,
+            };
+        }
 
         let enforce_budget = self.enforces_listener_budget(peer, &req.aoi);
         let Some(listener) = self.build_listener(&req.aoi, enforce_budget) else {
@@ -798,14 +890,6 @@ impl PulseServer {
             && validate::realm_length(&init.realm, self.max_realm_length)
     }
 
-    fn pre_auth_for(&mut self, peer: u32) -> &mut PreAuthAdmission {
-        if peer >= ENET_CAPACITY as u32 {
-            &mut self.pre_auth_wt
-        } else {
-            &mut self.pre_auth_enet
-        }
-    }
-
     fn is_authenticated(&self, peer: u32) -> bool {
         self.peers
             .get(&peer)
@@ -1003,7 +1087,7 @@ impl PulseServer {
                 if let Some(msg) = reply {
                     self.send(transports, peer, channel::RELIABLE, &msg).await?;
                 }
-                self.pre_auth_for(peer).release_on_disconnect(peer);
+                self.pre_auth.release_on_disconnect(peer);
                 transports.disconnect(peer, reason.code()).await?;
                 tracing::info!(peer, ?reason, "peer rejected by hardening");
             }
@@ -1018,7 +1102,7 @@ impl PulseServer {
                     return Ok(());
                 }
                 if let Some(dup) = duplicate_of {
-                    self.pre_auth_for(dup).release_on_disconnect(dup);
+                    self.pre_auth.release_on_disconnect(dup);
                     transports
                         .disconnect(dup, DisconnectReason::DuplicateSession.code())
                         .await?;
@@ -1030,7 +1114,7 @@ impl PulseServer {
                     s.features = features;
                 }
 
-                self.pre_auth_for(peer).release_on_promotion(peer);
+                self.pre_auth.release_on_promotion(peer);
                 self.identity
                     .set_with_session(peer, wallet.clone(), session);
                 self.board.set_active(peer);
@@ -1053,7 +1137,7 @@ impl PulseServer {
                     return Ok(());
                 }
                 if let Some(dup) = duplicate_of {
-                    self.pre_auth_for(dup).release_on_disconnect(dup);
+                    self.pre_auth.release_on_disconnect(dup);
                     transports
                         .disconnect(dup, DisconnectReason::DuplicateSession.code())
                         .await?;
@@ -1074,7 +1158,7 @@ impl PulseServer {
                     s.scene_listener = Some(listener);
                 }
 
-                self.pre_auth_for(peer).release_on_promotion(peer);
+                self.pre_auth.release_on_promotion(peer);
                 self.identity
                     .set_with_session(peer, wallet.clone(), session);
                 crate::pulse::metrics::scene_listener_connected_inc();
@@ -1142,7 +1226,7 @@ impl PulseServer {
         for e in expired {
             tracing::info!(peer = e.peer, reason = ?e.reason, "reaping peer");
             if e.reason == crate::pulse::simulation::ExpiredReason::AuthTimeout {
-                self.pre_auth_for(e.peer).release_on_disconnect(e.peer);
+                self.pre_auth.release_on_disconnect(e.peer);
                 transports
                     .disconnect(e.peer, DisconnectReason::AuthTimeout.code())
                     .await?;
@@ -1171,7 +1255,8 @@ impl PulseServer {
     }
 
     pub async fn run(self, bind: SocketAddr) -> anyhow::Result<()> {
-        self.run_with_tick(bind, 50).await
+        let tick_ms = u64::from(self.simulation.base_tick_ms);
+        self.run_with_tick(bind, tick_ms).await
     }
 
     pub async fn run_with_tick(self, bind: SocketAddr, tick_ms: u64) -> anyhow::Result<()> {
@@ -1183,7 +1268,7 @@ impl PulseServer {
         .await?;
         tracing::info!(%bind, "catalyrst-pulse listening (enet)");
         let transports = Transports::enet_only(enet, ENET_CAPACITY as u32);
-        self.run_on(transports, tick_ms).await
+        self.serve(transports, tick_ms).await
     }
 
     pub async fn run_with_webtransport(
@@ -1192,13 +1277,24 @@ impl PulseServer {
         tick_ms: u64,
         wt: Option<WtConfig>,
     ) -> anyhow::Result<()> {
+        self.run_with_webtransport_until(bind, tick_ms, wt, std::future::pending())
+            .await
+    }
+
+    pub(crate) async fn run_with_webtransport_until(
+        self,
+        bind: SocketAddr,
+        tick_ms: u64,
+        wt: Option<WtConfig>,
+        shutdown: impl std::future::Future<Output = ()>,
+    ) -> anyhow::Result<()> {
         let enet = Host::bind(HostConfig {
             bind,
             max_peers: ENET_CAPACITY,
             channel_limit: 8,
         })
         .await?;
-        tracing::info!(%bind, "catalyrst-pulse listening (enet)");
+        tracing::info!(%bind, local = %enet.local_addr()?, "catalyrst-pulse listening (enet)");
         let transports = match wt {
             Some(cfg) => {
                 let wt_bind = cfg.bind_addr;
@@ -1210,15 +1306,13 @@ impl PulseServer {
             }
             None => Transports::enet_only(enet, ENET_CAPACITY as u32),
         };
-        self.run_on(transports, tick_ms).await
+        self.run_inspected(transports, tick_ms, None, shutdown)
+            .await
     }
 
     pub async fn serve(self, transports: Transports, tick_ms: u64) -> anyhow::Result<()> {
-        self.run_on(transports, tick_ms).await
-    }
-
-    async fn run_on(self, transports: Transports, tick_ms: u64) -> anyhow::Result<()> {
-        self.run_inspected(transports, tick_ms, None).await
+        self.run_inspected(transports, tick_ms, None, std::future::pending())
+            .await
     }
 
     pub async fn serve_with_inspection(
@@ -1227,7 +1321,7 @@ impl PulseServer {
         tick_ms: u64,
         requests: inspection::Requests,
     ) -> anyhow::Result<()> {
-        self.run_inspected(transports, tick_ms, Some(requests))
+        self.run_inspected(transports, tick_ms, Some(requests), std::future::pending())
             .await
     }
 
@@ -1236,7 +1330,9 @@ impl PulseServer {
         mut transports: Transports,
         tick_ms: u64,
         mut inspection: Option<inspection::Requests>,
+        shutdown: impl std::future::Future<Output = ()>,
     ) -> anyhow::Result<()> {
+        tokio::pin!(shutdown);
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(tick_ms));
         let mut cluster_ticker = tokio::time::interval(std::time::Duration::from_millis(
             self.clusters
@@ -1254,6 +1350,10 @@ impl PulseServer {
                 .as_ref()
                 .and_then(|relay| relay.next_renewal());
             tokio::select! {
+                _ = &mut shutdown => {
+                    transports.shutdown_enet(DisconnectReason::Graceful.code());
+                    return Ok(());
+                }
                 settings = async {
                     match self.flag_snapshots.as_mut() {
                         Some(rx) => { if rx.changed().await.is_err() { return None; } Some(rx.borrow_and_update().clone()) },
@@ -1294,18 +1394,22 @@ impl PulseServer {
                     }
                 }
                 serviced = transports.service() => {
-                    match serviced? {
+                    match serviced.context("the Pulse transport failed")? {
                         Some(Event::ReceiveLimitExceeded { peer, kind, .. }) => {
                             self.receive_limit(&mut transports, peer as u32, kind).await?;
                         }
-                        Some(Event::Connect { peer, ip }) => {
+                        Some(Event::Connect { peer, ip, webtransport_connection }) => {
                             let now = started.elapsed().as_millis() as u32;
 
                             let ip = ip
                                 .or_else(|| transports.peer_ip(peer as u32))
                                 .unwrap_or_default();
                             if let Err(reason) = self.connect_pending(peer as u32, ip, now) {
-                                transports.disconnect_now(peer as u32, reason.code()).await?;
+                                if let Some(connection) = webtransport_connection {
+                                    transports.refuse_webtransport_connection(connection, reason.code());
+                                } else {
+                                    self.disconnect_now(&mut transports, peer as u32, reason).await?;
+                                }
                             }
                         }
                         Some(Event::Receive { peer, channel, packet }) => {
@@ -1319,12 +1423,19 @@ impl PulseServer {
                                 .corrupted_limiter
                                 .register_and_check_exhausted(peer as u32, now)
                             {
-                                self.pre_auth_for(peer as u32).release_on_disconnect(peer as u32);
+                                self.pre_auth.release_on_disconnect(peer as u32);
                                 transports
                                     .disconnect(peer as u32, DisconnectReason::PacketCorrupted.code())
                                     .await?;
                                 tracing::info!(peer, "webtransport peer disconnected (corrupt budget)");
                             }
+                        }
+                        Some(Event::Oversized { peer }) => {
+                            self.pre_auth.release_on_disconnect(peer as u32);
+                            transports
+                                .disconnect(peer as u32, DisconnectReason::PacketCorrupted.code())
+                                .await?;
+                            tracing::info!(peer, "webtransport peer disconnected (stream frame over twice the message cap)");
                         }
                         Some(Event::Disconnect { peer }) => {
                             self.on_disconnect(&mut transports, peer as u32).await?;
@@ -1348,13 +1459,23 @@ impl PulseServer {
                 } => {
                     self.deliver_application(&mut transports, completed.0, completed.1).await?;
                 }
-                _ = ticker.tick() => {
+                scheduled = ticker.tick() => {
+                    let tick_started = tokio::time::Instant::now();
                     let instant = std::time::Instant::now();
                     let mut expired = self.application_relay.as_mut().map(|relay| relay.maintenance(instant)).unwrap_or_default();
                     expired.extend(self.silent_relay_scopes(&transports, instant));
                     self.deliver_application(&mut transports, expired, vec![]).await?;
                     let now = started.elapsed().as_millis() as u32;
                     self.run_tick(&mut transports, now).await?;
+                    crate::pulse::metrics::simulation_tick(
+                        tick_started.saturating_duration_since(scheduled),
+                        tick_started.elapsed(),
+                        self.admitted_connections.len(),
+                        self.pre_auth.in_flight(),
+                    );
+                }
+                _ = self.replay_policy.journal_progressed() => {
+                    self.release_journaled(&mut transports).await?;
                 }
                 _ = cluster_ticker.tick(), if self.clusters.is_some() => {
                     self.run_cluster_pass();
@@ -1370,11 +1491,8 @@ impl PulseServer {
         kind: rusty_enet::ReceiveLimitKind,
     ) -> anyhow::Result<()> {
         if kind == rusty_enet::ReceiveLimitKind::PacketSize {
-            transports
-                .disconnect_now(peer, DisconnectReason::PacketCorrupted.code())
+            self.disconnect_now(transports, peer, DisconnectReason::PacketCorrupted)
                 .await?;
-            // DisconnectNow emits no local Disconnect. Include preauth and all reservations now.
-            self.on_disconnect(transports, peer).await?;
         }
         Ok(())
     }
@@ -1393,11 +1511,8 @@ impl PulseServer {
         // receive buffer before decoding any message or mutating peer state.
         if !transports.owns_wt(peer) && data.len() > 4096 {
             if data.len() > 8192 {
-                transports
-                    .disconnect_now(peer, DisconnectReason::PacketCorrupted.code())
+                self.disconnect_now(transports, peer, DisconnectReason::PacketCorrupted)
                     .await?;
-                // DisconnectNow has no local Disconnect event: release every reservation now.
-                self.on_disconnect(transports, peer).await?;
             } else if self
                 .corrupted_limiter
                 .register_and_check_exhausted(peer, now)
@@ -1407,25 +1522,171 @@ impl PulseServer {
             }
             return Ok(());
         }
-        let action = self.dispatch(peer, channel, data, now_ms, now);
+        let Some(action) = self.dispatch_or_hold(peer, channel, data, now_ms, now) else {
+            return Ok(());
+        };
         self.apply(transports, peer, action, now).await
+    }
+
+    /// [`Self::dispatch`], except that an outcome which issued a replay-journal record is held
+    /// until that record is durable (`None`), as are the peer's packets behind it.
+    fn dispatch_or_hold(
+        &mut self,
+        peer: u32,
+        channel: u8,
+        data: &[u8],
+        now_ms: i64,
+        now: u32,
+    ) -> Option<Action> {
+        if let Some(held) = self
+            .held_handshakes
+            .iter_mut()
+            .find(|held| held.peer == peer)
+        {
+            if held.overflowed {
+                return None;
+            }
+            held.held_bytes += data.len();
+            if held.packets.len() >= MAX_HELD_PACKETS || held.held_bytes > MAX_HELD_BYTES {
+                held.overflowed = true;
+                held.packets = Vec::new();
+                crate::pulse::metrics::handshake("legacy", "held_packets_overflow");
+                tracing::debug!(
+                    peer,
+                    "Pulse peer sent too much while its handshake was held"
+                );
+                return None;
+            }
+            held.packets.push(HeldPacket {
+                channel,
+                data: data.to_vec(),
+                now_ms,
+                now,
+            });
+            return None;
+        }
+        let issued = self.replay_policy.journal_issued();
+        let action = self.dispatch(peer, channel, data, now_ms, now);
+        let journaled = self.replay_policy.journal_issued();
+        if journaled == issued {
+            return Some(action);
+        }
+        self.held_handshakes.push_back(HeldHandshake {
+            journaled,
+            peer,
+            action,
+            now,
+            packets: Vec::new(),
+            held_bytes: 0,
+            overflowed: false,
+        });
+        None
+    }
+
+    /// Removes the held outcomes the journal has made durable, in order. Once the journal has
+    /// failed, the rest become a `ServerFull` refusal without a reply. A peer that overflowed
+    /// its held packets is refused with `InputRateExceeded` and no reply.
+    fn take_journaled(&mut self) -> Vec<HeldHandshake> {
+        let progress = self.replay_policy.journal_progress();
+        let mut ready = Vec::new();
+        while let Some(held) = self.held_handshakes.front() {
+            if held.journaled > progress.durable_through && !progress.failed {
+                break;
+            }
+            let mut held = self.held_handshakes.pop_front().expect("front exists");
+            if held.journaled > progress.durable_through {
+                if let Some(state) = self.peers.get_mut(&held.peer) {
+                    state.connection_state = PeerConnectionState::PendingDisconnect;
+                }
+                held.action = Action::Reject {
+                    reply: None,
+                    reason: DisconnectReason::ServerFull,
+                };
+            } else if held.overflowed {
+                if let Some(state) = self.peers.get_mut(&held.peer) {
+                    state.connection_state = PeerConnectionState::PendingDisconnect;
+                }
+                held.action = Action::Reject {
+                    reply: None,
+                    reason: DisconnectReason::InputRateExceeded,
+                };
+            }
+            ready.push(held);
+        }
+        ready
+    }
+
+    /// A held admission is applied against the state at release: a ban that arrived meanwhile
+    /// refuses it, and the incumbent session of its wallet is looked up again.
+    fn recheck_held(&mut self, peer: u32, mut action: Action) -> Action {
+        let (Action::Authenticated {
+            wallet,
+            duplicate_of,
+            ..
+        }
+        | Action::AuthenticatedListener {
+            wallet,
+            duplicate_of,
+            ..
+        }) = &mut action
+        else {
+            return action;
+        };
+        if self.ban_list.is_banned(wallet) {
+            if let Some(state) = self.peers.get_mut(&peer) {
+                state.connection_state = PeerConnectionState::PendingDisconnect;
+            }
+            return Action::Reject {
+                reply: Some(handshake_response(false, Some("banned".into()))),
+                reason: DisconnectReason::Banned,
+            };
+        }
+        *duplicate_of = self.identity.peer_by_wallet(wallet).filter(|p| *p != peer);
+        action
+    }
+
+    async fn release_journaled(&mut self, transports: &mut Transports) -> anyhow::Result<()> {
+        for held in self.take_journaled() {
+            if !self.peers.contains_key(&held.peer) {
+                continue;
+            }
+            let action = self.recheck_held(held.peer, held.action);
+            self.apply(transports, held.peer, action, held.now).await?;
+            for packet in held.packets {
+                self.receive(
+                    transports,
+                    held.peer,
+                    packet.channel,
+                    &packet.data,
+                    packet.now_ms,
+                    packet.now,
+                )
+                .await?;
+            }
+        }
+        Ok(())
     }
     fn connect_pending(&mut self, peer: u32, ip: String, now: u32) -> Result<(), DisconnectReason> {
         // A transport slot is already allocated, but no application admission work has run.
         // Preserve a live reservation even if application state was cleaned up before its
         // eventual transport Disconnect. Native slot reuse must follow that event.
-        if self.peers.contains_key(&peer) || self.ip_limiter.contains_peer(peer) {
+        if self.peers.contains_key(&peer) || self.admitted_connections.contains(&peer) {
             return Err(DisconnectReason::IpConnectionLimitExceeded);
         }
         if !self.ip_limiter.acquire(peer, &ip, &self.ip_limiter_options) {
             return Err(DisconnectReason::IpConnectionLimitExceeded);
         }
-        let admit = self.pre_auth_for(peer).try_admit(peer, &ip);
-        if let Some(reason) = crate::pulse::hardening::pre_auth_refusal_reason(admit) {
-            self.pre_auth_for(peer).release_on_disconnect(peer);
+        let refusal = if self.admitted_connections.len() >= self.max_admitted_connections {
+            Some(DisconnectReason::ServerFull)
+        } else {
+            let admit = self.pre_auth.try_admit(peer, &ip);
+            crate::pulse::hardening::pre_auth_refusal_reason(admit)
+        };
+        if let Some(reason) = refusal {
             self.ip_limiter.release(peer);
             return Err(reason);
         }
+        self.admitted_connections.insert(peer);
         let mut state = PeerState::new(PeerConnectionState::PendingAuth, now);
         state.ip = Some(ip);
         self.peers.insert(peer, state);
@@ -1476,35 +1737,52 @@ impl PulseServer {
         self.cleanup_peer(transports, peer).await
     }
 
+    async fn disconnect_now(
+        &mut self,
+        transports: &mut Transports,
+        peer: u32,
+        reason: DisconnectReason,
+    ) -> anyhow::Result<()> {
+        transports.disconnect_now(peer, reason.code()).await?;
+        // WebTransport returns the slot through its queued Disconnect event.
+        if !transports.owns_wt(peer) {
+            self.on_disconnect(transports, peer).await?;
+        }
+        Ok(())
+    }
+
     async fn on_disconnect(
         &mut self,
         transports: &mut Transports,
         peer: u32,
     ) -> anyhow::Result<()> {
-        self.ip_limiter.release(peer);
-        self.pre_auth_for(peer).release_on_disconnect(peer);
+        self.release_connection(peer);
+        self.pre_auth.release_on_disconnect(peer);
         self.corrupted_limiter.release(peer);
         self.cleanup_peer(transports, peer).await
     }
 
-    fn remove_peer_state(&mut self, peer: u32) -> bool {
+    fn release_connection(&mut self, peer: u32) {
+        self.admitted_connections.remove(&peer);
+        self.ip_limiter.release(peer);
+    }
+
+    fn remove_peer_state(&mut self, peer: u32) -> Vec<u32> {
+        self.held_handshakes.retain(|held| held.peer != peer);
         let Some(state) = self.peers.remove(&peer) else {
-            return false;
+            return Vec::new();
         };
-        self.pre_auth_for(peer).release_on_disconnect(peer);
+        self.pre_auth.release_on_disconnect(peer);
         self.corrupted_limiter.release(peer);
         self.board.clear_active(peer);
         self.grids.remove(peer);
         self.identity.remove(peer);
         self.profiles.remove(peer);
-        self.simulation.cleanup_observer_views(peer);
         self.gameplay_limiter.release(peer);
         if state.is_listener() {
             crate::pulse::metrics::scene_listener_connected_dec();
-            false
-        } else {
-            true
         }
+        self.simulation.cleanup_observer_views(peer)
     }
 
     async fn cleanup_peer(&mut self, transports: &mut Transports, peer: u32) -> anyhow::Result<()> {
@@ -1513,37 +1791,39 @@ impl PulseServer {
             .as_mut()
             .map(|relay| relay.disconnect(peer))
             .unwrap_or_default();
-        let notify = self.remove_peer_state(peer);
-        self.deliver_application(transports, relay_left, vec![])
-            .await?;
-        if notify {
-            self.notify_player_left(transports, peer).await?;
-        }
-        Ok(())
+        let observers = self.remove_peer_state(peer);
+        let relay = self
+            .deliver_application(transports, relay_left, vec![])
+            .await;
+        let departure = self.notify_player_left(transports, peer, observers).await;
+        relay.and(departure)
     }
 
     async fn notify_player_left(
         &self,
         transports: &mut Transports,
         peer: u32,
+        observers: Vec<u32>,
     ) -> anyhow::Result<()> {
+        if observers.is_empty() {
+            return Ok(());
+        }
         let left = ServerMessage {
             message: Some(server_message::Message::PlayerLeft(
                 crate::protocol::pulse::decentraland::pulse::PlayerLeft { subject_id: peer },
             )),
         };
-        let targets: Vec<u32> = self
-            .peers
-            .iter()
-            .filter(|(_, s)| s.connection_state == PeerConnectionState::Authenticated)
-            .map(|(id, _)| *id)
-            .collect();
-        for target in targets {
-            self.send(transports, target, channel::RELIABLE, &left)
-                .await?;
+        let mut result = Ok(());
+        for observer in observers {
+            if self.is_authenticated(observer) {
+                let sent = self
+                    .send(transports, observer, channel::RELIABLE, &left)
+                    .await;
+                result = result.and(sent);
+            }
         }
         transports.flush();
-        Ok(())
+        result
     }
 
     async fn send(

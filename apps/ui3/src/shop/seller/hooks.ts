@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
-import { type ShopSigner } from "../api/signer";
+import { type ShopSigner } from "@shop/api/signer";
 import { useShopWallet } from "../wallet/context";
 import { fetchFavoriteStats } from "../market/lib/favorites";
 import { fetchPublishableItems } from "./lib/builder";

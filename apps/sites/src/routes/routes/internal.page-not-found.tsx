@@ -1,4 +1,4 @@
-import { ensureSid } from "@/core/lib/telemetry/session";
+import { requestSession } from "@/core/lib/telemetry/session";
 import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/internal.page-not-found";
@@ -17,7 +17,7 @@ export function loader() {
   return Response.json({ ok: false, error: "method not allowed" }, { status: 405, headers: { allow: "POST" } });
 }
 
-export async function action({ request }: Route.ActionArgs) {
+export async function action({ request, context }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
   }
@@ -36,7 +36,7 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   try {
-    const { sid } = ensureSid(request);
+    const { sid } = requestSession(request, context);
     track(
       "page_not_found",
       {

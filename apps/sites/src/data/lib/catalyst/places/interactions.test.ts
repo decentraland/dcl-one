@@ -36,6 +36,12 @@ describe("loadPlaceViewer", () => {
     await expect(loadPlaceViewer(IDENTITY, PLACE_ID)).resolves.toEqual({ liked: false, favorite: false });
   });
 
+  it("a world's own like and save come from the worlds read, which knows its id", async () => {
+    vi.mocked(signedGetJSON).mockResolvedValueOnce({ ok: true, data: { id: "sample.dcl.eth", user_like: true, user_dislike: false, user_favorite: true } });
+    await expect(loadPlaceViewer(IDENTITY, "sample.dcl.eth")).resolves.toEqual({ liked: true, favorite: true });
+    expect(signedGetJSON).toHaveBeenCalledWith("/places/api/worlds/sample.dcl.eth", { identity: IDENTITY, signal: undefined });
+  });
+
   it("an answer without the viewer fields is refused rather than read as not saved", async () => {
     vi.mocked(signedGetJSON).mockResolvedValueOnce({ ok: true, data: { id: PLACE_ID } });
     await expect(loadPlaceViewer(IDENTITY, PLACE_ID)).rejects.toThrow();

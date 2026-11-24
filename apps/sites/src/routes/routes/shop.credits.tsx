@@ -12,10 +12,10 @@ function iapRedirect(url: URL): string | null {
   return url.searchParams.get("view") === "mobile-iap" ? `/shop/overview${url.search}` : null;
 }
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, params, context }: Route.LoaderArgs) {
   const iap = iapRedirect(new URL(request.url));
   if (iap) throw redirect(iap);
-  return shopLoader("credits", request, params);
+  return shopLoader("credits", request, params, context);
 }
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {

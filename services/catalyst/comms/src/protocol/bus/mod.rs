@@ -7,10 +7,15 @@
 //! |---|---|---|---|
 //! | cluster change | `peer.{wallet}.cluster_change` | Pulse -> gatekeeper | [`cluster::ClusterChange`] |
 //! | cluster lookup | `peer.{wallet}.cluster_lookup`, reply on a private `_INBOX.` subject | gatekeeper -> Pulse | [`cluster::ClusterLookup`] |
+//! | selection retirement | `peer.{wallet}.selection_retirement`, private reply | gatekeeper -> Pulse | [`cluster::SelectionRetirementLookup`] |
 //! | islands snapshot | `engine.islands` | Pulse -> connector | [`topology`] |
 //! | discovery beacon | `engine.discovery` | Pulse -> connector | [`topology`] |
 //! | control position | `archipelago.control.position.v1` | connector -> Pulse | [`control_position::ControlPosition`] |
-//! | room event | `comms.room_events.v1` | gatekeeper -> `multiplayer-hosting` | [`room_events::RoomEvent`] |
+//! | legacy room intent | `archipelago.control.position.v2` | connector -> Pulse | [`control_position::LegacyRoomIntent`] |
+//! | statistics producer control | `archipelago.statistics.producer.v2` | connector <-> Pulse | [`statistics::ProducerRequest`], [`statistics::ProducerReply`] |
+//! | statistics observation | `archipelago.statistics.observations.v2` | connector -> Pulse | [`statistics::Observation`] |
+//! | statistics snapshot chunks | `archipelago.statistics.snapshots.v1` | Pulse -> statistics readers | [`statistics::Snapshot`] |
+//! | room event | `comms.room_events.v1` | gatekeeper -> every `serve`, `multiplayer-hosting` | [`room_events::RoomEvent`] |
 //!
 //! A session's connect and its island assignment are not messages: inside `serve` the
 //! connector and the gatekeeper's island subscriber exchange them by call. Their former
@@ -23,7 +28,8 @@
 //! for a room event. Subjects are internal to the monorepo, so a payload changes with both
 //! of its ends in one commit and has no compatibility form.
 //!
-//! Wallets and sessions travel as lower-case `0x` and 40 hex digits. Every builder
+//! Statistics preserves exact identifiers and IEEE position bits; its process epochs and
+//! sequences affect transport ordering only, never admission. Other wallets and sessions travel as lower-case `0x` and 40 hex digits. Every builder
 //! lower-cases; every parser accepts upper-case hex and a `0X` prefix and hands back the
 //! lower-case form ([`wallet_token`]). The cluster parsers refuse a subject of another shape
 //! and a payload over [`MAX_PAYLOAD_BYTES`]; a control position is held to
@@ -35,6 +41,8 @@ use std::time::Duration;
 pub mod cluster;
 pub mod control_position;
 pub mod room_events;
+pub mod selection_view;
+pub mod statistics;
 pub mod topology;
 
 /// Social mutation fanout between serves; the higher-layer social module owns its codec.

@@ -1,29 +1,36 @@
 //! `/entity_screen_position`: where a scene entity is in the 3D view, in the window coordinates
 //! `/click_at` takes, so an end-to-end test can click a scene object.
 
-use bevy::math::{Affine3A, Mat3A, Vec3A};
 use bevy::prelude::*;
 use bevy::render::camera::ViewportConversionError;
 use bevy::render::primitives::Aabb;
+use bevy::window::PrimaryWindow;
 use bevy_console::ConsoleCommand;
 use common::structs::PrimaryCamera;
-use console::{DoAddConsoleCommand, PendingConsoleResponses};
+use console::{reply::Screen, DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::{SceneComponentId, SceneEntityId};
 use dcl_types::interface::CrdtStore;
+use scene_runner::update_scene::synthetic_pointer::{anchor_point, Anchor};
 
 use crate::{
     active_scene::SceneResolver, read_commands::parse_entity_id, snapshot::PendingSnapshotRequests,
 };
 
-pub fn add_screen_position_command(app: &mut App) {
-    app.add_console_command::<EntityScreenPositionCommand, _>(entity_screen_position_cmd);
+pub struct ScreenPositionCommandPlugin;
+
+impl Plugin for ScreenPositionCommandPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<EntityScreenPositionCommand, _>(entity_screen_position_cmd);
+    }
 }
 
 /// Report, as JSON, where a scene entity of the active scene is on screen, in logical window
 /// pixels from the top left, as /click_at takes them: `x` and `y` (null while the entity is behind
 /// the camera), `onScreen`, `inFront`, `depth` along the view direction, `distance` from the
-/// camera, the `anchor` aimed at and the camera's `viewport`. The entity is named as in
-/// /entity_components, and a click needs the point on screen and not under the HUD
+/// camera, the `anchor` aimed at, the camera's `viewport`, the point `normalized` (0 to 1 of the
+/// window, as /click_at --normalized takes it) and the window's `screen` {width, height, scale}.
+/// The entity is named as in /entity_components, and a click needs the point on screen and not
+/// under the HUD
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/entity_screen_position")]
 struct EntityScreenPositionCommand {
@@ -35,11 +42,11 @@ struct EntityScreenPositionCommand {
     bounds: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn entity_screen_position_cmd(
     mut input: ConsoleCommand<EntityScreenPositionCommand>,
     resolver: SceneResolver,
     camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     transforms: Query<&GlobalTransform>,
     meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
     children: Query<&Children>,
@@ -74,31 +81,29 @@ fn entity_screen_position_cmd(
         input.reply_failed("no primary camera");
         return;
     };
+    let Some(window) = Screen::primary(&windows) else {
+        input.reply_failed("no primary window");
+        return;
+    };
 
-    let (anchor, point) = if cmd.bounds {
-        let boxes = std::iter::once(target)
-            .chain(children.iter_descendants(target))
-            .filter_map(|e| meshes.get(e).ok())
-            .filter(|(_, _, visible)| visible.get())
-            .map(|(aabb, transform, _)| (*aabb, transform.affine()));
-        match world_bounds_centre(boxes) {
-            Some(centre) => ("bounds", centre),
-            None => {
-                input.reply_failed(format!(
-                    "entity {} has no visible mesh with bounds (invisible, or still loading)",
-                    cmd.entity
-                ));
-                return;
-            }
-        }
+    let anchor = if cmd.bounds {
+        Anchor::Bounds
     } else {
-        match transforms.get(target) {
-            Ok(transform) => ("origin", transform.translation()),
-            Err(_) => {
-                input.reply_failed(format!("entity {} has no position yet", cmd.entity));
-                return;
-            }
-        }
+        Anchor::Origin
+    };
+    let Some(point) = anchor_point(target, anchor, &transforms, &meshes, &children) else {
+        input.reply_failed(match anchor {
+            Anchor::Bounds => format!(
+                "entity {} has no visible mesh with bounds (invisible, or still loading)",
+                cmd.entity
+            ),
+            Anchor::Origin => format!("entity {} has no position yet", cmd.entity),
+        });
+        return;
+    };
+    let anchor = match anchor {
+        Anchor::Bounds => "bounds",
+        Anchor::Origin => "origin",
     };
 
     let screen = match project(camera, camera_transform, point) {
@@ -108,7 +113,9 @@ fn entity_screen_position_cmd(
             return;
         }
     };
-    let json = screen.to_json(&cmd.entity, &ctx.hash, anchor).to_string();
+    let json = screen
+        .to_json(&cmd.entity, &ctx.hash, anchor, &window)
+        .to_string();
 
     // The root, the player and the camera are placed by the engine and carry no Transform in the
     // scene's own state; any other entity without one sits at the scene's origin by default, which
@@ -141,27 +148,6 @@ fn has_transform(crdt: &CrdtStore, entity: SceneEntityId) -> bool {
         .is_some_and(|entry| entry.is_some)
 }
 
-/// The centre of the box around every local-space `Aabb`, each placed in the world by its transform
-fn world_bounds_centre(boxes: impl IntoIterator<Item = (Aabb, Affine3A)>) -> Option<Vec3> {
-    let mut bounds: Option<(Vec3A, Vec3A)> = None;
-    for (aabb, placement) in boxes {
-        let centre = placement.transform_point3a(aabb.center);
-        // the half extents of the placed box: its axes' extents, summed absolute
-        let axes = placement.matrix3;
-        let abs = Mat3A::from_cols(axes.x_axis.abs(), axes.y_axis.abs(), axes.z_axis.abs());
-        let half = abs * aabb.half_extents;
-        if !(centre.is_finite() && half.is_finite()) {
-            continue;
-        }
-        let (min, max) = (centre - half, centre + half);
-        bounds = Some(match bounds {
-            Some((lo, hi)) => (lo.min(min), hi.max(max)),
-            None => (min, max),
-        });
-    }
-    bounds.map(|(min, max)| Vec3::from((min + max) * 0.5))
-}
-
 /// Where a world point lands on the primary camera's view
 #[derive(Debug)]
 struct ScreenPoint {
@@ -180,9 +166,15 @@ struct ScreenPoint {
 }
 
 impl ScreenPoint {
-    fn to_json(&self, entity: &str, scene: &str, anchor: &str) -> serde_json::Value {
-        // hundredths of a pixel or unit, which is finer than anything a click or a scene can tell
-        let round = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
+    fn to_json(
+        &self,
+        entity: &str,
+        scene: &str,
+        anchor: &str,
+        window: &Screen,
+    ) -> serde_json::Value {
+        use console::reply::{round, round_fine};
+        let normalized = self.position.map(|p| window.to_normalized(p));
         serde_json::json!({
             "entity": entity,
             "scene": scene,
@@ -199,6 +191,11 @@ impl ScreenPoint {
                 "width": round(self.viewport.width()),
                 "height": round(self.viewport.height()),
             },
+            "normalized": normalized.map(|n| serde_json::json!({
+                "x": round_fine(n.x),
+                "y": round_fine(n.y),
+            })),
+            "screen": window.to_json(),
         })
     }
 }
@@ -438,8 +435,14 @@ mod tests {
         assert!((screen.depth + 10.0).abs() < EPSILON);
         assert!((screen.distance - 10.0).abs() < EPSILON);
 
-        let json = screen.to_json("512", "hash", "origin");
+        let window = Screen {
+            width: 1280.0,
+            height: 720.0,
+            scale: 1.0,
+        };
+        let json = screen.to_json("512", "hash", "origin", &window);
         assert!(json["x"].is_null() && json["y"].is_null());
+        assert!(json["normalized"].is_null());
         assert_eq!(json["inFront"], false);
         assert_eq!(json["onScreen"], false);
     }
@@ -462,7 +465,12 @@ mod tests {
     fn the_reply_names_what_a_test_needs() {
         let (camera, transform) = default_camera();
         let screen = project(&camera, &transform, Vec3::new(0.0, 0.0, -10.0)).unwrap();
-        let json = screen.to_json("512", "bafy", "bounds");
+        let window = Screen {
+            width: 1280.0,
+            height: 720.0,
+            scale: 1.0,
+        };
+        let json = screen.to_json("512", "bafy", "bounds", &window);
         assert_eq!(json["entity"], "512");
         assert_eq!(json["scene"], "bafy");
         assert_eq!(json["anchor"], "bounds");
@@ -474,61 +482,10 @@ mod tests {
         assert_eq!(json["distance"], 10.0);
         assert_eq!(json["viewport"]["width"], 1280.0);
         assert_eq!(json["viewport"]["height"], 720.0);
-    }
-
-    #[test]
-    fn bounds_centre_is_the_centre_of_the_placed_boxes() {
-        let unit = Aabb::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0));
-        let shifted = Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0));
-        let centre = world_bounds_centre([(unit, Affine3A::IDENTITY), (unit, shifted)]).unwrap();
-        // the boxes span x from -1 to 11
-        assert!(
-            centre.distance(Vec3::new(5.0, 0.0, 0.0)) < EPSILON,
-            "{centre}"
-        );
-    }
-
-    #[test]
-    fn bounds_follow_a_box_through_its_scale_and_translation() {
-        let placement = Affine3A::from_scale_rotation_translation(
-            Vec3::splat(2.0),
-            Quat::IDENTITY,
-            Vec3::new(0.0, 3.0, 0.0),
-        );
-        let aabb = Aabb::from_min_max(Vec3::ZERO, Vec3::splat(2.0));
-        // the box spans (0, 3, 0) to (4, 7, 4)
-        let centre = world_bounds_centre([(aabb, placement)]).unwrap();
-        assert!(
-            centre.distance(Vec3::new(2.0, 5.0, 2.0)) < EPSILON,
-            "{centre}"
-        );
-    }
-
-    #[test]
-    fn bounds_widen_for_a_box_turned_a_quarter() {
-        // 4 long on x, turned about Y so it is 4 long on z: it spans z from -2 to 2
-        let turned = Affine3A::from_rotation_translation(
-            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-            Vec3::ZERO,
-        );
-        let long = Aabb::from_min_max(Vec3::new(-2.0, -1.0, -1.0), Vec3::new(2.0, 1.0, 1.0));
-        let far = Aabb::from_min_max(Vec3::new(-0.5, -0.5, 4.5), Vec3::new(0.5, 0.5, 5.5));
-        let centre = world_bounds_centre([(long, turned), (far, Affine3A::IDENTITY)]).unwrap();
-        // z spans -2 to 5.5; unturned it would span -1 to 5.5
-        assert!(
-            centre.distance(Vec3::new(0.0, 0.0, 1.75)) < EPSILON,
-            "{centre}"
-        );
-    }
-
-    #[test]
-    fn bounds_skip_boxes_that_are_not_finite_and_need_one_box() {
-        let broken = Affine3A::from_scale(Vec3::splat(f32::NAN));
-        let unit = Aabb::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0));
-        let centre = world_bounds_centre([(unit, broken), (unit, Affine3A::IDENTITY)]).unwrap();
-        assert!(centre.length() < EPSILON);
-        assert_eq!(world_bounds_centre([]), None);
-        assert_eq!(world_bounds_centre([(unit, broken)]), None);
+        assert_eq!(json["normalized"]["x"], 0.5);
+        assert_eq!(json["normalized"]["y"], 0.5);
+        assert_eq!(json["screen"]["width"], 1280.0);
+        assert_eq!(json["screen"]["height"], 720.0);
     }
 
     #[test]

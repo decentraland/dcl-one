@@ -1,7 +1,7 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 // A frame loop shaped like @dcl/ecs: systems run from the live array, which removal splices.
 const systems: Array<(dt: number) => void> = []
@@ -62,6 +62,38 @@ it('opens only the fixed support URL through the scene permission boundary', asy
   expect(openExternalUrl).toHaveBeenCalledWith({ url: 'https://decentraland.org/help/' })
 })
 
+describe('openExternalUrl', () => {
+  beforeEach(() => {
+    openExternalUrl.mockReset()
+  })
+
+  it('opens an https url and answers under the request id', async () => {
+    const { ctx, sent, req } = fakeCtx()
+    registerSession(ctx)
+    await req({ kind: 'openExternalUrl', requestId: 7, url: 'https://x.com/intent/post?text=hi' })
+    expect(openExternalUrl).toHaveBeenCalledWith({ url: 'https://x.com/intent/post?text=hi' })
+    expect(sent).toContainEqual({ kind: 'externalUrlOpened', requestId: 7, ok: true })
+  })
+
+  it.each(['file:///etc/passwd', 'http://example.org/', 'javascript:alert(1)', 'steam://run/1', ''])('refuses %s', async (url) => {
+    const { ctx, sent, req } = fakeCtx()
+    registerSession(ctx)
+    expectConsoleOutput('error', [['[session] refused to open', url]])
+    await req({ kind: 'openExternalUrl', requestId: 8, url })
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(sent).toContainEqual({ kind: 'externalUrlOpened', requestId: 8, ok: false })
+  })
+
+  it('answers a failed open instead of leaving the page waiting', async () => {
+    openExternalUrl.mockRejectedValueOnce(new Error('denied'))
+    const { ctx, sent, req } = fakeCtx()
+    registerSession(ctx)
+    expectConsoleOutput('error', [['[session] open', 'https://example.org/', new Error('denied')]])
+    await req({ kind: 'openExternalUrl', requestId: 9, url: 'https://example.org/' })
+    expect(sent).toContainEqual({ kind: 'externalUrlOpened', requestId: 9, ok: false })
+  })
+})
+
 const readies = (sent: SceneToPage[]): number => sent.filter((m) => m.kind === 'event' && m.name === 'playerReady').length
 
 beforeEach(() => {
@@ -114,7 +146,8 @@ describe('bridge service URLs', () => {
       'https://gateway.example.org/notifications/notifications?limit=50&from=0',
       'https://example.org/mounted/events/api/events?community_id=some%2Fid&list=upcoming',
       'https://custom.example/social/v2/communities/some%2Fid/members?limit=100',
-      'https://example.org/mounted/camera-reel-service/api/communities/some%2Fid/images?limit=30'
+      // the photos are read for the community's places only, so this card (none) reads none
+      'https://custom.example/social/v1/communities/some%2Fid/places'
     ]) {
       expect(BevyApi.kernelFetch).toHaveBeenCalledWith(expect.objectContaining({
         url, init: expect.objectContaining({ method: 'GET' })
@@ -126,33 +159,31 @@ describe('bridge service URLs', () => {
 })
 
 describe('communities list', () => {
-  it("adds the user's own communities the browse page left out, after it, and keeps the browse list when that read fails", async () => {
+  it('is every community the user is a member of, and nothing when that read fails', async () => {
     const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
     const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
     const { ctx, req, sent } = fakeCtx()
     registerCommunities(ctx)
     const raw = (id: string, role: string) => ({ id, name: `Community ${id}`, description: '', membersCount: 1, role, privacy: 'public', thumbnailUrl: `https://img.example/${id}.png` })
     let memberOfAnswers = true
+    const urls: string[] = []
     vi.mocked(BevyApi.kernelFetch).mockImplementation(async ({ url }: { url: string }) => {
-      if (url.includes('onlyMemberOf=true')) {
-        return memberOfAnswers
-          ? ({ ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('z', 'owner')], total: 2 }) } as never)
-          : ({ ok: false, status: 500, body: 'down' } as never)
-      }
-      return { ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('b', 'none')] }) } as never
+      urls.push(url)
+      return memberOfAnswers
+        ? ({ ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('z', 'owner')], total: 2 }) } as never)
+        : ({ ok: false, status: 500, body: 'down' } as never)
     })
     try {
       await req({ kind: 'getCommunities' })
       memberOfAnswers = false
-      await req({ kind: 'getCommunities' })
+      // the page's request fails (requestFailed), so it asks again the next time it opens
+      await expect(req({ kind: 'getCommunities' })).rejects.toThrow()
     } finally {
       vi.mocked(BevyApi.kernelFetch).mockReset()
     }
+    expect(urls.every((u) => u.includes('onlyMemberOf=true'))).toBe(true)
     const lists = sent.flatMap((m) => (m.kind === 'communities' ? [m.communities.map((c) => `${c.id}:${c.role}`)] : []))
-    expect(lists).toEqual([
-      ['a:member', 'b:none', 'z:owner'],
-      ['a:member', 'b:none']
-    ])
+    expect(lists).toEqual([['a:member', 'z:owner']])
   })
 })
 

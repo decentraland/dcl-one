@@ -6,9 +6,10 @@
 // and the hash. Only GET pages redirect: a write is never redirected and a signed API request never
 // reaches these routes. Pure, so the SSR loaders and the Explorer's native runtime share it.
 
-import { landIdentity, landRedirectTarget } from "@ui/shop/land/redirects";
-import { isNameRegistrar, landCategoryOf } from "@ui/shop/land/contracts";
-import { aliasTarget, resolveShopAlias, SHOP_BASE } from "@ui/shop/routes";
+import { sitePath } from "../router/site-path";
+import { landAliasOptions, landIdentity, landRedirectTarget } from "./land-redirects";
+import { isNameRegistrar, landCategoryOf } from "@shop/land/contracts";
+import { aliasTarget, resolveShopAlias, SHOP_BASE } from "@shop/route-aliases";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const NUMBER = /^[0-9]+$/;
@@ -33,6 +34,13 @@ export function isTokenRegistry(contract: string): boolean {
 export function parseAssetRef(ref: string | null | undefined): { contract: string; id: string } | null {
   const m = /^(0x[0-9a-fA-F]{40})[-:]([0-9]+)$/.exec((ref ?? "").trim());
   return m ? { contract: m[1]!.toLowerCase(), id: m[2]! } : null;
+}
+
+export { SHOP_BASE };
+
+/** The Shop page of an account: everything it has published or owns. */
+export function accountPage(address: string): string {
+  return `${SHOP_BASE}/accounts/${encodeURIComponent(address.toLowerCase())}`;
 }
 
 /** The Shop page of an asset: an item page for a collection item, a token page for a registry token. */
@@ -150,7 +158,7 @@ export function shopIndexTarget(search: string, hash = ""): string {
   if (tab === "all-assets") return withQuery(`${SHOP_BASE}/items`, itemsQuery(q), hash);
   const page = tab ? V2_TABS[tab] : undefined;
   if (page) return aliasTarget(page, without(q, ["tab"]).toString(), hash);
-  return resolveShopAlias(SHOP_BASE, withQuery("", without(q, ["tab"])), hash) ?? `${SHOP_BASE}/overview`;
+  return resolveShopAlias(SHOP_BASE, withQuery("", without(q, ["tab"])), hash, landAliasOptions()) ?? `${SHOP_BASE}/overview`;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -250,9 +258,9 @@ function contractsPath(segments: string[], q: URLSearchParams, hash: string): st
 }
 
 /** A same-site return path, or null (never another origin: `//host` and `/\host` are refused). */
+/** A sign-in return path on this site only; resolved against a placeholder origin, so absolute URLs never qualify. */
 function safeReturn(raw: string | null): string | null {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return null;
-  return raw;
+  return sitePath(raw, "https://shop.invalid");
 }
 
 /**
@@ -278,7 +286,7 @@ export function marketplaceTarget(pathname: string, search = "", hash = ""): str
     return aliasTarget(`${SHOP_BASE}/overview`, search, hash);
   }
   if (first === "contracts") return contractsPath(segments, q, hash) ?? withQuery(`${SHOP_BASE}/${rest.slice(1)}`, q, hash);
-  if (first === "parcels" || first === "estates") return resolveShopAlias(`${SHOP_BASE}${rest}`, search, hash) ?? withQuery(`${SHOP_BASE}/${rest.slice(1)}`, q, hash);
+  if (first === "parcels" || first === "estates") return resolveShopAlias(`${SHOP_BASE}${rest}`, search, hash, landAliasOptions()) ?? withQuery(`${SHOP_BASE}/${rest.slice(1)}`, q, hash);
   if (first === "collections" && segments.length === 2 && ADDRESS.test(second!)) return withQuery(`${SHOP_BASE}/collection/${second!.toLowerCase()}`, q, hash);
   if (first === "accounts" && segments.length === 2 && ADDRESS.test(second!)) return withQuery(`${SHOP_BASE}/accounts/${second!.toLowerCase()}`, without(q, ["vendor", "assetType", "page"]), hash);
   if (first === "lists" && segments.length === 2) return withQuery(`${SHOP_BASE}/my-favorites/${encodeURIComponent(second!)}`, q, hash);

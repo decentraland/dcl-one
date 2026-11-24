@@ -1,0 +1,226 @@
+/* Places, on the menu's 1920x1080 canvas: a 68px header band,
+   the category chips, and a five-column grid. Shared by the in-world PlacesPage and the picker. */
+.page {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: auto;
+}
+.browser {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--text);
+  font-family: var(--font-family);
+}
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 68px;
+  /* a presenting card keeps its close button clear of the row (--menu-title-end) */
+  padding: 0 var(--menu-title-end, 20px) 0 20px;
+  background: var(--scrim-head);
+}
+.title {
+  margin: 0 21px 0 0;
+  font-size: var(--type-36);
+  font-weight: 600;
+  line-height: 44px;
+}
+.pills {
+  display: flex;
+  gap: 14px;
+}
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.pill:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.pillOn,
+.pillOn:hover {
+  background: var(--accent);
+}
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+.sortWrap {
+  position: relative;
+}
+.sort {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 190px;
+  height: 42px;
+  padding: 0 14px 0 10px;
+  border: none;
+  border-radius: 10px;
+  background: #fff;
+  color: #16141a;
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.sort span {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+}
+.sort:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sortScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+}
+.sortMenu {
+  position: absolute;
+  top: 55px;
+  right: 0;
+  z-index: 5;
+  width: 240px;
+  padding: 14px 0 12px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.sortHead {
+  padding: 12px 20px 8px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  color: #a09ba8;
+}
+.sortItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 39px;
+  padding: 0 20px;
+  border: none;
+  background: transparent;
+  color: #16141a;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sortItem:hover {
+  background: #f1eff4;
+}
+.sortItem svg {
+  color: var(--accent);
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 396px;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: #fff;
+  color: #16141a;
+}
+/* the input draws no ring of its own: the box shows keyboard focus */
+.search:has(input:focus-visible) {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 18px;
+}
+.search input::placeholder {
+  color: #a09ba8;
+}
+.search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.categories {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 20px 20px 0;
+}
+.category {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 10px 0 8px;
+  border: none;
+  border-radius: 21px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15.6px;
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.category img {
+  border-radius: 7px;
+}
+.category:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.categoryOn,
+.categoryOn:hover {
+  background: var(--accent);
+}
+.results {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 38px;
+  padding: 0 32px 24px 20px;
+  overflow-y: auto;
+  /* No platform scrollbar: a classic one (Windows, Linux) takes 15px off the grid, an overlay one
+     (macOS) none, so the cards would differ in width per OS. */
+  scrollbar-width: none;
+}
+.results::-webkit-scrollbar {
+  display: none;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 19.5px;
+}
+.more {
+  align-self: center;
+  margin-top: 20px;
+}

@@ -3,6 +3,7 @@
 //! rankings are never recalculated here.
 use std::{sync::Arc, time::Duration};
 
+use anyhow::Context as _;
 use chrono::{NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,6 +123,7 @@ async fn local_delta(
 
 /// Runs in the photo finalizer's transaction. All communities attached to the
 /// place receive one contribution, including inactive communities as upstream.
+/// Community place ids are stored lowercased; the photo's place matches lowercased.
 pub async fn record_photo(
     conn: &mut PgConnection,
     key: &str,
@@ -131,7 +133,7 @@ pub async fn record_photo(
     sqlx::query("WITH receipts AS (
         INSERT INTO social.community_ranking_events(kind,event_key,community_id,occurred_at)
         SELECT 'photo',$1,p.community_id,$3 FROM social.community_places p
-        JOIN social.communities c ON c.id=p.community_id AND c.origin='local' WHERE p.place_id=$2
+        JOIN social.communities c ON c.id=p.community_id AND c.origin='local' WHERE p.place_id=lower($2)
         ON CONFLICT DO NOTHING RETURNING community_id)
         UPDATE social.communities c SET ranking_photos_count=LEAST(c.ranking_photos_count::bigint+1,2147483647)::int4
         FROM receipts r WHERE c.id=r.community_id")
@@ -213,9 +215,10 @@ pub(crate) async fn recalculate_ids(
         .await?;
     let updates: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
     let scores: Vec<f32> = rows.iter().map(|row| score(&row.metrics) as f32).collect();
-    sqlx::query("UPDATE social.communities c SET ranking_score=v.score,updated_at=$3
+    // The importer compares updated_at to decide which metadata edit is newer.
+    sqlx::query("UPDATE social.communities c SET ranking_score=v.score
         FROM UNNEST($1::uuid[],$2::real[]) v(id,score) WHERE c.id=v.id AND c.origin='local' AND c.active")
-        .bind(updates).bind(scores).bind(now).execute(&mut *tx).await?;
+        .bind(updates).bind(scores).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -411,16 +414,22 @@ pub fn spawn_jobs(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
         }
     });
     let pool = state.pool.clone();
-    jobs.spawn_leased("community-ranking", move |ctx| { let pool = pool.clone(); async move {
-        loop {
-            match recalculate(&pool,Utc::now().naive_utc()).await {
-                Ok(count)=>ctx.progress(format!("{count} community scores calculated")),
-                Err(error)=>{ctx.error(error.to_string()); tracing::error!(%error,"community ranking calculation failed");}
+    // Daily, first pass on every lease acquisition; a failed pass waits the
+    // same day as a successful one.
+    jobs.spawn_periodic_leased(
+        "community-ranking",
+        crate::jobs::PeriodicCfg::every(Duration::from_secs(86_400)),
+        move |_ctx| {
+            let pool = pool.clone();
+            async move {
+                let count = recalculate(&pool, Utc::now().naive_utc())
+                    .await
+                    .context("community ranking calculation failed")?;
+                tracing::info!(count, "community scores calculated");
+                Ok(())
             }
-            ctx.pass_done();
-            tokio::select! { _=ctx.cancel.cancelled()=>return Ok(()), _=tokio::time::sleep(Duration::from_secs(86400))=>{} }
-        }
-    }});
+        },
+    );
 }
 
 #[cfg(test)]

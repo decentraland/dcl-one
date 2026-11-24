@@ -14,74 +14,81 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 use std::collections::BTreeSet;
 
-pub(super) fn register(app: &mut App) {
-    app.add_console_command::<MicrophoneInfo, _>(microphone_info)
-        .add_console_command::<NearbyVoice, _>(nearby_voice)
-        .add_console_command::<VoicePanning, _>(voice_panning)
-        .add_debug_section(DebugSection {
-            title: "Voice chat",
-            query: "/microphone_info",
-            fields: &[
-                ("Microphone available", "available"),
-                ("Microphone enabled", "enabled"),
-                ("Room connected", "connected"),
-                ("Permission", "permission"),
-                ("Local microphone track active", "transmitting"),
-                ("Active remote speakers (up to 32)", "speakers"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Available input devices", "devices"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Current input device", "device"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Capture sample rate (Hz)", "rate"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Capture channels", "channels"),
-            ],
-            actions: &[],
-            inputs: &[],
-        })
-        .add_debug_section(DebugSection {
-            title: "Nearby voice chat",
-            query: "/nearby_voice",
-            fields: &[
-                ("Island connected", "connected"),
-                ("Local speaking", "speaking"),
-                ("Remote participants", "participants"),
-                ("Active speakers", "speakerCount"),
-                ("Speakers (up to 32)", "speakers"),
-                ("Subscribed microphone tracks (all rooms)", "tracks"),
-                ("Player audio sources (all transports)", "sources"),
-                (
-                    "Sources with a selected transport (all transports)",
-                    "assigned",
-                ),
-            ],
-            actions: &[],
-            inputs: &[
-                DebugInput {
-                    label: "Spatialize",
-                    field: "spatialize",
-                    command: "/voice_panning spatialize {value}",
-                    kind: DebugInputKind::Toggle,
-                },
-                DebugInput {
-                    label: "Smooth panning",
-                    field: "smooth",
-                    command: "/voice_panning smooth {value}",
-                    kind: DebugInputKind::Toggle,
-                },
-                DebugInput {
-                    label: "Stereo panning strength",
-                    field: "strength",
-                    command: "/voice_panning strength {value}",
-                    kind: DebugInputKind::Number {
-                        min: 0.0,
-                        max: 1.0,
-                        step: 0.05,
+pub(super) struct MicDebugPlugin;
+
+impl Plugin for MicDebugPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<MicrophoneInfo, _>(microphone_info)
+            .add_console_command::<NearbyVoice, _>(nearby_voice)
+            .add_console_command::<VoicePanning, _>(voice_panning)
+            .add_debug_section(DebugSection {
+                title: "Voice chat",
+                query: "/microphone_info",
+                fields: &[
+                    ("Microphone available", "available"),
+                    ("Microphone enabled", "enabled"),
+                    ("Room connected", "connected"),
+                    ("Permission", "permission"),
+                    ("Client window focus", "windowFocus"),
+                    ("Local microphone track active", "transmitting"),
+                    ("Active remote speakers (up to 32)", "speakers"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Available input devices", "devices"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Current input device", "device"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Capture sample rate (Hz)", "rate"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Capture channels", "channels"),
+                ],
+                actions: &[],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Nearby voice chat",
+                query: "/nearby_voice",
+                fields: &[
+                    ("Island connected", "connected"),
+                    ("Turned off by the scene", "sceneBlocked"),
+                    ("Mic opens refused by the scene", "refusals"),
+                    ("Local speaking", "speaking"),
+                    ("Remote participants", "participants"),
+                    ("Active speakers", "speakerCount"),
+                    ("Speakers (up to 32)", "speakers"),
+                    ("Subscribed microphone tracks (all rooms)", "tracks"),
+                    ("Player audio sources (all transports)", "sources"),
+                    (
+                        "Sources with a selected transport (all transports)",
+                        "assigned",
+                    ),
+                ],
+                actions: &[],
+                inputs: &[
+                    DebugInput {
+                        label: "Spatialize",
+                        field: "spatialize",
+                        command: "/voice_panning spatialize {value}",
+                        kind: DebugInputKind::Toggle,
                     },
-                },
-            ],
-        });
+                    DebugInput {
+                        label: "Smooth panning",
+                        field: "smooth",
+                        command: "/voice_panning smooth {value}",
+                        kind: DebugInputKind::Toggle,
+                    },
+                    DebugInput {
+                        label: "Stereo panning strength",
+                        field: "strength",
+                        command: "/voice_panning strength {value}",
+                        kind: DebugInputKind::Number {
+                            min: 0.0,
+                            max: 1.0,
+                            step: 0.05,
+                        },
+                    },
+                ],
+            });
+    }
 }
 
 /// Report the microphone device and capture state.
@@ -89,7 +96,6 @@ pub(super) fn register(app: &mut App) {
 #[command(name = "/microphone_info")]
 struct MicrophoneInfo;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn microphone_info(
     mut input: ConsoleCommand<MicrophoneInfo>,
     mic: Res<MicState>,
@@ -102,6 +108,7 @@ fn microphone_info(
         ),
     >,
     permission: Res<State<MicrophonePermission>>,
+    focus: Res<ClientWindowFocus>,
     transmission: Res<State<MicrophoneTransmissionState>>,
     speakers: Query<&LivekitParticipant, (With<ActiveSpeaker>, Without<Local>)>,
     #[cfg(not(target_arch = "wasm32"))] device: Option<Res<MicrophoneDevice>>,
@@ -110,7 +117,7 @@ fn microphone_info(
     let Some(Ok(_)) = input.take() else { return };
     let speakers: BTreeSet<_> = speakers.iter().map(|p| p.identity().to_string()).collect();
     #[allow(unused_mut)]
-    let mut report = json!({"available": mic.available, "enabled": mic.enabled, "connected": !connected.is_empty(), "permission": format!("{:?}", permission.get()),
+    let mut report = json!({"available": mic.available, "enabled": mic.enabled, "connected": !connected.is_empty(), "permission": format!("{:?}", permission.get()), "windowFocus": format!("{:?}", *focus),
         "transmitting": *transmission.get() == MicrophoneTransmissionState::Enabled, "speakers": speakers.into_iter().take(32).collect::<Vec<_>>()});
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -136,9 +143,9 @@ fn microphone_info(
 #[command(name = "/nearby_voice")]
 struct NearbyVoice;
 
-#[allow(clippy::type_complexity)]
 fn nearby_voice(
     mut input: ConsoleCommand<NearbyVoice>,
+    mic: Res<MicState>,
     settings: Res<NearbyPanning>,
     islands: Query<
         Has<Connected>,
@@ -173,7 +180,7 @@ fn nearby_voice(
                 speakers.insert(participant.identity().to_string());
             }
         }
-        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "speaking": speaking, "participants": remotes,
+        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "sceneBlocked": mic.scene_blocked(), "refusals": mic.refusals, "speaking": speaking, "participants": remotes,
             "speakerCount": speakers.len(), "speakers": speakers.into_iter().take(32).collect::<Vec<_>>(), "tracks": tracks.iter().count(),
             "sources": sources.iter().count(), "assigned": sources.iter().filter(|s| s.current_transport.is_some()).count(),
             "spatialize": settings.spatialize, "smooth": settings.smooth, "strength": settings.strength}).to_string());

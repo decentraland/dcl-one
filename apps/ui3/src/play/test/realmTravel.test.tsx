@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { SceneLoadingOverlay } from '../features/session/SceneLoadingOverlay'
+import { SceneLoadingOverlay } from '@hud/features/session/SceneLoadingOverlay'
 import { DEFAULT_REALM } from '../lib/baseDomain'
-import { enterAsGuest, renderSession } from './harness'
+import { enterAsGuest, renderSession } from '@hud/test/harness'
 
 // Audit P0 onboarding-realm-1: a failed in-world realm change stranded the player on "Reconnecting…".
 // The engine now validates the destination before leaving the current realm and reports the outcome;
@@ -45,15 +45,13 @@ describe('in-world realm change', () => {
     expect(h.session().travelError).toBeNull()
   })
 
-  it('/world and /goto genesis in chat travel the same way', async () => {
+  it('/world and /goto genesis in chat travel the same way, /goto genesis to Genesis Plaza', async () => {
     const h = renderSession()
     await enterAsGuest(h)
     act(() => h.session().chat.send('/world boedo.dcl.eth'))
     act(() => h.session().chat.send('/goto genesis'))
-    expect(h.driver.sentOf('changeRealm')).toEqual([
-      { kind: 'changeRealm', realm: 'boedo.dcl.eth', travelId: 2 },
-      { kind: 'changeRealm', realm: DEFAULT_REALM, travelId: 3 }
-    ])
+    expect(h.driver.sentOf('changeRealm')).toEqual([{ kind: 'changeRealm', realm: 'boedo.dcl.eth', travelId: 2 }])
+    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0, travelId: 3 }])
     expect(h.session().travellingTo).toBe(DEFAULT_REALM)
   })
 

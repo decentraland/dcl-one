@@ -1,0 +1,634 @@
+/* Just the card — the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it (reference
+   canvas) and animates it in. Screen-relative caps use % — percentages resolve against the scaled
+   .pop box, i.e. the visible screen. vw/vh would NOT: viewport units ignore ancestor transforms, so
+   at --ui-scale > 1 they overshoot the real screen. */
+.modal {
+  position: relative;
+  display: flex;
+  width: min(1650px, 96%);
+  height: min(928px, 92%);
+  border-radius: 24px;
+  font-family: var(--font-family);
+  background: linear-gradient(160deg, #4a2088 0%, #371561 100%);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+/* Main column (header + tabs + content). */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 40px 40px 0;
+}
+
+.header {
+  display: flex;
+  gap: 30px;
+  align-items: flex-start;
+}
+.thumb {
+  flex: none;
+  width: 200px;
+  height: 200px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 72px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.5);
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.headInfo {
+  flex: 1;
+  min-width: 0;
+  padding-top: 8px;
+}
+.name {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1px;
+  font-size: 16px;
+  color: var(--ink-7);
+}
+.privacy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.meta b {
+  color: var(--text);
+}
+.bar {
+  color: var(--ink-45);
+}
+.desc {
+  margin: 18px 0 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink-7);
+}
+.error {
+  margin: 8px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--error-text);
+}
+.headActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 10px;
+  background: var(--white-10);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    transform 0.16s var(--ease-spring, ease);
+}
+.iconBtn:hover {
+  background: var(--fill-5);
+  transform: scale(1.08);
+}
+.joined {
+  opacity: 0.85;
+}
+/* the header's Join / Request to Join / Leave: an outlined button */
+.headActions > button:not(.iconBtn):not(.kebab) {
+  min-width: 130px;
+  height: 40px;
+  padding: 0 16px;
+  border: 2px solid var(--text);
+  border-radius: 10px;
+  background: rgba(22, 0, 44, 0.55);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.kebab {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    transform 0.16s var(--ease-spring, ease);
+}
+.kebab:hover {
+  background: var(--fill-5);
+  transform: scale(1.08);
+}
+
+.tabs {
+  margin-top: 33px;
+  gap: 57px;
+  --tab-ink: var(--text);
+}
+
+.tabBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 0;
+  scrollbar-width: thin;
+}
+.empty {
+  margin: 40px auto;
+  color: var(--ink-45);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* Members — two columns. */
+.memberGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+.member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.memberInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.memberName {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memberRole {
+  font-size: 12px;
+  color: var(--ink-45);
+}
+.addFriend {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: #fff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    transform 0.16s var(--ease-spring, ease);
+}
+.addFriend:hover {
+  background: var(--brand-hover);
+  transform: scale(1.05);
+}
+.requested {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  color: var(--ink-6);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+/* ⋮ context menu (copy link / leave). */
+.kebabWrap {
+  position: relative;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  min-width: 170px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: #241338;
+  border: 1px solid var(--white-10);
+  box-shadow: var(--shadow-panel);
+  transform-origin: top right;
+  animation: menuPop 0.16s var(--ease-spring, ease);
+}
+@keyframes menuPop {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.menuItem {
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+.menuItem:hover {
+  background: var(--white-10);
+}
+.menuDanger {
+  color: #ff6b6b;
+}
+
+/* Places. */
+.placeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.place {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.placeCover {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
+  overflow: hidden;
+}
+/* A card with the places service's row: as unity-explorer's, hovering or focusing it shows its
+   actions, and the cover gives up the room they take so the card keeps its height. */
+.placeActionable {
+  /* the actions' height: 10px above, two 36px rows 8px apart */
+  --place-actions-h: 90px;
+  position: relative;
+  container-type: inline-size;
+  cursor: pointer;
+}
+.placeActionable .placeCover {
+  aspect-ratio: auto;
+  height: calc(100cqw * 10 / 16);
+  transition: height var(--dur-hover) var(--ease-outquad);
+}
+.placeActionable:hover .placeCover,
+.placeActionable:focus-within .placeCover {
+  height: calc(100cqw * 10 / 16 - var(--place-actions-h));
+}
+.placeOpen {
+  position: absolute;
+  inset: 0;
+}
+.placeActions {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: default;
+}
+.placeActionable:hover .placeActions,
+.placeActionable:focus-within .placeActions {
+  display: flex;
+}
+.placeButtons {
+  display: flex;
+  gap: 8px;
+}
+.placeToggle {
+  flex: 1;
+  height: 36px;
+}
+.placeJump {
+  width: 100%;
+  height: 36px;
+  gap: 8px;
+  font-size: var(--type-14);
+  font-weight: 600;
+}
+/* Delete on a place the user owns (owners and moderators): over the cover's top-right corner. */
+.placeDelete {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--panel);
+}
+.placeDelete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* ADD PLACE: the grid's first tile for owners and moderators, opening the Edit Community form. */
+.addPlace {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+  padding: 12px;
+  border: 2px dashed var(--white-10);
+  border-radius: 14px;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: transparent;
+}
+.placeCover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.placeName {
+  margin-top: 10px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
+}
+.placeMeta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-6);
+}
+.placeLike {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.placePos {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Photos — square thumbnail grid. */
+.photoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.photo {
+  aspect-ratio: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.2s var(--ease-spring, ease);
+}
+.photo:hover img {
+  transform: scale(1.06);
+}
+
+/* Upcoming Events sidebar. */
+.events {
+  flex: none;
+  width: 470px;
+  display: flex;
+  flex-direction: column;
+  padding: 46px 20px 0;
+  background: rgba(0, 0, 0, 0.18);
+  border-left: 1px solid var(--white-10);
+}
+.eventsHead {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 16px;
+}
+.eventsList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 22px;
+  scrollbar-width: thin;
+}
+.event {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 0;
+}
+.eventThumb {
+  flex: none;
+  width: 180px;
+  height: 122px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.eventThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.eventInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.eventDate {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--ink-6);
+}
+.eventName {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 9px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    transform 0.16s var(--ease-spring, ease);
+}
+.close:hover {
+  background: rgba(0, 0, 0, 0.65);
+  transform: scale(1.08);
+}
+
+/* The community's picture in the delete confirmation, as unity-explorer's. */
+.confirmThumb {
+  display: block;
+  width: 72px;
+  height: 72px;
+  margin: 4px auto 0;
+  border-radius: var(--r-control);
+  object-fit: cover;
+}
+
+/* A member row (unity-explorer's member card): the row opens the passport; the menu button shows on
+   hover, on keyboard focus, and while its menu is open. */
+.member:hover,
+.memberActive {
+  background: var(--white-10);
+}
+.memberMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.memberTag {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.memberMenu {
+  flex: none;
+  opacity: 0;
+}
+.member:hover .memberMenu,
+.memberActive .memberMenu,
+.memberMenu:focus-visible {
+  opacity: 1;
+}
+/* an action on this member is running: the button stays, dimmed, until the members come back */
+.memberMenu:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+/* Request Sent / Blocked: the button names the way back (Cancel Request / Unblock) on hover */
+.swap {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.swapHover {
+  display: none;
+}
+.swap:hover .swapIdle,
+.swap:focus-visible .swapIdle {
+  display: none;
+}
+.swap:hover .swapHover,
+.swap:focus-visible .swapHover {
+  display: inline;
+}
+/* the transfer confirmation: the owner handing over to the member, then unity-explorer's warning */
+.confirmTransfer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.confirmFaces {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* A request's, an invite's or a ban's own buttons, where Members rows show the friendship button. */
+.rowActions {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* The Members tab's sections for owners and moderators (Members, Banned, Join Requests, Invited). */
+.memberTabs {
+  margin-bottom: 12px;
+}
+
+/* A section's rows carry two buttons each: one row per line, so the names keep their room. */
+.sectionGrid {
+  grid-template-columns: 1fr;
+}

@@ -1,9 +1,12 @@
+#![forbid(unsafe_code)]
+
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use anyhow::anyhow;
 use bevy::log::debug;
 use common::structs::SceneJsFile;
 use common::structs::{CameraFov, GlobalCrdtStateUpdate, TimeOfDay};
+use common::util::AsH160;
 use dcl_component::{
     proto_components::sdk::components::PbPlayerIdentityData, DclReader, FromDclReader,
     SceneComponentId, SceneEntityId,
@@ -54,8 +57,8 @@ impl KillFlag {
 pub struct RendererStore(pub CrdtStore);
 
 // Sidecar holding only the components the scene→renderer filter drops (unrecognized / custom).
-// Merged into the inspector snapshot so custom components are visible as raw bytes; never
-// pushed to the renderer.
+// The inspector snapshot includes these components as raw bytes. This store keeps its grow-only
+// entries across scene ticks. The renderer never receives them.
 #[derive(Default)]
 pub struct FilteredCrdtStore(pub CrdtStore);
 
@@ -172,7 +175,6 @@ impl State for deno_core::OpState {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn init_state(
     state: &mut impl State,
     initial_crdt_store: CrdtStore,
@@ -333,6 +335,19 @@ pub fn player_identity(state: &impl State) -> Result<PbPlayerIdentityData, anyho
         .map_err(|e| anyhow!(format!("{e:?}")))
 }
 
+/// The player address a scene's `localStorage` is partitioned by, in lowercase. An error on a
+/// scene server, which has no player, and until the player's identity has reached the scene.
+pub fn storage_address(state: &impl State) -> Result<String, anyhow::Error> {
+    if state.borrow::<CrdtContext>().is_server {
+        anyhow::bail!("localStorage is not available on a scene server");
+    }
+    player_identity(state)
+        .ok()
+        .and_then(|identity| identity.address.as_h160())
+        .map(|address| format!("{address:#x}"))
+        .ok_or_else(|| anyhow!("localStorage is not available until the player has signed in"))
+}
+
 #[cfg(test)]
 pub(crate) mod test_state {
     use super::State;
@@ -373,6 +388,61 @@ pub(crate) mod test_state {
                 .remove(&TypeId::of::<T>())
                 .map(|v| *v.downcast().unwrap())
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_address_tests {
+    use super::{test_state::TestState, *};
+    use dcl_component::DclWriter;
+
+    fn state(is_server: bool, address: Option<&str>) -> TestState {
+        let mut s = TestState::default();
+        s.put(CrdtContext::new(
+            dcl_types::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            is_server,
+        ));
+        let mut store = CrdtStore::default();
+        if let Some(address) = address {
+            let mut buf = Vec::new();
+            DclWriter::new(&mut buf).write(&PbPlayerIdentityData {
+                address: address.to_owned(),
+                is_guest: false,
+            });
+            store.force_update(
+                SceneComponentId::PLAYER_IDENTITY_DATA,
+                CrdtType::LWW_ANY,
+                SceneEntityId::PLAYER,
+                Some(&mut DclReader::new(&buf)),
+            );
+        }
+        s.put(RendererStore(store));
+        s
+    }
+
+    #[test]
+    fn scene_storage_needs_a_signed_in_player_and_is_never_on_a_server() {
+        let address = "0xabcdef0000000000000000000000000000000001";
+        assert_eq!(
+            storage_address(&state(false, Some(address))).unwrap(),
+            address
+        );
+        // however the profile spells it, a player has one partition
+        assert_eq!(
+            storage_address(&state(
+                false,
+                Some("0xAbCdEf0000000000000000000000000000000001")
+            ))
+            .unwrap(),
+            address
+        );
+        assert!(storage_address(&state(false, None)).is_err());
+        assert!(storage_address(&state(false, Some(""))).is_err());
+        assert!(storage_address(&state(true, Some(address))).is_err());
     }
 }
 
@@ -576,6 +646,41 @@ mod scene_log_budget_tests {
             state.borrow().borrow::<SceneResourceCounters>().tick_count,
             1
         );
+    }
+
+    // A scene that subscribes but never calls a topic op still has its inbox moved into its
+    // topic queues each tick, so the bounded inbox does not fill between consumes.
+    #[test]
+    fn each_tick_drains_the_topic_inbox() {
+        let (sx, _rx) = scene_response_channel();
+        let mut s = crdt_state();
+        s.put(SceneResponseSender::new(dcl_types::SceneId::DUMMY, sx));
+        let state = std::rc::Rc::new(std::cell::RefCell::new(s));
+        futures_lite::future::block_on(super::comms_api::op_comms_subscribe_topic(
+            state.clone(),
+            Some("t".to_owned()),
+        ))
+        .unwrap();
+        let inbox = std::mem::take(&mut **state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>())
+            .into_iter()
+            .find_map(|call| match call {
+                common::rpc::RpcCall::SubscribeSceneTopics { sender } => Some(sender),
+                _ => None,
+            })
+            .expect("subscribe asks the engine for topic messages");
+        let mut payload = 1u16.to_le_bytes().to_vec();
+        payload.extend(b"thello");
+        inbox.send(("0x1".to_owned(), payload)).unwrap();
+
+        super::engine::crdt_send_to_renderer(state.clone(), &[]);
+
+        let mut state = state.borrow_mut();
+        assert_eq!(state.borrow::<SceneResourceCounters>().comms_msgs_in, 1);
+        let queued = state
+            .borrow_mut::<super::comms_api::SceneTopics>()
+            .consume("t");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].data, "hello");
     }
 
     // An oversized batch is refused at ingress: the scene is reported as errored and flagged

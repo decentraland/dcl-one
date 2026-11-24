@@ -11,7 +11,7 @@ import { useShopWallet } from "../wallet/context";
 import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
 import { CURRENCY, formatAmount } from "@shop/checkout/lib/currency";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
-import { cancelCreditOrder, creditOrderPill, fetchUserCreditOrders, resumeCreditOrder, type CreditOrder } from "./credits";
+import { cancelCreditOrder, creditOrderPill, fetchUserCreditOrders, resumeCreditOrder, type CreditOrder } from "@shop/credits/credits";
 import { useCreditPacks } from "./hooks";
 import { isIapMode } from "./iap";
 import { createPackCheckout, packBonus, pollCreditGrant, type CreditPack } from "./payments";

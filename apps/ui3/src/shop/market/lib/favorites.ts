@@ -11,8 +11,8 @@
 
 import type { FavoriteList } from "@catalyst-api/market/FavoriteList";
 import type { ListPickItem } from "@catalyst-api/market/ListPickItem";
-import { isShopApiError } from "../../api/client";
-import { type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import { sameAddress } from "@shop/model/address";
 import { shopClient } from "../../api/host";
 

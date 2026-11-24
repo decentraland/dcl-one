@@ -11,6 +11,9 @@ pub use system_api_types::services::{Service, ServiceValue};
 
 pub const DEFAULT: &str = "decentraland.org";
 
+/// Decentraland's own deployments, each a separate environment.
+pub const DECENTRALAND_DOMAINS: [&str; 2] = [DEFAULT, "decentraland.zone"];
+
 static BASE_DOMAIN: OnceLock<String> = OnceLock::new();
 static SERVICES: OnceLock<HashMap<Service, String>> = OnceLock::new();
 static GATEWAY: OnceLock<crate::gateway::Gateway> = OnceLock::new();
@@ -99,8 +102,34 @@ pub fn get() -> &'static str {
     BASE_DOMAIN.get().map(String::as_str).unwrap_or(DEFAULT)
 }
 
-pub fn is_custom() -> bool {
-    !matches!(get(), DEFAULT | "decentraland.zone")
+/// The Decentraland deployment a resolved service url runs on: [`DECENTRALAND_DOMAINS`] entry
+/// its host is, or is under. None for anything else, such as a dcl-one node, a gateway or a
+/// local service, whatever the base domain says: a page or launch keeps the default base
+/// domain while overriding its services.
+pub fn decentraland_domain(url: &str) -> Option<&'static str> {
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?;
+    DECENTRALAND_DOMAINS.into_iter().find(|domain| {
+        host == *domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|sub| sub.ends_with('.'))
+    })
+}
+
+/// The Decentraland deployment a url runs on, when that url may be given this installation's
+/// persistent identifier (comms' `deviceIdentifier`, the feature-flags rollout id): a parsed url
+/// with an `https` scheme and a host, no username, password or fragment, on a
+/// [`decentraland_domain`]. None for anything else, so a third-party realm, a node or a local
+/// service never receives it.
+pub fn device_identifier_domain(url: &str) -> Option<&'static str> {
+    let parsed = url::Url::parse(url).ok()?;
+    let plain = parsed.scheme() == "https"
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.fragment().is_none();
+    plain.then(|| decentraland_domain(url)).flatten()
 }
 
 fn host(sub: &str) -> String {
@@ -218,6 +247,48 @@ pub fn url(service: Service, path: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_device_identifier_goes_only_to_plain_https_decentraland_urls() {
+        for (url, domain) in [
+            (
+                "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+                Some("decentraland.org"),
+            ),
+            (
+                "https://feature-flags.decentraland.zone/explorer.json",
+                Some("decentraland.zone"),
+            ),
+            ("https://decentraland.org/", Some("decentraland.org")),
+            // not https
+            ("http://feature-flags.decentraland.org/explorer.json", None),
+            ("wss://comms-gatekeeper.decentraland.org/ws", None),
+            // userinfo or a fragment
+            ("https://user@comms-gatekeeper.decentraland.org/", None),
+            (
+                "https://user:secret@comms-gatekeeper.decentraland.org/",
+                None,
+            ),
+            ("https://comms-gatekeeper.decentraland.org/#x", None),
+            // not a Decentraland host
+            (
+                "https://feature-flags.decentraland.org.example.test/explorer.json",
+                None,
+            ),
+            (
+                "https://gateway.example.test/mount/feature-flags/explorer.json",
+                None,
+            ),
+            ("https://notdecentraland.org/", None),
+            ("http://127.0.0.1:5222/feature-flags/explorer.json", None),
+            ("http://localhost:3000/explorer.json", None),
+            // not a url
+            ("decentraland.org", None),
+            ("", None),
+        ] {
+            assert_eq!(device_identifier_domain(url), domain, "{url}");
+        }
+    }
+
     // NOTE: asserts literal URLs, so no test in this crate may set() a custom domain —
     // tests share the process-wide OnceLock.
     #[test]
@@ -238,6 +309,35 @@ mod tests {
         assert_eq!(
             service(Service::PulseServer),
             "pulse-server.decentraland.org"
+        );
+    }
+
+    #[test]
+    fn only_decentraland_hosts_are_a_decentraland_deployment() {
+        for (url, expected) in [
+            (
+                "https://peer.decentraland.org/lambdas",
+                Some("decentraland.org"),
+            ),
+            (
+                "https://PEER-EC1.Decentraland.ORG:443",
+                Some("decentraland.org"),
+            ),
+            ("https://decentraland.zone/auth", Some("decentraland.zone")),
+            ("https://peer.decentraland.zone", Some("decentraland.zone")),
+            ("https://gateway.example.test/mount/peer/lambdas", None),
+            ("http://127.0.0.1:5222/lambdas", None),
+            ("https://peer.decentraland.org.example.test", None),
+            ("https://evildecentraland.org", None),
+            ("https://peer.decentraland.today", None),
+            ("peer.decentraland.org", None),
+        ] {
+            assert_eq!(decentraland_domain(url), expected, "{url}");
+        }
+        // the default composition is Decentraland's own
+        assert_eq!(
+            decentraland_domain(&url(Service::Catalyst, "/lambdas")),
+            Some(DEFAULT)
         );
     }
 

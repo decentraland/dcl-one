@@ -187,8 +187,7 @@ fn placements(
         .collect()
 }
 
-/// Spawn and drop props around the player's parcel, and keep them on the eased terrain.
-#[allow(clippy::too_many_arguments)]
+/// Spawn and drop props around the player's parcel, and keep them on the terrain.
 fn update_props(
     mut commands: Commands,
     surface: Res<TerrainSurface>,
@@ -262,7 +261,7 @@ fn update_props(
     let resnap = |parcel: IVec2| {
         changes.relayout
             || changes.params
-            || changes.eased.is_some_and(|(min, max)| {
+            || changes.targets.is_some_and(|(min, max)| {
                 (min - 1).cmple(parcel).all() && (max + 1).cmpge(parcel).all()
             })
     };

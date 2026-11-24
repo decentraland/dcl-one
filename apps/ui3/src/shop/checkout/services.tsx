@@ -4,11 +4,12 @@
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
-import { type ShopClient } from "../api/shop";
-import type { ShopSigner } from "../api/signer";
+import { type ShopClient } from "@shop/api/shop";
+import type { ShopSigner } from "@shop/api/signer";
 import { type OfferFetcher } from "../cart/revalidate";
 import { shopCart, type CartStore } from "../cart/store";
 import { shopChainReader, type ChainReader } from "./chain/rpc";
+import { pageLocks } from "./lib/web-lock";
 import { liveResolvers, type SettlementResolvers } from "./purchase/cart";
 import type { RailContext } from "./purchase/rail";
 import { shopClient } from "../api/host";
@@ -30,6 +31,14 @@ export type ShopServices = {
   signer?: ShopSigner | null;
   /** A page on setting up a web3 wallet, for the MANA guidance. */
   walletSetupUrl?: string;
+  /** The browser's Web Locks (the page's by default): one tab at a time runs a credits + MANA sale of an item. */
+  locks?: LockManager | null;
+  /** How long a read of the chain's finalized time (what proves a credit expired) may take; FINALIZED_TIME_MS unless set. */
+  finalizedTimeMs?: number;
+  /** How long a Credits and MANA purchase may take to read its listing again after its approval; 10 s unless set. */
+  listingReadMs?: number;
+  /** How long the wallet may take to say its active account when a Credits and MANA purchase starts; 10 s unless set. */
+  accountReadMs?: number;
 };
 
 const Ctx = createContext<Partial<ShopServices>>({});
@@ -53,6 +62,10 @@ function defaults(partial: Partial<ShopServices>): ShopServices {
       }),
     signer: partial.signer ?? null,
     walletSetupUrl: partial.walletSetupUrl ?? "https://decentraland.org/help/wallets/",
+    locks: partial.locks !== undefined ? partial.locks : pageLocks(),
+    finalizedTimeMs: partial.finalizedTimeMs,
+    listingReadMs: partial.listingReadMs,
+    accountReadMs: partial.accountReadMs,
   };
 }
 

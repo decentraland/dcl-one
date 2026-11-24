@@ -5,10 +5,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router";
 
-import { isShopApiError } from "../../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { shopCart } from "../../cart/store";
 import { SHOP_BASE } from "../../routes";
-import { fetchCatalogByIds } from "../api";
+import { fetchCatalogByIds } from "@shop/discovery/api";
 import { cartInputFor } from "../components/AssetCard";
 import { formatCredits, formatCreditsFull } from "../components/PriceTag";
 import Icon from "../components/Icon";

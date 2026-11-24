@@ -1,0 +1,32 @@
+import type { Project } from '/shared/types/projects';
+
+export type Severity = 'success' | 'info' | 'warning' | 'error' | 'loading';
+export type NotificationId = string;
+export type CustomNotificationType =
+  | { type: 'missing-scenes' }
+  | { type: 'new-dependency-version'; project: Project }
+  // `installed`: the scene has the skills and they are outdated, else it has none.
+  | { type: 'sdk-skills'; project: Project; installed: boolean }
+  | { type: 'deploy'; path: string }
+  // The editor realm's Multiplayer Server kept stopping and main gave up restarting it.
+  | { type: 'realm-server-stopped'; path: string }
+  | { type: 'external-agent-access' };
+
+export type Opts = {
+  requestId?: string;
+  duration?: number;
+};
+
+type CommonNotificationProps<T extends { type: string }> = {
+  id: NotificationId;
+} & T &
+  Opts;
+
+export type CustomNotification = CommonNotificationProps<CustomNotificationType>;
+export type GenericNotification = CommonNotificationProps<{ type: 'generic' }> & {
+  severity: Severity;
+  message: string;
+  description?: string;
+};
+
+export type Notification = CustomNotification | GenericNotification;

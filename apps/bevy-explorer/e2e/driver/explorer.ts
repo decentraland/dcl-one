@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { sleep, until } from './wait.ts'
@@ -46,6 +46,53 @@ export interface WorldState {
    *  action. Null where the client takes no input; absent from builds older than the suite, which
    *  the keyboard waits refuse. */
   keyboardClaimed?: boolean | null
+}
+
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
+export interface PointerReport {
+  hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+  events: { event: string; button: string; tick: number }[]
+  diagnosis: string | null
+}
+
+/** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
+export interface RaycastStats {
+  budgetMs: number
+  ran: number
+  deferred: number
+  spentMs: number
+  uncappedRan: number
+  uncappedSpentMs: number
+}
+
+/** A `/media_state` player row; the retry fields are the web backend's. */
+export interface MediaPlayerRow {
+  type: 'video' | 'audio'
+  entity: string
+  scene: string | null
+  source: string
+  lastPlaybackState?: string | null
+  retryAttempt?: number | null
+  retryFailures?: number | null
+  retryDelaySeconds?: number | null
+  retryGaveUp?: boolean | null
+  lastError?: string | null
+}
+
+/** `/media_state`: the loaded media players. */
+export interface MediaState {
+  backend: string
+  players: MediaPlayerRow[]
+}
+
+/** `/media_retry_delay`: the wait before a failed web source's first reopen and the reopens allowed. */
+export interface MediaRetryDelay {
+  firstDelayMs: number
+  maxReopens: number
 }
 
 export interface Control {
@@ -114,9 +161,12 @@ export interface AvatarReport {
   kind: 'player' | 'otherPlayer' | 'sceneAvatar' | 'preview' | 'other'
   address: string | null
   selected: { bodyShape: string | null; wearables: string[]; emotes: string[]; forceRender: string[]; fromScene: boolean }
-  rendered: { processed: boolean; failed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
+  rendered: { processed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
   emote: EmoteState | null
   upperBodyEmote: EmoteState | null
+  /** The files the avatar could not be built from; `noBody` when neither its body nor the default
+   *  body could be. Absent from builds before it was reported. */
+  loadFailures?: { bodies: string[]; wearables: string[]; noBody: boolean }
 }
 
 export interface ChatMessage {
@@ -130,6 +180,83 @@ export interface ChatMessage {
 export interface ChatHistory {
   total: number
   messages: ChatMessage[]
+}
+
+/** A nametag on show (`/nametag_state` `tags`). `bubble` never carries the message. */
+export interface NametagTag {
+  /** An address, `local`, or null for an avatar with no wallet. */
+  player: string | null
+  /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
+  sceneAvatar: boolean
+  name: string
+  suffix: string
+  verified: boolean
+  official: boolean
+  voice: 'off' | 'idle' | 'speaking' | 'hushed'
+  /** Metres from the camera; null until the tag is first placed. */
+  distance: number | null
+  opacity: number
+  /** Metres per tag unit. */
+  scale: number
+  position: [number, number, number]
+  /** Metres over the head bone for an avatar at a scale of one; null until the avatar is built. */
+  headOffset: number | null
+  bubble: { kind: 'nearby' | 'community' | 'dm'; mention: boolean; length: number } | null
+}
+
+export interface NametagState {
+  visible: boolean
+  shown: number
+  /** Of those shown, the tags over a scene's avatars. */
+  sceneAvatars: number
+  /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  hidden: number
+  /** The glyph atlas' distance-field and colour page sizes, in pixels. */
+  atlas: [number, number]
+  bubbles: 'All' | 'NearbyOnly' | 'None'
+  tags: NametagTag[]
+}
+
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** `/voice`'s actions: ring (`call`), answer (`accept` / `reject`), hang up or leave (`end`), open,
+ *  join or close a community stream, raise the hand, the call mic, and moderation (`deny` turns
+ *  down a raised hand). */
+export type VoiceAction =
+  | ['call', string]
+  | ['accept' | 'reject' | 'end' | 'close']
+  | ['start' | 'join', string]
+  | ['hand', 'up' | 'down']
+  | ['mic', 'on' | 'off']
+  | ['promote' | 'demote' | 'kick' | 'deny', string]
+
+/** The private call or community stream as the HUD sees it: its status
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+  /** `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure. */
+  errorIsNotice: boolean
 }
 
 /** `/community_state`: community chat's routing and counters (no message bodies). */
@@ -147,12 +274,80 @@ export interface CommunityState {
   lastError?: string | null
 }
 
+export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed'
+  | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
+
 export interface VoiceState {
-  mic: { available: boolean; enabled: boolean }
+  mic: { available: boolean; enabled: boolean; sceneBlocked: boolean }
   livekit: boolean
   connected: boolean | null
-  rooms: { scene: boolean; state: string }[] | null
+  rooms: { scene: boolean; state: RoomState }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
+}
+
+/** The saved mutes for nearby voice (`/nearby_mutes`). */
+export interface NearbyMutes {
+  /** Null while signed out. */
+  account: string | null
+  load: 'idle' | 'loading' | 'loaded' | 'failed'
+  count: number
+  /** Lowercased addresses, sorted; the first 32. */
+  muted: string[]
+}
+
+export interface ConnectivityState {
+  connectionLost: boolean
+  probing: boolean
+  everConnected: boolean
+  suppressed: boolean
+  rooms: { scope: string; state: RoomState; retryAt: number | null }[]
+}
+
+/** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
+ *  `null` reading explained in `unavailable` by its field path. */
+export interface BanBlockState {
+  address: string | null
+  blocks: {
+    state: 'unavailable' | 'live'
+    reason: 'social_feature_off' | 'not_signed_in' | 'social_not_connected' | null
+    blocked: string[]
+    blockedBy: string[]
+  }
+  platformBan: {
+    state: 'unknown' | 'checked' | 'failed'
+    isBanned: boolean | null
+    source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
+    reason: string | null
+    matchedOn: string | null
+    customMessage: string | null
+    expiresAt: string | null
+    checkedAgoSecs: number | null
+    error: string | null
+  }
+  sceneAdmission: {
+    state: 'unknown' | 'allowed' | 'refused'
+    scope: 'platform' | 'world' | 'scene' | null
+    message: string | null
+    sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
+  }
+  sceneRoom: {
+    state: 'not_connected' | 'connected'
+    sceneId: string | null
+    bannedAddresses: string[]
+    sceneAdmins: string[]
+  }
+  lookup: {
+    address: string
+    isBlockedEitherWay: boolean
+    direction: 'none' | 'local_user_blocked_them' | 'they_blocked_local_user' | 'mutual'
+    bannedInScene: boolean
+    adminPermissions: 'admin' | 'not_admin' | 'not_loaded_yet'
+  } | null
+  unavailable: Record<string, string>
 }
 
 export interface ScreenPosition {
@@ -166,12 +361,126 @@ export interface ScreenPosition {
   depth: number
   distance: number
   viewport: { x: number; y: number; width: number; height: number }
+  /** `x`/`y` as 0 to 1 of the window from the top left, as `clickAt(..., { normalized: true })` takes them */
+  normalized: { x: number; y: number } | null
+  screen: Screen
+}
+
+/** The window a coordinate is read against, in the logical pixels the commands use; `scale` is
+ *  the device pixel ratio, so a screenshot's pixels are `scale` times as many. */
+export interface Screen {
+  width: number
+  height: number
+  scale: number
+}
+
+/** Where `/click_at` clicked, in pixels and normalized, and on what window. The web page adds how
+ *  (`input`: `trusted` from the test runner, else `synthetic`). */
+export interface ClickAtReply {
+  x: number
+  y: number
+  normalized: { x: number; y: number }
+  button: MouseButton
+  screen: Screen
+  input?: 'trusted' | 'synthetic'
 }
 
 export interface Position {
   x: number
   y: number
   z: number
+}
+
+export interface LiveScene {
+  title: string
+  hash: string
+  portable: boolean
+  smartWearable: boolean
+  broken: boolean
+}
+
+export type SmartWearableState = 'loading' | 'running' | 'blocked' | 'stopped' | 'notSmart' | 'failed'
+
+export interface SmartWearableEntry {
+  urn: string
+  state: SmartWearableState
+  reason?: string
+}
+
+export interface SmartWearables {
+  /** Whether the parcel scene the player stands in allows portable experiences; null when there
+   *  are no smart wearables (the reply then has no header). */
+  currentSceneAllows: boolean | null
+  entries: SmartWearableEntry[]
+}
+
+export type SmartWearableAction = 'run' | 'kill' | 'restart'
+
+const SMART_WEARABLE_STATES: readonly SmartWearableState[] = ['loading', 'running', 'blocked', 'stopped', 'notSmart', 'failed']
+
+export type PortableKind = 'scene' | 'smartWearable'
+export type PortableState = 'loading' | 'running' | 'failed' | 'blocked' | 'stopped'
+
+/** A portable experience the HUD lists: every portable but startup ones and the HUD's own scene,
+ *  and smart wearables that are stopped while still equipped. */
+export interface Portable {
+  name: string
+  /** The live scene hash `/stop_portable` takes; null for a smart wearable that is not loaded. */
+  hash: string | null
+  kind: PortableKind
+  state: PortableState
+}
+
+const PORTABLE_STATES: readonly PortableState[] = ['loading', 'running', 'failed', 'blocked', 'stopped']
+
+/** `/live_scenes`: `<title> [<hash>, portable, smart wearable, broken]` per line, the flags
+ *  optional, or `no scenes loaded`. */
+export function parseLiveScenes(reply: string): LiveScene[] {
+  if (reply.trim() === 'no scenes loaded') return []
+  return reply
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const match = /^(.*) \[([^,\]]+)((?:, [a-z ]+)*)\]$/.exec(line.trim())
+      if (!match) throw new Error(`unparseable live_scenes line: ${line}`)
+      const flags = match[3]!.split(',').map((flag) => flag.trim()).filter(Boolean)
+      return { title: match[1]!, hash: match[2]!, portable: flags.includes('portable'), smartWearable: flags.includes('smart wearable'), broken: flags.includes('broken') }
+    })
+}
+
+/** `/smart_wearables`: `current scene allows: <bool>`, then `<urn> <state> [<reason>]` per entry,
+ *  or `no smart wearables`. */
+export function parseSmartWearables(reply: string): SmartWearables {
+  const lines = reply.split('\n').map((line) => line.trim()).filter(Boolean)
+  if (lines.length === 1 && lines[0] === 'no smart wearables') return { currentSceneAllows: null, entries: [] }
+  const header = /^current scene allows: (true|false)$/.exec(lines[0] ?? '')
+  if (!header) throw new Error(`unparseable smart_wearables header: ${reply.slice(0, 200)}`)
+  const entries = lines.slice(1).map((line): SmartWearableEntry => {
+    const match = /^(\S+) (\S+)(?: (.+))?$/.exec(line)
+    const state = match?.[2] as SmartWearableState | undefined
+    if (!match || !state || !SMART_WEARABLE_STATES.includes(state)) throw new Error(`unparseable smart_wearables line: ${line}`)
+    const reason = match[3]?.replace(/^\[(.*)\]$/, '$1')
+    return reason ? { urn: match[1]!, state, reason } : { urn: match[1]!, state }
+  })
+  return { currentSceneAllows: header[1] === 'true', entries }
+}
+
+const SMART_WEARABLE_REPLIES: Record<SmartWearableAction, string> = { run: 'running', kill: 'killed', restart: 'restarted' }
+
+/** `/portables`: `<name> [<hash or ->, <kind>, <state>]` per line, or `no portables`. The kind is
+ *  `scene` or `smartWearable` (`smart wearable` reads the same). */
+export function parsePortables(reply: string): Portable[] {
+  if (reply.trim() === 'no portables') return []
+  return reply
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line): Portable => {
+      const match = /^(.*) \[([^,\]]+), ([^,\]]+), ([^,\]]+)\]$/.exec(line.trim())
+      const kind = match?.[3]!.replace(/ (\w)/g, (_, c: string) => c.toUpperCase()) as PortableKind | undefined
+      const state = match?.[4] as PortableState | undefined
+      if (!match || (kind !== 'scene' && kind !== 'smartWearable') || !state || !PORTABLE_STATES.includes(state)) throw new Error(`unparseable portables line: ${line}`)
+      return { name: match[1]!, hash: match[2] === '-' ? null : match[2]!, kind, state }
+    })
 }
 
 /** What `/hud_login` answers once the sign-in has landed and the welcome page is done: the
@@ -200,6 +509,8 @@ export interface ExplorerOptions {
   allowSyntheticInput?: boolean
   /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
   profileDeployWindowMs?: number
+  /** How many deployments of one profile go through in a span (`PROFILE_DEPLOY_BURST`). */
+  profileDeployBurst?: { count: number; spanMs: number }
 }
 
 /** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
@@ -207,6 +518,11 @@ export interface ExplorerOptions {
  *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
  *  after the engine reports the new version. */
 export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** And no more than five deployments of a profile in a minute: zone's peers answer a sixth with
+ *  `429 Too many requests` and no `Retry-After` (seen on runs that deployed at 0, 5, 14, 27, 32
+ *  and 38 s), which the engine does not retry and the HUD shows as "Couldn't save your look". */
+export const PROFILE_DEPLOY_BURST = { count: 5, spanMs: 61_000 }
 
 /** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
  *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
@@ -238,19 +554,25 @@ function scrubbed(line: string, error: unknown): unknown {
 export class Explorer {
   readonly console: Console
   readonly hud: Hud
+  /** When this client's driver was made: before its sign-in, so before anything the sign-in did. */
+  readonly openedAt = Date.now()
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
   readonly #deployWindowMs: number
+  readonly #deployBurst: { count: number; spanMs: number }
+  /** When each recent deployment of the own profile was seen, oldest first. */
+  readonly #deploymentsSeenAt: number[] = []
   /** The own profile's version as last read, and when it was last seen to change. */
   #ownVersion: number | undefined
   #ownVersionChangedAt = 0
-  /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
+  /** The credentials the lines run so far carried (`secretsOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
     this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
+    this.#deployBurst = options.profileDeployBurst ?? PROFILE_DEPLOY_BURST
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -264,8 +586,7 @@ export class Explorer {
   async run(line: string): Promise<string> {
     const startedAt = Date.now()
     const record: CommandRecord = { line: redactLine(line.trim()), startedAt, ms: 0 }
-    const secret = secretOf(line)
-    if (secret !== undefined) this.#secrets.add(secret)
+    for (const secret of secretsOf(line)) this.#secrets.add(secret)
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
@@ -286,9 +607,7 @@ export class Explorer {
   /** `text` with every credential a line of this client carried replaced: the page's console,
    *  which the HUD may have written an error into. */
   redactSecrets(text: string): string {
-    let out = text
-    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>')
-    return out
+    return replaceSecrets(this.#secrets, text)
   }
 
   /** Run a line whose reply is JSON. A reply that does not parse is an error naming the command,
@@ -386,14 +705,13 @@ export class Explorer {
 
   /** Sign in with an identity (while the world is held: the lobby, before any realm). `name` and
    *  `look` apply to a first login only. */
-  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; profiles?: string } = {}): Promise<void> {
+  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean } = {}): Promise<void> {
     const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
     const flags: string[] = []
     if (options.defaultOnError) flags.push('--default-on-error')
     if (options.guest) flags.push('--guest')
     if (options.name !== undefined) flags.push(`--name ${options.name}`)
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
-    if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
   }
 
@@ -431,6 +749,8 @@ export class Explorer {
     await until(() => this.worldState(), (state) => state.signedIn, { timeoutMs: 30_000, intervalMs: 250, what: 'the guest to be signed in' })
   }
 
+  /** The engine's sign-out (`/logout`). On the web the HUD never hears of it and stays signed in,
+   *  refusing a new `/hud_login`; `/hud_logout` signs both out. */
   async logout(): Promise<void> {
     await this.run('/logout')
   }
@@ -442,7 +762,10 @@ export class Explorer {
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
     const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
     if (address === undefined) {
-      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      // Each edit is one version above the last (`bump_version`), so a read that skipped some counts
+      // them all; a version a failed deploy used and the next edit skips counts too, which only
+      // waits longer.
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#deploymentSeen(Math.max(1, data.version - this.#ownVersion))
       this.#ownVersion = data.version
     }
     return data
@@ -451,16 +774,29 @@ export class Explorer {
   /** Count a deployment of the own profile from now that no version change showed: the sign-in,
    *  whose first login deploys a new profile before any version was read. */
   profileDeployed(): void {
+    this.#deploymentSeen()
+  }
+
+  #deploymentSeen(count = 1): void {
     this.#ownVersionChangedAt = Date.now()
+    for (let i = 0; i < count; i++) this.#deploymentsSeenAt.push(this.#ownVersionChangedAt)
   }
 
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
    *  the passport): wait out the catalyst's window since the profile was last seen to change, a
-   *  deployment of its own. A change since the last read counts from now. */
+   *  deployment of its own, and, with a burst's worth of deployments in its span, until the oldest
+   *  of them leaves it. A change since the last read counts from now. */
   async profileDeployWindow(): Promise<void> {
     await this.userData()
     const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
     if (left > 0) await sleep(left)
+    const { count, spanMs } = this.#deployBurst
+    const recent = this.#deploymentsSeenAt
+    while (recent.length > 0 && recent[0]! <= Date.now() - spanMs) recent.shift()
+    if (recent.length >= count) {
+      const wait = recent[recent.length - count]! + spanMs - Date.now()
+      if (wait > 0) await sleep(wait)
+    }
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -492,7 +828,8 @@ export class Explorer {
     return this.json<ChatHistory>(`/chat_history ${count}`)
   }
 
-  /** A direct message; `/dm` takes several words, `/chat` does not. Not a delivery confirmation. */
+  /** A direct message; `/dm` takes the rest of the line, so runs of spaces collapse to one. Not a
+   *  delivery confirmation. */
   async dm(address: string, message: string): Promise<void> {
     await this.run(`/dm ${address} ${message}`)
   }
@@ -531,6 +868,55 @@ export class Explorer {
     return this.json<VoiceState>('/voice_state')
   }
 
+  nametags(): Promise<NametagState> {
+    return this.json<NametagState>('/nametag_state')
+  }
+
+  /** Shows `message` in a chat bubble over the named nametags, on this client only; how many
+   *  bubbles were asked for. */
+  async nametagBubble(target: 'local' | 'all' | string, kind: 'nearby' | 'community' | 'dm', message: string): Promise<number> {
+    const reply = await this.json<{ bubbles: number }>(`/nametag_bubble ${target} ${kind} ${message}`)
+    return reply.bubbles
+  }
+
+  connectivity(): Promise<ConnectivityState> {
+    return this.json<ConnectivityState>('/connectivity_state')
+  }
+
+  retryConnectivity(): Promise<string> {
+    return this.run('/connectivity_retry')
+  }
+
+  /** The ban and block status; with an address, also that address's standing. */
+  banBlockState(address?: string): Promise<BanBlockState> {
+    return this.json<BanBlockState>(address ? `/ban_block_state ${address}` : '/ban_block_state')
+  }
+
+  /** Block a user through the social service; answers once the service has. */
+  async blockUser(address: string): Promise<void> {
+    await this.run(`/block_user ${address}`)
+  }
+
+  /** Lift a block through the social service; answers once the service has. */
+  async unblockUser(address: string): Promise<void> {
+    await this.run(`/unblock_user ${address}`)
+  }
+
+  /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and
+   *  refusals). Only queues the request: `/voice_state` `call` follows. */
+  async voice(...action: VoiceAction): Promise<void> {
+    await this.run(['/voice', ...action].join(' '))
+  }
+
+  nearbyMutes(): Promise<NearbyMutes> {
+    return this.json<NearbyMutes>('/nearby_mutes')
+  }
+
+  /** Mute or unmute a wallet's nearby voice, as the profile menu's Hush and Hear do. */
+  async nearbyMute(address: string, muted: boolean): Promise<void> {
+    await this.run(`/nearby_mute ${muted ? 'on' : 'off'} ${address}`)
+  }
+
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */
   async time(hours?: number, speed?: number): Promise<{ before: string; after: string; speed: number }> {
     const reply = await this.run(['/time', hours === undefined ? '' : String(hours), speed === undefined ? '' : String(speed)].join(' '))
@@ -542,6 +928,13 @@ export class Explorer {
   /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively). */
   async screenshot(): Promise<Buffer> {
     return Buffer.from(await this.run('/screenshot'), 'base64')
+  }
+
+  /** Lay the HUD out at `[width, height]` CSS px, or at the window's size again with `null`, and
+   *  resolve once it has drawn at that size. Throws on a transport without `resizeView`. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    if (!this.console.resizeView) throw new Error(`the ${this.console.kind} transport cannot resize the view`)
+    await this.console.resizeView(size)
   }
 
   // --- input --------------------------------------------------------------------------------
@@ -579,9 +972,11 @@ export class Explorer {
     await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
   }
 
-  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
-  async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
-    await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
+  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them), or, with
+   *  `normalized`, at 0 to 1 of the window from the top left. */
+  async clickAt(x: number, y: number, button: MouseButton = 'left', options: { normalized?: boolean } = {}): Promise<ClickAtReply> {
+    const flags = `${button === 'left' ? '' : ` --button ${button}`}${options.normalized ? ' --normalized' : ''}`
+    return this.json<ClickAtReply>(`/click_at ${x} ${y}${flags}`)
   }
 
   // --- scenes -------------------------------------------------------------------------------
@@ -592,12 +987,115 @@ export class Explorer {
     return reply === '(no entities)' ? [] : reply.split('\n')
   }
 
+  /** Point the scene commands (`/scene_entities`, `/inspect_component`, `/scene_logs`) at a scene
+   *  by hash or title; without one they follow the player's parcel again. */
+  async setScene(hashOrTitle?: string): Promise<void> {
+    await this.run(hashOrTitle ? `/set_scene ${hashOrTitle}` : '/set_scene')
+  }
+
+  /** The `value` of every `UiText` in the target scene: what its screen-space UI shows. */
+  async uiTexts(): Promise<string[]> {
+    const entities = await this.sceneEntities('UiText')
+    const texts: string[] = []
+    for (const entity of entities) {
+      const id = /\((\d+)\)$/.exec(entity)?.[1] ?? entity
+      const text = await this.inspect<{ value?: string }>(id, 'UiText')
+      if (typeof text.value === 'string') texts.push(text.value)
+    }
+    return texts
+  }
+
+  /** The scenes running: parcel scenes and portable experiences. */
+  async liveScenes(): Promise<LiveScene[]> {
+    return parseLiveScenes(await this.run('/live_scenes'))
+  }
+
+  async smartWearables(): Promise<SmartWearables> {
+    return parseSmartWearables(await this.run('/smart_wearables'))
+  }
+
+  /** A smart wearable's entry, or undefined when the engine does not track it. */
+  async smartWearable(urn: string): Promise<SmartWearableEntry | undefined> {
+    return (await this.smartWearables()).entries.find((entry) => entry.urn === urn)
+  }
+
+  /** The portable experiences the HUD's rail lists. */
+  async portables(): Promise<Portable[]> {
+    return parsePortables(await this.run('/portables'))
+  }
+
+  /** `/stop_portable <hash>`: stop a listed portable as the HUD's `Stop` does; a reply other than
+   *  `stopped <hash>` is an error. */
+  async stopPortable(hash: string): Promise<void> {
+    const reply = (await this.run(`/stop_portable ${hash}`)).trim()
+    if (reply !== `stopped ${hash}`) throw new Error(`/stop_portable ${hash} replied: ${reply}`)
+  }
+
+  /** `/smart_wearable run|kill|restart <urn>`; a reply other than `<running|killed|restarted>
+   *  <urn>` is an error. */
+  async smartWearableAction(action: SmartWearableAction, urn: string): Promise<void> {
+    const reply = (await this.run(`/smart_wearable ${action} ${urn}`)).trim()
+    if (reply !== `${SMART_WEARABLE_REPLIES[action]} ${urn}`) throw new Error(`/smart_wearable ${action} ${urn} replied: ${reply}`)
+  }
+
   async inspect<T = unknown>(entity: string | number, component: string): Promise<T> {
     return this.json<T>(`/inspect_component ${entity} ${component}`)
   }
 
   entityScreenPosition(entity: string | number, options: { bounds?: boolean } = {}): Promise<ScreenPosition> {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
+  }
+
+  /** Aims the pointer at an entity and reports what it hovers; a blocked outcome resolves with `diagnosis` set; a refusal rejects. */
+  hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
+    let line = `/hover_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.frames !== undefined) line += ` --frames ${options.frames}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  async clearPointer(): Promise<void> {
+    await this.run('/hover_entity --clear')
+  }
+
+  clickEntity(
+    entity: string | number,
+    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+  ): Promise<PointerReport> {
+    let line = `/click_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.button) line += ` --button ${options.button}`
+    if (options.event) line += ` --event ${options.event}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  raycastStats(): Promise<RaycastStats> {
+    return this.json<RaycastStats>('/raycast_stats')
+  }
+
+  /** The capped raycast tier's budget in ms; with `ms`, overrides it first, and `'auto'` returns it to a tenth of the target frame. */
+  async raycastBudget(ms?: number | 'auto'): Promise<number> {
+    const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
+    const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
+    if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
+    return Number(match[1])
+  }
+
+  mediaState(): Promise<MediaState> {
+    return this.json<MediaState>('/media_state')
+  }
+
+  /** The wait before a failed web media source's first reopen; with `ms`, sets it first. */
+  mediaRetryDelay(ms?: number): Promise<MediaRetryDelay> {
+    return this.json<MediaRetryDelay>(ms === undefined ? '/media_retry_delay' : `/media_retry_delay ${ms}`)
+  }
+
+  /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    return reply === '(no logs)' ? [] : reply.split('\n')
   }
 
   async close(): Promise<void> {

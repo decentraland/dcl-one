@@ -1,5 +1,40 @@
 # Measured query workloads
 
+## Credit revocation sweep
+
+A disposable PostgreSQL 18 table held 200,000 revocations across two chains,
+including 4,000 pending or sent rows. After `ANALYZE`, the worker's hash-range
+page of 20 used 2,015 local buffer accesses with the creation-time partial
+index. It filtered and sorted 1,503 candidates. Adding the partial index on
+`(chain_id, credit_hash)` reduced the page to 22 buffer accesses under both
+custom and generic prepared plans. The upper-bound query went from 44 buffers
+to three with a custom plan and from 2,015 to three with a generic plan.
+The new index occupied 424 KiB. These synthetic plans measure read work and
+index size. Production cardinalities and write costs remain unmeasured.
+
+## Seasonal photo progress
+
+A disposable PostgreSQL 18 fixture with 1,000,000 photo-goal receipts and
+500,000 retained Camera events measured the wallet/season/week `photosTaken`
+query with `EXPLAIN (ANALYZE, BUFFERS)` after `ANALYZE`. Returning two counted
+photos used a parallel sequential scan in 26.199 ms. The partial index on
+`(address, season_id, week_id, ordinal) WHERE outcome = 'counted'` selected an
+index scan in 0.030 ms with five shared-buffer reads. Its measured size was
+67 MB. Including `photo_id` increased it to 82 MB without improving this
+sample's execution time (0.031 ms), so the index has no included columns.
+
+The global oldest-unprocessed-event diagnostic took 182.756 ms with one
+pending event and 173.302 ms with none. Replacing the aggregate with an
+ordered limit still selected a hash anti-join and did not reliably reduce
+the work. The worker samples this diagnostic separately from photo
+processing, at most every five minutes, with a query deadline; diagnostic
+failure does not roll back completed work or prevent that pass's processing.
+
+These are single local samples with synthetic distributions and uncontrolled
+cache state. They establish the selected access path and the cost of the
+diagnostic in that fixture, not production latency, throughput, index write
+cost or capacity.
+
 ## Social notification polling and oversized-event expiry
 
 The explicit `rpc::tests::fanout::notification_and_spill_queries_use_bounded_index_paths`
@@ -391,3 +426,21 @@ the build; DATABASE.md gives the concurrent build to run beforehand.
 These are single warm-cache samples on synthetic data during other load. They
 do not measure production row width, cold reads, the build time or lock wait
 on the production table, or a whole pass's total.
+
+## Wallet presence and world quota lookups
+
+On 100,000 synthetic memberships per table,
+selective and missing-wallet probes used 3–4 buffers instead of 1,024–1,137
+under custom and generic plans. A wallet holding 10% of community rows still
+selected a sequential scan with a custom plan. Each index occupied about
+2.9 MiB after write probes; inserting 1,000 memberships added about 78 kB of
+WAL per table. These are warm synthetic measurements, not production latency
+or capacity claims.
+
+On 100,000 synthetic identities,
+the quota read used 103 buffers instead of 668, with both custom and generic
+prepared plans; the index occupied 5.65 MiB after write probes. Retiring 1,000
+new identities increased measured WAL from 221 kB to 332 kB. Production world
+sizes, request rates and latency are unmeasured.
+
+Building the two wallet indexes and the retired identity index on the synthetic tables took 64, 65 and 108 ms respectively.

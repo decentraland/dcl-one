@@ -18,16 +18,20 @@ This monorepo contains the core packages for Decentraland's SDK and development 
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/decentraland/js-sdk-toolchain.git
-cd js-sdk-toolchain
+git clone https://github.com/decentraland/dcl-one.git
+cd dcl-one/library/js-sdk-toolchain
 ```
 
-2. Install dependencies and build all packages:
+2. With Node ≥24.16 and Corepack available, install dependencies and build:
 
 ```bash
+corepack enable
 make install
 make build
 ```
+
+pnpm workspace links share local build outputs. Every `@dcl/hashing` dependency,
+including those of `dcl-catalyst-client`, resolves to `library/hashing`.
 
 ## Development
 
@@ -73,8 +77,8 @@ Two workflows publish `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and `sdk`
 version `7.0.0`; each run stamps its own.
 
 **PR previews** (`.github/workflows/sdk.yml`). A pull request from this repository publishes what
-it packed as `@dcl-regenesislabs/*` under the shared `pr` dist-tag and comments the install
-command on the PR. The run renames the packages before packing and pins siblings as npm aliases,
+it packed as `@dcl-regenesislabs/*` under the shared `pr` dist-tag and adds the install
+command to the PR's CI status comment. The run renames the packages before packing and pins siblings as npm aliases,
 so a scene keeps importing `@dcl/sdk`:
 
 ```bash
@@ -94,7 +98,7 @@ A push to `main` that touches the SDK or the protocol publishes under `next` as
 
 A versioned release is a manual run from `main`:
 
-1. Run `SDK release` from `main` with the `version` to publish, following the
+1. Run `SDK / Release` from `main` with the `version` to publish, following the
    [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
    `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag.
 2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the

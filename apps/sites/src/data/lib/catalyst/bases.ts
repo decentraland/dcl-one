@@ -8,8 +8,6 @@ export const WORLDS_PREFIX = "/worlds-content-server";
 export const SOCIAL_PREFIX = "/social-api";
 export const NOTIFICATIONS_PREFIX = "/notifications";
 export const MARKET_PREFIX = "/marketplace-api";
-export const BUILDER_PREFIX = "/builder-api";
-export const DEFAULT_CREATORS_DATA_URL = "/api/creator-hub";
 export const DEFAULT_PLAY_PATH = "/play";
 
 export type BaseEnv = Record<string, string | undefined>;
@@ -52,14 +50,16 @@ export function browserCatalystBase(env: BaseEnv = processEnv()): string {
   return trimSlash(envValue(env, "PUBLIC_CATALYST_URL") ?? "");
 }
 
+/** An absolute URL of this site for a page's public address (canonical, share links): under
+ * PUBLIC_CATALYST_URL when set, else the request's origin. */
+export function publicPageUrl(request: Request, pathname: string, env: BaseEnv = processEnv()): string {
+  return `${browserCatalystBase(env) || new URL(request.url).origin}${pathname}`;
+}
+
 export function worldsUrl(override?: string, env: BaseEnv = processEnv()): string {
   return trimSlash(
     override ?? envValue(env, "WORLDS_URL") ?? `${catalystUrl(undefined, env)}${WORLDS_PREFIX}`,
   );
-}
-
-export function publicWorldsUrl(env: BaseEnv = processEnv()): string {
-  return `${publicCatalystUrl(env)}${WORLDS_PREFIX}`;
 }
 
 export function worldsContentServerUrl(override?: string, env: BaseEnv = processEnv()): string {
@@ -68,14 +68,39 @@ export function worldsContentServerUrl(override?: string, env: BaseEnv = process
   );
 }
 
+/**
+ * The host of the Explorer launcher installers that /download and the home page offer and /download_success
+ * starts, from deployment config: the node serves no installer, so no default points at another operator's
+ * binaries; unset, the pages offer none and /download_success answers 404.
+ */
+export function explorerInstallersUrl(env: BaseEnv = processEnv()): string | null {
+  const v = envValue(env, "EXPLORER_INSTALLERS_URL");
+  return v ? trimSlash(v) : null;
+}
+
+/**
+ * The JSON of the Explorer's download counts per platform, from deployment config:
+ * unset, the hero shows its fallback total and /download no total.
+ */
+export function downloadCountsUrl(env: BaseEnv = processEnv()): string | null {
+  return envValue(env, "DOWNLOAD_COUNTS_URL") ?? null;
+}
+
 export function communitiesUrl(env: BaseEnv = processEnv()): string {
   return trimSlash(
     envValue(env, "COMMUNITIES_URL") ?? `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,
   );
 }
 
-export function creatorsDataUrl(override?: string, env: BaseEnv = processEnv()): string {
-  return trimSlash(override ?? envValue(env, "CREATORS_DATA_URL") ?? DEFAULT_CREATORS_DATA_URL);
+/**
+ * The blog's CMS (cms-server, the Contentful cache decentraland/sites reads), as the full
+ * `<origin>/spaces/<space>/environments/<environment>` base; undefined when unset, and the blog
+ * then answers 503.
+ */
+export function blogCmsUrl(env: BaseEnv = processEnv()): string | undefined {
+  // TODO(cms-migration): point BLOG_CMS_URL at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
+  const value = envValue(env, "BLOG_CMS_URL");
+  return value ? trimSlash(value) : undefined;
 }
 
 /**
@@ -95,6 +120,10 @@ export function siteUrl(path: string, env: BaseEnv = processEnv()): string {
  * The explorer entry every jump-in link targets: BEVY_PLAY_URL (default /play;
  * a path on this origin, or an absolute URL) with the launch parameters.
  * `playUrl({ position: "-3,-2" })` -> `/play/?position=-3%2C-2`.
+ * An absolute URL on another origin still works as a link, but a dcl-one /play
+ * may be framed only by its own origin (routes/lib/play-framing.ts), so the
+ * pages that frame BEVY_PLAY_URL (Place detail's watcher, the scene editor)
+ * show an empty frame for one.
  */
 export function playUrl(
   params?: Record<string, string | undefined> | URLSearchParams,

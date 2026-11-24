@@ -9,7 +9,7 @@ use tokio::time::Instant;
 
 // Operational safety bounds, not a delivery SLO. Keep each effect well below
 // a request lifetime; milestone alerts run after the grant commits.
-const EFFECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const EFFECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(2);
 const MAX_ATTEMPTS: usize = 3;
 
@@ -72,7 +72,7 @@ impl Adapter {
         };
         let adapter = self.clone();
         let message = self.milestone(referrer);
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let _permit = permit;
             adapter.send(message).await;
         });

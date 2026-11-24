@@ -1,11 +1,13 @@
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SPEC = importlib.util.spec_from_file_location('ui_standards', Path(__file__).parents[1] / 'ui_standards.py')
+SCRIPT = Path(__file__).parents[1] / 'ui_standards.py'
+SPEC = importlib.util.spec_from_file_location('ui_standards', SCRIPT)
 ui_standards = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ui_standards)
 
@@ -22,6 +24,119 @@ class UiStandardsTest(unittest.TestCase):
         self.assertFalse(ui_standards.is_ui_source('apps/dcl-scene-cli/testdata/golden/ui/src/index.tsx'))
         self.assertFalse(ui_standards.is_ui_source('rendering/bevy-explorer/source/src/file.ts'))
         self.assertFalse(ui_standards.is_ui_source('services/catalyst/src/main.rs'))
+
+    def test_deep_shared_imports(self):
+        found = ui_standards.deep_shared_imports(
+            'import { Button } from "@dcl/one-ui"\n'
+            'import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth"\n'
+            "import type { IconProps } from '@dcl/one-ui/foundations/icons'\n"
+            'export { theme } from "@dcl/one-ui/foundations"\n'
+            'const page = await import("@dcl/one-ui/components/NavBar/NavBar")\n'
+            'vi.mock("@dcl/one-ui/components/AppChrome/chrome-nav", () => ({}))\n'
+            'import { EventsPage } from "@dcl/one-ui/apps/sites/events/EventsPage"\n'
+            'import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url"\n'
+            'import { shopFlags } from "@dcl/one-ui/apps/shopping/flags"\n')
+        self.assertEqual(found, ['@dcl/one-ui/components/AppChrome/chrome-auth', '@dcl/one-ui/foundations/icons',
+                                 '@dcl/one-ui/foundations', '@dcl/one-ui/components/NavBar/NavBar',
+                                 '@dcl/one-ui/components/AppChrome/chrome-nav',
+                                 '@dcl/one-ui/apps/sites/events/EventsPage',
+                                 '@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url',
+                                 '@dcl/one-ui/apps/shopping/flags'])
+
+    def test_deep_shared_imports_allow_stylesheets_shop_and_hud_ui_and_comments(self):
+        self.assertEqual(ui_standards.deep_shared_imports(
+            'import "@dcl/one-ui/foundations.css"\n'
+            'import "@dcl/one-ui/foundations/colors/colors.css"\n'
+            'import styles from "@dcl/one-ui/text-styles.module.css"\n'
+            'import { shopSession } from "@dcl/one-ui/apps/shop/session"\n'
+            'import { ARM_MS } from "@dcl/one-ui/apps/hud/design"\n'
+            '// import { NavBar } from "@dcl/one-ui/components/NavBar/NavBar"\n'
+            'const ALIAS = "@dcl/one-ui/"\n'
+            'const other = "@dcl/one-ui-extra/components/X"\n'), [])
+
+    def test_shared_import_scope(self):
+        deep = 'import { NavBar } from "@dcl/one-ui/components/NavBar/NavBar"\n'
+        sources = {
+            'apps/sites/src/Page.tsx': deep,
+            'apps/sites/scripts/check.mts': deep,
+            'tooling/shop-parity/page.mts': deep,
+            'library/shop/cart.ts': deep,
+            'library/ui/test/consumer/types.ts': deep,
+            'rendering/bevy-explorer/source/react-web/src/App.tsx': deep,
+            'apps/sites/README.md': deep,
+            'apps/sites/src/Clean.tsx': 'import { NavBar } from "@dcl/one-ui"\n',
+            'apps/ui3/src/shop/discovery/components/LivePromo.tsx':
+                f'const A = lazy(() => import("{ui_standards.LAZY_ANIMATED_BACKGROUND}"))\n',
+            'apps/ui3/src/shop/discovery/components/LivePromo.test.tsx': deep,
+            'apps/ui3/src/Other.tsx': f'const A = lazy(() => import("{ui_standards.LAZY_ANIMATED_BACKGROUND}"))\n',
+        }
+        issues = ui_standards.shared_import_issues(sources, sources.__getitem__)
+        self.assertEqual([issue.split(':')[0] for issue in issues],
+                         ['apps/sites/scripts/check.mts', 'apps/sites/src/Page.tsx',
+                          'apps/ui3/src/Other.tsx', 'apps/ui3/src/shop/discovery/components/LivePromo.test.tsx',
+                          'library/shop/cart.ts', 'tooling/shop-parity/page.mts'])
+        self.assertIn("from '@dcl/one-ui' instead", issues[0])
+
+    def test_relative_shared_imports(self):
+        found = ui_standards.relative_shared_imports('apps/sites/scripts/check.mts', (
+            'import { SECTIONS } from "../../../library/ui/apps/sites/flow-map/exflowmapdata"\n'
+            "import type { IconProps } from '../../../library/ui/foundations/icons/index.ts'\n"
+            'export { Button } from "../../../library/ui/components/Button/Button"\n'
+            'import "../../../library/ui/foundations/setup"\n'
+            'let copy: typeof import("../../../library/ui/apps/sites/status/statusCopy.ts")\n'
+            'const page = await import("../../../library/ui/components/NavBar/NavBar")\n'
+            'const legacy = require("../../../library/ui/index.ts")\n'
+            'vi.mock("../../../library/ui/components/AppChrome/chrome-nav", () => ({}))\n'
+            'vi.doMock("../../../library/ui/svg/logo.svg?url")\n'
+            'import { x } from "../../../library/ui"\n'))
+        self.assertEqual(found, ['../../../library/ui/apps/sites/flow-map/exflowmapdata',
+                                 '../../../library/ui/foundations/icons/index.ts',
+                                 '../../../library/ui/components/Button/Button',
+                                 '../../../library/ui/foundations/setup',
+                                 '../../../library/ui/apps/sites/status/statusCopy.ts',
+                                 '../../../library/ui/components/NavBar/NavBar',
+                                 '../../../library/ui/index.ts',
+                                 '../../../library/ui/components/AppChrome/chrome-nav',
+                                 '../../../library/ui/svg/logo.svg?url',
+                                 '../../../library/ui'])
+
+    def test_relative_shared_imports_allow_stylesheets_tooling_fixtures_and_other_paths(self):
+        self.assertEqual(ui_standards.relative_shared_imports('apps/ui3/src/web/pages/StInvite.browser.test.ts', (
+            'import styles from "../../../../../library/ui/components/Button/Button.module.css"\n'
+            'import css from "../../../../../library/ui/components/Button/Button.module.css?inline"\n'
+            'import { openSession } from "../../../../../library/ui/figma/review/scripts/capture-browser.mjs"\n'
+            '// import { NavBar } from "../../../../../library/ui/components/NavBar/NavBar"\n'
+            "const fixture = 'import { x } from \"../../../../../library/ui/apps/shop/capabilities.ts\"'\n"
+            'const root = new URL("../../../../../library/ui/", import.meta.url)\n'
+            'import { flow } from "../../../../../library/web-core/flow-map"\n'
+            'import { ui } from "../../../../../library/uikit/index"\n'
+            'import { Page } from "./Page"\n'
+            'import { NavBar } from "@dcl/one-ui"\n')), [])
+
+    def test_relative_shared_imports_resolve_against_the_file(self):
+        specifier = 'import { x } from "../../library/ui/index.ts"\n'
+        self.assertEqual(ui_standards.relative_shared_imports('apps/sites/check.mts', specifier),
+                         ['../../library/ui/index.ts'])
+        self.assertEqual(ui_standards.relative_shared_imports('apps/sites/scripts/check.mts', specifier), [])
+
+    def test_relative_shared_import_scope(self):
+        relative = 'import { SECTIONS } from "../../../library/ui/apps/sites/flow-map/data"\n'
+        pending = 'apps/sites/src/routes/routes/_index.tsx'
+        sources = {
+            'apps/sites/scripts/check.mts': relative,
+            pending: 'import { x } from "' + '../' * pending.count('/') + 'library/ui/components/X"\n',
+            'apps/sites/README.md': relative,
+            'library/shop/scripts/x/check.mts': relative,
+            'tooling/shop-parity/page.mts': relative,
+            'apps/sites/scripts/clean.mts': 'import { SECTIONS } from "@web-core/flow-map"\n',
+        }
+        issues = ui_standards.shared_import_issues(sources, sources.__getitem__)
+        self.assertEqual(sorted(issue.split(':')[0] for issue in issues),
+                         sorted(['apps/sites/scripts/check.mts', pending]))
+        self.assertIn("from '@dcl/one-ui' instead", issues[0])
+
+    def test_shared_import_scope_empty(self):
+        self.assertEqual(ui_standards.shared_import_issues(set(), lambda name: ''), [])
 
     def test_forbidden_imports(self):
         self.assertTrue(ui_standards.forbidden_imports("import styled from 'styled-components'"))
@@ -101,6 +216,67 @@ class UiStandardsTest(unittest.TestCase):
         self.assertEqual(ui_standards.added_lines(diff), ['++i', 'const a = 1'])
 
 
+class TokensReportTest(unittest.TestCase):
+    LENGTHS = ui_standards.token_lengths(
+        '--dcl-space-8: 8px; --dcl-space-16: 16px; --dcl-radius-md: 12px; --dcl-font-size-body-md: 16px;')
+
+    def test_token_lengths_read_the_space_and_radius_tokens_only(self):
+        self.assertEqual(self.LENGTHS, {8.0, 12.0, 16.0})
+
+    def test_stylesheet_report_counts_literals_token_uses_and_drift(self):
+        css = ('/* no token for the hero: reference #0b0a0c */\n'
+               '.hero { background: #0b0a0c url("red.svg"); color: rgba(255, 255, 255, 0.6); border-color: white;\n'
+               '  padding: 16px 10px; border-radius: 12px; font-family: Inter, sans-serif; }\n'
+               '.card { color: var(--dcl-text-primary); gap: var(--dcl-space-8); outline: 1px solid transparent;\n'
+               '  white-space: nowrap; margin: 8px; content: "white"; }\n'
+               '@media (min-width: 768px) { .hero { padding: 0 16px; } }\n')
+        self.assertEqual(ui_standards.stylesheet_report(css, self.LENGTHS),
+                         {'colours': 3, 'lengths': 4, 'fonts': 1, 'tokens': 2, 'drift': 1})
+
+    def test_tokens_report_lists_each_stylesheet_and_the_totals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'a').mkdir()
+            (root / 'node_modules').mkdir()
+            (root / 'a' / 'A.module.css').write_text('.a { color: #fff; }')
+            (root / 'b.css').write_text('.b { gap: 8px; color: var(--dcl-text-primary); }')
+            (root / 'node_modules' / 'x.css').write_text('.x { color: red; }')
+            lines = ui_standards.tokens_report([str(root)], self.LENGTHS)
+            self.assertEqual(len(lines), 4)
+            self.assertIn('a/A.module.css', lines[1])
+            self.assertTrue(lines[3].startswith('total (2 files)'))
+            self.assertEqual(lines[3].split()[-5:], ['1', '1', '0', '1', '0'])
+            result = subprocess.run([sys.executable, str(SCRIPT), '--tokens', str(root)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines()[-1].split()[-5:], ['1', '1', '0', '1', '0'])
+
+    def test_token_floor_counts_tokens_and_primitives_outside_comments(self):
+        primitives = ui_standards.primitive_names(':root { --ink-1: #fff; --panel: #000; /* --gone: 1px; */ }')
+        self.assertEqual(primitives, {'--ink-1', '--panel'})
+        text = '.a { color: var(--dcl-text-default); background: var(--panel); border-color: var(--own); }\n/* var(--ink-1) */'
+        self.assertEqual(ui_standards.floor_counts(text, primitives), {'tokens': 1, 'primitives': 1})
+
+    def test_token_floor_fails_on_fewer_tokens_or_more_primitives(self):
+        floor = {'a.css': {'tokens': 3, 'primitives': 1}}
+        self.assertEqual(ui_standards.floor_issues(floor, {'a.css': {'tokens': 4, 'primitives': 0}}), [])
+        self.assertEqual(len(ui_standards.floor_issues(floor, {'a.css': {'tokens': 2, 'primitives': 2}})), 2)
+        self.assertEqual(ui_standards.floor_issues({}, {'new.css': {'tokens': 0, 'primitives': 1}}),
+                         ['new.css: 1 uses of atoms/primitives.css properties, the ceiling is 0'])
+
+    def test_token_floor_fails_on_an_entry_whose_stylesheet_is_gone(self):
+        floor = {'moved.css': {'tokens': 3, 'primitives': 0}, 'kept.css': {'tokens': 1, 'primitives': 0}}
+        current = {'kept.css': {'tokens': 1, 'primitives': 0}, 'new.css': {'tokens': 0, 'primitives': 0}}
+        self.assertEqual(ui_standards.floor_issues(floor, current),
+                         ['moved.css: the floor records a stylesheet that is not there; run --write-token-floor'])
+
+    def test_recorded_floor_leaves_out_a_stylesheet_with_no_use(self):
+        current = {'a.css': {'tokens': 2, 'primitives': 0}, 'b.css': {'tokens': 0, 'primitives': 1},
+                   'none.css': {'tokens': 0, 'primitives': 0}}
+        recorded = ui_standards.recorded_floor(current)
+        self.assertEqual(sorted(recorded), ['a.css', 'b.css'])
+        self.assertEqual(ui_standards.floor_issues(recorded, current), [])
+
+
 class UiStandardsIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -176,6 +352,52 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         self.commit('legacy')
         component.write_text("import styled from 'styled-components'\nexport const A = styled.div``\nexport const B = styled.span``\n")
         self.assertEqual(ui_standards.check('HEAD'), [])
+
+    def test_imported_files_pass_only_when_added(self):
+        (self.root / 'tooling').mkdir()
+        (self.root / ui_standards.IMPORTED).write_text('# imported\napps/sites/src/Old.tsx\napps/sites/src/Old.css\n')
+        component = self.path / 'Old.tsx'
+        component.write_text("import styled from 'styled-components'\n")
+        (self.path / 'Old.css').write_text('.root {}\n')
+        (self.path / 'New.tsx').write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/New.tsx: new CSS-in-JS imports are not allowed'])
+        self.commit('import')
+        component.write_text("import styled from 'styled-components'\nimport { css } from '@emotion/css'\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Old.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_import_list_cannot_grow_or_be_deleted_after_it_exists(self):
+        (self.root / 'tooling').mkdir()
+        listing = self.root / ui_standards.IMPORTED
+        listing.write_text('apps/sites/src/Old.tsx\n')
+        (self.path / 'Old.tsx').write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.commit('import')
+        listing.write_text('apps/sites/src/Old.tsx\napps/sites/src/New.tsx\n')
+        (self.path / 'New.tsx').write_text("import styled from 'styled-components'\n")
+        self.assertEqual(ui_standards.check('HEAD'), [
+            f'{ui_standards.IMPORTED}: paths can\'t be added to the import list',
+            'apps/sites/src/New.tsx: new CSS-in-JS imports are not allowed',
+        ])
+        listing.unlink()
+        self.assertEqual(ui_standards.check('HEAD')[0], f'{ui_standards.IMPORTED}: the import list can\'t be deleted; empty it instead')
+        listing.write_text('')
+        (self.path / 'New.tsx').unlink()
+        self.assertEqual(ui_standards.check('HEAD'), [])
+
+    def test_listed_path_deleted_then_re_added_is_checked(self):
+        (self.root / 'tooling').mkdir()
+        (self.root / ui_standards.IMPORTED).write_text('apps/sites/src/Old.tsx\n')
+        component = self.path / 'Old.tsx'
+        component.write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.commit('import')
+        self.git('rm', '-q', 'apps/sites/src/Old.tsx')
+        self.commit('delete')
+        self.path.mkdir(parents=True, exist_ok=True)
+        component.write_text("import styled from 'styled-components'\n")
+        self.git('add', '.')
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Old.tsx: new CSS-in-JS imports are not allowed'])
 
     def test_colored_diff_config_does_not_hide_added_lines(self):
         self.git('config', 'color.diff', 'always')

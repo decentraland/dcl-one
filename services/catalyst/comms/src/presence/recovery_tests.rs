@@ -30,11 +30,14 @@ type SourceRooms = Vec<(String, String, Vec<(String, String)>)>;
 #[derive(Default)]
 struct Source {
     fail: AtomicBool,
+    fail_inventory_after_roster: AtomicBool,
     empty: AtomicBool,
     sid_changed: AtomicBool,
     enumerate: AtomicUsize,
     rooms: Mutex<SourceRooms>,
     dirty_on_read: Mutex<Option<Arc<Presence>>>,
+    /// The room a roster read's event names, when not the room being read.
+    dirty_room: Mutex<Option<String>>,
     not_found_remaining: AtomicUsize,
     recreate_on_not_found: AtomicBool,
     roster_reads: AtomicUsize,
@@ -53,6 +56,11 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
             use axum::response::IntoResponse;
             if source.fail.load(Ordering::SeqCst) { return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(); }
             if uri.path().ends_with("ListRooms") {
+                if source.fail_inventory_after_roster.load(Ordering::SeqCst)
+                    && source.roster_reads.load(Ordering::SeqCst) != 0
+                {
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
                 let call = source.enumerate.fetch_add(1, Ordering::SeqCst);
                 let values = if source.empty.load(Ordering::SeqCst) { vec![] } else {
                     source.rooms.lock().iter().map(|(name,sid,_)| json!({"name":name,"sid":if source.sid_changed.load(Ordering::SeqCst) && call%2 == 1 { "RM_recreated" } else { sid }})).collect::<Vec<_>>()
@@ -67,7 +75,8 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
                     return axum::http::StatusCode::NOT_FOUND.into_response();
                 }
                 if let Some(presence) = source.dirty_on_read.lock().as_ref() {
-                    presence.invalidate_room(body["room"].as_str().unwrap());
+                    let room = source.dirty_room.lock().clone();
+                    presence.invalidate_room(room.as_deref().unwrap_or_else(|| body["room"].as_str().unwrap()));
                 }
                 let values = source.rooms.lock().iter().find(|(name,_,_)| Some(name.as_str()) == body["room"].as_str())
                     .map(|(_,_,people)| people.iter().map(|(identity,sid)| json!({"identity":identity,"sid":sid})).collect::<Vec<_>>()).unwrap_or_default();
@@ -76,21 +85,30 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
         }
     )).with_state(source.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mut settings = Settings::for_tests();
-    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let api_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let state = Arc::new(CommsState::new(
-        sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
-        crate::http::Outbound::for_tests(),
-        settings,
-        None,
-        None,
-        Arc::new(StubPolicy::default()),
-        Arc::new(Catalogue::default()),
-        Arc::new(Presence::new()),
-        Arc::new(StubDirectory::default()),
-    ));
+    let state = replica(&api_url, Arc::new(crate::gatekeeper::bus::DisabledBus));
     (state, source, server)
+}
+
+/// One `serve` replica over the shared LiveKit `api_url` and NATS `bus`.
+fn replica(api_url: &str, bus: Arc<dyn crate::gatekeeper::bus::NatsBus>) -> Arc<CommsState> {
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = api_url.to_owned();
+    Arc::new(
+        CommsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            crate::http::Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(Catalogue::default()),
+            Arc::new(Presence::new()),
+            Arc::new(StubDirectory::default()),
+        )
+        .with_bus(bus),
+    )
 }
 
 async fn get(app: &Router, path: &str) -> (axum::http::StatusCode, Value) {
@@ -138,8 +156,7 @@ async fn real_worker_source_down_keeps_http_healthy_expires_then_recovers_and_cl
     let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
     let app = router(state.presence.clone());
     let unknown = get(&app, "/live-data").await;
-    assert_eq!(unknown.0, axum::http::StatusCode::OK);
-    assert_eq!(unknown.1["lastUpdated"], "1970-01-01T00:00:00.000Z");
+    assert_eq!(unknown.0, axum::http::StatusCode::SERVICE_UNAVAILABLE);
     assert!(
         state
             .presence
@@ -176,12 +193,12 @@ async fn real_worker_source_down_keeps_http_healthy_expires_then_recovers_and_cl
     elapse(Duration::from_secs(60)).await;
     wait_pass(&jobs, 3).await;
     let (status, expired) = get(&app, "/live-data").await;
-    assert_eq!(status, axum::http::StatusCode::OK);
-    assert_eq!(expired["data"], json!({"totalUsers":0,"perWorld":[]}));
-    assert_eq!(expired["lastUpdated"], initial["lastUpdated"]);
+    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(expired["error"], "Service Unavailable");
+    assert_eq!(state.presence.last_updated(), initial["lastUpdated"]);
     assert_eq!(
         get(&app, "/wallet/watch:foo/connected-world").await.0,
-        axum::http::StatusCode::NOT_FOUND
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
 
     // The error retry doubles to its 5 s cap (plus up to 1 s of jitter).
@@ -342,11 +359,145 @@ async fn same_scope_refresh_is_single_flight_and_does_not_refresh_global_source_
     server.abort();
 }
 
+#[tokio::test]
+async fn island_and_voice_events_leave_occupancy_reads_valid_but_an_unseen_world_room_does_not() {
+    let (state, source, server) = fixture().await;
+    state.presence.recover_complete(&state).await.unwrap();
+    let lobby = Scope::Lobby("foo.dcl.eth".into());
+    for room in ["island-fixture", "voice-chat-private-fixture"] {
+        state.presence.invalidate_room(room);
+        assert_eq!(state.presence.admission_count(&lobby), Some(1), "{room}");
+    }
+    *source.dirty_on_read.lock() = Some(state.presence.clone());
+    for room in ["island-fixture", "voice-chat-private-fixture"] {
+        *source.dirty_room.lock() = Some(room.into());
+        state.presence.recover_complete(&state).await.unwrap();
+        // An unseen world room's event sends the next admission read to LiveKit.
+        state.presence.invalidate_room("world-unseen.dcl.eth");
+        assert_eq!(state.presence.admission_count(&lobby), None);
+        assert_eq!(
+            state
+                .presence
+                .admission_occupancy(&state, "foo.dcl.eth", false)
+                .await
+                .unwrap(),
+            1,
+            "{room}"
+        );
+    }
+    *source.dirty_room.lock() = Some("world-unseen.dcl.eth".into());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    assert!(matches!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await,
+        Err(RecoveryFailure::Changed)
+    ));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_scoped_read_classifies_only_rooms_that_could_hold_its_participants() {
+    let (mut state, source, server) = fixture().await;
+    {
+        let mut rooms = source.rooms.lock();
+        rooms.push(("world-bar.dcl.eth".into(), "RM_bar".into(), vec![]));
+        rooms.push(("island-fixture".into(), "RM_island".into(), vec![]));
+        for index in 0..8 {
+            rooms.push((
+                format!("world-other{index}.dcl.eth"),
+                format!("RM_other{index}"),
+                vec![],
+            ));
+        }
+    }
+    let catalogue = Arc::new(Catalogue::default());
+    Arc::get_mut(&mut state).unwrap().scenes = catalogue.clone();
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await
+            .unwrap(),
+        1
+    );
+    let classified = std::mem::take(&mut *catalogue.classified.lock());
+    assert!(!classified.is_empty());
+    assert!(
+        classified.iter().all(|room| room == "world-foo.dcl.eth"),
+        "{classified:?}"
+    );
+    state.presence.recover_complete(&state).await.unwrap();
+    assert!(
+        catalogue
+            .classified
+            .lock()
+            .iter()
+            .any(|room| room == "world-other0.dcl.eth")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_scenes_read_counts_its_world_scene_rooms_and_skips_other_worlds() {
+    use crate::world_identity::{RealmId, SceneId, WorldName};
+    let (mut state, source, server) = fixture().await;
+    let mut catalogue = Catalogue::default();
+    let mut rooms = vec![];
+    for (world, watcher) in [
+        ("foo.dcl.eth", "foo-scene-watch"),
+        ("bar.dcl.eth", "bar-scene-watch"),
+    ] {
+        let world = WorldName::parse(world).unwrap();
+        let scene = SceneId::parse("bafkscene").unwrap();
+        let room = crate::rooms::worlds_service_scene_room(&world, &scene);
+        rooms.push(room.clone());
+        source.rooms.lock().push((
+            room.clone(),
+            format!("RM_{watcher}"),
+            vec![(watcher.into(), format!("PA_{watcher}"))],
+        ));
+        catalogue.extra.insert(
+            room.clone(),
+            crate::rooms::ResolvedRoom {
+                realm: RealmId::World(world),
+                scene_id: Some(scene),
+                deployment: None,
+                room,
+            },
+        );
+    }
+    let catalogue = Arc::new(catalogue);
+    Arc::get_mut(&mut state).unwrap().scenes = catalogue.clone();
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", true)
+            .await
+            .unwrap(),
+        1
+    );
+    let classified = catalogue.classified.lock().clone();
+    assert!(classified.contains(&rooms[0]), "{classified:?}");
+    assert!(!classified.contains(&rooms[1]), "{classified:?}");
+    server.abort();
+}
+
 #[derive(Default)]
 struct Catalogue {
     refusal: Option<(String, RoomRefusal)>,
+    legacy: Option<(
+        String,
+        crate::world_identity::WorldName,
+        crate::world_identity::SceneId,
+    )>,
     unavailable: Option<String>,
     extra: HashMap<String, crate::rooms::ResolvedRoom>,
+    classified: Mutex<Vec<String>>,
 }
 #[async_trait::async_trait]
 impl crate::interfaces::SceneIdentity for Catalogue {
@@ -354,6 +505,7 @@ impl crate::interfaces::SceneIdentity for Catalogue {
         &self,
         room: &str,
     ) -> Result<RoomClassification, crate::rooms::ResolveError> {
+        self.classified.lock().push(room.to_owned());
         if self.unavailable.as_deref() == Some(room) {
             return Err(crate::rooms::ResolveError::Db(sqlx::Error::Protocol(
                 "injected catalogue outage".into(),
@@ -365,6 +517,14 @@ impl crate::interfaces::SceneIdentity for Catalogue {
             return Ok(RoomClassification::RelevantRefused {
                 room: room.into(),
                 reason: *reason,
+            });
+        }
+        if let Some((name, world, scene)) = &self.legacy
+            && name == room
+        {
+            return Ok(RoomClassification::LegacyWorldScene {
+                world: world.clone(),
+                scene: scene.clone(),
             });
         }
         if let Some(resolved) = self.extra.get(room) {
@@ -570,6 +730,12 @@ async fn baseline_world_lobby_and_scene_counts_remain_scoped() {
         axum::http::StatusCode::OK
     );
     assert_eq!(
+        get(&app, "/wallet/Authoritative-Server/connected-world")
+            .await
+            .0,
+        axum::http::StatusCode::NOT_FOUND
+    );
+    assert_eq!(
         get(&app, "/wallet/shared-wallet/connected-world").await.0,
         axum::http::StatusCode::NOT_FOUND
     );
@@ -624,7 +790,6 @@ async fn a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined() 
         ),
         ("world-foo.dcl.eth-scene", RoomRefusal::Ambiguous, true),
         ("world-Foo.dcl.eth", RoomRefusal::Noncanonical, true),
-        ("world-foo.dcl.eth-scene", RoomRefusal::Legacy, true),
     ] {
         *source.rooms.lock() = vec![
             (
@@ -694,6 +859,54 @@ async fn a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined() 
     server.abort();
 }
 
+#[tokio::test]
+async fn a_legacy_scene_room_locates_its_wallet_without_granting_room_authority() {
+    use crate::world_identity::{SceneId, WorldName};
+    let (mut state, source, server) = fixture().await;
+    let room = "world-scene-room-foo.dcl.eth-scene";
+    source.rooms.lock().push((
+        room.into(),
+        "RM_legacy".into(),
+        vec![(
+            "0x00000000000000000000000000000000000000aa".into(),
+            "PA_legacy".into(),
+        )],
+    ));
+    Arc::get_mut(&mut state).unwrap().scenes = Arc::new(Catalogue {
+        legacy: Some((
+            room.into(),
+            WorldName::parse("foo.dcl.eth").unwrap(),
+            SceneId::parse("Scene").unwrap(),
+        )),
+        ..Default::default()
+    });
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    state.presence.recover_complete(&state).await.unwrap();
+    let app = router(state.presence.clone());
+    let (status, connected) = get(
+        &app,
+        "/wallet/0x00000000000000000000000000000000000000aa/connected-world",
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(connected["world"], "foo.dcl.eth");
+    assert_eq!(get(&app, "/live-data").await.1["data"]["totalUsers"], 1);
+    assert!(matches!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", true)
+            .await,
+        Err(RecoveryFailure::Unresolved)
+    ));
+    assert!(
+        !topology
+            .snapshot()
+            .is_online("0x00000000000000000000000000000000000000aa")
+    );
+    server.abort();
+}
+
 #[test]
 fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
     let presence = Presence::new();
@@ -702,6 +915,7 @@ fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
         sid: format!("RM_{world}"),
         realm: world.into(),
         is_world: true,
+        legacy: false,
         scene: None,
         participants: vec![crate::shared::livekit::OccupancyParticipant {
             identity: "0xAaAa".into(),
@@ -729,8 +943,16 @@ fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
         presence.get_peer_world("0xAAAA").unwrap().as_deref(),
         Some("bar.dcl.eth")
     );
-    publish(vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 2_000)]);
-    assert_eq!(presence.get_peer_world("0xaaaa"), Err(AmbiguousWorld));
+    for order in [
+        vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 2_000)],
+        vec![room("bar.dcl.eth", 2_000), room("foo.dcl.eth", 2_000)],
+    ] {
+        publish(order);
+        assert_eq!(
+            presence.get_peer_world("0xaaaa").unwrap().as_deref(),
+            Some("bar.dcl.eth")
+        );
+    }
 }
 
 #[tokio::test]
@@ -754,14 +976,25 @@ async fn classifier_store_error_among_valid_rooms_is_not_empty_or_successful_obs
     assert!(Arc::ptr_eq(&state.presence.complete(), &published));
     assert_eq!(state.presence.last_updated(), observed);
     assert_eq!(state.presence.world_participant_count("foo.dcl.eth"), 1);
-    state.presence.invalidate_room("world-foo.dcl.eth");
+    // A scoped read classifies only the rooms that could hold its
+    // participants: the outage keeps bar undetermined, not foo. An unseen
+    // world room's event sends both reads to LiveKit.
+    state.presence.invalidate_room("world-unseen.dcl.eth");
     assert!(matches!(
         state
             .presence
-            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .admission_occupancy(&state, "bar.dcl.eth", false)
             .await,
         Err(RecoveryFailure::Source)
     ));
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await
+            .unwrap(),
+        1
+    );
     assert!(Arc::ptr_eq(&state.presence.complete(), &published));
     assert_eq!(state.presence.last_updated(), observed);
     server.abort();
@@ -863,8 +1096,7 @@ async fn repeated_not_found_stops_after_one_retry_and_preserves_snapshot_and_tim
 }
 
 #[tokio::test]
-async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_recovers() {
-    use tower::ServiceExt;
+async fn equal_join_timestamps_select_the_first_world_then_follow_the_remaining_room() {
     let (state, source, server) = fixture().await;
     *source.rooms.lock() = vec![
         (
@@ -880,31 +1112,10 @@ async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_
     ];
     state.presence.recover_complete(&state).await.unwrap();
     let before = state.presence.complete();
-    assert_eq!(state.presence.get_peer_world("0xAAAA"), Err(AmbiguousWorld));
     let app = router(state.presence.clone());
-    let response = app
-        .clone()
-        .oneshot(
-            axum::http::Request::get("/wallet/0xAAAA/connected-world")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        axum::http::StatusCode::SERVICE_UNAVAILABLE
-    );
-    assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "1");
-    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
-        .await
-        .unwrap();
-    let error: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(error["error"], "Service Unavailable");
-    assert_eq!(
-        error["message"],
-        "Connected world could not be decided; retry shortly."
-    );
+    let (status, body) = get(&app, "/wallet/0xAAAA/connected-world").await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body, json!({"wallet":"0xAAAA","world":"bar.dcl.eth"}));
     assert!(Arc::ptr_eq(&state.presence.complete(), &before));
     assert_eq!(
         state.presence.world_counts(),
@@ -1215,5 +1426,210 @@ async fn exact_scene_rejects_unsupported_or_unavailable_scope_even_with_fresh_co
     assert!(Arc::ptr_eq(&state.presence.complete(), &published));
     assert_eq!(state.presence.last_updated(), observed);
     assert_eq!(state.presence.comms_stats().users, 1);
+    server.abort();
+}
+
+const WORLD_WALLET: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const GENESIS_WALLET: &str = "0xcccccccccccccccccccccccccccccccccccccccc";
+
+fn passes(jobs: &crate::jobs::Jobs) -> u64 {
+    jobs.report()
+        .iter()
+        .find(|r| r.name == "comms-occupancy-recovery")
+        .map_or(0, |r| r.passes)
+}
+
+/// A verified LiveKit webhook for `WORLD_WALLET`'s session `sid` in the foo lobby.
+async fn webhook(app: &Router, id: &str, kind: &str, sid: &str) {
+    use tower::ServiceExt;
+    let settings = Settings::for_tests();
+    let body = serde_json::to_vec(&json!({ "id": id, "createdAt": 1718900000, "event": kind, "room": { "name": "world-foo.dcl.eth" }, "participant": { "identity": WORLD_WALLET, "sid": sid } })).unwrap();
+    let jwt = crate::gatekeeper::webhook::test_support::webhook_jwt(
+        &body,
+        &settings.livekit.api_key,
+        &settings.livekit.api_secret,
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::post("/livekit-webhook")
+                .header("content-type", "application/webhook+json")
+                .header("authorization", jwt)
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+}
+
+async fn advance_until_pass(jobs: &[crate::jobs::Jobs], pass: u64) {
+    for _ in 0..10 {
+        elapse(Duration::from_secs(6)).await;
+        for _ in 0..100 {
+            if jobs.iter().all(|jobs| passes(jobs) >= pass) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+    panic!("recovery workers did not finish pass {pass}");
+}
+
+#[tokio::test]
+async fn world_events_reach_every_replica_at_once_and_complete_reads_correct_drift() {
+    let (first, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![("authoritative-server".into(), "PA_server".into())];
+    source.rooms.lock().push((
+        "scene:main:GenesisScene".into(),
+        "RM_genesis".into(),
+        vec![(GENESIS_WALLET.into(), "PA_genesis".into())],
+    ));
+    let bus = Arc::new(crate::gatekeeper::bus::InProcessBus::new());
+    let replicas = [
+        replica(&first.livekit.api_url, bus.clone()),
+        replica(&first.livekit.api_url, bus.clone()),
+    ];
+    let topologies = replicas.each_ref().map(|replica| {
+        let topology = Arc::new(crate::topology::Topology::default());
+        replica.presence.attach_topology(topology.clone());
+        topology
+    });
+    let jobs = replicas.each_ref().map(|replica| {
+        let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
+        replica.spawn_presence_recovery(&jobs);
+        jobs
+    });
+    for jobs in &jobs {
+        wait_pass(jobs, 1).await;
+    }
+    assert!(
+        topologies.iter().all(|t| t.snapshot().wallets.is_empty()),
+        "World rooms only: Genesis comes from Pulse, servers never count"
+    );
+
+    // One replica's webhook; both replicas apply it before any read.
+    let app = crate::gatekeeper::router(replicas[0].clone());
+    webhook(&app, "EV_join", "participant_joined", "PA_1").await;
+    assert!(
+        topologies
+            .iter()
+            .all(|t| t.snapshot().is_online(WORLD_WALLET))
+    );
+    webhook(&app, "EV_join_again", "participant_joined", "PA_1").await;
+    webhook(&app, "EV_leave", "participant_left", "PA_1").await;
+    assert!(
+        topologies
+            .iter()
+            .all(|t| !t.snapshot().is_online(WORLD_WALLET))
+    );
+    assert!(
+        jobs.iter().all(|jobs| passes(jobs) == 1),
+        "no read was needed"
+    );
+
+    // A join whose leave never arrives: the next complete read ends it.
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_2".into())];
+    webhook(&app, "EV_join_2", "participant_joined", "PA_2").await;
+    source.rooms.lock()[0].2.clear();
+    // Whichever wait each replica is in (the webhook replica's own invalidation
+    // shortens its), advance until both have read again, well inside the TTL.
+    advance_until_pass(&jobs, 2).await;
+    assert!(
+        topologies
+            .iter()
+            .all(|t| !t.snapshot().is_online(WORLD_WALLET))
+    );
+
+    // A restarted replica missed every event and recovers on its first read.
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_3".into())];
+    let restarted = replica(&first.livekit.api_url, bus.clone());
+    let fresh = Arc::new(crate::topology::Topology::default());
+    restarted.presence.attach_topology(fresh.clone());
+    assert!(!fresh.snapshot().is_online(WORLD_WALLET));
+    let restarted_jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
+    restarted.spawn_presence_recovery(&restarted_jobs);
+    wait_pass(&restarted_jobs, 1).await;
+    assert!(fresh.snapshot().is_online(WORLD_WALLET));
+
+    // LiveKit unreachable: an unconfirmed session ages out instead of staying online.
+    source.fail.store(true, Ordering::SeqCst);
+    elapse(crate::topology::WORLD_OCCUPANCY_TTL + Duration::from_secs(1)).await;
+    assert!(!fresh.snapshot().is_online(WORLD_WALLET));
+
+    for jobs in jobs.into_iter().chain([restarted_jobs]) {
+        jobs.shutdown(Duration::from_secs(1)).await;
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_read_a_webhook_overtook_still_feeds_the_online_view() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_1".into())];
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    *source.dirty_on_read.lock() = Some(state.presence.clone());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    assert_eq!(state.presence.last_updated(), "1970-01-01T00:00:00.000Z");
+    assert!(topology.snapshot().is_online(WORLD_WALLET));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_read_that_fails_after_listing_confirms_and_ends_nothing() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_listed".into())];
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    // Announced by an event, absent from LiveKit's listing.
+    topology.apply_world_event("PA_unlisted", GENESIS_WALLET, true);
+    // The inventory changes between enumerations: the read fails after its rosters.
+    source.sid_changed.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    let view = topology.snapshot();
+    assert!(view.is_online(WORLD_WALLET), "listed: confirmed");
+    assert!(
+        view.is_online(GENESIS_WALLET),
+        "unlisted: not ended by a failed read"
+    );
+    // LiveKit itself down: nothing is confirmed.
+    source.sid_changed.store(false, Ordering::SeqCst);
+    source.fail.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Source)
+    ));
+    elapse(crate::topology::WORLD_OCCUPANCY_TTL + Duration::from_secs(1)).await;
+    let view = topology.snapshot();
+    assert!(
+        !view.is_online(WORLD_WALLET),
+        "a source failure confirms nothing"
+    );
+    assert!(!view.is_online(GENESIS_WALLET));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_source_failure_discards_rosters_already_read() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_listed".into())];
+    source
+        .fail_inventory_after_roster
+        .store(true, Ordering::SeqCst);
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Source)
+    ));
+    assert_eq!(source.roster_reads.load(Ordering::SeqCst), 1);
+    assert!(!topology.snapshot().is_online(WORLD_WALLET));
     server.abort();
 }

@@ -1,0 +1,40 @@
+.TemplatesPage .Filters .filter-by {
+  text-transform: none;
+  margin-left: 36px;
+  display: flex;
+  align-items: center;
+}
+
+.TemplatesPage .Filters .filter-by .filter-chip {
+  margin-left: 12px;
+  cursor: pointer;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+/* The font and the outline of the filter and tag chips. */
+.TemplatesPage .filter-chip,
+.TemplatesPage .tag-chip {
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+}
+
+.TemplatesPage .filter-chip[data-variant="outlined"],
+.TemplatesPage .tag-chip {
+  padding: 0 11px;
+  border: 1px solid #bdbdbd;
+  box-shadow: none;
+}
+
+.TemplatesPage .template-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.TemplatesPage .ProjectCard .title h6 {
+  font-size: 20px;
+}
+
+.TemplatesPage .ProjectCard .info {
+  padding: 16px;
+}

@@ -33,9 +33,16 @@ const WORK_RUNNING: &str = "comms_cluster_work_running";
 const WORK_QUEUED: &str = "comms_cluster_work_queued";
 const FEED_OVERSIZED: &str = "comms_cluster_feed_oversized_total";
 const FEED_INVALID_SUBJECT: &str = "comms_cluster_feed_invalid_subject_total";
+const WS_UNATTRIBUTED: &str = "comms_ws_unattributed_upgrades_total";
+const WS_PENDING_EVICTED: &str = "comms_ws_pending_evictions_total";
+const WS_PENDING_HELD: &str = "comms_ws_pending_handshakes";
 
-const COUNTERS: [&str; 20] = [
+const SELECTED_SLOTS: &str = "comms_cluster_selected_slots";
+const SELECTED_REFUSED: &str = "comms_cluster_selected_slot_refused_total";
+
+const COUNTERS: [&str; 23] = [
     EVENTS_RECEIVED,
+    SELECTED_REFUSED,
     CONNECTS_RECEIVED,
     TOKENS_MINTED,
     PUBLISHED,
@@ -55,6 +62,8 @@ const COUNTERS: [&str; 20] = [
     WORK_CANCELLED,
     FEED_OVERSIZED,
     FEED_INVALID_SUBJECT,
+    WS_UNATTRIBUTED,
+    WS_PENDING_EVICTED,
 ];
 
 /// Renders every cluster series at 0 so a dashboard and an alert both have a value to compare
@@ -68,6 +77,15 @@ pub fn register_series() {
         counter!(WORK_REJECTED, "reason" => reason).increment(0);
     }
     cluster_work_depths(0, 0);
+    selected_slot_occupancy(0);
+    ws_pending_handshakes(0);
+}
+
+pub(crate) fn selected_slot_occupancy(slots: usize) {
+    gauge!(SELECTED_SLOTS).set(slots as f64);
+}
+pub(crate) fn selected_slot_refused() {
+    counter!(SELECTED_REFUSED).increment(1);
 }
 
 pub fn cluster_event_received() {
@@ -164,6 +182,36 @@ pub(crate) fn cluster_feed_invalid_subject() {
     counter!(FEED_INVALID_SUBJECT).increment(1);
 }
 
+/// A pending `/ws` handshake closed because a newer socket took its place in a full
+/// `WS_MAX_PENDING_HANDSHAKES` share. A steady rate under normal load means the share is too small
+/// for the node's join rate.
+pub(crate) fn ws_pending_eviction() {
+    counter!(WS_PENDING_EVICTED).increment(1);
+}
+
+/// `/ws` sockets currently in the handshake, out of `WS_MAX_PENDING_HANDSHAKES`.
+pub(crate) fn ws_pending_handshakes(held: usize) {
+    gauge!(WS_PENDING_HELD).set(held as f64);
+}
+
+/// A `/ws` upgrade the per-client cap cannot attribute; warns on the first
+/// one in this process and answers whether it did.
+pub(crate) fn ws_unattributed_upgrade() -> bool {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    note_unattributed_upgrade(&WARNED)
+}
+
+fn note_unattributed_upgrade(warned: &std::sync::atomic::AtomicBool) -> bool {
+    counter!(WS_UNATTRIBUTED).increment(1);
+    let first = !warned.swap(true, std::sync::atomic::Ordering::Relaxed);
+    if first {
+        tracing::warn!(
+            "a /ws upgrade has no attributable client address (gateway peer outside HTTP_TRUSTED_PROXY_CIDRS, or no X-Real-IP); WS_MAX_SOCKETS_PER_IP does not count such sockets"
+        );
+    }
+    first
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,6 +227,42 @@ mod tests {
     }
 
     #[test]
+    fn pending_handshake_evictions_and_depth_are_exported() {
+        let rendered = render_recorded(|| {
+            let pending = crate::archipelago::state::PendingHandshakes::new(2);
+            let _oldest = pending.admit();
+            let _middle = pending.admit();
+            let _newest = pending.admit();
+            let _next = pending.admit();
+        });
+        assert!(
+            rendered.contains(&format!("{WS_PENDING_EVICTED} 2")),
+            "{rendered}"
+        );
+        // The last sample is taken as the slots drop at the end of the closure.
+        assert!(
+            rendered.contains(&format!("{WS_PENDING_HELD} 0")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn unattributed_upgrades_count_every_one_and_warn_once() {
+        let once = std::sync::atomic::AtomicBool::new(false);
+        let mut warned = Vec::new();
+        let rendered = render_recorded(|| {
+            for _ in 0..3 {
+                warned.push(note_unattributed_upgrade(&once));
+            }
+        });
+        assert_eq!(warned, [true, false, false]);
+        assert!(
+            rendered.contains(&format!("{WS_UNATTRIBUTED} 3")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn every_cluster_series_renders_before_the_first_event() {
         let rendered = render_recorded(register_series);
         for name in COUNTERS.iter().chain(
@@ -186,6 +270,8 @@ mod tests {
                 crate::gatekeeper::bus::metrics::NATS_CONNECTED,
                 WORK_RUNNING,
                 WORK_QUEUED,
+                SELECTED_SLOTS,
+                WS_PENDING_HELD,
             ]
             .iter(),
         ) {
@@ -210,6 +296,8 @@ mod tests {
             cluster_feed_oversized();
             cluster_feed_invalid_subject();
             cluster_work_depths(32, 992);
+            selected_slot_occupancy(20_000);
+            selected_slot_refused();
         });
         for sample in [
             format!("{WORK_REJECTED}{{reason=\"wallet_full\"}} 1"),
@@ -218,6 +306,8 @@ mod tests {
             format!("{WORK_CANCELLED} 1"),
             format!("{FEED_OVERSIZED} 1"),
             format!("{FEED_INVALID_SUBJECT} 1"),
+            format!("{SELECTED_SLOTS} 20000"),
+            format!("{SELECTED_REFUSED} 1"),
             format!("{WORK_RUNNING} 32"),
             format!("{WORK_QUEUED} 992"),
         ] {

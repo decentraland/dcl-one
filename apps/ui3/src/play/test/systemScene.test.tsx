@@ -11,7 +11,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { isTrustedSystemScene, SYSTEM_SCENE } from '../lib/systemScene'
 import { isTrustedBaseDomain } from '../lib/baseDomain'
-import { UntrustedLaunchGate } from '../features/gate/UntrustedLaunchGate'
+import { UntrustedLaunchGate } from '@hud/features/gate/UntrustedLaunchGate'
 
 describe('isTrustedSystemScene', () => {
   it('accepts the default bridge scene, with or without a trailing slash', () => {

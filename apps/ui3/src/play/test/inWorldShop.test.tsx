@@ -2,13 +2,13 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import { tryOnUrn, webShopUrl } from '../features/shop/itemLinks'
+import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import { tryOnUrn, webShopUrl } from '@dcl/one-ui/apps/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { defaultFilters, pageCount, readsListings, serverSort, SHOP_PAGE_SIZE, shopQueries, statusOf, type CatalogueFilters } from '../features/shop/catalogueQuery'
-import { PopupHost, resetPopups } from '../design'
-import type { Wearable } from '../engine/protocol'
-import { fakeProfileState } from './harness'
+import { defaultFilters, pageCount, readsListings, serverSort, SHOP_PAGE_SIZE, shopQueries, statusOf, type CatalogueFilters } from '@dcl/one-ui/apps/shop/catalogueQuery'
+import { PopupHost, resetPopups } from '@hud/design'
+import type { Wearable } from '@explorer-core/engine/protocol'
+import { fakeProfileState } from '@hud/test/harness'
 
 const CONTRACT = '0x1111111111111111111111111111111111111111'
 const CREATOR = '0x2222222222222222222222222222222222222222'
@@ -566,7 +566,7 @@ describe('in-world shop', () => {
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'Golden Armor' }))
     const panel = screen.getByRole('complementary', { name: 'Golden Armor' })
-    expect(within(panel).getByText(/epic\s*35\/1000/i)).toBeInTheDocument()
+    expect(within(panel).getByText('35/1000').parentElement).toHaveTextContent(/^epic 35\/1000$/i)
     expect(await within(panel).findByText('No flesh, just bones!')).toBeInTheDocument()
     expect(within(panel).getByText('tiara')).toBeInTheDocument()
     expect(within(panel).getByRole('button', { name: /buy item/i })).toBeInTheDocument()
@@ -779,6 +779,6 @@ describe('in-world shop', () => {
     renderShop()
     const nav = screen.getAllByRole('navigation').find((n) => n.getAttribute('aria-label') !== 'Pages')!
     const labels = within(nav).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\[.*\]$/, ''))
-    expect(labels.slice(0, 3)).toEqual(['Places', 'Shop', 'Events'])
+    expect(labels).toEqual(['Events', 'Places', 'Shop', 'Communities', 'Map', 'Backpack', 'Gallery', 'Settings'])
   })
 })

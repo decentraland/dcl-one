@@ -6,7 +6,7 @@
 // never re-priced in MANA here.
 
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
-import { type ShopClient } from "../../api/shop";
+import { type ShopClient } from "@shop/api/shop";
 import { shopClient } from "../../api/host";
 
 export type FavoriteItem = {

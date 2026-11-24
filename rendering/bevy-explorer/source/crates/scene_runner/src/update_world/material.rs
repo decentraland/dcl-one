@@ -1,6 +1,7 @@
 use std::{
     hash::{Hash, Hasher},
     sync::OnceLock,
+    time::Duration,
 };
 
 use bevy::{
@@ -21,8 +22,11 @@ use comms::profile::ProfileManager;
 use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer};
 
 use crate::{
-    gltf_resolver::GltfMaterialResolver, renderer_context::RendererSceneContext,
-    update_scene::pointer_results::ResolveCursor, ContainerEntity, SceneEntity, SceneSets,
+    gltf_resolver::GltfMaterialResolver,
+    renderer_context::RendererSceneContext,
+    scene_spawn_slice::{mark_waiting, InstantiationBudget},
+    update_scene::pointer_results::ResolveCursor,
+    ContainerEntity, SceneEntity, SceneSets,
 };
 use dcl_component::{
     proto_components::{
@@ -38,7 +42,11 @@ use dcl_component::{
 use dcl_types::interface::{ComponentPosition, CrdtType};
 use scene_material::{SceneBound, SceneMaterial};
 
-use super::{mesh_renderer::update_mesh, scene_ui::UiTextureOutput, AddCrdtInterfaceExt};
+use super::{
+    mesh_renderer::{update_mesh, PendingPrimitive},
+    scene_ui::UiTextureOutput,
+    AddCrdtInterfaceExt,
+};
 
 pub struct MaterialDefinitionPlugin;
 
@@ -53,9 +61,13 @@ pub struct BaseMaterial {
 pub struct MaterialDefinition {
     pub material: StandardMaterial,
     pub shadow_caster: bool,
+    /// An SDK PBR material without a glTF base, which has emissive rules of its own
+    /// (`SCENE_PLAIN_EMISSIVE`).
+    pub plain_emissive: bool,
     pub base_color_texture: Option<TextureUnion>,
     pub emmissive_texture: Option<TextureUnion>,
     pub normal_map: Option<TextureUnion>,
+    pub alpha_texture: Option<TextureUnion>,
 }
 
 #[derive(Component, Clone)]
@@ -83,8 +95,38 @@ fn tex_is_present(tex: &Option<TextureUnion>) -> bool {
     })
 }
 
+fn content_src(image: &Handle<Image>) -> Option<String> {
+    let ipfs_path = IpfsPath::new_from_path(image.path()?.path()).ok()??;
+    ipfs_path.content_path().map(ToOwned::to_owned)
+}
+
+/// `bound_material.wgsl` multiplies every emissive by 5; an SDK emissive of 1 is as bright as a
+/// white surface under a light of intensity 1.
+const SDK_EMISSIVE_SCALE: f32 = 0.2;
+
+/// The uv transform of a material, from its main texture's tiling and offset: `offset + uv *
+/// tiling` with the texture's origin at its bottom left. The meshes' v runs down from the top
+/// (`1 - v`), which moves the offset's sign and the tiling's anchor.
+fn texture_uv_transform(texture: &Option<TextureUnion>) -> Affine2 {
+    let Some(TextureUnion {
+        tex: Some(texture_union::Tex::Texture(texture)),
+    }) = texture
+    else {
+        return Affine2::IDENTITY;
+    };
+    let tiling = texture.tiling.map(|t| Vec2::from(&t)).unwrap_or(Vec2::ONE);
+    let offset = texture.offset.map(|o| Vec2::from(&o)).unwrap_or(Vec2::ZERO);
+    Affine2 {
+        matrix2: Mat2::from_diagonal(tiling),
+        translation: Vec2::new(offset.x, 1.0 - tiling.y - offset.y),
+    }
+}
+
 impl MaterialDefinition {
     pub fn from_base_and_material(base: Option<&BaseMaterial>, pb_material: &PbMaterial) -> Self {
+        // a material that names a glTF keeps the glTF's alpha and emissive rules: what
+        // `dcl_material_from_standard_material` writes for one has to draw the same read back
+        let gltf_backed = base.is_some();
         let base = base
             .map(|b| &b.material)
             .unwrap_or(DEFAULT_BASE.get_or_init(|| StandardMaterial {
@@ -100,44 +142,20 @@ impl MaterialDefinition {
             .material
         {
             Some(pb_material::Material::Unlit(unlit)) => {
-                if tex_is_present(&unlit.alpha_texture)
-                    && tex_is_present(&unlit.texture)
-                    && unlit.alpha_texture != unlit.texture
-                {
-                    debug!("separate alpha texture not supported");
-                }
-
                 let base_color = unlit
                     .diffuse_color
-                    .map(Color4DclToBevy::convert_linear_rgba)
+                    .map(Color4DclToBevy::convert_srgba)
                     .unwrap_or(base.base_color);
 
-                let alpha_mode = if let Some(test) = unlit.alpha_test {
-                    AlphaMode::Mask(test)
-                } else if base_color.alpha() < 1.0 || tex_is_present(&unlit.alpha_texture) {
-                    AlphaMode::Blend
-                } else {
-                    AlphaMode::Opaque
+                let alpha_mode = match unlit.alpha_test {
+                    Some(alpha_test) if gltf_backed => AlphaMode::Mask(alpha_test),
+                    _ if tex_is_present(&unlit.alpha_texture) => AlphaMode::Blend,
+                    _ if gltf_backed && base_color.alpha() < 1.0 => AlphaMode::Blend,
+                    // `alpha_test` and the diffuse alpha leave an SDK unlit material opaque
+                    _ => AlphaMode::Opaque,
                 };
 
-                let uv_transform = match &unlit.texture {
-                    Some(TextureUnion {
-                        tex: Some(texture_union::Tex::Texture(inner_texture)),
-                        ..
-                    }) => Affine2 {
-                        matrix2: Mat2::from_diagonal(
-                            inner_texture
-                                .tiling
-                                .map(|t| Vec2::from(&t))
-                                .unwrap_or(Vec2::ONE),
-                        ),
-                        translation: inner_texture
-                            .offset
-                            .map(|o| Vec2::from(&o) * Vec2::new(1.0, -1.0))
-                            .unwrap_or(Vec2::ZERO),
-                    },
-                    _ => Affine2::IDENTITY,
-                };
+                let uv_transform = texture_uv_transform(&unlit.texture);
 
                 (
                     StandardMaterial {
@@ -153,16 +171,9 @@ impl MaterialDefinition {
                 )
             }
             Some(pb_material::Material::Pbr(pbr)) => {
-                if tex_is_present(&pbr.alpha_texture)
-                    && tex_is_present(&pbr.texture)
-                    && pbr.alpha_texture != pbr.texture
-                {
-                    debug!("separate alpha texture not supported");
-                }
-
                 let base_color = pbr
                     .albedo_color
-                    .map(Color4DclToBevy::convert_linear_rgba)
+                    .map(Color4DclToBevy::convert_srgba)
                     .unwrap_or(base.base_color);
 
                 let alpha_mode = match pbr
@@ -175,17 +186,14 @@ impl MaterialDefinition {
                         AlphaMode::Mask(pbr.alpha_test.unwrap_or(0.5))
                     }
                     Some(MaterialTransparencyMode::MtmAlphaBlend) => AlphaMode::Blend,
+                    // blended without a cutoff (bound_material.wgsl)
                     Some(MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend) => {
-                        // TODO requires bevy patch or custom material or material extension tbd
-                        warn!(
-                            "MaterialTransparencyMode::MtmAlphaTestAndAlphaBlend not implemented!"
-                        );
-                        AlphaMode::Blend
+                        AlphaMode::Premultiplied
                     }
+                    // `alpha_test` applies in the alpha-test mode only, and the deprecated
+                    // alpha texture never
                     Some(MaterialTransparencyMode::MtmAuto) | None => {
-                        if let Some(test) = pbr.alpha_test {
-                            AlphaMode::Mask(test)
-                        } else if base_color.alpha() < 1.0 || tex_is_present(&pbr.alpha_texture) {
+                        if base_color.alpha() < 1.0 {
                             AlphaMode::Blend
                         } else {
                             AlphaMode::Opaque
@@ -193,33 +201,28 @@ impl MaterialDefinition {
                     }
                 };
 
-                let emissive_intensity = pbr.emissive_intensity.unwrap_or(2.0);
-                let emissive = if let Some(color) = pbr.emissive_color {
-                    color.convert_linear_rgb().to_linear() * emissive_intensity
-                } else if pbr.emissive_texture.is_some() {
-                    Color::WHITE.to_linear() * emissive_intensity
-                } else {
-                    Color::BLACK.to_linear()
-                };
+                // HDR, so linear, unlike the other colours. an emissive texture alone emits
+                // nothing: the unset colour is black
+                let emissive = pbr
+                    .emissive_color
+                    .map(|color| {
+                        color.convert_linear_rgb().to_linear()
+                            * pbr.emissive_intensity.unwrap_or(2.0)
+                            * SDK_EMISSIVE_SCALE
+                    })
+                    .unwrap_or(LinearRgba::BLACK);
+                let emits = emissive.red > 0.0 || emissive.green > 0.0 || emissive.blue > 0.0;
 
-                let uv_transform = match &pbr.texture {
-                    Some(TextureUnion {
-                        tex: Some(texture_union::Tex::Texture(inner_texture)),
-                        ..
-                    }) => Affine2 {
-                        matrix2: Mat2::from_diagonal(
-                            inner_texture
-                                .tiling
-                                .map(|t| Vec2::from(&t))
-                                .unwrap_or(Vec2::ONE),
-                        ),
-                        translation: inner_texture
-                            .offset
-                            .map(|o| Vec2::from(&o) * Vec2::new(1.0, -1.0))
-                            .unwrap_or(Vec2::ZERO),
-                    },
-                    _ => Affine2::IDENTITY,
-                };
+                let uv_transform = texture_uv_transform(&pbr.texture);
+
+                // the glTF's own normal map comes back as a bump texture with its green channel up
+                let own_normal_map = gltf_backed
+                    && matches!(
+                        pbr.bump_texture.as_ref().and_then(|t| t.tex.as_ref()),
+                        Some(Tex::Texture(texture))
+                            if base.normal_map_texture.as_ref().and_then(content_src).as_deref()
+                                == Some(texture.src.as_str())
+                    );
 
                 (
                     StandardMaterial {
@@ -230,11 +233,21 @@ impl MaterialDefinition {
                         perceptual_roughness: pbr.roughness.unwrap_or(base.perceptual_roughness),
                         // TODO specular intensity
                         alpha_mode,
+                        // a bump texture's green channel points down the image
+                        flip_normal_map_y: if own_normal_map || !tex_is_present(&pbr.bump_texture) {
+                            base.flip_normal_map_y
+                        } else {
+                            true
+                        },
                         uv_transform,
                         ..base.clone()
                     },
                     pbr.texture.clone(),
-                    pbr.emissive_texture.clone(),
+                    // the shader reads a black emissive with a texture as "use the texture"
+                    // (glTF materials rely on it), so a material that emits nothing binds none
+                    pbr.emissive_texture
+                        .clone()
+                        .filter(|_| emits || gltf_backed),
                     pbr.bump_texture.clone(),
                 )
             }
@@ -245,14 +258,27 @@ impl MaterialDefinition {
         };
 
         let shadow_caster = match &pb_material.material {
-            Some(pb_material::Material::Unlit(unlit)) => unlit.cast_shadows.unwrap_or(false),
+            // an unlit material casts no shadow, whatever `cast_shadows` says
+            Some(pb_material::Material::Unlit(_)) => false,
             Some(pb_material::Material::Pbr(pbr)) => pbr.cast_shadows.unwrap_or(true),
             None => !base.unlit,
+        };
+
+        let alpha_texture = match &pb_material.material {
+            Some(pb_material::Material::Unlit(unlit)) => unlit
+                .alpha_texture
+                .clone()
+                // a glTF's alpha is its texture's own, not the brightness of one
+                .filter(|_| !gltf_backed && tex_is_present(&unlit.alpha_texture)),
+            _ => None,
         };
 
         Self {
             material,
             shadow_caster,
+            alpha_texture,
+            plain_emissive: !gltf_backed
+                && matches!(&pb_material.material, Some(pb_material::Material::Pbr(_))),
             base_color_texture,
             emmissive_texture,
             normal_map,
@@ -273,17 +299,40 @@ impl Plugin for MaterialDefinitionPlugin {
                 init_cache,
                 remove_freed_cached_materials,
                 update_materials,
+                add_missing_tangents,
                 update_bias,
                 update_loading_materials,
             )
                 .chain()
                 .in_set(SceneSets::PostLoop)
-                // we must run after update_mesh as that inserts a default material if none is present
+                // we must run after update_mesh as that inserts a default material if none is present,
+                // and marks the first materials it paid for (`MaterialPrepaid`) and the primitives
+                // that wait (`PendingPrimitive`): the command flush between the two shows them here
                 .after(update_mesh),
         );
         app.init_resource::<CachedMaterialOwners>();
     }
 }
+
+/// What an entity's first material costs the frame when the scene's cache already holds it.
+pub const MATERIAL_COST: Duration = Duration::from_micros(1);
+
+/// What an entity's first material costs the frame when it is created: mostly the render world
+/// preparing it. Measured with the same stress scene as
+/// [`PRIMITIVE_COST`](super::mesh_renderer::PRIMITIVE_COST).
+pub const NEW_MATERIAL_COST: Duration = Duration::from_micros(8);
+
+/// The entity's first material was paid for with its primitive (`update_mesh`): it is created
+/// in the same frame, without asking the slice again.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct MaterialPrepaid;
+
+/// The entity's first material waits: for the next frame's instantiation slice, for its
+/// primitive, or for a texture source.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct PendingMaterial;
 
 #[derive(Component)]
 pub struct RetryMaterial(pub Vec<Handle<Image>>);
@@ -328,6 +377,16 @@ impl TextureResolver<'_, '_> {
         scene: &RendererSceneContext,
         texture: &texture_union::Tex,
     ) -> Result<ResolvedTexture, TextureResolveError> {
+        self.resolve_texture_as(scene, texture, true)
+    }
+
+    /// `is_srgb` is false for data the shader reads as numbers, a normal map.
+    fn resolve_texture_as(
+        &mut self,
+        scene: &RendererSceneContext,
+        texture: &texture_union::Tex,
+        is_srgb: bool,
+    ) -> Result<ResolvedTexture, TextureResolveError> {
         match texture {
             texture_union::Tex::Texture(texture) => {
                 if texture.src.is_empty() {
@@ -361,6 +420,7 @@ impl TextureResolver<'_, '_> {
                             &texture.src,
                             &scene.hash,
                             move |s: &mut ImageLoaderSettings| {
+                                s.is_srgb = is_srgb;
                                 s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                                     address_mode_u: wrap_mode,
                                     address_mode_v: wrap_mode,
@@ -499,24 +559,45 @@ fn init_cache(
     }
 }
 
-#[allow(clippy::type_complexity)]
+type MaterialData = (
+    Entity,
+    Ref<'static, PbMaterialComponent>,
+    &'static ContainerEntity,
+    Option<&'static SceneEntity>,
+    Option<&'static BaseMaterial>,
+    Option<&'static ShadowCasterOverride>,
+    Has<PendingMaterial>,
+    Has<MaterialPrepaid>,
+    Has<PendingPrimitive>,
+);
+
 pub fn update_materials(
     mut commands: Commands,
-    mut new_materials: Query<
+    prepaid_materials: Query<MaterialData, With<MaterialPrepaid>>,
+    // one waiting for its primitive is left out: it comes back prepaid once `update_mesh` admits
+    // the primitive, so a flood of waiting primitives is not walked here every frame
+    pending_materials: Query<
+        MaterialData,
         (
-            Entity,
-            Ref<PbMaterialComponent>,
-            &ContainerEntity,
-            Option<&SceneEntity>,
-            Option<&BaseMaterial>,
-            Option<&ShadowCasterOverride>,
+            With<PendingMaterial>,
+            Without<PendingPrimitive>,
+            Without<MaterialPrepaid>,
         ),
-        Or<(
-            Changed<PbMaterialComponent>,
-            Changed<BaseMaterial>,
-            With<RetryMaterial>,
-        )>,
     >,
+    new_materials: Query<
+        MaterialData,
+        (
+            Or<(
+                Changed<PbMaterialComponent>,
+                Changed<BaseMaterial>,
+                With<RetryMaterial>,
+            )>,
+            Without<PendingMaterial>,
+            Without<MaterialPrepaid>,
+        ),
+    >,
+    mut removed_materials: RemovedComponents<PbMaterialComponent>,
+    has_material: Query<(), With<PbMaterialComponent>>,
     mut materials: ResMut<Assets<SceneMaterial>>,
     sourced: Query<(Entity, &MeshMaterial3d<SceneMaterial>, &MaterialSource)>,
     // ui-canvas atlas slot changes are applied to the material in place by
@@ -528,13 +609,59 @@ pub fn update_materials(
     config: Res<AppConfig>,
     mut gltf_resolver: GltfMaterialResolver,
     images: Res<Assets<Image>>,
+    mut budget: InstantiationBudget,
 ) {
     gltf_resolver.begin_frame();
 
-    for (ent, mat, container, maybe_scene_ent, base, shadow_override) in new_materials.iter_mut() {
+    // a material removed and added again in one tick keeps its place if it was waiting
+    for ent in removed_materials.read() {
+        if has_material.contains(ent) {
+            continue;
+        }
+        if let Ok(mut e) = commands.get_entity(ent) {
+            e.remove::<(PendingMaterial, MaterialPrepaid)>();
+        }
+    }
+
+    let gate = budget.gate();
+    // prepaid ones first: they come with their primitive, whatever stops the walk below. Then
+    // what waited, before what is new; once the slice is spent the walk leaves the rest of the
+    // waiting as they are, untouched. What is new is still gone through, to mark it and apply
+    // changes.
+    let waiting = pending_materials.iter().take_while(|_| !gate.is_spent());
+    for (
+        ent,
+        mat,
+        container,
+        maybe_scene_ent,
+        base,
+        shadow_override,
+        pending,
+        prepaid,
+        primitive_pending,
+    ) in prepaid_materials
+        .iter()
+        .chain(waiting)
+        .chain(new_materials.iter())
+    {
         let Ok((mut scene, mut cache)) = scenes.get_mut(container.root) else {
+            commands
+                .entity(ent)
+                .remove::<(PendingMaterial, MaterialPrepaid)>();
             continue;
         };
+
+        // only an entity's first material waits for the slice; a changed one (a texture tween
+        // rewrites it every frame) is created at once, uncharged. A prepaid one came with its
+        // primitive.
+        let first = mat.is_added() || pending || prepaid;
+        let gated = first && !prepaid;
+        // a new one whose primitive waits is admitted with it, which pays for both; once the
+        // slice is spent, a new one joins the waiting
+        if gated && (primitive_pending || gate.is_spent()) {
+            mark_waiting(&mut commands, ent, PendingMaterial, pending);
+            continue;
+        }
 
         let hasher = &mut std::hash::DefaultHasher::new();
         mat.0.hash(hasher);
@@ -550,7 +677,13 @@ pub fn update_materials(
             });
 
         let (material, shadow_caster) = match cached_data {
-            Some(data) => data,
+            Some(data) => {
+                if gated && !gate.admit(MATERIAL_COST) {
+                    mark_waiting(&mut commands, ent, PendingMaterial, pending);
+                    continue;
+                }
+                data
+            }
             None => {
                 let new_base;
                 let base = if let Some(gltf_def) = mat.0.gltf.as_ref() {
@@ -572,6 +705,13 @@ pub fn update_materials(
                                 commands
                                     .entity(ent)
                                     .try_insert(RetryMaterial(Vec::default()));
+                                if first {
+                                    mark_waiting(&mut commands, ent, PendingMaterial, pending);
+                                }
+                                // waiting for its source, it no longer comes with its primitive
+                                if prepaid {
+                                    commands.entity(ent).remove::<MaterialPrepaid>();
+                                }
                                 continue;
                             }
                             Ok(Some(mat)) => {
@@ -580,6 +720,8 @@ pub fn update_materials(
                                     gltf: gltf_def.gltf_src.clone(),
                                     name: gltf_def.name.clone(),
                                 };
+                                // kept even if the material then waits (a texture's source, the
+                                // slice), so a retry finds its base without resolving it again
                                 commands.entity(ent).try_insert(new_base.clone());
                                 Some(&new_base)
                             }
@@ -591,18 +733,21 @@ pub fn update_materials(
 
                 let defn = MaterialDefinition::from_base_and_material(base, &mat.0);
                 let textures: Result<Vec<_>, _> = [
-                    &defn.base_color_texture,
-                    &defn.emmissive_texture,
-                    &defn.normal_map,
+                    (&defn.base_color_texture, true),
+                    (&defn.emmissive_texture, true),
+                    (&defn.normal_map, false),
+                    (&defn.alpha_texture, true),
                 ]
                 .into_iter()
                 .map(
-                    |texture| match texture.as_ref().and_then(|t| t.tex.as_ref()) {
-                        Some(texture) => match resolver.resolve_texture(&scene, texture) {
-                            Ok(resolved) => Ok(Some(resolved)),
-                            Err(TextureResolveError::SourceNotReady) => Err(()),
-                            Err(_) => Ok(None),
-                        },
+                    |(texture, is_srgb)| match texture.as_ref().and_then(|t| t.tex.as_ref()) {
+                        Some(texture) => {
+                            match resolver.resolve_texture_as(&scene, texture, is_srgb) {
+                                Ok(resolved) => Ok(Some(resolved)),
+                                Err(TextureResolveError::SourceNotReady) => Err(()),
+                                Err(_) => Ok(None),
+                            }
+                        }
                         None => Ok(None),
                     },
                 )
@@ -614,32 +759,39 @@ pub fn update_materials(
                         commands
                             .entity(ent)
                             .try_insert(RetryMaterial(Vec::default()));
+                        if first {
+                            mark_waiting(&mut commands, ent, PendingMaterial, pending);
+                        }
+                        if prepaid {
+                            commands.entity(ent).remove::<MaterialPrepaid>();
+                        }
                         continue;
                     }
                 };
 
-                let mut can_cache = true;
-
-                if let Some(source) = textures
+                let source = textures
                     .iter()
                     .flatten()
                     .filter_map(|t| t.source_entity)
-                    .next()
-                {
-                    commands.entity(ent).try_insert(MaterialSource(source));
-                    can_cache = false;
+                    .next();
+
+                let [mut base_color_texture, emissive_texture, normal_map_texture, alpha_texture]: [Option<ResolvedTexture>; 4] =
+                    textures.try_into().unwrap();
+
+                let cursor = base_color_texture
+                    .as_mut()
+                    .and_then(|bct| bct.camera_target.take());
+                let can_cache = source.is_none() && cursor.is_none();
+
+                if gated && !gate.admit(NEW_MATERIAL_COST) {
+                    mark_waiting(&mut commands, ent, PendingMaterial, pending);
+                    continue;
                 }
-
-                let [mut base_color_texture, emissive_texture, normal_map_texture]: [Option<
-                    ResolvedTexture,
-                >;
-                    3] = textures.try_into().unwrap();
-
-                if let Some(bct) = base_color_texture.as_mut() {
-                    if let Some(cursor) = bct.camera_target.take() {
-                        commands.entity(ent).try_insert(cursor);
-                        can_cache = false;
-                    }
+                if let Some(source) = source {
+                    commands.entity(ent).try_insert(MaterialSource(source));
+                }
+                if let Some(cursor) = cursor {
+                    commands.entity(ent).try_insert(cursor);
                 }
 
                 // ui-canvas atlas sub-rect transform (from the base-colour texture);
@@ -663,7 +815,16 @@ pub fn update_materials(
                         uv_transform: ui_uv_transform.unwrap_or(defn.material.uv_transform),
                         ..defn.material.clone()
                     },
-                    extension: SceneBound::new(&bounds, config.graphics.oob),
+                    extension: {
+                        let mut extension = SceneBound::new(&bounds, config.graphics.oob);
+                        if defn.plain_emissive {
+                            extension = extension.with_plain_emissive();
+                        }
+                        if let Some(alpha_texture) = alpha_texture {
+                            extension = extension.with_alpha_texture(alpha_texture.image);
+                        }
+                        extension
+                    },
                 });
 
                 if can_cache {
@@ -676,7 +837,7 @@ pub fn update_materials(
 
         let mut commands = commands.entity(ent);
         commands
-            .remove::<RetryMaterial>()
+            .remove::<(RetryMaterial, PendingMaterial, MaterialPrepaid)>()
             .try_insert(MeshMaterial3dLoading(material));
         if shadow_override.map_or(shadow_caster, |shadows| shadows.0) {
             commands.remove::<NotShadowCaster>();
@@ -718,6 +879,7 @@ pub fn update_materials(
                 .remove::<MaterialSource>();
         }
     }
+    gate.report("materials");
 }
 
 fn update_loading_materials(
@@ -800,7 +962,33 @@ fn update_loading_materials(
     }
 }
 
-#[allow(clippy::type_complexity)]
+/// A normal map is drawn only on a mesh with tangents. A glTF mesh has none unless its own
+/// material has a normal map, so one given a bump texture by a scene gets them here. A mesh
+/// whose uvs span no area has none to give, and stays as it is.
+fn add_missing_tangents(
+    drawn: Query<
+        (&Mesh3d, &MeshMaterial3d<SceneMaterial>),
+        Or<(Changed<Mesh3d>, Changed<MeshMaterial3d<SceneMaterial>>)>,
+    >,
+    materials: Res<Assets<SceneMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (mesh, material) in &drawn {
+        let mapped = materials
+            .get(material)
+            .is_some_and(|material| material.base.normal_map_texture.is_some());
+        // read first: `get_mut` marks the mesh changed, which uploads it again
+        let bare = meshes
+            .get(mesh)
+            .is_some_and(|mesh| !mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT));
+        if mapped && bare {
+            if let Some(mesh) = meshes.get_mut(mesh) {
+                let _ = mesh.generate_tangents();
+            }
+        }
+    }
+}
+
 fn update_bias(
     mut materials: ResMut<Assets<SceneMaterial>>,
     query: Query<
@@ -824,9 +1012,7 @@ pub fn dcl_material_from_standard_material(
     images: &Assets<Image>,
 ) -> pb_material::Material {
     let dcl_texture = |h: &Handle<Image>| -> TextureUnion {
-        let path = h.path().unwrap().path();
-        let ipfs_path = IpfsPath::new_from_path(path).unwrap().unwrap();
-        let src = ipfs_path.content_path().unwrap().to_owned();
+        let src = content_src(h).unwrap();
         let sampler = if let Some(Image {
             sampler: ImageSampler::Descriptor(d),
             ..
@@ -837,10 +1023,11 @@ pub fn dcl_material_from_standard_material(
             &ImageSamplerDescriptor::default()
         };
 
+        // the inverse of `texture_uv_transform`
         let (scale, _, translation) = base.uv_transform.to_scale_angle_translation();
         let tiling = (scale != Vec2::ONE).then_some(Vector2::from(scale));
-        let offset = (translation != Vec2::ZERO)
-            .then_some(Vector2::from(translation * Vec2::new(1.0, -1.0)));
+        let offset = Vec2::new(translation.x, 1.0 - scale.y - translation.y);
+        let offset = (offset != Vec2::ZERO).then_some(Vector2::from(offset));
 
         TextureUnion {
             tex: Some(dcl_component::proto_components::common::texture_union::Tex::Texture(dcl_component::proto_components::common::Texture {
@@ -873,12 +1060,20 @@ pub fn dcl_material_from_standard_material(
         None
     };
 
+    // a colour holds 0 to 1, so the intensity carries what an emissive has above it
+    let emissive_peak = base
+        .emissive
+        .red
+        .max(base.emissive.green)
+        .max(base.emissive.blue)
+        .max(1.0);
+
     if base.unlit {
         pb_material::Material::Unlit(pb_material::UnlitMaterial {
             texture: base.base_color_texture.as_ref().map(dcl_texture),
             alpha_test,
             cast_shadows: Some(false),
-            diffuse_color: Some(base.base_color.convert_linear_rgba()),
+            diffuse_color: Some(base.base_color.convert_srgba()),
             alpha_texture,
         })
     } else {
@@ -889,8 +1084,11 @@ pub fn dcl_material_from_standard_material(
             alpha_texture,
             emissive_texture: base.emissive_texture.as_ref().map(dcl_texture),
             bump_texture: base.normal_map_texture.as_ref().map(dcl_texture),
-            albedo_color: Some(base.base_color.convert_linear_rgba()),
-            emissive_color: Some(Color::LinearRgba(base.emissive * 0.5).convert_linear_rgb()),
+            // in the form an SDK material is read: sRGB albedo, linear emissive
+            albedo_color: Some(base.base_color.convert_srgba()),
+            emissive_color: Some(
+                Color::LinearRgba(base.emissive / emissive_peak).convert_linear_rgb(),
+            ),
             reflectivity_color: None,
             transparency_mode: Some(match base.alpha_mode() {
                 AlphaMode::Opaque => MaterialTransparencyMode::MtmOpaque,
@@ -900,89 +1098,11 @@ pub fn dcl_material_from_standard_material(
             metallic: Some(base.metallic),
             roughness: Some(base.perceptual_roughness),
             specular_intensity: None,
-            emissive_intensity: None,
+            emissive_intensity: Some(emissive_peak / SDK_EMISSIVE_SCALE),
             direct_intensity: None,
         })
     }
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-    use bevy::ecs::system::RunSystemOnce;
-    use scene_material::SceneMaterialExt;
-
-    fn material_id(materials: &mut Assets<SceneMaterial>) -> AssetId<SceneMaterial> {
-        materials
-            .add(SceneMaterial::new_unbounded(StandardMaterial::default()))
-            .id()
-    }
-
-    #[test]
-    fn removed_materials_leave_the_cache() {
-        let mut app = App::new();
-        app.add_event::<AssetEvent<SceneMaterial>>()
-            .init_resource::<CachedMaterialOwners>();
-        let mut materials = Assets::<SceneMaterial>::default();
-        let (freed, live, stale, rebuilt) = (
-            material_id(&mut materials),
-            material_id(&mut materials),
-            material_id(&mut materials),
-            material_id(&mut materials),
-        );
-
-        // hash 3 was rebuilt with a new material before the stale one's removal was seen
-        let scene = app
-            .world_mut()
-            .spawn(CachedMaterials(HashMap::from_iter([
-                (1, (freed, true)),
-                (2, (live, false)),
-                (3, (rebuilt, true)),
-            ])))
-            .id();
-        app.world_mut()
-            .resource_mut::<CachedMaterialOwners>()
-            .0
-            .extend([
-                (freed, (scene, 1)),
-                (live, (scene, 2)),
-                (stale, (scene, 3)),
-                (rebuilt, (scene, 3)),
-            ]);
-
-        app.world_mut()
-            .send_event_batch([freed, stale].map(|id| AssetEvent::Removed { id }));
-        app.world_mut()
-            .run_system_once(remove_freed_cached_materials)
-            .unwrap();
-
-        let cache = app.world().get::<CachedMaterials>(scene).unwrap();
-        assert_eq!(cache.0.len(), 2);
-        assert_eq!(cache.0.get(&2), Some(&(live, false)));
-        assert_eq!(cache.0.get(&3), Some(&(rebuilt, true)));
-        let owners = app.world().resource::<CachedMaterialOwners>();
-        assert_eq!(owners.0.len(), 2);
-        assert!(owners.0.contains_key(&live) && owners.0.contains_key(&rebuilt));
-    }
-
-    #[test]
-    fn removed_materials_of_despawned_scenes_leave_the_owners() {
-        let mut app = App::new();
-        app.add_event::<AssetEvent<SceneMaterial>>()
-            .init_resource::<CachedMaterialOwners>();
-        let id = material_id(&mut Assets::<SceneMaterial>::default());
-        let scene = app.world_mut().spawn(CachedMaterials::default()).id();
-        app.world_mut()
-            .resource_mut::<CachedMaterialOwners>()
-            .0
-            .insert(id, (scene, 1));
-        app.world_mut().despawn(scene);
-
-        app.world_mut().send_event(AssetEvent::Removed { id });
-        app.world_mut()
-            .run_system_once(remove_freed_cached_materials)
-            .unwrap();
-
-        assert!(app.world().resource::<CachedMaterialOwners>().0.is_empty());
-    }
-}
+mod tests;

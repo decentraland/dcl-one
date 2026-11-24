@@ -6,8 +6,8 @@ import { getPlayer } from '@dcl/sdk/players'
 import { serviceBase, signed } from '../http'
 import { identity } from '../identity'
 import type { Ctx } from '../bridge'
-import type { AppNotification } from '../../../src/engine/protocol'
-import { notificationTimeMs } from '../../../src/lib/notificationTime'
+import type { AppNotification } from '@explorer-core/engine/protocol'
+import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 
 /** unity-explorer's NotificationsRequestController polls at the same rate. */
 export const POLL_INTERVAL_S = 5
@@ -103,8 +103,9 @@ export function registerNotifications(ctx: Ctx): void {
 
   ctx.push((dt) => {
     const player = getPlayer()
-    if (player == null || player.isGuest) {
-      // Logged out (the engine clears the player) or a guest, who has no notifications.
+    if (player == null) {
+      // Logged out (the engine clears the player). A guest is read like anyone, as in
+      // unity-explorer: a guest account has notifications, a throwaway guest just gets none.
       if (armed) disarm()
       return
     }

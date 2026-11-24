@@ -113,7 +113,6 @@ fn smooth_angle(current: f32, target: f32, alpha: f32) -> f32 {
     current + wrap_180(target - current) * alpha
 }
 
-#[allow(clippy::type_complexity)]
 fn cache_head_ik_rig(
     mut commands: Commands,
     needs_rig: Query<(Entity, &AttachPoints), (With<AvatarShape>, Without<HeadIkRig>)>,
@@ -188,7 +187,6 @@ fn reset_head_ik_chain(rigs: Query<&HeadIkRig>, mut transforms: Query<&mut Trans
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn apply_head_ik(
     time: Res<Time>,
     config: Res<HeadIkConfig>,

@@ -1,4 +1,4 @@
-name: SDK
+name: SDK / CI
 # The SDK's CI and its PR previews. sdk-release.yml calls the same jobs for next and for releases.
 # A same-repo PR publishes what it packed as @dcl-regenesislabs/* under the pr dist-tag. Those
 # packages are previews only: any branch can publish to them. The @dcl/* names publish only from
@@ -8,6 +8,11 @@ on:
     paths:
       - library/js-sdk-toolchain/**
       - library/protocol/**
+      - apps/dcl-scene-cli/**
+      - apps/bevy-explorer/e2e/scenes/environment/**
+      - library/dcl-scene-build/**
+      - library/hashing/**
+      - tooling/check-local-hashing.mjs
       - .github/workflows/sdk.yml
       - .github/workflows/sdk-release.yml
   workflow_call:
@@ -28,10 +33,15 @@ env:
   # playground-assets is built and tested with the rest but not published
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
   PREVIEW_SCOPE: '@dcl-regenesislabs'
+  # What the packed sdk-commands names for its two linked dependencies: versions already on npm.
+  # It uses hashV1 from one and the local_development and realm about messages from the other;
+  # move a pin when library/hashing or library/protocol changes one of those.
+  PROTOCOL_VERSION: 1.0.0-43896819135.commit-551f65b
+  HASHING_VERSION: 1.1.3
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -41,10 +51,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
-          cache: npm
-          # library/protocol keeps no lockfile (it ignores package-lock.json)
-          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
-      - name: Install (builds library/protocol's out-ts first)
+      - run: corepack enable
+      - name: Install (builds library/protocol's out-ts and library/hashing first)
         run: make install
       - name: Lint
         run: make lint
@@ -52,7 +60,7 @@ jobs:
         run: make lint-packages
   build-test:
     name: Build, test, pack
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 60
     defaults:
       run:
@@ -62,22 +70,30 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.16.0
-          cache: npm
-          # library/protocol keeps no lockfile (it ignores package-lock.json)
-          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
-      - name: Install (builds library/protocol's out-ts first)
+      - run: corepack enable
+      - name: Install (builds library/protocol's out-ts and library/hashing first)
         run: make install
+      - name: Test the embedded CLI SDK contracts and declarations
+        run: node --test ../../apps/dcl-scene-cli/scripts/environment-sdk.test.mjs
       - name: Build
         id: build
         # a changed API report fails here; the regenerated files are still uploaded below
         continue-on-error: true
         run: make build
       - name: Test
+        id: test
         run: make test
         env:
           # as upstream: the snapshot test rewrites a stale .crdt in place and still fails on it,
           # so the artifact below carries what to commit
           UPDATE_SNAPSHOTS: true
+      - name: Test SDK init in isolation
+        # A separate required check under the same 180 s command budget, even after suite failure.
+        # The npm cache is warm and tests do not compete here; a pass does not prove cold or contended installs.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (steps.test.outcome == 'success' || steps.test.outcome == 'failure') }}
+        run: node_modules/.bin/jest --detectOpenHandles --forceExit --colors --runTestsByPath test/sdk-commands/blackbox/init.spec.ts
+        env:
+          SDK_INIT_FIXTURE: isolated
       - name: Upload the regenerated API report and snapshots
         # what a local `make update-snapshots` would commit, for a reviewer or an author without the toolchain
         if: always()
@@ -114,7 +130,7 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
       - name: Stamp the release version into @dcl/sdk
         if: inputs.version != ''
-        run: cd packages/@dcl/sdk && npm version "$VERSION" --no-git-tag-version --allow-same-version
+        run: cd packages/@dcl/sdk && npm pkg set version="$VERSION"
         env:
           VERSION: ${{ inputs.version }}
       - name: Name the PR's packages as previews
@@ -144,7 +160,7 @@ jobs:
     needs: [lint, build-test]
     # fork PRs publish nothing
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 15
     permissions:
       pull-requests: write
@@ -186,22 +202,31 @@ jobs:
             fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Comment the install command on the PR
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+      - name: Write the install command
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           VERSION: ${{ steps.publish.outputs.version }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          set -euo pipefail
-          marker='<!-- sdk-preview -->'
-          fence="\`\`\`"
           # npm aliases, so scenes keep importing @dcl/sdk
-          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@npm:%s/sdk@%s @dcl/sdk-commands@npm:%s/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$HEAD_SHA" "$fence" "$PREVIEW_SCOPE" "$VERSION" "$PREVIEW_SCOPE" "$VERSION" "$fence")
-          id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -f body="$body" > /dev/null
-          else
-            gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" > /dev/null
-          fi
+          {
+            echo '![SDK](https://img.shields.io/badge/SDK-Published-brightgreen?logo=npm&logoColor=white&style=for-the-badge)'
+            echo
+            echo "SDK packages for $HEAD_SHA:"
+            echo
+            echo '```'
+            echo "npm install @dcl/sdk@npm:$PREVIEW_SCOPE/sdk@$VERSION @dcl/sdk-commands@npm:$PREVIEW_SCOPE/sdk-commands@$VERSION"
+            echo '```'
+            echo
+            echo 'The pr dist-tag points at the last PR preview published, so prefer the exact version.'
+          } > sdk-section.md
+      - name: Add it to the PR's CI status comment
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          section: sdk
+          body-file: sdk-section.md
+          github-token: ${{ github.token }}

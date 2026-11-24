@@ -202,6 +202,15 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
             .collect();
         Json(Value::Array(docs))
     }
+    async fn versions(
+        AxState(m): AxState<Arc<Mock>>,
+        Query(q): Query<HashMap<String, String>>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        m.hit("entities/versions");
+        m.bodies.lock().push(json!({"body":body,"query":q}));
+        Json(json!([]))
+    }
     async fn profiles(AxState(m): AxState<Arc<Mock>>, Json(body): Json<Value>) -> Json<Value> {
         m.hit("profiles");
         m.bodies.lock().push(body.clone());
@@ -293,6 +302,7 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         .route("/explorer.json", get(flags))
         .route("/events.json", get(events_flags))
         .route("/entities/active", post(entities))
+        .route("/entities/versions", post(versions))
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(profiles_metadata))
         .route("/v2/tiles/info", get(tiles_info))
@@ -356,33 +366,48 @@ fn lazy_pool() -> PgPool {
 /// A node with no database behind it: everything the routes answer from
 /// memory (the realm doc, the registry reader, the embedded flags).
 async fn node_without_db(settings: Settings) -> Node {
-    let pool = lazy_pool();
+    node_on_pool(settings, lazy_pool()).await
+}
+
+/// A node over `pool` without `State::new`'s mirror loads: the routes that
+/// keep their own rows (the auth-api relay) on a scratch database.
+async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
     let (content, tmp) = content_state(pool.clone()).await;
     let state = Arc::new(State {
         settings,
-        pool,
+        pool: pool.clone(),
         http: crate::http::Outbound::for_tests(),
         content,
-        registry: registry::Cache::new(),
         denylist: Default::default(),
-        flags: feature_flags::Snapshot::default(),
+        flags: std::sync::Arc::new(feature_flags::Snapshot::from_document(
+            feature_flags::embedded_document(),
+            false,
+        )),
         map: map::MapState::new(),
         ab_cdn: ab_cdn::Cache::new(tmp.0.join("ab-cdn"), u64::MAX).unwrap(),
         satellite: satellite::SatelliteState::new(1 << 20, 64),
         world_manifest: world_manifest::WorldManifestState::default(),
         posters: posters::PosterState::default(),
         opensea: opensea::Runtime::default(),
-        auth_api: auth_api::AuthApiState::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
-        onboarding: Arc::default(),
+        onboarding: Arc::new(onboarding::OnboardingState::new(pool)),
+        registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
+        contract_checks: Default::default(),
+        auth_sockets: Default::default(),
+        land_authz: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
 }
 
 /// The state alone, its temporary storage leaked for the test's lifetime.
 pub(crate) async fn node_without_db_state(settings: Settings) -> Shared {
-    let node = node_without_db(settings).await;
+    node_on_pool_state(settings, lazy_pool()).await
+}
+
+/// [`node_on_pool`]'s state alone, its temporary storage leaked.
+pub(crate) async fn node_on_pool_state(settings: Settings, pool: PgPool) -> Shared {
+    let node = node_on_pool(settings, pool).await;
     let state = node.state.clone();
     std::mem::forget(node);
     state
@@ -397,13 +422,22 @@ async fn node_with_db(settings: Settings, pool: PgPool) -> Node {
     Node { state, _tmp: tmp }
 }
 
-struct ScratchDb {
-    pool: PgPool,
+/// [`node_with_db`]'s state alone, its temporary storage leaked for the
+/// test's lifetime.
+pub(crate) async fn node_with_db_state(settings: Settings, pool: PgPool) -> Shared {
+    let node = node_with_db(settings, pool).await;
+    let state = node.state.clone();
+    std::mem::forget(node);
+    state
+}
+
+pub(crate) struct ScratchDb {
+    pub(crate) pool: PgPool,
     admin: PgPool,
     name: String,
 }
 
-async fn scratch_database() -> Option<ScratchDb> {
+pub(crate) async fn scratch_database() -> Option<ScratchDb> {
     let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return None;
@@ -417,21 +451,28 @@ async fn scratch_database() -> Option<ScratchDb> {
         .await
         .unwrap();
     let name = format!("catalyst_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(6)
         .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     Some(ScratchDb { pool, admin, name })
 }
 
 impl ScratchDb {
-    async fn teardown(self) {
+    /// Another pool on the same database, as a second replica holds.
+    pub(crate) async fn second_pool(&self) -> PgPool {
+        let url = std::env::var("CATALYST_TEST_DATABASE_URL").unwrap();
+        let base: PgConnectOptions = url.parse().unwrap();
+        PgPoolOptions::new()
+            .max_connections(6)
+            .connect_with(base.database(&self.name).options([("TimeZone", "UTC")]))
+            .await
+            .unwrap()
+    }
+
+    pub(crate) async fn teardown(self) {
         self.pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{}\" WITH (FORCE)",
@@ -493,7 +534,12 @@ async fn every_replica_reloads_the_shared_denylist() {
     let wallet = "0x00000000000000000000000000000000000000fe";
     assert!(!replica.state.denylist.contains(wallet));
     let jobs = Jobs::new();
-    denylist::spawn_reload(&replica.state, &jobs, std::time::Duration::from_millis(20));
+    denylist::spawn_reload(
+        &replica.state,
+        &jobs,
+        std::time::Duration::from_millis(20),
+        denylist::RELOAD_TIMEOUT,
+    );
     denylist::set_local(&db.pool, wallet, true).await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while !replica.state.denylist.contains(wallet) {
@@ -553,10 +599,10 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
 
     let jobs = Jobs::new().with_fleet_jobs(false).with_first_pass_now(true);
     let started = tokio::time::Instant::now();
-    // Only shorten the interval between passes; the production five-second
-    // pass timeout and real SQL wait remain unchanged.
-    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100));
-    tokio::time::timeout(Duration::from_secs(3), async {
+    // Observe the SQL lock wait before the reload pass times out.
+    let timeout = Duration::from_secs(3);
+    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100), timeout);
+    tokio::time::timeout(timeout - Duration::from_millis(500), async {
         loop {
             let blocked: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
@@ -576,14 +622,14 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
     .expect("the real snapshot query must reach PostgreSQL and wait for the table lock");
     assert_eq!(jobs.report()[0].passes, 0);
 
-    tokio::time::timeout_at(started + Duration::from_secs(8), async {
+    tokio::time::timeout_at(started + timeout + Duration::from_secs(3), async {
         while jobs.report()[0].passes == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the five-second reload deadline must finish a pass despite the SQL lock");
-    assert!(started.elapsed() >= Duration::from_secs(5));
+    .expect("the reload deadline must finish a pass despite the SQL lock");
+    assert!(started.elapsed() >= timeout);
     let failed = &jobs.report()[0];
     assert!(
         failed
@@ -622,6 +668,12 @@ async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_un
     assert_eq!(body, json!({"users": [{"wallet": "0xReplacement"}]}));
     assert!(jobs.shutdown(Duration::from_secs(2)).await.is_empty());
     db.teardown().await;
+}
+
+#[test]
+fn production_denylist_reload_has_thirty_second_interval_and_five_second_budget() {
+    assert_eq!(denylist::RELOAD_INTERVAL, Duration::from_secs(30));
+    assert_eq!(denylist::RELOAD_TIMEOUT, Duration::from_secs(5));
 }
 
 async fn job_ctx() -> (Jobs, crate::jobs::JobContext) {
@@ -768,10 +820,10 @@ async fn ab_cdn_reads_through_once_and_serves_the_cached_object_after() {
     );
 }
 
-/// With no registry or asset-bundle CDN configured (an island, or a bare
-/// node) neither reader sends a request: the registry knows nothing and
-/// every object is this node's own. Blank used to fall back to
-/// decentraland.org, and an empty source built a relative URL (502).
+/// With no Registry or asset-bundle CDN configured (an island, or a bare
+/// node) neither reader sends a request: the boot entity reads know no
+/// converted entity, the other Registry reads are unavailable and every
+/// object is this node's own.
 #[tokio::test]
 async fn no_registry_or_cdn_source_reads_nothing_upstream() {
     let config = crate::config::Config::parse_for_tests(&[
@@ -809,14 +861,14 @@ async fn no_registry_or_cdn_source_reads_nothing_upstream() {
         .await;
         assert_eq!((status, body), (StatusCode::OK, json!([])), "{path}");
     }
-    let (status, body) = call_json(
+    let (status, _) = call_json(
         &app,
-        "POST",
-        "/asset-bundle-registry/profiles",
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
+        "GET",
+        "/asset-bundle-registry/entities/status/bafy",
+        None,
     )
     .await;
-    assert_eq!((status, body), (StatusCode::OK, json!([])));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let (status, _, _) = call(&app, "GET", "/ab-cdn/v49/assets/bafy_mac", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(mock.hits.lock().is_empty(), "{:?}", mock.hits.lock());
@@ -864,6 +916,21 @@ fn opensea_reads_no_chain_or_cryptokitties_without_an_rpc_upstream() {
 async fn realm_about_keeps_the_upstream_shape_and_reflects_the_sync_state() {
     let node = node_without_db(Settings::for_tests(Sources::defaults())).await;
     let app = router(node.state.clone());
+
+    let ping = app
+        .clone()
+        .oneshot(
+            axum::http::Request::get("/realm-provider-ea/ping")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ping.status(), StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(ping.into_body(), 64).await.unwrap(),
+        "/ping"
+    );
 
     let (status, ours) = call_json(&app, "GET", "/realm-provider-ea/main/about", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -1062,168 +1129,147 @@ async fn feature_flags_serve_the_embedded_full_set_before_the_first_pass() {
 }
 
 #[tokio::test]
-async fn registry_entities_are_cached_per_pointer_including_misses() {
+async fn registry_gateway_preserves_queries_and_never_caches_native_reads() {
     let mock = mock();
     let addr = serve_mock(mock.clone()).await;
     let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
     let app = router(node.state.clone());
-    let path = "/asset-bundle-registry/entities/active";
-
+    for operation in ["active", "versions"] {
+        let path = format!("/asset-bundle-registry/entities/{operation}?world_name=Foo.dcl.eth");
+        for _ in 0..2 {
+            let (status, _) =
+                call_json(&app, "POST", &path, Some(json!({"pointers":["0,0"]}))).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        assert_eq!(mock.hits(&format!("entities/{operation}")), 2);
+        assert_eq!(
+            mock.bodies.lock().last().unwrap()["query"]["world_name"],
+            "Foo.dcl.eth"
+        );
+    }
+    mock.entities.lock().clear();
     let (status, docs) = call_json(
         &app,
         "POST",
-        path,
-        Some(json!({"pointers": ["0,0", "0,1"]})),
+        "/asset-bundle-registry/entities/active",
+        Some(json!({"pointers":["0,0"]})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        docs.as_array().unwrap().len(),
-        1,
-        "one entity for two of its pointers"
+        docs,
+        json!([]),
+        "native changes must be visible immediately"
     );
-    assert_eq!(docs[0]["id"], "bafyscene");
-    assert_eq!(
-        key_set(&docs[0]),
-        [
-            "bundles",
-            "content",
-            "deployer",
-            "id",
-            "metadata",
-            "pointers",
-            "status",
-            "timestamp",
-            "type",
-            "versions"
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect()
-    );
-    assert_eq!(mock.hits("entities/active"), 1);
+}
 
-    let (_, again) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"pointers": ["0,1", "0,0"]})),
-    )
-    .await;
-    assert_eq!(again, docs);
-    assert_eq!(
-        mock.hits("entities/active"),
-        1,
-        "both pointers answered from the cache"
-    );
-
-    let (_, mixed) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"pointers": ["0,0", "9,9"]})),
-    )
-    .await;
-    assert_eq!(mixed.as_array().unwrap().len(), 1);
-    assert_eq!(
-        mock.hits("entities/active"),
-        2,
-        "only the miss goes upstream"
-    );
-    let last = mock.bodies.lock().last().cloned().unwrap();
-    assert_eq!(last["body"]["pointers"], json!(["9,9"]));
-
-    let (_, none) = call_json(&app, "POST", path, Some(json!({"pointers": ["9,9"]}))).await;
-    assert_eq!(none, json!([]));
-    assert_eq!(
-        mock.hits("entities/active"),
-        2,
-        "an absent pointer is cached as absent"
-    );
-
-    let (_, by_id) = call_json(&app, "POST", path, Some(json!({"ids": ["bafyother"]}))).await;
-    assert_eq!(by_id[0]["pointers"], json!(["5,5"]));
-    assert_eq!(mock.hits("entities/active"), 3);
-
-    let (_, world) = call_json(
-        &app,
-        "POST",
-        &format!("{path}?world_name=Foo.dcl.eth"),
-        Some(json!({"pointers": ["0,0"]})),
-    )
-    .await;
-    assert_eq!(world[0]["id"], "bafyscene");
-    assert_eq!(
-        mock.hits("entities/active"),
-        4,
-        "a world is its own pointer namespace"
-    );
-    assert_eq!(
-        mock.bodies.lock().last().unwrap()["query"]["world_name"],
-        "Foo.dcl.eth"
-    );
-
-    for bad in [
-        json!({}),
-        json!({"pointers": []}),
-        json!({"pointers": ["0,0"], "ids": ["x"]}),
+#[test]
+fn registry_backend_is_native_only_on_loopback() {
+    use registry::Backend;
+    for native in [
+        "http://127.0.0.1:5147",
+        "https://127.0.0.2:5147",
+        "http://[::1]:5147",
+        "http://localhost:5147/",
     ] {
-        let (status, _) = call_json(&app, "POST", path, Some(bad)).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            matches!(Backend::parse(native).unwrap(), Backend::Native(_)),
+            "{native}"
+        );
     }
-    let too_many: Vec<String> = (0..1001).map(|i| format!("{i},0")).collect();
-    let (status, _) = call_json(&app, "POST", path, Some(json!({"pointers": too_many}))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Same-network hosts are not the local runtime: they take the source guard.
+    for upstream in [
+        "https://asset-bundle-registry.decentraland.org",
+        "http://10.0.0.5:5147",
+        "http://[fd00::1]:5147",
+        "http://catalyst-abgen:5147",
+    ] {
+        assert!(
+            matches!(Backend::parse(upstream).unwrap(), Backend::Upstream(_)),
+            "{upstream}"
+        );
+    }
+    for bad in [
+        "ftp://127.0.0.1/",
+        "http://user:pw@127.0.0.1/",
+        "http://127.0.0.1/?token=x",
+        "http://127.0.0.1/#x",
+        "not a url",
+    ] {
+        assert!(Backend::parse(bad).is_err(), "{bad}");
+    }
+}
+
+/// A read queues for a backend slot instead of failing at once, and is
+/// refused only when none frees up within the wait.
+#[tokio::test]
+async fn registry_reads_wait_briefly_for_a_backend_slot() {
+    use tokio::sync::Semaphore;
+    let permits = Semaphore::new(1);
+    let held = permits.acquire().await.unwrap();
+    assert!(
+        registry::slot(&permits, Duration::from_millis(20))
+            .await
+            .is_none()
+    );
+    let waiting = registry::slot(&permits, Duration::from_secs(2));
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(held);
+    };
+    let (permit, ()) = tokio::join!(waiting, release);
+    assert!(permit.is_some());
+}
+
+/// Startup validation accepts the local runtime over http or https and a
+/// public Registry, and names the variable when it refuses one.
+#[test]
+fn registry_source_validates_at_startup_and_names_the_variable() {
+    let mut settings = Settings::for_tests(Sources::defaults());
+    settings.allow_private_sources = false;
+    settings.public_url = "https://gateway.example.org".into();
+    for ok in [
+        "http://127.0.0.1:5147",
+        "https://127.0.0.1:5147",
+        "http://localhost:5147",
+        "https://asset-bundle-registry.decentraland.org",
+    ] {
+        let mut s = settings.clone();
+        s.sources.registry = ok.into();
+        s.validate().unwrap_or_else(|e| panic!("{ok}: {e:#}"));
+    }
+    for bad in [
+        "http://10.0.0.5:5147",
+        "http://catalyst-abgen:5147",
+        "http://user:pw@127.0.0.1:5147",
+        "https://gateway.example.org/asset-bundle-registry",
+    ] {
+        let mut s = settings.clone();
+        s.sources.registry = bad.into();
+        let err = format!("{:#}", s.validate().unwrap_err());
+        assert!(err.contains("EXPLORER_REGISTRY_SOURCE_URL"), "{bad}: {err}");
+    }
 }
 
 #[tokio::test]
-async fn registry_profiles_are_matched_by_address_and_cached() {
+async fn registry_profiles_are_composed_from_the_shared_profile_service() {
     let mock = mock();
     let addr = serve_mock(mock.clone()).await;
     let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
     let app = router(node.state.clone());
-    let path = "/asset-bundle-registry/profiles";
-
-    let (status, docs) = call_json(&app, "POST", path, Some(json!({"ids": ["0xC9C29AB98E6BC42015985165A11153F564E9F8C2", "0x0000000000000000000000000000000000000009"]}))).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(docs.as_array().unwrap().len(), 1);
-    assert_eq!(docs[0]["avatars"][0]["name"], "Ryumi");
-    assert_eq!(
-        docs[0]["timestamp"], "1790276949479",
-        "the registry's string timestamp is served as is"
-    );
-    assert_eq!(mock.hits("profiles"), 1);
-
-    let (_, again) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
-    )
-    .await;
-    assert_eq!(again, docs);
-    let (_, unknown) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0x0000000000000000000000000000000000000009"]})),
-    )
-    .await;
-    assert_eq!(unknown, json!([]));
-    assert_eq!(
-        mock.hits("profiles"),
-        1,
-        "known and unknown addresses are both cached"
-    );
-
-    let (status, _) = call_json(&app, "POST", path, Some(json!({"ids": []}))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    for path in ["/profiles", "/profiles/metadata"] {
+        let (status, _, _) = call(
+            &app,
+            "POST",
+            &format!("/asset-bundle-registry{path}"),
+            Some(json!({"ids": []})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    assert!(mock.hits.lock().is_empty());
     let (status, st) = call_json(&app, "GET", "/asset-bundle-registry/status", None).await;
     assert_eq!(status, StatusCode::OK);
-    let (health_status, health) =
-        call_json(&app, "GET", "/asset-bundle-registry/health", None).await;
-    assert_eq!(health_status, StatusCode::OK);
-    assert_eq!(health, json!({"status": "ok"}));
     assert_eq!(
         key_set(&st["data"]),
         ["commitHash", "currentTime", "version"]
@@ -1233,69 +1279,6 @@ async fn registry_profiles_are_matched_by_address_and_cached() {
     );
 }
 
-/// `/profiles/metadata` answers upstream's projection (`pointer`, no
-/// `avatars`): a document is matched to its address by `pointer`, so a known
-/// profile is not dropped as address-less and the answer is not `[]`.
-#[tokio::test]
-async fn registry_profile_metadata_is_matched_by_pointer_and_cached() {
-    let mock = mock();
-    let addr = serve_mock(mock.clone()).await;
-    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
-    let app = router(node.state.clone());
-    let path = "/asset-bundle-registry/profiles/metadata";
-
-    let (status, docs) = call_json(&app, "POST", path, Some(json!({"ids": ["0xC9C29AB98E6BC42015985165A11153F564E9F8C2", "0x0000000000000000000000000000000000000009"]}))).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        docs.as_array().unwrap().len(),
-        1,
-        "the known profile's metadata row is served"
-    );
-    assert_eq!(
-        key_set(&docs[0]),
-        ["hasClaimedName", "name", "pointer", "thumbnailUrl"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    );
-    assert_eq!(
-        docs[0]["pointer"],
-        "0xc9c29ab98e6bc42015985165a11153f564e9f8c2"
-    );
-    assert_eq!(docs[0]["name"], "Ryumi");
-    assert_eq!(mock.hits("profiles/metadata"), 1);
-
-    let (_, again) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
-    )
-    .await;
-    assert_eq!(again, docs);
-    let (_, unknown) = call_json(
-        &app,
-        "POST",
-        path,
-        Some(json!({"ids": ["0x0000000000000000000000000000000000000009"]})),
-    )
-    .await;
-    assert_eq!(unknown, json!([]), "an address the registry has no row for");
-    assert_eq!(
-        mock.hits("profiles/metadata"),
-        1,
-        "known and unknown addresses are both cached"
-    );
-    assert_eq!(
-        mock.hits("profiles"),
-        0,
-        "the metadata variant never asks for the full profile"
-    );
-}
-
-/// The district documents of `api.decentraland.org` (`/v2/districts[/{id}]`,
-/// `/v2/addresses/{address}/contributions`) are served from the embedded
-/// upstream data, without a grid mirror pass.
 #[tokio::test]
 async fn map_district_documents_are_served_from_the_embedded_upstream_data() {
     let node = node_without_db(Settings::for_tests(sources_at(
@@ -1370,13 +1353,7 @@ async fn registry_upstream_failure_is_a_502_not_a_short_answer() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("asset-bundle registry upstream"),
-        "{body}"
-    );
+    assert!(body["message"] == "Registry service unavailable", "{body}");
 }
 
 #[tokio::test]
@@ -1703,7 +1680,9 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     feature_flags::set_local_flag(&db.pool, "explorer", "explorer-local-only", true)
         .await
         .unwrap();
-    node.state.flags.reload(&db.pool, "explorer").await.unwrap();
+    feature_flags::reload(&node.state.flags, &db.pool, "explorer")
+        .await
+        .unwrap();
     let (_, doc) = call_json(&app, "GET", "/feature-flags/explorer.json", None).await;
     assert_eq!(doc["flags"]["explorer-feature-a"], true);
     assert_eq!(doc["flags"]["explorer-local-only"], true);
@@ -1841,6 +1820,13 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     let task = tokio::spawn(axum::serve(listener, server).into_future());
     let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
     let snapshot = feature_flags::Snapshot::empty();
+    feature_flags::reload(&snapshot, &db.pool, "dapps")
+        .await
+        .unwrap();
+    assert!(
+        !snapshot.is_sourced(),
+        "a fresh database holds no dapps document from the service"
+    );
     let url = format!("http://{addr}/dapps.json");
     let audience = "https://social.example.invalid";
     feature_flags::refresh_app(
@@ -1855,6 +1841,7 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     .unwrap();
     assert_eq!(observed.lock()[0][header::REFERER], audience);
     assert!(observed.lock()[0].get(header::IF_NONE_MATCH).is_none());
+    assert!(snapshot.is_sourced(), "a fetched document is sourced");
     assert_eq!(
         snapshot.variant_values("dapps", "communities_global_moderators"),
         Some(vec!["0xabc".into()])
@@ -1881,9 +1868,19 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
             .is_err()
         );
         assert_eq!(snapshot.document(), last_good);
+        assert!(
+            snapshot.is_sourced(),
+            "a failed refresh keeps the sourced document"
+        );
         let restarted = feature_flags::Snapshot::empty();
-        restarted.reload(&db.pool, "dapps").await.unwrap();
+        feature_flags::reload(&restarted, &db.pool, "dapps")
+            .await
+            .unwrap();
         assert_eq!(restarted.document(), last_good);
+        assert!(
+            restarted.is_sourced(),
+            "a stored document is sourced after a restart"
+        );
     }
     task.abort();
     db.teardown().await;
@@ -1962,8 +1959,10 @@ async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downl
         assert_eq!((path, status), (path, StatusCode::OK));
         assert_eq!(headers["content-type"], "image/png");
     }
-    let (status, _, _) = call(&app, "GET", "/api/v1/estates/404/map.png", None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // an estate the grid holds no parcel of redirects, as the atlas does
+    let (status, headers, _) = call(&app, "GET", "/api/v1/estates/404/map.png", None).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(headers["location"], "http://localhost/dissolved_estate.png");
 
     let (status, tiles) = call_json(
         &app,
@@ -2080,7 +2079,7 @@ async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downl
 
 /// One bounded run of every mirror pass and reader against the real upstreams
 /// (`cargo test --lib live_upstream -- --ignored --nocapture`): one 38 MB grid
-/// download, three small documents, two registry calls. Prints the `/mirrors`
+/// download and three small documents. Registry uses the local runtime. Prints the `/mirrors`
 /// report; the freshness evidence in tests/README.md comes from here.
 #[tokio::test]
 #[ignore]
@@ -2127,26 +2126,6 @@ async fn live_upstream_passes_complete_and_the_boot_routes_answer() {
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     let (_, tiles) = call_json(&app, "GET", "/api/v2/tiles?x1=0&x2=0&y1=0&y2=0", None).await;
     assert_eq!(tiles["data"]["0,0"]["name"], "Genesis Plaza");
-    let (status, docs) = call_json(
-        &app,
-        "POST",
-        "/asset-bundle-registry/entities/active",
-        Some(json!({"pointers": ["0,0"]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(docs[0]["type"], "scene");
-    assert!(docs[0]["bundles"].is_object());
-    let (status, profiles) = call_json(
-        &app,
-        "POST",
-        "/asset-bundle-registry/profiles",
-        Some(json!({"ids": ["0xc9c29ab98e6bc42015985165a11153f564e9f8c2"]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(profiles[0]["avatars"].is_array());
-
     let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
     println!(
@@ -2184,6 +2163,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
         [
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
+            "auth-api-socket-push",
             "explorer-denylist-mirror",
             "explorer-denylist-reload",
             "explorer-flags-mirror",
@@ -2238,4 +2218,637 @@ async fn blank_sources_spawn_no_mirror_and_read_no_builtin_upstream() {
     let names: BTreeSet<String> = jobs.report().into_iter().map(|r| r.name).collect();
     assert!(names.iter().all(|n| !n.ends_with("-mirror")), "{names:?}");
     jobs.shutdown(Duration::from_secs(5)).await;
+}
+
+#[tokio::test]
+async fn registry_native_routes_preserve_wire_contract_and_replace_untrusted_original_path() {
+    use axum::http::{Method, Uri};
+    async fn echo(
+        method: Method,
+        uri: Uri,
+        headers: HeaderMap,
+        body: axum::body::Bytes,
+    ) -> Response {
+        (
+            StatusCode::ACCEPTED,
+            [("cache-control", "no-store"), ("retry-after", "3")],
+            Json(json!({
+                "method":method.as_str(), "uri":uri.to_string(),
+                "body":String::from_utf8(body.to_vec()).unwrap(),
+                "authorization":headers.get("authorization").is_some(),
+                "identity":headers.get("x-identity-auth-chain-0").unwrap().to_str().unwrap(),
+                "timestamp":headers.get("x-identity-timestamp").unwrap().to_str().unwrap(),
+                "metadata":headers.get("x-identity-metadata").unwrap().to_str().unwrap(),
+                "original":headers.get("x-original-path").unwrap().to_str().unwrap(),
+                "contentType":headers.get("content-type").unwrap().to_str().unwrap(),
+            })),
+        )
+            .into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, Router::new().fallback(echo)).into_future());
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state);
+    for (method, path) in [
+        ("POST", "/entities/active"),
+        ("POST", "/entities/versions"),
+        ("GET", "/entities/status"),
+        ("GET", "/entities/status/bafytest"),
+        ("GET", "/worlds/Test.dcl.eth/manifest"),
+        ("GET", "/denylist"),
+        ("GET", "/queues/status"),
+    ] {
+        let path_and_query = format!("{path}?world_name=A%2Bb.dcl.eth&x=1&x=2");
+        let public = format!("/asset-bundle-registry{path_and_query}");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&public)
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer operator-test")
+                    .header("x-identity-auth-chain-0", "signed-chain")
+                    .header("x-identity-timestamp", "1700000000000")
+                    .header("x-identity-metadata", "{}")
+                    .header("x-original-path", "/forged-path")
+                    .body(Body::from(r#"{ "pointers": ["0,0"], "unchanged": true }"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{method} {path}");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["retry-after"], "3");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["method"], method);
+        assert_eq!(body["uri"], path_and_query);
+        assert_eq!(body["original"], format!("/asset-bundle-registry{path}"));
+        assert_eq!(
+            body["body"],
+            r#"{ "pointers": ["0,0"], "unchanged": true }"#
+        );
+        assert_eq!(
+            body["authorization"], false,
+            "the admin bearer never leaves the host"
+        );
+        assert_eq!(body["identity"], "signed-chain");
+        assert_eq!(body["timestamp"], "1700000000000");
+        assert_eq!(body["metadata"], "{}");
+        assert_eq!(body["contentType"], "application/json");
+    }
+    let (status, _, _) = call(&app, "POST", "/asset-bundle-registry/not-a-route", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Registry writes stay behind the ops console.
+    for (method, path) in [
+        ("POST", "/denylist/bafytest"),
+        ("DELETE", "/denylist/bafytest"),
+        ("POST", "/queues/retry"),
+        ("POST", "/queues/pause"),
+        ("POST", "/queues/resume"),
+        ("POST", "/registry"),
+        ("DELETE", "/flush-cache"),
+    ] {
+        let (status, _, _) =
+            call(&app, method, &format!("/asset-bundle-registry{path}"), None).await;
+        assert!(
+            matches!(
+                status,
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "{method} {path}: {status}"
+        );
+    }
+    // Percent-encoded dot segments must never escape an enumerated route
+    // when the outbound URL parser normalizes them.
+    for path in [
+        "/asset-bundle-registry/entities/status/%2e%2e",
+        "/asset-bundle-registry/worlds/%2e%2e/manifest",
+    ] {
+        let (status, _, _) = call(&app, "GET", path, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+    }
+    let (status, _, _) = call(
+        &app,
+        "DELETE",
+        "/asset-bundle-registry/entities/active",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    server.abort();
+}
+
+/// The Registry gateway is opt-in: `ABGEN_ADMIN_URL` (the ops console's
+/// runtime) does not select it, since an abgen without native Registry
+/// state cannot answer these routes.
+#[test]
+fn registry_source_is_only_the_explicit_variable() {
+    let config = crate::config::Config::parse_for_tests(&[
+        "catalyst",
+        "--database-url",
+        "postgres:///catalyst",
+        "--abgen-admin-url",
+        "http://127.0.0.1:5147",
+    ])
+    .unwrap();
+    assert_eq!(Sources::from_config(&config).registry, "");
+    let config = crate::config::Config::parse_for_tests(&[
+        "catalyst",
+        "--database-url",
+        "postgres:///catalyst",
+        "--abgen-admin-url",
+        "http://127.0.0.1:5147",
+        "--explorer-registry-source-url",
+        "http://localhost:5150/",
+    ])
+    .unwrap();
+    assert_eq!(
+        Sources::from_config(&config).registry,
+        "http://localhost:5150"
+    );
+}
+
+/// A public Registry receives the request only: no signed-fetch headers, no
+/// asserted original path, no bearer.
+#[tokio::test]
+async fn registry_upstream_gets_no_identity_or_path_assertion() {
+    async fn echo(headers: HeaderMap) -> Json<Value> {
+        let names: Vec<String> = headers.keys().map(|k| k.to_string()).collect();
+        Json(json!(names))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, Router::new().fallback(echo)).into_future());
+    // An IPv4-mapped address is not loopback to the classifier, so this is
+    // the upstream path (tests allow private sources).
+    let sources = Sources {
+        registry: format!("http://[::ffff:127.0.0.1]:{}", addr.port()),
+        ..sources_at(addr)
+    };
+    let node = node_without_db(Settings::for_tests(sources)).await;
+    let app = router(node.state);
+    let response = app
+        .oneshot(
+            Request::get("/asset-bundle-registry/entities/status/bafy")
+                .header("authorization", "Bearer operator-test")
+                .header("x-identity-auth-chain-0", "signed-chain")
+                .header("x-original-path", "/forged")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let names: Vec<String> = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    for header in [
+        "authorization",
+        "x-identity-auth-chain-0",
+        "x-original-path",
+    ] {
+        assert!(!names.iter().any(|n| n == header), "{header}: {names:?}");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn registry_native_failures_are_preserved_without_following_redirects() {
+    async fn response(Query(q): Query<HashMap<String, String>>) -> Response {
+        let status = StatusCode::from_u16(q["status"].parse().unwrap()).unwrap();
+        (
+            status,
+            [
+                ("content-type", "application/problem+json"),
+                ("location", "http://127.0.0.1:1/never-follow"),
+            ],
+            r#"{"error":"native failure"}"#,
+        )
+            .into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server =
+        tokio::spawn(axum::serve(listener, Router::new().fallback(response)).into_future());
+    let mut node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    // The production pool normally follows redirects; the Registry adapter
+    // must explicitly suppress them for this request only.
+    Arc::get_mut(&mut node.state).unwrap().http =
+        crate::http::Outbound::new(crate::http::HttpClientCfg::serve(4)).unwrap();
+    let app = router(node.state);
+    for status in [307, 400, 401, 403, 404, 429, 500, 503] {
+        let (actual, headers, body) = call(
+            &app,
+            "POST",
+            &format!("/asset-bundle-registry/entities/active?status={status}"),
+            Some(json!({"pointers":["0,0"]})),
+        )
+        .await;
+        assert_eq!(actual.as_u16(), status);
+        assert_eq!(headers["content-type"], "application/problem+json");
+        assert_eq!(body, br#"{"error":"native failure"}"#);
+    }
+    server.abort();
+}
+
+fn abr_capture(name: &str) -> Value {
+    let path = format!(
+        "{}/services/catalyst/tests/fixtures/conformance/content-lambdas/captures/abr/{name}",
+        env!("DCL_ONE_ROOT")
+    );
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// The boot reads apply the Registry's pointer rule before any backend call,
+/// with and without a source: `ids` is not read, an absent or empty
+/// `pointers` is the captured 400 (keys in the Registry's order), a body
+/// that is not JSON or is `null` the http-commons 500, and the pointers are
+/// not capped.
+#[tokio::test]
+async fn registry_boot_reads_take_the_registry_pointer_rule() {
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let empty = Sources {
+        registry: String::new(),
+        ..sources_at(addr)
+    };
+    let captured = [
+        ("/entities/active", abr_capture("AB-4-empty-pointers.json")),
+        (
+            "/entities/versions",
+            abr_capture("AB-11-missing-pointers.json"),
+        ),
+    ];
+    for sources in [sources_at(addr), empty] {
+        let node = node_without_db(Settings::for_tests(sources)).await;
+        let app = router(node.state.clone());
+        for (path, capture) in &captured {
+            let path = format!("/asset-bundle-registry{path}");
+            for body in [
+                r#"{}"#,
+                r#"{"pointers":[]}"#,
+                r#"{"pointers":null}"#,
+                r#"{"pointers":""}"#,
+                r#"{"pointers":{"length":0}}"#,
+                r#"{"ids":["bafkreiexample"]}"#,
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::post(&path)
+                            .header("content-type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path} {body}");
+                assert_eq!(response.headers()["content-type"], "application/json");
+                let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                let parsed: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(parsed, capture["response"]["body"], "{path} {body}");
+                // The Registry's key order and the captured length.
+                assert_eq!(
+                    bytes.as_ref(),
+                    br#"{"ok":false,"message":"No pointers provided"}"#
+                );
+                assert_eq!(
+                    bytes.len().to_string(),
+                    capture["response"]["headers"]["content-length"]
+                        .as_str()
+                        .unwrap()
+                );
+            }
+            // `null.pointers` throws in the Registry's handler.
+            for body in ["", "{", "null"] {
+                let response = app
+                    .clone()
+                    .oneshot(Request::post(&path).body(Body::from(body)).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+                let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                    .await
+                    .unwrap();
+                assert_eq!(bytes.as_ref(), br#"{"error":"Internal Server Error"}"#);
+            }
+            let many: Vec<String> = (0..1001).map(|i| format!("{i},0")).collect();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(&path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(json!({ "pointers": many }).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+    // Only the two admitted reads (one per path, with a source) reached it.
+    assert_eq!(mock.hits("entities/active"), 1);
+    assert_eq!(mock.hits("entities/versions"), 1);
+}
+
+/// `POST /entities/active` drops a backend entity whose id is on this node's
+/// content denylist, leaving the other entities' bytes (content and
+/// asset-bundle fields) as received.
+#[tokio::test]
+async fn registry_active_entities_leave_out_the_content_denylist() {
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let entity = |id: &str, pointer: &str| {
+        json!({"id": id, "type": "scene", "timestamp": "1791215990965",
+            "deployer": "0x0000000000000000000000000000000000000b02",
+            "pointers": [pointer], "content": [], "metadata": {},
+            "status": "complete",
+            "bundles": {"assets": {"mac": "complete", "windows": "complete", "webgl": "pending"}}})
+    };
+    let kept = entity("bafkreikept", "1,1");
+    let listed = entity("bafkreilisted", "2,2");
+    *mock.entities.lock() = vec![kept.clone(), listed.clone()];
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state.clone());
+    let request = Some(json!({"pointers": ["1,1", "2,2"]}));
+    let path = "/asset-bundle-registry/entities/active";
+    let (status, all) = call_json(&app, "POST", path, request.clone()).await;
+    assert_eq!((status, all), (StatusCode::OK, json!([kept, listed])));
+    node.state.content.denylist.add("bafkreilisted");
+    let (status, _, bytes) = call(&app, "POST", path, request.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, serde_json::to_vec(&json!([kept])).unwrap());
+    node.state.content.denylist.add("bafkreikept");
+    let (status, rest) = call_json(&app, "POST", path, request).await;
+    assert_eq!((status, rest), (StatusCode::OK, json!([])));
+}
+
+/// A backend that answers every read with cache validators and a `304` to
+/// any conditional request, as an HTTP cache-aware Registry would; its
+/// `/entities/active` answer is a fixed two-entity list.
+async fn serve_validating_backend() -> SocketAddr {
+    async fn answer(uri: axum::http::Uri, headers: HeaderMap) -> Response {
+        let validators = [
+            ("etag", "\"backend\""),
+            ("last-modified", "Tue, 10 Nov 2026 00:00:00 GMT"),
+            ("cache-control", "public, max-age=60"),
+        ];
+        if headers.contains_key("if-none-match") || headers.contains_key("if-modified-since") {
+            return (StatusCode::NOT_MODIFIED, validators).into_response();
+        }
+        let body = if uri.path() == "/entities/active" {
+            json!([{"id": "bafkreikept"}, {"id": "bafkreilisted"}])
+        } else {
+            json!({})
+        };
+        (validators, Json(body)).into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, Router::new().fallback(answer)).into_future());
+    addr
+}
+
+/// The backend's `ETag` and `Last-Modified` describe its unfiltered answer:
+/// `/entities/active` never sends it the client's conditional headers (its
+/// `304` would skip the denylist), keeps the validators while the denylist
+/// drops nothing and removes them when it does. `Cache-Control` stays, and
+/// the other reads still forward the conditional headers.
+#[tokio::test]
+async fn registry_active_entities_validators_describe_the_filtered_answer() {
+    let addr = serve_validating_backend().await;
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state.clone());
+    let conditional = |request: axum::http::request::Builder| {
+        request
+            .header("if-none-match", "\"backend\"")
+            .header("if-modified-since", "Tue, 10 Nov 2026 00:00:00 GMT")
+    };
+    let active = |app: Router| async move {
+        let response = app
+            .oneshot(
+                conditional(Request::post("/asset-bundle-registry/entities/active"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"pointers":["1,1","2,2"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        (status, headers, body)
+    };
+
+    let (status, h, body) = active(app.clone()).await;
+    assert_eq!(status, StatusCode::OK, "no conditional header reached it");
+    assert_eq!(
+        body,
+        json!([{"id": "bafkreikept"}, {"id": "bafkreilisted"}])
+    );
+    assert_eq!(h["etag"], "\"backend\"");
+    assert_eq!(h["last-modified"], "Tue, 10 Nov 2026 00:00:00 GMT");
+    assert_eq!(h["cache-control"], "public, max-age=60");
+
+    node.state.content.denylist.add("bafkreilisted");
+    let (status, h, body) = active(app.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([{"id": "bafkreikept"}]));
+    assert!(h.get("etag").is_none(), "{h:?}");
+    assert!(h.get("last-modified").is_none(), "{h:?}");
+    assert_eq!(h["cache-control"], "public, max-age=60");
+
+    let response = app
+        .oneshot(
+            conditional(Request::get("/asset-bundle-registry/entities/status/bafy"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(response.headers()["etag"], "\"backend\"");
+}
+
+/// The boot reads cap their body at 1 MiB, with or without a source and
+/// before any backend call: unity-explorer's largest read (every parcel of a
+/// world at the coordinate bound) fits, a body just over the cap is a 413.
+#[tokio::test]
+async fn registry_boot_reads_cap_the_request_body() {
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let empty = Sources {
+        registry: String::new(),
+        ..sources_at(addr)
+    };
+    let grid: Vec<String> = (-150..=150)
+        .flat_map(|x| (-150..=150).map(move |y| format!("{x},{y}")))
+        .collect();
+    let world = json!({ "pointers": grid }).to_string();
+    assert_eq!(world.len(), 865_088);
+    let over = format!(
+        r#"{{"pointers":["0,0"],"pad":"{}"}}"#,
+        "x".repeat(1024 * 1024)
+    );
+    for sources in [sources_at(addr), empty] {
+        let node = node_without_db(Settings::for_tests(sources)).await;
+        let app = router(node.state.clone());
+        for path in ["/entities/active", "/entities/versions"] {
+            let path = format!("/asset-bundle-registry{path}");
+            for (body, expected) in [
+                (world.clone(), StatusCode::OK),
+                (over.clone(), StatusCode::PAYLOAD_TOO_LARGE),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::post(&path)
+                            .header("content-type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected, "{path}");
+            }
+        }
+    }
+    // Only the in-limit reads with a source reached the backend.
+    assert_eq!(mock.hits("entities/active"), 1);
+    assert_eq!(mock.hits("entities/versions"), 1);
+}
+
+/// `GET /denylist` at the handler: a source's non-200 answer passes through,
+/// a 200 that is not an array is a 502, `HEAD` asks the source with `GET`,
+/// and the local half's failed read (no database here) is a 500, with or
+/// without a source.
+#[tokio::test]
+async fn registry_denylist_handler_answers_source_failures_and_local_read_errors() {
+    use axum::http::{Method, Uri};
+    async fn source(method: Method, uri: Uri) -> Response {
+        match (method, uri.query()) {
+            (_, Some("case=busy")) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "3")],
+                Json(json!({"ok":false,"message":"busy"})),
+            )
+                .into_response(),
+            (_, Some("case=object")) => Json(json!({"not":"an array"})).into_response(),
+            (_, Some("case=malformed")) => "{".into_response(),
+            // Only a GET gets this distinct status, so HEAD must arrive as GET.
+            (Method::GET, Some("case=method")) => StatusCode::CONFLICT.into_response(),
+            (_, Some("case=method")) => StatusCode::IM_A_TEAPOT.into_response(),
+            _ => Json(json!([])).into_response(),
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, Router::new().fallback(source)).into_future());
+    let node = node_without_db(Settings::for_tests(sources_at(addr))).await;
+    let app = router(node.state.clone());
+    let path = "/asset-bundle-registry/denylist";
+
+    let (status, headers, body) = call(&app, "GET", &format!("{path}?case=busy"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(headers["retry-after"], "3");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"ok":false,"message":"busy"})
+    );
+    let (status, _, _) = call(&app, "GET", &format!("{path}?case=object"), None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _, _) = call(&app, "GET", &format!("{path}?case=malformed"), None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let (status, _, body) = call(&app, "HEAD", &format!("{path}?case=method"), None).await;
+    assert!(body.is_empty());
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "HEAD reaches the source as GET"
+    );
+    // The source's array is good; the local read has no database.
+    let (status, _, body) = call(&app, "GET", path, None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error":"Internal Server Error"})
+    );
+
+    let empty = Sources {
+        registry: String::new(),
+        ..sources_at(addr)
+    };
+    let node = node_without_db(Settings::for_tests(empty)).await;
+    let (status, _, _) = call(&router(node.state.clone()), "GET", path, None).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "without a source the local rows are the answer, so their read failing is a 500"
+    );
+}
+
+#[tokio::test]
+async fn registry_denylist_reads_local_rows_without_a_source_and_reuses_them() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let mut settings = Settings::for_tests(Sources::defaults());
+    settings.sources.registry.clear();
+    let node = node_with_db(settings, db.pool.clone()).await;
+    for id in ["QmCase", "0,0", "profile-pointer"] {
+        crate::content::denylist::add(&db.pool, id, "0xoperator")
+            .await
+            .unwrap();
+    }
+    let app = router(node.state);
+    let path = "/asset-bundle-registry/denylist";
+    let (status, _, first) = call(&app, "GET", path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rows: Value = serde_json::from_slice(&first).unwrap();
+    let ids: BTreeSet<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["entity_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, BTreeSet::from(["QmCase", "0,0", "profile-pointer"]));
+    for row in rows.as_array().unwrap() {
+        assert_eq!(row["created_by"], "0xoperator");
+        assert!(row["reason"].is_null());
+        assert_eq!(row["created_at"], row["updated_at"]);
+    }
+    // Closing the pool makes another SELECT fail, so every concurrent success
+    // must come from this router's previously loaded local rows.
+    db.pool.close().await;
+    let mut requests = tokio::task::JoinSet::new();
+    for _ in 0..16 {
+        let app = app.clone();
+        requests.spawn(async move { call(&app, "GET", path, None).await });
+    }
+    while let Some(response) = requests.join_next().await {
+        let (status, _, body) = response.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, first);
+    }
+    let (status, _, body) = call(&app, "HEAD", path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_empty());
+    db.teardown().await;
 }

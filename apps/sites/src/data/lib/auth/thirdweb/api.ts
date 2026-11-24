@@ -1,9 +1,9 @@
-import { check } from "@ui/validate";
+import { check } from "@web-core/validate";
 import {
   EnclaveSignatureSchema,
   ThirdwebAuthResultSchema,
   WalletsMeSchema,
-} from "@ui/data/auth/thirdwebSchema";
+} from "@web-core/auth/thirdwebSchema";
 
 import { THIRDWEB_API_BASE, thirdwebClientId } from "./config";
 

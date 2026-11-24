@@ -11,11 +11,12 @@ import { useSearchParams } from "react-router";
 
 import Button from "../../atoms/Button";
 import EmptyState from "../../components/EmptyState";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { reasonText } from "@shop/payment/copy";
 import { indexOutage } from "../land/api";
 import { useResource } from "../land/useResource";
-import { fetchNameResales, NAME_SORT_LABEL, nameOf, parsePriceBound, nameResaleQueryFromSearch, nameResaleQueryToSearch, NAMES_PAGE_SIZE, type NameResaleQuery } from "./api";
+import { shopClient } from "../api/host";
+import { fetchNameResales, NAME_SORT_LABEL, nameOf, parsePriceBound, nameResaleQueryFromSearch, nameResaleQueryToSearch, NAMES_PAGE_SIZE, type NameResaleQuery } from "@shop/names/api";
 import NameCard from "./NameCard";
 import "./names.css";
 
@@ -92,7 +93,7 @@ export default function NamesBrowse({ client }: { client?: ShopClient }) {
   const [params, setParams] = useSearchParams();
   const query = nameResaleQueryFromSearch(`?${params}`);
   const [draft, setDraft] = useState(query.search);
-  const results = useResource((signal) => fetchNameResales(query, { client, signal }), [nameResaleQueryToSearch(query), client]);
+  const results = useResource((signal) => fetchNameResales(query, { client: client ?? shopClient(), signal }), [nameResaleQueryToSearch(query), client]);
 
   const update = (patch: Partial<NameResaleQuery>) => {
     const next = { ...query, ...patch, page: patch.page ?? 1 };

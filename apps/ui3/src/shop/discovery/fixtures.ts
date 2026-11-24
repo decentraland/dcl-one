@@ -9,16 +9,16 @@
 import { createElement, useState, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 
-import type { AuthIdentity } from "../../data/auth/identity";
-import { createShopClient, type ShopClient } from "../api/shop";
+import type { AuthIdentity } from "@web-core/auth/identity";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { shopCart, type CartStore } from "../cart/store";
 import type { EvmAddress } from "@shop/model/address";
 import { ShopOfferProvider, missingOfferRoute, type OfferSource } from "../detail/offers";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost } from "../wallet/session";
-import type { ShopTransport, TransportRequest } from "../api/signer";
+import type { ShopTransport, TransportRequest } from "@shop/api/signer";
 import { BOOK, ITEM, TOKEN } from "@shop/payment/fixtures";
-import type { UnifiedListingRaw } from "./api";
+import type { UnifiedListingRaw } from "@shop/discovery/api";
 import { resetShopQueries } from "./query";
 import { primeRemoteFlags } from "./lib/remoteFlags";
 import type { RawCollectionItem } from "@shop/discovery/lib/catalogItem";
@@ -201,7 +201,7 @@ export const ITEM_META = {
   category: "wearable",
   chainId: 137,
   network: "MATIC",
-  data: { wearable: { isSmart: false, category: "hat", bodyShapes: ["BaseMale", "BaseFemale"] } },
+  data: { wearable: { description: "A hat for the discerning nacho.", isSmart: false, category: "hat", bodyShapes: ["BaseMale", "BaseFemale"] } },
 };
 
 export function tokenNft(owner: string = RESELLER, onSale = true) {
@@ -271,7 +271,6 @@ export function defaultAnswers(): Record<string, (url: URL) => unknown> {
       if (itemId && !known) return { data: [], total: 0 };
       return { data: [known && known !== PRIMARY_WEARABLE && known !== RESALE_WEARABLE ? { ...ITEM_META, name: known.name, thumbnail: known.thumbnail, rarity: known.rarity, category: known.category } : ITEM_META], total: 1 };
     },
-    "/v2/catalog": () => ({ data: [{ ...catalogRow(PRIMARY_WEARABLE), data: { wearable: { description: "A hat for the discerning nacho." } } }], total: 1 }),
     "/v1/nfts": (url) => {
       const owner = url.searchParams.get("owner");
       if (url.searchParams.get("tokenId")) {

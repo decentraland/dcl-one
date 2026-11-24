@@ -11,7 +11,9 @@ use super::helpers::{
 use crate::auth::is_eth_address;
 use crate::notifications::{NewNotification, insert_notifications};
 use crate::rpc::context::{Context, PairScope};
-use crate::rpc::db::record_friendship_action;
+use crate::rpc::db::{
+    DbError, friendship_probe_on, lock_friendship_pair, record_friendship_action,
+};
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::errors::InvalidFriendshipAction;
 use crate::rpc::proto::v2::*;
@@ -54,8 +56,9 @@ pub(crate) async fn apply_friendship_action(
         tracing::warn!(actor = %me, target = %other, "friendship mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
     }
-    let db = ctx.db();
-    let probe = db.friendship_probe(me, other).await?;
+    let mut tx = ctx.db().pool().begin().await.map_err(DbError::from)?;
+    lock_friendship_pair(&mut tx, me, other).await?;
+    let probe = friendship_probe_on(&mut *tx, me, other).await?;
     if probe.blocked || probe.blocked_by {
         return Err(Refusal::Forbidden(BLOCKED_MESSAGE.into()));
     }
@@ -65,7 +68,7 @@ pub(crate) async fn apply_friendship_action(
     }
     let action_id = uuid::Uuid::new_v4();
     let (id, created_at) = record_friendship_action(
-        db.pool(),
+        &mut *tx,
         action_id,
         me,
         other,
@@ -75,6 +78,7 @@ pub(crate) async fn apply_friendship_action(
         message,
     )
     .await?;
+    tx.commit().await.map_err(DbError::from)?;
     let created_ms = created_at.timestamp_millis();
     let mut my_profile = ctx.profiles().friend_profile(me).await;
     // Raw/JSON updates identify the actor wallet. RPC delivery resolves the
@@ -93,6 +97,13 @@ pub(crate) async fn apply_friendship_action(
         .await;
     if action == Action::Accept {
         announce_accepted_connectivity(ctx, me, other).await;
+        // Subscribers on other replicas hear the accept through their own topology.
+        ctx.pubsub()
+            .forward_mutation(crate::rpc::fanout::Event::FriendshipAccepted {
+                actor: me.to_lowercase(),
+                friend: other.to_lowercase(),
+            })
+            .await;
     }
     notify_friendship_action(ctx, action, action_id, me, other, message).await;
     Ok((id, created_ms))
@@ -103,10 +114,13 @@ pub(crate) async fn apply_friendship_action(
 /// current ONLINE peers; the stream's existing relationship and topology
 /// guards recheck them before delivery. A wallet the profile source holds no
 /// profile for is skipped, as upstream's live loop skips it.
-async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
-    let snapshot = ctx.topology().snapshot();
+pub(crate) async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
     for (recipient, friend) in [(other, me), (me, other)] {
-        if !snapshot.is_online(friend) {
+        let (online, generation) = {
+            let snapshot = ctx.topology().snapshot();
+            (snapshot.is_online(friend), snapshot.generation)
+        };
+        if !online {
             continue;
         }
         let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
@@ -115,7 +129,7 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
         let mut friend_profile = profile;
         friend_profile.address = friend.to_string();
         ctx.topology()
-            .deliver_if_current(snapshot.generation, friend, true, || {
+            .deliver_if_current(generation, friend, true, || {
                 ctx.pubsub().publish(
                     recipient,
                     SocialEvent::TopologyFriendConnectivity(
@@ -124,7 +138,7 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
                             friend: Some(friend_profile),
                             status: ConnectivityStatus::Online as i32,
                         },
-                        snapshot.generation,
+                        generation,
                     ),
                 );
             });

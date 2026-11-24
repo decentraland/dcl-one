@@ -13,7 +13,7 @@
 // (Windows), and prints `adapter-luid: <high>,<low>` for the caller to pass the same way. A VM
 // whose display adapter is a paravirtual one keeps its real GPU as a second adapter, and the
 // browser starts on the first.
-//   npm run gpu-probe [-- --adapter nvidia] [-- <more browser flags>...]
+//   pnpm run gpu-probe [--adapter nvidia] [<more browser flags>...]
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -23,6 +23,7 @@ import { pathToFileURL } from 'node:url'
 import { chromeArgs } from '../driver/chrome.ts'
 import { REPORT_DIR } from '../driver/paths.ts'
 import { webDriverModule } from '../driver/web.ts'
+import { gpuPageFilled } from './gpu-page.ts'
 
 const ANSWER_TIMEOUT_MS = 30_000
 const GPU_PAGE_TIMEOUT_MS = 20_000
@@ -47,7 +48,7 @@ const GPU_PAGE_TEXT = `(() => {
   return parts.join('')
 })()`
 
-/** The page's side: the app's gate asks for an adapter the same way (`react-web/src/lib/gpu.ts`). */
+/** The page's side: the app's gate asks for an adapter the same way (`library/explorer-core/lib/gpu.ts`). */
 const PROBE = `(async () => {
   if (!navigator.gpu) return 'navigator.gpu is absent'
   const adapter = await navigator.gpu.requestAdapter()
@@ -197,7 +198,7 @@ async function ask(pipe: Pipe, url: string): Promise<{ product: string; answer: 
   }
   const { result, exceptionDetails } = await evaluate(PROBE)
   const answer = exceptionDetails ? `error: ${exceptionDetails.exception?.description ?? exceptionDetails.text}` : String(result?.value)
-  // chrome://gpu fills itself in once the GPU process has answered; the adapter lines come last
+  // chrome://gpu fills itself in once the GPU process has answered (`gpuPageFilled`)
   const navigation = await pipe.send('Page.navigate', { url: 'chrome://gpu' }, sessionId)
   if (navigation.errorText) return { product, answer, gpuPage: '', refused: String(navigation.errorText) }
   let gpuPage = ''
@@ -205,7 +206,7 @@ async function ask(pipe: Pipe, url: string): Promise<{ product: string; answer: 
   while (Date.now() < until) {
     const page = await evaluate(GPU_PAGE_TEXT).catch(() => undefined)
     const text = typeof page?.result?.value === 'string' ? page.result.value : ''
-    if (/Graphics Feature Status/.test(text) && /LUID=|Dawn Info/.test(text)) {
+    if (gpuPageFilled(text)) {
       gpuPage = text
       break
     }

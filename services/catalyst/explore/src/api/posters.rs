@@ -1,9 +1,7 @@
-//! The event poster bucket: `GET /poster/{file}` and `/poster-vertical/{file}`
-//! as the old gateway fronted them on `events-assets-099ac00.<domain>`, at
-//! the root (the vhost's own paths) and under `/events-assets-099ac00` (the
-//! gateway prefix the explorer-boot corpus maps the host to). Mirrored event
-//! records carry `https://events-assets-099ac00.decentraland.org/poster/...`
-//! URLs, rewritten to this deployment's domain on read (`explore::events`).
+//! The event poster bucket serves `/poster/{file}` and `/poster-vertical/{file}`
+//! at the root and under `/events-assets-099ac00`. Event records with a
+//! rewrite domain point at the prefixed paths on that domain. The root
+//! paths also serve operators that configure a dedicated poster vhost.
 //!
 //! The old vhost asked the events service's own poster store first and, on
 //! its 404, proxied the upstream bucket on the same origin (never a redirect:
@@ -12,25 +10,23 @@
 //! keyed index into the ONE blob store; a miss reads the upstream bucket
 //! through `http::Outbound` once per name at a time, lands the bytes in the
 //! store and indexes them, so the next request never leaves the node. An
-//! upstream miss is remembered for a minute. Only the four image types the
-//! events service accepted pass (sniffed from the bytes); the upstream's own
-//! `Content-Type` is served back as it came (`image/*` or
-//! `application/octet-stream`, which the bucket answers for most files).
+//! upstream miss is remembered for a minute. Read-through accepts the four
+//! upload formats plus AVIF. The bytes determine the response and indexed
+//! media type even when the bucket sends an incorrect or generic header.
 //! The read-through runs where the old one did: when the events catalogue is
 //! mirrored (`EVENTS_MIRROR_UPSTREAM`), from `EVENTS_POSTER_UPSTREAM_URL`.
 //! Local uploads (`origin = 'local'`, the old `<sha256>.<ext>` names) are
 //! rows of the same index, written by the events write routes.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use serde_json::json;
@@ -90,27 +86,44 @@ pub fn sniff(body: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// The type served for a landed object: the upstream's when it is one of
-/// the image types or the bucket's `application/octet-stream`, else the sniffed one.
-fn served_type(upstream: Option<&str>, sniffed: &'static str) -> String {
-    let declared = upstream.map(|v| v.split(';').next().unwrap_or(v).trim().to_ascii_lowercase());
-    match declared.as_deref() {
-        Some(
-            t @ ("image/png"
-            | "image/jpeg"
-            | "image/gif"
-            | "image/webp"
-            | "application/octet-stream"),
-        ) => t.to_string(),
-        _ => sniffed.to_string(),
+/// Recognize AVIF from a complete leading ISO-BMFF file-type box. The
+/// payload contains a major brand, a minor version, then whole brand codes.
+fn avif_file_type(body: &[u8]) -> bool {
+    let Some(header) = body.first_chunk::<8>() else {
+        return false;
+    };
+    if &header[4..] != b"ftyp" {
+        return false;
     }
+    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let (size, offset) = if size == 1 {
+        let Some(extended) = body.get(8..16).and_then(|bytes| bytes.try_into().ok()) else {
+            return false;
+        };
+        (u64::from_be_bytes(extended), 16)
+    } else {
+        (u64::from(size), 8)
+    };
+    let Ok(size) = usize::try_from(size) else {
+        return false;
+    };
+    let Some(payload) = body.get(offset..size) else {
+        return false;
+    };
+    let Some((brand_and_version, compatible)) = payload.split_first_chunk::<8>() else {
+        return false;
+    };
+    let (compatible_brands, remainder) = compatible.as_chunks::<4>();
+    remainder.is_empty()
+        && (matches!(&brand_and_version[..4], b"avif" | b"avis")
+            || compatible_brands
+                .iter()
+                .any(|brand| matches!(brand, b"avif" | b"avis")))
 }
-
-type Flights = HashMap<(Kind, String), Arc<tokio::sync::Mutex<()>>>;
 
 #[derive(Default)]
 pub struct PosterState {
-    locks: Mutex<Flights>,
+    locks: crate::keyed_locks::KeyedLocks<(Kind, String)>,
     misses: Mutex<HashMap<(Kind, String), Instant>>,
 }
 
@@ -192,13 +205,7 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
     if state.posters.is_known_miss(&key) {
         return Ok(Served::Miss);
     }
-    let lock = state
-        .posters
-        .locks
-        .lock()
-        .entry(key.clone())
-        .or_default()
-        .clone();
+    let lock = state.posters.locks.claim(&key);
     let result = async {
         let _guard = lock.lock().await;
         if let Some(hit) = lookup(state, kind, file).await? {
@@ -206,9 +213,10 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
         }
         let url = format!("{}/{}/{file}", upstream.trim_end_matches('/'), kind.as_str());
         match mirror::fetch_conditional(&state.http, &state.settings, &url, None, None, BODY_CAP, FETCH_TIMEOUT, mirror::Reach::Public).await? {
-            Conditional::Fetched { body, content_type, .. } => {
-                let sniffed = sniff(&body).with_context(|| format!("{} is not a poster image", mirror::shown(&url)))?;
-                let content_type = served_type(content_type.as_deref(), sniffed);
+            Conditional::Fetched { body, .. } => {
+                let content_type = sniff(&body)
+                    .or_else(|| avif_file_type(&body).then_some("image/avif"))
+                    .with_context(|| format!("{} is not a poster image", mirror::shown(&url)))?;
                 let body = Bytes::from(body);
                 let cid = {
                     let body = body.clone();
@@ -229,12 +237,12 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
                 .bind(kind.as_str())
                 .bind(file)
                 .bind(&cid)
-                .bind(&content_type)
+                .bind(content_type)
                 .bind(body.len() as i64)
                 .execute(&state.pool)
                 .await
                 .context("recording explore.poster")?;
-                Ok(Served::Hit { body, content_type, cid })
+                Ok(Served::Hit { body, content_type: content_type.to_owned(), cid })
             }
             Conditional::Missing(_) => {
                 state.posters.remember_miss(key.clone());
@@ -244,11 +252,6 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
         }
     }
     .await;
-    let mut locks = state.posters.locks.lock();
-    drop(lock);
-    if locks.get(&key).is_some_and(|l| Arc::strong_count(l) == 1) {
-        locks.remove(&key);
-    }
     result
 }
 
@@ -341,23 +344,13 @@ mod tests {
     }
 
     #[test]
-    fn only_the_four_poster_types_pass_and_the_bucket_type_is_kept() {
+    fn only_the_four_upload_formats_pass() {
         assert_eq!(sniff(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
         assert_eq!(sniff(&[0xff, 0xd8, 0xff, 0xe0]), Some("image/jpeg"));
         assert_eq!(sniff(b"GIF89a..."), Some("image/gif"));
         assert_eq!(sniff(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("image/webp"));
-        assert_eq!(sniff(b"<svg xmlns=..."), None);
+        assert_eq!(sniff(b"<svg xmlns=...>"), None);
         assert_eq!(sniff(b"<html>"), None);
-        assert_eq!(
-            served_type(Some("application/octet-stream"), "image/jpeg"),
-            "application/octet-stream"
-        );
-        assert_eq!(served_type(Some("image/webp"), "image/webp"), "image/webp");
-        assert_eq!(
-            served_type(Some("text/html; charset=utf-8"), "image/png"),
-            "image/png",
-            "a type the bucket should not send is replaced by the sniffed one"
-        );
-        assert_eq!(served_type(None, "image/gif"), "image/gif");
+        assert_eq!(sniff(b"\0\0\0\x10ftypavif\0\0\0\0"), None);
     }
 }

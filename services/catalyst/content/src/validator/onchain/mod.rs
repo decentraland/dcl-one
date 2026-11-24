@@ -5,14 +5,17 @@
 //! ownership through `ownerOf`/`balanceOf` in JSON-RPC batches, every
 //! question asked at the block of the entity timestamp and again at the
 //! block five minutes before it. Blocks come from a binary search over the
-//! RPC ([`dcl_http::jsonrpc::BlockSearch`]).
+//! RPC ([`dcl_http::jsonrpc::BlockSearch`]); each block it reads is asked up
+//! to [`BLOCK_READ_ATTEMPTS`] times, a transient error or an empty answer (a
+//! replica behind the chain) retried after a jittered backoff. The
+//! `eth_call`s are asked once.
 //!
 //! The vendored contract data is in `contracts/` with its provenance
 //! (`upstream.lock.json`). A call that cannot be decided (no RPC, a failing
 //! RPC, a node that cannot answer for that block, a check past its deadline)
 //! is an `Err`, never a grant; a call the chain reverts is a "no".
 
-mod items;
+pub(crate) mod items;
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -27,17 +30,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::error::ValidatorError;
-use crate::http::Outbound;
 use crate::http::jsonrpc::{
-    BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
+    BlockError, BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
 };
+use crate::http::{Outbound, RetryDecision, retry_with_backoff};
 
 pub use items::v1_collection_contract;
-
-/// A collection URN naming no item the ownership check can ask about.
-pub(crate) fn is_malformed_item(urn: &str) -> bool {
-    matches!(items::item_ref(urn), items::ItemRef::Malformed)
-}
 
 sol! {
     interface Checker {
@@ -63,19 +61,31 @@ pub fn checker_bytecode() -> &'static str {
     CHECKER_BYTECODE.trim()
 }
 
-/// Distinct item URNs asked about per check; more refuses the check. An
-/// avatar wears at most 18 wearable categories and 10 emotes, an outfits
-/// entity about ten avatars of those; `@dcl/schemas` caps neither list.
+/// Distinct item URNs asked about per check; more refuses the check (400).
+/// Every item is an `eth_call` to the operator's RPC, and any signer can name
+/// any number of them: `@dcl/schemas` caps neither a profile's avatars nor an
+/// outfit's wearables, and the reference validator asks about every one. The
+/// bound keeps one signed deploy from driving that RPC without limit; no
+/// entity the clients build reaches it (an avatar wears at most 18 wearable
+/// categories and 10 emotes, an outfits entity ten avatars of those).
 pub(crate) const MAX_ITEMS_ASKED: usize = 200;
 /// Distinct third-party NFT contracts asked about per check; more refuses
 /// the check. Their standard probes are batched, so this matches the item cap.
 pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = MAX_ITEMS_ASKED;
 
-/// How many items one ownership check asks about, and what more is.
+/// Distinct claimed names asked about per check; more refuses the check. A
+/// profile names one per avatar.
+pub(crate) const MAX_NAMES_ASKED: usize = MAX_ITEMS_ASKED;
+/// Longer names are answered as not held without being asked: no registrable
+/// NAME comes near it, and it bounds the calldata one name sends.
+pub(crate) const MAX_NAME_BYTES: usize = 64;
+
+/// How many items or names one ownership check asks about, and what more is.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ItemCaps {
     pub items: usize,
     pub nft_contracts: usize,
+    pub names: usize,
     /// Past a cap the check is undecided instead of [`ValidatorError::TooManyItems`].
     pub undecided_past_cap: bool,
 }
@@ -84,6 +94,7 @@ pub(crate) struct ItemCaps {
 pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
     items: MAX_ITEMS_ASKED,
     nft_contracts: MAX_NFT_CONTRACTS_ASKED,
+    names: MAX_NAMES_ASKED,
     undecided_past_cap: false,
 };
 
@@ -92,10 +103,11 @@ pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
 pub(crate) const SYNCED_ITEM_CAPS: ItemCaps = ItemCaps {
     items: 1000,
     nft_contracts: 1000,
+    names: 1000,
     undecided_past_cap: true,
 };
-/// `eth_call`s per JSON-RPC batch request.
-const CALLS_PER_BATCH: usize = 100;
+/// `eth_call`s per JSON-RPC batch request, and sub-calls per Checker `multicall`.
+pub(crate) const CALLS_PER_BATCH: usize = 100;
 /// Single calls in flight at once when an endpoint answers no batch.
 const CALLS_IN_FLIGHT: usize = 8;
 /// Third-party NFT standards kept before the memo starts over.
@@ -109,6 +121,13 @@ const BLOCKS_MEMO_CAP: usize = 4096;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// The longest one access check takes before it is undecided.
 const CHECK_DEADLINE: Duration = Duration::from_secs(30);
+/// Reads of one block before its error stands, and the first wait between
+/// them: 100-200 ms, then 200-400 ms.
+const BLOCK_READ_ATTEMPTS: u32 = 3;
+const BLOCK_READ_BASE_MS: u64 = 100;
+/// One block read's timeout: every attempt and its backoff (under 16 s) fit
+/// in [`CHECK_DEADLINE`] with an `eth_call` after them.
+const BLOCK_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// An address as the vendored JSON spells it.
 #[derive(Debug, Clone, Copy)]
@@ -201,16 +220,6 @@ pub fn timestamp_bounds(timestamp_ms: i64) -> (i64, i64) {
     (upper, (upper - 60 * 5 - 7).max(0))
 }
 
-/// Whether a JSON-RPC error is the call's own revert (geth's code 3, the
-/// "execution reverted" of hosted providers, Nethermind's "VM execution error").
-fn is_revert(e: &RpcError) -> bool {
-    matches!(e, RpcError::Response { code, message }
-    if *code == 3 || {
-        let m = message.to_ascii_lowercase();
-        m.contains("revert") || m.contains("vm execution error")
-    })
-}
-
 fn query_failed(what: &str, e: impl std::fmt::Display) -> ValidatorError {
     ValidatorError::BlockchainQuery(format!("{what}: {e}"))
 }
@@ -225,6 +234,68 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
         params.push(o.clone());
     }
     Value::Array(params)
+}
+
+/// Whether a failed block read may succeed when asked again: the node
+/// unreachable or overloaded, a 2xx body that is not JSON (cut off on the
+/// way), a JSON-RPC internal or server error, or a replica that has not seen
+/// the block yet. A rate limit (HTTP 429, or EIP-1474's -32005 "limit
+/// exceeded") is not asked again within the check, nor is an answer that
+/// will not change (a refused endpoint, a bad key or path, invalid params,
+/// EIP-1474's resource not found, transaction rejected, method or version
+/// not supported, a block without a usable number or timestamp).
+fn transient(e: &BlockError) -> bool {
+    match e {
+        BlockError::Missing(_) => true,
+        BlockError::Shape(_) => false,
+        BlockError::Rpc(RpcError::Transport(_) | RpcError::Malformed(_)) => true,
+        BlockError::Rpc(RpcError::Status(s)) => *s == 408 || (500..600).contains(s),
+        BlockError::Rpc(RpcError::Response { code, .. }) => {
+            *code == -32603
+                || ((-32099..=-32000).contains(code)
+                    && ![-32001, -32003, -32004, -32005, -32006].contains(code))
+        }
+        BlockError::Rpc(RpcError::Refused(_)) => false,
+    }
+}
+
+/// One block, read again after a [`transient`] error, each wait doubling with
+/// up to as much again in jitter.
+async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockInfo, BlockError> {
+    let rpc = Rpc::new(http, url).with_timeout(BLOCK_READ_TIMEOUT);
+    let rpc = &rpc;
+    let mut attempt = 0;
+    // `after` always carries the jittered wait, overriding the helper's own
+    // ladder, so the `base_ms` passed here is nominal.
+    let answer = retry_with_backoff(
+        "block read",
+        BLOCK_READ_ATTEMPTS,
+        BLOCK_READ_BASE_MS,
+        || {
+            attempt += 1;
+            let last = attempt == BLOCK_READ_ATTEMPTS;
+            let base = BLOCK_READ_BASE_MS << (attempt - 1);
+            let wait = Duration::from_millis(base + rand::random::<u64>() % base);
+            async move {
+                Ok(match rpc.block(tag).await {
+                    Err(e) if !last && transient(&e) => {
+                        tracing::debug!(error = %e, ?tag, attempt, "block read failed, asking again");
+                        RetryDecision::Retry {
+                            after: Some(wait),
+                            rate_limited: false,
+                        }
+                    }
+                    answer => RetryDecision::Done(answer),
+                })
+            }
+        },
+    )
+    .await;
+    // The last attempt answers `Done`, so the budget never runs out first.
+    answer
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Err(RpcError::Transport("block read gave no answer".into()).into()))
 }
 
 /// One chain's RPC and the blocks read from it.
@@ -255,15 +326,15 @@ impl Chain {
     }
 
     async fn block_at(&self, timestamp: i64) -> Result<Option<BlockInfo>, ValidatorError> {
-        let rpc = self.rpc();
         self.search
-            .block_at(timestamp, |tag| rpc.block(tag))
+            .block_at(timestamp, |tag| read_block(&self.http, &self.url, tag))
             .await
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }
 
-    /// The blocks of an entity timestamp, searched once per timestamp while
-    /// the memo holds them.
+    /// The blocks of an entity timestamp. Only final answers are memoized: a
+    /// timestamp whose bounds reach past the head (a fresh deploy) is searched
+    /// again, one `latest` read per access check.
     async fn blocks_for(&self, timestamp_ms: i64) -> Result<Blocks, ValidatorError> {
         if let Some((found, blocks)) = self.memo.lock().get(&timestamp_ms)
             && found.elapsed() < BLOCKS_MEMO_TTL
@@ -283,6 +354,10 @@ impl Chain {
                 at_deployment.map_or(n, |at| n.min(at))
             }),
         };
+        // A head-bound answer moves as blocks are mined: a retry must read the head again.
+        if !(self.search.is_final(upper, at) && self.search.is_final(lower, before)) {
+            return Ok(blocks);
+        }
         let mut memo = self.memo.lock();
         if memo.len() >= BLOCKS_MEMO_CAP {
             memo.clear();
@@ -300,7 +375,7 @@ impl Chain {
             Ok(hex) => hex::decode(hex.trim_start_matches("0x"))
                 .map(Some)
                 .map_err(|e| query_failed(&format!("{} eth_call", self.name), e)),
-            Err(e) if is_revert(&e) => Ok(None),
+            Err(e) if e.is_revert() => Ok(None),
             Err(e) => Err(query_failed(&format!("{} eth_call", self.name), e)),
         }
     }
@@ -411,8 +486,22 @@ impl Chain {
         out
     }
 
-    /// The Checker's `multicall` over `calls` at `block`; all false when it reverts.
+    /// The Checker's `multicall` over `calls` at `block`, [`CALLS_PER_BATCH`] calls per
+    /// `eth_call`; a batch that reverts answers all false.
     async fn multicall(
+        &self,
+        checker: Address,
+        calls: Vec<Vec<u8>>,
+        block: u64,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        let mut out = Vec::with_capacity(calls.len());
+        for chunk in calls.chunks(CALLS_PER_BATCH) {
+            out.extend(self.multicall_batch(checker, chunk.to_vec(), block).await?);
+        }
+        Ok(out)
+    }
+
+    async fn multicall_batch(
         &self,
         checker: Address,
         calls: Vec<Vec<u8>>,
@@ -641,14 +730,18 @@ impl OnChainAccess {
         Ok(())
     }
 
-    /// The last L1 block at or before `timestamp_ms`, from the same search the
-    /// access checks use; `None` before the first block.
-    pub async fn l1_block_at(&self, timestamp_ms: i64) -> Result<Option<u64>, ValidatorError> {
+    /// The L1 block `@dcl/crypto` asks a contract wallet at for `timestamp_ms`
+    /// (`Blocks.getDate(ts, false)`): the last block strictly before it, block 1 before the
+    /// first blocks. From the same search the access checks use.
+    pub async fn l1_verification_block(&self, timestamp_ms: i64) -> Result<u64, ValidatorError> {
         let chain = &self.l1()?.chain;
+        // Block timestamps are whole seconds: strictly before `ms / 1000` is at or before
+        // the second of `ms - 1`.
+        let before = timestamp_ms.saturating_sub(1).div_euclid(1000);
         let block = self
-            .within_deadline("L1 block", chain.block_at(timestamp_ms.div_euclid(1000)))
+            .within_deadline("L1 block", chain.block_at(before))
             .await?;
-        Ok(block.map(|b| b.number))
+        Ok(block.map_or(1, |b| b.number.max(1)))
     }
 
     /// Per parcel, whether `address` may deploy on it (owner, operator,
@@ -687,11 +780,64 @@ impl OnChainAccess {
         .await
     }
 
-    /// Per name, whether `address` holds it; all of them at one block.
+    /// Per name, whether `address` holds it; all of them at one block. More than
+    /// [`MAX_NAMES_ASKED`] distinct names is [`ValidatorError::TooManyItems`].
     pub async fn names(
         &self,
         address: &str,
         names: &[String],
+        timestamp_ms: i64,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        self.names_capped(address, names, timestamp_ms, LOCAL_ITEM_CAPS)
+            .await
+    }
+
+    /// [`Self::names`] under `caps`; each distinct name is asked once.
+    pub(crate) async fn names_capped(
+        &self,
+        address: &str,
+        names: &[String],
+        timestamp_ms: i64,
+        caps: ItemCaps,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut distinct: Vec<&String> = Vec::new();
+        let mut seen = HashSet::new();
+        for name in names {
+            if seen.insert(name) {
+                distinct.push(name);
+            }
+        }
+        if distinct.len() > caps.names {
+            let message = format!(
+                "{} distinct names, at most {} are checked",
+                distinct.len(),
+                caps.names
+            );
+            return Err(if caps.undecided_past_cap {
+                ValidatorError::BlockchainQuery(message)
+            } else {
+                ValidatorError::TooManyItems(message)
+            });
+        }
+        let askable: Vec<&String> = distinct
+            .into_iter()
+            .filter(|n| n.len() <= MAX_NAME_BYTES)
+            .collect();
+        let owned = self.distinct_names(address, &askable, timestamp_ms).await?;
+        let by_name: HashMap<&String, bool> = askable.into_iter().zip(owned).collect();
+        Ok(names
+            .iter()
+            .map(|n| by_name.get(n).copied().unwrap_or(false))
+            .collect())
+    }
+
+    async fn distinct_names(
+        &self,
+        address: &str,
+        names: &[&String],
         timestamp_ms: i64,
     ) -> Result<Vec<bool>, ValidatorError> {
         if names.is_empty() {
@@ -708,7 +854,7 @@ impl OnChainAccess {
                     Checker::checkNameCall {
                         _sender: sender,
                         _registrar: l1.contracts.registrar.0,
-                        _name: name.clone(),
+                        _name: (*name).clone(),
                     }
                     .abi_encode()
                 })

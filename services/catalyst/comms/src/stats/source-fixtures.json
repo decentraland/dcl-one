@@ -1,0 +1,1614 @@
+{
+  "provenance": {
+    "repository": "decentraland/archipelago-workers",
+    "revision": "64dc515987175c679e4009fe557ea60fdf50bc6c",
+    "kind": "local source-handler harness; not deployed HTTP capture",
+    "node": "v24.15.0",
+    "versions": {
+      "@dcl/protocol": "1.0.0-35089025179.commit-5810768",
+      "protobufjs": "7.2.4",
+      "typescript": "4.9.5",
+      "dcl-catalyst-client": "22.0.0",
+      "long": "5.2.3"
+    },
+    "sources": {
+      "stats/src/adapters/stats.ts": "78c0c238325325edb17cce3aa4b3c53438c3912478ecb824a6f41fb5d8703f27",
+      "stats/src/adapters/core-status.ts": "0ce0c1ff4b3720ac2fcca954d8f289ae4e08f2c01d51d9223ab0bb5b41684aa8",
+      "stats/src/logic/subscriptions.ts": "4402165b43bfbfa397db17f861e0e069a670117834c78175132448acb94db0b0",
+      "stats/src/logic/decode.ts": "c82aca097c28cbdbe60abc7efefa1b1e55818ab86832083ac923962b370dd668",
+      "stats/src/controllers/handlers/peers-handler.ts": "f2128bde23edf97283f2cbd45e1497a5e53fdb4ae5a51dafd0ecde466f55487c",
+      "stats/src/logic/utils.ts": "dc3a6327d816e35ea811158b7b488e98fe84e18339602123ab9a3a5fee325fca",
+      "stats/src/controllers/handlers/parcels-handler.ts": "f9ab9b2b4c67d371688e51b38da00369c6367680e36667af1b8ca61f467c31bc",
+      "stats/src/controllers/handlers/islands-handler.ts": "a938d7bcbb27ab45e02a00006ec188d8133914937e6d38868d267bcb6376d7af",
+      "stats/src/controllers/handlers/core-status-handler.ts": "f33a1006e72543766684c2e25cc1ac4a5e32f174f3d5b9626d7b8dfbb9b0ee58",
+      "stats/src/controllers/handlers/hot-scenes-handler.ts": "ad22316fd0d20638ce1ee19ddbc5757be57f345ad0795290eaba6383ba704711",
+      "stats/src/adapters/content.ts": "86a05dab710aea1e03ff940ed5bf4474f69aaf62e316e3d39f19cf970b1bbc09"
+    },
+    "sourcesLf": {
+      "stats/src/adapters/stats.ts": "78c0c238325325edb17cce3aa4b3c53438c3912478ecb824a6f41fb5d8703f27",
+      "stats/src/adapters/core-status.ts": "0ce0c1ff4b3720ac2fcca954d8f289ae4e08f2c01d51d9223ab0bb5b41684aa8",
+      "stats/src/logic/subscriptions.ts": "4402165b43bfbfa397db17f861e0e069a670117834c78175132448acb94db0b0",
+      "stats/src/logic/decode.ts": "c82aca097c28cbdbe60abc7efefa1b1e55818ab86832083ac923962b370dd668",
+      "stats/src/controllers/handlers/peers-handler.ts": "f2128bde23edf97283f2cbd45e1497a5e53fdb4ae5a51dafd0ecde466f55487c",
+      "stats/src/logic/utils.ts": "dc3a6327d816e35ea811158b7b488e98fe84e18339602123ab9a3a5fee325fca",
+      "stats/src/controllers/handlers/parcels-handler.ts": "f9ab9b2b4c67d371688e51b38da00369c6367680e36667af1b8ca61f467c31bc",
+      "stats/src/controllers/handlers/islands-handler.ts": "a938d7bcbb27ab45e02a00006ec188d8133914937e6d38868d267bcb6376d7af",
+      "stats/src/controllers/handlers/core-status-handler.ts": "f33a1006e72543766684c2e25cc1ac4a5e32f174f3d5b9626d7b8dfbb9b0ee58",
+      "stats/src/controllers/handlers/hot-scenes-handler.ts": "ad22316fd0d20638ce1ee19ddbc5757be57f345ad0795290eaba6383ba704711",
+      "stats/src/adapters/content.ts": "86a05dab710aea1e03ff940ed5bf4474f69aaf62e316e3d39f19cf970b1bbc09"
+    },
+    "fetchCount": 4,
+    "pointerCalls": [
+      [
+        "-2,2",
+        "1,0",
+        "-1,2",
+        "624999986137269300000,0"
+      ],
+      [
+        "1,0",
+        "-1,2",
+        "624999986137269300000,0",
+        "Infinity,-Infinity"
+      ],
+      [
+        "1,0",
+        "-1,2",
+        "624999986137269300000,0",
+        "Infinity,-Infinity"
+      ],
+      [
+        "1,0",
+        "-1,2",
+        "624999986137269300000,0",
+        "Infinity,-Infinity"
+      ]
+    ],
+    "containedDecodeErrors": 1
+  },
+  "baseUrl": "https://content.example/content/",
+  "cases": [
+    {
+      "name": "cold",
+      "events": [],
+      "now": 1000,
+      "peers": [],
+      "topology": [],
+      "discovery": [],
+      "documents": [],
+      "reads": [
+        {
+          "path": "/peers",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=a&id=B&id=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=A,B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?ID=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?%69d=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=%FF",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers/B",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/peers/b",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/peers/A%2FB%2B%25",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/parcels",
+          "status": 200,
+          "body": "{\"parcels\":[]}"
+        },
+        {
+          "path": "/islands",
+          "status": 200,
+          "body": "{\"ok\":true,\"islands\":[]}"
+        },
+        {
+          "path": "/core-status",
+          "status": 200,
+          "body": "{\"healthy\":false,\"userCount\":0}"
+        },
+        {
+          "path": "/hot-scenes",
+          "status": 200,
+          "body": "[]"
+        },
+        {
+          "path": "/islands/C1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/c1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/missing",
+          "status": 404,
+          "body": ""
+        }
+      ]
+    },
+    {
+      "name": "populated",
+      "events": [
+        {
+          "subject": "peer.B.heartbeat",
+          "bytes": [
+            10,
+            15,
+            13,
+            205,
+            204,
+            204,
+            189,
+            21,
+            0,
+            0,
+            0,
+            64,
+            29,
+            0,
+            0,
+            0,
+            66
+          ],
+          "time": 123
+        },
+        {
+          "subject": "peer.a.heartbeat",
+          "bytes": [
+            10,
+            5,
+            13,
+            0,
+            0,
+            128,
+            65
+          ],
+          "time": 124
+        },
+        {
+          "subject": "peer.A.heartbeat",
+          "bytes": [
+            10,
+            10,
+            13,
+            10,
+            215,
+            35,
+            188,
+            29,
+            0,
+            0,
+            0,
+            66
+          ],
+          "time": 125
+        },
+        {
+          "subject": "peer.B.heartbeat",
+          "bytes": [
+            10,
+            15,
+            13,
+            123,
+            20,
+            128,
+            193,
+            21,
+            205,
+            204,
+            204,
+            61,
+            29,
+            0,
+            0,
+            0,
+            66
+          ],
+          "time": 90
+        },
+        {
+          "subject": "peer.A/B+%.heartbeat",
+          "bytes": [
+            10,
+            10,
+            13,
+            120,
+            134,
+            7,
+            100,
+            29,
+            119,
+            204,
+            43,
+            50
+          ],
+          "time": 126
+        },
+        {
+          "subject": "engine.islands",
+          "bytes": [
+            10,
+            6,
+            10,
+            4,
+            115,
+            107,
+            105,
+            112,
+            10,
+            50,
+            10,
+            2,
+            67,
+            49,
+            18,
+            1,
+            97,
+            18,
+            7,
+            109,
+            105,
+            115,
+            115,
+            105,
+            110,
+            103,
+            18,
+            1,
+            65,
+            18,
+            1,
+            97,
+            24,
+            42,
+            34,
+            15,
+            13,
+            205,
+            204,
+            204,
+            61,
+            21,
+            0,
+            0,
+            0,
+            64,
+            29,
+            0,
+            0,
+            64,
+            64,
+            41,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            240,
+            63,
+            10,
+            6,
+            10,
+            2,
+            67,
+            49,
+            34,
+            0
+          ],
+          "time": 127
+        },
+        {
+          "subject": "engine.discovery",
+          "bytes": [
+            18,
+            5,
+            8,
+            232,
+            7,
+            24,
+            17
+          ],
+          "time": 1000
+        }
+      ],
+      "now": 1000,
+      "peers": [
+        {
+          "address": "B",
+          "time": 90,
+          "positionBits": [
+            "13848571668978466816",
+            "4591870180174331904",
+            "4629700416936869888"
+          ]
+        },
+        {
+          "address": "a",
+          "time": 124,
+          "positionBits": [
+            "4625196817309499392",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "address": "A",
+          "time": 125,
+          "positionBits": [
+            "13800290266030014464",
+            "0",
+            "4629700416936869888"
+          ]
+        },
+        {
+          "address": "A/B+%",
+          "time": 126,
+          "positionBits": [
+            "4936209963446960128",
+            "0",
+            "4487126258294980608"
+          ]
+        }
+      ],
+      "topology": [
+        10,
+        6,
+        10,
+        4,
+        115,
+        107,
+        105,
+        112,
+        10,
+        50,
+        10,
+        2,
+        67,
+        49,
+        18,
+        1,
+        97,
+        18,
+        7,
+        109,
+        105,
+        115,
+        115,
+        105,
+        110,
+        103,
+        18,
+        1,
+        65,
+        18,
+        1,
+        97,
+        24,
+        42,
+        34,
+        15,
+        13,
+        205,
+        204,
+        204,
+        61,
+        21,
+        0,
+        0,
+        0,
+        64,
+        29,
+        0,
+        0,
+        64,
+        64,
+        41,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        240,
+        63,
+        10,
+        6,
+        10,
+        2,
+        67,
+        49,
+        34,
+        0
+      ],
+      "discovery": [
+        18,
+        5,
+        8,
+        232,
+        7,
+        24,
+        17
+      ],
+      "documents": [
+        {
+          "id": "z",
+          "metadata": {
+            "scene": {
+              "base": " -12x,+3,wat,0x10",
+              "parcels": [
+                "1,0",
+                "1,0"
+              ]
+            },
+            "display": {
+              "title": null,
+              "navmapThumbnail": "thumb",
+              "description": false
+            },
+            "contact": {
+              "name": 7
+            },
+            "source": {
+              "projectId": [
+                "raw"
+              ]
+            }
+          },
+          "content": [
+            {
+              "file": "thumb",
+              "hash": "first"
+            },
+            {
+              "file": "thumb",
+              "hash": "second"
+            }
+          ]
+        },
+        {
+          "id": "a",
+          "metadata": {
+            "scene": {
+              "base": "4",
+              "parcels": []
+            }
+          }
+        }
+      ],
+      "reads": [
+        {
+          "path": "/peers",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"B\",\"address\":\"B\",\"lastPing\":90,\"parcel\":[-2,2],\"position\":[-16.010000228881836,0.10000000149011612,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]}]}"
+        },
+        {
+          "path": "/peers?id=a&id=B&id=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"B\",\"address\":\"B\",\"lastPing\":90,\"parcel\":[-2,2],\"position\":[-16.010000228881836,0.10000000149011612,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/peers?id=",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=A,B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?ID=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"B\",\"address\":\"B\",\"lastPing\":90,\"parcel\":[-2,2],\"position\":[-16.010000228881836,0.10000000149011612,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]}]}"
+        },
+        {
+          "path": "/peers?%69d=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/peers?id=%FF",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers/B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"B\",\"address\":\"B\",\"lastPing\":90,\"parcel\":[-2,2],\"position\":[-16.010000228881836,0.10000000149011612,32]}}"
+        },
+        {
+          "path": "/peers/b",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/peers/A%2FB%2B%25",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]}}"
+        },
+        {
+          "path": "/parcels",
+          "status": 200,
+          "body": "{\"parcels\":[{\"peersCount\":1,\"parcel\":{\"x\":-2,\"y\":2}},{\"peersCount\":1,\"parcel\":{\"x\":1,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":-1,\"y\":2}},{\"peersCount\":1,\"parcel\":{\"x\":624999986137269300000,\"y\":0}}]}"
+        },
+        {
+          "path": "/islands",
+          "status": 200,
+          "body": "{\"ok\":true,\"islands\":[{\"id\":\"C1\",\"maxPeers\":42,\"center\":[0.10000000149011612,2,3],\"radius\":1.0000000000000002,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]},{\"id\":\"C1\",\"maxPeers\":0,\"center\":[0,0,0],\"radius\":0,\"peers\":[]}]}"
+        },
+        {
+          "path": "/core-status",
+          "status": 200,
+          "body": "{\"healthy\":true,\"userCount\":17}"
+        },
+        {
+          "path": "/hot-scenes",
+          "status": 200,
+          "body": "[{\"id\":\"z\",\"name\":null,\"baseCoords\":[-12,3,null,0],\"usersTotalCount\":2,\"parcels\":[[1,0],[1,0]],\"thumbnail\":\"https://content.example/content//contents/first\",\"creator\":7,\"projectId\":[\"raw\"],\"description\":false},{\"id\":\"a\",\"baseCoords\":[4],\"usersTotalCount\":0,\"parcels\":[]}]"
+        },
+        {
+          "path": "/islands/C1",
+          "status": 200,
+          "body": "{\"id\":\"C1\",\"maxPeers\":42,\"center\":[0.10000000149011612,2,3],\"radius\":1.0000000000000002,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/islands/c1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/missing",
+          "status": 404,
+          "body": ""
+        }
+      ]
+    },
+    {
+      "name": "disconnect_reinsert_nonfinite_stale",
+      "events": [
+        {
+          "subject": "peer.B.disconnect",
+          "bytes": [],
+          "time": 1001
+        },
+        {
+          "subject": "peer.B.heartbeat",
+          "bytes": [
+            10,
+            15,
+            13,
+            0,
+            0,
+            128,
+            127,
+            21,
+            0,
+            0,
+            192,
+            127,
+            29,
+            0,
+            0,
+            128,
+            255
+          ],
+          "time": 1002
+        },
+        {
+          "subject": "peer.no-position.heartbeat",
+          "bytes": [],
+          "time": 1003
+        },
+        {
+          "subject": "engine.islands",
+          "bytes": [
+            255
+          ],
+          "time": 1004
+        }
+      ],
+      "now": 91000,
+      "peers": [
+        {
+          "address": "a",
+          "time": 124,
+          "positionBits": [
+            "4625196817309499392",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "address": "A",
+          "time": 125,
+          "positionBits": [
+            "13800290266030014464",
+            "0",
+            "4629700416936869888"
+          ]
+        },
+        {
+          "address": "A/B+%",
+          "time": 126,
+          "positionBits": [
+            "4936209963446960128",
+            "0",
+            "4487126258294980608"
+          ]
+        },
+        {
+          "address": "B",
+          "time": 1002,
+          "positionBits": [
+            "9218868437227405312",
+            "9221120237041090560",
+            "18442240474082181120"
+          ]
+        }
+      ],
+      "topology": [
+        10,
+        6,
+        10,
+        4,
+        115,
+        107,
+        105,
+        112,
+        10,
+        50,
+        10,
+        2,
+        67,
+        49,
+        18,
+        1,
+        97,
+        18,
+        7,
+        109,
+        105,
+        115,
+        115,
+        105,
+        110,
+        103,
+        18,
+        1,
+        65,
+        18,
+        1,
+        97,
+        24,
+        42,
+        34,
+        15,
+        13,
+        205,
+        204,
+        204,
+        61,
+        21,
+        0,
+        0,
+        0,
+        64,
+        29,
+        0,
+        0,
+        64,
+        64,
+        41,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        240,
+        63,
+        10,
+        6,
+        10,
+        2,
+        67,
+        49,
+        34,
+        0
+      ],
+      "discovery": [
+        18,
+        5,
+        8,
+        232,
+        7,
+        24,
+        17
+      ],
+      "documents": [
+        {
+          "id": "z",
+          "metadata": {
+            "scene": {
+              "base": " -12x,+3,wat,0x10",
+              "parcels": [
+                "1,0",
+                "1,0"
+              ]
+            },
+            "display": {
+              "title": null,
+              "navmapThumbnail": "thumb",
+              "description": false
+            },
+            "contact": {
+              "name": 7
+            },
+            "source": {
+              "projectId": [
+                "raw"
+              ]
+            }
+          },
+          "content": [
+            {
+              "file": "thumb",
+              "hash": "first"
+            },
+            {
+              "file": "thumb",
+              "hash": "second"
+            }
+          ]
+        },
+        {
+          "id": "a",
+          "metadata": {
+            "scene": {
+              "base": "4",
+              "parcels": []
+            }
+          }
+        }
+      ],
+      "reads": [
+        {
+          "path": "/peers",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?id=a&id=B&id=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?id=",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=A,B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?ID=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?%69d=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/peers?id=%FF",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers/B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}}"
+        },
+        {
+          "path": "/peers/b",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/peers/A%2FB%2B%25",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]}}"
+        },
+        {
+          "path": "/parcels",
+          "status": 200,
+          "body": "{\"parcels\":[{\"peersCount\":1,\"parcel\":{\"x\":1,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":-1,\"y\":2}},{\"peersCount\":1,\"parcel\":{\"x\":624999986137269300000,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":null,\"y\":null}}]}"
+        },
+        {
+          "path": "/islands",
+          "status": 200,
+          "body": "{\"ok\":true,\"islands\":[{\"id\":\"C1\",\"maxPeers\":42,\"center\":[0.10000000149011612,2,3],\"radius\":1.0000000000000002,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]},{\"id\":\"C1\",\"maxPeers\":0,\"center\":[0,0,0],\"radius\":0,\"peers\":[]}]}"
+        },
+        {
+          "path": "/core-status",
+          "status": 200,
+          "body": "{\"healthy\":false,\"userCount\":17}"
+        },
+        {
+          "path": "/hot-scenes",
+          "status": 200,
+          "body": "[{\"id\":\"z\",\"name\":null,\"baseCoords\":[-12,3,null,0],\"usersTotalCount\":2,\"parcels\":[[1,0],[1,0]],\"thumbnail\":\"https://content.example/content//contents/first\",\"creator\":7,\"projectId\":[\"raw\"],\"description\":false},{\"id\":\"a\",\"baseCoords\":[4],\"usersTotalCount\":0,\"parcels\":[]}]"
+        },
+        {
+          "path": "/islands/C1",
+          "status": 200,
+          "body": "{\"id\":\"C1\",\"maxPeers\":42,\"center\":[0.10000000149011612,2,3],\"radius\":1.0000000000000002,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/islands/c1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/missing",
+          "status": 404,
+          "body": ""
+        }
+      ]
+    },
+    {
+      "name": "future_clock_no_expiry",
+      "events": [],
+      "now": -88999,
+      "peers": [
+        {
+          "address": "a",
+          "time": 124,
+          "positionBits": [
+            "4625196817309499392",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "address": "A",
+          "time": 125,
+          "positionBits": [
+            "13800290266030014464",
+            "0",
+            "4629700416936869888"
+          ]
+        },
+        {
+          "address": "A/B+%",
+          "time": 126,
+          "positionBits": [
+            "4936209963446960128",
+            "0",
+            "4487126258294980608"
+          ]
+        },
+        {
+          "address": "B",
+          "time": 1002,
+          "positionBits": [
+            "9218868437227405312",
+            "9221120237041090560",
+            "18442240474082181120"
+          ]
+        }
+      ],
+      "topology": [
+        10,
+        6,
+        10,
+        4,
+        115,
+        107,
+        105,
+        112,
+        10,
+        50,
+        10,
+        2,
+        67,
+        49,
+        18,
+        1,
+        97,
+        18,
+        7,
+        109,
+        105,
+        115,
+        115,
+        105,
+        110,
+        103,
+        18,
+        1,
+        65,
+        18,
+        1,
+        97,
+        24,
+        42,
+        34,
+        15,
+        13,
+        205,
+        204,
+        204,
+        61,
+        21,
+        0,
+        0,
+        0,
+        64,
+        29,
+        0,
+        0,
+        64,
+        64,
+        41,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        240,
+        63,
+        10,
+        6,
+        10,
+        2,
+        67,
+        49,
+        34,
+        0
+      ],
+      "discovery": [
+        18,
+        5,
+        8,
+        232,
+        7,
+        24,
+        17
+      ],
+      "documents": [
+        {
+          "id": "z",
+          "metadata": {
+            "scene": {
+              "base": " -12x,+3,wat,0x10",
+              "parcels": [
+                "1,0",
+                "1,0"
+              ]
+            },
+            "display": {
+              "title": null,
+              "navmapThumbnail": "thumb",
+              "description": false
+            },
+            "contact": {
+              "name": 7
+            },
+            "source": {
+              "projectId": [
+                "raw"
+              ]
+            }
+          },
+          "content": [
+            {
+              "file": "thumb",
+              "hash": "first"
+            },
+            {
+              "file": "thumb",
+              "hash": "second"
+            }
+          ]
+        },
+        {
+          "id": "a",
+          "metadata": {
+            "scene": {
+              "base": "4",
+              "parcels": []
+            }
+          }
+        }
+      ],
+      "reads": [
+        {
+          "path": "/peers",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?id=a&id=B&id=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?id=",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=A,B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?ID=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?%69d=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/peers?id=%FF",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers/B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}}"
+        },
+        {
+          "path": "/peers/b",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/peers/A%2FB%2B%25",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]}}"
+        },
+        {
+          "path": "/parcels",
+          "status": 200,
+          "body": "{\"parcels\":[{\"peersCount\":1,\"parcel\":{\"x\":1,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":-1,\"y\":2}},{\"peersCount\":1,\"parcel\":{\"x\":624999986137269300000,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":null,\"y\":null}}]}"
+        },
+        {
+          "path": "/islands",
+          "status": 200,
+          "body": "{\"ok\":true,\"islands\":[{\"id\":\"C1\",\"maxPeers\":42,\"center\":[0.10000000149011612,2,3],\"radius\":1.0000000000000002,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]},{\"id\":\"C1\",\"maxPeers\":0,\"center\":[0,0,0],\"radius\":0,\"peers\":[]}]}"
+        },
+        {
+          "path": "/core-status",
+          "status": 200,
+          "body": "{\"healthy\":true,\"userCount\":17}"
+        },
+        {
+          "path": "/hot-scenes",
+          "status": 200,
+          "body": "[{\"id\":\"z\",\"name\":null,\"baseCoords\":[-12,3,null,0],\"usersTotalCount\":2,\"parcels\":[[1,0],[1,0]],\"thumbnail\":\"https://content.example/content//contents/first\",\"creator\":7,\"projectId\":[\"raw\"],\"description\":false},{\"id\":\"a\",\"baseCoords\":[4],\"usersTotalCount\":0,\"parcels\":[]}]"
+        },
+        {
+          "path": "/islands/C1",
+          "status": 200,
+          "body": "{\"id\":\"C1\",\"maxPeers\":42,\"center\":[0.10000000149011612,2,3],\"radius\":1.0000000000000002,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/islands/c1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/missing",
+          "status": 404,
+          "body": ""
+        }
+      ]
+    },
+    {
+      "name": "empty_topology",
+      "events": [
+        {
+          "subject": "engine.islands",
+          "bytes": [],
+          "time": 92000
+        }
+      ],
+      "now": 92000,
+      "peers": [
+        {
+          "address": "a",
+          "time": 124,
+          "positionBits": [
+            "4625196817309499392",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "address": "A",
+          "time": 125,
+          "positionBits": [
+            "13800290266030014464",
+            "0",
+            "4629700416936869888"
+          ]
+        },
+        {
+          "address": "A/B+%",
+          "time": 126,
+          "positionBits": [
+            "4936209963446960128",
+            "0",
+            "4487126258294980608"
+          ]
+        },
+        {
+          "address": "B",
+          "time": 1002,
+          "positionBits": [
+            "9218868437227405312",
+            "9221120237041090560",
+            "18442240474082181120"
+          ]
+        }
+      ],
+      "topology": [],
+      "discovery": [
+        18,
+        5,
+        8,
+        232,
+        7,
+        24,
+        17
+      ],
+      "documents": [
+        {
+          "id": "z",
+          "metadata": {
+            "scene": {
+              "base": " -12x,+3,wat,0x10",
+              "parcels": [
+                "1,0",
+                "1,0"
+              ]
+            },
+            "display": {
+              "title": null,
+              "navmapThumbnail": "thumb",
+              "description": false
+            },
+            "contact": {
+              "name": 7
+            },
+            "source": {
+              "projectId": [
+                "raw"
+              ]
+            }
+          },
+          "content": [
+            {
+              "file": "thumb",
+              "hash": "first"
+            },
+            {
+              "file": "thumb",
+              "hash": "second"
+            }
+          ]
+        },
+        {
+          "id": "a",
+          "metadata": {
+            "scene": {
+              "base": "4",
+              "parcels": []
+            }
+          }
+        }
+      ],
+      "reads": [
+        {
+          "path": "/peers",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?id=a&id=B&id=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?id=",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?id=A,B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers?ID=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]},{\"id\":\"A\",\"address\":\"A\",\"lastPing\":125,\"parcel\":[-1,2],\"position\":[-0.009999999776482582,0,32]},{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]},{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}]}"
+        },
+        {
+          "path": "/peers?%69d=a",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[{\"id\":\"a\",\"address\":\"a\",\"lastPing\":124,\"parcel\":[1,0],\"position\":[16,0,0]}]}"
+        },
+        {
+          "path": "/peers?id=%FF",
+          "status": 200,
+          "body": "{\"ok\":true,\"peers\":[]}"
+        },
+        {
+          "path": "/peers/B",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"B\",\"address\":\"B\",\"lastPing\":1002,\"parcel\":[null,null],\"position\":[null,null,null]}}"
+        },
+        {
+          "path": "/peers/b",
+          "status": 404,
+          "body": "{\"ok\":false,\"peer\":null}"
+        },
+        {
+          "path": "/peers/A%2FB%2B%25",
+          "status": 200,
+          "body": "{\"ok\":true,\"peer\":{\"id\":\"A/B+%\",\"address\":\"A/B+%\",\"lastPing\":126,\"parcel\":[624999986137269300000,0],\"position\":[9.999999778196308e+21,0,9.99999993922529e-9]}}"
+        },
+        {
+          "path": "/parcels",
+          "status": 200,
+          "body": "{\"parcels\":[{\"peersCount\":1,\"parcel\":{\"x\":1,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":-1,\"y\":2}},{\"peersCount\":1,\"parcel\":{\"x\":624999986137269300000,\"y\":0}},{\"peersCount\":1,\"parcel\":{\"x\":null,\"y\":null}}]}"
+        },
+        {
+          "path": "/islands",
+          "status": 200,
+          "body": "{\"ok\":true,\"islands\":[]}"
+        },
+        {
+          "path": "/core-status",
+          "status": 200,
+          "body": "{\"healthy\":false,\"userCount\":17}"
+        },
+        {
+          "path": "/hot-scenes",
+          "status": 200,
+          "body": "[{\"id\":\"z\",\"name\":null,\"baseCoords\":[-12,3,null,0],\"usersTotalCount\":2,\"parcels\":[[1,0],[1,0]],\"thumbnail\":\"https://content.example/content//contents/first\",\"creator\":7,\"projectId\":[\"raw\"],\"description\":false},{\"id\":\"a\",\"baseCoords\":[4],\"usersTotalCount\":0,\"parcels\":[]}]"
+        },
+        {
+          "path": "/islands/C1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/c1",
+          "status": 404,
+          "body": ""
+        },
+        {
+          "path": "/islands/missing",
+          "status": 404,
+          "body": ""
+        }
+      ]
+    }
+  ],
+  "wire": [
+    {
+      "type": "ClientPacket",
+      "label": "challenge",
+      "bytes": [
+        10,
+        6,
+        10,
+        4,
+        48,
+        120,
+        65,
+        98
+      ]
+    },
+    {
+      "type": "ClientPacket",
+      "label": "signed",
+      "bytes": [
+        18,
+        21,
+        10,
+        19,
+        91,
+        123,
+        34,
+        116,
+        121,
+        112,
+        101,
+        34,
+        58,
+        34,
+        83,
+        73,
+        71,
+        78,
+        69,
+        82,
+        34,
+        125,
+        93
+      ]
+    },
+    {
+      "type": "ClientPacket",
+      "label": "heartbeat",
+      "bytes": [
+        26,
+        19,
+        10,
+        15,
+        13,
+        205,
+        204,
+        204,
+        61,
+        21,
+        123,
+        20,
+        128,
+        193,
+        29,
+        120,
+        134,
+        7,
+        100,
+        18,
+        0
+      ]
+    },
+    {
+      "type": "ClientPacket",
+      "label": "missing-position",
+      "bytes": [
+        26,
+        0
+      ]
+    },
+    {
+      "type": "ServerPacket",
+      "label": "challenge-response",
+      "bytes": [
+        10,
+        72,
+        10,
+        68,
+        100,
+        99,
+        108,
+        45,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        97,
+        98,
+        16,
+        1
+      ]
+    },
+    {
+      "type": "ServerPacket",
+      "label": "welcome",
+      "bytes": [
+        18,
+        6,
+        10,
+        4,
+        48,
+        120,
+        97,
+        98
+      ]
+    },
+    {
+      "type": "ServerPacket",
+      "label": "kicked",
+      "bytes": [
+        50,
+        0
+      ]
+    },
+    {
+      "type": "ServerPacket",
+      "label": "island",
+      "bytes": [
+        26,
+        75,
+        10,
+        2,
+        67,
+        49,
+        18,
+        50,
+        108,
+        105,
+        118,
+        101,
+        107,
+        105,
+        116,
+        58,
+        119,
+        115,
+        115,
+        58,
+        47,
+        47,
+        101,
+        120,
+        97,
+        109,
+        112,
+        108,
+        101,
+        46,
+        105,
+        110,
+        118,
+        97,
+        108,
+        105,
+        100,
+        63,
+        97,
+        99,
+        99,
+        101,
+        115,
+        115,
+        95,
+        116,
+        111,
+        107,
+        101,
+        110,
+        61,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101,
+        26,
+        0,
+        34,
+        15,
+        10,
+        1,
+        97,
+        18,
+        10,
+        13,
+        205,
+        204,
+        204,
+        61,
+        29,
+        0,
+        0,
+        0,
+        64
+      ]
+    }
+  ]
+}

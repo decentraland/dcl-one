@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { landTokenId } from "@ui/data/catalyst/landListing";
+import { LAND_NETWORKS, landTokenId } from "@shop/land/contracts";
+import { CHAIN } from "@shop/model/chain";
 
 import { assetPage, isTokenRegistry, legacyShopTarget, marketplaceTarget, parseAssetRef, shopIndexTarget } from "./redirects";
 
@@ -9,6 +10,8 @@ const LAND = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
 const ESTATE = "0x959e104e1a4db6317fa58f8295f586e1a978c297";
 const REGISTRAR = "0x2a187453064356c898cae034eaed119e1663acb8";
 const ME = "0x1111111111111111111111111111111111111111";
+
+afterEach(() => vi.unstubAllEnvs());
 
 /** A target as path + query map, so parameter order never decides a test. */
 function at(target: string | null): { path: string; query: Record<string, string> } {
@@ -38,6 +41,15 @@ describe("asset identity", () => {
 });
 
 describe("v2's /marketplace pages", () => {
+  it("should use Sepolia for implicit LAND identifiers when the Shop settles on Amoy", () => {
+    vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+    vi.stubEnv("VITE_SHOP_ETHEREUM_CHAIN_ID", "");
+    const { land } = LAND_NETWORKS[CHAIN.SEPOLIA]!;
+    expect(mk("/marketplace/rent-land?x=-3&y=12&from=map")).toEqual({
+      path: `/shop/token/${land}/${landTokenId(-3, 12)}/rent`,
+      query: { from: "map" },
+    });
+  });
   it("/marketplace is the overview; in the iOS IAP view, the items (marker kept)", () => {
     expect(mk("/marketplace?utm_source=x")).toEqual({ path: "/shop/overview", query: { utm_source: "x" } });
     expect(mk("/marketplace?view=mobile-iap&section=wearables")).toEqual({ path: "/shop/items", query: { view: "mobile-iap", category: "wearable" } });
@@ -115,6 +127,15 @@ describe("the classic Marketplace's paths (decentraland.org/marketplace)", () =>
     expect(mk(`/marketplace/accounts/${ME}?section=on_sale&vendor=decentraland`)).toEqual({ path: `/shop/accounts/${ME}`, query: { section: "on_sale" } });
   });
 
+  it("should resolve parcels and estates on the network the LAND redirects use", () => {
+    vi.stubEnv("VITE_SHOP_ETHEREUM_CHAIN_ID", String(CHAIN.SEPOLIA));
+    const sepolia = LAND_NETWORKS[CHAIN.SEPOLIA]!;
+
+    expect(mk("/marketplace/parcels/1/2/detail").path).toBe(`/shop/token/${sepolia.land.toLowerCase()}/${landTokenId(1, 2)}`);
+    expect(mk("/marketplace/estates/7/detail").path).toBe(`/shop/token/${sepolia.estate.toLowerCase()}/7`);
+    expect(mk("/marketplace/rent-land?x=1&y=2").path).toContain(sepolia.land.toLowerCase());
+  });
+
   it("parcels and estates resolve to their registry token", () => {
     expect(mk("/marketplace/parcels/-10/20/detail").path).toBe(`/shop/token/${LAND}/${landTokenId(-10, 20)}`);
     expect(mk("/marketplace/estates/7/detail").path).toBe(`/shop/token/${ESTATE}/7`);
@@ -150,6 +171,22 @@ describe("the classic Marketplace's paths (decentraland.org/marketplace)", () =>
     expect(mk("/marketplace/sign-in?redirectTo=%2Fshop%2Fcart").path).toBe("/shop/cart");
     expect(mk("/marketplace/sign-in?redirectTo=%2F%2Fevil.example%2Fx").path).toBe("/shop/my-items");
     expect(mk("/marketplace/sign-in?redirectTo=https%3A%2F%2Fevil.example").path).toBe("/shop/my-items");
+  });
+
+  it.each([
+    ["a tab", "%2F%09%2Fevil.example%2Fshop"],
+    ["a newline", "%2F%0A%2Fevil.example%2Fshop%2Fcart"],
+    ["a carriage return", "%2F%0D%2Fevil.example%2Fshop"],
+    ["a backslash after the tab", "%2F%09%5Cevil.example%2Fshop"],
+  ])("sign-in never returns a path with %s that a browser reads as another host", (_, redirectTo) => {
+    const target = marketplaceTarget("/marketplace/sign-in", `?redirectTo=${redirectTo}`, "");
+    expect(new URL(target ?? "", "https://sites.test").origin).toBe("https://sites.test");
+    expect(target).toBe("/shop/my-items");
+  });
+
+  it("sign-in keeps the query and fragment of a Shop page it returns to", () => {
+    const redirectTo = encodeURIComponent("/shop/cart?step=pay#total");
+    expect(marketplaceTarget("/marketplace/sign-in", `?redirectTo=${redirectTo}`, "")).toBe("/shop/cart?step=pay#total");
   });
 
   it("an unknown path keeps its place under /shop (a Shop page or the not-found page)", () => {

@@ -5,6 +5,10 @@ understand the change in one sitting.
 
 ## Scope
 
+- Before implementation planning, apply the repository's
+  [design feasibility gate](../../../../docs/design-feasibility.md) to runtime
+  features and resource policies. Validate the requested outcome on each supported
+  platform before choosing implementation structure.
 - One problem per PR, fixed at the sentence that names it. If the fix wants new state or
   plumbing the problem didn't mention, that is a second PR and a conversation first. Give
   independently useful diagnostics their own PR and verification.
@@ -28,21 +32,19 @@ understand the change in one sitting.
 - When simplifying a feature, remove leftover edits that no longer change behaviour. Keep
   comments that explain constraints still in force and rename tests that now prove a different
   contract.
-- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
-  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
-  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
-  code is clear. Unity sources go in the PR description; who decided goes there or in
-  [decisions](decisions.md).
+- Comments explain current invariants and constraints. Keep implementation provenance and
+  decision history out of them; apply the [public-prose rule](#public-prose).
 - Existing comments survive a refactor unless they became wrong.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.
 - Reuse what exists: protocol and SDK types, the existing scheduling, picking and loading
-  paths. Hand-rolled parallels are the main source of drift.
+  paths, helpers such as `scene_runner::parcel_to_vec3` and `vec3_to_parcel`. Hand-rolled
+  parallels are the main source of drift.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it
   first; the [scheduling guide](scheduling.md) explains the current setup.
 - If something works better with a change in a dependency, change the dependency. Upstream it
-  where possible; where it is bespoke to us, we maintain our forks for exactly that. Bevy itself
-  is vendored here: see [the bevy fork](bevy-fork.md).
+  where possible; where it is bespoke to us, it is a patch in this repository: see
+  [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Tests
 
@@ -76,17 +78,71 @@ understand the change in one sitting.
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
-- A port from Unity names the Unity files it follows, the constants carried over, and every
-  divergence with its reason. See [porting from Unity](porting-from-unity.md).
+- Measurements in the description or an ADR describe the merged code: re-run them at the head
+  after the last change to the measured path, merged with main.
+- Explain the chosen behavior, constants, alternatives and verification in this engine's own
+  terms. Follow [public prose](#public-prose); for ports, use [Porting from Unity](porting-from-unity.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
+
+## Public prose
+
+Document current behavior, ownership, constraints and reasons directly. Except for the
+porting workflow below, omit Unity implementation provenance from code comments, tracked documentation
+(including ADRs and agent instructions), and PR titles and descriptions: source-file or
+revision inventories, copied-constant attribution, and comparisons offered as the reason for
+this engine's design. Keep that research in ignored task/review reports. This supersedes older
+instructions to put implementation provenance in PRs outside that workflow.
+
+The [Porting from Unity guide](porting-from-unity.md) is an explicit exception: preserve
+its source inventory, mappings and integration instructions. Its workflow may name Unity
+source files, carried constants and intentional divergences in porting PR descriptions.
+Code comments still explain this engine's constraints, as that guide requires.
+
+Unity remains an existing Decentraland client. Name it accurately in client lists, protocol
+consumer requirements, compatibility and rollout limitations, tooling instructions, and
+benchmark operations. Preserve the evidence and source pins supporting those facts. Do not
+remove a client, obscure its identity as a generic "external client", or imply that its
+implementation is complete merely to remove its name.
+Compatibility comparisons in [decisions](decisions.md) and [oddities](oddities.md) are
+permitted; classify each claim in context rather than treating a page's client names as violations.
+
+Preserve exact tool and skill identifiers, endpoint paths, process names, wire values, and
+repository or download URLs needed for the documented task. Keep required legal attribution
+in licenses and dependency manifests.
+
+Removing provenance is a documentation edit, not a behavior or process change. Preserve
+technical values, rejected alternatives and their reasons, verification requirements, merge
+gates and useful source pins outside this prohibition. Do not turn a report about another
+implementation into a requirement or claimed behavior of this engine; retain such evidence
+in the ignored review report when it cannot stand alone here.
+
+For generated documentation, update its source or generation transform and regenerate derived
+views, including search indexes. Run the generator's consistency check; editing only the rendered
+document leaves the policy unenforced on the next generation.
+
+Before committing or updating a PR, search every changed file and the complete PR text with
+`rg -ni '\bunity(?:\b|[-_])'`. This is a minimum check: also inspect the diff for source-file
+and type names that do not contain that word. Apply the porting-workflow exception above;
+otherwise remove implementation provenance. Preserve client facts and operational references,
+and check the diff for lost compatibility information. Record the classification in the ignored review report. Explain
+this engine's design using its requirements and tests.
 
 ## Before pushing
 
-- Merge main first. CI tests the merge, not the branch.
-- `cargo fmt --all`, `cargo clippy --locked -- -D warnings`, `cargo test --all`. Clippy warnings
-  are errors in CI.
+- Include the latest `main` in the branch you push. Explorer CI jobs that use GitHub's
+  PR merge ref test the target revision available for that run. Before merging, follow
+  [PR merge verification](../../../../docs/pr-merge-verification.md).
+- `cargo fmt --all`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
+  `cargo test --all`. Clippy warnings are errors in CI. `common`'s tests read the patched Bevy
+  tree: write it first, from the repository root, with
+  `python3 tooling/patched-sources.py materialise bevy`
+  ([bevy-fork](bevy-fork.md)).
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.
+- A change that limits per-frame work (a budget, slicing) is tried in the web build by hand,
+  where frames are slowest and a fixed cost takes the largest share of one: that run is part of
+  the case for the change, and CI only shows that it compiles. Say in the description what you
+  saw and the worst frames. Other changes to per-frame work need no manual web run.
 - Web-only engine switches are a page param plus a wasm export, not a launch option.
 
 ## Dependencies
@@ -102,11 +158,15 @@ understand the change in one sitting.
 - Hoist every third-party dependency to `[workspace.dependencies]` and use
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
-- Changes to bevy go in the vendored tree, `rendering/bevy-explorer/bevy`: see
-  [the bevy fork](bevy-fork.md).
-- `rendering/bevy-explorer/forks.toml` and `cargo-patches.toml` are generated from the lock.
-  After changing a git dependency's revision, run `python3 tooling/upstream-forks.py` from the
-  dcl-one root so they match; a daily workflow otherwise opens an `upstream/forks` PR.
+- Every package in the workspace declares `[lints] workspace = true`, so
+  `[workspace.lints]` reaches it; set a crate-specific level in the crate's source, not in
+  its manifest.
+- A crate without `unsafe` code declares `#![forbid(unsafe_code)]` in its crate root. A change
+  that adds `unsafe` to such a crate removes the attribute, so the addition shows in review.
+- A change to bevy or to a forked crate is one more patch file under
+  `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
+  files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI
+  publishes it here after the merge: see [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Review
 
@@ -133,6 +193,11 @@ fails the check. For a targeted run, `--filter TEXT` selects matching tests and
 | Keys are published while a slot is in use, since its release can choose between newcomers | `keys_are_read_while_a_slot_is_in_use` |
 | A departed hash ranks last while any request of it is alive, including a retry after its queue drained | `a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained` |
 | The gate keeps granting after a poisoned lock, and a release skips a queue entry without its ticket instead of panicking in a destructor | `a_poisoned_gate_keeps_granting_and_releasing`, `a_queue_entry_without_its_ticket_is_skipped_inside_a_release` |
+| A content hash's definitive client error is answered from memory for the session; other failures, url-keyed reads and loopback keep the retry window; preview asks again | `a_content_hash_that_answers_a_client_error_is_remembered_for_the_session`, `transient_and_url_keyed_failures_keep_the_retry_window`, `a_loopback_404_is_answered_from_memory_only_within_the_retry_window`, `a_session_failure_is_answered_by_read_without_a_request`, `a_preview_client_ignores_a_session_failure`, `a_preview_client_does_not_keep_a_content_failure_for_the_session`, `a_preview_client_asks_again_for_a_missing_file_at_once` |
+| The failure memory keeps answering after a poisoned lock | `a_poisoned_failure_memory_keeps_answering` |
+| Content reads are keyed by hash and url reads by url, so only content can be remembered for the session | `content_reads_are_keyed_by_hash_and_url_reads_by_url` |
+| A session failure answers only content reads; any other read of the url keeps the retry window, and a success clears the entry | `a_session_failure_answers_only_content_reads`, `a_successful_download_clears_a_failure_of_its_url` |
+| A content download that does not match its hash fails uncached and is asked for again after the retry window; a match is read and cached; a name the check cannot verify is read uncached | `a_download_that_does_not_match_its_hash_fails_and_is_not_cached`, `a_hash_mismatch_is_asked_for_again_after_the_retry_window`, `a_download_that_matches_its_hash_is_read_and_cached`, `a_name_the_hash_check_cannot_verify_is_read_and_not_cached` |
 
 Give each test its own gate and counters so it can run alongside other tests. Trace destructor
 paths for nested locks or file I/O under a lock. When changing diagnostics, check the units
@@ -142,7 +207,6 @@ Before adding a shared budget, identify the workload that needs it and measure t
 on unrelated callers. Give changes with independent consumers or failure modes their own
 PR and test evidence.
 
-For browser forwarding changes, run
-`npx vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
-`rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
-referrer policy and disposal of unread response bodies.
+For service worker routing changes, run
+`pnpm exec vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
+`rendering/bevy-explorer/source/react-web`.

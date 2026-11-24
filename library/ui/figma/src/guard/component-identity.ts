@@ -11,5 +11,20 @@ function componentOwner(ownership: Ownership, name: string | undefined): Compone
   if (id) return componentOwnerById(ownership, id)
   return null
 }
-export { componentOwner, componentOwnerById }
+function componentIdOfFile(ownership: Ownership, file: string): string | undefined {
+  const prefix = file.startsWith('components/')
+    ? 'components/'
+    : 'figma/review/src/generated/components/'
+  if (!file.startsWith(prefix)) return undefined
+  const relative = file.slice(prefix.length)
+  const suffixes = ['.tsx', '.module.css', '.module.css.d.ts', '.figma.ts']
+  for (const suffix of suffixes) {
+    if (!relative.endsWith(suffix)) continue
+    const id = ownership.fileComponentId.get(relative.slice(0, -suffix.length))
+    if (id) return id
+  }
+  return undefined
+}
+
+export { componentOwner, componentOwnerById, componentIdOfFile }
 export type { ComponentOwner }

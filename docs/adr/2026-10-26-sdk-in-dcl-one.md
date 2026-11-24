@@ -17,20 +17,23 @@ the SDK belongs beside it.
 ## Decision
 
 `library/js-sdk-toolchain` is a first-party snapshot of `decentraland/js-sdk-toolchain` `main`
-(`afd7f79`, 2026-10-23), keeping its Apache-2.0 `LICENSE`, its npm layout (six packages under
-`packages/@dcl`, per-package lockfiles, `file:` links between them) and its build (`make install
+(`afd7f79`, 2026-10-23), keeping its Apache-2.0 `LICENSE`, its layout (six packages under
+`packages/@dcl`, linked to each other with `workspace:*`) and its build (`make install
 build test prepare`). Its `.github`, agent files and editor configuration were left behind.
+It installs with pnpm as one workspace with a single lockfile
+([decision](2026-11-13-pnpm-default-package-manager.md)).
 
-- `@dcl/protocol` is `file:../protocol` (root) and `file:../../../../protocol` (`sdk-commands`):
-  npm links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
+- `@dcl/protocol` is `link:../protocol` (root) and `link:../../../../protocol` (`sdk-commands`):
+  the install links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
-- No published package depends on `@dcl/protocol`. `@dcl/sdk-commands`, the one that used it at
-  runtime, generates the two messages it needs (`local_development`, realm `about`) into
-  `src/generated` during `make build`, with the options `@dcl/protocol`'s own `out-ts` uses, so the
-  SDK ships the protocol at its commit and never waits on a protocol release.
-  `scripts/check-no-local-packages.cjs`, run by `sdk.yml`, still fails a tarball that names a
-  `file:` link.
+- `make prepare` pins `@dcl/protocol` and `@dcl/hashing` in the packed manifests to
+  `PROTOCOL_VERSION` and `HASHING_VERSION`, which the caller must set. `sdk.yml` sets them to
+  versions already on npm: `sdk-commands` uses only `hashV1` from one and the `local_development`
+  and realm `about` messages from the other, so a pin moves only when `library/hashing` or
+  `library/protocol` changes one of those, after that change is published. A tarball never names
+  a local link or a version that is not on npm (`scripts/check-no-local-packages.cjs`, run by
+  `sdk.yml`).
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
   components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`, and a
@@ -54,11 +57,11 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
   manifests name this repository, which trusted publishing requires.
 - A pull request from this repository publishes the tarballs its run built as
-  `@dcl-regenesislabs/*` under the shared `pr` dist-tag, one tag for every PR, and a sticky comment
-  names the exact version to install; fork pull requests publish nothing. The run renames the five
-  manifests before packing. The code and the dependency keys keep the `@dcl` names, the build
-  installs siblings under those keys (`@dcl/ecs@file:../ecs`), and `make prepare` pins a sibling as
-  an npm alias (`npm:@dcl-regenesislabs/ecs@<version>`) when its name differs from the key. A scene
+  `@dcl-regenesislabs/*` under the shared `pr` dist-tag, one tag for every PR, and the PR's CI
+  status comment names the exact version to install; fork pull requests publish nothing. The run
+  renames the five manifests before packing. The code and the dependency keys keep the `@dcl`
+  names, and `pnpm pack` writes a `workspace:*` sibling whose name differs from its key as an npm
+  alias (`npm:@dcl-regenesislabs/ecs@<version>`). A scene
   installs `@dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>` and keeps importing `@dcl/sdk`.
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
   (`make update-snapshots`) whenever `library/protocol` changes what `@dcl/ecs` generates; the
@@ -71,8 +74,8 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   follows ships the protocol at that commit.
 - `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge and
   movement scenes stop needing the `experimental-bevy` dist-tag.
-- `library/` holds a second npm project that is not a `dcl-*` crate (as `catalyst-api/` and
-  `protocol/` already are); its lockfiles and `node_modules` stay its own.
+- `library/` holds a second JavaScript project that is not a `dcl-*` crate (as `catalyst-api/` and
+  `protocol/` already are); its lockfile and `node_modules` stay its own.
 
 ## Follow-ups
 

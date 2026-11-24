@@ -15,7 +15,7 @@
 use std::str::FromStr;
 
 use bevy::{
-    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
     render::render_asset::RenderAssetBytesPerFrame,
 };
@@ -44,6 +44,8 @@ pub fn apply(app: &mut App, launch: &LaunchOptions, config: &AppConfig, boot_ser
         realm: _,
         position: _,
         content_server: _,
+        // the startup scenes are the binary's
+        portables: _,
         // latch
         base_domain: _,
         services: _,
@@ -57,11 +59,12 @@ pub fn apply(app: &mut App, launch: &LaunchOptions, config: &AppConfig, boot_ser
         preview_parcel: None,
     });
 
+    // the frame rate and the entity count diagnostics, in every build
+    if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default());
+    }
+    app.add_plugins(EntityCountDiagnosticsPlugin);
     if log_fps.unwrap_or(config.graphics.log_fps) {
-        // the HUD adds the frame timing too
-        if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
-            app.add_plugins(FrameTimeDiagnosticsPlugin::default());
-        }
         app.add_plugins(LogDiagnosticsPlugin::default());
     }
 }
@@ -76,7 +79,6 @@ pub fn apply_client(
     let ClientOptions {
         // the scene set is the binary's: the ui scene and the startup scenes
         system_scene: _,
-        portables: _,
         // mapped onto the launch options before they are latched (main.rs)
         deep_link: _,
         editor,
@@ -85,6 +87,7 @@ pub fn apply_client(
         session_id: _,
         campaign_anon_user_id: _,
         imposter_source,
+        bevy_variants,
         gpu_bytes_per_frame,
         // sizes the task pool, which exists before plugins run (lib.rs desktop_default_plugins;
         // web.rs engine_start spawns the workers)
@@ -92,7 +95,13 @@ pub fn apply_client(
         // the app assembly (lib.rs) inserts `common::autopilot::Autopilot`: only it knows the
         // CSV destination, a native flag or a web page param
         autopilot: _,
+        ff,
     } = client;
+
+    // the flags the engine reads from the feature-flags service, under this option's overrides
+    app.add_plugins(common::feature_flags::FeatureFlagsPlugin {
+        overrides: ff.clone(),
+    });
 
     app.insert_resource(EditorMode(*editor));
 
@@ -101,13 +110,21 @@ pub fn apply_client(
         app.insert_resource(WorldHold);
     }
 
-    // the preview stats and sysinfo panels (system_ui) read the frame rate
-    if launch.preview && !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
-        app.add_plugins(FrameTimeDiagnosticsPlugin::default());
-    }
-
     if let Some(source) = imposter_source {
         imposters::imposter_spec::set_source(source);
+    }
+
+    // abgen's Bevy variants: the launch option, else the config, else the asset-bundle
+    // generator's CDN for this base domain; `off` in either turns them off
+    let bevy_variants_base = bevy_variants
+        .as_deref()
+        .or(config.bevy_variants_url.as_deref())
+        .map(str::to_owned)
+        .unwrap_or_else(|| common::base_domain::service(common::base_domain::Service::AbgenCdn));
+    if !bevy_variants_base.trim().eq_ignore_ascii_case("off") {
+        if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
+            ipfs.set_bevy_variants_base(&bevy_variants_base);
+        }
     }
 
     let gpu_bytes_per_frame = gpu_bytes_per_frame.unwrap_or(config.graphics.gpu_bytes_per_frame);

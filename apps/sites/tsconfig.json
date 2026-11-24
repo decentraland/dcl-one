@@ -8,13 +8,11 @@
     "**/.client/**/*.tsx",
     ".react-router/types/**/*",
     "../ui3/src/overlay/dcl-globals.d.ts",
-    "../ui3/src/editor/code/monaco-modules.d.ts",
     "../ui3/src/wearable-preview/three-shim.d.ts"
   ],
   "exclude": [
     "node_modules",
-    "build",
-    "template-games"
+    "build"
   ],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
@@ -27,17 +25,49 @@
     "paths": {
       "react": ["./node_modules/@types/react/index.d.ts"],
       "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
       "@ui/*": ["../ui3/src/*"],
+      "@dcl/one-ui": ["../../library/ui/index.ts"],
+      "@dcl/one-ui/*": ["../../library/ui/*"],
+      "react-dom": ["./node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with ui3.
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with ui3.
       "@shop/*": ["../../library/shop/*"],
+      // Decentraland's content hashes, imported as source.
+      "@dcl/hashing": ["../../library/hashing/src/index.ts"],
+      // The full three.js declarations, for the code that needs more than the avatar preview's reduced ones
+      // (src/data/lib/creators/three.ts).
+      "three-full": ["./node_modules/@types/three"],
+      "three-full/*": ["./node_modules/@types/three/*"],
+      // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it.
+      "@hud/*": ["../../library/ui/apps/hud/*"],
+      "@explorer-core/*": ["../../library/explorer-core/*"],
+      "@hud-host": ["../ui3/src/play/host.ts"],
+      // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+      "@shop-host": ["../ui3/src/play/shopHost.ts"],
+      // library/ui/apps/shop has no node_modules of its own: TanStack Query resolves to this app's copy.
+      "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
+      // library/ui/apps/hud has no node_modules of its own: its packages resolve to this app's copy.
+      "@noble/*": ["./node_modules/@noble/*"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.
       "viem": ["./node_modules/viem"],
-      // The validation seam ui3 owns. Types always resolve to the checking
-      // implementation: both expose the same surface, so either type-checks the
-      // same, and this keeps zod's types reachable.
-      "dcl-validate-impl": ["../ui3/src/validate/checked.ts"],
+      // The browser logic shared with ui3: the validation seam, auth signing, profile and notification views.
+      "@web-core/*": ["../../library/web-core/*"],
+      // library/web-core has no node_modules of its own: its packages resolve to this app's copy.
+      "viem/*": ["./node_modules/viem/*"],
+      "zod": ["./node_modules/zod"],
+      "@walletconnect/sign-client": ["./node_modules/@walletconnect/sign-client"],
+      "qrcode-generator": ["./node_modules/qrcode-generator"],
+      // The shared UI library, imported as source (docs/ui-standards.md, "Integration").
+      "@dcl/one-ui": ["../../library/ui/index.ts"],
+      "@dcl/one-ui/*": ["../../library/ui/*"],
+      // The validation seam (library/web-core/validate). Types always resolve to
+      // the checking implementation: both expose the same surface, so either
+      // type-checks the same, and this keeps zod's types reachable.
+      "dcl-validate-impl": ["../../library/web-core/validate/checked.ts"],
       "@/*": ["./src/*"]
     },
     "esModuleInterop": true,

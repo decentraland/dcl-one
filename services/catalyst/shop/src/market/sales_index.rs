@@ -1,5 +1,6 @@
 //! The `sales` chain index on Polygon: the primary mints the CollectionStore
-//! issues (a mirrored collection's `Issue` whose `_caller` is the store) and
+//! issues (a mirrored collection's `Issue` whose `_caller` is the store,
+//! priced by the store's `Bought` in the same transaction) and
 //! the ERC721BidV2 bid lifecycle (`BidCreated`, `BidAccepted`,
 //! `BidCancelled`), kept in `shop.sale_event` and folded into `shop.nft_bid`
 //! (one row per bidder and token, as the contract keeps them: a bidder's new
@@ -11,9 +12,6 @@
 //! difference.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
@@ -21,11 +19,10 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use super::MarketplaceState;
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
-use super::nft_index::{self, DecodeError, topic_address, topic_u256};
-use crate::jobs::{Jobs, PeriodicCfg};
-use crate::land_authz::indexer::{Rpc, RpcLog};
+use super::chain_walk::{topic_address, topic_u256};
+use super::nft_index::{self, DecodeError};
+use crate::chain_index::rpc::{Rpc, RpcLog};
 
 /// `Issue(address indexed _beneficiary, uint256 indexed _tokenId, uint256 indexed _itemId, uint256 _issuedId, address _caller)` (v2 collections).
 pub const TOPIC_ISSUE: &str = "0x57e2fe3f4d57a597e655a893f43c395d7dc18cb9c9c1898eda75cc0ad7608525";
@@ -38,6 +35,9 @@ pub const TOPIC_BID_ACCEPTED: &str =
 /// `BidCancelled(bytes32 _id, address indexed _tokenAddress, uint256 indexed _tokenId, address indexed _bidder)`.
 pub const TOPIC_BID_CANCELLED: &str =
     "0xc43098075c34b8b92567bd49f08f55e397ebf82dd82072e3eb1be525c4506f5f";
+
+/// `Bought((address collection, uint256[] ids, uint256[] prices, address[] beneficiaries)[] _itemsToBuy)` (CollectionStore).
+pub const TOPIC_BOUGHT: &str = "0x77cc75f8061aa168906862622e88c5b05a026a9c06c02d91ec98543e01e7ad33";
 
 pub const KIND_MINT: &str = "mint";
 pub const KIND_BID_CREATED: &str = "bid_created";
@@ -190,6 +190,87 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<SaleEvent>, De
     Ok(Some(event))
 }
 
+/// One item a store `Bought` paid for: (collection, item id, beneficiary, price).
+pub type BoughtItem = (String, String, String, String);
+
+/// A store `Bought` log's transaction and items; `Ok(None)` for another log.
+pub fn decode_bought(log: &RpcLog) -> Result<Option<(String, Vec<BoughtItem>)>, DecodeError> {
+    let (block, index) = chain_walk::log_position(log);
+    let err = |why: String| DecodeError {
+        block,
+        index: index as i32,
+        what: "Bought",
+        why,
+    };
+    if log.address.to_ascii_lowercase() != STORE_MATIC
+        || log
+            .topics
+            .first()
+            .map(|t| t.to_ascii_lowercase())
+            .as_deref()
+            != Some(TOPIC_BOUGHT)
+    {
+        return Ok(None);
+    }
+    let tx = log
+        .transaction_hash
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| err("missing transaction hash".into()))?;
+    let data = hex::decode(log.data.trim_start_matches("0x")).map_err(|e| err(e.to_string()))?;
+    type Items = sol_data::Array<(
+        sol_data::Address,
+        sol_data::Array<sol_data::Uint<256>>,
+        sol_data::Array<sol_data::Uint<256>>,
+        sol_data::Array<sol_data::Address>,
+    )>;
+    let (items,) = <(Items,)>::abi_decode_params(&data).map_err(|e| err(e.to_string()))?;
+    let mut out = Vec::new();
+    for (collection, ids, prices, beneficiaries) in items {
+        if ids.len() != prices.len() || ids.len() != beneficiaries.len() {
+            return Err(err("ids, prices and beneficiaries differ in length".into()));
+        }
+        for ((id, price), beneficiary) in ids.iter().zip(&prices).zip(&beneficiaries) {
+            out.push((
+                format!("{collection:#x}"),
+                id.to_string(),
+                format!("{beneficiary:#x}"),
+                price.to_string(),
+            ));
+        }
+    }
+    Ok(Some((tx, out)))
+}
+
+/// Prices each mint by its transaction's `Bought` item of the same
+/// collection, item and beneficiary, each item used once; a mint without one keeps no price.
+pub fn price_mints(rows: &mut [SaleEvent], logs: &[RpcLog]) {
+    let mut bought: HashMap<String, Vec<Option<BoughtItem>>> = HashMap::new();
+    for log in logs {
+        match decode_bought(log) {
+            Ok(Some((tx, items))) => bought
+                .entry(tx)
+                .or_default()
+                .extend(items.into_iter().map(Some)),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, "sales index: skipping a Bought it cannot decode"),
+        }
+    }
+    for row in rows.iter_mut().filter(|r| r.kind == KIND_MINT) {
+        let Some(items) = bought.get_mut(&row.tx_hash) else {
+            continue;
+        };
+        let item = row.item_id.as_deref().unwrap_or_default();
+        if let Some(slot) = items.iter_mut().find(|i| {
+            i.as_ref().is_some_and(|(c, id, b, _)| {
+                *c == row.contract_address && id == item && *b == row.buyer
+            })
+        }) {
+            row.price = slot.take().map(|(_, _, _, price)| price);
+        }
+    }
+}
+
 pub async fn insert_events(
     conn: &mut PgConnection,
     rows: &[SaleEvent],
@@ -230,8 +311,12 @@ pub async fn insert_events(
 /// past `$2` touched, the open bids on a token with an acceptance after
 /// them (whatever fold saw the acceptance, so a database folded before the
 /// rule existed converges without a cursor reset), plus the rows still
-/// missing their seller that the nft walk (`$3`, its last indexed block) has
-/// passed since. The
+/// missing their seller that the nft walk (`nft`: its last indexed block,
+/// read in the same statement as its transfers, and only while its history
+/// is bound to Polygon, out of quarantine and not diverged) has passed
+/// since, plus every bid created past `$5`, the lowest point the nft walk
+/// rewound to since the last fold (`shop.bid_seller_recheck`): its inferred
+/// seller may name an owner the rewind took away. The
 /// latest `bid_created` of a key defines the bid; the latest event at or
 /// after it, its status, `invalidated` when another bid on the token was
 /// accepted after it (the contract drops the token's other bids without an
@@ -240,9 +325,16 @@ pub async fn insert_events(
 /// a contract still owed a backfill does not read (the walk has not seen every
 /// transfer before the bid: the row waits with no seller and is revisited once
 /// the walk passes it and the backfill is done). An
-/// unchanged row is left alone.
+/// unchanged row is left alone. The latest event is one backward probe of
+/// `sale_event_bidder_idx` per bid (`LATERAL … LIMIT 1`), not a join of two
+/// key sets: the planner estimates `created` at one row, and as a join it
+/// rescanned every key per key, which a full fold of Polygon's history
+/// (about 66k bids) did not finish within the hour.
 const FOLD_BIDS_SQL: &str = "
-WITH touched AS (
+WITH nft AS (
+    SELECT COALESCE(max(last_block), -1) AS indexed FROM shop.chain_cursor
+    WHERE indexer = $4 AND network = $1 AND chain_id = $3 AND quarantined_at IS NULL AND diverged_at IS NULL
+), touched AS (
     SELECT contract_address, token_id, buyer AS bidder FROM shop.sale_event
     WHERE network = $1 AND block_number > $2 AND kind <> 'mint'
     UNION
@@ -253,7 +345,10 @@ WITH touched AS (
           AND a.kind = 'bid_accepted' AND (a.block_number, a.log_index) > (b.created_block, b.created_log_index))
     UNION
     SELECT b.contract_address, b.token_id, b.bidder FROM shop.nft_bid b
-    WHERE b.network = $1 AND b.seller IS NULL AND b.created_block <= $3 AND EXISTS (
+    WHERE b.network = $1 AND $5::bigint IS NOT NULL AND b.created_block > $5
+    UNION
+    SELECT b.contract_address, b.token_id, b.bidder FROM shop.nft_bid b
+    WHERE b.network = $1 AND b.seller IS NULL AND b.created_block <= (SELECT indexed FROM nft) AND EXISTS (
         SELECT 1 FROM shop.nft_event n
         WHERE n.network = $1 AND n.contract_address = b.contract_address AND n.token_id = b.token_id
           AND n.kind = 'transfer' AND (n.block_number, n.log_index) < (b.created_block, b.created_log_index))
@@ -265,14 +360,6 @@ WITH touched AS (
     JOIN shop.sale_event e ON e.network = $1 AND e.contract_address = t.contract_address
         AND e.token_id = t.token_id AND e.buyer = t.bidder AND e.kind = 'bid_created'
     ORDER BY e.contract_address, e.token_id, e.buyer, e.block_number DESC, e.log_index DESC
-), latest AS (
-    SELECT DISTINCT ON (c.contract_address, c.token_id, c.bidder)
-        c.contract_address, c.token_id, c.bidder, e.kind, e.seller, e.block_number, e.log_index, e.block_time
-    FROM created c
-    JOIN shop.sale_event e ON e.network = $1 AND e.contract_address = c.contract_address
-        AND e.token_id = c.token_id AND e.buyer = c.bidder AND e.kind <> 'mint'
-        AND (e.block_number, e.log_index) >= (c.block_number, c.log_index)
-    ORDER BY c.contract_address, c.token_id, c.bidder, e.block_number DESC, e.log_index DESC
 )
 INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status,
     created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at)
@@ -281,7 +368,7 @@ SELECT $1, c.contract_address, c.token_id, c.bidder, c.bid_id,
         SELECT n.to_address FROM shop.nft_event n
         WHERE n.network = $1 AND n.contract_address = c.contract_address AND n.token_id = c.token_id
           AND n.kind = 'transfer' AND (n.block_number, n.log_index) < (c.block_number, c.log_index)
-          AND c.block_number <= $3
+          AND c.block_number <= (SELECT indexed FROM nft)
           AND NOT EXISTS (
             SELECT 1 FROM shop.nft_contract k
             WHERE k.network = $1 AND k.contract_address = c.contract_address AND k.backfill_from_block IS NOT NULL
@@ -295,7 +382,16 @@ SELECT $1, c.contract_address, c.token_id, c.bidder, c.bid_id,
               AND a.kind = 'bid_accepted' AND (a.block_number, a.log_index) > (c.block_number, c.log_index)) THEN 'invalidated'
          ELSE 'open' END,
     c.block_number, c.log_index, c.block_time, l.block_number, l.log_index, l.block_time
-FROM created c JOIN latest l USING (contract_address, token_id, bidder)
+FROM created c
+CROSS JOIN LATERAL (
+    SELECT e.kind, e.seller, e.block_number, e.log_index, e.block_time
+    FROM shop.sale_event e
+    WHERE e.network = $1 AND e.contract_address = c.contract_address
+      AND e.token_id = c.token_id AND e.buyer = c.bidder AND e.kind <> 'mint'
+      AND (e.block_number, e.log_index) >= (c.block_number, c.log_index)
+    ORDER BY e.block_number DESC, e.log_index DESC
+    LIMIT 1
+) l
 ON CONFLICT (network, contract_address, token_id, bidder) DO UPDATE SET
     bid_id = EXCLUDED.bid_id, seller = EXCLUDED.seller, price = EXCLUDED.price, expires_at = EXCLUDED.expires_at,
     status = EXCLUDED.status, created_block = EXCLUDED.created_block, created_log_index = EXCLUDED.created_log_index,
@@ -306,12 +402,22 @@ WHERE (nft_bid.bid_id, nft_bid.seller, nft_bid.status, nft_bid.updated_block, nf
 
 /// The fold in one transaction: the keys a bid event past `since` touched
 /// (`None`: every key), each over its whole history; the rows written.
-pub async fn fold(pool: &PgPool, since: Option<i64>) -> anyhow::Result<u64> {
+pub async fn fold(
+    pool: &PgPool,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<u64> {
     let since = since.unwrap_or(-1);
-    let nft_indexed = chain_walk::cursor(pool, chain_walk::INDEXER_NFT, ChainNet::Matic)
-        .await?
-        .map_or(-1, |cursor| cursor.last_block);
     let mut tx = pool.begin().await?;
+    // The nft walk's rewinds since the last fold, read before the fold's own
+    // statement (whose newer snapshot sees each one's rows); only these are
+    // deleted after it, so one recorded meanwhile waits for the next fold.
+    let (rechecks, recheck_from): (Option<Vec<i64>>, Option<i64>) = sqlx::query_as(
+        "SELECT array_agg(id), min(from_block) FROM shop.bid_seller_recheck WHERE network = $1",
+    )
+    .bind(ChainNet::Matic.db_name())
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query("SET LOCAL statement_timeout = '3600s'")
         .execute(&mut *tx)
         .await?;
@@ -319,10 +425,19 @@ pub async fn fold(pool: &PgPool, since: Option<i64>) -> anyhow::Result<u64> {
     let bids = sqlx::query(FOLD_BIDS_SQL)
         .bind(ChainNet::Matic.db_name())
         .bind(since)
-        .bind(nft_indexed)
+        .bind(chain_walk::mainnet_chain(ChainNet::Matic))
+        .bind(chain_walk::INDEXER_NFT)
+        .bind(recheck_from)
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    if let Some(ids) = rechecks {
+        sqlx::query("DELETE FROM shop.bid_seller_recheck WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+    }
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(bids)
 }
@@ -369,6 +484,11 @@ impl ChainIndex for SalesIndex {
                 topics: json!([[TOPIC_ISSUE]]),
             });
         }
+        // The store's Bought prices the mints of its transaction.
+        groups.push(LogGroup {
+            addresses: vec![STORE_MATIC.to_string()],
+            topics: json!([[TOPIC_BOUGHT]]),
+        });
         if to >= BID_V2_MATIC_START_BLOCK {
             groups.push(LogGroup {
                 addresses: vec![BID_V2_MATIC.to_string()],
@@ -396,6 +516,7 @@ impl ChainIndex for SalesIndex {
                 }
             }
         }
+        price_mints(&mut rows, logs);
         Ok(insert_events(conn, &rows).await?)
     }
 
@@ -433,8 +554,14 @@ impl ChainIndex for SalesIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let bids = fold(pool, since).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let bids = fold(pool, since, owner).await?;
         tracing::info!(bids, "sales index: folded");
         Ok(true)
     }
@@ -519,75 +646,9 @@ pub async fn status(pool: &PgPool) -> Value {
     json!({
         "matic": c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
         })),
     })
-}
-
-/// Attaches `sales-index` when `MARKETPLACE_SALES_INDEX_ENABLED` and a
-/// Polygon JSON-RPC endpoint (`TRADE_RPC_URLS` 137=) are configured, on the
-/// market indexes' cadence and budget: the venue check on its first tick,
-/// then one pass per tick once the collections mirror has completed a pass
-/// (the address set is only as complete as it).
-pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
-    let settings = market.settings.market.indexes.clone();
-    if !settings.sales_enabled {
-        tracing::info!(
-            job = "sales-index",
-            "marketplace chain index off: its routes answer the unavailable envelope"
-        );
-        return;
-    }
-    let Some(url) = market.chain_rpc_url(ChainNet::Matic) else {
-        tracing::warn!(
-            job = "sales-index",
-            "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
-        );
-        return;
-    };
-    let market = market.clone();
-    let venues_checked = Arc::new(AtomicBool::new(false));
-    jobs.spawn_periodic_leased(
-        "sales-index",
-        PeriodicCfg::every(settings.interval)
-            .with_jitter(Duration::from_secs(1))
-            .with_error_backoff(Duration::from_secs(30)),
-        move |ctx| {
-            let (market, url, settings, venues_checked) = (
-                market.clone(),
-                url.clone(),
-                settings.clone(),
-                venues_checked.clone(),
-            );
-            async move {
-                let rpc = Rpc::at(&market.http, &url);
-                if !venues_checked.load(Ordering::SeqCst) {
-                    check_venues(&rpc, &market.pool).await?;
-                    venues_checked.store(true, Ordering::SeqCst);
-                }
-                if !nft_index::mirror_complete(&market.pool, ChainNet::Matic).await {
-                    ctx.progress(
-                        "sales matic: waiting for the collections mirror's first complete pass"
-                            .to_string(),
-                    );
-                    return Ok(());
-                }
-                let progress = |m: String| ctx.progress(m);
-                let outcome = chain_walk::run_pass(
-                    &market.pool,
-                    &rpc,
-                    &SalesIndex,
-                    &settings,
-                    Some(&ctx.cancel),
-                    &progress,
-                )
-                .await?;
-                tracing::info!(indexer = INDEXER_SALES, summary = %outcome.summary(), "marketplace chain index pass");
-                ctx.progress(outcome.summary());
-                Ok(())
-            }
-        },
-    );
 }
 
 #[cfg(test)]
@@ -620,6 +681,10 @@ pub(crate) mod tests {
             (
                 "BidCancelled(bytes32,address,uint256,address)",
                 TOPIC_BID_CANCELLED,
+            ),
+            (
+                "Bought((address,uint256[],uint256[],address[])[])",
+                TOPIC_BOUGHT,
             ),
         ] {
             assert_eq!(format!("{:#x}", keccak256(sig)), topic, "{sig}");
@@ -761,6 +826,133 @@ pub(crate) mod tests {
             block,
             index,
         )
+    }
+
+    /// A store `Bought` of `items` (collection, item, price, beneficiary) in transaction `tx`.
+    pub(crate) fn bought_log(
+        items: &[(&str, u64, u128, &str)],
+        tx: &str,
+        block: u64,
+        index: u64,
+    ) -> RpcLog {
+        let addr = |a: &str| alloy_primitives::Address::from_str(a).unwrap();
+        type Item = (
+            alloy_primitives::Address,
+            Vec<U256>,
+            Vec<U256>,
+            Vec<alloy_primitives::Address>,
+        );
+        let encoded: Vec<Item> = items
+            .iter()
+            .map(|(c, id, price, b)| {
+                (
+                    addr(c),
+                    vec![U256::from(*id)],
+                    vec![U256::from(*price)],
+                    vec![addr(b)],
+                )
+            })
+            .collect();
+        let mut l = log(
+            STORE_MATIC,
+            vec![TOPIC_BOUGHT.into()],
+            (encoded,).abi_encode_params(),
+            block,
+            index,
+        );
+        l.transaction_hash = Some(tx.to_string());
+        l
+    }
+
+    /// A Bought of two items, one of them twice, prices the transaction's
+    /// store mints by collection, item and beneficiary; another transaction's
+    /// mint and a bare data word stay unpriced.
+    #[test]
+    fn the_stores_bought_prices_its_transactions_mints() {
+        let other = "0x00000000000000000000000000000000000000c2";
+        let tx = format!("0x{:064x}", 10_000);
+        let mint = |item: u64, beneficiary: &str, index: u64| {
+            let token = (U256::from(item) << 216) | U256::from(index);
+            decode_log(
+                &issue_log(
+                    COLLECTION,
+                    beneficiary,
+                    token,
+                    item,
+                    STORE_MATIC,
+                    100,
+                    index,
+                ),
+                5,
+            )
+            .unwrap()
+            .unwrap()
+        };
+        let mut rows = vec![
+            SaleEvent {
+                tx_hash: tx.clone(),
+                ..mint(3, ALICE, 0)
+            },
+            SaleEvent {
+                tx_hash: tx.clone(),
+                ..mint(3, ALICE, 1)
+            },
+            SaleEvent {
+                tx_hash: tx.clone(),
+                ..mint(4, BOB, 2)
+            },
+            mint(3, ALICE, 3),
+        ];
+        let bought = bought_log(
+            &[
+                (COLLECTION, 3, 2_000_000_000_000_000_000, ALICE),
+                (COLLECTION, 3, 2_000_000_000_000_000_000, ALICE),
+                (other, 4, 9, BOB),
+                (COLLECTION, 4, 0, BOB),
+            ],
+            &tx,
+            100,
+            4,
+        );
+        let (decoded_tx, items) = decode_bought(&bought).unwrap().unwrap();
+        assert_eq!(decoded_tx, tx);
+        assert_eq!(items.len(), 4);
+        assert_eq!(
+            items[2],
+            (
+                other.to_string(),
+                "4".to_string(),
+                BOB.to_string(),
+                "9".to_string()
+            )
+        );
+        price_mints(&mut rows, &[bought]);
+        let prices: Vec<_> = rows.iter().map(|r| r.price.as_deref()).collect();
+        assert_eq!(
+            prices,
+            [
+                Some("2000000000000000000"),
+                Some("2000000000000000000"),
+                Some("0"),
+                None
+            ]
+        );
+        let mut bare = bought_log(&[], &tx, 100, 5);
+        bare.data = format!("0x{:064x}", 1);
+        assert!(decode_bought(&bare).is_err());
+        assert_eq!(
+            decode_bought(&issue_log(
+                COLLECTION,
+                ALICE,
+                U256::from(1u8),
+                0,
+                STORE_MATIC,
+                1,
+                0
+            ))
+            .unwrap(),
+            None
+        );
     }
 
     #[test]

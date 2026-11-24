@@ -9,7 +9,7 @@ import { http, HttpResponse } from "msw";
 
 import { chargeForQuote, usdCents } from "@shop/model/money";
 import { ENDPOINTS } from "@shop/api/endpoints";
-import type { ShopTransport, TransportRequest } from "./signer";
+import type { ShopTransport, TransportRequest } from "@shop/api/signer";
 import wire from "./fixtures/credits-wire.json";
 
 export type WireRoute = "authorize" | "batch" | "cancel" | "submitted";

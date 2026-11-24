@@ -7,10 +7,10 @@ import { Link, useParams } from "react-router";
 
 import Button from "../../atoms/Button";
 import type { NftResult } from "@catalyst-api/market/NftResult";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
 import { fetchNftResult, indexOutage, landData } from "./api";
-import { landCategoryOf } from "./contracts";
+import { landCategoryOf } from "@shop/land/contracts";
 import { dateText, epochMs, Mana, relativeText } from "./format";
 import {
   EstateParcels,
@@ -50,8 +50,7 @@ function ManageSignIn({ onSignIn }: { onSignIn?: () => void }) {
   );
 }
 
-export const BUILDER_LAND_HREF = "/create/land";
-export const BUILDER_NAMES_HREF = "/create/names";
+export const CREATOR_HUB_HREF = "/download/creator-hub";
 
 export type ManageAssetProps = {
   client?: ShopClient;
@@ -190,8 +189,8 @@ export default function ManageAsset(props: ManageAssetProps) {
               Deploy scenes, grant operator permissions and point a NAME to this LAND from the Creator Hub.
             </p>
             <div className="shop-land-actions">
-              <Button as="a" href={BUILDER_LAND_HREF} aria-disabled={locked || undefined} onClick={(e) => locked && e.preventDefault()}>
-                Open in Builder
+              <Button as="a" href={CREATOR_HUB_HREF} aria-disabled={locked || undefined} onClick={(e) => locked && e.preventDefault()}>
+                Open in Creator Hub
               </Button>
             </div>
             {locked ? <p className="shop-land-page__sub">This action is locked until the rent has finished and the {assetWord.toLowerCase()} has been claimed back.</p> : null}
@@ -417,8 +416,8 @@ function NonLandManage({ result, tokenHref }: { result: NftResult; tokenHref: st
               A NAME's World, its scenes and the LAND it points to are managed in the Creator Hub. You can sell or transfer it from the Shop.
             </p>
             <div className="shop-land-actions">
-              <Button as="a" href={BUILDER_NAMES_HREF}>
-                Manage your NAMEs
+              <Button as="a" href={CREATOR_HUB_HREF}>
+                Open in Creator Hub
               </Button>
               <Button as="a" variant="secondary" href={`${tokenHref}/sell`}>
                 Sell

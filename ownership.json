@@ -143,6 +143,7 @@
       "owners": [],
       "paths": [
         "/library/js-sdk-toolchain/",
+        "/library/hashing/",
         "/.github/workflows/sdk.yml",
         "/.github/workflows/sdk-release.yml"
       ]
@@ -155,7 +156,10 @@
       ],
       "paths": [
         "/schemas/",
-        "/services/catalyst/db/"
+        "/services/catalyst/db/",
+        "/tooling/migration/",
+        "/tooling/tests/migration_*.py",
+        "/tooling/tests/test_migration.py"
       ]
     },
     {
@@ -174,14 +178,18 @@
     },
     {
       "id": "comms",
-      "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse",
+      "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse; and the community chat message router (its own process)",
       "owners": [
         "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/comms/",
+        "/services/catalyst/message-router/",
+        "/services/catalyst/cast-bot/",
+        "/.github/workflows/cast-presenter.yml",
         "/library/vendor/rusty_enet/",
-        "/library/dcl-livekit-token/"
+        "/library/dcl-livekit-token/",
+        "/services/catalyst/comms-e2e/"
       ]
     },
     {
@@ -203,7 +211,9 @@
       "paths": [
         "/apps/sites/",
         "/apps/ui3/",
-        "/library/ui/"
+        "/library/ui/",
+        "/library/web-core/",
+        "/tooling/creators-e2e/"
       ]
     },
     {
@@ -226,6 +236,7 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/library/shop/",
+        "/library/ui/apps/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"
@@ -243,32 +254,43 @@
     },
     {
       "id": "creator-ui",
-      "description": "Creator editor and native shell",
+      "description": "Creator editor (web) and the Creator Hub desktop workspace (Electron app, inspector, asset packs)",
       "owners": [
         "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/editor/",
         "/apps/ui3/editor-scene/",
-        "/apps/creator-hub/"
+        "/apps/creator-hub/",
+        "/.github/workflows/creator-hub-*.yml",
+        "/.github/actions/creator-hub-*/"
       ]
     },
     {
       "id": "explorer-client",
-      "description": "Explorer source, local app builds and component workflows",
+      "description": "Explorer source, its HUD UI and page core, local app builds, component workflows, the tools that rebuild and prove its sources and select its CI, and its Nix package",
       "owners": [
         "@decentraland/client"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
+        "/library/ui/apps/hud/",
+        "/library/explorer-core/",
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
-        "/.github/actions/bevy-explorer-*/"
+        "/.github/actions/bevy-explorer-*/",
+        "/tooling/bevy-*.py",
+        "/tooling/patched-sources.py",
+        "/tooling/vendor-provenance.py",
+        "/tooling/tests/test_bevy_*.py",
+        "/infra/dev/explorer-shell-hook.sh",
+        "/infra/packages/bevy-explorer-native.nix",
+        "/infra/packages/bevy-explorer.nix"
       ]
     },
     {
       "id": "explorer-rust",
-      "description": "Explorer Rust source, its workspace manifest, build script and Cargo configuration, the Rust harness crates, the vendored Rust crates including Bevy, and the generated fork pins",
+      "description": "Explorer Rust source, its workspace manifest, build script and Cargo configuration, the Rust harness crates, the vendored Rust crates, and the upstream references and patch series of Bevy and the forked crates",
       "owners": [
         "@robtfm"
       ],
@@ -282,9 +304,8 @@
         "/rendering/bevy-explorer/source/local-harness/benchmark/",
         "/rendering/bevy-explorer/source/local-harness/presence/harness-util/",
         "/rendering/bevy-explorer/source/vendor/",
-        "/rendering/bevy-explorer/bevy/",
-        "/rendering/bevy-explorer/cargo-patches.toml",
-        "/rendering/bevy-explorer/forks.toml"
+        "/rendering/bevy-explorer/vendor/",
+        "/rendering/bevy-explorer/patches/"
       ]
     },
     {
@@ -299,6 +320,17 @@
         "/tooling/native-lock/",
         "/.github/workflows/uuav-native.yml",
         "/.github/workflows/uuav-verify.yml"
+      ]
+    },
+    {
+      "id": "avatar-preview",
+      "description": "Avatar preview renderer: the standalone wasm build of the Explorer's avatar look that the shop and the creator hub embed, its page, build and release workflow",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/rendering/avatar-preview/",
+        "/.github/workflows/avatar-preview*.yml"
       ]
     },
     {
@@ -319,27 +351,6 @@
       ],
       "paths": [
         "/docs/"
-      ]
-    },
-    {
-      "id": "ui-provenance",
-      "description": "Provenance of the shared UI library: source and public pins, font origins, port verification and their checks; a change needs an approving code-owner review",
-      "owners": [
-        "@decentraland/web-applications"
-      ],
-      "paths": [
-        "/library/ui/upstream.lock.json",
-        "/library/ui/port-verification.json",
-        "/library/ui/figma/lock-digests.mjs",
-        "/library/ui/figma/port-verification.mjs",
-        "/library/ui/figma/public-foundations.mjs",
-        "/library/ui/figma/src/public-foundations.test.ts",
-        "/library/ui/test/foundations-source.test.ts",
-        "/library/ui/test/foundations.test.tsx",
-        "/library/ui/foundations/source.json",
-        "/library/ui/foundations/typography/font-source.json",
-        "/library/ui/figma/src/install.ts",
-        "/library/ui/figma/src/install.test.ts"
       ]
     },
     {

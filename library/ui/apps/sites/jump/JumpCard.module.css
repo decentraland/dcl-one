@@ -1,0 +1,363 @@
+/*
+ * decentraland.org's jump card (decentraland-ui2 breakpoints: xs 768, sm 991, md 1024, xl 1500). Its fills (#380a4d, the phone gradients)
+ * are the reference's own colours, which no token names.
+ */
+.root {
+  display: flex;
+  width: 100%;
+  min-width: 1118px;
+  max-width: 1448px;
+  height: 608px;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  color: var(--dcl-neutrals-white);
+}
+
+.media {
+  position: relative;
+  box-sizing: border-box;
+  flex-grow: 1;
+  max-width: 724px;
+  overflow: hidden;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.badge {
+  position: absolute;
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-shadow);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 700;
+  line-height: 1.5;
+  backdrop-filter: blur(4px);
+}
+
+.live {
+  background: var(--dcl-primary-primary);
+  color: var(--dcl-neutrals-white);
+}
+
+.accent {
+  color: var(--dcl-primary-primary);
+}
+
+.online {
+  color: var(--dcl-system-green-dark-2);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.body {
+  display: flex;
+  box-sizing: border-box;
+  flex-grow: 1;
+  flex-direction: column;
+  justify-content: flex-start;
+  max-width: 724px;
+  padding: 60px 60px var(--dcl-space-48) var(--dcl-space-48);
+  background: #380a4d;
+}
+
+.content {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  margin-bottom: 30px;
+}
+
+/* 48px from 1024px, where --dcl-font-size-heading-lg is 48px; the media rules below set the smaller widths. */
+.title {
+  display: -webkit-box;
+  margin: 0 0 var(--dcl-space-16);
+  overflow: hidden;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-lg);
+  font-weight: 600;
+  line-height: 1.17;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.creator {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0 0 var(--dcl-space-24);
+  color: var(--dcl-primary-primary);
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.avatar {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 34px;
+  /* The disc every Decentraland client draws behind a profile's face, from the display name. */
+  background: var(--avatar-bg, var(--dcl-neutrals-white));
+  object-fit: cover;
+}
+
+.by {
+  color: var(--dcl-neutrals-white);
+}
+
+.creatorLink {
+  color: var(--dcl-primary-primary);
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  letter-spacing: normal;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.creatorLink:hover {
+  color: #ff4d75; /* MUI primary hover, no token */
+  text-decoration: underline;
+}
+
+.creatorLink:focus-visible {
+  border-radius: var(--dcl-radius-xs);
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-8);
+  margin-bottom: var(--dcl-space-48);
+}
+
+.chip {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: 1.75;
+  backdrop-filter: blur(4px);
+}
+
+.ended {
+  background: var(--dcl-neutrals-cloudy-sky);
+  color: var(--dcl-neutrals-snow);
+  text-transform: uppercase;
+}
+
+.text {
+  position: relative;
+  height: 128px;
+  --text-fade: #380a4d;
+}
+
+.text::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: -1px;
+  left: 0;
+  z-index: 1;
+  height: var(--dcl-space-24);
+  background: linear-gradient(transparent, var(--text-fade));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.text[data-fade='true']::after {
+  opacity: 1;
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  padding-right: var(--dcl-space-4);
+  overflow-y: auto;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.scroll:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.3) var(--dcl-transparencies-white-10);
+}
+
+.description {
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-4);
+  line-height: 1.6;
+}
+
+/* On a desktop the actions are the content section's last flex child; on a phone they are a fixed bar. */
+.bottom {
+  display: contents;
+}
+
+.jumpIn {
+  composes: jumpIn from './JumpButtons.module.css';
+}
+
+@media (max-width: 1499.98px) {
+  .root {
+    min-width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 1023.98px) {
+  .root {
+    width: calc(100% - var(--dcl-space-64));
+    min-width: auto;
+    height: 490px;
+    margin: 0 var(--dcl-space-32);
+  }
+
+  .media {
+    height: 100%;
+  }
+
+  .body {
+    padding: 20px;
+  }
+
+  .title {
+    font-size: 40px;
+  }
+
+  .date {
+    font-size: var(--dcl-font-size-body-sm);
+  }
+}
+
+@media (max-width: 990.98px) {
+  .body {
+    padding: var(--dcl-space-16);
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-1);
+  }
+}
+
+@media (max-width: 767.98px) {
+  .root {
+    width: 100%;
+    height: auto;
+    flex-direction: column;
+    margin: 0;
+    padding-bottom: 25px;
+    border-radius: 0;
+    background: linear-gradient(96.05deg, #2e013e 36.2%, #7f0d59 100.69%);
+    box-shadow: none;
+  }
+
+  .media {
+    width: 100%;
+    max-width: 100%;
+    height: 250px;
+    flex-grow: 0;
+  }
+
+  .badge {
+    gap: 6px;
+    padding: 6px var(--dcl-space-12);
+    border-radius: var(--dcl-radius-xs);
+    font-size: var(--dcl-font-size-body-xs);
+  }
+
+  .body {
+    max-width: 100%;
+    padding: var(--dcl-space-32) var(--dcl-space-24) 0;
+    background: transparent;
+  }
+
+  .title {
+    font-size: 28px;
+    line-height: 1.2;
+  }
+
+  .creator {
+    gap: 6px;
+    margin-bottom: var(--dcl-space-16);
+    font-size: var(--dcl-font-size-body-md);
+  }
+
+  .avatar {
+    width: var(--dcl-space-24);
+    height: var(--dcl-space-24);
+    border-radius: 50%;
+  }
+
+  .creatorLink {
+    font-size: var(--dcl-font-size-body-md);
+  }
+
+  .meta {
+    margin-bottom: var(--dcl-space-12);
+  }
+
+  .chip {
+    gap: 6px;
+    border-radius: var(--dcl-radius-xs);
+    font-size: var(--dcl-font-size-body-sm);
+    line-height: 1.5;
+  }
+
+  .text {
+    height: 250px;
+    --text-fade: #2e013e;
+  }
+
+  .description {
+    font-size: var(--dcl-font-size-body-md);
+    line-height: 1.5;
+  }
+
+  .bottom {
+    position: fixed;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    z-index: 1000;
+    display: flex;
+    box-sizing: border-box;
+    flex-direction: row;
+    gap: var(--dcl-space-12);
+    min-height: 115px;
+    padding: var(--dcl-space-32) var(--dcl-space-24);
+    border-top: 1px solid var(--dcl-transparencies-white-10);
+    background: linear-gradient(100.12deg, #130119 0%, #320524 100%);
+    box-shadow: 0 -4px 16px var(--dcl-transparencies-black-20);
+    backdrop-filter: blur(8px);
+  }
+}

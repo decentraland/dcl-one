@@ -170,6 +170,9 @@
       "/notifications/confirm-email"
     ];
   }
+  # Badges at the root: only the wallet reads the web profile uses. The base of
+  # upstream's other paths is <node>/badges (or badges.<domain>): root /badges
+  # is that prefix and root /categories is places'.
   {
     key = "~ \"^/users/0x[0-9a-fA-F]{40}/(badges|preview)$\"";
     to = "/badges$uri";

@@ -4,28 +4,18 @@ use bevy::{
 };
 
 use common::{
-    partition::{point_partition, scene_partition, LoadPriority, PartitionData, Tier},
+    partition::{point_partition, scene_partition, LoadPriority, Tier},
     structs::{PrimaryCamera, PrimaryUser},
 };
 use ipfs::IpfsResource;
 
-use crate::{initialize_scene::SceneHash, renderer_context::RendererSceneContext, ContainingScene};
+use crate::{
+    initialize_scene::SceneHash, renderer_context::RendererSceneContext, scene_lod::SceneLod,
+    ContainingScene,
+};
 
-/// Where a scene, or an entity with `PartitionedDownloads`, is relative to the player and the
-/// camera; refreshed every frame by `update_scene_partitions`.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Partition(pub PartitionData);
-
-/// The content hashes whose downloads take this entity's partition: an avatar's body and
-/// wearables. Scenes need none; their downloads carry the scene's own hash. Inserting it
-/// registers the hashes with the ipfs request slots and replacing or removing it (an outfit
-/// change, a despawn) releases them, so the slots know exactly which hashes have an owner.
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-#[component(
-    on_insert = register_partitioned_downloads,
-    on_replace = release_partitioned_downloads
-)]
-pub struct PartitionedDownloads(pub Vec<String>);
+use ipfs::partition::{avatar_key, keyed};
+pub use ipfs::partition::{Partition, PartitionedDownloads, PartitionedEmoteDownloads};
 
 /// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
 /// bottom of the scene tier until it has one; the publisher raises the player's scene to the
@@ -58,35 +48,6 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
     ipfs.release_download_priority(&hash.0);
 }
 
-fn register_partitioned_downloads(world: DeferredWorld, context: HookContext) {
-    let (Some(ipfs), Some(downloads)) = (
-        world.get_resource::<IpfsResource>(),
-        world.get::<PartitionedDownloads>(context.entity),
-    ) else {
-        return;
-    };
-    let key = world
-        .get::<Partition>(context.entity)
-        .map_or(LoadPriority::AVATAR_PENDING, |partition| {
-            partition.0.load_priority(Tier::Avatar)
-        });
-    for hash in &downloads.0 {
-        ipfs.register_download_priority(hash, key);
-    }
-}
-
-fn release_partitioned_downloads(world: DeferredWorld, context: HookContext) {
-    let (Some(ipfs), Some(downloads)) = (
-        world.get_resource::<IpfsResource>(),
-        world.get::<PartitionedDownloads>(context.entity),
-    ) else {
-        return;
-    };
-    for hash in &downloads.0 {
-        ipfs.release_download_priority(hash);
-    }
-}
-
 /// A scene behind the camera counts as this many times farther in the tick queue: it keeps
 /// ticking, and yields first when frame time runs short.
 pub const BEHIND_SCENE_TICK_PENALTY: f32 = 4.0;
@@ -100,21 +61,38 @@ pub fn sampling_transform(
     player: &Query<&GlobalTransform, With<PrimaryUser>>,
 ) -> Option<(Vec3, Option<(Vec3, Vec3)>)> {
     let player = player.single().ok()?;
-    let camera = camera
-        .single()
-        .ok()
-        .map(|camera| (camera.translation(), camera.forward().as_vec3()));
-    Some((player.translation(), camera))
+    Some((player.translation(), camera_facing(camera)))
 }
 
-#[allow(clippy::type_complexity)]
+/// The rendering camera's position and forward direction, `None` without one (the headless
+/// server): what "in front of the camera" is measured against.
+pub(crate) fn camera_facing(
+    camera: &Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
+) -> Option<(Vec3, Vec3)> {
+    camera
+        .single()
+        .ok()
+        .map(|camera| (camera.translation(), camera.forward().as_vec3()))
+}
+
 pub fn update_scene_partitions(
     camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut scenes: Query<(Entity, &RendererSceneContext, Option<&mut Partition>)>,
     mut points: Query<
         (Entity, &GlobalTransform, Option<&mut Partition>),
-        (With<PartitionedDownloads>, Without<RendererSceneContext>),
+        (
+            Or<(With<PartitionedDownloads>, With<PartitionedEmoteDownloads>)>,
+            Without<RendererSceneContext>,
+        ),
+    >,
+    mut lods: Query<
+        (Entity, &SceneLod, Option<&mut Partition>),
+        (
+            Without<RendererSceneContext>,
+            Without<PartitionedDownloads>,
+            Without<PartitionedEmoteDownloads>,
+        ),
     >,
     mut commands: Commands,
 ) {
@@ -140,21 +118,33 @@ pub fn update_scene_partitions(
         let partition = point_partition(origin, camera, transform.translation());
         apply(entity, Partition(partition), current);
     }
+    for (entity, lod, current) in lods.iter_mut() {
+        let partition = scene_partition(origin, camera, lod.parcels.iter().copied());
+        apply(entity, Partition(partition), current);
+    }
 }
 
 /// This frame's download priority of every registered hash, written into the ipfs request
-/// slots in place: the player's scenes first, even before they have a context and while the
-/// player is still out of world arriving in one; then the
-/// avatars' bodies and wearables, nearest avatar first, a shared wearable at the best of its
-/// avatars; then the other scenes by partition, a scene with no partition yet last among them.
+/// slots in place: the player's own body, wearables and emotes first; then the player's scenes,
+/// even before they have a context and while the player is still out of world arriving in one;
+/// then the other avatars' bodies, wearables and emotes, nearest avatar first, a shared one at
+/// the best of its avatars (the player's own, when the player wears or plays it too); then the
+/// other scenes by partition, a scene with no partition yet last among them; then the scenes'
+/// stand-ins, whose files a spawned scene's own key outranks.
 /// Which hashes are registered is the hooks' business (`register_scene_hash`,
-/// `register_partitioned_downloads`). Runs only on a frame in which a download waits for or
-/// holds a slot: a grant that chooses between downloads happens at an enqueue while others wait
-/// or at a release, so it reads this frame's keys unless the gate was idle when the frame began,
-/// and the steady state costs nothing.
+/// `register_partitioned_downloads`, `register_partitioned_emote_downloads`, `scene_lod`'s). Runs
+/// only on a frame in which a download waits for or holds a slot: a grant that chooses between
+/// downloads happens at an enqueue while others wait or at a release, so it reads this frame's
+/// keys unless the gate was idle when the frame began, and the steady state costs nothing.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
-    partitioned: Query<(&Partition, &PartitionedDownloads)>,
+    partitioned: Query<(Option<&Partition>, &PartitionedDownloads, Has<PrimaryUser>)>,
+    partitioned_emotes: Query<(
+        Option<&Partition>,
+        &PartitionedEmoteDownloads,
+        Has<PrimaryUser>,
+    )>,
+    lods: Query<(&Partition, &SceneLod)>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
@@ -176,11 +166,25 @@ pub fn publish_download_priorities(
         };
         (hash.0.as_str(), key)
     });
-    let wearable_keys = partitioned.iter().flat_map(|(partition, downloads)| {
-        let key = partition.0.load_priority(Tier::Avatar);
-        downloads.0.iter().map(move |hash| (hash.as_str(), key))
-    });
-    ipfs.update_download_priorities(scene_keys.chain(wearable_keys));
+    let wearable_keys = partitioned
+        .iter()
+        .flat_map(|(partition, downloads, is_player)| {
+            keyed(avatar_key(is_player, partition), &downloads.0)
+        });
+    let emote_keys = partitioned_emotes
+        .iter()
+        .flat_map(|(partition, downloads, is_player)| {
+            keyed(avatar_key(is_player, partition), &downloads.0)
+        });
+    let lod_keys = lods
+        .iter()
+        .map(|(partition, lod)| (lod.hash.as_str(), partition.0.load_priority(Tier::Lod)));
+    ipfs.update_download_priorities(
+        scene_keys
+            .chain(wearable_keys)
+            .chain(emote_keys)
+            .chain(lod_keys),
+    );
 }
 
 #[cfg(test)]

@@ -1,0 +1,237 @@
+/* Source's SceneJumpInModal: an 880px panel (at 1920) on the scene-panel radial gradient. Its center
+   stop (#6e31a7 in source) is the nearest brand token, brand purple (#691fa9). */
+.modal {
+  border-radius: var(--dcl-radius-xl);
+  background: radial-gradient(
+    47.39% 84.22% at 42.4% 26.48%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-background-web-dark) 100%
+  );
+  box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
+}
+
+.close {
+  position: absolute;
+  top: var(--dcl-space-16);
+  right: var(--dcl-space-16);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--dcl-transparencies-black-60);
+}
+
+.close:focus-visible,
+.copy:focus-visible,
+.jumpIn:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.heroWrap {
+  position: relative;
+}
+
+.hero {
+  position: relative;
+  aspect-ratio: 880 / 449;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-xl) var(--dcl-radius-xl) 0 0;
+  background: var(--dcl-neutrals-onix-dark-1);
+}
+
+.cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    0deg,
+    var(--dcl-neutrals-black) 0%,
+    color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent) 30%,
+    transparent 106%
+  );
+}
+
+.heroText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-16);
+}
+
+@media (min-width: 768px) {
+  .heroText {
+    position: absolute;
+    bottom: 30px;
+    left: 50px;
+    padding: 0;
+  }
+}
+
+.title {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  font-weight: 600;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-16);
+}
+
+.creatorRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border: 2px solid color-mix(in srgb, var(--dcl-neutrals-white) 50%, transparent);
+  border-radius: var(--dcl-radius-full);
+  object-fit: cover;
+}
+
+.by {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  white-space: nowrap;
+}
+
+.creator {
+  color: var(--dcl-brand-ruby);
+  font-weight: 500;
+}
+
+.location {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.ctaRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 20px;
+}
+
+.jumpIn {
+  composes: text627574746f6e2f786c from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  height: 46px;
+  padding: 0 20px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+  text-decoration: none;
+}
+
+.jumpIn:hover {
+  background: var(--dcl-primary-primary-dark-1);
+}
+
+@media (min-width: 768px) {
+  .jumpIn {
+    flex: none;
+    width: 249px;
+  }
+}
+
+.copyWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.copy {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--dcl-neutrals-snow);
+  border-radius: var(--dcl-radius-md);
+  background: transparent;
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--dcl-transparencies-white-10);
+}
+
+.copied {
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  padding: var(--dcl-space-4) 10px;
+  transform: translateX(-50%);
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-neutrals-shadow);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  padding: 30px 50px;
+}
+
+.aboutLabel {
+  composes: text6c6162656c2f6d642d63617073 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.aboutText {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 767px) {
+  .about {
+    padding: var(--dcl-space-16);
+  }
+}

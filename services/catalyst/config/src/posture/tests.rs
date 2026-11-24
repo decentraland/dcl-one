@@ -23,8 +23,6 @@ fn expanded(posture: Posture, pairs: &[(&str, &str)]) -> HashMap<&'static str, S
 fn parsed(pairs: &[(&str, &str)]) -> Config {
     let map = env(pairs);
     let mut all = map.clone();
-    // `check` reads the stamp directory from the environment itself.
-    all.remove(RESTORE_STAMP_DIR);
     if let Some((_, vars)) = resolve(&lookup(&map)).unwrap() {
         for (k, v) in vars {
             all.insert(k.to_string(), v);
@@ -195,6 +193,32 @@ fn a_mirror_refuses_a_blank_nft_worker() {
     check_of(&[db, (ENV, "journey")]).unwrap();
 }
 
+/// A mirror walks the chain every 30 s and keeps tracking open MANA
+/// executions every 5 s; island and journey keep the binary's pace.
+#[test]
+fn a_mirror_walks_the_chain_every_30_seconds() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let mirror = parsed(&[db, (ENV, "mirror")]);
+    assert_eq!(
+        (
+            mirror.marketplace.marketplace_index_interval_secs,
+            mirror
+                .marketplace
+                .marketplace_executions_track_interval_secs
+        ),
+        (30, 5)
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert!(!expanded(posture, &[]).contains_key("MARKETPLACE_INDEX_INTERVAL_SECS"));
+    }
+    let own = parsed(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_INDEX_INTERVAL_SECS", "5"),
+    ]);
+    assert_eq!(own.marketplace.marketplace_index_interval_secs, 5);
+}
+
 /// O-1: a mirror lists the approved third-party providers from lamb2's
 /// default registry and may not blank it; island and journey name none.
 #[test]
@@ -241,45 +265,69 @@ fn a_mirror_reads_the_third_party_registry() {
     refuse_remote_secrets(&mut c).unwrap();
 }
 
+/// Escrow leases are a dcl-one extension: the explorer backpack lists them
+/// and a local deploy counts them as item ownership only when the operator
+/// opts in, under every posture and without one.
 #[test]
-fn a_mirror_explorer_lists_chain_owned_items_only() {
-    assert_eq!(
-        expanded(Posture::Mirror, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
-        "false"
-    );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(
-            expanded(posture, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
-            "true"
+fn escrow_leases_count_only_on_an_operator_opt_in() {
+    for posture in Posture::ALL {
+        for key in [
+            "EXPLORER_ESCROW_GRANTS_ENABLED",
+            "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED",
+        ] {
+            assert_eq!(expanded(posture, &[])[key], "false", "{key}");
+        }
+    }
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    for posture in [None, Some("mirror"), Some("island"), Some("journey")] {
+        let mut pairs = vec![db];
+        pairs.extend(posture.map(|p| (ENV, p)));
+        let c = parsed(&pairs);
+        assert!(
+            !c.market_upstreams.explorer_escrow_grants_enabled,
+            "{posture:?}"
+        );
+        assert!(
+            !c.validator.content_escrow_lease_ownership_enabled,
+            "{posture:?}"
+        );
+        pairs.extend([
+            ("EXPLORER_ESCROW_GRANTS_ENABLED", "true"),
+            ("CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "true"),
+        ]);
+        let c = parsed(&pairs);
+        assert!(
+            c.market_upstreams.explorer_escrow_grants_enabled,
+            "{posture:?}"
+        );
+        assert!(
+            c.validator.content_escrow_lease_ownership_enabled,
+            "{posture:?}"
         );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert!(!c.market_upstreams.explorer_escrow_grants_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
-    assert!(c.market_upstreams.explorer_escrow_grants_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
-    assert!(
-        c.market_upstreams.explorer_escrow_grants_enabled,
-        "without a posture the binary default lists them"
-    );
 }
 
 #[test]
-fn a_mirror_catalog_takes_the_upstream_filters_only() {
-    assert_eq!(
-        expanded(Posture::Mirror, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
-        "false"
+fn the_catalog_defaults_to_upstream_filters() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let opt_in = ("LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "true");
+    assert!(
+        !parsed(&[db])
+            .market_upstreams
+            .lambdas_catalog_extensions_enabled
     );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(
-            expanded(posture, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
-            "true"
+    for posture in ["mirror", "island", "journey"] {
+        assert!(
+            !parsed(&[db, (ENV, posture)])
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled
+        );
+        assert!(
+            parsed(&[db, (ENV, posture), opt_in])
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled
         );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert!(!c.market_upstreams.lambdas_catalog_extensions_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
-    assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
 }
 
 /// CS-25: a mirror syncs from the DAO catalyst list, `SYNC_SOURCE` its fallback.
@@ -367,7 +415,6 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
             let allowed = [
                 "SERVE_UNSYNCED",
                 "PHASED_SYNC",
-                "EXPLORER_ESCROW_GRANTS_ENABLED",
                 "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
             ];
             assert!(
@@ -383,6 +430,7 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         "TRADES_SYNC_UPSTREAM_URL",
         "RPC_UPSTREAM_MAINNET",
         "ABGEN_UPSTREAM_AB_CDN",
+        "BVIMPOSTERS_UPSTREAM_URL",
         "EXPLORER_REGISTRY_SOURCE_URL",
         "OPENSEA_FALLBACK_URL",
         "COINGECKO_URL",
@@ -404,6 +452,27 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
         !got.contains_key("MAP_PARCEL_VIEW_URL"),
         "island leaves the parcel view to the node's own"
     );
+}
+
+/// Only a mirror fetches the disposable email list or names SendGrid; an island's empty
+/// SendGrid URL leaves email unconfigured.
+#[test]
+fn only_the_mirror_fetches_the_disposable_list_and_names_sendgrid() {
+    let bare = Config::parse_env_for_tests([("DATABASE_URL", "postgres:///catalyst")]).unwrap();
+    assert_eq!(bare.social.disposable_email_domains_url, "");
+    for posture in ["island", "journey"] {
+        let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)]);
+        assert_eq!(c.social.disposable_email_domains_url, "", "{posture}");
+        assert_eq!(c.social.sendgrid_api_url, "", "{posture}");
+    }
+    let mirror = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(
+        mirror
+            .social
+            .disposable_email_domains_url
+            .starts_with("https://raw.githubusercontent.com/disposable-email-domains/")
+    );
+    assert_eq!(mirror.social.sendgrid_api_url, "https://api.sendgrid.com");
 }
 
 /// Every URL the mirror row names is one the binary leaves empty by
@@ -484,7 +553,8 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
     assert!(c.explore.explorer_mirrors_enabled && c.social.communities_mirror_upstream);
     assert!(c.marketplace.marketplace_nft_index_enabled && c.land_authz.land_authz_index_enabled);
-    assert!(c.shop.credits_usage_index_enabled && c.shop.shop_rentals_index_enabled);
+    assert!(c.shop.credits_usage_index_enabled);
+    assert_eq!(c.shop.shop_rentals_index_enabled, Some(true));
     assert_eq!(
         c.shop.credits_manager_contract.as_deref(),
         Some(CREDITS_MANAGER_MAINNET)
@@ -493,8 +563,8 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
         Some(
-            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
-             137=https://rpc.decentraland.org/polygon?project=catalyst-content"
+            "1=https://rpc.decentraland.org/mainnet?project=dcl-one,\
+             137=https://rpc.decentraland.org/polygon?project=dcl-one"
         )
     );
     assert!(c.content.content_history_prune_enabled);
@@ -531,7 +601,10 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         c.map_urls().satellite_base.as_deref(),
         Some("https://genesis.city/map/latest")
     );
-    assert!(!c.content.content_history_prune_enabled);
+    assert!(
+        c.content.content_history_prune_enabled,
+        "content writes leave the prune default alone"
+    );
 
     // The preset leaves the chain endpoints to the binary's default; off
     // mainnet it knows no contract.
@@ -566,7 +639,7 @@ fn the_presence_collector_follows_the_data_write_switch() {
 }
 
 #[test]
-fn journey_opens_all_six_write_domains_without_a_stamp() {
+fn journey_opens_all_six_write_domains() {
     let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "journey")]);
     assert!(c.writes.content_writes_enabled && c.create.create_writes_enabled);
     assert!(c.writes.data_writes_enabled && c.writes.social_writes_enabled);
@@ -596,33 +669,19 @@ fn startup_refuses_the_contradictions() {
         ("WORLDS_FORWARD_UPSTREAM_URL", "https://worlds.example.org"),
     ]);
     assert!(err.contains("WORLDS_FORWARD_UPSTREAM_URL"), "{err}");
-    let err = refused(&[db, (ENV, "island"), ("SOCIAL_WRITES_ENABLED", "true")]);
-    assert!(
-        err.contains("SOCIAL_WRITES_ENABLED is on with no WRITES_RESTORE_STAMP_DIR"),
-        "{err}"
-    );
-    let err = refused(&[
-        db,
-        (ENV, "mirror"),
-        ("CONTENT_WRITES_ENABLED", "true"),
-        ("OPS_WRITES_ENABLED", "true"),
-    ]);
-    assert!(
-        err.contains("CONTENT_WRITES_ENABLED, OPS_WRITES_ENABLED are on"),
-        "{err}"
-    );
 
-    // The stamp directory opens them; a forward URL is a mirror's choice.
+    // A write switch alone opens its plane; a forward URL is a mirror's choice.
     let ok = |pairs: &[(&str, &str)]| {
         let c = parsed(pairs);
         let map = env(pairs);
         check(&c, &lookup(&map))
     };
+    ok(&[db, (ENV, "island"), ("SOCIAL_WRITES_ENABLED", "true")]).unwrap();
     ok(&[
         db,
-        (ENV, "island"),
-        ("SOCIAL_WRITES_ENABLED", "true"),
-        (RESTORE_STAMP_DIR, "/var/lib/catalyst/stamps"),
+        (ENV, "mirror"),
+        ("CONTENT_WRITES_ENABLED", "true"),
+        ("OPS_WRITES_ENABLED", "true"),
     ])
     .unwrap();
     ok(&[
@@ -736,7 +795,7 @@ fn a_polygon_endpoint_from_its_file_still_makes_the_trade_list() {
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
         Some(
-            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
+            "1=https://rpc.decentraland.org/mainnet?project=dcl-one,\
              137=https://polygon.example.org/key"
         )
     );
@@ -1008,6 +1067,7 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
     for posture in ["island", "journey"] {
         for (secret, api) in [
             ("SENDGRID_API_KEY", "SendGrid"),
+            ("MAGIC_SECRET_KEY", "Magic"),
             ("SLACK_BOT_TOKEN", "Slack"),
             ("TURNSTILE_SECRET_KEY", "Turnstile"),
             ("STRIPE_SECRET_KEY", "Stripe"),
@@ -1083,13 +1143,26 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     let pair = |l1: &str, l2: &str| {
         let url = |chain: &str| {
             Some(format!(
-                "https://rpc.decentraland.org/{chain}?project=catalyst-content"
+                "https://rpc.decentraland.org/{chain}?project=dcl-one"
             ))
         };
         (url(l1), url(l2))
     };
     assert_eq!(rpcs(&[]), pair("mainnet", "polygon"));
     assert_eq!(rpcs(&[(ENV, "mirror")]), pair("mainnet", "polygon"));
+    // Guard: the tag is never derived from PUBLIC_URL. It would tie the node's
+    // address, public or internal, to its RPC activity.
+    for public_url in [
+        "https://node.example.org",
+        "http://192.0.2.7:5000",
+        "http://catalyst.test",
+    ] {
+        assert_eq!(
+            rpcs(&[(ENV, "mirror"), ("PUBLIC_URL", public_url)]),
+            pair("mainnet", "polygon"),
+            "{public_url}"
+        );
+    }
     assert_eq!(rpcs(&[("ETH_NETWORK", "sepolia")]), pair("sepolia", "amoy"));
     assert_eq!(
         rpcs(&[(ENV, "mirror"), ("ETH_NETWORK", "sepolia")]),
@@ -1140,4 +1213,51 @@ fn about_resource_check_is_off_unless_set() {
         let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
         assert!(on.node.about_resource_check, "{posture}");
     }
+}
+
+#[test]
+fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let writes = ("WORLDS_WRITES_ENABLED", "true");
+    let reader = (
+        "MARKETPLACE_SUBGRAPH_URL",
+        "https://reader.example/subgraph",
+    );
+    let skip = ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true");
+    let run = |pairs: &[(&str, &str)]| worlds_names_reader(&parsed(pairs));
+
+    let err = run(&[db, writes]).unwrap_err().to_string();
+    assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{err}");
+    assert!(
+        run(&[db, writes, ("MARKETPLACE_SUBGRAPH_URL", " ")]).is_err(),
+        "a blank reader is no reader"
+    );
+    assert!(
+        run(&[db, (ENV, "island"), writes]).is_err(),
+        "refused under a posture too"
+    );
+
+    assert!(
+        run(&[db, writes, skip])
+            .unwrap()
+            .unwrap()
+            .contains("MARKETPLACE_SUBGRAPH_URL"),
+        "no chain access: starts and warns"
+    );
+
+    for pairs in [&[db, writes, reader][..], &[db][..], &[db, skip][..]] {
+        assert_eq!(run(pairs).unwrap(), None, "{pairs:?}");
+    }
+}
+
+/// The indexer shares serve's environment but takes no world writes: the
+/// shared refusals leave the names reader to serve.
+#[test]
+fn the_shared_check_leaves_the_names_reader_to_serve() {
+    let pairs = [
+        ("DATABASE_URL", "postgres:///catalyst"),
+        ("WORLDS_WRITES_ENABLED", "true"),
+    ];
+    let map = env(&pairs);
+    check(&parsed(&pairs), &lookup(&map)).unwrap();
 }

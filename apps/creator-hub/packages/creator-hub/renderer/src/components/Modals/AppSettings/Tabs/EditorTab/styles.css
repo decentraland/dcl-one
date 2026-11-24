@@ -1,0 +1,79 @@
+.editor-select {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+[role="combobox"] .menu-only {
+  display: none;
+}
+
+[role="listbox"] .menu-only {
+  display: flex;
+}
+
+.CodeEditorFormGroup {
+  gap: 16px;
+}
+
+/* The select keeps its 56px height, its text 14px from the outline, its white arrow 12px from the right
+   and the full text colour when no editor is set. */
+.CodeEditorSelect [role="combobox"] {
+  padding: 15.5px 37px 15.5px 13px;
+  letter-spacing: 0.00938em;
+}
+
+.CodeEditorSelect [role="combobox"] [data-placeholder] {
+  color: inherit;
+}
+
+.CodeEditorSelect > span[aria-hidden="true"] {
+  right: 13px;
+  color: var(--white);
+}
+
+/* The list opens against the select. The chosen editor keeps one colour until the pointer is on it. */
+.CodeEditorMenu {
+  margin-top: -4px;
+  letter-spacing: 0.00938em;
+}
+
+.CodeEditorMenu [role="option"][aria-selected="true"]:not(:hover) {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+}
+
+.PreviewOptionsFormGroup {
+  gap: 4px;
+}
+
+.AppWarningsFormGroup {
+  gap: 16px;
+}
+
+/* The box sits at the top of the row, on the first line of the text. */
+.AppSettingsModal .AppWarningsFormGroup .SettingsCheckbox {
+  min-height: 33px;
+  align-items: flex-start;
+}
+
+.default-icon {
+  margin-left: auto;
+}
+
+/* The added editors, each with its remove button. */
+.EditorList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.EditorList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-left: 13px;
+}

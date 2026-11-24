@@ -4,7 +4,13 @@
 //! ONE client, a `jobs::spawn_periodic` job with `index_cursor` as its
 //! durable progress: [`indexer`]), `token_right` / `estate_land` /
 //! `account_right` (the fold), read by [`resolve::Store`] and served by
-//! [`routes`]. Consumers: the content deploy validator and `worlds::policy`
+//! [`routes`]. The same pass appends the Estate registry's version-0 data
+//! documents (`CreateEstate`, `Update`) to `estate_data_event`, which
+//! [`LandAuthzState::dissolved_estate`] reads for the map metadata of an
+//! estate left without LAND. A node whose index predates that table holds
+//! only the documents indexed since: `LAND_AUTHZ_REPLAY_FROM_BLOCK` at the
+//! Estate registry's deployment block (6,236,547 on mainnet) re-reads the
+//! earlier ones. Consumers: the content deploy validator and `worlds::policy`
 //! through [`can_deploy`] / [`can_deploy_batch`] / [`owns_land_at`], comms'
 //! scene permissions and the `lands-permissions` route through the old
 //! lambdas paths.
@@ -47,10 +53,17 @@
 //! two topics the indexer adds ([`KIND_ADD_LAND`], [`KIND_REMOVE_LAND`]).
 //! The publish rule is the old one: a reader uses this index only after
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
-//! 25 blocks of the chain head) and `folded_at` is at most 30 minutes old;
-//! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
-//! `owns_land_at`) answers the owner leg for the write paths and the
-//! land-manager subgraph answers the read routes above. The job runs only
+//! 25 blocks of the confirmed head, which trails the chain head by
+//! `LAND_AUTHZ_CONFIRMATIONS`, 12 by default). The fold job runs every
+//! `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120 by default). The public LAND Lambdas
+//! routes use folds up to ten minutes old on the database clock;
+//! `/lambdas/land-authz/status` reports their window and the fold's age.
+//! Outside that window, the routes use their configured subgraph fallback
+//! or return an error. The LAND subgraph can lag the chain, and this node
+//! memoizes its per-parcel response for five seconds.
+//! Deploy authorization and its batch permissions preview use the 30-minute
+//! fold window and fall back to the marketplace
+//! subgraph's owner leg. The job runs only
 //! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
 //! keep using the fallbacks.
 
@@ -79,13 +92,25 @@ use sqlx::PgPool;
 use crate::chain_index::ChainIndex;
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
+
+// Public reads allow ten minutes. At the maximum configured interval,
+// 240 seconds to the first pass and two retries capped at 150 seconds
+// leave one minute for pass execution. Sustained failures age out the fold.
+const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
+
+fn index_schedule(interval: Duration) -> PeriodicCfg {
+    PeriodicCfg::every(interval)
+        .with_jitter(Duration::from_secs(15))
+        .with_error_backoff(Duration::from_secs(150))
+}
 pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 
 pub const SCHEMA: &str = "land_authz";
 
 pub use crate::chain_index::registries::{
-    ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET, LAND_REGISTRY_SEPOLIA,
-    LAND_START_BLOCK_MAINNET, LAND_START_BLOCK_SEPOLIA, NETWORK_MAINNET, NETWORK_SEPOLIA,
+    ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_MAINNET, LAND_REGISTRY_MAINNET,
+    LAND_REGISTRY_SEPOLIA, LAND_SEPOLIA, LAND_START_BLOCK_MAINNET, LAND_START_BLOCK_SEPOLIA,
+    LandNetwork, NETWORK_MAINNET, NETWORK_SEPOLIA, land_network, land_network_of_registry,
 };
 
 pub const KIND_UPDATE_OPERATOR: &str = "update_operator";
@@ -165,7 +190,7 @@ pub(crate) fn is_address(addr: &str) -> bool {
 /// The indexer's configuration. `main.rs` fills it from `Config`:
 /// `ETH_NETWORK` picks the registries and the cursor row, `ETH_RPC_URL`
 /// (`Config::eth_rpc_url()`, https only) is the log source,
-/// `LAND_AUTHZ_INDEX_ENABLED` attaches the job, and the four knobs below
+/// `LAND_AUTHZ_INDEX_ENABLED` attaches the job, and the knobs below
 /// bound it.
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -182,14 +207,22 @@ pub struct Settings {
     /// `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120): pause between passes.
     pub interval: Duration,
     /// `LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` (50, effective minimum 2): log,
-    /// timestamp-header and repair calls per pass, excluding head probes.
+    /// timestamp-header and repair calls per pass, excluding head probes and
+    /// the block headers that check a range's fork.
     pub requests_per_pass: usize,
     /// `LAND_AUTHZ_REPLAY_FROM_BLOCK`: rewind durably once at the first pass
-    /// (the start block for a full repair).
+    /// (the start block for a full repair, which may also switch registries).
+    /// Held per process: while it stays set, every restart replays again, so
+    /// unset it once the replay has published.
     pub replay_from_block: Option<u64>,
     /// `LAND_AUTHZ_STOP_BLOCK`: index no further (a development bound); an
     /// index held short of the head is never published.
     pub stop_block: Option<u64>,
+    /// `LAND_AUTHZ_CONFIRMATIONS` (12): blocks the index stays behind the
+    /// head, so a reorg shallower than this never reaches the log.
+    pub confirmations: u64,
+    /// [`indexer::REBIND_LOCK_TIMEOUT`]; no environment variable sets it.
+    pub rebind_lock_timeout: Duration,
 }
 
 impl Settings {
@@ -208,12 +241,18 @@ impl Settings {
             requests_per_pass: 50,
             replay_from_block: None,
             stop_block: None,
+            confirmations: 12,
+            rebind_lock_timeout: indexer::REBIND_LOCK_TIMEOUT,
         })
     }
 
-    /// Mainnet, no RPC, job off: what the tests start from.
+    /// Mainnet, no RPC, job off, indexing to the head (no confirmation
+    /// depth): what the tests start from.
     pub fn for_tests() -> Self {
-        Self::for_network("mainnet", None).expect("mainnet is known")
+        Self {
+            confirmations: 0,
+            ..Self::for_network("mainnet", None).expect("mainnet is known")
+        }
     }
 
     pub fn is_configured(&self) -> bool {
@@ -289,6 +328,27 @@ pub struct EstateMembership {
     pub estate_id: Option<String>,
 }
 
+/// An estate's latest data document: its name and description, each empty
+/// when the document has none.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EstateData {
+    pub name: String,
+    pub description: String,
+}
+
+/// What the index says of an Estate token
+/// ([`LandAuthzState::dissolved_estate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DissolvedEstate {
+    /// Minted and holding no LAND: its latest data document.
+    Dissolved(EstateData),
+    /// Never minted, or still holding LAND.
+    NotDissolved,
+    /// The index could not answer: it is not published, or the database
+    /// failed. Not an answer about the estate, so never one to cache.
+    Unknown,
+}
+
 /// Why no decision could be made: the caller refuses the write (never
 /// grants), and a route answers the unavailable envelope.
 #[derive(Debug, thiserror::Error)]
@@ -329,9 +389,47 @@ impl LandAuthzState {
         )
     }
 
-    /// The cursor row when the local index may answer on the database clock.
+    /// The cursor row when the local index of the configured registries may
+    /// answer on the database clock. A yes/no only: a read that depends on
+    /// it runs on [`Self::ready_snapshot`] instead.
     pub async fn ready(&self) -> Option<Cursor> {
-        indexer::ready_cursor(&self.pool, &self.settings.network).await
+        indexer::ready_cursor(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+        )
+        .await
+    }
+
+    /// The configured registries' index when it may answer, as a snapshot
+    /// the dependent reads run on ([`indexer::ReadySnapshot`]): the check and
+    /// the reads see one state, so a rebind between them cannot mix two
+    /// registries' rows. A database error reads as not ready (the fallback,
+    /// never a grant).
+    pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
+        self.ready_snapshot_within(READY_WINDOW).await
+    }
+
+    async fn ready_snapshot_within(
+        &self,
+        max_age: chrono::Duration,
+    ) -> Option<indexer::ReadySnapshot> {
+        match indexer::ready_snapshot_within(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+            max_age,
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; using the fallback reader");
+                None
+            }
+        }
     }
 
     /// One indexed coordinate lookup on the caller's connection, including the
@@ -364,6 +462,41 @@ impl LandAuthzState {
         Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
     }
 
+    /// The Estate token `estate_id` (decimal) when the configured Estate
+    /// registry minted it and it holds no LAND now: a dissolved estate, the
+    /// atlas's `searchEstateSize: 0` lookup, with the name and description
+    /// of its latest data document (`estate_data_event`; empty when it has
+    /// none). [`DissolvedEstate::NotDissolved`] when it was never minted or
+    /// still holds LAND; [`DissolvedEstate::Unknown`] when the index may not
+    /// answer (a database error reads as not ready).
+    pub async fn dissolved_estate(&self, estate_id: &str) -> DissolvedEstate {
+        let Some(mut snapshot) = self.ready_snapshot().await else {
+            return DissolvedEstate::Unknown;
+        };
+        let row: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
+            "SELECT d.name, d.description FROM land_authz.token_right e \
+             LEFT JOIN LATERAL (SELECT x.name, x.description FROM land_authz.estate_data_event x \
+                                 WHERE x.token_address = e.token_address AND x.estate_id = e.token_id \
+                                 ORDER BY x.block_number DESC, x.log_index DESC LIMIT 1) d ON true \
+             WHERE e.token_address = $1 AND e.token_id = $2::numeric \
+               AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el \
+                                WHERE el.estate_token_id = $2::numeric)",
+        )
+        .bind(&self.settings.estate_registry)
+        .bind(estate_id)
+        .fetch_optional(&mut *snapshot.tx)
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "land-authz: dissolved-estate lookup failed"));
+        match row {
+            Ok(Some((name, description))) => DissolvedEstate::Dissolved(EstateData {
+                name: name.unwrap_or_default(),
+                description: description.unwrap_or_default(),
+            }),
+            Ok(None) => DissolvedEstate::NotDissolved,
+            Err(_) => DissolvedEstate::Unknown,
+        }
+    }
+
     /// The marketplace reader, when one with a subgraph URL is attached.
     fn fallback_reader(&self) -> Option<&Arc<ChainIndex>> {
         self.market
@@ -391,9 +524,7 @@ impl LandAuthzState {
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "land-authz-index",
-            PeriodicCfg::every(self.settings.interval)
-                .with_jitter(Duration::from_secs(15))
-                .with_error_backoff(Duration::from_secs(3600)),
+            index_schedule(self.settings.interval),
             move |ctx| {
                 let state = state.clone();
                 async move { indexer::run_pass(&state, &ctx).await.map(|_| ()) }
@@ -414,11 +545,15 @@ pub async fn can_deploy_batch(
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(cursor) = state.ready().await {
+    if let Some(mut snapshot) = state.ready_snapshot().await {
+        let cursor = &snapshot.cursor;
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
         };
-        let rights = state.store().deploy_rights_batch(parcels).await?;
+        let rights = state
+            .store()
+            .deploy_rights_batch_on(&mut snapshot.tx, parcels)
+            .await?;
         return Ok(rights
             .into_iter()
             .map(|r| match r {
@@ -501,8 +636,11 @@ pub async fn owns_land_at(
     owner: &str,
     coords: &[(i32, i32)],
 ) -> Result<bool, Unavailable> {
-    if state.ready().await.is_some() {
-        return Ok(state.store().owns_land_at(owner, coords).await?);
+    if let Some(mut snapshot) = state.ready_snapshot().await {
+        return Ok(state
+            .store()
+            .owns_land_at_on(&mut snapshot.tx, owner, coords)
+            .await?);
     }
     let Some(market) = state.fallback_reader() else {
         return Err(Unavailable::NoSource);
@@ -570,6 +708,7 @@ mod unit_tests {
             (NETWORK_MAINNET, LAND_REGISTRY_MAINNET)
         );
         assert_eq!(mainnet.start_block, LAND_START_BLOCK_MAINNET);
+        assert_eq!(mainnet.confirmations, 12);
         assert!(
             !mainnet.is_configured(),
             "off until LAND_AUTHZ_INDEX_ENABLED"

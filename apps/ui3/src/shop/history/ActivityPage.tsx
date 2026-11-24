@@ -19,7 +19,7 @@ import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
 import { fetchAssetDisplay, fetchTradeDisplay, fetchUserActivity, fetchUserSales } from "../checkout/lib/api";
 import { formatAmount } from "@shop/checkout/lib/currency";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
-import { creditOrderPill, fetchUserCreditOrders, fetchUserPurchases, resumeCreditOrder, type CreditOrder } from "../credits/credits";
+import { creditOrderPill, fetchUserCreditOrders, fetchUserPurchases, resumeCreditOrder, type CreditOrder } from "@shop/credits/credits";
 import { CreditsAmount, ManaAmount } from "../credits/components/Amount";
 import { buildActivityFeed, filterActivity, type ActivityEntry, type ActivityFilter, type SaleRecord } from "./activity";
 import { foldOrderLines, purchaseOrderPill, type OrderLineItem, type PurchaseOrder } from "./purchases";

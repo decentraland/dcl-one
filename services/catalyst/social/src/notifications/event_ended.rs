@@ -690,10 +690,18 @@ mod tests {
 
     #[tokio::test]
     async fn metric_query_prefilters_expired_series_and_counts_attendance_only_after_page_limit() {
-        let _guard = TEST_LOCK.lock().await;
-        let Some(pool) = crate::db::scratch::pool(6).await else {
+        // The plan depends on every row in explore.event, so no other test's
+        // events may share its table.
+        let Some(database) = crate::db::scratch::OwnedDatabase::new(
+            "endedplan",
+            crate::db::scratch::Schema::Full,
+            2,
+        )
+        .await
+        else {
             return;
         };
+        let pool = database.pool.clone();
         let prefix = Uuid::new_v4().to_string();
         let now = chrono::Utc::now().naive_utc();
         let since = now - Duration::days(30);
@@ -748,11 +756,7 @@ mod tests {
         let mut attendee_loops = Vec::new();
         let mut indexes = Vec::new();
         inspect(&plan, &mut attendee_loops, &mut indexes);
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        database.drop().await;
         assert!(!attendee_loops.is_empty());
         assert!(attendee_loops.iter().all(|loops| *loops <= PAGE as u64));
         assert!(
@@ -761,6 +765,11 @@ mod tests {
                 .any(|index| index == "event_notifications_live_idx"),
             "the prepared scan must prefilter expired series with the finish index: {indexes:?}"
         );
+    }
+
+    fn lock_timed_out(error: &anyhow::Error) -> bool {
+        matches!(error.downcast_ref::<sqlx::Error>(), Some(sqlx::Error::Database(db))
+            if db.code().as_deref() == Some("55P03"))
     }
 
     #[tokio::test]
@@ -787,7 +796,22 @@ mod tests {
         }
         let end = now + Duration::hours(1);
         let (one, two) = tokio::join!(run_once(&pool, end), run_once(&pool, end));
-        assert_eq!(one.unwrap() + two.unwrap(), 101);
+        // The activation row serializes scans. The scan that waits for the row
+        // records the last ending. If the first scan holds the row for longer
+        // than the lock timeout, the waiting scan records nothing and the next
+        // scan records that ending.
+        let mut recorded = Vec::new();
+        for scan in [one, two] {
+            match scan {
+                Ok(count) => recorded.push(count),
+                Err(error) => assert!(lock_timed_out(&error), "{error:#}"),
+            }
+        }
+        if recorded.len() == 1 {
+            recorded.push(run_once(&pool, end).await.unwrap());
+        }
+        recorded.sort_unstable();
+        assert_eq!(recorded, [1, PAGE as u64]);
         assert_eq!(run_once(&pool, end).await.unwrap(), 0);
         let facts: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM social.event_ended_occurrences WHERE community_id IS NULL",

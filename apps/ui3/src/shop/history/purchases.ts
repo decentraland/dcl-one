@@ -5,7 +5,7 @@
 // SETTLED if any line settled, EXPIRED otherwise; EXPIRED rows only reach here when they were actually
 // submitted (see activity.ts), so the pill says FAILED for them.
 
-import type { PurchaseRecord } from "../credits/credits";
+import type { PurchaseRecord } from "@shop/credits/credits";
 
 export type PurchaseOrder = {
   /** The shared settlement hash when present, else the earliest line's id. */

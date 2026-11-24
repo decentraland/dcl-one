@@ -12,8 +12,8 @@ import {
   resumeCreditOrder,
   authorizeUsdCredit,
   reportIntentSubmission,
-} from "./credits";
-import { nextBalancePoll } from "./hooks";
+} from "@shop/credits/credits";
+import { nextBalancePoll } from "@shop/credits/balance-query";
 import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, pollCreditGrant, usdForCredits } from "./payments";
 import { ORDER_NOT_FOUND, pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
@@ -59,6 +59,23 @@ describe("the credits account", () => {
     ]);
     expect(shop.log[0]!.query.get("status")).toBe("all");
     expect(shop.log[0]!.query.get("limit")).toBe("24");
+  });
+
+  it("a page counts the rows the server sent, the ones it can't decode included: where the next page starts, and whether there is one", async () => {
+    const shop = createFakeShop({
+      userPurchases: () => ({
+        purchases: [
+          { id: "a", status: "SETTLED", usdCents: 115, createdAt: 2 },
+          { id: "b", status: "WEIRD" },
+          { id: "c", status: "EXPIRED", usdCents: 50, createdAt: 1 },
+        ],
+      }),
+    });
+    const page = await fetchUserPurchases("0xabc", { all: true, first: 3, skip: 6 }, shop.client);
+    expect(page.items.map((p) => p.id)).toEqual(["a", "c"]);
+    expect(page.returned).toBe(3);
+    // A full page with no total: there may be another.
+    expect(page.total).toBe(6 + 3 + 1);
   });
 
   it("credit orders never throw and speak credits-server's vocabulary", async () => {

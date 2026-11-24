@@ -1,45 +1,47 @@
-use std::{borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr};
+use std::{
+    borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr, time::Duration,
+};
 
 use analytics::segment_system::SegmentConfig;
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext},
     diagnostic::FrameCount,
+    ecs::{schedule::ScheduleConfigs, system::ScheduleSystem},
     math::{FloatOrd, Vec3Swizzles},
-    pbr::NotShadowCaster,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     reflect::TypePath,
-    render::{
-        primitives::Aabb,
-        render_resource::{AsBindGroup, ShaderRef},
-        storage::ShaderStorageBuffer,
-    },
+    render::{primitives::Aabb, storage::ShaderStorageBuffer},
 };
 
 use common::{
+    partition::{scene_partition, Tier},
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
-        WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, ReadsMapPins, SceneJsFile,
+        SceneLoadDistance, SceneMeta, SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
 };
-use comms::global_crdt::{CrdtContexts, GlobalCrdtState};
+use comms::{
+    global_crdt::{CrdtContexts, GlobalCrdtState},
+    SceneBanGate,
+};
 use dcl_component::{
     proto_components::sdk::components::{PbMainCamera, PbRealmInfo, PbVisibilityComponent},
     DclReader, DclWriter, SceneComponentId, SceneEntityId,
 };
 use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore, CrdtType},
-    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender,
+    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender, SceneWake,
 };
 use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
     SceneIpfsLocation,
 };
-use scene_material::{BoundRegion, SceneBounds};
+use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
@@ -50,6 +52,9 @@ use crate::{
         RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
         SCENE_JS_SPAWN_TICK,
     },
+    ring_parcels,
+    scene_lod::Rings,
+    scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
@@ -96,7 +101,6 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<PortableScenes>();
         app.init_asset::<SerializedCrdtStore>();
         app.init_asset_loader::<CrdtLoader>();
-        app.add_plugins(MaterialPlugin::<LoadingMaterial>::default());
 
         app.add_systems(
             Update,
@@ -106,23 +110,24 @@ impl Plugin for SceneLifecyclePlugin {
                 load_scene_javascript,
                 initialize_scene,
                 animate_ready_scene,
-                update_loading_quads,
                 handle_live_scene_info,
             )
                 .in_set(SceneSets::Init),
         );
 
-        app.add_systems(
-            PostUpdate,
-            (
-                process_realm_change,
-                load_active_entities.run_if(not(resource_exists::<WorldHold>)),
-                process_scene_lifecycle,
-            )
-                .chain()
-                .in_set(RealmLifecycle),
-        );
+        app.add_systems(PostUpdate, realm_lifecycle_systems().in_set(RealmLifecycle));
     }
+}
+
+/// The realm lifecycle, in the order the plugin runs it.
+fn realm_lifecycle_systems() -> ScheduleConfigs<ScheduleSystem> {
+    (
+        process_realm_change,
+        load_active_entities.run_if(not(resource_exists::<WorldHold>)),
+        process_scene_lifecycle,
+    )
+        .chain()
+        .into_configs()
 }
 
 #[derive(Component, Debug)]
@@ -170,17 +175,41 @@ pub(crate) fn load_scene_entity(
             None => commands.spawn_empty(),
         };
 
-        let h_scene = match &event.location {
-            SceneIpfsLocation::Hash(hash) => ipfas.load_hash::<EntityDefinition>(hash),
+        let (h_scene, id) = match &event.location {
+            SceneIpfsLocation::Hash(hash) => (
+                ipfas.load_hash::<EntityDefinition>(hash),
+                Some(hash.clone()),
+            ),
             SceneIpfsLocation::Urn(urn) => match ipfas.load_urn::<EntityDefinition>(urn) {
-                Ok(h_scene) => h_scene,
+                Ok(h_scene) => (
+                    h_scene,
+                    IpfsPath::new_from_urn::<EntityDefinition>(urn)
+                        .ok()
+                        .and_then(|path| path.context_free_hash().ok().flatten()),
+                ),
                 Err(e) => {
                     warn!("failed to parse urn: {e}");
                     commands.try_insert(SceneLoading::Failed);
                     continue;
                 }
             },
+            // a smart wearable's scene: the wearable entity's manifest covers its files
+            SceneIpfsLocation::ContentFile { hash, file } => {
+                match ipfas.load_content_file::<EntityDefinition>(file, hash) {
+                    Ok(h_scene) => (h_scene, Some(hash.clone())),
+                    Err(e) => {
+                        warn!("failed to load {file} of {hash}: {e}");
+                        commands.try_insert(SceneLoading::Failed);
+                        continue;
+                    }
+                }
+            }
         };
+        // the scene's Bevy variants manifest, alongside its entity file rather than after it:
+        // the entity id is all it needs (`load_urn` has registered a urn's own content server)
+        if let Some(id) = id {
+            ipfas.ipfs().request_bevy_variants(&id);
+        }
 
         commands.try_insert((
             SceneLoading::SceneEntity,
@@ -250,7 +279,6 @@ pub(crate) fn load_scene_json(
 #[derive(Asset, Default, Clone, TypePath)]
 pub struct SerializedCrdtStore(pub Vec<u8>);
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_scene_javascript(
     mut commands: Commands,
     config: Res<AppConfig>,
@@ -305,6 +333,10 @@ pub(crate) fn load_scene_javascript(
         };
 
         let portable = portable_scenes.get(&definition.id);
+        let portable_experiences = meta.portable_experiences_toggle();
+        let nearby_voice_chat_enabled = meta.nearby_voice_chat_enabled();
+        // scene.json alone doesn't make a parcel scene or World a portable
+        let reads_map_pins = portable.is_some() && meta.declares_portable_experience();
 
         let Some(base) = meta
             .scene
@@ -341,10 +373,7 @@ pub(crate) fn load_scene_javascript(
         let bounds = if portable.is_some() {
             Vec::default()
         } else {
-            scene_regions(parcels.clone().into_iter())
-                .into_iter()
-                .map(|region| BoundRegion::new(region.min, region.max, region.count))
-                .collect::<Vec<_>>()
+            scene_bound_regions(&parcels, &realm)
         };
 
         // get main.crdt
@@ -415,6 +444,14 @@ pub(crate) fn load_scene_javascript(
                 .try_insert(SceneTime { time: fixed_time });
         }
 
+        if !nearby_voice_chat_enabled {
+            commands.entity(root).try_insert(NearbyVoiceDisabled);
+        }
+
+        if reads_map_pins {
+            commands.entity(root).try_insert(ReadsMapPins);
+        }
+
         info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?}), storage root: {storage_root}");
         let scene_bounds = SceneBounds::new(&bounds, storage_buffers.as_deref_mut());
         let mut renderer_context = RendererSceneContext::new(
@@ -436,6 +473,7 @@ pub(crate) fn load_scene_javascript(
             false,
             meta.authoritative_multiplayer.unwrap_or_default(),
         );
+        renderer_context.portable_experiences = portable_experiences;
 
         // start from this scene's crdt context (its own room's on a multi-tenant server,
         // the shared context otherwise), with position data localized for this scene.
@@ -586,6 +624,24 @@ pub(crate) fn load_scene_javascript(
     }
 }
 
+/// The regions a scene is clipped and collided to. A city scene has neighbours it must not build
+/// over, so its limit grows with each connected region's parcel count; every other realm (a
+/// World, a preview, an editor) gives its scenes one fixed height limit.
+fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &CurrentRealm) -> Vec<BoundRegion> {
+    let city = !realm.config.lists_scenes() && !realm.is_local();
+    scene_regions(parcels.iter().copied())
+        .into_iter()
+        .map(|region| {
+            let bound = BoundRegion::new(region.min, region.max, region.count);
+            if city {
+                bound
+            } else {
+                bound.with_height(FIXED_SCENE_HEIGHT)
+            }
+        })
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct TestScenes(pub VecDeque<TestScene>);
 
@@ -633,7 +689,6 @@ pub struct TestingData {
 #[derive(Component)]
 pub struct SuperUserScene;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn initialize_scene(
     mut commands: Commands,
     scene_updates: Res<SceneUpdates>,
@@ -719,6 +774,7 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
+        let wake = SceneWake::default();
         let (main_sx, kill_guard) = spawn_scene(
             context.crdt_store.clone(),
             scene_context,
@@ -731,6 +787,7 @@ pub(crate) fn initialize_scene(
             inspected,
             super_user.map(|_| su_bridge.sender.clone()),
             scene_origin,
+            wake.clone(),
         );
 
         context.inspected = inspected;
@@ -742,6 +799,7 @@ pub(crate) fn initialize_scene(
             handle: SceneThreadHandle {
                 sender: main_sx,
                 kill_guard,
+                wake,
             },
             in_flight: true,
         };
@@ -780,6 +838,56 @@ pub struct PortableSource {
     pub parent_scene: Option<String>,
     pub ens: Option<String>,
     pub super_user: bool,
+    pub kind: PortableKind,
+}
+
+/// Where a portable came from, which decides who may kill it, whether scenes see it, and how
+/// its entity is loaded.
+#[derive(Clone, Debug)]
+pub enum PortableKind {
+    /// Spawned by a scene (`PortableExperiences.spawn`); `parent_scene` is set.
+    Scene,
+    /// A launch-time (`--portables`), console or server-hosted portable: never killable by a
+    /// scene and hidden from `getPortableExperiencesLoaded`.
+    Startup,
+    /// The scene of an equipped (or previewed, or console-run) smart wearable. `pid` is the
+    /// wearable urn and the scene hash is `{wearable collection}-sw-{shape}`; `location` is the
+    /// wearable content file the scene's definition loads from.
+    SmartWearable {
+        name: String,
+        location: SceneIpfsLocation,
+    },
+}
+
+impl PortableSource {
+    /// A source from a scene spawn or a startup list: the kind follows `parent_scene`.
+    pub fn new(
+        pid: String,
+        parent_scene: Option<String>,
+        ens: Option<String>,
+        super_user: bool,
+    ) -> Self {
+        let kind = if parent_scene.is_some() {
+            PortableKind::Scene
+        } else {
+            PortableKind::Startup
+        };
+        Self {
+            pid,
+            parent_scene,
+            ens,
+            super_user,
+            kind,
+        }
+    }
+
+    pub fn is_smart_wearable(&self) -> bool {
+        matches!(self.kind, PortableKind::SmartWearable { .. })
+    }
+
+    pub fn is_startup(&self) -> bool {
+        matches!(self.kind, PortableKind::Startup)
+    }
 }
 
 #[derive(Resource, Default)]
@@ -865,6 +973,12 @@ pub struct ScenePointers {
     // The realm lists its scenes up front (a World) and they have all resolved, so a parcel none
     // of them covers is empty rather than unknown; there is no pointer request to answer for it.
     all_scenes_known: bool,
+    // each named scene's base parcel by hash, from its `scene.json` as the realm listed it: a far
+    // LOD is placed from it without loading the scene's entity definition. Cleared with the
+    // pointers; a hash a redeployment replaced keeps its entry until then
+    bases: HashMap<String, IVec2>,
+    // bumped whenever what `get` answers may have changed
+    generation: u64,
 }
 
 impl Default for ScenePointers {
@@ -876,6 +990,8 @@ impl Default for ScenePointers {
             crcs: Default::default(),
             terrain: Default::default(),
             all_scenes_known: false,
+            bases: Default::default(),
+            generation: 0,
         }
     }
 }
@@ -908,6 +1024,7 @@ impl ScenePointers {
     pub fn set_all_scenes_known(&mut self) {
         if !self.all_scenes_known {
             self.all_scenes_known = true;
+            self.generation += 1;
             // the terrain has been reading those parcels as unknown
             self.terrain.invalidate();
         }
@@ -921,6 +1038,8 @@ impl ScenePointers {
         self.realm_bounds = (min_bound, max_bound);
         self.all_scenes_known = false;
         self.pointers.clear();
+        self.bases.clear();
+        self.generation += 1;
         self.crcs.clear();
         self.terrain.invalidate();
     }
@@ -1016,7 +1135,26 @@ impl ScenePointers {
         self.terrain
             .mark(parcel, matches!(result, PointerResult::Exists { .. }));
         self.pointers.insert(parcel, result);
+        self.generation += 1;
         res
+    }
+
+    /// Records the base parcel of the scene `hash`, as its `scene.json` names it.
+    pub(crate) fn set_base(&mut self, hash: &str, base: IVec2) {
+        self.bases.insert(hash.to_owned(), base);
+    }
+
+    /// The base parcel of a scene the pointers name, when the realm listed it with its
+    /// `scene.json`.
+    pub(crate) fn base(&self, hash: &str) -> Option<IVec2> {
+        self.bases.get(hash).copied()
+    }
+
+    /// Changes whenever what `get` answers may have changed, so a reader can keep what it worked
+    /// out from the pointers until then. Change detection on the resource cannot tell, since
+    /// `crc` and the terrain take it mutably.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn min(&self) -> IVec2 {
@@ -1148,6 +1286,7 @@ pub fn process_realm_change(
     current_realm: Res<CurrentRealm>,
     mut segment_config: Option<ResMut<SegmentConfig>>,
     player: Query<Entity, With<PrimaryUser>>,
+    teleport_target: Res<RealmInitialLocation>,
 ) {
     if current_realm.is_changed() {
         // move to oow on realm change
@@ -1156,7 +1295,13 @@ pub fn process_realm_change(
             .ok()
             .and_then(|p| commands.get_entity(p).ok())
         {
-            commands.try_insert(OutOfWorld);
+            // A realm change that says where to land starts a landing of its own. Without one,
+            // a landing already under way goes on in the new realm, on the spawn point it names.
+            if *teleport_target == RealmInitialLocation::None {
+                commands.try_insert_if_new(OutOfWorld::default());
+            } else {
+                commands.try_insert(OutOfWorld::default());
+            }
         }
 
         info!(
@@ -1176,7 +1321,6 @@ pub fn process_realm_change(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -1192,16 +1336,17 @@ fn load_active_entities(
     mut teleport_target: ResMut<RealmInitialLocation>,
     mut pending_teleport: Local<bool>,
 ) {
-    let teleport_components = |parcel: IVec2| -> (Transform, OutOfWorld) {
-        (
-            Transform::from_translation(Vec3::new(
-                (parcel.x as f32 + 0.5) * 16.0,
-                0.0,
-                (parcel.y as f32 + 0.5) * -16.0,
-            )),
-            OutOfWorld,
-        )
-    };
+    let teleport_components =
+        |parcel: IVec2, spawn_point: Option<String>| -> (Transform, OutOfWorld) {
+            (
+                Transform::from_translation(Vec3::new(
+                    (parcel.x as f32 + 0.5) * 16.0,
+                    0.0,
+                    (parcel.y as f32 + 0.5) * -16.0,
+                )),
+                OutOfWorld { spawn_point },
+            )
+        };
 
     if current_realm.is_changed() {
         *fetch_count = 100;
@@ -1236,24 +1381,23 @@ fn load_active_entities(
             }
         }
         pointers.set_realm(bounds_min, bounds_max);
-        pointers.reset_terrain(
-            current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty()),
-        );
+        pointers.reset_terrain(current_realm.config.lists_scenes());
         for mut context in global_crdt.iter_mut() {
             context.set_bounds(bounds_min, bounds_max);
         }
 
         // A teleport that named this realm: land on its parcel now that the realm is live. The
         // out-of-world sweep holds the player until the parcel resolves against the new realm.
-        if let RealmInitialLocation::Parcel(parcel) = *teleport_target {
+        if let RealmInitialLocation::Parcel {
+            parcel,
+            spawn_point,
+        } = &*teleport_target
+        {
+            let (parcel, spawn_point) = (*parcel, spawn_point.clone());
             if !current_realm.about_url.is_empty() {
                 if let Ok((player_entity, _)) = player.single() {
                     if let Ok(mut commands) = commands.get_entity(player_entity) {
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!("change to realm with target parcel -> none ({parcel})");
                         *teleport_target = RealmInitialLocation::None;
                     }
@@ -1261,12 +1405,11 @@ fn load_active_entities(
             }
         }
 
-        if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
-            let has_scene_urns = !current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_none_or(Vec::is_empty);
+        if let (false, RealmInitialLocation::Base { spawn_point }) =
+            (current_realm.about_url.is_empty(), &*teleport_target)
+        {
+            let spawn_point = spawn_point.clone();
+            let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
                 // we want to go to base but there are no specific parcels
@@ -1279,7 +1422,7 @@ fn load_active_entities(
                         } else {
                             Default::default()
                         };
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!(
                             "change to no scene realm -> none ({} in {}/{} = {})",
                             vec3_to_parcel(player_transform.translation()),
@@ -1294,7 +1437,7 @@ fn load_active_entities(
                 // the world's manifest says where to land, as it does for unity-explorer
                 if let Ok((player_entity, _)) = player.single() {
                     if let Ok(mut commands) = commands.get_entity(player_entity) {
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!("change to world with spawn parcel -> none ({parcel})");
                         *teleport_target = RealmInitialLocation::None;
                     }
@@ -1311,12 +1454,12 @@ fn load_active_entities(
         return;
     };
 
-    let teleport_on_resolve = match *teleport_target {
-        RealmInitialLocation::None | RealmInitialLocation::Parcel(_) => {
+    let teleport_on_resolve = match &*teleport_target {
+        RealmInitialLocation::None | RealmInitialLocation::Parcel { .. } => {
             *pending_teleport = false;
             None
         }
-        RealmInitialLocation::Base => {
+        RealmInitialLocation::Base { .. } => {
             if *pending_teleport {
                 error!("pending ...");
                 Some(
@@ -1334,11 +1477,7 @@ fn load_active_entities(
         }
     };
 
-    let has_scene_urns = !current_realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_none_or(Vec::is_empty);
+    let has_scene_urns = current_realm.config.lists_scenes();
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()
@@ -1513,17 +1652,22 @@ fn load_active_entities(
                 }
             }
 
+            let parcel = |pointer: &str| {
+                let (x, y) = pointer.split_once(',')?;
+                let x = x.parse::<i32>().ok()?;
+                let y = y.parse::<i32>().ok()?;
+                Some(IVec2::new(x, y))
+            };
             let parcels = meta
                 .scene
                 .parcels
                 .iter()
-                .filter_map(|pointer| {
-                    let (x, y) = pointer.split_once(',')?;
-                    let x = x.parse::<i32>().ok()?;
-                    let y = y.parse::<i32>().ok()?;
-                    Some(IVec2::new(x, y))
-                })
+                .filter_map(|pointer| parcel(pointer))
                 .collect::<Vec<_>>();
+            // a far LOD's mesh is relative to it (`scene_lod`)
+            if let Some(base) = parcel(&meta.scene.base) {
+                pointers.set_base(&active_entity.id, base);
+            }
 
             // jump to target if we just resolved it
             if teleport_on_resolve
@@ -1532,7 +1676,11 @@ fn load_active_entities(
             {
                 if let Ok(mut commands) = commands.get_entity(player_entity) {
                     let parcel = parcels.first().copied().unwrap_or_default();
-                    commands.try_insert(teleport_components(parcel));
+                    let spawn_point = match &*teleport_target {
+                        RealmInitialLocation::Base { spawn_point } => spawn_point.clone(),
+                        _ => None,
+                    };
+                    commands.try_insert(teleport_components(parcel, spawn_point));
                     debug!("resolved the target -> none (@ {parcel})");
                 }
                 *teleport_target = RealmInitialLocation::None;
@@ -1580,11 +1728,30 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
-#[expect(clippy::type_complexity, clippy::too_many_arguments)]
+/// How many scenes beyond the player's own, portables, system scenes and the imposter-bake scene
+/// may be loading at once.
+/// The next one spawns when one of them is ready, so the scenes in range come in waves, nearest
+/// first, instead of all in the frame they enter range. A slot is not taken back: a scene that has
+/// just come within the live ring waits behind farther scenes already loading, for at most
+/// `WAVE_SLOT_TIMEOUT`.
+const SCENES_PER_WAVE: usize = 6;
+
+/// A scene loading for longer than this stops holding a wave slot, so a stalled load cannot hold
+/// the scenes behind it back. It is app time (`Time`), which does not run on while a web tab is
+/// in the background and draws no frames. App time also caps each frame's step, so on slow frames
+/// the wait is at least this long in wall time, and can be longer.
+const WAVE_SLOT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// When a scene took a wave slot, in app time. Only a scene spawned into a slot has it; the
+/// player's own scene, portables, system scenes and the imposter-bake scene spawn without one.
+#[derive(Component)]
+pub struct WaveSlotSince(Duration);
+
 pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
     focus: Query<&GlobalTransform, With<PrimaryUser>>,
+    camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     scene_entities: Query<
         (
             Entity,
@@ -1592,6 +1759,7 @@ pub fn process_scene_lifecycle(
             Option<&RendererSceneContext>,
             Option<&SceneLoading>,
             Has<SuperUserScene>,
+            Option<&WaveSlotSince>,
         ),
         Or<(With<SceneLoading>, With<RendererSceneContext>)>,
     >,
@@ -1603,7 +1771,11 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
+    bans: SceneBanGate,
+    time: Res<Time>,
+    config: Res<AppConfig>,
 ) {
+    let rings = Rings::from_config(&config);
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
 
     // add nearby scenes to requirements
@@ -1655,6 +1827,20 @@ pub fn process_scene_lifecycle(
             .map(|(h, u)| ((h, u), false)),
     );
 
+    // the scenes with a parcel within a ring of the player's parcel. Those of the live ring go
+    // live whatever the load distance: a larger load distance widens the live area, a smaller one
+    // does not shrink it below the ring. The ring only adds to what the load distance loads: a
+    // negative one (a headless worker fed scenes by its control channel) loads nothing by
+    // position, the ring included
+    let focus_parcel = vec3_to_parcel(focus.translation());
+    let ring_on = range.load >= 0.0;
+    let ring_scenes = |ring: i32| {
+        let pointers = &pointers;
+        ring_parcels(focus_parcel, if ring_on { ring } else { -1 })
+            .filter_map(move |parcel| pointers.get(parcel).and_then(PointerResult::hash_and_urn))
+    };
+    required_scene_ids.extend(ring_scenes(rings.live.into()).map(|(h, u)| ((h, u), false)));
+
     // add any portables to requirements. Portables are exempt from the
     // current-scene deferral below (see `retain`) so they load immediately
     // instead of queueing behind the spawn-point parcel scene at startup.
@@ -1669,23 +1855,32 @@ pub fn process_scene_lifecycle(
     );
 
     // add imposter scene
-    required_scene_ids.extend(
-        imposter_scene
-            .0
-            .as_ref()
-            .and_then(|(scene, _)| scene.hash_and_urn())
-            .map(|(h, u)| ((h, u), false)),
-    );
+    let imposter_scene = imposter_scene
+        .0
+        .as_ref()
+        .and_then(|(scene, _)| scene.hash_and_urn());
+    let imposter_hash = imposter_scene.as_ref().map(|(hash, _)| hash.clone());
+    let imposter_hash = imposter_hash.as_deref();
+    required_scene_ids.extend(imposter_scene.map(|(h, u)| ((h, u), false)));
 
-    // record additional optional scenes
+    // record additional optional scenes: a live scene is kept until it is past the load distance
+    // plus the unload margin and past the keep ring, so stepping back and forth across either
+    // edge does not respawn it
     let mut keep_scene_ids = required_scene_ids.keys().cloned().collect::<HashSet<_>>();
     keep_scene_ids.extend(pir.iter().flat_map(|(parcel, dist)| {
-        if *dist >= range.load && *dist <= range.unload {
+        if *dist >= range.load && *dist <= range.load + range.unload {
             pointers.get(parcel).and_then(PointerResult::hash_and_urn)
         } else {
             None
         }
     }));
+    keep_scene_ids.extend(ring_scenes(rings.live_keep.into()));
+
+    let allowed = |scene: &(String, Option<String>)| {
+        portable_ids.contains(scene) || !bans.is_banned(&scene.0)
+    };
+    required_scene_ids.retain(|scene, _| allowed(scene));
+    keep_scene_ids.retain(allowed);
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids
@@ -1704,10 +1899,13 @@ pub fn process_scene_lifecycle(
     // despawn any no-longer required entities
     let mut current_scene_loading = false;
     let mut startup_loading = false;
-    for (entity, scene_hash, maybe_ctx, maybe_loading, is_super) in &scene_entities {
-        match keep_entities.get(&entity) {
+    // the scenes holding a wave slot: spawned into one, still loading and not stalled
+    let mut wave_loading = 0usize;
+    for (entity, scene_hash, maybe_ctx, maybe_loading, is_super, slot_since) in &scene_entities {
+        let kept = match keep_entities.get(&entity) {
             Some((hash, _)) => {
                 existing_ids.insert(*hash);
+                true
             }
             None => {
                 if let Ok(mut commands) = commands.get_entity(entity) {
@@ -1715,8 +1913,9 @@ pub fn process_scene_lifecycle(
                     commands.despawn();
                 }
                 removed_hashes.push(&scene_hash.0);
+                false
             }
-        }
+        };
 
         // a failed load is terminal: the entity is kept (so the scene isn't respawned while
         // in range) but it will never get further, so it must not defer other scenes. a
@@ -1730,10 +1929,20 @@ pub fn process_scene_lifecycle(
             });
 
         // check if the current scene is still loading
-        if let Some((current_hash, _)) = current_scene.as_ref() {
-            if &scene_hash.0 == current_hash && still_loading {
-                current_scene_loading = true;
-            }
+        let is_current = current_scene
+            .as_ref()
+            .is_some_and(|(current_hash, _)| &scene_hash.0 == current_hash);
+        if is_current && still_loading {
+            current_scene_loading = true;
+        }
+
+        // a scene despawned this frame frees its slot now
+        if kept
+            && still_loading
+            && slot_since
+                .is_some_and(|since| time.elapsed().saturating_sub(since.0) < WAVE_SLOT_TIMEOUT)
+        {
+            wave_loading += 1;
         }
 
         // the startup set (system/super-user scenes and startup portables) is highest
@@ -1771,15 +1980,15 @@ pub fn process_scene_lifecycle(
     }
 
     let mut defer_to_current_scene = false;
-    if let Some(current_scene) = current_scene {
-        if required_scene_ids.contains_key(&current_scene)
+    if let Some(current_scene) = current_scene.as_ref() {
+        if required_scene_ids.contains_key(current_scene)
             && (!existing_ids.contains(&current_scene.0) || current_scene_loading)
         {
             defer_to_current_scene = true;
             // if the current scene is not even spawned, spawn only that scene
             // (plus super-user scenes and portables, which are exempt).
             required_scene_ids.retain(|scene, super_user| {
-                *super_user || scene == &current_scene || portable_ids.contains(scene)
+                *super_user || scene == current_scene || portable_ids.contains(scene)
             });
         }
     }
@@ -1791,28 +2000,71 @@ pub fn process_scene_lifecycle(
         return;
     }
 
-    // spawn any newly required scenes
-    for ((required_scene_hash, maybe_urn), super_user) in required_scene_ids
+    // the newly required scenes: the player's own, portables, system scenes and the scene an
+    // imposter is being baked from spawn at once; the rest fill the free wave slots nearest
+    // first, in front of the camera before behind
+    let (exempt, mut wave): (Vec<_>, Vec<_>) = required_scene_ids
         .iter()
         .filter(|((hash, _), _)| !existing_ids.contains(hash))
-    {
-        let entity = commands
-            .spawn((
-                SceneHash(required_scene_hash.clone()),
-                SceneLoading::SceneSpawned,
-                crate::load_timing::SpawnedAt(web_time::Instant::now()),
-            ))
-            .id();
+        .partition(|(scene, super_user)| {
+            **super_user
+                || current_scene.as_ref() == Some(*scene)
+                || portable_ids.contains(*scene)
+                || imposter_hash == Some(scene.0.as_str())
+        });
+    // ordered only when there are more than the free slots take: scenes that all spawn this frame
+    // need no order, and nothing is ordered while every slot is taken
+    let free = SCENES_PER_WAVE.saturating_sub(wave_loading);
+    if wave.len() > free && free > 0 {
+        let mut parcels_by_hash: HashMap<&str, Vec<IVec2>> = HashMap::new();
+        // the parcels in range, and those of the live ring, which the load distance may not reach
+        let live_ring = ring_parcels(focus_parcel, i32::from(rings.live));
+        for parcel in pir.iter().map(|(parcel, _)| *parcel).chain(live_ring) {
+            if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
+                parcels_by_hash
+                    .entry(hash.as_str())
+                    .or_default()
+                    .push(parcel);
+            }
+        }
+        let camera = camera_facing(&camera);
+        wave.sort_by_cached_key(|((hash, _), _)| {
+            let parcels = parcels_by_hash.get(hash.as_str()).into_iter().flatten();
+            scene_partition(focus.translation(), camera, parcels.copied())
+                .load_priority(Tier::Scene)
+        });
+    }
+    wave.truncate(free);
+
+    let exempt = exempt.into_iter().map(|scene| (scene, false));
+    let wave = wave.into_iter().map(|scene| (scene, true));
+    for (((required_scene_hash, maybe_urn), super_user), takes_slot) in exempt.chain(wave) {
+        let mut scene = commands.spawn((
+            SceneHash(required_scene_hash.clone()),
+            SceneLoading::SceneSpawned,
+            crate::load_timing::SpawnedAt(web_time::Instant::now()),
+        ));
+        if takes_slot {
+            scene.insert(WaveSlotSince(time.elapsed()));
+        }
+        let entity = scene.id();
         info!("spawning scene {:?} @ ??: {entity:?}", required_scene_hash);
         live_scenes
             .scenes
             .insert(required_scene_hash.clone(), entity);
-        spawn.write(LoadSceneEvent {
-            entity: Some(entity),
-            location: match maybe_urn {
+        let location = match portables
+            .get(required_scene_hash)
+            .map(|source| &source.kind)
+        {
+            Some(PortableKind::SmartWearable { location, .. }) => location.clone(),
+            _ => match maybe_urn {
                 Some(urn) => SceneIpfsLocation::Urn(urn.to_owned()),
                 None => SceneIpfsLocation::Hash(required_scene_hash.to_owned()),
             },
+        };
+        spawn.write(LoadSceneEvent {
+            entity: Some(entity),
+            location,
             super_user: *super_user,
         });
     }
@@ -1827,43 +2079,23 @@ pub fn process_scene_lifecycle(
 )]
 pub struct SceneHash(pub String);
 
-#[derive(Component)]
-pub struct LoadingQuad(bool);
-
-#[allow(clippy::too_many_arguments)]
+/// Raises a scene from its parking spot below the world once it is ready (its fifth tick, broken
+/// or frozen), and in preview mode lays the grid plane under each of its parcels. Until then a
+/// loading scene shows nothing of its own and its stand-in (the near LOD, else the far LOD, else
+/// the imposter tile of its parcels) covers its parcels. The stand-in stays until the scene's
+/// content is shown (`RendererSceneContext::content_shown`), so the raised scene and its stand-in
+/// overlap in between rather than swapping in one frame.
 fn animate_ready_scene(
-    mut q: Query<(
-        Entity,
-        &mut Transform,
-        Ref<RendererSceneContext>,
-        Option<&Children>,
-    )>,
+    mut q: Query<(Entity, &mut Transform, Ref<RendererSceneContext>)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut loading_materials: ResMut<Assets<LoadingMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    loading_quads: Query<(), With<LoadingQuad>>,
     preview: Res<PreviewMode>,
     mut handles: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
     asset_server: Res<AssetServer>,
     current_imposter_scene: Res<CurrentImposterScene>,
 ) {
-    if handles.is_none() {
-        *handles = Some((
-            meshes.add(
-                Rectangle::default()
-                    .mesh()
-                    .build()
-                    .scaled_by(Vec3::splat(PARCEL_SIZE)),
-            ),
-            materials.add(StandardMaterial {
-                base_color_texture: Some(asset_server.load("embedded://images/grid.png")),
-                ..Default::default()
-            }),
-        ));
-    }
-
-    for (root, mut transform, ctx, children) in q.iter_mut() {
+    for (root, mut transform, ctx) in q.iter_mut() {
         // skip animating imposters
         if current_imposter_scene
             .0
@@ -1879,21 +2111,28 @@ fn animate_ready_scene(
         // (already-spawned) main.crdt content stuck underground and looks empty until unfrozen.
         let frozen = ctx.blocked.contains(FROZEN_BLOCK);
         if transform.translation.y < 0.0 && (ctx.tick_number >= 5 || ctx.broken() || frozen) {
-            if transform.translation.y == -1000.0 {
-                for child in children.map(|c| c.iter()).unwrap_or_default() {
-                    if loading_quads.get(child).is_ok() {
-                        commands.entity(child).despawn();
-                    }
-                }
-            }
-
-            // transform.translation.y *= 0.75;
-            // if transform.translation.y > -0.01 {
             transform.translation.y = 0.0;
-            // }
         }
 
-        if ctx.is_added() {
+        if ctx.is_added() && preview.is_preview {
+            let (mesh, material) = handles
+                .get_or_insert_with(|| {
+                    (
+                        meshes.add(
+                            Rectangle::default()
+                                .mesh()
+                                .build()
+                                .scaled_by(Vec3::splat(PARCEL_SIZE)),
+                        ),
+                        materials.add(StandardMaterial {
+                            base_color_texture: Some(
+                                asset_server.load("embedded://images/grid.png"),
+                            ),
+                            ..Default::default()
+                        }),
+                    )
+                })
+                .clone();
             let mut children = Vec::new();
             for parcel in ctx.parcels.iter() {
                 let position = ((*parcel - ctx.base) * IVec2::new(1, -1))
@@ -1901,58 +2140,27 @@ fn animate_ready_scene(
                     .extend(0.0)
                     .xzy()
                     * PARCEL_SIZE;
-                let middle = Vec3::new(PARCEL_SIZE * 0.5, 0.0, PARCEL_SIZE * -0.5);
 
-                for (parcel_offset, position_offset, is_x) in [
-                    (-IVec2::X, -Vec3::Z * 0.5, true),
-                    (IVec2::X, -Vec3::Z * 0.5 + Vec3::X, true),
-                    (-IVec2::Y, Vec3::X * 0.5, false),
-                    (IVec2::Y, Vec3::X * 0.5 - Vec3::Z, false),
-                ] {
-                    if !ctx.parcels.contains(&(*parcel + parcel_offset)) {
-                        children.push(
-                            commands
-                                .spawn((
-                                    Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                    MeshMaterial3d(
-                                        loading_materials.add(LoadingMaterial::default()),
-                                    ),
-                                    Transform::from_translation(
-                                        position + position_offset * PARCEL_SIZE + Vec3::Y * 1000.0,
-                                    )
-                                    .looking_at(position + middle + Vec3::Y * 1000.0, Vec3::Y),
-                                    LoadingQuad(is_x),
-                                    NotShadowCaster,
-                                ))
-                                .id(),
-                        );
-                    }
-                }
-
-                if preview.is_preview {
-                    children.push(
-                        commands
-                            .spawn((
-                                PreviewGridPlane,
-                                Aabb::from_min_max(
-                                    Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
-                                    Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
-                                ),
-                                Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                MeshMaterial3d(handles.as_ref().unwrap().1.clone()),
-                                Transform::from_translation(
-                                    position
-                                        + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),
-                                )
-                                .looking_at(
-                                    position
-                                        + Vec3::new(PARCEL_SIZE * 0.5, -2.0, -PARCEL_SIZE * 0.5),
-                                    Vec3::Z,
-                                ),
-                            ))
-                            .id(),
-                    );
-                }
+                children.push(
+                    commands
+                        .spawn((
+                            PreviewGridPlane,
+                            Aabb::from_min_max(
+                                Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
+                                Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
+                            ),
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform::from_translation(
+                                position + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),
+                            )
+                            .looking_at(
+                                position + Vec3::new(PARCEL_SIZE * 0.5, -2.0, -PARCEL_SIZE * 0.5),
+                                Vec3::Z,
+                            ),
+                        ))
+                        .id(),
+                );
             }
 
             commands.entity(root).try_push_children(&children);
@@ -1960,78 +2168,11 @@ fn animate_ready_scene(
     }
 }
 
-#[derive(Component)]
-pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
-
-fn update_loading_quads(
-    mut q: Query<
-        (
-            &GlobalTransform,
-            &mut Transform,
-            &MeshMaterial3d<LoadingMaterial>,
-            &LoadingQuad,
-        ),
-        Without<PrimaryUser>,
-    >,
-    player: Query<&Transform, With<PrimaryUser>>,
-    mut mats: ResMut<Assets<LoadingMaterial>>,
-    mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
-) {
-    let Ok(player_translation) = player.single().map(|p| p.translation) else {
-        return;
-    };
-
-    let prev_active = std::mem::take(&mut *local_prev_active);
-
-    for (gt, mut trans, h_mat, loading) in q.iter_mut() {
-        let nearest_point = player_translation.xz().clamp(
-            gt.translation().xz()
-                - if loading.0 {
-                    Vec2::Y * PARCEL_SIZE * 0.5
-                } else {
-                    Vec2::X * PARCEL_SIZE * 0.5
-                },
-            gt.translation().xz()
-                + if loading.0 {
-                    Vec2::Y * PARCEL_SIZE * 0.5
-                } else {
-                    Vec2::X * PARCEL_SIZE * 0.5
-                },
-        );
-        let active = (nearest_point - player_translation.xz()).length() < 10.0;
-        if prev_active.contains(&h_mat.0.id()) || active {
-            let mat = mats.get_mut(h_mat.0.id()).unwrap();
-            mat.player_pos = player_translation.extend(if active { 1.0 } else { 0.0 })
-        }
-
-        trans.translation.y = player_translation.y + 1000.0;
-
-        if active {
-            local_prev_active.insert(h_mat.0.id());
-        }
-    }
-}
-
-#[derive(Asset, TypePath, Clone, AsBindGroup, Default)]
-pub struct LoadingMaterial {
-    #[uniform(0)]
-    player_pos: Vec4, // xyz = player pos, w = active
-}
-
-impl Material for LoadingMaterial {
-    fn fragment_shader() -> bevy::render::render_resource::ShaderRef {
-        ShaderRef::Path("embedded://shaders/loading.wgsl".into())
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
-    }
-}
-
 pub fn handle_live_scene_info(
     mut events: EventReader<SystemApi>,
     scenes: Query<(&RendererSceneContext, Option<&SuperUserScene>)>,
     ipfas: IpfsAssetServer,
+    portables: Res<PortableScenes>,
 ) {
     let mut senders = events
         .read()
@@ -2062,6 +2203,9 @@ pub fn handle_live_scene_info(
                 .map(|v| dcl_component::proto_components::common::Vector2::from(v.as_vec2()))
                 .collect(),
             is_portable: ctx.is_portable,
+            is_smart_wearable: portables
+                .get(&ctx.hash)
+                .is_some_and(PortableSource::is_smart_wearable),
             is_broken: ctx.broken(),
             is_blocked: !ctx.blocked.is_empty(),
             is_super: maybe_super.is_some(),

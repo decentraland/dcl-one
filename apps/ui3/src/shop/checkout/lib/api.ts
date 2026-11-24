@@ -4,17 +4,17 @@
 //       marketplace@f3956826:webapp/src/modules/activity/actions.ts (FETCH_USER_ACTIVITY_REQUEST),
 //       webapp/src/modules/sagas.ts (the Transak and Wert gateway calls). Marketplace UI: Apache-2.0,
 //       Copyright 2020 Metaverse Holdings Ltd.
-// The Shopping area's slice of upstream's `lib/api.ts`, on the ONE client (api/shop.ts): what the
+// The Shopping area's slice of upstream's `lib/api.ts`, on the ONE client (@shop/api/shop): what the
 // purchase rails, the receipts and the activity feed read. The shared `ui3/src/shop/lib/api.ts`
 // (Discovery's catalogue mappers) can re-export these under the same names.
 
-import { isShopApiError } from "../../api/client";
-import { type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "@shop/model/money";
 import type { SaleRecord } from "../../history/activity";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./trade";
-import { fetchPrimaryListingForItem } from "../../detail/api";
+import { fetchPrimaryListingForItem } from "@shop/detail/api";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
 export function usdWeiToCents(amount?: string | null): number {
@@ -107,12 +107,30 @@ export async function resolveLiveCoupon(
   }
 }
 
-/** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. */
+/** The node's largest page (`SHOP_MAX_PAGE_SIZE`): nearly every item's listings fit one read, which no listing sold
+ * or added between reads can shift. A longer list is paged, bounded by the first answer's total. */
+const STORE_MINT_PAGE = 1000;
+
+/** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. A store mint is a `legacy` row
+ * among its item's newest-first listings, after any MANA trade listed since, however many: the pages are read until it
+ * shows up, a page comes short, or the first answer's total is reached (fixed then, so a growing feed is not chased).
+ * A full page with no total to bound the search is a failed read, not a missing mint; a failed read rejects. */
 export async function fetchStoreMintState(contractAddress: string, itemId: string, client: ShopClient): Promise<{ priceWei: string; available: number } | null> {
-  const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, first: 1 });
-  const row = body?.data?.[0];
-  if (!row || row.acquisition !== "store" || !row.manaWei) return null;
-  return { priceWei: row.manaWei, available: typeof row.available === "number" ? row.available : 0 };
+  let total: number | null = null;
+  for (let skip = 0; ; skip += STORE_MINT_PAGE) {
+    const body = await client.catalog.unified<{ data?: UnifiedListing[]; total?: number }>({ contractAddress, itemId, source: "legacy", first: STORE_MINT_PAGE, skip });
+    const rows = body?.data ?? [];
+    const row = rows.find((r) => r.acquisition === "store");
+    if (row) return row.manaWei ? { priceWei: row.manaWei, available: typeof row.available === "number" ? row.available : 0 } : null;
+    if (rows.length < STORE_MINT_PAGE) return null;
+    if (total === null) {
+      if (typeof body?.total !== "number" || !Number.isSafeInteger(body.total) || body.total < 0) {
+        throw new Error("The item's listings came without a total, so its store mint could not be looked for.");
+      }
+      total = body.total;
+    }
+    if (skip + rows.length >= total) return null;
+  }
 }
 
 /** What a receipt or an activity line shows for a bought asset. */
@@ -216,8 +234,8 @@ export async function fetchUserSales(
 }
 
 /** Does `owner` hold a token of this item? (the success page's ownership check). */
-export async function fetchOwnsItem(owner: string, contractAddress: string, itemId: string, client: ShopClient): Promise<boolean> {
-  const body = await client.market.nfts<{ total?: number; data?: unknown[] }>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }).catch(() => null);
+export async function fetchOwnsItem(owner: string, contractAddress: string, itemId: string, client: ShopClient, signal?: AbortSignal): Promise<boolean> {
+  const body = await client.market.nfts<{ total?: number; data?: unknown[] }>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }, { signal }).catch(() => null);
   return (body?.total ?? body?.data?.length ?? 0) > 0;
 }
 
