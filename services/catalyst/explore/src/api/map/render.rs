@@ -378,7 +378,7 @@ mod tests {
         }))
         .unwrap();
         tiles.insert("0,0".to_string(), tile);
-        Grid::from_tiles(tiles, 1, None, chrono::Utc::now().naive_utc())
+        Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc())
     }
 
     #[test]
@@ -438,7 +438,7 @@ mod tests {
             .unwrap();
             tiles.insert(id, tile);
         }
-        let grid = Grid::from_tiles(tiles, 1, None, chrono::Utc::now().naive_utc());
+        let grid = Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc());
         let png = render_estate_minimap(&grid).unwrap();
         let pixmap = Pixmap::decode_png(&png).unwrap();
         let ordinal = |x: i32, y: i32| {

@@ -75,6 +75,9 @@ pub struct SyncSettings {
     pub entity_types: Option<HashSet<String>>,
     pub from_timestamp_ms: i64,
     pub phased_sync: bool,
+    pub snapshot_resync_initial_delay: Duration,
+    pub snapshot_resync_interval: Duration,
+    pub pointer_changes_wait_time_ms: u64,
     pub content_download_concurrency: usize,
     pub connections_max_idle: usize,
     pub snapshot_concurrency: usize,
@@ -151,6 +154,18 @@ impl SyncSettings {
             entity_types,
             from_timestamp_ms: config.content.sync_from_timestamp_ms,
             phased_sync: config.content.phased_sync,
+            snapshot_resync_initial_delay: Duration::from_secs(
+                config
+                    .content
+                    .sync_snapshot_resync_initial_delay_secs
+                    .into(),
+            ),
+            snapshot_resync_interval: Duration::from_secs(
+                config.content.sync_snapshot_resync_interval_secs.into(),
+            ),
+            pointer_changes_wait_time_ms: u64::from(
+                config.content.sync_pointer_changes_poll_interval_secs,
+            ) * 1_000,
             content_download_concurrency: config.content.concurrent_sync_downloads,
             connections_max_idle: config.content.connections_max_idle,
             snapshot_concurrency: config.content.sync_snapshot_concurrency,
@@ -482,6 +497,9 @@ impl Leader {
                 from_timestamp: settings.from_timestamp_ms,
                 entity_types: settings.entity_types.clone(),
                 phased_sync: settings.phased_sync,
+                snapshot_resync_initial_delay: settings.snapshot_resync_initial_delay,
+                snapshot_resync_interval: settings.snapshot_resync_interval,
+                pointer_changes_wait_time_ms: settings.pointer_changes_wait_time_ms,
                 snapshot_concurrency: settings.snapshot_concurrency,
                 snapshot_scheduling: settings.snapshot_scheduling,
                 ..Default::default()

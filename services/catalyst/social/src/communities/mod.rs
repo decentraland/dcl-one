@@ -57,6 +57,8 @@ pub(crate) mod voice;
 mod write_support;
 
 #[cfg(test)]
+pub(crate) mod test_names;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -184,9 +186,9 @@ pub struct State {
     /// The social RPC's fan-out, attached in `serve`: membership changes and
     /// deletions reach the open community-member connectivity streams.
     pub updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
-    /// The process's shared chain reader, attached by `serve`. Profile claims
-    /// are user-authored and cannot establish NAME ownership.
-    pub chain_index: std::sync::OnceLock<Arc<crate::chain_index::ChainIndex>>,
+    /// The node's DCL NAME source, attached by `serve`. Profile claims are
+    /// user-authored and cannot establish NAME ownership.
+    pub name_authority: std::sync::OnceLock<Arc<dyn crate::chain_index::names::NameAuthority>>,
     /// Explore's explorer-flags document, attached once explore is up: the official wallets
     /// (`features::official_wallets`). Unattached, no post is official.
     pub explorer_flags: std::sync::OnceLock<Arc<crate::explore::api::feature_flags::Snapshot>>,
@@ -281,7 +283,7 @@ impl State {
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),
             updates: std::sync::OnceLock::new(),
-            chain_index: std::sync::OnceLock::new(),
+            name_authority: std::sync::OnceLock::new(),
             explorer_flags: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
@@ -370,8 +372,9 @@ impl State {
             .unwrap_or_default()
     }
 
-    pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {
-        let _ = self.chain_index.set(index);
+    /// Attaches the node's DCL NAME source (selected once, by the shop).
+    pub fn set_name_authority(&self, names: Arc<dyn crate::chain_index::names::NameAuthority>) {
+        let _ = self.name_authority.set(names);
     }
 
     /// Attaches explore's explorer-flags document, which names the official wallets (once).
@@ -379,15 +382,31 @@ impl State {
         let _ = self.explorer_flags.set(flags);
     }
 
+    /// Whether `wallet` holds a DCL NAME now: the authorization of creating
+    /// a community (directly or federated) and of receiving its ownership.
+    /// A source that cannot establish it refuses (503), never "holds none".
     pub(crate) async fn has_owned_name(&self, wallet: &Address) -> Result<bool, CommError> {
-        let index = self.chain_index.get().ok_or(CommError::Internal)?;
-        crate::chain_index::graph::owned_names(index, wallet.as_str())
-            .await
-            .map(|names| !names.is_empty())
-            .map_err(|error| {
+        use crate::chain_index::names::{NamesError, Purpose};
+        let names = self.name_authority.get().ok_or_else(|| {
+            CommError::Status(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "no DCL NAME source on this node".into(),
+            )
+        })?;
+        match names.owned_names(wallet.as_str(), Purpose::Authorize).await {
+            Ok(answer) => Ok(!answer.value.is_empty()),
+            Err(NamesError::NotEstablished(message)) => {
+                tracing::warn!(%message, %wallet, "NAME ownership not established");
+                Err(CommError::Status(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    message,
+                ))
+            }
+            Err(error) => {
                 tracing::error!(%error, %wallet, "NAME ownership lookup failed");
-                CommError::Internal
-            })
+                Err(CommError::Internal)
+            }
+        }
     }
 
     /// Attaches the worlds module's re-admission (once).

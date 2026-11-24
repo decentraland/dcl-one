@@ -119,7 +119,7 @@ impl PubSub {
             return;
         };
         if !event.fits_queue() {
-            metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound")
+            dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound")
                 .increment(1);
             return;
         }
@@ -128,7 +128,7 @@ impl PubSub {
             Ok(Ok(()))
         ) {
             tracing::warn!("social mutation publish queue admission failed");
-            metrics::counter!("social_event_delivery_dropped", "reason" => "outbound_queue")
+            dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "outbound_queue")
                 .increment(1);
         }
     }
@@ -146,11 +146,11 @@ impl PubSub {
     pub(crate) fn forward(&self, event: super::fanout::Event) {
         if let Some(outbound) = self.outbound.get() {
             if !event.fits_queue() {
-                metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound").increment(1);
+                dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound").increment(1);
                 return;
             }
             if outbound.try_send(event).is_err() {
-                metrics::counter!("social_event_delivery_dropped", "reason" => "outbound_queue")
+                dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "outbound_queue")
                     .increment(1);
             }
         }
@@ -167,7 +167,7 @@ impl PubSub {
             return;
         }
         let Some(event) = super::fanout::Event::community_voice(scope, exclude, update) else {
-            metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound")
+            dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound")
                 .increment(1);
             return;
         };
@@ -176,7 +176,7 @@ impl PubSub {
             return;
         }
         let Some(bytes) = event.encode_stored() else {
-            metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound")
+            dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound")
                 .increment(1);
             return;
         };
@@ -190,7 +190,7 @@ impl PubSub {
             }
             Err(error) => {
                 tracing::warn!(%error, "social event overflow storage failed");
-                metrics::counter!("social_event_delivery_dropped", "reason" => "payload_storage")
+                dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "payload_storage")
                     .increment(1);
             }
         }

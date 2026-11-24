@@ -7,7 +7,7 @@ import { Select, SelectOption } from '@ui/atoms/Select';
 import Slider from '@ui/atoms/Slider';
 import Text from '@ui/atoms/Text';
 import Toggle from '@ui/atoms/Toggle';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import {
   DEFAULT_OPTIMIZE_OPTIONS,

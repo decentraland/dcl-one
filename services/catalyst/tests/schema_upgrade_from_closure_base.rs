@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 37] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -49,6 +49,7 @@ const PREPARED_PENDING_STEPS: [&str; 37] = [
     "0056_signatures_rental_cancel_reason",
     "0057_worlds_thumbnail_alias_expiry",
     "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -70,8 +71,19 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     .unwrap()
 }
 
+fn expected_pending_steps() -> Vec<&'static str> {
+    PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+            "0062_shop_estate_repair_reset",
+        ])
+        .collect()
+}
+
 fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
-    assert_eq!(after.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(after.len(), before.len() + expected_pending_steps().len());
     for row in before {
         assert!(
             after.contains(row),
@@ -81,7 +93,7 @@ fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
     let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_pending_steps()
     );
     let steps = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL);
     for row in added {
@@ -642,16 +654,67 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .execute(pool)
     .await
     .unwrap();
+    assert!(!has_column(pool, "content.processed_snapshots", "entity_types").await);
+    let legacy_snapshot = catalyst::auth::hash_bytes_v1(b"legacy processed snapshot");
+    sqlx::query("INSERT INTO content.processed_snapshots (hash, process_time) VALUES ($1, now())")
+        .bind(&legacy_snapshot)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
             .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps,
+        expected_pending_steps(),
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let estate_trigger: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM pg_trigger WHERE tgrelid='shop.chain_cursor'::regclass
+         AND tgname='reset_estate_creation_repair' AND tgenabled='O')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        estate_trigger,
+        "upgrading installs the estate rebuild trigger"
+    );
+    let snapshots = catalyst::content::sync::LiveProcessedSnapshotStore::new(pool.clone());
+    let hashes = [legacy_snapshot];
+    let recorded_coverage: Vec<String> =
+        sqlx::query_scalar("SELECT entity_types FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&hashes[0])
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(recorded_coverage.is_empty());
+    let scenes = std::collections::HashSet::from(["scene".to_string()]);
+    for filter in [None, Some(&scenes)] {
+        assert!(
+            snapshots
+                .filter_processed_in_chunks(hashes.clone(), filter)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a migrated receipt must leave the snapshot eligible for replay"
+        );
+    }
+    snapshots
+        .mark_processed_many(&hashes, Some(&scenes))
+        .await
+        .unwrap();
+    assert!(
+        snapshots
+            .filter_processed_in_chunks(hashes.clone(), Some(&scenes))
+            .await
+            .unwrap()
+            .contains(&hashes[0]),
+        "a replay proves coverage for the current filter"
+    );
     let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
     assert_eq!(
         captcha_after.0, captcha_before,
@@ -1350,7 +1413,8 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .await
                 .unwrap();
         assert_eq!(
-            applied.steps, PREPARED_PENDING_STEPS,
+            applied.steps,
+            expected_pending_steps(),
             "only new main event-hook steps apply; historical 0020 never re-adds retired columns"
         );
         catalyst::db::bootstrap(pool).await.unwrap();
@@ -1878,11 +1942,22 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
             "the object pass keeps {index}"
         );
     }
+    // A database the previous binary migrated also holds the decoded index
+    // on the unwrapped metadata path, which no query reads.
+    let unwrapped = "content.deployments_scene_logs_permissions_decoded_idx";
+    sqlx::query(
+        "CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+             USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+             WHERE entity_type = 'scene' AND deleter_deployment IS NULL",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     // An invalid decoded index, as a failed concurrent build leaves, is refused.
     let set_valid = |valid: bool| async move {
         sqlx::query(
             "UPDATE pg_index SET indisvalid = $1
-             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+             WHERE indexrelid = 'content.deployments_scene_v_logs_permissions_decoded_idx'::regclass",
         )
         .bind(valid)
         .execute(pool)
@@ -1895,7 +1970,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     set_valid(true).await;
     release_statements(pool, &release).await.unwrap();
     assert!(!has_function("worlds.logs_permissions(text)").await);
-    for index in old_objects {
+    for index in old_objects.into_iter().chain([unwrapped]) {
         assert!(!has_relation(pool, index).await, "{index} is dropped");
     }
     assert!(has_function("worlds.logs_permissions_decoded(text)").await);
@@ -1903,7 +1978,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     assert!(
         has_relation(
             pool,
-            "content.deployments_scene_logs_permissions_decoded_idx"
+            "content.deployments_scene_v_logs_permissions_decoded_idx"
         )
         .await
     );

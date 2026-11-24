@@ -3,13 +3,14 @@
 # into the performance section of the PR's CI status comment (.github/actions/bevy-explorer-ci-status).
 # It runs for every PR of this repository whose Bevy Explorer / CI run passes with a web app built,
 # which a PR that changes the explorer's web inputs gets, or by hand for any PR of this repository.
+# Each night, and by hand without a PR, it measures main's newest web build against the latest
+# release instead: its results stay with the run, and a regression opens or updates one issue.
 # tooling/benchmark-inputs.py decides and finds the builds and runners in the CI runs' artifacts.
 # A leg is one scenario of tooling/benchmark-scenarios.json on one laptop: every run measures the
 # first scenario, and the whole list when the PR carries the performance-suite label (adding it
 # starts a run) or a manual run asks for the suite.
 #
-# GitHub starts `workflow_run`, `workflow_dispatch` and `pull_request_target` only from the
-# workflow file on the default branch: until this file is on main, no run starts.
+# GitHub starts these events from the workflow file on the default branch.
 #
 # Repository variables: BENCHMARK_ENABLED_RUNNERS (the laptops that are online, by runner label;
 # empty means all; `none` means none, and PR engine builds then skip wasm-opt), BENCHMARK_RUNS
@@ -22,17 +23,21 @@ name: Bevy Explorer / Benchmark
   # Only adding the suite label counts (setup's condition); no job runs code of the PR's branch.
   pull_request_target:
     types: [labeled]
+  # Nightly, while the laptops are least likely to be busy with PRs.
+  schedule:
+    - cron: '17 2 * * *'
   workflow_dispatch:
     inputs:
       pr:
-        description: Pull request number or URL
-        required: true
+        description: Pull request number or URL (empty = main against the latest release)
+        required: false
+        default: ''
       change_sha:
-        description: Commit of the PR to measure (empty = its head)
+        description: Commit to measure (empty = the PR's head; without a PR, main's newest web build)
         required: false
         default: ''
       base_sha:
-        description: Commit on main to compare with (empty = the newest main build that has each artifact)
+        description: Commit on main to compare with (empty = the newest main build that has each artifact; without a PR, the latest release)
         required: false
         default: ''
       runs:
@@ -40,7 +45,7 @@ name: Bevy Explorer / Benchmark
         required: false
         default: ''
       suite:
-        description: Every scenario of tooling/benchmark-scenarios.json, not only the first
+        description: For a pull request, run every scenario in tooling/benchmark-scenarios.json
         type: boolean
         required: false
         default: false
@@ -51,27 +56,35 @@ permissions: {}
 # commit, a CI run of no PR or not started by a pull_request event, such as a manual one on the
 # PR's branch, any other label) get the run's own group, so they cancel nothing: a suite holds
 # the laptops for hours. A PR given by URL to a manual run forms a group of its own.
+# Nightly and manual runs of main queue in their own concurrency group.
+
 concurrency:
   group: >-
     bevy-explorer-benchmark-${{
+      ((github.event_name == 'schedule' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')) && 'main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.head_sha == github.event.workflow_run.pull_requests[0].head.sha &&
-       github.event.workflow_run.pull_requests[0].number) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.pr) ||
+       github.event.workflow_run.pull_requests[0].number &&
+       format('pr-{0}', github.event.workflow_run.pull_requests[0].number)) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.pr &&
+       format('pr-{0}', github.event.inputs.pr)) ||
       (github.event_name == 'pull_request_target' && github.event.label.name == 'performance-suite' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.event.pull_request.number) ||
+       format('pr-{0}', github.event.pull_request.number)) ||
       format('run-{0}', github.run_id) }}
-  cancel-in-progress: true
+  cancel-in-progress: >-
+    ${{ !(github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')) }}
 jobs:
   setup:
     name: Inputs
-    # The laptops run whatever a leg is given, so only this repository's PRs reach them; the
-    # resolver checks the PR's head and the CI run again.
+    # The laptops run whatever a leg is given, so only this repository's PRs and main reach them;
+    # the resolver checks the PR's head and the CI run again.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository) ||
@@ -83,6 +96,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
+      deployments: read
     outputs:
       run: ${{ steps.inputs.outputs.run }}
       pr: ${{ steps.inputs.outputs.pr }}
@@ -96,6 +110,10 @@ jobs:
       report_runner_artifact: ${{ steps.inputs.outputs.report_runner_artifact }}
       report_runner_run_id: ${{ steps.inputs.outputs.report_runner_run_id }}
       notes: ${{ steps.inputs.outputs.notes }}
+      change_description: ${{ steps.inputs.outputs.change_description }}
+      base_description: ${{ steps.inputs.outputs.base_description }}
+      retention_days: ${{ steps.inputs.outputs.retention_days }}
+      issue_title: ${{ steps.inputs.outputs.issue_title }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,12 +129,22 @@ jobs:
           BENCHMARK_ENABLED_RUNNERS: ${{ vars.BENCHMARK_ENABLED_RUNNERS }}
           BENCHMARK_RUNS: ${{ vars.BENCHMARK_RUNS }}
         run: python3 tooling/benchmark-inputs.py
+      # A PR is told in its performance section; a run of main that cannot measure fails instead,
+      # so a nightly never stays green without measuring. Main unchanged since the release has no
+      # notes and passes.
+      - name: Fail a run of main that cannot measure
+        if: steps.inputs.outputs.pr == '' && steps.inputs.outputs.run == 'false' && steps.inputs.outputs.notes != ''
+        env:
+          NOTES: ${{ steps.inputs.outputs.notes }}
+        run: |
+          echo "::error::$NOTES"
+          exit 1
   # A PR whose builds are unfit (an unoptimized web build, no base build, no runner, no laptop)
-  # is told why in the performance section.
+  # is told why in the performance section; a run of main says why in the Inputs summary.
   notice:
     name: Notice
     needs: setup
-    if: needs.setup.outputs.run == 'false' && needs.setup.outputs.notes != ''
+    if: needs.setup.outputs.run == 'false' && needs.setup.outputs.notes != '' && needs.setup.outputs.pr != ''
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -143,7 +171,7 @@ jobs:
   running:
     name: Running
     needs: setup
-    if: needs.setup.outputs.run == 'true'
+    if: needs.setup.outputs.run == 'true' && needs.setup.outputs.pr != ''
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -303,7 +331,7 @@ jobs:
           } > section.md
           echo "stuck=true" >> "$GITHUB_OUTPUT"
       - name: Say on the PR that the run was cancelled
-        if: steps.queue.outputs.stuck == 'true'
+        if: steps.queue.outputs.stuck == 'true' && env.PR_NUMBER != ''
         uses: ./.github/actions/bevy-explorer-ci-status
         with:
           pr-number: ${{ needs.setup.outputs.pr }}
@@ -337,6 +365,7 @@ jobs:
       base_artifact: ${{ matrix.leg.base_artifact }}
       base_run_id: ${{ matrix.leg.base_run_id }}
       runs: ${{ needs.setup.outputs.runs }}
+      retention_days: ${{ needs.setup.outputs.retention_days }}
   # The report runner may be the PR's own build, so this job has no write permission; the post
   # job, which runs no downloaded code, comments.
   gather:
@@ -374,10 +403,8 @@ jobs:
         id: report
         env:
           PR_NUMBER: ${{ needs.setup.outputs.pr }}
-          CHANGE_SHA: ${{ needs.setup.outputs.change_sha }}
-          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
-          CHANGE_DESCRIPTION: '#${{ needs.setup.outputs.pr }} at ${{ needs.setup.outputs.change_sha }}'
-          BASE_DESCRIPTION: main at ${{ needs.setup.outputs.base_sha }}
+          CHANGE_DESCRIPTION: ${{ needs.setup.outputs.change_description }}
+          BASE_DESCRIPTION: ${{ needs.setup.outputs.base_description }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EXPECTED_RUNS: ${{ needs.setup.outputs.runs }}
           EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
@@ -447,14 +474,14 @@ jobs:
             report.md
             comment.md
           overwrite: true
-          retention-days: 7
+          retention-days: ${{ needs.setup.outputs.retention_days }}
   # Runs nothing it downloads: it only reads report.md and comment.md, and checks out only the
   # comment action.
   post:
     name: Post
     needs: [setup, gather]
     # Not after a cancelled run, as for the report job.
-    if: ${{ !cancelled() && needs.gather.result == 'success' }}
+    if: ${{ !cancelled() && needs.gather.result == 'success' && needs.setup.outputs.pr != '' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -498,6 +525,86 @@ jobs:
           section: performance
           github-token: ${{ github.token }}
           body-file: section.md
+      - name: Fail when no leg produced data
+        if: needs.gather.outputs.status == '2'
+        run: |
+          echo "::error::No leg produced data; the report says why"
+          exit 1
+  # A run of main keeps one open issue for a regression against the release: the newest regressed
+  # report replaces its body, and each later regressed run adds a comment. A manual run that names
+  # change_sha or base_sha keeps an issue of its own comparison. It reads only report.md.
+  regression:
+    name: Regression issue
+    needs: [setup, gather]
+    if: ${{ !cancelled() && needs.gather.result == 'success' && needs.setup.outputs.pr == '' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: ${{ needs.setup.outputs.issue_title }}
+    steps:
+      - name: Download the report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: benchmark-report
+          path: report
+      # An issue body holds 65536 characters; a longer report stays in the run's artifact.
+      # `shell: bash` adds pipefail: a failed issue search must not read as "no issue" and open a
+      # second one. The body names the measured commits, so a nightly that measures the same pair
+      # again replaces the report without a comment.
+      - name: Open or update the regression issue
+        if: needs.gather.outputs.status != '2'
+        shell: bash
+        env:
+          CHANGE_DESCRIPTION: ${{ needs.setup.outputs.change_description }}
+          BASE_DESCRIPTION: ${{ needs.setup.outputs.base_description }}
+          CHANGE_SHA: ${{ needs.setup.outputs.change_sha }}
+          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if grep -q '^\*\*Overall: ⚠️' report/report.md; then
+            echo "::error::Nothing was compared: no base leg produced data; the report says why"
+            exit 1
+          fi
+          if ! grep -q '^\*\*Overall: 🔴' report/report.md; then
+            if grep -Eq '^\*\*Overall: (✅|🟢)' report/report.md; then
+              echo "No regression against the release."
+              exit 0
+            fi
+            echo "::error::The report has no Overall line this job knows; its format may have changed"
+            exit 1
+          fi
+          pair="<!-- benchmark pair: $CHANGE_SHA $BASE_SHA -->"
+          {
+            printf '%s\n\n' "$pair"
+            printf 'The benchmark measured a regression of %s against %s ([run](%s)). Each run that regresses again comments here and replaces the report below; close the issue once main is back within the threshold.\n\n' \
+              "$CHANGE_DESCRIPTION" "$BASE_DESCRIPTION" "$RUN_URL"
+            if [ "$(wc -c < report/report.md)" -le 60000 ]; then
+              cat report/report.md
+            else
+              printf 'The report is too long for an issue: see the benchmark-report artifact of the run.\n'
+            fi
+          } > body.md
+          # Only an issue this workflow opened: anyone can open one with the same title.
+          found=$(gh issue list --state open --author app/github-actions --search "in:title \"$TITLE\"" --json number,title,body \
+            | jq -r --arg title "$TITLE" --arg pair "$pair" \
+              'map(select(.title == $title)) | first | if . == null then "" else "\(.number) \(.body | contains($pair))" end')
+          read -r number same <<< "$found"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file body.md
+            if [ "$same" = true ]; then
+              echo "Issue #$number already reports this pair; replaced its report." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            gh issue comment "$number" --body "Regressed again: $CHANGE_DESCRIPTION against $BASE_DESCRIPTION ([run]($RUN_URL))."
+            echo "Updated issue #$number." >> "$GITHUB_STEP_SUMMARY"
+          else
+            url=$(gh issue create --title "$TITLE" --body-file body.md)
+            echo "Opened $url." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Fail when no leg produced data
         if: needs.gather.outputs.status == '2'
         run: |

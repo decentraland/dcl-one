@@ -23,7 +23,10 @@ with active pointers. Resolve world UUIDs through the active
 `explore.world_scene_place` association and its `worlds.world_scenes` row.
 Effective bases come from the target's `social.scene_base_parcel`, the SQL copy
 of the resolver's rules: the canonical declared base when it belongs to the
-footprint, otherwise the numerically first valid parcel.
+footprint, otherwise the numerically first valid parcel. A Genesis scene's
+declared base is read where content stores it, at `entity_metadata` `v`
+(`{v,scene,base}`), for admins and bans alike; a world scene's at `entity`
+`{metadata,scene,base}`.
 
 Both moderation steps read the complete source set in one transaction, so
 aliases of one target identity cannot land in separate batches and overwrite

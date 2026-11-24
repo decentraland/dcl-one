@@ -12,16 +12,19 @@
 //! a node unready. Deploys of a type are taken only once that type is ready
 //! ([`SyncStatus::takes_deploys_of`]).
 
-use futures::StreamExt;
+use futures::future::{BoxFuture, Shared};
+use futures::{FutureExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
+use tokio::task::{JoinError, JoinHandle};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::pointer_changes::{self, PeerUrls, PointerChangesOptions, ScheduleTarget};
+use super::pointer_changes::{self, PointerChangesOptions, ScheduleTarget};
 use super::repository::{LiveDeploymentRepository, LiveProcessedSnapshotStore};
 use super::snapshots::{self, SnapshotScheduling};
 use super::{
@@ -38,6 +41,8 @@ pub struct SyncOrchestratorConfig {
     pub request_max_retries: u32,
     pub request_retry_wait_ms: u64,
     pub pointer_changes_wait_time_ms: u64,
+    pub snapshot_resync_initial_delay: Duration,
+    pub snapshot_resync_interval: Duration,
     pub bootstrap_reconnect_time_ms: u64,
     pub bootstrap_reconnect_exponent: f64,
     pub bootstrap_max_reconnect_ms: u64,
@@ -46,8 +51,8 @@ pub struct SyncOrchestratorConfig {
     pub syncing_max_reconnect_ms: u64,
     /// `PHASED_SYNC`: non-profile types first, then profiles.
     pub phased_sync: bool,
-    /// `SYNC_ENTITY_TYPES`: `None` syncs every type. Snapshots are marked processed for this
-    /// subset only, so widening it later needs explicit replay/resync handling.
+    /// `SYNC_ENTITY_TYPES`: `None` syncs every type. A snapshot receipt covers the types
+    /// this pass synced, so a wider allowlist can replay the snapshot.
     pub entity_types: Option<HashSet<String>>,
     /// Snapshots deployed at once per pass (`SYNC_SNAPSHOT_CONCURRENCY`).
     pub snapshot_concurrency: usize,
@@ -60,7 +65,9 @@ impl Default for SyncOrchestratorConfig {
             from_timestamp: 0,
             request_max_retries: 10,
             request_retry_wait_ms: 5_000,
-            pointer_changes_wait_time_ms: 10_000,
+            pointer_changes_wait_time_ms: 5_000,
+            snapshot_resync_initial_delay: Duration::from_secs(3_600),
+            snapshot_resync_interval: Duration::from_secs(14 * 86_400),
             bootstrap_reconnect_time_ms: 5_000,
             bootstrap_reconnect_exponent: 1.5,
             bootstrap_max_reconnect_ms: 3_600_000,
@@ -85,7 +92,18 @@ enum ServerPhase {
 struct ServerState {
     phase: ServerPhase,
     last_snapshot_timestamp: Timestamp,
-    sync_task: Option<tokio::task::JoinHandle<()>>,
+    retry_at: Instant,
+    retry_delay_ms: f64,
+    cancel: CancellationToken,
+    sync_task: Option<JoinHandle<()>>,
+}
+
+/// A peer captured for one bootstrap pass. Removal cancels this membership even if the same
+/// URL is added again before the pass returns.
+#[derive(Clone)]
+struct Peer {
+    url: String,
+    cancel: CancellationToken,
 }
 
 type SnapshotsByHash = HashMap<String, (Vec<SnapshotMetadata>, HashSet<String>)>;
@@ -108,10 +126,20 @@ pub struct SyncDependencies {
 
 pub struct SyncOrchestrator {
     inner: SyncOrchestratorRefs,
-    bootstrap_handle: Mutex<Option<tokio::task::AbortHandle>>,
+    tasks: Mutex<SyncTasks>,
+}
+
+type BootstrapTask = Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>;
+
+#[derive(Default)]
+struct SyncTasks {
+    bootstrap: Option<BootstrapTask>,
+    retired_streams: Vec<JoinHandle<()>>,
+    stopped: bool,
 }
 
 const POINTER_CHANGES_SHIFT_MS: Timestamp = 20 * 60_000;
+const DEPLOYMENT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The operator's sync control (the old `SyncControlHandle`, re-added for
 /// `/admin/api/content/sync/{pause,resume,force}`): process state beside the
@@ -190,14 +218,14 @@ impl SyncOrchestrator {
                 deployment_repo: deps.deployment_repo,
                 status: deps.status,
                 servers: Default::default(),
-                peer_urls: Arc::new(PeerUrls::new(Arc::from(Vec::new()))),
                 bootstrap_done: Default::default(),
+                peers_changed: Default::default(),
                 cancel: CancellationToken::new(),
                 control: deps.control,
                 failed_snapshot_hashes: Default::default(),
                 unmarked_clean_snapshots: Default::default(),
             },
-            bootstrap_handle: Mutex::new(None),
+            tasks: Mutex::default(),
         }
     }
 
@@ -205,9 +233,10 @@ impl SyncOrchestrator {
         &self,
         peer_servers: HashSet<String>,
     ) -> Result<SyncHandle, SyncError> {
+        let mut tasks = self.tasks.lock().await;
         self.inner.check_stopped()?;
 
-        {
+        let initial_peers = {
             let mut servers = self.inner.servers.lock().await;
             for url in &peer_servers {
                 if !servers.contains_key(url) {
@@ -217,6 +246,9 @@ impl SyncOrchestrator {
                         ServerState {
                             phase: ServerPhase::BootstrappingSnapshots,
                             last_snapshot_timestamp: self.inner.config.from_timestamp,
+                            retry_at: Instant::now(),
+                            retry_delay_ms: self.inner.bootstrap_backoff_start(),
+                            cancel: self.inner.cancel.child_token(),
                             sync_task: None,
                         },
                     );
@@ -227,51 +259,88 @@ impl SyncOrchestrator {
                     return true;
                 }
                 info!(server = %url, "Removing server from sync");
+                state.cancel.cancel();
                 if let Some(handle) = state.sync_task.take() {
-                    handle.abort();
+                    tasks.retired_streams.push(handle);
                 }
                 false
             });
             let mut urls: Vec<String> = servers.keys().cloned().collect();
             urls.sort();
-            *self.inner.peer_urls.write().unwrap() = Arc::from(urls);
-        }
-
-        if let Some(handle) = self.bootstrap_handle.lock().await.take() {
-            info!("Aborting previous bootstrap task before starting new one");
-            handle.abort();
-        }
-
-        let orchestrator = self.inner.clone();
-        let handle = tokio::spawn(async move {
-            if let Err(e) = orchestrator.run_bootstrap().await {
-                error!(error = %e, "Bootstrap failed");
+            self.inner.deployer.set_peers(urls).await;
+            if tasks.bootstrap.is_none() {
+                servers
+                    .iter()
+                    .map(|(url, state)| Peer {
+                        url: url.clone(),
+                        cancel: state.cancel.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
             }
-        });
-        *self.bootstrap_handle.lock().await = Some(handle.abort_handle());
+        };
 
+        tasks.retired_streams.retain(|task| !task.is_finished());
+        let task = tasks.bootstrap.get_or_insert_with(|| {
+            let orchestrator = self.inner.clone();
+            let task = tokio::spawn(async move {
+                if let Err(e) = orchestrator.run_bootstrap(initial_peers).await
+                    && !matches!(e, SyncError::Stopped)
+                {
+                    error!(error = %e, "Bootstrap failed");
+                }
+            });
+            async move { task.await.map_err(Arc::new) }.boxed().shared()
+        });
+        self.inner.peers_changed.notify_one();
         Ok(SyncHandle {
             bootstrap_done: self.inner.bootstrap_done.clone(),
             status: self.inner.status.clone(),
-            task: handle,
+            task: task.clone(),
         })
     }
 
     pub async fn stop(&self) {
+        let mut tasks = self.tasks.lock().await;
+        if tasks.stopped {
+            return;
+        }
         info!("Stopping sync orchestrator");
         self.inner.cancel.cancel();
 
-        if let Some(handle) = self.bootstrap_handle.lock().await.take() {
-            handle.abort();
-            info!("Aborted bootstrap task");
+        if let Some(task) = &tasks.bootstrap
+            && let Err(e) = task.clone().await
+        {
+            warn!(error = %e, "Bootstrap task exited before shutdown");
         }
 
-        for (url, state) in self.inner.servers.lock().await.iter_mut() {
-            if let Some(handle) = state.sync_task.take() {
-                handle.abort();
-                info!(server = %url, "Aborted sync task");
+        tasks.retired_streams.extend(
+            self.inner
+                .servers
+                .lock()
+                .await
+                .values_mut()
+                .filter_map(|state| state.sync_task.take()),
+        );
+        while let Some(task) = tasks.retired_streams.last_mut() {
+            if let Err(e) = task.await {
+                warn!(error = %e, "Sync stream exited before shutdown");
+            }
+            tasks.retired_streams.pop();
+        }
+        match tokio::time::timeout(DEPLOYMENT_DRAIN_TIMEOUT, self.inner.deployer.on_idle()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!(error = %e, "Failed to drain sync deployments during shutdown"),
+            Err(_) => {
+                warn!(
+                    in_flight = self.inner.deployer.in_flight(),
+                    "Sync deployment drain timed out; next bootstrap replays unconfirmed work"
+                );
+                self.inner.deployer.cancel_pending();
             }
         }
+        tasks.stopped = true;
     }
 
     pub fn state(&self) -> SyncState {
@@ -288,13 +357,19 @@ impl SyncOrchestrator {
     }
 }
 
+impl Drop for SyncOrchestrator {
+    fn drop(&mut self) {
+        self.inner.cancel.cancel();
+        self.inner.deployer.cancel_pending();
+    }
+}
+
 /// The sync job for [`crate::jobs::Jobs`]: starts sync against `peers` and holds until the job
 /// is cancelled, then stops the orchestrator. A bootstrap task that dies (panics) marks the node
 /// `Failed`: `/about` answers 503 and every deploy is refused, while `/status` stays 200 and
-/// names the state. The bootstrap task ends once every peer streams (the
-/// streams are their own tasks), so the job keeps running without it. `on_bootstrap` (what starts
-/// the failed-deployments retry) runs once the node is `Syncing`, every type bootstrapped; a
-/// `PartiallySynced` node is still deploying profile snapshots.
+/// names the state. The bootstrap task remains active to catch up newly added peers and refresh
+/// snapshots. `on_bootstrap` starts the failed-deployments retry when every type bootstrapped.
+/// A `PartiallySynced` node is still deploying profile snapshots.
 ///
 /// A changed `peers` set (the DAO list refresh) is handed to
 /// [`SyncOrchestrator::sync_with_servers`] at any time, during the first bootstrap too: a new
@@ -311,7 +386,7 @@ pub async fn run_sync_job(
     let initial = peers.borrow_and_update().clone();
     info!(peers = ?initial, "Sync orchestrator starting...");
     ctx.progress("starting");
-    let mut handle = match orchestrator.sync_with_servers(initial).await {
+    let handle = match orchestrator.sync_with_servers(initial).await {
         Ok(handle) => handle,
         Err(e) => {
             error!(error = %e, "Sync orchestrator failed to start; sync state is now Failed and every deploy is refused");
@@ -324,7 +399,6 @@ pub async fn run_sync_job(
     let status = orchestrator.status();
     let signal = handle.bootstrap_signal();
     let mut bootstrapped = false;
-    let mut bootstrap_running = true;
     let mut peers_open = true;
     let mut on_bootstrap = Some(on_bootstrap);
     loop {
@@ -346,22 +420,17 @@ pub async fn run_sync_job(
                 }
                 let next = peers.borrow_and_update().clone();
                 info!(peers = ?next, "Sync peers changed");
-                handle = match orchestrator.sync_with_servers(next.clone()).await {
-                    Ok(handle) => handle,
-                    Err(e) => {
-                        warn!(error = %e, "Sync peers changed after the orchestrator stopped");
-                        ctx.error(format!("peer change after stop: {e}"));
-                        break;
-                    }
-                };
-                bootstrap_running = true;
+                if let Err(e) = orchestrator.sync_with_servers(next.clone()).await {
+                    warn!(error = %e, "Sync peers changed after the orchestrator stopped");
+                    ctx.error(format!("peer change after stop: {e}"));
+                    break;
+                }
                 let mut sorted: Vec<String> = next.into_iter().collect();
                 sorted.sort();
                 *retry_peers.write().await = sorted;
                 ctx.progress(format!("peers changed; {}", status.state_name()));
             }
-            outcome = handle.join(), if bootstrap_running => {
-                bootstrap_running = false;
+            outcome = handle.join() => {
                 if let Err(e) = outcome
                     && !e.is_cancelled() {
                         error!(error = %e, "Bootstrap task died; sync state is now Failed and every deploy is refused");
@@ -370,6 +439,7 @@ pub async fn run_sync_job(
                         orchestrator.stop().await;
                         return Err(anyhow::anyhow!("bootstrap task died: {e}"));
                     }
+                break;
             }
         }
     }
@@ -388,10 +458,8 @@ struct SyncOrchestratorRefs {
     deployment_repo: Arc<LiveDeploymentRepository>,
     status: Arc<SyncStatus>,
     servers: Arc<Mutex<HashMap<String, ServerState>>>,
-    /// Every peer's URL, the download fallback each stream reads per entity, so a running
-    /// stream follows peer changes.
-    peer_urls: Arc<PeerUrls>,
     bootstrap_done: Arc<Notify>,
+    peers_changed: Arc<Notify>,
     cancel: CancellationToken,
     control: SyncControl,
     failed_snapshot_hashes: Arc<StdMutex<HashSet<String>>>,
@@ -470,6 +538,14 @@ impl SyncOrchestratorRefs {
         }
     }
 
+    async fn until_stopped<T>(&self, future: impl Future<Output = T>) -> Result<T, SyncError> {
+        tokio::select! {
+            biased;
+            _ = self.cancel.cancelled() => Err(SyncError::Stopped),
+            outcome = future => Ok(outcome),
+        }
+    }
+
     fn bootstrap_backoff_start(&self) -> f64 {
         self.config.bootstrap_reconnect_time_ms.max(1) as f64
     }
@@ -482,17 +558,16 @@ impl SyncOrchestratorRefs {
         )
     }
 
-    async fn select_servers<T>(&self, f: impl Fn(&str, &ServerState) -> Option<T>) -> Vec<T> {
+    async fn select_servers<T>(
+        &self,
+        mut f: impl FnMut(&str, &ServerState) -> Option<T>,
+    ) -> Vec<T> {
         self.servers
             .lock()
             .await
             .iter()
             .filter_map(|(url, s)| f(url, s))
             .collect()
-    }
-
-    async fn server_urls(&self) -> Vec<String> {
-        self.select_servers(|url, _| Some(url.to_string())).await
     }
 
     /// Holds a new pass while the operator has sync paused; `Stopped` when the
@@ -521,21 +596,17 @@ impl SyncOrchestratorRefs {
         self.bootstrap_done.notify_waiters();
     }
 
-    async fn servers_not_syncing(&self) -> Vec<String> {
-        self.select_servers(|url, s| (s.phase != ServerPhase::Syncing).then(|| url.to_string()))
-            .await
-    }
-
-    /// Publishes `state` once a bootstrap pass over every peer finished. A peer that failed in
-    /// the pass (unreachable, an unreadable snapshot list, a snapshot or pointer-changes run that
-    /// did not fully deploy) does not hold the node: it stays in bootstrap and the straggler
-    /// retry keeps working on it. A node already `Syncing` (a peer added by a DAO list refresh
-    /// re-runs the bootstrap) is never sent back to `PartiallySynced`.
-    async fn announce(&self, state: SyncState, message: &str) {
-        if self.status.state() == SyncState::Syncing && state != SyncState::Syncing {
-            return;
+    /// A pass must cover a current peer generation before opening the deployment gate.
+    /// Unreachable peers that were attempted stay eligible for background bootstrap retries.
+    async fn announce(&self, peers: &[Peer], state: SyncState, message: &str) -> bool {
+        let servers = self.servers.lock().await;
+        if !peers.iter().any(|peer| !peer.cancel.is_cancelled()) {
+            return false;
         }
-        let held = self.servers_not_syncing().await;
+        let held: Vec<_> = servers
+            .iter()
+            .filter_map(|(url, state)| (state.phase != ServerPhase::Syncing).then_some(url))
+            .collect();
         if held.is_empty() {
             info!("{message}");
         } else {
@@ -545,23 +616,50 @@ impl SyncOrchestratorRefs {
             );
         }
         self.set_state(state);
+        true
     }
 
-    async fn run_bootstrap(&self) -> Result<(), SyncError> {
+    async fn run_bootstrap(&self, mut peers: Vec<Peer>) -> Result<(), SyncError> {
+        let phased = self.config.phased_sync
+            && self.config.entity_types.as_ref().is_none_or(|allow| {
+                allow.contains("profile") && NON_PROFILE_TYPES.iter().any(|t| allow.contains(*t))
+            });
         let mut backoff_ms = self.bootstrap_backoff_start();
         loop {
-            let phased = self.config.phased_sync
-                && self.config.entity_types.as_ref().is_none_or(|allow| {
-                    allow.contains("profile")
-                        && NON_PROFILE_TYPES.iter().any(|t| allow.contains(*t))
-                });
+            self.check_stopped()?;
+            if peers.iter().all(|peer| peer.cancel.is_cancelled()) {
+                peers = self
+                    .select_servers(|url, state| {
+                        Some(Peer {
+                            url: url.to_owned(),
+                            cancel: state.cancel.clone(),
+                        })
+                    })
+                    .await;
+                if peers.is_empty() {
+                    self.until_stopped(self.peers_changed.notified()).await?;
+                    continue;
+                }
+            }
+
             let result = if phased {
-                self.run_phased_bootstrap().await
+                self.run_phased_bootstrap(&peers).await
             } else {
-                self.run_full_bootstrap().await
+                self.run_full_bootstrap(&peers).await
             };
             match result {
-                Ok(()) => break,
+                Ok(()) => {
+                    if self
+                        .announce(
+                            &peers,
+                            SyncState::Syncing,
+                            "Bootstrap complete, entering steady-state sync",
+                        )
+                        .await
+                    {
+                        break;
+                    }
+                }
                 Err(SyncError::Stopped) => return Err(SyncError::Stopped),
                 Err(e) => {
                     warn!(error = %e, backoff_ms, "Bootstrap failed; retrying");
@@ -573,56 +671,131 @@ impl SyncOrchestratorRefs {
             }
         }
 
-        self.retry_bootstrap_stragglers().await
+        let next_resync = Instant::now() + self.config.snapshot_resync_initial_delay;
+        self.defer_bootstrap_retries(&peers).await;
+        drop(peers);
+        self.maintain_peers(next_resync).await
     }
 
-    /// Runs with only the node's global allowlist (no slice filter) on purpose: a straggler may have
-    /// been held back by either phased slice, and only a pass covering every synced type proves its
-    /// snapshots complete so they can be marked processed.
-    async fn retry_bootstrap_stragglers(&self) -> Result<(), SyncError> {
-        let mut backoff_ms = self.bootstrap_backoff_start();
+    async fn maintain_peers(&self, mut next_resync: Instant) -> Result<(), SyncError> {
         loop {
-            let pending = self.servers_not_syncing().await;
-            if pending.is_empty() {
-                self.failed_snapshot_hashes.lock().unwrap().clear();
-                self.unmarked_clean_snapshots.lock().unwrap().clear();
-                if self.status.state() != SyncState::Syncing {
-                    info!("Every peer reached steady state, entering steady-state sync");
-                    self.set_state(SyncState::Syncing);
+            self.wait_while_paused().await?;
+            let now = Instant::now();
+            if now >= next_resync {
+                match self.resync_snapshots().await {
+                    Err(SyncError::Stopped) => return Err(SyncError::Stopped),
+                    Err(e) => warn!(error = %e, "Periodic snapshot sync failed"),
+                    Ok(()) => {}
                 }
-                return Ok(());
-            }
-            info!(
-                servers = ?pending,
-                backoff_ms,
-                "Servers held back from sync; retrying their bootstrap"
-            );
-            if self.sleep_or_stop(backoff_ms as u64).await {
-                return Err(SyncError::Stopped);
+                next_resync = Instant::now() + self.config.snapshot_resync_interval;
+                continue;
             }
 
-            let allow = self.config.entity_types.as_ref();
-            match self.bootstrap_from_snapshots(allow, true).await {
-                Err(SyncError::Stopped) => return Err(SyncError::Stopped),
-                Err(e) => warn!(error = %e, "Snapshot bootstrap retry failed"),
-                Ok(()) => {}
-            }
-            match self.bootstrap_from_pointer_changes(allow, true).await {
-                Err(SyncError::Stopped) => return Err(SyncError::Stopped),
-                Err(e) => warn!(error = %e, "Pointer-changes bootstrap retry failed"),
-                Ok(()) => {}
+            let mut deadline = next_resync;
+            let due = self
+                .select_servers(|url, state| {
+                    if state.phase == ServerPhase::Syncing {
+                        return None;
+                    }
+                    if state.retry_at > now {
+                        deadline = deadline.min(state.retry_at);
+                        return None;
+                    }
+                    Some(Peer {
+                        url: url.to_owned(),
+                        cancel: state.cancel.clone(),
+                    })
+                })
+                .await;
+            if !due.is_empty() {
+                match self.catch_up_peers(&due).await {
+                    Err(SyncError::Stopped) => return Err(SyncError::Stopped),
+                    Err(e) => warn!(error = %e, "Peer bootstrap failed; retrying"),
+                    Ok(()) => {}
+                }
+                self.defer_bootstrap_retries(&due).await;
+                continue;
             }
 
-            let still_pending = self.servers_not_syncing().await.len();
-            if still_pending < pending.len() {
-                self.save_frontier().await;
-                self.resolve_deleters().await;
-                self.start_steady_state_sync().await?;
-                backoff_ms = self.bootstrap_backoff_start();
-            } else {
-                backoff_ms = self.bootstrap_backoff(backoff_ms);
+            tokio::select! {
+                _ = self.cancel.cancelled() => return Err(SyncError::Stopped),
+                _ = self.peers_changed.notified() => {}
+                _ = tokio::time::sleep_until(deadline) => {}
             }
         }
+    }
+
+    async fn defer_bootstrap_retries(&self, peers: &[Peer]) {
+        let now = Instant::now();
+        let mut servers = self.servers.lock().await;
+        for peer in peers {
+            if peer.cancel.is_cancelled() {
+                continue;
+            }
+            if let Some(state) = servers.get_mut(&peer.url)
+                && state.phase != ServerPhase::Syncing
+            {
+                state.retry_at = now + Duration::from_millis(state.retry_delay_ms as u64);
+                state.retry_delay_ms = self.bootstrap_backoff(state.retry_delay_ms);
+            }
+        }
+        if servers
+            .values()
+            .all(|state| state.phase == ServerPhase::Syncing)
+        {
+            self.failed_snapshot_hashes.lock().unwrap().clear();
+            self.unmarked_clean_snapshots.lock().unwrap().clear();
+        }
+    }
+
+    /// A newly added peer, or a peer held by either startup slice, needs a pass covering all
+    /// enabled types to prove its snapshots complete.
+    async fn catch_up_peers(&self, peers: &[Peer]) -> Result<(), SyncError> {
+        self.resume_servers_from_cursors(peers).await?;
+        let allow = self.config.entity_types.as_ref();
+        self.bootstrap_from_snapshots(peers, ServerPhase::BootstrappingSnapshots, allow, true)
+            .await?;
+        self.bootstrap_from_pointer_changes(peers, allow, true)
+            .await?;
+        let caught_up = {
+            let servers = self.servers.lock().await;
+            peers.iter().any(|peer| {
+                !peer.cancel.is_cancelled()
+                    && servers
+                        .get(&peer.url)
+                        .is_some_and(|state| state.phase == ServerPhase::Syncing)
+            })
+        };
+        if caught_up {
+            self.save_frontier().await;
+            self.resolve_deleters().await;
+            self.start_steady_state_sync().await?;
+        }
+        Ok(())
+    }
+
+    async fn resync_snapshots(&self) -> Result<(), SyncError> {
+        let peers = self
+            .select_servers(|url, state| {
+                (state.phase == ServerPhase::Syncing).then(|| Peer {
+                    url: url.to_owned(),
+                    cancel: state.cancel.clone(),
+                })
+            })
+            .await;
+        if peers.is_empty() {
+            return Ok(());
+        }
+        info!(peers = peers.len(), "Starting periodic snapshot sync");
+        self.bootstrap_from_snapshots(
+            &peers,
+            ServerPhase::Syncing,
+            self.config.entity_types.as_ref(),
+            true,
+        )
+        .await?;
+        self.resolve_deleters().await;
+        Ok(())
     }
 
     /// From ITS OWN persisted cursor (`resume_point` is the rule): a server whose cursor lags the
@@ -630,49 +803,48 @@ impl SyncOrchestratorRefs {
     /// would skip that server's not-yet-deployed entities. A server with no cursor row keeps the
     /// configured floor, so its own snapshots (or, with none, its earliest pointer change) set
     /// where it starts.
-    async fn resume_servers_from_cursors(&self) -> Result<(), SyncError> {
-        let mut resume_by_url: HashMap<String, Timestamp> = HashMap::new();
-        for url in self.server_urls().await {
-            let cursor = self.deployment_repo.get_server_sync_cursor(&url).await?;
-            resume_by_url.insert(url, resume_point(cursor));
-        }
-        for (url, state) in self.servers.lock().await.iter_mut() {
-            let Some(&resume) = resume_by_url.get(url) else {
-                continue;
+    async fn resume_servers_from_cursors(&self, peers: &[Peer]) -> Result<(), SyncError> {
+        for peer in peers {
+            let cursor = tokio::select! {
+                biased;
+                _ = peer.cancel.cancelled() => continue,
+                cursor = self.deployment_repo.get_server_sync_cursor(&peer.url) => cursor?,
             };
-            if resume > 0 {
-                info!(server = %url, resume, "Resuming server from its persisted cursor");
+            let resume = resume_point(cursor);
+            let mut servers = self.servers.lock().await;
+            if resume > 0
+                && !peer.cancel.is_cancelled()
+                && let Some(state) = servers.get_mut(&peer.url)
+            {
+                info!(server = %peer.url, resume, "Resuming server from its persisted cursor");
                 state.last_snapshot_timestamp = state.last_snapshot_timestamp.max(resume);
             }
         }
-        Ok(())
+        self.check_stopped()
     }
 
-    async fn run_full_bootstrap(&self) -> Result<(), SyncError> {
-        self.resume_servers_from_cursors().await?;
+    async fn run_full_bootstrap(&self, peers: &[Peer]) -> Result<(), SyncError> {
+        self.resume_servers_from_cursors(peers).await?;
         let allow = self.config.entity_types.as_ref();
 
         info!("Phase 1: Bootstrap from snapshots");
-        self.bootstrap_from_snapshots(allow, true).await?;
+        self.bootstrap_from_snapshots(peers, ServerPhase::BootstrappingSnapshots, allow, true)
+            .await?;
 
         info!("Phase 2: Bootstrap from pointer-changes");
-        self.bootstrap_from_pointer_changes(allow, true).await?;
+        self.bootstrap_from_pointer_changes(peers, allow, true)
+            .await?;
         self.save_frontier().await;
 
         info!("Resolving deleter_deployment for overwritten entities");
         self.resolve_deleters().await;
-
-        self.announce(
-            SyncState::Syncing,
-            "Bootstrap complete, entering steady-state sync",
-        )
-        .await;
+        self.check_stopped()?;
 
         self.start_steady_state_sync().await
     }
 
-    async fn run_phased_bootstrap(&self) -> Result<(), SyncError> {
-        self.resume_servers_from_cursors().await?;
+    async fn run_phased_bootstrap(&self, peers: &[Peer]) -> Result<(), SyncError> {
+        self.resume_servers_from_cursors(peers).await?;
 
         let non_profile_filter: HashSet<String> = NON_PROFILE_TYPES
             .iter()
@@ -687,59 +859,76 @@ impl SyncOrchestratorRefs {
         let profile_filter: HashSet<String> = ["profile".to_string()].into_iter().collect();
 
         info!(types = ?non_profile_filter, "Phase 1: Bootstrap non-profile entities from snapshots");
-        self.bootstrap_from_snapshots(Some(&non_profile_filter), false)
-            .await?;
+        self.bootstrap_from_snapshots(
+            peers,
+            ServerPhase::BootstrappingSnapshots,
+            Some(&non_profile_filter),
+            false,
+        )
+        .await?;
 
         info!("Phase 2: Pointer-changes catch-up for all enabled types");
-        self.bootstrap_from_pointer_changes(self.config.entity_types.as_ref(), false)
+        self.bootstrap_from_pointer_changes(peers, self.config.entity_types.as_ref(), false)
             .await?;
         self.save_frontier().await;
+        self.check_stopped()?;
 
         let mut ready_types: Vec<String> = non_profile_filter.iter().cloned().collect();
         ready_types.sort();
         self.announce(
+            peers,
             SyncState::PartiallySynced { ready_types },
             "Phase 3: Partially synced \u{2014} non-profile types ready, starting to serve queries",
         )
         .await;
 
-        for state in self.servers.lock().await.values_mut() {
-            if state.sync_task.is_none() {
-                state.phase = ServerPhase::BootstrappingSnapshots;
+        {
+            let mut servers = self.servers.lock().await;
+            for peer in peers {
+                if !peer.cancel.is_cancelled()
+                    && let Some(state) = servers.get_mut(&peer.url)
+                {
+                    state.phase = ServerPhase::BootstrappingSnapshots;
+                }
             }
         }
 
         info!("Phase 4: Bootstrap profiles from snapshots");
-        self.bootstrap_from_snapshots(Some(&profile_filter), true)
-            .await?;
+        self.bootstrap_from_snapshots(
+            peers,
+            ServerPhase::BootstrappingSnapshots,
+            Some(&profile_filter),
+            true,
+        )
+        .await?;
 
         info!("Phase 5: Final pointer-changes catch-up for all enabled types");
-        self.bootstrap_from_pointer_changes(self.config.entity_types.as_ref(), true)
+        self.bootstrap_from_pointer_changes(peers, self.config.entity_types.as_ref(), true)
             .await?;
         self.save_frontier().await;
 
         info!("Phase 6: Resolving deleter_deployment for overwritten entities");
         self.resolve_deleters().await;
-
-        self.announce(
-            SyncState::Syncing,
-            "Bootstrap complete, entering steady-state sync",
-        )
-        .await;
+        self.check_stopped()?;
 
         self.start_steady_state_sync().await
     }
 
     async fn resolve_deleters(&self) {
-        if let Err(e) = self.deployment_repo.resolve_deleter_deployments().await {
+        if let Ok(Err(e)) = self
+            .until_stopped(self.deployment_repo.resolve_deleter_deployments())
+            .await
+        {
             warn!(error = %e, "Failed to resolve deleter_deployment");
         }
     }
 
     async fn save_frontier(&self) {
         let _ = self
-            .deployment_repo
-            .set_sync_heartbeat(chrono::Utc::now().timestamp_millis())
+            .until_stopped(
+                self.deployment_repo
+                    .set_sync_heartbeat(chrono::Utc::now().timestamp_millis()),
+            )
             .await;
     }
 
@@ -757,38 +946,51 @@ impl SyncOrchestratorRefs {
 
     async fn bootstrap_from_snapshots(
         &self,
+        peers: &[Peer],
+        phase: ServerPhase,
         entity_type_filter: Option<&HashSet<String>>,
         mark_processed: bool,
     ) -> Result<(), SyncError> {
-        let bootstrapping = self
-            .select_servers(|url, s| {
-                (s.phase == ServerPhase::BootstrappingSnapshots).then(|| url.to_string())
-            })
-            .await;
-        if bootstrapping.is_empty() {
+        let eligible: HashMap<&str, &CancellationToken> = {
+            let servers = self.servers.lock().await;
+            peers
+                .iter()
+                .filter(|peer| {
+                    !peer.cancel.is_cancelled()
+                        && servers
+                            .get(&peer.url)
+                            .is_some_and(|state| state.phase == phase)
+                })
+                .map(|peer| (peer.url.as_str(), &peer.cancel))
+                .collect()
+        };
+        if eligible.is_empty() {
             return Ok(());
         }
         self.wait_while_paused().await?;
         let _beat = heartbeat_while_busy(self.deployment_repo.clone());
 
         info!(
-            servers = ?bootstrapping,
+            servers = ?eligible.keys(),
             has_type_filter = entity_type_filter.is_some(),
-            "Bootstrapping from snapshots"
+            "Fetching peer snapshots"
         );
 
         let mut snapshots_by_hash = SnapshotsByHash::new();
         let mut last_ts_by_server: HashMap<String, Timestamp> = HashMap::new();
         let mut held_from_fetch = HashSet::new();
 
-        for server in &bootstrapping {
-            match snapshots::fetch_snapshots(
-                &self.http_client,
-                server,
-                self.config.request_max_retries,
-            )
-            .await
-            {
+        for (&server, cancel) in &eligible {
+            let fetched = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => continue,
+                result = snapshots::fetch_snapshots(
+                    &self.http_client,
+                    server,
+                    self.config.request_max_retries,
+                ) => result,
+            };
+            match fetched {
                 Ok(fetched) => apply_snapshot_fetch(
                     server,
                     fetched,
@@ -800,6 +1002,7 @@ impl SyncOrchestratorRefs {
                 Err(e) => warn!(server = %server, error = %e, "Failed to fetch snapshots"),
             }
         }
+        self.check_stopped()?;
 
         let mut candidates: Vec<(String, Timestamp, Vec<Vec<String>>)> = snapshots_by_hash
             .iter()
@@ -825,9 +1028,11 @@ impl SyncOrchestratorRefs {
             })
             .collect();
         let mut processed = self
-            .processed_store
-            .filter_processed_in_chunks(all_hashes)
-            .await?;
+            .until_stopped(
+                self.processed_store
+                    .filter_processed_in_chunks(all_hashes, self.config.entity_types.as_ref()),
+            )
+            .await??;
 
         let (deployable, newly_marked) = snapshots::decide_snapshot_pass(
             &candidates,
@@ -835,9 +1040,11 @@ impl SyncOrchestratorRefs {
             self.config.from_timestamp,
         );
 
-        self.processed_store
-            .mark_processed_many(&newly_marked)
-            .await?;
+        self.until_stopped(
+            self.processed_store
+                .mark_processed_many(&newly_marked, self.config.entity_types.as_ref()),
+        )
+        .await??;
 
         let mut time_ranges_to_deploy: Vec<TimeRange> = Vec::new();
         let mut snapshots_to_process: Vec<(String, HashSet<String>)> = Vec::new();
@@ -847,9 +1054,8 @@ impl SyncOrchestratorRefs {
         // holds active: skipped, neither downloaded nor marked processed, as
         // upstream's snapshotStorage.has.
         let own = self
-            .processed_store
-            .own_snapshot_hashes(&deployable)
-            .await?;
+            .until_stopped(self.processed_store.own_snapshot_hashes(&deployable))
+            .await??;
         if !own.is_empty() {
             info!(
                 count = own.len(),
@@ -863,27 +1069,6 @@ impl SyncOrchestratorRefs {
             let (metas, servers) = &snapshots_by_hash[&hash];
             time_ranges_to_deploy.extend(metas.iter().map(|m| m.time_range));
             snapshots_to_process.push((hash, servers.clone()));
-        }
-
-        let mut need_download = Vec::new();
-        for item in &snapshots_to_process {
-            if !self.storage.exist(&item.0).await.unwrap_or(true) {
-                need_download.push(item.clone());
-            }
-        }
-        if !need_download.is_empty() {
-            info!(
-                count = need_download.len(),
-                "Pre-downloading snapshot files in parallel"
-            );
-            snapshots::download_snapshot_files(
-                &self.http_client,
-                self.storage.clone(),
-                &need_download,
-                self.config.request_max_retries,
-                self.config.request_retry_wait_ms,
-            )
-            .await;
         }
 
         let snapshot_concurrency = self.config.snapshot_concurrency.max(1);
@@ -902,9 +1087,17 @@ impl SyncOrchestratorRefs {
 
         futures::stream::iter(pass.iter())
             .for_each_concurrent(snapshot_concurrency, |(hash, servers, report)| {
-                let failed_hashes = &failed_hashes;
+                let (failed_hashes, eligible) = (&failed_hashes, &eligible);
                 async move {
-                    if self.is_stopped() {
+                    let advertisers: Vec<_> = servers
+                        .iter()
+                        .filter_map(|url| {
+                            let cancel = eligible[url.as_str()];
+                            (!cancel.is_cancelled()).then_some((url.as_str(), cancel))
+                        })
+                        .collect();
+                    if advertisers.is_empty() {
+                        failed_hashes.lock().unwrap().insert(hash.clone());
                         return;
                     }
                     if let Err(e) = snapshots::deploy_entities_from_snapshot(
@@ -913,7 +1106,7 @@ impl SyncOrchestratorRefs {
                         self.deployer.as_ref(),
                         snapshots::SnapshotSource {
                             snapshot_hash: hash,
-                            servers,
+                            advertisers: &advertisers,
                             max_retries: self.config.request_max_retries,
                             retry_wait_ms: self.config.request_retry_wait_ms,
                         },
@@ -923,7 +1116,6 @@ impl SyncOrchestratorRefs {
                         },
                         self.config.snapshot_scheduling,
                         report,
-                        || self.is_stopped(),
                     )
                     .await
                     {
@@ -935,7 +1127,7 @@ impl SyncOrchestratorRefs {
             .await;
 
         self.check_stopped()?;
-        self.deployer.on_idle().await?;
+        self.until_stopped(self.deployer.on_idle()).await??;
         self.check_stopped()?;
 
         let mut failed_hashes = failed_hashes.into_inner().unwrap();
@@ -984,8 +1176,6 @@ impl SyncOrchestratorRefs {
                         clean_unmarked.insert(hash.clone());
                     }
                     SnapshotPassVerdict::Retire => {
-                        failed_global.remove(hash);
-                        clean_unmarked.remove(hash);
                         to_mark.push(hash.clone());
                     }
                     SnapshotPassVerdict::Unproven => held.extend(servers.iter().cloned()),
@@ -994,14 +1184,32 @@ impl SyncOrchestratorRefs {
             (held, to_mark)
         };
 
-        if let Err(e) = self.processed_store.mark_processed_many(&to_mark).await {
-            warn!(snapshots = to_mark.len(), error = %e, "Failed to mark snapshots as processed");
+        self.until_stopped(
+            self.processed_store
+                .mark_processed_many(&to_mark, self.config.entity_types.as_ref()),
+        )
+        .await??;
+        if !to_mark.is_empty() {
+            let mut failed_global = self.failed_snapshot_hashes.lock().unwrap();
+            let mut clean_unmarked = self.unmarked_clean_snapshots.lock().unwrap();
+            for hash in to_mark {
+                failed_global.remove(&hash);
+                clean_unmarked.remove(&hash);
+            }
+        }
+
+        // The live pointer stream retains its own cursor during periodic snapshot sync.
+        if phase == ServerPhase::Syncing {
+            return Ok(());
         }
 
         let mut advanced = Vec::new();
         {
             let mut servers = self.servers.lock().await;
             for (url, ts) in &last_ts_by_server {
+                if eligible[url.as_str()].is_cancelled() {
+                    continue;
+                }
                 if held_servers.contains(url) {
                     info!(
                         server = %url,
@@ -1020,29 +1228,38 @@ impl SyncOrchestratorRefs {
 
         if mark_processed {
             for (url, ts) in advanced {
-                let _ = self
-                    .deployment_repo
-                    .advance_server_sync_cursor(&url, ts)
-                    .await;
+                tokio::select! {
+                    biased;
+                    _ = eligible[url.as_str()].cancelled() => {},
+                    _ = self.deployment_repo.advance_server_sync_cursor(&url, ts) => {},
+                }
             }
         }
 
-        Ok(())
+        self.check_stopped()
     }
 
     async fn bootstrap_from_pointer_changes(
         &self,
+        peers: &[Peer],
         entity_type_filter: Option<&HashSet<String>>,
         persist_cursor: bool,
     ) -> Result<(), SyncError> {
-        let bootstrapping = self
-            .select_servers(|url, s| {
-                (s.phase == ServerPhase::BootstrappingPointerChanges).then(|| {
-                    let from = (s.last_snapshot_timestamp - POINTER_CHANGES_SHIFT_MS).max(0);
-                    (url.to_string(), from)
+        let bootstrapping: Vec<_> = {
+            let servers = self.servers.lock().await;
+            peers
+                .iter()
+                .filter(|peer| !peer.cancel.is_cancelled())
+                .filter_map(|peer| {
+                    let state = servers.get(&peer.url)?;
+                    (state.phase == ServerPhase::BootstrappingPointerChanges).then(|| {
+                        let from =
+                            (state.last_snapshot_timestamp - POINTER_CHANGES_SHIFT_MS).max(0);
+                        (peer, from)
+                    })
                 })
-            })
-            .await;
+                .collect()
+        };
         if bootstrapping.is_empty() {
             return Ok(());
         }
@@ -1058,38 +1275,35 @@ impl SyncOrchestratorRefs {
             }])
             .await?;
 
-        let filter_owned = entity_type_filter.map(|f| Arc::new(f.clone()));
-
-        // A JoinSet aborts its passes when dropped: a bootstrap aborted by a peer change (or a
-        // stop) never leaves a pass running beside the restarted one.
-        let mut passes = tokio::task::JoinSet::new();
-        for (server, from_timestamp) in bootstrapping {
-            let refs = self.clone();
-            let filter = filter_owned.clone();
-
-            passes.spawn(async move {
+        futures::stream::iter(bootstrapping)
+            .for_each_concurrent(None, |(peer, from_timestamp)| async move {
+                let server = &peer.url;
                 let options = PointerChangesOptions {
                     from_timestamp,
                     wait_time_ms: 0,
-                    entity_type_filter: filter.as_deref(),
+                    entity_type_filter,
                 };
                 let progress = AtomicI64::new(from_timestamp);
+                let settled_polls = AtomicU64::new(0);
                 let report = Arc::new(DeploymentReport::default());
-                let outcome = pointer_changes::deploy_entities_from_pointer_changes(
-                    &refs.http_client,
-                    &server,
+                let pass = pointer_changes::deploy_entities_from_pointer_changes(
+                    &self.http_client,
+                    server,
                     &options,
                     ScheduleTarget {
-                        deployer: refs.deployer.as_ref(),
-                        content_servers: &refs.peer_urls,
+                        deployer: self.deployer.as_ref(),
                         report: &report,
                     },
-                    persist_cursor.then(|| refs.deployment_repo.clone()),
+                    persist_cursor.then(|| self.deployment_repo.clone()),
                     &progress,
-                    &AtomicU64::new(0),
-                    || refs.is_stopped(),
-                )
-                .await;
+                    &settled_polls,
+                    || peer.cancel.is_cancelled(),
+                );
+                let outcome = tokio::select! {
+                    biased;
+                    _ = peer.cancel.cancelled() => return,
+                    outcome = pass => outcome,
+                };
                 let reached = progress.load(Relaxed);
                 let (ts, failed) = match outcome {
                     Ok(greatest_ts) => (greatest_ts, false),
@@ -1098,7 +1312,10 @@ impl SyncOrchestratorRefs {
                         (reached, true)
                     }
                 };
-                if let Some(state) = refs.servers.lock().await.get_mut(&server) {
+                let mut servers = self.servers.lock().await;
+                if !peer.cancel.is_cancelled()
+                    && let Some(state) = servers.get_mut(server)
+                {
                     // A finished pass delivered every row before its settled cursor, while the
                     // snapshot's end can sit above rows the pass read before they committed:
                     // the stream resumes from the pass.
@@ -1107,37 +1324,37 @@ impl SyncOrchestratorRefs {
                     } else {
                         ts
                     };
-                    if !failed && !refs.is_stopped() {
+                    if !failed {
                         state.phase = ServerPhase::Syncing;
                     }
                 }
-            });
-        }
+            })
+            .await;
 
-        while passes.join_next().await.is_some() {}
-
-        self.deployer.on_idle().await?;
-        Ok(())
+        self.check_stopped()?;
+        self.until_stopped(self.deployer.on_idle()).await??;
+        self.check_stopped()
     }
 
     /// Spawns a stream for every `Syncing` peer without one. Spawning and recording the handle
-    /// happen under one lock, with no await between, so an abort of the bootstrap task never
-    /// leaves an unrecorded stream behind (which the next call would duplicate).
+    /// happen under one lock, with no await between, so stop can join every producer.
     async fn start_steady_state_sync(&self) -> Result<(), SyncError> {
         let mut servers = self.servers.lock().await;
+        self.check_stopped()?;
         for (server, state) in servers.iter_mut() {
             if state.phase != ServerPhase::Syncing || state.sync_task.is_some() {
                 continue;
             }
             let refs = self.clone();
             let server = server.clone();
+            let cancel = state.cancel.clone();
             let mut from_timestamp = state.last_snapshot_timestamp;
 
             let handle = tokio::spawn(async move {
                 let cfg = &refs.config;
                 let mut backoff_ms = cfg.syncing_reconnect_time_ms as f64;
                 loop {
-                    if refs.control.wait_while_paused(&refs.cancel).await {
+                    if refs.control.wait_while_paused(&cancel).await {
                         return;
                     }
                     let options = PointerChangesOptions {
@@ -1149,29 +1366,32 @@ impl SyncOrchestratorRefs {
                     let report = Arc::new(DeploymentReport::default());
                     let settled_polls = AtomicU64::new(0);
                     let run_started = tokio::time::Instant::now();
-                    let outcome = pointer_changes::deploy_entities_from_pointer_changes(
+                    let stream = pointer_changes::deploy_entities_from_pointer_changes(
                         &refs.http_client,
                         &server,
                         &options,
                         ScheduleTarget {
                             deployer: refs.deployer.as_ref(),
-                            content_servers: &refs.peer_urls,
                             report: &report,
                         },
                         Some(refs.deployment_repo.clone()),
                         &progress,
                         &settled_polls,
-                        || refs.is_stopped() || refs.control.is_paused(),
-                    )
-                    .await;
-                    refs.advance_cursor(&server, &mut from_timestamp, progress.load(Relaxed))
-                        .await;
+                        || cancel.is_cancelled() || refs.control.is_paused(),
+                    );
+                    let outcome = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return,
+                        outcome = async {
+                            let outcome = stream.await;
+                            let confirmed = progress.load(Relaxed);
+                            let greatest = outcome.as_ref().copied().unwrap_or(confirmed);
+                            refs.advance_cursor(&server, &mut from_timestamp, greatest.max(confirmed)).await;
+                            outcome
+                        } => outcome,
+                    };
                     let failed = match outcome {
-                        Ok(greatest_ts) => {
-                            refs.advance_cursor(&server, &mut from_timestamp, greatest_ts)
-                                .await;
-                            false
-                        }
+                        Ok(_) => false,
                         Err(e) => {
                             error!(server = %server, error = %e, "Sync stream failed");
                             true
@@ -1183,12 +1403,17 @@ impl SyncOrchestratorRefs {
                         settled_polls.load(Relaxed) > 0,
                         run_started.elapsed(),
                     );
-                    if let Some(state) = refs.servers.lock().await.get_mut(&server) {
-                        state.last_snapshot_timestamp =
-                            state.last_snapshot_timestamp.max(from_timestamp);
+                    {
+                        let mut servers = refs.servers.lock().await;
+                        if !cancel.is_cancelled()
+                            && let Some(state) = servers.get_mut(&server)
+                        {
+                            state.last_snapshot_timestamp =
+                                state.last_snapshot_timestamp.max(from_timestamp);
+                        }
                     }
                     tokio::select! {
-                        _ = refs.cancel.cancelled() => return,
+                        _ = cancel.cancelled() => return,
                         _ = tokio::time::sleep(Duration::from_millis(backoff_ms as u64)) => {}
                         _ = refs.control.changed() => {}
                     }
@@ -1204,7 +1429,7 @@ impl SyncOrchestratorRefs {
 pub struct SyncHandle {
     bootstrap_done: Arc<Notify>,
     status: Arc<SyncStatus>,
-    task: tokio::task::JoinHandle<()>,
+    task: BootstrapTask,
 }
 
 impl SyncHandle {
@@ -1217,10 +1442,9 @@ impl SyncHandle {
         }
     }
 
-    /// The bootstrap task itself. It ends once every peer reached steady state (their streams
-    /// are separate tasks), on stop, when a later `sync_with_servers` aborts it, or on a panic.
-    pub async fn join(&mut self) -> Result<(), tokio::task::JoinError> {
-        (&mut self.task).await
+    /// Waits for the shared bootstrap and snapshot maintenance task to exit.
+    pub async fn join(&self) -> Result<(), Arc<JoinError>> {
+        self.task.clone().await
     }
 }
 

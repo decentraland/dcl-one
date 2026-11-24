@@ -18,11 +18,11 @@
     "export-web": "node ../scripts/bridge-scene-export.mjs --web"
   },
   "devDependencies": {
-    "@dcl/ecs": "7.28.1-34901226656.commit-44656ea",
-    "@dcl/js-runtime": "7.28.1-34901226656.commit-44656ea",
-    "@dcl/react-ecs": "7.28.1-34901226656.commit-44656ea",
-    "@dcl/sdk": "7.28.1-34901226656.commit-44656ea",
-    "@dcl/sdk-commands": "7.28.1-34901226656.commit-44656ea",
+    "@dcl/ecs": "7.33.1-45449076924.commit-76c9960",
+    "@dcl/js-runtime": "7.33.1-45449076924.commit-76c9960",
+    "@dcl/react-ecs": "7.33.1-45449076924.commit-76c9960",
+    "@dcl/sdk": "7.33.1-45449076924.commit-76c9960",
+    "@dcl/sdk-commands": "7.33.1-45449076924.commit-76c9960",
     "oxlint": "1.92.0",
     "prettier": "3.0.3",
     "@dcl/hashing": "workspace:*"

@@ -2335,9 +2335,9 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
 /// loosening the room refuses is stored. Each room failure is counted.
 #[tokio::test(flavor = "current_thread")]
 async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let failures = || {
         series
             .render()

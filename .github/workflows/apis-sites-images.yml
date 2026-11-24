@@ -345,8 +345,8 @@ jobs:
       - name: Export the tested APIs package
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.apis == 'true'
         run: |
-          # The node and the cast-bot it starts (CAST_BOT_BIN), both in the APIs image.
-          for package in catalyst cast-bot; do
+          # The node, the cast-bot it starts (CAST_BOT_BIN) and the message router, all in the APIs image.
+          for package in catalyst cast-bot message-router; do
             cache_drv=$(nix eval --raw ".#$package.drvPath")
             image_drv=$(nix eval --raw --impure "git+file:.?lfs=1#$package.drvPath")
             if [ "$cache_drv" != "$image_drv" ]; then
@@ -356,7 +356,7 @@ jobs:
           done
           mkdir -p .cache/apis-nix
           # Runtime closures only: no extra Cargo target tree or dependency build cache.
-          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst .#cast-bot
+          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst .#cast-bot .#message-router
           du -sh .cache/apis-nix
       - name: Save the tested APIs package
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.apis == 'true'
