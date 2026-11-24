@@ -74,7 +74,10 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
 fn expected_pending_steps() -> Vec<&'static str> {
     PREPARED_PENDING_STEPS
         .into_iter()
-        .chain(["0060_shop_third_party_registry_index"])
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+        ])
         .collect()
 }
 
@@ -650,6 +653,13 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .execute(pool)
     .await
     .unwrap();
+    assert!(!has_column(pool, "content.processed_snapshots", "entity_types").await);
+    let legacy_snapshot = catalyst::auth::hash_bytes_v1(b"legacy processed snapshot");
+    sqlx::query("INSERT INTO content.processed_snapshots (hash, process_time) VALUES ($1, now())")
+        .bind(&legacy_snapshot)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
@@ -661,6 +671,38 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let snapshots = catalyst::content::sync::LiveProcessedSnapshotStore::new(pool.clone());
+    let hashes = [legacy_snapshot];
+    let recorded_coverage: Vec<String> =
+        sqlx::query_scalar("SELECT entity_types FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&hashes[0])
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(recorded_coverage.is_empty());
+    let scenes = std::collections::HashSet::from(["scene".to_string()]);
+    for filter in [None, Some(&scenes)] {
+        assert!(
+            snapshots
+                .filter_processed_in_chunks(hashes.clone(), filter)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a migrated receipt must leave the snapshot eligible for replay"
+        );
+    }
+    snapshots
+        .mark_processed_many(&hashes, Some(&scenes))
+        .await
+        .unwrap();
+    assert!(
+        snapshots
+            .filter_processed_in_chunks(hashes.clone(), Some(&scenes))
+            .await
+            .unwrap()
+            .contains(&hashes[0]),
+        "a replay proves coverage for the current filter"
+    );
     let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
     assert_eq!(
         captcha_after.0, captcha_before,
