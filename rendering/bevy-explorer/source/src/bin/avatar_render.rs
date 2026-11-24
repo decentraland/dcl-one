@@ -196,7 +196,6 @@ fn main() -> AppExit {
         scene_imposter_bake: SceneImposterBake::Off,
         ..base_config
     };
-    let audio_settings = final_config.audio.clone();
 
     let mut app = offline_app(final_config, &realm, content_server.unwrap_or(root));
 
@@ -211,7 +210,6 @@ fn main() -> AppExit {
         avatar::AvatarPlugin,
     ));
     app.init_resource::<SceneDrivenAnimationFeedback>();
-    app.insert_resource(audio_settings);
     // the booth's layer reaches every wearable mesh under the avatar
     app.add_plugins(HierarchyPropagatePlugin::<RenderLayers>::default());
 
