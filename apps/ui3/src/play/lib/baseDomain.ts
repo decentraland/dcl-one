@@ -18,11 +18,11 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
-import { gatewayServiceUrl, parseGateway } from '@explorer-core/lib/gateway'
+import { DECENTRALAND_DOMAINS, gatewayServiceUrl, gatewaySignedPath as signedPathThrough, parseGateway } from '@explorer-core/lib/gateway'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).
-const TRUSTED_BASE_DOMAINS = ['decentraland.org', 'decentraland.zone']
+const TRUSTED_BASE_DOMAINS = DECENTRALAND_DOMAINS
 
 /** The apex deployment domain a hosting origin implies, or null for unrecognised hosts. */
 export function hostBaseDomain(hostname: string): string | null {
@@ -231,6 +231,11 @@ export function derivedServiceUrl(name: string): string {
   return s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`
 }
 window.__serviceUrl = serviceUrl
+
+/** The path a signed request to `url` signs through the entry url's gateway, or null (hostContract). */
+export function gatewaySignedPath(url: string): string | null {
+  return GATEWAY == null ? null : signedPathThrough(GATEWAY, url, SERVICES.map((s) => serviceUrl(s.name)))
+}
 
 /**
  * The service options the ENGINE boots with (EngineHost's boot config). Upstream the engine composes

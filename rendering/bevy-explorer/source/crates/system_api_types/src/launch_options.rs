@@ -74,6 +74,7 @@ pub struct LaunchOptions {
     /// aliases and forwarded signing paths; any other host: direct paths); explicit service urls
     /// win. Pulse, the social and Ethereum RPC sockets, storage, abgen's CDN and the auth and
     /// reels pages keep the base domain's hosts unless their own service option names them
+    /// (natively, Pulse also reads `PULSE_SERVER`)
     #[arg(long, value_name = "url", help_heading = SERVICES)]
     pub gateway: Option<String>,
 

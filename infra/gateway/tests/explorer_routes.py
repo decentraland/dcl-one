@@ -111,7 +111,17 @@ def check(rows, root):
         fallback = f'{row["scheme"]}://{host}{row["path"]}' if row["scheme"] else host
         assert row["fallback"] == fallback, row
         if row["web"]:
-            assert web[name] == {key: row[key] for key in ("name", "value", "scheme", "sub", "path")}, row
+            assert {key: web[name][key] for key in ("name", "value", "scheme", "sub", "path")} == {
+                key: row[key] for key in ("name", "value", "scheme", "sub", "path")
+            }, row
+            # the generated gateway segments compose the engine's own gateway bases
+            for key, base, column in (
+                ("gatewayVirtualHost", "https://gateway.example.test", "vhost"),
+                ("gatewayDirect", "https://example.test", "direct"),
+            ):
+                segment = web[name][key]
+                composed = None if segment is None else (base if segment == "" else f"{base}/{segment}")
+                assert composed == row[column], (name, key, composed, row[column])
             hud_base = hud["options"][name]
             if name == "pulseServer":
                 assert hud_base == "example.test", hud_base

@@ -23,15 +23,23 @@ async function signPayload(identity: AuthIdentity, payload: string, sign: SignMe
 }
 
 /** The signed-fetch (ADR-44) headers for one request. Without `metadata`, to the project storage
- *  service; with it, to another service, signed as a scene's signed fetch is. */
-export async function signFetch(identity: AuthIdentity, method: string, url: string, sign: SignMessage, metadata?: Record<string, unknown>): Promise<Record<string, string>> {
+ *  service; with it, to another service, signed as a scene's signed fetch is, over `signedPath`
+ *  when a gateway forwards a path other than the url's own. */
+export async function signFetch(
+  identity: AuthIdentity,
+  method: string,
+  url: string,
+  sign: SignMessage,
+  metadata?: Record<string, unknown>,
+  signedPath?: string
+): Promise<Record<string, string>> {
   const timestamp = String(Date.now())
   const { pathname, search } = new URL(url)
   // the project service takes only this intent and verifies the query too; the others verify the path alone
   const [meta, path] =
     metadata == null
       ? [JSON.stringify({ intent: 'dcl:editor:projects', signer: 'dcl:editor', origin: location.origin }), `${pathname}${search}`]
-      : [JSON.stringify(metadata), pathname]
+      : [JSON.stringify(metadata), signedPath ?? pathname]
   const payload = [method, path, timestamp, meta].join(':').toLowerCase()
   const headers: Record<string, string> = { 'x-identity-timestamp': timestamp, 'x-identity-metadata': meta }
   const chain = await signPayload(identity, payload, sign)

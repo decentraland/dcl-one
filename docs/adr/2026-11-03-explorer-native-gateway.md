@@ -1,6 +1,6 @@
 # Native Explorer gateway routing
 
-- Status: Accepted
+- Status: Accepted; amended by [Explorer gateway on web and in links](2026-11-24-explorer-gateway-on-web-and-links.md)
 - Date: 2026-11-03
 
 The desktop operator can opt into first-party service routing with `--gateway`. Explicit service

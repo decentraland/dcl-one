@@ -3,7 +3,7 @@
 // (infra/gateway/tests/explorer_routes.py); these cases pin the parse and profile-image edges.
 import { describe, expect, it } from 'vitest'
 import { SERVICES } from '../engine/generated/serviceTable'
-import { gatewayProfileImage, gatewayServiceUrl, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
+import { gatewayProfileImage, gatewayServiceUrl, gatewaySignedPath, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
 
 const service = (name: string) => SERVICES.find((s) => s.name === name)!
 
@@ -76,10 +76,71 @@ describe('isTrustedGatewayPrefix', () => {
       ['http://gateway.decentraland.org', 'decentraland.org'],
       ['https://gateway.decentraland.zone', 'decentraland.org'],
       ['https://evil-decentraland.org', 'decentraland.org'],
+      ['https://cdn.decentraland.org', 'decentraland.org'],
+      ['https://evil.example', 'node.example.test'],
       ['https://gateway.example.test', 'example.test']
     ]) {
       expect(isTrustedGatewayPrefix(prefix, domain), prefix).toBe(false)
     }
     expect(isTrustedGatewayPrefix('http://node.example.test/_scene/x', 'node.example.test', 'http://node.example.test')).toBe(false)
+  })
+})
+
+// The same cases as crates/common/src/gateway.rs `original_path` tests.
+describe('gatewaySignedPath', () => {
+  const vhost = parseGateway('https://gateway.example.test/mount/')!
+  const bases = SERVICES.map((s) => gatewayServiceUrl(vhost, s)).filter((b): b is string => b != null)
+  const sign = (raw: string) => gatewaySignedPath(vhost, raw, bases)
+
+  it('signs the path the virtual host forwards after the service alias', () => {
+    expect(sign('https://gateway.example.test/mount/places/api/places?limit=1')).toBe('/api/places')
+    expect(sign('https://gateway.example.test/mount/comms-gatekeeper/a%2Fb?q=1')).toBe('/a%2Fb')
+    for (const [target, expected] of [
+      ['social-api', '/social-api'],
+      ['social-api?x=a/b', '/social-api'],
+      ['social-api/', '/'],
+      ['social-api/?x=a/b', '/'],
+      ['social-api/v1/search?x=a/b', '/v1/search']
+    ]) {
+      expect(sign(`https://gateway.example.test/mount/${target}`), target).toBe(expected)
+    }
+    expect(sign('https://user@GATEWAY.example.test:443/mount/social-api/v1/search')).toBe('/v1/search')
+  })
+
+  it('keeps the public path elsewhere', () => {
+    for (const raw of [
+      'https://other.example.test/mount/comms-gatekeeper/a',
+      'https://gateway.example.test/mount2/comms-gatekeeper/a',
+      'https://gateway.example.test/mount/unknown/a',
+      'https://gateway.example.test/mount/places-other/a'
+    ]) {
+      expect(sign(raw), raw).toBe(null)
+    }
+    const apex = parseGateway('http://localhost:5222')!
+    expect(gatewaySignedPath(apex, 'http://localhost:5222/comms-gatekeeper/a', [])).toBe(null)
+  })
+
+  it('matches explicit bases under the mount at path boundaries', () => {
+    const gateway = parseGateway('https://gateway.example.test/mount')!
+    const configured = ['https://gateway.example.test/mount', 'https://gateway.example.test/mount/private-api/custom']
+    for (const [path, signed] of [
+      ['private-api/custom/items', '/custom/items'],
+      ['private-api/custom', '/custom'],
+      ['private-api/custom-other/items', null],
+      ['private-api/items', null],
+      ['v1/communities', null]
+    ]) {
+      expect(gatewaySignedPath(gateway, `https://gateway.example.test/mount/${path}`, configured), String(path)).toBe(signed)
+    }
+  })
+
+  it('refuses a path the proxy could read differently', () => {
+    for (const raw of [
+      'https://gateway.example.test/mount/places/a/../b',
+      'https://gateway.example.test/mount/places/a%2f..%2fb',
+      'https://gateway.example.test/mount/places\\a'
+    ]) {
+      expect(() => sign(raw), raw).toThrow('ambiguous')
+    }
   })
 })

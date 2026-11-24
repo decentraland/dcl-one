@@ -34,23 +34,24 @@ impl Gateway {
         })
     }
 
-    /// A gateway a `decentraland://` link may select for a session on `base_domain`: an https
-    /// origin with no port or path under that domain, when it is one of Decentraland's own
-    /// deployments; a node proxies other hosts under a path (`/_scene/<host>`). A link reaches the
-    /// native client with no prompt, so any other gateway takes `--gateway`.
+    /// A gateway a `decentraland://` link may select for a session on `base_domain`, when that is
+    /// one of Decentraland's own deployments: `https://gateway.<base_domain>` or
+    /// `https://<base_domain>`, with no port or path; a node proxies other hosts under a path
+    /// (`/_scene/<host>`). A link reaches the native client with no prompt, so any other gateway
+    /// takes `--gateway`.
     pub fn parse_link(raw: &str, base_domain: &str) -> Result<Self, String> {
         let gateway = Self::parse(raw)?;
         let url = Url::parse(&gateway.prefix).map_err(|e| e.to_string())?;
-        if url.scheme() != "https"
-            || url.port().is_some()
-            || url.path() != "/"
-            || crate::base_domain::decentraland_domain(&gateway.prefix)
-                != Some(base_domain)
-                    .filter(|d| crate::base_domain::DECENTRALAND_DOMAINS.contains(d))
-        {
+        let host = url.host_str().unwrap_or_default();
+        let trusted = url.scheme() == "https"
+            && url.port().is_none()
+            && url.path() == "/"
+            && crate::base_domain::DECENTRALAND_DOMAINS.contains(&base_domain)
+            && (host == base_domain || host.strip_prefix("gateway.") == Some(base_domain));
+        if !trusted {
             return Err(format!(
-                "a link's gateway must be an https origin under {base_domain}, a Decentraland \
-                 deployment; pass --gateway for `{raw}`"
+                "a link's gateway must be https://gateway.{base_domain} or https://{base_domain} \
+                 on a Decentraland deployment; pass --gateway for `{raw}`"
             ));
         }
         Ok(gateway)
@@ -375,7 +376,7 @@ mod gateway_tests {
     }
 
     #[test]
-    fn a_link_selects_only_an_https_gateway_of_its_decentraland_deployment() {
+    fn a_link_selects_only_its_decentraland_deployments_gateway_or_apex() {
         for (raw, domain) in [
             ("https://gateway.decentraland.org", "decentraland.org"),
             ("https://decentraland.zone/", "decentraland.zone"),
@@ -391,6 +392,7 @@ mod gateway_tests {
             "https://gateway.decentraland.org:8443",
             "https://gateway.decentraland.org/_scene/x",
             "https://decentraland.org/mount",
+            "https://cdn.decentraland.org",
             "https://gateway.decentraland.zone",
             "https://gateway.example.test",
             "https://decentraland.org.example.test",
@@ -403,7 +405,9 @@ mod gateway_tests {
             );
         }
         // a session on another deployment takes its gateway by --gateway only
-        assert!(Gateway::parse_link("https://gateway.example.test", "example.test").is_err());
+        for raw in ["https://gateway.example.test", "https://evil.example"] {
+            assert!(Gateway::parse_link(raw, "example.test").is_err(), "{raw}");
+        }
     }
 
     #[test]
