@@ -38,7 +38,7 @@ use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
 use crate::chain_index::rpc::RpcLog;
-use crate::land_authz::events::TOPIC_CREATE_ESTATE;
+use crate::land_authz::events::{TOPIC_CREATE_ESTATE, parse_estate_data};
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
 
 pub const TOPIC_TRANSFER: &str =
@@ -319,7 +319,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
     Ok(Some(event))
 }
 
-/// The registries' data CSV (`0,"name","description",...`): the version
+/// The LAND registry's parcel data CSV (`0,"name","description",...`): the version
 /// must be `0` (squid `buildData`), fields may be quoted with `""` escapes.
 pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     let csv = raw.replace('\0', "");
@@ -639,9 +639,12 @@ async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u
         if cols.0.last() == Some(&contract) && cols.1.last() == Some(&token) {
             continue;
         }
-        let Some((name, description)) =
-            r.get::<Option<&str>, _>("detail").and_then(parse_land_data)
-        else {
+        let parse = if contract == ESTATE_REGISTRY_MAINNET {
+            parse_estate_data
+        } else {
+            parse_land_data
+        };
+        let Some((name, description)) = r.get::<Option<&str>, _>("detail").and_then(parse) else {
             continue;
         };
         cols.0.push(contract);
@@ -1437,8 +1440,8 @@ pub(crate) mod tests {
             (KIND_LAND_DATA, ESTATE_REGISTRY_MAINNET, "5750")
         );
         assert_eq!(
-            parse_land_data(ev.detail.as_deref().unwrap()),
-            Some((Some("1x2 Estate".to_string()), None))
+            parse_estate_data(ev.detail.as_deref().unwrap()),
+            Some((Some("1x2 Estate".to_string()), Some(String::new())))
         );
     }
 

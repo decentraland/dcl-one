@@ -1947,8 +1947,7 @@ const PINNED_CALLS: &[&str] = &[
 ];
 
 /// After a reorg rewind and the refold it owes, `land_data` equals a
-/// truncate-and-rebuild of the remaining log: a token whose only Update was
-/// reorged out loses its row, a token with an older Update falls back to it.
+/// rebuild of the remaining estate documents, including the creation data.
 #[tokio::test]
 async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
     let Some(db) = ScratchDb::create().await else {
@@ -1956,8 +1955,8 @@ async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
     };
     let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
     let index = NftIndex::new(ChainNet::Ethereum);
-    let document = |block, token, create, data: &str| {
-        let id = topic_word(U256::from(token as u64));
+    let document = |block, log, token: u64, create, data: &str| {
+        let id = topic_word(U256::from(token));
         let topics = if create {
             vec![
                 crate::land_authz::events::TOPIC_CREATE_ESTATE.into(),
@@ -1977,100 +1976,93 @@ async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
             topics,
             (data.to_string(),).abi_encode_params(),
             block,
-            0,
+            log,
         )
     };
-    let logs = [
-        document(100, 1, true, "0,A-old"),
-        document(200, 1, false, "0,A-new"),
-        document(201, 2, true, "0,B-only-late"),
-        document(202, 1, false, "1,unreadable"),
-    ];
+    let owner = chain_walk::test_owner(&db.pool, &index, &IndexSettings::default()).await;
+    let fold = |since| nft_index::fold(&db.pool, ChainNet::Ethereum, since, &owner);
+    let rows = || {
+        sqlx::query_as::<_, (String, Option<String>, Option<String>, i64, i32)>(
+            "SELECT token_id::text, name, description, updated_block, updated_log
+             FROM shop.land_data ORDER BY token_id",
+        )
+        .fetch_all(&db.pool)
+    };
+    let mut conn = db.pool.acquire().await.unwrap();
     index
         .write(
-            &mut db.pool.acquire().await.unwrap(),
-            &logs,
+            &mut conn,
+            &[
+                document(100, 1, 1, true, r#"0,"Named","Desc""#),
+                document(100, 2, 2, true, r#"0,"Second","Estate""#),
+            ],
             &Default::default(),
         )
         .await
         .unwrap();
-    nft_index::fold(
-        &db.pool,
-        ChainNet::Ethereum,
-        None,
-        &chain_walk::test_owner(
-            &db.pool,
-            &NftIndex::new(ChainNet::Ethereum),
-            &IndexSettings::default(),
+    fold(None).await.unwrap();
+
+    index
+        .write(
+            &mut conn,
+            &[
+                document(200, 3, 1, false, "0"),
+                document(201, 4, 2, false, r#"0,"","""#),
+            ],
+            &Default::default(),
         )
-        .await,
-    )
-    .await
-    .unwrap();
-    let rows = |pool: sqlx::PgPool| async move {
-        sqlx::query_as::<_, (String, Option<String>, i64)>(
-            "SELECT token_id::text, name, updated_block FROM shop.land_data ORDER BY token_id",
-        )
-        .fetch_all(&pool)
         .await
-        .unwrap()
-    };
+        .unwrap();
+    fold(Some(100)).await.unwrap();
+    let expected = vec![
+        (
+            "1".into(),
+            Some("Named".into()),
+            Some("Desc".into()),
+            100,
+            1,
+        ),
+        ("2".into(), Some(String::new()), Some(String::new()), 201, 4),
+    ];
+    assert_eq!(rows().await.unwrap(), expected);
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    fold(None).await.unwrap();
+    assert_eq!(rows().await.unwrap(), expected);
+
+    index
+        .write(
+            &mut conn,
+            &[
+                document(210, 5, 1, false, r#"0,"Renamed","New description""#),
+                document(211, 6, 3, true, "0,Late estate,"),
+            ],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    fold(Some(201)).await.unwrap();
     assert_eq!(
-        rows(db.pool.clone()).await,
+        rows().await.unwrap(),
         vec![
-            ("1".into(), Some("A-new".into()), 200),
-            ("2".into(), Some("B-only-late".into()), 201)
+            (
+                "1".into(),
+                Some("Renamed".into()),
+                Some("New description".into()),
+                210,
+                5
+            ),
+            expected[1].clone(),
+            ("3".into(), Some("Late estate".into()), None, 211, 6),
         ]
     );
 
-    let mut conn = db.pool.acquire().await.unwrap();
-    NftIndex::new(ChainNet::Ethereum)
-        .rewind(&mut conn, 150)
-        .await
-        .unwrap();
+    index.rewind(&mut conn, 201).await.unwrap();
     drop(conn);
-    nft_index::fold(
-        &db.pool,
-        ChainNet::Ethereum,
-        None,
-        &chain_walk::test_owner(
-            &db.pool,
-            &NftIndex::new(ChainNet::Ethereum),
-            &IndexSettings::default(),
-        )
-        .await,
-    )
-    .await
-    .unwrap();
-    let after_rewind = rows(db.pool.clone()).await;
-    assert_eq!(
-        after_rewind,
-        vec![("1".into(), Some("A-old".into()), 100)],
-        "token 2 had no Update left at or before the cursor"
-    );
-
-    sqlx::query("TRUNCATE shop.land_data")
-        .execute(&db.pool)
-        .await
-        .unwrap();
-    nft_index::fold(
-        &db.pool,
-        ChainNet::Ethereum,
-        None,
-        &chain_walk::test_owner(
-            &db.pool,
-            &NftIndex::new(ChainNet::Ethereum),
-            &IndexSettings::default(),
-        )
-        .await,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        rows(db.pool.clone()).await,
-        after_rewind,
-        "the rewind's result is the truncate-and-rebuild's"
-    );
+    fold(None).await.unwrap();
+    assert_eq!(rows().await.unwrap(), expected);
     db.drop().await;
 }
 
