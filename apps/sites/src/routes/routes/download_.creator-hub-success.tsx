@@ -1,12 +1,15 @@
 import { useEffect, useRef } from "react";
 
-import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
+import { DownloadSuccess } from "@dcl/one-ui";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";
+import { trackCreatorHubClick } from "@/features/download/creator-hub-click";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 
 import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import { track } from "@/core/lib/telemetry/track";
 
 import { publicBase } from "../lib/social-meta";
@@ -32,6 +35,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.ComponentProps) {
   const { sid, os, retryUrl } = loaderData;
+  const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return;
@@ -50,7 +55,14 @@ export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.Com
         footerLines={[
           {
             text: (link) => <>Trouble with the download? Let&apos;s try that again: {link}</>,
-            link: { label: "Download Decentraland Creator Hub", href: retryUrl || CREATOR_HUB_RELEASES },
+            link: {
+              label: "Download Decentraland Creator Hub",
+              href: retryUrl || CREATOR_HUB_RELEASES,
+              // The legacy footer reported only a retry of a known installer, through `useTrackClick`.
+              onClick: retryUrl
+                ? () => trackCreatorHubClick("success-footer", { sid, userId, scope }, os === "windows" ? "Windows" : "macOS")
+                : undefined,
+            },
           },
         ]}
       />

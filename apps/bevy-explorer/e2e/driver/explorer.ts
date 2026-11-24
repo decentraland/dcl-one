@@ -338,6 +338,8 @@ export interface BanBlockState {
     scope: 'platform' | 'world' | 'scene' | null
     message: string | null
     sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
   }
   sceneRoom: {
     state: 'not_connected' | 'connected'
@@ -933,6 +935,13 @@ export class Explorer {
   /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively). */
   async screenshot(): Promise<Buffer> {
     return Buffer.from(await this.run('/screenshot'), 'base64')
+  }
+
+  /** Lay the HUD out at `[width, height]` CSS px, or at the window's size again with `null`, and
+   *  resolve once it has drawn at that size. Throws on a transport without `resizeView`. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    if (!this.console.resizeView) throw new Error(`the ${this.console.kind} transport cannot resize the view`)
+    await this.console.resizeView(size)
   }
 
   // --- input --------------------------------------------------------------------------------

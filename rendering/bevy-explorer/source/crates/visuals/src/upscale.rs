@@ -254,6 +254,7 @@ fn sync_scene_target(
 #[cfg(test)]
 mod tests {
     use bevy::window::WindowResolution;
+    use common::sync::MutexExt;
 
     use super::*;
 
@@ -605,7 +606,7 @@ mod tests {
         let sink = drawn.clone();
         app.world_mut().spawn(Screenshot::image(output)).observe(
             move |trigger: Trigger<ScreenshotCaptured>| {
-                *sink.lock().unwrap() = Some(trigger.0.clone());
+                *sink.lock_ignore_poison() = Some(trigger.0.clone());
             },
         );
         for _ in 0..5 {
@@ -639,8 +640,7 @@ mod tests {
         assert_eq!(compositor_pipelines, 1);
 
         let drawn = drawn
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .take()
             .expect("the output was captured");
         assert!(

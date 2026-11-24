@@ -19,18 +19,20 @@ WITH retired AS (
     WHERE a.active AND t.place_id = a.place_id AND t.active AND t.id <> a.id
     RETURNING t.id, t.place_id, t.ingress_id
 )
-INSERT INTO social.scene_stream_cleanup (access_id, place_id, ingress_id, occurred_at, due_at)
-SELECT id, place_id, ingress_id, timezone('UTC', now()), timezone('UTC', now())
+INSERT INTO social.scene_stream_cleanup (access_id, place_id, ingress_id, occurred_at, due_at, recipients, recipients_resolved, recipient_cursor, notification_started)
+SELECT id, place_id, ingress_id, timezone('UTC', now()), timezone('UTC', now()), ARRAY[]::text[], false, 0, false
 FROM retired
 ON CONFLICT (access_id) DO NOTHING;
 
+-- Preserve source creation times: an import replay never makes a historical
+-- credential look newly issued.
 -- A row retired on the node stays retired; node streaming state with a newer
 -- webhook version wins.
 INSERT INTO social.scene_stream_access AS t
-    (id, place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by,
+    (id, place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, admin_place_key,
      created_at, expiration_time, streaming, streaming_start_time,
      streaming_state_version, streaming_checked_at, cleanup_retry_at, active)
-SELECT s.id, s.place_id, s.streaming_url, s.streaming_key, s.ingress_id, s.room_id, s.generated_by,
+SELECT s.id, s.place_id, s.streaming_url, s.streaming_key, s.ingress_id, s.room_id, s.generated_by, NULL::text,
        s.created_at AT TIME ZONE 'UTC', s.expiration_time AT TIME ZONE 'UTC',
        s.streaming AND a.active, s.streaming_start_time AT TIME ZONE 'UTC',
        s.streaming_state_version, s.streaming_checked_at AT TIME ZONE 'UTC', NULL, a.active
@@ -56,19 +58,20 @@ SET place_id = EXCLUDED.place_id,
     active = t.active AND EXCLUDED.active;
 
 -- An unfinished upstream ingress deletion becomes a node cleanup intent, due
--- now; a historic row without catalogue context, so the node resolves the
--- owner for the expiry notice (sent only when no newer credential exists).
+-- now; a historic row without catalogue context, so the node resolves every
+-- notification authority for the expiry notice (sent only when no newer credential exists).
 -- A new upstream-active credential kept inactive here (the node holds a
 -- newer one) still has a live ingress, so it gets an intent with no notice.
 INSERT INTO social.scene_stream_cleanup
-    (access_id, place_id, ingress_id, notification_kind, occurred_at, due_at)
+    (access_id, place_id, ingress_id, notification_kind, occurred_at, due_at, recipients, recipients_resolved, recipient_cursor, notification_started)
 SELECT s.id, s.place_id, s.ingress_id,
        CASE WHEN s.cleanup_pending AND s.cleanup_expired THEN 'streaming_key_expired' END,
        CASE WHEN NOT s.cleanup_pending THEN timezone('UTC', now())
             WHEN s.cleanup_expired
             THEN COALESCE(s.expiration_time, s.created_at + interval '4 days') AT TIME ZONE 'UTC'
             ELSE s.created_at AT TIME ZONE 'UTC' END,
-       CASE WHEN s.cleanup_pending THEN s.created_at AT TIME ZONE 'UTC' ELSE timezone('UTC', now()) END
+       CASE WHEN s.cleanup_pending THEN s.created_at AT TIME ZONE 'UTC' ELSE timezone('UTC', now()) END,
+       ARRAY[]::text[], false, 0, false
 FROM stage s
 JOIN migration_stream_access_active a ON a.id = s.id
 WHERE (s.cleanup_pending AND NOT s.active) OR (s.active AND NOT a.active AND NOT a.present)

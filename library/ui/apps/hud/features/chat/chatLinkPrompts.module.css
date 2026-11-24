@@ -1,0 +1,15 @@
+/* The link's host, read first. */
+.host {
+  font-weight: var(--fw-bold);
+  overflow-wrap: anywhere;
+}
+
+/* A long link wraps inside the dialog instead of widening it. */
+.url {
+  overflow-wrap: anywhere;
+}
+
+/* A link that is not https says so. */
+.insecure {
+  color: var(--error-text);
+}

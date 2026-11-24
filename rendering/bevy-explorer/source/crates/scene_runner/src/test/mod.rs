@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 use std::{collections::BTreeMap, sync::Mutex, time::Instant};
 
 use bevy::{
@@ -67,7 +68,7 @@ impl PluginGroup for TestPlugins {
     fn build(self) -> PluginGroupBuilder {
         let builder = PluginGroupBuilder::start::<Self>();
 
-        let mut log_added = LOG_ADDED.lock().unwrap();
+        let mut log_added = LOG_ADDED.lock_ignore_poison();
         let builder = if !*log_added {
             *log_added = true;
             builder.add(LogPlugin::default())

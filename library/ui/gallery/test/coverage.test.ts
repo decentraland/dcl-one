@@ -1,10 +1,12 @@
 import * as ui from '@dcl/one-ui'
 import * as foundations from '@dcl/one-ui/foundations'
+import * as sitesUi from '../../apps/sites'
 import { describe, expect, it } from 'vitest'
 import { componentExports, coverageProblems } from '../src/coverage'
 import { entries, exclusions } from '../src/examples'
 
-const components = componentExports(ui, foundations)
+// The app-scoped Sites UI the entry re-exports is not a shared component, so the gallery does not show it.
+const components = componentExports(ui, { ...foundations, ...sitesUi })
 const page = (name: string, shown: string[]) => ({
   name,
   components: shown,
@@ -20,6 +22,7 @@ describe('when the gallery is checked against the public package entry', () => {
     expect(components).not.toContain('GeneralLike')
     expect(components).not.toContain('textClasses')
     expect(components).not.toContain('decentralandNavigation')
+    expect(components).not.toContain('SitesButton')
   })
 
   it('should account for every public component export', () => {

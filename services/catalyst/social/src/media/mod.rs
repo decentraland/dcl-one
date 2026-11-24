@@ -331,14 +331,17 @@ impl MediaState {
     }
 }
 
-/// `POST /translate`, `GET /convert` and `/media/convert`, served at the
-/// root (the `autotranslate-server.` vhost, nginx's `/metamorph-api` strip)
-/// and under the old gateway prefix `/autotranslate-server` by the caller.
+/// The gateway strips `/metamorph-api` before forwarding to `/translate`,
+/// `/convert` or `/media/convert`. Direct node callers can also use both
+/// converter paths with that prefix. The caller mounts this router at the
+/// root and under `/autotranslate-server`.
 pub fn router(state: SharedState) -> Router {
     let converter = common_middleware(
         Router::new()
-            .route("/convert", get(convert::convert))
-            .route("/media/convert", get(convert::convert)),
+            .route("/convert", get(convert::native))
+            .route("/metamorph-api/convert", get(convert::native))
+            .route("/media/convert", get(convert::convert))
+            .route("/metamorph-api/media/convert", get(convert::convert)),
     )
     .layer(axum::middleware::map_response(convert::response_headers));
     common_middleware(Router::new().route("/translate", post(translate::translate)))
