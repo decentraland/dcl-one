@@ -409,7 +409,7 @@ pub async fn render(bytes: Bytes, width: u32) -> Result<(&'static str, Bytes), S
     render_bounded(bytes, Rendition::Thumbnail(width)).await
 }
 
-/// Encodes a WebP or GIF event cover as a JPEG or alpha-preserving PNG for native image readers.
+/// Encodes the first frame of an event cover as a JPEG or alpha-preserving PNG for native readers.
 pub async fn render_event_poster(bytes: Bytes) -> Result<(&'static str, Bytes), String> {
     render_bounded(bytes, Rendition::EventPoster).await
 }

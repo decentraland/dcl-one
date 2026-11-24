@@ -593,8 +593,8 @@ fn cacheable(status: StatusCode, content_type: &str, body: Bytes) -> Result<Conv
     }
 }
 
-#[cfg(test)]
 #[path = "convert"]
+#[cfg(test)]
 mod tests {
     use super::*;
 

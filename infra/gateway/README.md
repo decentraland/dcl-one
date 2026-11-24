@@ -25,7 +25,7 @@ curl --head --get --data-urlencode "url=$poster" "$node_base/metamorph-api/conve
 curl --head --get --data-urlencode "url=$poster" --data-urlencode 'width=640' "$node_base/media/convert"
 ```
 
-The node's remote-source policy applies to both requests. A restricted node may return 403. A saturated thumbnail queue returns 503 with `Retry-After: 1`. Successes advertise a one-day public cache lifetime. During rollout or rollback, inspect a previously requested native URL as well as a fresh one. A CDN or player may still have a fresh copy of the earlier representation. If an immediate refresh is required, invalidate the affected native conversion URLs at the edge and check the player cache separately. [Event poster decision](../../docs/adr/2026-11-24-event-poster-raster-delivery.md)
+The node's remote-source policy applies to both requests. A restricted node may return 403. A saturated thumbnail queue returns 503 with `Retry-After: 1`. Successes advertise a one-day public cache lifetime. When checking a change of representation, compare a previously requested native URL with a fresh one. A CDN or player can serve a cached copy until its one-day freshness lifetime expires. If an immediate refresh is required, invalidate the affected native conversion URLs at the edge and check the player cache separately. [Event poster decision](../../docs/adr/2026-11-24-event-poster-raster-delivery.md)
 
 ## Gateway operations
 
