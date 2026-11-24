@@ -1335,6 +1335,240 @@ async fn owner_of(
         .unwrap()
 }
 
+fn estate_document(
+    block: u64,
+    log: u64,
+    token: u64,
+    create: bool,
+    data: &str,
+) -> crate::chain_index::rpc::RpcLog {
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+    let id = topic_word(U256::from(token));
+    let topics = if create {
+        vec![
+            crate::land_authz::events::TOPIC_CREATE_ESTATE.into(),
+            topic_addr(ALICE),
+            id,
+        ]
+    } else {
+        vec![
+            nft_index::TOPIC_LAND_UPDATE.into(),
+            id,
+            topic_addr(ALICE),
+            topic_addr(ALICE),
+        ]
+    };
+    log_at(
+        estate,
+        topics,
+        (data.to_string(),).abi_encode_params(),
+        block,
+        log,
+    )
+}
+
+#[tokio::test]
+async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_resumes() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let first = 6_236_547;
+    let last = first + 5;
+    let net = ChainNet::Ethereum;
+    let renamed = estate_document(first + 4, 1, 2, false, r#"0,"Later","Update""#);
+    let chain = FakeChain::new(
+        first - 1 + net.confirmations(),
+        vec![renamed],
+        2_000_000,
+        100,
+    );
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let original = state_over(db.pool.clone(), &url, index_settings(100, 2_000_000), false);
+    let index = NftIndex::new(net);
+    assert!(publish_nft(&original, &url, &index).await.published);
+    *chain.head.lock() = last + net.confirmations();
+    assert!(publish_nft(&original, &url, &index).await.published);
+    // Model the pre-upgrade database: it has the Update and a published
+    // cursor, but never requested the two historical creations.
+    sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_estate_creations'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    chain.logs.lock().extend([
+        log_json(&estate_document(
+            first,
+            0,
+            1,
+            true,
+            r#"0,"Original","Desc""#,
+        )),
+        log_json(&estate_document(
+            first + 2,
+            0,
+            2,
+            true,
+            r#"0,"Older","Desc""#,
+        )),
+    ]);
+    let small = state_over(db.pool.clone(), &url, index_settings(20, 2), false);
+    let marker = || {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT position, ceiling FROM shop.worker_progress
+             WHERE worker = 'nft_estate_creations' AND scope = 1",
+        )
+        .fetch_one(&db.pool)
+    };
+    let names = || {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT token_id::text, name FROM shop.land_data ORDER BY token_id",
+        )
+        .fetch_all(&db.pool)
+    };
+    let old = vec![(String::from("2"), String::from("Later"))];
+    assert_eq!(names().await.unwrap(), old);
+
+    // The forward walk spends this pass's log budget. It captures the old
+    // cursor before advancing and publishes the next block immediately.
+    let busy = state_over(db.pool.clone(), &url, index_settings(1, 2), false);
+    *chain.head.lock() += 1;
+    assert!(pass(&busy, &url, &NftIndex::new(net)).await.published);
+    assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
+    // An archive error leaves the same window owed and ownership published.
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
+    assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+
+    for position in [first + 1, first + 3, last] {
+        // A fresh projection and owner for every pass, as on restart.
+        let out = pass(&small, &url, &NftIndex::new(net)).await;
+        assert!(out.published);
+        assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
+        if position < last {
+            assert_eq!(names().await.unwrap(), old);
+        }
+    }
+    assert_eq!(
+        names().await.unwrap(),
+        [
+            ("1".into(), "Original".into()),
+            ("2".into(), "Later".into())
+        ]
+    );
+    let reads = chain.get_logs.load(Ordering::SeqCst);
+    assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
+    assert_eq!(chain.get_logs.load(Ordering::SeqCst), reads);
+
+    chain.fork(first, 7, vec![]);
+    assert!(
+        publish_nft(&small, &url, &NftIndex::new(net))
+            .await
+            .published
+    );
+    assert!(names().await.unwrap().is_empty());
+    assert_eq!(
+        marker().await.unwrap(),
+        (first as i64 - 1, first as i64 - 1)
+    );
+    db.drop().await;
+}
+
+/// After a reorg rewind and the refold it owes, `land_data` equals a
+/// rebuild of the remaining estate documents, including the creation data.
+#[tokio::test]
+async fn estate_updates_preserve_the_last_valid_document_across_folds_and_rewinds() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let index = NftIndex::new(ChainNet::Ethereum);
+    let owner = chain_walk::test_owner(&db.pool, &index, &IndexSettings::default()).await;
+    let fold = |since| nft_index::fold(&db.pool, ChainNet::Ethereum, since, &owner);
+    let rows = || {
+        sqlx::query_as::<_, (String, Option<String>, Option<String>, i64, i32)>(
+            "SELECT token_id::text, name, description, updated_block, updated_log
+             FROM shop.land_data ORDER BY token_id",
+        )
+        .fetch_all(&db.pool)
+    };
+    let mut conn = db.pool.acquire().await.unwrap();
+    index
+        .write(
+            &mut conn,
+            &[
+                estate_document(100, 1, 1, true, r#"0,"Named","Desc""#),
+                estate_document(100, 2, 2, true, r#"0,"Second","Estate""#),
+            ],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    fold(None).await.unwrap();
+
+    index
+        .write(
+            &mut conn,
+            &[
+                estate_document(200, 3, 1, false, "0"),
+                estate_document(201, 4, 2, false, r#"0,"","""#),
+            ],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    fold(Some(100)).await.unwrap();
+    let expected = vec![
+        (
+            "1".into(),
+            Some("Named".into()),
+            Some("Desc".into()),
+            100,
+            1,
+        ),
+        ("2".into(), Some(String::new()), Some(String::new()), 201, 4),
+    ];
+    assert_eq!(rows().await.unwrap(), expected);
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    fold(None).await.unwrap();
+    assert_eq!(rows().await.unwrap(), expected);
+
+    index
+        .write(
+            &mut conn,
+            &[
+                estate_document(210, 5, 1, false, r#"0,"Renamed","New description""#),
+                estate_document(211, 6, 3, true, "0,Late estate,"),
+            ],
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+    fold(Some(201)).await.unwrap();
+    assert_eq!(
+        rows().await.unwrap(),
+        vec![
+            (
+                "1".into(),
+                Some("Renamed".into()),
+                Some("New description".into()),
+                210,
+                5
+            ),
+            expected[1].clone(),
+            ("3".into(), Some("Late estate".into()), None, 211, 6),
+        ]
+    );
+
+    index.rewind(&mut conn, 201).await.unwrap();
+    drop(conn);
+    fold(None).await.unwrap();
+    assert_eq!(rows().await.unwrap(), expected);
+    db.drop().await;
+}
+
 async fn publish_nft(st: &MarketplaceState, url: &str, ix: &NftIndex) -> PassOutcome {
     publish(st, url, ix).await
 }
@@ -1946,237 +2180,106 @@ const PINNED_CALLS: &[&str] = &[
     "finalized",
 ];
 
-fn estate_document(
-    block: u64,
-    log: u64,
-    token: u64,
-    create: bool,
-    data: &str,
-) -> crate::chain_index::rpc::RpcLog {
-    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
-    let id = topic_word(U256::from(token));
-    let topics = if create {
-        vec![
-            crate::land_authz::events::TOPIC_CREATE_ESTATE.into(),
-            topic_addr(ALICE),
-            id,
-        ]
-    } else {
-        vec![
-            nft_index::TOPIC_LAND_UPDATE.into(),
-            id,
-            topic_addr(ALICE),
-            topic_addr(ALICE),
-        ]
-    };
-    log_at(
-        estate,
-        topics,
-        (data.to_string(),).abi_encode_params(),
-        block,
-        log,
-    )
-}
-
-#[tokio::test]
-async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_resumes() {
-    let Some(db) = ScratchDb::create().await else {
-        return;
-    };
-    let first = 6_236_547;
-    let last = first + 5;
-    let net = ChainNet::Ethereum;
-    let renamed = estate_document(first + 4, 1, 2, false, r#"0,"Later","Update""#);
-    let chain = FakeChain::new(
-        first - 1 + net.confirmations(),
-        vec![renamed],
-        2_000_000,
-        100,
-    );
-    chain.chain_id.store(1, Ordering::SeqCst);
-    let url = serve(chain.clone()).await;
-    let original = state_over(db.pool.clone(), &url, index_settings(100, 2_000_000), false);
-    let index = NftIndex::new(net);
-    assert!(publish_nft(&original, &url, &index).await.published);
-    *chain.head.lock() = last + net.confirmations();
-    assert!(publish_nft(&original, &url, &index).await.published);
-    // Model the pre-upgrade database: it has the Update and a published
-    // cursor, but never requested the two historical creations.
-    sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_estate_creations'")
-        .execute(&db.pool)
-        .await
-        .unwrap();
-    chain.logs.lock().extend([
-        log_json(&estate_document(
-            first,
-            0,
-            1,
-            true,
-            r#"0,"Original","Desc""#,
-        )),
-        log_json(&estate_document(
-            first + 2,
-            0,
-            2,
-            true,
-            r#"0,"Older","Desc""#,
-        )),
-    ]);
-    let small = state_over(db.pool.clone(), &url, index_settings(20, 2), false);
-    let marker = || {
-        sqlx::query_as::<_, (i64, i64)>(
-            "SELECT position, ceiling FROM shop.worker_progress
-             WHERE worker = 'nft_estate_creations' AND scope = 1",
-        )
-        .fetch_one(&db.pool)
-    };
-    let names = || {
-        sqlx::query_as::<_, (String, String)>(
-            "SELECT token_id::text, name FROM shop.land_data ORDER BY token_id",
-        )
-        .fetch_all(&db.pool)
-    };
-    let old = vec![(String::from("2"), String::from("Later"))];
-    assert_eq!(names().await.unwrap(), old);
-
-    // The forward walk spends this pass's log budget. It captures the old
-    // cursor before advancing and publishes the next block immediately.
-    let busy = state_over(db.pool.clone(), &url, index_settings(1, 2), false);
-    *chain.head.lock() += 1;
-    assert!(pass(&busy, &url, &NftIndex::new(net)).await.published);
-    assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
-    // An archive error leaves the same window owed and ownership published.
-    chain.fail_chain_id.store(true, Ordering::SeqCst);
-    assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
-    assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
-    chain.fail_chain_id.store(false, Ordering::SeqCst);
-
-    for position in [first + 1, first + 3, last] {
-        // A fresh projection and owner for every pass, as on restart.
-        let out = pass(&small, &url, &NftIndex::new(net)).await;
-        assert!(out.published);
-        assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
-        if position < last {
-            assert_eq!(names().await.unwrap(), old);
-        }
-    }
-    assert_eq!(
-        names().await.unwrap(),
-        [
-            ("1".into(), "Original".into()),
-            ("2".into(), "Later".into())
-        ]
-    );
-    let reads = chain.get_logs.load(Ordering::SeqCst);
-    assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
-    assert_eq!(chain.get_logs.load(Ordering::SeqCst), reads);
-
-    chain.fork(first, 7, vec![]);
-    assert!(
-        publish_nft(&small, &url, &NftIndex::new(net))
-            .await
-            .published
-    );
-    assert!(names().await.unwrap().is_empty());
-    assert_eq!(
-        marker().await.unwrap(),
-        (first as i64 - 1, first as i64 - 1)
-    );
-    db.drop().await;
-}
-
 /// After a reorg rewind and the refold it owes, `land_data` equals a
-/// rebuild of the remaining estate documents, including the creation data.
+/// truncate-and-rebuild of the remaining log: a token whose only Update was
+/// reorged out loses its row, a token with an older Update falls back to it.
 #[tokio::test]
 async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let index = NftIndex::new(ChainNet::Ethereum);
-    let owner = chain_walk::test_owner(&db.pool, &index, &IndexSettings::default()).await;
-    let fold = |since| nft_index::fold(&db.pool, ChainNet::Ethereum, since, &owner);
-    let rows = || {
-        sqlx::query_as::<_, (String, Option<String>, Option<String>, i64, i32)>(
-            "SELECT token_id::text, name, description, updated_block, updated_log
-             FROM shop.land_data ORDER BY token_id",
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET;
+    let update = |block: i64, token: i64, name: &str| {
+        format!(
+            "('ethereum', {block}, 0, {block}, 'land_data', '{land}', '{land}', {token}, NULL, NULL, NULL, NULL, '0,\"{name}\",\"\"')"
         )
-        .fetch_all(&db.pool)
     };
-    let mut conn = db.pool.acquire().await.unwrap();
-    index
-        .write(
-            &mut conn,
-            &[
-                estate_document(100, 1, 1, true, r#"0,"Named","Desc""#),
-                estate_document(100, 2, 2, true, r#"0,"Second","Estate""#),
-            ],
-            &Default::default(),
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) VALUES {}, {}, {}",
+        update(100, 1, "A-old"),
+        update(200, 1, "A-new"),
+        update(201, 2, "B-only-late"),
+    )))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    nft_index::fold(
+        &db.pool,
+        ChainNet::Ethereum,
+        None,
+        &chain_walk::test_owner(
+            &db.pool,
+            &NftIndex::new(ChainNet::Ethereum),
+            &IndexSettings::default(),
         )
-        .await
-        .unwrap();
-    fold(None).await.unwrap();
-
-    index
-        .write(
-            &mut conn,
-            &[
-                estate_document(200, 3, 1, false, "0"),
-                estate_document(201, 4, 2, false, r#"0,"","""#),
-            ],
-            &Default::default(),
+        .await,
+    )
+    .await
+    .unwrap();
+    let rows = |pool: sqlx::PgPool| async move {
+        sqlx::query_as::<_, (String, Option<String>, i64)>(
+            "SELECT token_id::text, name, updated_block FROM shop.land_data ORDER BY token_id",
         )
+        .fetch_all(&pool)
         .await
-        .unwrap();
-    fold(Some(100)).await.unwrap();
-    let expected = vec![
-        (
-            "1".into(),
-            Some("Named".into()),
-            Some("Desc".into()),
-            100,
-            1,
-        ),
-        ("2".into(), Some(String::new()), Some(String::new()), 201, 4),
-    ];
-    assert_eq!(rows().await.unwrap(), expected);
-    sqlx::query("TRUNCATE shop.land_data")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    fold(None).await.unwrap();
-    assert_eq!(rows().await.unwrap(), expected);
-
-    index
-        .write(
-            &mut conn,
-            &[
-                estate_document(210, 5, 1, false, r#"0,"Renamed","New description""#),
-                estate_document(211, 6, 3, true, "0,Late estate,"),
-            ],
-            &Default::default(),
-        )
-        .await
-        .unwrap();
-    fold(Some(201)).await.unwrap();
+        .unwrap()
+    };
     assert_eq!(
-        rows().await.unwrap(),
+        rows(db.pool.clone()).await,
         vec![
-            (
-                "1".into(),
-                Some("Renamed".into()),
-                Some("New description".into()),
-                210,
-                5
-            ),
-            expected[1].clone(),
-            ("3".into(), Some("Late estate".into()), None, 211, 6),
+            ("1".into(), Some("A-new".into()), 200),
+            ("2".into(), Some("B-only-late".into()), 201)
         ]
     );
 
-    index.rewind(&mut conn, 201).await.unwrap();
+    let mut conn = db.pool.acquire().await.unwrap();
+    NftIndex::new(ChainNet::Ethereum)
+        .rewind(&mut conn, 150)
+        .await
+        .unwrap();
     drop(conn);
-    fold(None).await.unwrap();
-    assert_eq!(rows().await.unwrap(), expected);
+    nft_index::fold(
+        &db.pool,
+        ChainNet::Ethereum,
+        None,
+        &chain_walk::test_owner(
+            &db.pool,
+            &NftIndex::new(ChainNet::Ethereum),
+            &IndexSettings::default(),
+        )
+        .await,
+    )
+    .await
+    .unwrap();
+    let after_rewind = rows(db.pool.clone()).await;
+    assert_eq!(
+        after_rewind,
+        vec![("1".into(), Some("A-old".into()), 100)],
+        "token 2 had no Update left at or before the cursor"
+    );
+
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    nft_index::fold(
+        &db.pool,
+        ChainNet::Ethereum,
+        None,
+        &chain_walk::test_owner(
+            &db.pool,
+            &NftIndex::new(ChainNet::Ethereum),
+            &IndexSettings::default(),
+        )
+        .await,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rows(db.pool.clone()).await,
+        after_rewind,
+        "the rewind's result is the truncate-and-rebuild's"
+    );
     db.drop().await;
 }
 
