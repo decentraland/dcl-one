@@ -114,7 +114,7 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
             .ok()
     }
 
-    fn is_system_scene(&self, hash: &str) -> bool {
+    pub fn is_system_scene(&self, hash: &str) -> bool {
         self.system_scenes.as_ref().is_some_and(|ss| {
             ss.scenes
                 .iter()

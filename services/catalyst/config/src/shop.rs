@@ -161,8 +161,12 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
 
+    /// Walk the Polygon Third Party Registry for approved providers and publishing slots.
+    #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_third_party_registry_index_enabled: bool,
+
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
-    /// MANA transfers, sales, committee and rentals walks (30 under the mirror posture).
+    /// MANA transfers, sales, committee, third-party registry and rentals walks (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -754,7 +758,8 @@ mod tests {
             !c.marketplace.marketplace_nft_index_enabled
                 && !c.marketplace.marketplace_trade_events_index_enabled
                 && !c.marketplace.marketplace_sales_index_enabled
-                && !c.marketplace.marketplace_committee_index_enabled,
+                && !c.marketplace.marketplace_committee_index_enabled
+                && !c.marketplace.marketplace_third_party_registry_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(

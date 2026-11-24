@@ -6,7 +6,7 @@
 import figma from 'figma'
 const instance = figma.selectedInstance
 
-const variant = instance.getEnum('Property 1', { Dark: 'dark', Light: 'light' })
+const variant = instance.getEnum('theme', { dark: 'dark', light: 'light' })
 
 export default {
   example: figma.tsx`<Spinner variant="${variant}" />`,

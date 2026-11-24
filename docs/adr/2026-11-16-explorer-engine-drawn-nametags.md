@@ -60,6 +60,21 @@ scene draws none.
   back once the new body is built. A scene entity that only restyles a player gets none, nor do
   the HUD's preview avatars, which a system scene makes. Avatar modifier areas act on players,
   so they do not hide these tags; a scene hides its avatar's tag by hiding the avatar.
+- **A scene's plate is part of the avatar's tag.** `AvatarNametag` on a scene entity asks for a
+  plate over the name of the avatar the entity stands for: the local player, another player, or
+  an avatar the scene made, once its body is built. The avatar carries a `NametagPlate` beside
+  its `NametagContent`, and has its one tag for as long as it has either; the plate is more
+  quads in the tag's mesh, so it is placed, scaled, faded and hidden with the name. It floats
+  over the name's box and stays there while a bubble opens under it. An avatar with no name
+  (a scene avatar with a blank one) shows the plate alone, standing on the anchor. Only the
+  scene on the parcel the local player stands on plates avatars, and it plates another player
+  only while they stand in it too; a portable experience plates no one. While any scene asks
+  for a plate, the plates are worked out every frame from what the local player's scene holds,
+  so a plate goes with its component, its entity, its scene or the player who leaves; the other
+  players' places are read only when that scene plates one of them. A plate is for the player
+  it was written for: an entity id freed by a player who left comes back as a new generation.
+  While a mention's ring shows, the plate stands clear of it. The label is one line, cut with an ellipsis at the plate's widest; colours the scene
+  leaves out are the tag's own, and a border left out takes the fill's.
 - **The anchor on the CPU, the rest in the vertex shader.** After the avatar's bones are final,
   the tag's translation is set to the player's name-tag anchor: the highest of the head, toes and
   hips, plus the height of what the avatar wears above its head bone, measured in the head bone's
@@ -71,8 +86,9 @@ scene draws none.
   around the anchor that covers the mesh at the far end of the range, where it is largest,
   sized against a scene's scale of its avatar. The anchor is worked out in the avatar's own
   units, so a scaled, turned or tilted avatar keeps its tag straight over its head.
-- **A name that should not show is hidden, not removed.** Out of range, hidden by an avatar
-  modifier area, beyond the avatar cap, blocked either way or banned from the scene's room, the
+- **A name that should not show is hidden, not removed.** An area that hides nametags hides the
+  name and its bubble, and leaves a scene's plate standing in the name's place. Out of range,
+  hidden by an avatar modifier area that hides avatars, beyond the avatar cap, blocked either way or banned from the scene's room, the
   local player in first person (with a scene's camera override applied), not visible (its own
   visibility or a parent's), scaled to nothing, or with nametags off:
   the tag's `Visibility` is hidden and the tag is left as it is. A tag out of view is culled by
@@ -96,7 +112,8 @@ scene draws none.
   and the main pass tonemaps them with everything else in the frame.
 - **What a peer sends is bounded and checked before it is drawn.** A bubble shows the first 100
   characters of a message on wrapped lines, with line breaks read as spaces; a community's name
-  shows its first 28 characters and a player's name its first 32. An unclaimed name shows the
+  shows its first 28 characters and a player's name its first 32. A scene's plate shows the
+  first 128 characters of its label, and its colour channels are kept between 0 and 1. An unclaimed name shows the
   last four characters of its address in lower case, and anything after a `#` in the name itself
   is dropped. The verified seal needs a claimed name on a profile that says it has a connected
   wallet. Both flags are the peer's word: nothing confirms them against the catalyst yet.
@@ -185,7 +202,6 @@ them, which halves the work in the frame.
 - Fill `OfficialWallets` with the profile data the dcl-one services send: the social service
   already marks official wallets on community messages.
 - Confirm a claimed name against the catalyst before drawing the verified seal.
-- The SDK's nametag plate (`AvatarNametag`).
 - A fallback font for CJK names.
 - Measure a crowd of twenty or more players before and after, and on a desktop build; decide
   from it whether one draw per tag needs batching.

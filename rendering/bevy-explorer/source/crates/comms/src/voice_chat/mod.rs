@@ -422,7 +422,7 @@ pub struct VoiceChat {
 }
 
 impl VoiceChat {
-    /// The state as the HUD sees it; the mic shows off while the client window lacks focus.
+    /// The call's state; `mic_enabled` is false while `focus` is `NoFocus`.
     pub fn snapshot(
         &self,
         mic: &CallMic,
@@ -582,7 +582,8 @@ fn drive_voice_chat(
     mut commands: Commands,
     mut voice: ResMut<VoiceChat>,
     mut call_mic: ResMut<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: crate::livekit::mic::MicrophoneFocus,
+    mut last_focus: Local<Option<ClientWindowFocus>>,
     mut inputs: ResMut<VoiceInputs>,
     mut system_api: EventReader<SystemApi>,
     mut social_events: EventReader<VoiceEventReceived>,
@@ -891,15 +892,14 @@ fn drive_voice_chat(
     if voice.state_streams.iter().any(|s| s.is_closed()) {
         voice.state_streams.retain(|s| !s.is_closed());
     }
-    let dirty = force_snapshot
-        || changed
-        || connection_changed
-        || call_mic.is_changed()
-        || focus.is_changed();
+    let mic_focus = focus.get();
+    let focus_changed = last_focus.replace(mic_focus) != Some(mic_focus);
+    let dirty =
+        force_snapshot || changed || connection_changed || call_mic.is_changed() || focus_changed;
     if voice.state_streams.is_empty() || !dirty {
         return;
     }
-    let snapshot = voice.snapshot(&call_mic, *focus, &participants);
+    let snapshot = voice.snapshot(&call_mic, mic_focus, &participants);
     for sender in &voice.state_streams {
         let _ = sender.send(snapshot.clone());
     }
@@ -1107,6 +1107,8 @@ fn voice_command(mut input: ConsoleCommand<VoiceCommand>, mut events: EventWrite
 mod tests {
     use std::time::Duration;
 
+    use common::structs::AudioSettings;
+
     use super::*;
 
     fn app() -> App {
@@ -1117,6 +1119,7 @@ mod tests {
             .init_resource::<VoiceChat>()
             .init_resource::<CallMic>()
             .insert_resource(ClientWindowFocus::Focused)
+            .init_resource::<AudioSettings>()
             .init_resource::<VoiceInputs>()
             .init_resource::<SocialClient>()
             .init_resource::<Wallet>()

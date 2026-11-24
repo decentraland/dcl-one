@@ -199,6 +199,14 @@ Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API
 
 Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Builder's committee routes admit only `BUILDER_ADMIN_ADDRESSES` until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee.
 
+Third-party registry upgrade: run `catalyst schema migrate` before deploying the updated index worker.
+Use the mirror posture or set `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED=true` and supply a Polygon
+mainnet RPC via `TRADE_RPC_URLS` (chain 137) or, on mainnet, `RPC_ENDPOINT_POLYGON`. During catch-up,
+API replicas can keep their existing `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` to serve provider lists.
+Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` publishes the full
+registry history, API replicas prefer the native index and can serve manager and slot details.
+The NFT worker supplies wallet holdings for open mappings.
+
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with
 no posture; island, journey and posture-less nodes listed active leases in the explorer backpack

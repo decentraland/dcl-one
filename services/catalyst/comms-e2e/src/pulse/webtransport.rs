@@ -12,7 +12,9 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 use catalyst_comms::pulse::hardening::DisconnectReason;
-use catalyst_comms::pulse::transport::webtransport::client::{Client, ClientConfig, ClientEvent};
+use catalyst_comms::pulse::transport::webtransport::client::{
+    Client, ClientConfig, ClientError, ClientEvent,
+};
 use catalyst_comms::pulse::transport::webtransport::framing::{
     DatagramSequencer, StreamFrameReader, datagram_frame, stream_frame,
 };
@@ -77,6 +79,7 @@ fn run(dial: Dial, shared: Arc<Shared>, commands: Receiver<Command>) {
         dial.local,
     ) {
         Ok(client) => client,
+        Err(ClientError::Closed { code, .. }) => return shared.disconnected(code),
         Err(error) => return shared.transport_failed(format!("WebTransport: {error}")),
     };
     shared.connected();
