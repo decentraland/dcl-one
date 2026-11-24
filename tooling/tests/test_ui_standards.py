@@ -369,7 +369,8 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         self.git('add', '-A')
         self.write_ceiling({ui_standards.KIT_PATHS[0]: 2, ui_standards.KIT_PATHS[1]: 0})
         self.assertEqual(ui_standards.kit_ceiling('HEAD'), [
-            f'{ui_standards.KIT_PATHS[0]}: 2 is above the recorded ceiling of 1; a ceiling is never raised'])
+            f'{ui_standards.KIT_PATHS[0]}: 2 is above the recorded ceiling of 1; a ceiling is never raised',
+            f'{ui_standards.KIT_PATHS[0]}: 2 component files, the base revision has 1; a kit only shrinks'])
 
     def test_kit_ceiling_writer_refuses_a_raise_even_after_the_file_is_deleted(self):
         kit = self.kit('Button.tsx', ceiling=1)
@@ -388,6 +389,26 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         self.assertEqual(ui_standards.kit_ceiling('HEAD', write=True), [])
         self.assertEqual(ui_standards.kit_ceiling('HEAD'), [])
         self.assertEqual(json.loads((self.root / ui_standards.KIT_FILE).read_text())[ui_standards.KIT_PATHS[0]], 1)
+
+    def test_kit_ceiling_fails_when_a_kit_grows_back_under_a_ceiling_a_removal_did_not_lower(self):
+        kit = self.kit('Button.tsx', 'Modal.tsx', ceiling=2)
+        (kit / 'Modal.tsx').unlink()
+        self.git('add', '-A')
+        self.commit('remove a component and keep the ceiling')
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [])
+        (kit / 'Tabs.tsx').write_text('')
+        self.git('add', '-A')
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [
+            f'{ui_standards.KIT_PATHS[0]}: 2 component files, the base revision has 1; a kit only shrinks'])
+
+    def test_kit_ceiling_lets_one_component_replace_another_and_a_kit_the_base_did_not_cap_grow(self):
+        kit = self.kit('Button.tsx', ceiling=1)
+        (kit / 'Button.tsx').unlink()
+        (kit / 'Tabs.tsx').write_text('')
+        self.git('add', '-A')
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [])
+        self.assertEqual(ui_standards.grown_kits({}, {'kit': 1}, {'kit': 3}), [])
+        self.assertEqual(ui_standards.grown_kits({'kit': 3}, {'kit': 1}, {'kit': 1}), [])
 
     def test_kit_ceiling_passes_when_the_base_records_none_and_fails_when_the_file_is_missing(self):
         self.kit('Button.tsx')

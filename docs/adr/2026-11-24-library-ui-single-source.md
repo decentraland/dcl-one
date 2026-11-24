@@ -6,7 +6,7 @@
 
 ## Context
 
-`library/ui` publishes the shared components and foundations as `@dcl/one-ui`, and Sites consumes them. Other surfaces still own a component kit with the same purpose: the `apps/ui3` atoms (used by Creator Hub and the inspector) and components (used by the web Shop and `/play`), the Explorer HUD kit in `library/ui/apps/hud/design` (used by the HUD and the in-world Shop), the inspector's `components/ui`, and `library/ui/apps/sites/shared`. A button, a modal, a spinner or a set of tabs therefore exists in several implementations, each with its own tokens, and a design change has to be made once per kit.
+`library/ui` publishes the shared components and foundations as `@dcl/one-ui`, and Sites consumes them. Other surfaces still own a component kit with the same purpose: the `apps/ui3` atoms (used by Creator Hub and the inspector) and components (used by the web Shop, `/play` and the `apps/ui3` Explorer frames, all served by Sites on React 19), the Explorer HUD kit in `library/ui/apps/hud/design` (used by the HUD and the in-world Shop), the inspector's `components/ui`, and `library/ui/apps/sites/shared`. A button, a modal, a spinner or a set of tabs therefore exists in several implementations, each with its own tokens, and a design change has to be made once per kit.
 
 Two of these surfaces cannot import the public components today. The Explorer HUD build maps only `@dcl/one-ui/foundations`, and its checked input graph refuses CSS Modules composition, sources outside its listed library folders and unmaterialized Git LFS assets, all of which the root entry reaches. Creator Hub and the inspector run React 18, and `@dcl/one-ui` declares React 19 as its peer.
 
@@ -18,7 +18,7 @@ Two of these surfaces cannot import the public components today. The Explorer HU
 - A component that more than one surface needs and the library lacks is written in `library/ui/components` when its first consumer migrates.
 - App-specific UI lives in `library/ui/apps/<app>/` and is built from the shared components and tokens.
 - Every surface imports shared UI from the `@dcl/one-ui` entry and styles with the `--dcl-*` tokens.
-- An app-owned kit whose consumers can already import the entry may only shrink: `apps/ui3/src/components` and `library/ui/apps/sites/shared` (the `KIT_PATHS` of `tooling/ui_standards.py`). `--kit-ceiling` fails when one grows above its recorded ceiling and when a recorded ceiling is above the base revision's. It counts files, so it does not detect one component replacing another: that stays a review finding.
+- An app-owned kit whose consumers can already import the entry may only shrink: `apps/ui3/src/components` and `library/ui/apps/sites/shared` (the `KIT_PATHS` of `tooling/ui_standards.py`). `--kit-ceiling` fails when one grows above its recorded ceiling or above its size at the base revision, and when a recorded ceiling is above the base revision's. It counts files, so it does not detect one component replacing another: that stays a review finding.
 - The `apps/ui3` atoms (which the Creator Hub renderer and the inspector build from), the Explorer HUD kit (`library/ui/apps/hud/design`) and the inspector's `components/ui` keep receiving the components their surfaces need until those surfaces can import the entry. Each joins `KIT_PATHS` in the change that makes the entry importable there.
 - `apps/ui3` is not the destination of any UI, including Creator Hub's and the inspector's.
 
