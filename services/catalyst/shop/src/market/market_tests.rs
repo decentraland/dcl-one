@@ -1494,13 +1494,12 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let (status, body) = get(app(), &format!("/v1/users/{WALLET_A}/wearables/urn-token")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["elements"][0]["tokenId"], owned_token.as_str());
+    // The NAMEs read the nft index this node walks (no subgraph asked):
+    // the wallet holds none.
     let (status, body) = get(app(), &format!("/v1/users/{WALLET_A}/names")).await;
     assert_eq!(
-        (status, body["source"].as_str()),
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Some("marketplace-subgraph")
-        ),
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
         "{body}"
     );
 
@@ -3169,10 +3168,6 @@ async fn every_reader_route_names_its_missing_source_instead_of_answering_empty(
             "/v1/users/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/wearables",
             "nft-index",
         ),
-        (
-            "/v1/users/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/names",
-            "marketplace-subgraph",
-        ),
         ("/v1/catalog", "collections-subgraph:matic"),
         ("/v1/items", "collections-subgraph:matic"),
         // `/v1/collections` and `/v1/contracts` serve the copy their tables
@@ -3190,6 +3185,33 @@ async fn every_reader_route_names_its_missing_source_instead_of_answering_empty(
         assert_eq!(body["source"].as_str(), Some(source), "{uri}: {body}");
         assert_eq!(body["error"], "Service Unavailable", "{uri}");
     }
+    // The NAMEs: on mainnet the nft index is their source even where this
+    // process does not walk it (another may publish into its database), so
+    // a database that does not answer is a failed read; off mainnet without
+    // the subgraph the source is missing.
+    let names = "/v1/users/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/names";
+    let (status, body) = get(app(), names).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("upstream reader unavailable")
+        ),
+        "{body}"
+    );
+    let testnet = state_without_db_settings(Settings {
+        eth_network: "sepolia".into(),
+        ..Settings::for_tests()
+    });
+    let (status, body) = get(market_router(testnet), names).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("marketplace-subgraph")
+        ),
+        "{body}"
+    );
     let (status, body) = get(app(), "/v1/coupons").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (status, body) = get(app(), "/v1/rankings/houses/week").await;
