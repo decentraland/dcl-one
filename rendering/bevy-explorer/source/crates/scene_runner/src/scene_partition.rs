@@ -1,6 +1,5 @@
 use bevy::{
     ecs::{component::HookContext, world::DeferredWorld},
-    platform::collections::HashSet,
     prelude::*,
 };
 
@@ -159,7 +158,6 @@ pub fn publish_download_priorities(
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
-    mut last_active: Local<HashSet<Entity>>,
 ) {
     if !ipfs.reads_download_priorities() {
         return;
@@ -168,10 +166,15 @@ pub fn publish_download_priorities(
         .single()
         .map(|player| containing_scene.get_oow(player))
         .unwrap_or_default();
-    if active == *last_active && ipfs.downloads_held_from().is_some() {
+    // under a hold, publish only when a scene's place among the player's scenes differs from
+    // the key the gate holds for it
+    if ipfs.downloads_held_from().is_some()
+        && scenes.iter().all(|(entity, hash, _)| {
+            active.contains(&entity) == (ipfs.scene_priority(&hash.0) == Some(LoadPriority::TOP))
+        })
+    {
         return;
     }
-    last_active.clone_from(&active);
     let scene_keys = scenes.iter().map(|(entity, hash, partition)| {
         let key = if active.contains(&entity) {
             LoadPriority::TOP

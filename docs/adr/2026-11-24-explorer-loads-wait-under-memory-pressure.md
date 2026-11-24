@@ -27,13 +27,14 @@ a dense area grows the engine until the platform kills it.
   player's own body, wearables and emotes, avatars that system scenes place (the backpack, a
   passport: `PlayerDownloads`), the scenes the player stands in, portables, system scenes, and
   URL loads tagged as the player's: small files every scene shares (the SDK6 adaption layer,
-  fonts) and profile pictures. An NFT image ranks under the scene that shows it, and the NFT
-  dialog that scene opens shares the frame's image. Other avatars, other scenes, stand-ins,
+  fonts) and profile pictures in UI the player opens. An NFT image or a profile picture a
+  scene shows ranks under that scene's hash, and the NFT dialog a scene opens shares its
+  frame's image. Other avatars, other scenes, stand-ins,
   other URL requests and departed scenes keep their place in the queue. A held request is
   granted as soon as it rises out of the held tiers: its hash is registered for the player, the
   player's scene shares its download, or the player walks into its scene. While the hold is on,
-  download priorities are published only when the player's scenes change; other keys only
-  order held requests.
+  download priorities are published only when a scene's place among the player's scenes
+  differs from the key the gate holds for it; other keys only order held requests.
 - **Headless.** The scene server runs no refusal: its reading spans every tenant scene, and
   holding their downloads would leave its colliders behind its clients'.
 - **Idle metadata.** While refusing, collectible metadata that no caller has requested in the
@@ -63,6 +64,10 @@ a dense area grows the engine until the platform kills it.
 
 - Neighbouring scenes stall half-loaded and other avatars keep what they had while the refusal
   lasts; both resume when it ends, the held scenes spawning in the usual loading waves.
+- The player's URL loads rank with the player's scenes at all times, ahead of other avatars and
+  neighbouring scenes even when memory is fine; they are few and small.
+- When the refusal ends, the free slots go out at once on the keys of the last publish, which
+  under the hold tracked only the player's scenes; later grants use fresh keys.
 - The refusal slows growth; it does not cap it. Unaffected: the player's own loads, reads served
   by the disk or web cache (they take no request slot), instantiation of data already
   downloaded, and entity resolution, which posts outside the request slots.

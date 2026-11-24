@@ -10,7 +10,7 @@ use common::{
 };
 use comms::{
     global_crdt::ForeignPlayer,
-    profile::{name_color::UNCLAIMED_NAME_COLOR, ProfileManager, UserProfile},
+    profile::{name_color::UNCLAIMED_NAME_COLOR, ProfileImageOwner, ProfileManager, UserProfile},
 };
 use dcl_component::transform_and_parent::DclTranslation;
 use social::{FriendshipState, SocialClient};
@@ -197,7 +197,7 @@ fn update_marker_images(
     image_owners: Query<Entity, With<MarkerImageNode>>,
 ) {
     for (marker_ent, pending_image, children) in &pending {
-        match profiles.get_image(pending_image.0) {
+        match profiles.get_image(pending_image.0, ProfileImageOwner::Unowned) {
             Err(_) => {
                 commands.entity(marker_ent).remove::<PendingMarkerImage>();
             }

@@ -1859,7 +1859,7 @@ fn open_nft_dialog(
 
         let Ok(context) = scenes.get(*scene) else {
             response.send(Err("No scene".to_owned()));
-            return;
+            continue;
         };
 
         let h_nft = asset_server.load(format!("nft://{}.nft", urlencoding::encode(urn)));
