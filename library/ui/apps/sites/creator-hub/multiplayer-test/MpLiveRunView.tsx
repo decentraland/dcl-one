@@ -1,32 +1,36 @@
-import { LANE_STARTING_NOTE, type MpLane } from "./rules";
-import type { MpBotRow, MpRunPhase, MpTimelineEntry } from "./types";
+import { LANE_STARTING_NOTE, type MpLane } from '../../../../../web-core/multiplayer-test/rules'
+import type {
+  MpBotRow,
+  MpRunPhase,
+  MpTimelineEntry
+} from '../../../../../web-core/multiplayer-test/types'
 
-import "./mpliverunview.css";
+import './mpliverunview.css'
 
 type MpLiveRunViewProps = {
-  runId: string;
-  lane: MpLane;
-  phase: MpRunPhase;
-  detail?: string | null;
-  bots: MpBotRow[];
-  timeline: MpTimelineEntry[];
-  logs: string[];
-  shots: string[];
-  connLost?: boolean;
-  onStop?: () => void;
-};
+  runId: string
+  lane: MpLane
+  phase: MpRunPhase
+  detail?: string | null
+  bots: MpBotRow[]
+  timeline: MpTimelineEntry[]
+  logs: string[]
+  shots: string[]
+  connLost?: boolean
+  onStop?: () => void
+}
 
 const PHASE_LABELS: Record<MpRunPhase, string> = {
-  queued: "Queued",
-  starting: "Starting",
-  running: "Running",
-  analyzing: "Analyzing",
-  done: "Done",
-  failed: "Failed",
-};
+  queued: 'Queued',
+  starting: 'Starting',
+  running: 'Running',
+  analyzing: 'Analyzing',
+  done: 'Done',
+  failed: 'Failed'
+}
 
 function clock(at: number): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour12: false });
+  return new Date(at).toLocaleTimeString(undefined, { hour12: false })
 }
 
 export default function MpLiveRunView({
@@ -39,7 +43,7 @@ export default function MpLiveRunView({
   logs,
   shots,
   connLost = false,
-  onStop,
+  onStop
 }: MpLiveRunViewProps) {
   return (
     <section className="mp-live" data-mp-phase={phase} aria-label="Live run">
@@ -51,13 +55,8 @@ export default function MpLiveRunView({
             {detail ? <span className="mp-live__detail"> &#xB7; {detail}</span> : null}
           </h3>
         </div>
-        {onStop && phase !== "done" && phase !== "failed" && (
-          <button
-            type="button"
-            className="mp-live__stop"
-            data-mp-action="stop"
-            onClick={onStop}
-          >
+        {onStop && phase !== 'done' && phase !== 'failed' && (
+          <button type="button" className="mp-live__stop" data-mp-action="stop" onClick={onStop}>
             Stop run
           </button>
         )}
@@ -65,12 +64,12 @@ export default function MpLiveRunView({
 
       {connLost && (
         <p className="mp-live__warn" role="alert">
-          Sidecar connection lost &#x2014; reconnecting. The run keeps going; updates
-          resume when the sidecar is back.
+          Sidecar connection lost &#x2014; reconnecting. The run keeps going; updates resume when
+          the sidecar is back.
         </p>
       )}
 
-      {(phase === "queued" || phase === "starting") && (
+      {(phase === 'queued' || phase === 'starting') && (
         <p className="mp-live__starting" data-mp-note="starting">
           {LANE_STARTING_NOTE}
         </p>
@@ -96,10 +95,10 @@ export default function MpLiveRunView({
                 {bots.map((b) => (
                   <tr key={b.peer} data-mp-bot={b.peer}>
                     <td>{b.peer}</td>
-                    <td>{b.connected ? "yes" : "no"}</td>
+                    <td>{b.connected ? 'yes' : 'no'}</td>
                     <td>{b.deltas}</td>
-                    <td>{b.synced === null ? "\u{2014}" : b.synced ? "synced" : "pending"}</td>
-                    <td className="mp-live__hash">{b.probe ?? "\u{2014}"}</td>
+                    <td>{b.synced === null ? '\u{2014}' : b.synced ? 'synced' : 'pending'}</td>
+                    <td className="mp-live__hash">{b.probe ?? '\u{2014}'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -121,7 +120,7 @@ export default function MpLiveRunView({
         </section>
       </div>
 
-      {(lane === "engine" || lane === "mixed") && (
+      {(lane === 'engine' || lane === 'mixed') && (
         <section className="mp-live__panel" aria-label="Client screenshots">
           <div className="mp-live__label">Screenshots</div>
           {shots.length === 0 ? (
@@ -141,9 +140,9 @@ export default function MpLiveRunView({
       <section className="mp-live__panel" aria-label="Log tail">
         <div className="mp-live__label">Log tail</div>
         <pre className="mp-live__logs" data-mp-logs="">
-          {logs.length === 0 ? "\u{2026}" : logs.join("\n")}
+          {logs.length === 0 ? '\u{2026}' : logs.join('\n')}
         </pre>
       </section>
     </section>
-  );
+  )
 }

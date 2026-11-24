@@ -325,7 +325,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   frame-rate target and session override, the sampling status, the latest 15 s performance
   snapshot and the frame-time breakdown independently of the panel; `/debug_memory`, and in a
   `performance-profiler` build `/render_state` and `/profile_top`, the rest
-  ([profiling](../docs/guidelines/profiling.md)).
+  ([profiling](../docs/guidelines/profiling.md)). On the web, `/scene_loop_state` reports the
+  scene loop's scheduling (mode, the last loop's deadline source and budget, the frame tail's
+  reserve, the waits' lateness and the scenes whose relays wake) and `/scene_loop_mode
+  <both|relay|deadline|legacy>` switches its mode without a reload
+  ([scheduling](../docs/guidelines/scheduling.md)).
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON

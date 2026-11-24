@@ -246,16 +246,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
 - **The mic pauses while the Explorer lacks focus** (the primary window natively,
-  `document.hasFocus()` on the web), so it never captures while the player is in another app
-  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
-  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
-  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
-  at its next mic state poll (up to 1 s).
+  `document.hasFocus()` on the web) while the Mute Mic in Background setting (Sounds, on by
+  default) is on, so it never captures while the player is in another app or tab: it stops
+  capturing and publishing for nearby voice and calls alike, and resumes when focus returns.
+  The mic setting does not change, and neither pause nor resume plays the mic on/off sound.
+  The HUD shows the paused mic off: the call panel at once, the nearby mic toggle at its next
+  mic state poll (up to 1 s).
   - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
     other clients keep showing the paused speaker unmuted while no audio arrives; the mute
     entry above holds only for a mute the player chooses.
-  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
-    settings ("mute mic in background", on by default); the Explorer has no such setting.
+  - With the setting off, the mic stays live without focus, for nearby voice and calls alike.
+  - unity-explorer's setting of the same name pauses only the nearby mic.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
@@ -584,6 +585,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cover in the saved image, as unity-explorer computes it; the catalyst's camera-reel service parses
   the metadata into a struct without that field, so it is not stored. Kept for parity with the
   upstream service's clients.
+- **The photo viewer (#2073).** Its layout and numbers follow unity-explorer's, with four
+  differences. The info panel shows a loading view while a photo's details load; unity-explorer
+  never shows one. The owner's name opens their passport; unity-explorer's owner button cannot be
+  reached. A person's row is disabled for guests, because the
+  profile store cannot tell a profile that is missing from one still loading, which is the case
+  unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
+  accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
+  unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player

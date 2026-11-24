@@ -6,14 +6,17 @@ use std::sync::{
     Arc, Mutex,
 };
 
-use bevy::{ecs::relationship::Relationship, prelude::*};
-use common::structs::{ClientWindowFocus, MicState, SystemAudio};
+use bevy::{
+    ecs::{relationship::Relationship, system::SystemParam},
+    prelude::*,
+};
+use common::structs::{AudioSettings, ClientWindowFocus, MicState, SystemAudio};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
 use {
     bevy::render::view::RenderLayers,
-    common::{structs::AudioSettings, util::AsH160, util::VolumePanning},
+    common::{util::AsH160, util::VolumePanning},
     livestream_manager::AudioTransmitterVolume,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -333,6 +336,23 @@ fn suppress_nearby_voice_on_refusal(
     }
 }
 
+/// The client window's focus as [`AudioSettings::microphone_focus`] adjusts it.
+#[derive(SystemParam)]
+pub(crate) struct MicrophoneFocus<'w> {
+    focus: Res<'w, ClientWindowFocus>,
+    audio: Res<'w, AudioSettings>,
+}
+
+impl MicrophoneFocus<'_> {
+    pub(crate) fn get(&self) -> ClientWindowFocus {
+        self.audio.microphone_focus(self.window())
+    }
+
+    fn window(&self) -> ClientWindowFocus {
+        *self.focus
+    }
+}
+
 /// While the scene blocks nearby voice, only the call's mic can be the one that stopped by choice.
 fn mic_off_pings(scene_blocked: bool, call_was_transmitting: bool) -> bool {
     !scene_blocked || call_was_transmitting
@@ -344,10 +364,11 @@ fn transmission_state(
     microphone_transmission_state: Res<State<MicrophoneTransmissionState>>,
     mut next_state: ResMut<NextState<MicrophoneTransmissionState>>,
     mut last: ResMut<LastTransmission>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
 ) {
+    let focus = focus.get();
     let mut transmitting = false;
     let mut call = false;
     for (publication, room) in &tracks {
@@ -361,8 +382,8 @@ fn transmission_state(
         last.call = call;
     }
     // the pause ends on focus with nothing left to resume or a mic change since
-    if *focus == ClientWindowFocus::Focused
-        && (!can_capture_microphone(&mic, &call_mic, *focus)
+    if focus == ClientWindowFocus::Focused
+        && (!can_capture_microphone(&mic, &call_mic, focus)
             || mic.is_changed()
             || call_mic.is_changed())
     {
@@ -370,7 +391,7 @@ fn transmission_state(
     }
     if !transmitting && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
     {
-        last.focus_paused = *focus == ClientWindowFocus::NoFocus;
+        last.focus_paused = focus == ClientWindowFocus::NoFocus;
         next_state.set(MicrophoneTransmissionState::Disabled);
     } else if transmitting
         && microphone_transmission_state.get() == &MicrophoneTransmissionState::Disabled
@@ -520,9 +541,9 @@ fn enable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
 ) {
-    if can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
+    if can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(focus.get())) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -603,9 +624,9 @@ fn disable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
 ) {
-    if !can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
+    if !can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(focus.get())) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -667,7 +688,7 @@ fn reconcile_publications(
     )>,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
     permission: Res<State<MicrophonePermission>>,
     availability: Res<State<MicrophoneAvailability>>,
     drain: Res<MicrophoneDrain>,
@@ -675,7 +696,7 @@ fn reconcile_publications(
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
 ) {
-    let enabled = microphone_routes_open(*focus, &mic, *permission.get(), *availability.get());
+    let enabled = microphone_routes_open(focus.get(), &mic, *permission.get(), *availability.get());
     let eligible = |room: Entity, participant: &LivekitParticipant| {
         rooms.get(room).is_ok_and(|room| {
             enabled
@@ -1439,6 +1460,7 @@ mod routing_tests {
             .insert_resource(mic_state(true, true))
             .init_resource::<CallMic>()
             .insert_resource(ClientWindowFocus::Focused)
+            .init_resource::<AudioSettings>()
             .add_systems(Startup, add_ping_systems)
             .add_systems(Update, transmission_state);
         let room = app.world_mut().spawn_empty().id();
@@ -1499,5 +1521,13 @@ mod routing_tests {
         app.world_mut().resource_mut::<CallMic>().enabled = true;
         transmit(true);
         assert_eq!(chimes(&mut app), 1, "the player's call mic starts");
+
+        // Mute Mic in Background off: a stop without focus chimes
+        app.world_mut()
+            .resource_mut::<AudioSettings>()
+            .mute_mic_in_background = false;
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 1, "the player closes the mic while away");
     }
 }

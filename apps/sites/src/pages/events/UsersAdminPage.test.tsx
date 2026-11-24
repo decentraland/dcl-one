@@ -4,17 +4,17 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { postJSON } from "@/data/lib/catalyst/client";
+import { CatalystError, postJSON } from "@/data/lib/catalyst/client";
 import type { EventProfile } from "@/data/lib/catalyst/places/event-management";
-import { currentPath, fakeEventsApi, makeIdentity, MODERATOR, readsOf, renderAdminPage, type FakeEventsApi } from "./admin.test-utils";
+import { currentPath, fakeEventsApi, makeIdentity, MODERATOR, readsOf, renderAdminPage, type FakeEventsApi } from "@/features/explorer/event-management/admin.test-utils";
 import UsersAdminPage from "./UsersAdminPage";
 
 const auth = vi.hoisted(() => ({ identity: null as AuthIdentity | null, isConnected: false }));
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
 vi.mock("@/data/lib/auth/session", () => ({ getIdentity: () => auth.identity }));
-vi.mock("../../components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
-vi.mock("../../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("@/data/lib/catalyst/client", async (original) => ({
   ...await original<typeof import("@/data/lib/catalyst/client")>(),
   postJSON: vi.fn(), signedGetJSON: vi.fn(),
@@ -68,6 +68,19 @@ describe("when opening the Users page", () => {
     it("should redirect to /events", async () => {
       renderAdminPage(<UsersAdminPage />, PATH);
       await waitFor(() => expect(currentPath()).toBe("/events"));
+    });
+  });
+
+  describe("and the list of grants fails for a reason other than a refusal", () => {
+    beforeEach(() => { api.failNext.profiles = new CatalystError("Grants unavailable", LIST, 503); });
+
+    it("should offer a retry instead of redirecting, and list the accounts once it succeeds", async () => {
+      renderAdminPage(<UsersAdminPage />, PATH);
+      expect((await screen.findByRole("alert")).textContent).toBe("Grants unavailable");
+      expect(currentPath()).toBe(PATH);
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(await screen.findByRole("table", { name: "Users" })).toBeTruthy();
+      expect(readsOf(LIST)).toBe(2);
     });
   });
 

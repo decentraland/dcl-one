@@ -48,6 +48,23 @@ describe('gallery domain', () => {
     expect(h.session().gallery.metas['g1']?.sceneName).toBe('Genesis Plaza')
   })
 
+  it("loadWearables resolves a photo person's urns, and null when the bridge fails them", async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const urns = ['urn:decentraland:matic:collections-v2:0xabc:0']
+    const wearable = { urn: urns[0], name: 'Tiara', rarity: 'epic', category: 'tiara', equipped: true, shopUrl: 'https://shop/item' }
+    const read = h.session().gallery.loadWearables(urns)
+    const req = h.driver.last('getGalleryWearables') as { requestId: number }
+    expect(req).toMatchObject({ kind: 'getGalleryWearables', urns })
+    h.driver.emit({ kind: 'galleryWearables', requestId: req.requestId, ok: true, wearables: [wearable] })
+    await expect(read).resolves.toEqual([wearable])
+
+    const failed = h.session().gallery.loadWearables(urns)
+    const again = h.driver.last('getGalleryWearables') as { requestId: number }
+    h.driver.emit({ kind: 'galleryWearables', requestId: again.requestId, ok: false, wearables: [] })
+    await expect(failed).resolves.toBeNull()
+  })
+
   it('remove and setPublic send their writes and resolve with the outcome', async () => {
     const h = renderSession()
     await enterAsGuest(h)

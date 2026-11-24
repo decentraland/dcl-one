@@ -56,6 +56,20 @@ class WebToolsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Unexpected wasm-bindgen version'):
                 tools.install('wasm-bindgen', Path(temporary))
 
+    def test_test_runner_comes_from_the_binding_generator_release(self):
+        generator, runner = tools.TOOLS['wasm-bindgen'], tools.TOOLS['wasm-bindgen-test-runner']
+        self.assertEqual(runner[:3], generator[:3])
+        self.assertEqual(runner[3], generator[3].rsplit('/', 1)[0] + '/wasm-bindgen-test-runner')
+        data = self.archive('release/wasm-bindgen-test-runner')
+        pin = ('0.2.114', 'https://example.invalid/tool', hashlib.sha256(data).hexdigest(),
+               'release/wasm-bindgen-test-runner')
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.dict(tools.TOOLS, {'wasm-bindgen-test-runner': pin}), \
+                patch.object(tools.protoc, 'download', return_value=data), \
+                patch.object(tools.subprocess, 'check_output', return_value='wasm-bindgen-test-runner 0.2.114\n'):
+            directory = Path(temporary)
+            tools.install('wasm-bindgen-test-runner', directory)
+            self.assertEqual(list(directory.iterdir()), [directory / 'wasm-bindgen-test-runner'])
 
     def wasm_opt_output(self, output):
         data = self.archive('release/bin/wasm-opt')
