@@ -48,6 +48,7 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
         app.init_resource::<Collectibles<T>>()
             .init_asset::<Collectible<T>>()
             .init_asset::<CollectibleData<T>>()
+            .init_resource::<LoadRefusal>()
             .add_systems(Update, (request_collectibles::<T>, release_idle_data::<T>));
     }
 }
@@ -55,11 +56,11 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
 /// While loads wait for memory, drop the metadata (name, thumbnail, flags) of collectibles no
 /// one has asked for in the last few frames; a later request loads it again.
 fn release_idle_data<T: CollectibleType>(
-    refusal: Option<Res<LoadRefusal>>,
+    refusal: Res<LoadRefusal>,
     mut collectibles: ResMut<Collectibles<T>>,
     frame: Res<FrameCount>,
 ) {
-    if refusal.is_some_and(|refusal| refusal.refusing) {
+    if refusal.refusing {
         collectibles.release_idle_data(frame.0);
     }
 }
@@ -163,7 +164,7 @@ impl<T: CollectibleType> Collectibles<T> {
     }
 
     /// Drop the metadata handles no `get_data` call has renewed by `frame`.
-    pub fn release_idle_data(&mut self, frame: u32) {
+    fn release_idle_data(&mut self, frame: u32) {
         let count = self.data_cache.len();
         self.data_cache.retain(|_, (expiry, _)| *expiry >= frame);
         if self.data_cache.len() != count {

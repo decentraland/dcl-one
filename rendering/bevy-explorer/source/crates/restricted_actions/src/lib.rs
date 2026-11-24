@@ -1883,7 +1883,8 @@ fn show_nft_dialog(
             commands.entity(ent).remove::<NftDialogSpawn>();
 
             let url = &nft.image_url;
-            let ipfs_path = IpfsPath::new_from_url(url, "image");
+            // the player opened the dialog: downloaded with the player's loads
+            let ipfs_path = IpfsPath::new_from_url(url, "image").with_player_slot_owner();
             let h_image = asset_server.load::<Image>(PathBuf::from(&ipfs_path));
 
             let creator = nft.creator.clone().unwrap_or("unknown".to_owned());

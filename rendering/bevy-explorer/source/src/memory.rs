@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common::{
-    memory::{LoadRefusal, MemorySample, MemoryStatus},
+    memory::{LoadRefusal, MemoryPressure, MemorySample, MemoryStatus},
     partition::Tier,
 };
 use ipfs::IpfsResource;
@@ -24,16 +24,18 @@ impl Plugin for MemoryStatusPlugin {
     }
 }
 
-/// Advances [`LoadRefusal`] from the reading and, on a change, holds or releases every
-/// download but the player's.
+/// Advances [`LoadRefusal`] from the reading and, when refusal starts or ends, holds or releases
+/// every download but the player's.
 fn update_load_refusal(
     status: Res<MemoryStatus>,
+    time: Res<Time<Real>>,
     mut refusal: ResMut<LoadRefusal>,
     ipfs: Option<Res<IpfsResource>>,
 ) {
     let reading = status.reading();
-    let next = refusal.next(reading);
-    if next == *refusal {
+    let next = refusal.next(reading, time.elapsed());
+    if next.refusing == refusal.refusing {
+        refusal.set_if_neq(next);
         return;
     }
     match reading {
@@ -41,6 +43,10 @@ fn update_load_refusal(
             "engine memory full ({} of {} MiB): new scenes and other players' loads wait",
             reading.used_bytes >> 20,
             reading.cap_mib
+        ),
+        Some(reading) if reading.pressure() == MemoryPressure::Warning => info!(
+            "engine memory not full for {} s: loads resume",
+            LoadRefusal::WARNING_HOLD.as_secs()
         ),
         Some(_) => info!("engine memory below the warning threshold: loads resume"),
         None => info!("engine memory reading unavailable: loads resume"),

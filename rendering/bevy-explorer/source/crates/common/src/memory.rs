@@ -1,6 +1,6 @@
 //! Client memory as observed by the engine. All consumers read the same sample.
 
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::Duration};
 
 use bevy::prelude::{DetectChangesMut, Mut, Resource};
 
@@ -131,18 +131,35 @@ impl MemoryStatus {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Resource)]
 pub struct LoadRefusal {
     pub refusing: bool,
+    /// When the reading was last `Full`, on the clock `next` is given.
+    pub full_at: Duration,
 }
 
 impl LoadRefusal {
-    /// On at `Full`, held through `Warning`, off at `Normal`, `Abundance` or with no reading.
-    /// The gap between the two thresholds keeps a reading at the full threshold from admitting
-    /// and refusing on alternate samples.
-    pub fn next(self, reading: Option<MemoryReading>) -> Self {
-        let refusing = match reading.map(|reading| reading.pressure()) {
-            Some(MemoryPressure::Full) => true,
-            Some(MemoryPressure::Warning) => self.refusing,
-            Some(MemoryPressure::Normal | MemoryPressure::Abundance) | None => false,
-        };
-        Self { refusing }
+    /// How long a refusal outlasts the last `Full` reading while the reading stays in `Warning`.
+    /// Freed memory can stay resident, so the reading may never fall below the warning threshold
+    /// once it has risen past it; without a limit, loads would wait for the rest of the session.
+    pub const WARNING_HOLD: Duration = Duration::from_secs(30);
+
+    /// On at `Full`; held through `Warning` for up to [`Self::WARNING_HOLD`] after the last `Full`
+    /// reading; off at `Normal`, `Abundance` or with no reading. The gap between the two
+    /// thresholds keeps a reading at the full threshold from admitting and refusing on alternate
+    /// samples.
+    pub fn next(self, reading: Option<MemoryReading>, now: Duration) -> Self {
+        match reading.map(|reading| reading.pressure()) {
+            Some(MemoryPressure::Full) => Self {
+                refusing: true,
+                full_at: now,
+            },
+            Some(MemoryPressure::Warning)
+                if now.saturating_sub(self.full_at) < Self::WARNING_HOLD =>
+            {
+                self
+            }
+            _ => Self {
+                refusing: false,
+                ..self
+            },
+        }
     }
 }

@@ -449,12 +449,11 @@ impl IpfsAssetServer<'_, '_> {
     }
 
     /// An uncached url every scene of a kind needs to start (the SDK6 adaption layer). Its
-    /// requests rank under [`SCENE_RUNTIME_OWNER`], with the player's scenes, so they are not
-    /// held while engine memory is full; the path names no scene, so every scene shares one load.
+    /// requests rank with the player's loads, so they are not held while engine memory is full;
+    /// the path names no scene, so every scene shares one load.
     pub fn load_scene_runtime_url<T: IpfsAsset>(&self, url: &str) -> Handle<T> {
         let ext = T::ext();
-        let ipfs_path = IpfsPath::new_from_url_uncached(url, ext)
-            .with_keyvalue(IpfsKey::SlotOwner, SCENE_RUNTIME_OWNER.to_owned());
+        let ipfs_path = IpfsPath::new_from_url_uncached(url, ext).with_player_slot_owner();
         self.server.load(PathBuf::from(&ipfs_path))
     }
 
@@ -1165,10 +1164,6 @@ pub struct IpfsIo {
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
 
-/// The request-slot owner of the files every scene runtime of a kind needs: registered for the
-/// session at the player's scenes' rank ([`IpfsAssetServer::load_scene_runtime_url`]).
-pub const SCENE_RUNTIME_OWNER: &str = "scene-runtime";
-
 impl IpfsIo {
     pub fn new(
         is_preview: bool,
@@ -1182,7 +1177,7 @@ impl IpfsIo {
     ) -> Self {
         let (sender, receiver) = tokio::sync::watch::channel(None);
         let request_slots = PriorityGate::new(num_slots);
-        request_slots.register(SCENE_RUNTIME_OWNER, LoadPriority::TOP);
+        request_slots.register(ipfs_path::PLAYER_SLOT_OWNER, LoadPriority::TOP);
 
         Self {
             is_preview,

@@ -1,5 +1,6 @@
 use bevy::{
     ecs::{component::HookContext, world::DeferredWorld},
+    platform::collections::HashSet,
     prelude::*,
 };
 
@@ -138,6 +139,8 @@ pub fn update_scene_partitions(
 /// only on a frame in which a download waits for or holds a slot: a grant that chooses between
 /// downloads happens at an enqueue while others wait or at a release, so it reads this frame's
 /// keys unless the gate was idle when the frame began, and the steady state costs nothing.
+/// While engine memory is full, held requests keep the gate busy; then it publishes only on a
+/// frame in which a partition, a holder or the player's scenes changed.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(
@@ -156,6 +159,19 @@ pub fn publish_download_priorities(
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
+    (changed, mut last_active): (
+        Query<
+            (),
+            Or<(
+                Changed<Partition>,
+                Changed<SceneHash>,
+                Changed<PartitionedDownloads>,
+                Changed<PartitionedEmoteDownloads>,
+                Changed<PlayerDownloads>,
+            )>,
+        >,
+        Local<HashSet<Entity>>,
+    ),
 ) {
     if !ipfs.reads_download_priorities() {
         return;
@@ -164,6 +180,10 @@ pub fn publish_download_priorities(
         .single()
         .map(|player| containing_scene.get_oow(player))
         .unwrap_or_default();
+    if ipfs.downloads_held_from().is_some() && changed.is_empty() && active == *last_active {
+        return;
+    }
+    last_active.clone_from(&active);
     let scene_keys = scenes.iter().map(|(entity, hash, partition)| {
         let key = if active.contains(&entity) {
             LoadPriority::TOP

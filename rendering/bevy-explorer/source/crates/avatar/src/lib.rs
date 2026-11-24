@@ -123,6 +123,8 @@ use dcl_component::{
 #[cfg(feature = "explorer")]
 use dcl_types::interface::{ComponentPosition, CrdtType};
 #[cfg(feature = "explorer")]
+use ipfs::partition::PlayerDownloads;
+#[cfg(feature = "explorer")]
 use ipfs::EntityDefinition;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
@@ -131,8 +133,8 @@ use ipfs::{
 };
 #[cfg(feature = "explorer")]
 use scene_runner::{
-    renderer_context::RendererSceneContext, update_world::AddCrdtInterfaceExt, util::ConsoleRelay,
-    ContainingScene, SceneEntity,
+    initialize_scene::SuperUserScene, renderer_context::RendererSceneContext,
+    update_world::AddCrdtInterfaceExt, util::ConsoleRelay, ContainingScene, SceneEntity,
 };
 
 use crate::{
@@ -277,20 +279,30 @@ pub struct AvatarLoadReport {
 }
 
 /// Copies the scene's bounds and hash onto a scene-placed avatar whenever its selection changes.
+/// An avatar a system scene places (the backpack, a passport) is a preview the player opened, so
+/// its downloads are the player's.
 #[cfg(feature = "explorer")]
 fn sync_avatar_scene_context(
     mut commands: Commands,
     changed: Query<(Entity, &AvatarSelection), Changed<AvatarSelection>>,
     contexts: Query<&RendererSceneContext>,
+    super_user_scenes: Query<(), With<SuperUserScene>>,
 ) {
     for (entity, selection) in changed.iter() {
-        let Some(ctx) = selection.scene.and_then(|scene| contexts.get(scene).ok()) else {
+        let Some(scene) = selection.scene else {
             continue;
         };
-        commands.entity(entity).try_insert(AvatarSceneContext {
+        let Ok(ctx) = contexts.get(scene) else {
+            continue;
+        };
+        let mut avatar = commands.entity(entity);
+        avatar.try_insert(AvatarSceneContext {
             bounds: ctx.scene_bounds.clone(),
             hash: ctx.hash.to_string(),
         });
+        if super_user_scenes.contains(scene) {
+            avatar.try_insert(PlayerDownloads);
+        }
     }
 }
 

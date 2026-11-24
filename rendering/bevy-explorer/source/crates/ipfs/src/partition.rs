@@ -37,8 +37,8 @@ pub struct PartitionedDownloads(pub Vec<String>);
 )]
 pub struct PartitionedEmoteDownloads(pub Vec<String>);
 
-/// Marks an avatar that is not the player whose downloads are the player's own (a preview the
-/// player opened: the backpack, a passport): they rank with the player's avatar, so they do not
+/// Marks an avatar that is not the player whose downloads are the player's own (a preview a system
+/// scene places: the backpack, a passport): they rank with the player's avatar, so they do not
 /// wait while engine memory is full.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct PlayerDownloads;

@@ -97,6 +97,7 @@ impl Plugin for SceneLifecyclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentImposterScene>();
         app.init_resource::<RefusedScenes>();
+        app.init_resource::<LoadRefusal>();
         app.init_resource::<CurrentSceneLoading>();
         app.init_resource::<LiveScenes>();
         app.init_resource::<ScenePointers>();
@@ -1779,11 +1780,7 @@ pub fn process_scene_lifecycle(
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
     bans: SceneBanGate,
-    (time, load_refusal, mut refused_scenes): (
-        Res<Time>,
-        Option<Res<LoadRefusal>>,
-        ResMut<RefusedScenes>,
-    ),
+    (time, load_refusal, mut refused_scenes): (Res<Time>, Res<LoadRefusal>, ResMut<RefusedScenes>),
     config: Res<AppConfig>,
 ) {
     // counted afresh each frame, also on a frame that returns early
@@ -2011,7 +2008,7 @@ pub fn process_scene_lifecycle(
 
     // while engine memory is full no new world scene spawns: the player's own scene, portables
     // and system scenes still do. Spawned scenes are kept; an imposter bake's scene waits too
-    if load_refusal.is_some_and(|refusal| refusal.refusing) {
+    if load_refusal.refusing {
         required_scene_ids.retain(|scene, super_user| {
             let admitted = *super_user
                 || current_scene.as_ref() == Some(scene)

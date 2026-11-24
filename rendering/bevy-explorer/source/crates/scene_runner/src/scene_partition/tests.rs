@@ -746,3 +746,43 @@ fn overhead_of_publishing_at_a_busy_plaza() {
         "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, keys written in place); {idle:?} with none (partitions only)"
     );
 }
+
+#[test]
+fn a_hold_publishes_only_on_a_frame_with_a_change() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["worn".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+    world
+        .resource::<IpfsResource>()
+        .hold_downloads_from(Some(Tier::Avatar));
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+    let publish = world.register_system(publish_download_priorities);
+    world.run_system(publish).unwrap();
+    let priority = |world: &World| world.resource::<IpfsResource>().scene_priority("worn");
+    assert_eq!(priority(&world), Some(near.load_priority(Tier::Avatar)));
+
+    // a key written behind the publisher's back survives a frame with no change
+    world
+        .resource::<IpfsResource>()
+        .update_download_priorities([("worn", LoadPriority::OTHER)]);
+    world.run_system(publish).unwrap();
+    assert_eq!(priority(&world), Some(LoadPriority::OTHER));
+
+    let farther = PartitionData {
+        parcel_distance: 2,
+        ..near
+    };
+    world.get_mut::<Partition>(avatar).unwrap().0 = farther;
+    world.run_system(publish).unwrap();
+    assert_eq!(priority(&world), Some(farther.load_priority(Tier::Avatar)));
+}

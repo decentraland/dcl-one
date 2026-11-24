@@ -440,6 +440,10 @@ pub enum IpfsKey {
     SlotOwner,
 }
 
+/// The request-slot owner of the player's loads that name no scene, registered for the session
+/// with the player's scenes' rank.
+pub(crate) const PLAYER_SLOT_OWNER: &str = "player";
+
 /// The [`IpfsKey::Part`] of a glTF loaded for its colliders only (`scene_lod`).
 pub const COLLIDERS_PART: &str = "colliders";
 
@@ -614,6 +618,17 @@ impl IpfsPath {
         self
     }
 
+    /// Rank this load's requests under `owner` (a scene hash) in the request slots.
+    pub fn with_slot_owner(self, owner: &str) -> Self {
+        self.with_keyvalue(IpfsKey::SlotOwner, owner.to_owned())
+    }
+
+    /// Rank this load's requests with the player's own, which do not wait while engine memory is
+    /// full: files the player's scene needs whichever scene asks, and UI the player opens.
+    pub fn with_player_slot_owner(self) -> Self {
+        self.with_slot_owner(PLAYER_SLOT_OWNER)
+    }
+
     pub fn to_indexdb(&self) -> Option<String> {
         match &self.ipfs_type {
             IpfsType::IndexDb { file_path } => Some(file_path.clone()),
@@ -709,7 +724,7 @@ impl IpfsPath {
 
     /// The hash the file's requests rank under in the request slots: its [`IpfsKey::SlotOwner`],
     /// else its scene.
-    pub fn slot_owner(&self) -> Option<&str> {
+    pub(crate) fn slot_owner(&self) -> Option<&str> {
         self.get(&IpfsKey::SlotOwner).or_else(|| self.scene_hash())
     }
 
@@ -910,7 +925,7 @@ mod tests {
 
     use super::{
         content_file_path, is_http_url, resolve_content_uri, CacheKey, ContentPathExt, IpfsKey,
-        IpfsPath, IpfsType, COLLIDERS_PART,
+        IpfsPath, IpfsType, COLLIDERS_PART, PLAYER_SLOT_OWNER,
     };
     use crate::{ContentMap, IpfsContext, IpfsEntity};
 
@@ -1323,5 +1338,28 @@ mod tests {
 
         let by_url = IpfsPath::new_from_url("https://example.com/a.png", "png");
         assert!(matches!(by_url.cache_key(&context), Some(CacheKey::Url(_))));
+    }
+    #[test]
+    fn a_slot_owner_survives_the_asset_path_and_names_the_requests_owner() {
+        let by_url = IpfsPath::new_from_url("https://example.com/a.png", "png");
+        assert_eq!(by_url.slot_owner(), None);
+
+        let owned = by_url.with_slot_owner("bafyscene");
+        let parsed = IpfsPath::new_from_path(&PathBuf::from(&owned))
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.slot_owner(), Some("bafyscene"));
+
+        let content = IpfsPath::new(IpfsType::new_content_file(
+            "bafyscene".to_owned(),
+            "a.glb".to_owned(),
+        ));
+        assert_eq!(content.slot_owner(), Some("bafyscene"));
+        assert_eq!(
+            IpfsPath::new_from_url("https://example.com/b.png", "png")
+                .with_player_slot_owner()
+                .slot_owner(),
+            Some(PLAYER_SLOT_OWNER)
+        );
     }
 }

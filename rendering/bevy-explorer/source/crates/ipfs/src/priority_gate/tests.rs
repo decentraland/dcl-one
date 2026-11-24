@@ -765,3 +765,45 @@ fn a_ticket_shared_with_a_player_scene_is_granted_through_it() {
     gate.join(&ticket, scene("player-scene"));
     assert!(granted(&ticket).is_some());
 }
+
+#[test]
+fn a_released_slot_passes_held_tickets_for_a_later_unheld_one() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("neighbour", key(1, false, 100.0)),
+            ("player-scene", LoadPriority::TOP),
+        ],
+    );
+    let holder = gate.try_acquire().unwrap();
+    let neighbour = gate.ticket(scene("neighbour"));
+    let player_scene = gate.ticket(scene("player-scene"));
+    gate.hold_from(Some(Tier::Avatar));
+
+    drop(holder);
+    assert!(granted(&neighbour).is_none());
+    assert!(granted(&player_scene).is_some());
+}
+
+#[test]
+fn a_reader_from_the_players_scene_lifts_a_held_download() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("neighbour", key(1, false, 100.0)),
+            ("player-scene", LoadPriority::TOP),
+        ],
+    );
+    gate.hold_from(Some(Tier::Avatar));
+    let (registration, attempts) = DownloadReaders::first(&gate, scene("neighbour"), None, None);
+    let ticket = attempts.first.as_ref().unwrap();
+    assert!(granted(ticket).is_none());
+
+    let _player = registration
+        .readers
+        .try_register(scene("player-scene"))
+        .unwrap();
+    assert!(granted(ticket).is_some());
+}

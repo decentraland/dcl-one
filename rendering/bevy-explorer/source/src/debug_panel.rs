@@ -109,7 +109,7 @@ fn debug_memory(
     materials: Res<Assets<SceneMaterial>>,
     images: Res<Assets<Image>>,
     (refusal, refused_scenes, ipfs): (
-        Option<Res<LoadRefusal>>,
+        Res<LoadRefusal>,
         Option<Res<RefusedScenes>>,
         Option<Res<IpfsResource>>,
     ),
@@ -200,7 +200,7 @@ fn debug_memory(
         ])),
         "textures": current_scene_content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
         "meshes": current_scene_content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
-        "refusing": refusal.map(|r| r.refusing),
+        "refusing": refusal.refusing,
         "refusedScenes": refused_scenes.map(|r| r.0),
         "heldFrom": ipfs.as_ref().map(|ipfs| ipfs.downloads_held_from().map_or("none".to_owned(), |tier| format!("{tier:?}"))),
         "unavailable": {
@@ -214,7 +214,6 @@ fn debug_memory(
             "jsHeap": if cfg!(target_arch = "wasm32") { "No running scene reports a heap: this browser has no memory API." } else { "No running scene has reported a heap yet." },
             "textures": "The player is not on a parcel scene.",
             "meshes": "The player is not on a parcel scene.",
-            "refusing": "The memory plugin is not running.",
             "refusedScenes": "The scene lifecycle is not running.",
             "heldFrom": "The content loader is not running.",
         }
