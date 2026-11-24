@@ -160,14 +160,47 @@ impl Plugin for LoopPacingPlugin {
     }
 }
 
+/// Where a scene loop's deadline came from ([`LoopPacing::start_loop`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeadlineFrom {
+    /// The deadline mode: a frame target after the frame's start, less the tail's reserve.
+    FrameStart,
+    /// The grid: the mode does not take the deadline from the frame's start.
+    GridByMode,
+    /// The grid: the deadline mode before the tail is measured.
+    GridWithoutReserve,
+    /// The grid: the deadline mode with an uncapped frame rate.
+    GridUncapped,
+}
+
+impl DeadlineFrom {
+    /// As the debug panel shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FrameStart => "Frame start",
+            Self::GridByMode => "Grid (this mode keeps it)",
+            Self::GridWithoutReserve => "Grid (no tail reserve yet)",
+            Self::GridUncapped => "Grid (uncapped frame rate)",
+        }
+    }
+}
+
+/// A scene loop's budget, from its start to its deadline, and where the deadline came from, both
+/// set when the loop starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LastLoop {
+    pub budget: Duration,
+    pub deadline_from: DeadlineFrom,
+}
+
 /// The web scene loop across frames: the frame's start, the loop's last end and budget, the
 /// frame's tail and the lateness of the loop's timed waits.
 #[derive(bevy::prelude::Resource, Default)]
 pub struct LoopPacing {
     frame_start: Option<Instant>,
     loop_end: Option<Instant>,
-    // the last loop's, from its start to its deadline, for the debug panel
-    budget: Option<Duration>,
+    // the last loop's, for the debug panel
+    last_loop: Option<LastLoop>,
     // from the previous frame's handoff to this frame's start, for the debug panel: the engine
     // worker's work between frames (the runner, its event loop's tasks) and, under a frame rate
     // cap, its wait for the cap's next frame; the reserve covers neither
@@ -195,17 +228,47 @@ impl LoopPacing {
         }
     }
 
-    /// The deadline mode's deadline for a loop that starts at `loop_start`: from the frame's start
-    /// ([`frame_deadline`]) once the tail is measured and the frame rate is capped (`frame`, its
-    /// target), else `grid` ([`super::grid_deadline`]).
-    pub fn deadline(&self, grid: Instant, loop_start: Instant, frame: Option<Duration>) -> Instant {
-        match (frame, self.frame_start) {
-            (Some(frame), Some(frame_start)) => match self.tail.reserve(frame) {
-                Some(reserve) => frame_deadline(frame_start, loop_start, frame, reserve),
-                None => grid,
-            },
-            _ => grid,
+    /// The deadline mode's deadline for a loop that starts at `loop_start`, and where it came
+    /// from: from the frame's start ([`frame_deadline`]) once the tail is measured and the frame
+    /// rate is capped (`frame`, its target), else `grid` ([`super::grid_deadline`]).
+    pub fn deadline(
+        &self,
+        grid: Instant,
+        loop_start: Instant,
+        frame: Option<Duration>,
+    ) -> (Instant, DeadlineFrom) {
+        let Some(frame) = frame else {
+            return (grid, DeadlineFrom::GridUncapped);
+        };
+        match (self.frame_start, self.tail.reserve(frame)) {
+            (Some(frame_start), Some(reserve)) => (
+                frame_deadline(frame_start, loop_start, frame, reserve),
+                DeadlineFrom::FrameStart,
+            ),
+            _ => (grid, DeadlineFrom::GridWithoutReserve),
         }
+    }
+
+    /// The deadline of a loop that starts at `loop_start`: from the frame's start in the
+    /// deadline mode (`frame_deadline`, [`Self::deadline`]), else `grid`. Keeps its budget and
+    /// where it came from for the debug panel.
+    pub fn start_loop(
+        &mut self,
+        frame_deadline: bool,
+        grid: Instant,
+        loop_start: Instant,
+        frame: Option<Duration>,
+    ) -> Instant {
+        let (deadline, deadline_from) = if frame_deadline {
+            self.deadline(grid, loop_start, frame)
+        } else {
+            (grid, DeadlineFrom::GridByMode)
+        };
+        self.last_loop = Some(LastLoop {
+            budget: deadline.saturating_duration_since(loop_start),
+            deadline_from,
+        });
+        deadline
     }
 
     /// The last moment a timed wait for replies may end, when a reply ends the waits: before
@@ -227,13 +290,8 @@ impl LoopPacing {
         frame: Option<Duration>,
     ) -> PacedLoop {
         let mode = dcl_wasm::scene_loop_mode::get();
-        let deadline = if mode.frame_deadline() {
-            self.deadline(grid, loop_start, frame)
-        } else {
-            grid
-        };
+        let deadline = self.start_loop(mode.frame_deadline(), grid, loop_start, frame);
         let waits_for_replies = mode.loop_waits_for_replies();
-        self.budget = Some(deadline.saturating_duration_since(loop_start));
         PacedLoop {
             deadline,
             last_wait_end: if waits_for_replies {
@@ -461,17 +519,56 @@ mod tests {
         let s = Instant::now();
         let grid = s + ms(9.0);
         let loop_start = s + ms(4.0);
-        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), grid);
+        let without_reserve = (grid, DeadlineFrom::GridWithoutReserve);
+        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), without_reserve);
         pacing.frame_started(s, None, Duration::ZERO);
         for _ in 0..TAIL_FRAMES - 1 {
             pacing.tail.push(ms(3.0));
         }
-        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), grid);
+        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), without_reserve);
         pacing.tail.push(ms(3.0));
         // the reserve: 3 ms and 6 % of the frame target
         let reserve = pacing.tail.reserve(T).unwrap();
-        assert_eq!(pacing.deadline(grid, loop_start, Some(T)), s + T - reserve);
-        assert_eq!(pacing.deadline(grid, loop_start, None), grid);
+        assert_eq!(
+            pacing.deadline(grid, loop_start, Some(T)),
+            (s + T - reserve, DeadlineFrom::FrameStart)
+        );
+        assert_eq!(
+            pacing.deadline(grid, loop_start, None),
+            (grid, DeadlineFrom::GridUncapped)
+        );
+    }
+
+    /// A loop's start keeps its budget with where its deadline came from, so the debug panel shows
+    /// the two from the same loop.
+    #[test]
+    fn a_loop_keeps_its_budget_with_its_deadlines_source() {
+        let mut pacing = LoopPacing::default();
+        let s = Instant::now();
+        pacing.frame_started(s, None, Duration::ZERO);
+        for _ in 0..TAIL_FRAMES {
+            pacing.tail.push(ms(3.0));
+        }
+        let loop_start = s + ms(4.0);
+        let grid = loop_start + ms(5.0);
+        let deadline = pacing.start_loop(true, grid, loop_start, Some(T));
+        assert_eq!(deadline, s + T - pacing.tail.reserve(T).unwrap());
+        assert_eq!(
+            pacing.last_loop,
+            Some(LastLoop {
+                budget: deadline - loop_start,
+                deadline_from: DeadlineFrom::FrameStart,
+            })
+        );
+        // a mode without the frame-start deadline keeps the grid
+        assert_eq!(pacing.start_loop(false, grid, loop_start, Some(T)), grid);
+        assert_eq!(
+            pacing.last_loop,
+            Some(LastLoop {
+                budget: ms(5.0),
+                deadline_from: DeadlineFrom::GridByMode,
+            })
+        );
     }
 
     #[test]

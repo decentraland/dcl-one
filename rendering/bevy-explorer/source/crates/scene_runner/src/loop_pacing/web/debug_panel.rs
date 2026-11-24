@@ -15,7 +15,6 @@ use super::{LoopPacing, TAIL_FRAMES};
 /// The scene loop mode as the section shows it (`dcl_wasm::scene_loop_mode::SceneLoopMode`).
 struct ModeView {
     name: &'static str,
-    frame_deadline: bool,
     waits_for_replies: bool,
     relay_wake: bool,
 }
@@ -50,13 +49,6 @@ fn state(
             pacing.tail.len
         )
     };
-    let deadline = if !mode.frame_deadline {
-        "Grid (this mode keeps it)"
-    } else if reserve.is_some() && pacing.frame_start.is_some() {
-        "Frame start"
-    } else {
-        "Grid (no tail reserve yet)"
-    };
     let (lateness, lateness_reason) = if mode.waits_for_replies {
         (
             pacing.wait_lateness.p90(now),
@@ -73,14 +65,15 @@ fn state(
         .then(|| json!({"count": woken.len(), "scenes": woken}));
     json!({
         "mode": mode.name,
-        "deadline": deadline,
-        "budget": pacing.budget.map(ms),
+        "deadline": pacing.last_loop.map(|last| last.deadline_from.label()),
+        "budget": pacing.last_loop.map(|last| ms(last.budget)),
         "handoffGap": pacing.handoff_gap.map(ms),
         "tail": reserve.zip(pacing.tail.p90()).map(|(reserve, p90)| [ms(p90), ms(reserve)]),
         "tailFrames": pacing.tail.len,
         "lateness": lateness.map(ms),
         "woken": woken,
         "unavailable": {
+            "deadline": "No scene loop has run yet.",
             "budget": "No scene loop has run yet.",
             "handoffGap": "No frame has handed over to the render worker yet.",
             "tail": tail_reason,
@@ -175,7 +168,6 @@ mod commands {
             .collect();
         let view = ModeView {
             name: mode.name(),
-            frame_deadline: mode.frame_deadline(),
             waits_for_replies: mode.loop_waits_for_replies(),
             relay_wake: mode.relay_wake(),
         };
@@ -217,11 +209,13 @@ mod commands {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loop_pacing::tests::{ms as dur, T};
+    use crate::loop_pacing::{
+        tests::{ms as dur, T},
+        web::{DeadlineFrom, LastLoop},
+    };
 
     const BOTH: ModeView = ModeView {
         name: "both",
-        frame_deadline: true,
         waits_for_replies: true,
         relay_wake: true,
     };
@@ -232,8 +226,12 @@ mod tests {
         let pacing = LoopPacing::default();
         let state = state(&pacing, BOTH, Some(T), true, now, Vec::new());
         assert_eq!(state["mode"], "both");
-        assert_eq!(state["deadline"], "Grid (no tail reserve yet)");
-        assert!(state["budget"].is_null() && state["tail"].is_null());
+        assert!(state["deadline"].is_null() && state["budget"].is_null());
+        assert_eq!(
+            state["unavailable"]["deadline"],
+            "No scene loop has run yet."
+        );
+        assert!(state["tail"].is_null());
         assert_eq!(
             state["unavailable"]["tail"],
             "Measuring the frame tail: 0 of 32 frames."
@@ -256,7 +254,10 @@ mod tests {
         for _ in 0..TAIL_FRAMES {
             pacing.tail.push(dur(3.0));
         }
-        pacing.budget = Some(dur(7.25));
+        pacing.last_loop = Some(LastLoop {
+            budget: dur(7.25),
+            deadline_from: DeadlineFrom::FrameStart,
+        });
         pacing.handoff_gap = Some(dur(0.4));
         pacing.wait_lateness.push(now, dur(1.5));
         let state = state(
@@ -282,12 +283,16 @@ mod tests {
         // legacy keeps the grid and records no lateness
         let legacy = ModeView {
             name: "legacy",
-            frame_deadline: false,
             waits_for_replies: false,
             relay_wake: false,
         };
+        pacing.last_loop = Some(LastLoop {
+            budget: dur(5.0),
+            deadline_from: DeadlineFrom::GridByMode,
+        });
         let state = super::state(&pacing, legacy, Some(T), true, now, Vec::new());
         assert_eq!(state["deadline"], "Grid (this mode keeps it)");
+        assert_eq!(state["budget"], 5.0);
         assert!(state["lateness"].is_null());
     }
 
@@ -299,7 +304,6 @@ mod tests {
         let pacing = LoopPacing::default();
         let deadline = ModeView {
             name: "deadline",
-            frame_deadline: true,
             waits_for_replies: true,
             relay_wake: false,
         };
