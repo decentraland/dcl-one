@@ -16,9 +16,13 @@ time is an epoch-ms `bigint`; extracts convert it exactly
 | `broadcast_read` | `broadcast_read` ⨝ `notifications` | `social.broadcast_notifications`, `social.broadcast_reads` | Preserves the source broadcast ID (ingest-keyed rows take the ingest ID) and each normalized wallet's read receipt. Can seed missing parent broadcasts when run independently. |
 | `broadcast` | `notifications` without an address | `social.broadcast_notifications`, `social.broadcast_reads` | One global row per source ID, visible to new wallets as well. Converts copies from the former loader and preserves their read state. |
 
-All notification types are imported, including ones no node producer emits
-(governance, rentals, credits...): the bell lists rows regardless of type,
-upstream did the same, and the client decides what it renders.
+The inbox import preserves notification types regardless of producer. Credits
+goal notices are limited to the goal Catalyst supports. A completion must name
+`take-photo` in `metadata.goalId`, and a complete-goals reminder must list only
+`take-photo` in `metadata.pendingGoalIds`. A notice with mixed goals or missing
+goal metadata is omitted. Other Credits notification types follow the normal
+import rules. This filter applies to incoming rows and leaves previously
+imported history intact.
 
 ## Not migrated
 
@@ -172,7 +176,7 @@ Every upsert step uses upstream `updated_at` (`read_at` for `broadcast_read`);
 a read or a metadata upsert moves it, so `--since last` picks both up. The
 `*_reconcile` steps have none: they read the whole set every run.
 
-Import everything, settings and the whole notification history, with
+Import settings and eligible notification history with
 `run notifications-workers`, then `run notifications-workers --since last`
 until upstream writes stop, following the cutover order above.
 

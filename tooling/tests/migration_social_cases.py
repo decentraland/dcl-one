@@ -106,6 +106,40 @@ class SocialMigrationCases:
         self.assertEqual(self.count(tgt, 'social.referral_progress'), 0)
         self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
 
+    def test_when_importing_credits_notices_it_should_skip_unsupported_goals(self):
+        from tooling.tests import migration_harness as harness
+        src, tgt = self.notifications_dbs()
+        timestamp = 1767225600000
+        address = self.wallet('7')
+        cases = [
+            ('credits_goal_completed', {'goalId': 'take-photo'}, True),
+            ('credits_goal_completed', {'goalId': 'visit-scene'}, False),
+            ('credits_goal_completed', {}, False),
+            ('credits_reminder_complete_goals', {'pendingGoalIds': ['take-photo']}, True),
+            ('credits_reminder_complete_goals', {'pendingGoalIds': ['visit-scene']}, False),
+            ('credits_reminder_complete_goals', {'pendingGoalIds': ['take-photo', 'visit-scene']}, False),
+            ('credits_reminder_complete_goals', {'pendingGoalIds': 'take-photo'}, False),
+            ('credits_reminder_claim_credits', {'seasonId': 1}, True),
+            ('credits_on_demand_granted', {'studioName': 'Studio'}, True),
+        ]
+        expected = {}
+        for index, (kind, metadata, keep) in enumerate(cases, 1):
+            notice_id = str(uuid.UUID(int=index))
+            self.sql(src, f"""INSERT INTO notifications VALUES
+                ('{notice_id}', 'credits-{index}', '{kind}', '{address}', {self.text(json.dumps(metadata))},
+                 {timestamp}, NULL, {timestamp}, {timestamp});""")
+            if keep:
+                expected[notice_id] = metadata
+        for flags in [(), ('--restart',)]:
+            code, out = self.migrate('run', 'notifications-workers', '--step', 'notification', *flags,
+                                     sources_dir=harness.migrate.SOURCES)
+            self.assertEqual(code, 0, out)
+            rows = self.sql(tgt, f"SELECT id, metadata FROM social.notifications WHERE address = '{address}';")
+            actual = {notice_id: json.loads(metadata) for notice_id, metadata
+                      in (row.split('\t', 1) for row in rows.splitlines())}
+            self.assertEqual(actual, expected)
+            self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
+
     def test_when_converting_old_broadcast_copies_it_should_preserve_reads_and_unrelated_rows(self):
         from tooling.tests import migration_harness as harness
         _, tgt = self.notifications_dbs()

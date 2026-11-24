@@ -4,7 +4,7 @@
 //! atomically with the event. Dispatch pages commit their recipient cursor
 //! with notification/email-outbox inserts, so crashes and retries are safe.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use chrono::{Duration as Span, NaiveDateTime, Utc};
@@ -610,14 +610,55 @@ pub async fn run_once(pool: &PgPool, links: &Links, now: NaiveDateTime) -> anyho
     Ok(emitted)
 }
 
-pub fn spawn(pool: PgPool, links: Links, jobs: &crate::jobs::Jobs) {
+/// Confirm that retained unkeyed event notices can be matched by exact ID.
+async fn verify_history(pool: &PgPool) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = '30s'")
+        .execute(&mut *tx)
+        .await?;
+    let ambiguous: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM social.notifications
+            WHERE type IN ('events_starts_soon','events_started','event_created',
+                           'event_approved','event_rejected','event_deleted')
+              AND broadcast_key IS NULL
+              AND (jsonb_typeof(metadata->'eventId') IS DISTINCT FROM 'string'
+                   OR btrim(metadata->>'eventId') = '')
+        )",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    anyhow::ensure!(
+        !ambiguous,
+        "event notifications paused: reconcile imported event notice history or set EVENT_NOTIFICATIONS_ALLOW_UNRECONCILED_HISTORY=true"
+    );
+    Ok(())
+}
+
+pub fn spawn(
+    pool: PgPool,
+    links: Links,
+    allow_unreconciled_history: bool,
+    jobs: &crate::jobs::Jobs,
+) {
+    let history_verified = Arc::new(tokio::sync::OnceCell::new());
+    if allow_unreconciled_history {
+        tracing::warn!("event notification history verification is overridden");
+    }
     jobs.spawn_periodic_leased(
         "event-notifications",
         crate::jobs::PeriodicCfg::every(Duration::from_secs(60))
             .with_error_backoff(Duration::from_secs(300)),
         move |ctx| {
             let (pool, links) = (pool.clone(), links.clone());
+            let history_verified = history_verified.clone();
             async move {
+                if !allow_unreconciled_history {
+                    history_verified
+                        .get_or_try_init(|| verify_history(&pool))
+                        .await?;
+                }
                 let emitted = run_once(&pool, &links, Utc::now().naive_utc()).await?;
                 if emitted > 0 {
                     ctx.progress(format!("{emitted} event notices emitted"));
@@ -893,6 +934,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_history_verification_requires_exact_ids_on_unkeyed_notices() {
+        let pool = crate::db::scratch::isolated_pool(2)
+            .await
+            .expect("real PostgreSQL required");
+        verify_history(&pool).await.unwrap();
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO social.notifications(id,address,type,metadata,occurred_at)
+             VALUES($1,$2,'events_started','{}',now())",
+        )
+        .bind(id)
+        .bind(HOST)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(verify_history(&pool).await.is_err());
+        sqlx::query("UPDATE social.notifications SET metadata=$2 WHERE id=$1")
+            .bind(id)
+            .bind(json!({"eventId": "repaired-event"}))
+            .execute(&pool)
+            .await
+            .unwrap();
+        verify_history(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn event_notice_history_order_visibility_and_concurrency() {
         let pool = crate::db::scratch::isolated_pool(8)
             .await
@@ -937,9 +1004,21 @@ mod tests {
                 dispatch_page(&pool, &links, now),
                 dispatch_page(&pool, &links, now)
             );
-            a.unwrap();
-            b.unwrap();
+            for result in [a, b] {
+                if let Err(error) = result {
+                    assert!(timed_out(&error), "{error:#}");
+                }
+            }
         }
+        run_once(&pool, &links, now).await.unwrap();
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1 AND processed_at IS NULL",
+        )
+        .bind(&event)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pending, 0);
         assert_eq!(count(&pool, &event, "event_rejected", HOST).await, 1);
         sqlx::query("UPDATE social.subscriptions SET details='{\"ignore_all_in_app\":true}' WHERE address=$1").bind(HOST).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_rejected',$3,false,$4)")

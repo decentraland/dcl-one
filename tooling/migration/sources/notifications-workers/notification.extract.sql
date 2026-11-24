@@ -13,3 +13,8 @@ SELECT n.id,
 FROM notifications n
 WHERE n.address IS NOT NULL
   AND lower(n.address) ~ '^0x[0-9a-f]{40}$'
+  AND CASE n.type
+        WHEN 'credits_goal_completed' THEN n.metadata->>'goalId' = 'take-photo'
+        WHEN 'credits_reminder_complete_goals' THEN n.metadata->'pendingGoalIds' = '["take-photo"]'::jsonb
+        ELSE true
+      END

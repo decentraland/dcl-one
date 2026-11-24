@@ -89,7 +89,8 @@ pub struct Settings {
     /// a hold for a missing key still ends): see [`delivery::expire`].
     pub delivery_max_age: Option<Duration>,
     /// Deployment origin used by event notice links (the Sites `/events` pages).
-    pub events_base_url: String,
+    pub events_site_url: String,
+    pub event_notifications_allow_unreconciled_history: bool,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,
     /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
@@ -127,7 +128,8 @@ impl Default for Settings {
             delivery_interval: Duration::from_secs(15),
             broadcast_horizon: None,
             delivery_max_age: Some(delivery::DEFAULT_MAX_AGE),
-            events_base_url: "https://decentraland.org".into(),
+            events_site_url: "https://decentraland.org".into(),
+            event_notifications_allow_unreconciled_history: false,
             events_asset_base_url: "http://localhost/events".into(),
             events_public_base: None,
             current_version: None,
@@ -282,13 +284,14 @@ impl State {
         events::spawn(
             self.store.pool().clone(),
             events::Links {
-                base: self.settings.events_base_url.clone(),
+                base: self.settings.events_site_url.clone(),
                 asset_base: self.settings.events_asset_base_url.clone(),
                 public_base: self.settings.events_public_base.clone(),
                 jump_in_site_url: self.settings.jump_in_site_url.clone(),
                 community_cdn: self.settings.community_cdn_url.clone(),
                 slack_notices: self.settings.event_slack_notices,
             },
+            self.settings.event_notifications_allow_unreconciled_history,
             jobs,
         );
         if self.settings.first_wear_enabled {

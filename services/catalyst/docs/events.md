@@ -161,4 +161,10 @@ needed to identify the exact historical rows. The current database alone cannot
 prove that coverage. Keep jobs stopped until that evidence is reconciled or the
 deployment owner explicitly accepts the remaining historical limitation. A
 database that never ran the legacy import does not require an import repair.
-This prerequisite is operational; the worker does not enforce an import marker.
+Before its first pass, the event-notifications job checks for retained unkeyed
+event notices without a usable event ID. If any exist, it pauses and retries
+the check with job backoff. The check can establish whether the stored rows
+are matchable. Establishing the completeness of the source history still
+requires the deployment check above. After explicit acceptance of a known
+gap, use `EVENT_NOTIFICATIONS_ALLOW_UNRECONCILED_HISTORY=true` to start the
+job and log the override. Stop the job during any historical re-import.

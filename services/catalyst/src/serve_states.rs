@@ -727,7 +727,10 @@ pub(super) fn social_states(
         pool.clone(),
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
-            events_base_url: config.explore.events_site_url.clone(),
+            events_site_url: config.explore.events_site_url.clone(),
+            event_notifications_allow_unreconciled_history: config
+                .explore
+                .event_notifications_allow_unreconciled_history,
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
             events_public_base: explore.settings.configured_public_base.clone(),
             signing_key: non_empty(&config.social.signing_key),

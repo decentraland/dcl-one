@@ -2,6 +2,23 @@
 
 use clap::Args;
 
+fn parse_events_site_url(value: &str) -> Result<String, &'static str> {
+    let invalid = "expected an absolute HTTPS URL without credentials, query or fragment";
+    let url = url::Url::parse(value).map_err(|_| invalid)?;
+    if !value
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid);
+    }
+    Ok(value.into())
+}
+
 /// Explore: the places, world-catalogue and events mirrors and the explorer boot surface.
 #[derive(Args, Clone, Debug)]
 pub struct ExploreConfig {
@@ -67,9 +84,14 @@ pub struct ExploreConfig {
     #[arg(
         long,
         env = "EVENTS_SITE_URL",
-        default_value = "https://decentraland.org"
+        default_value = "https://decentraland.org",
+        value_parser = parse_events_site_url
     )]
     pub events_site_url: String,
+
+    /// Allow event notification delivery when legacy inbox rows lack an exact event ID.
+    #[arg(long, env = "EVENT_NOTIFICATIONS_ALLOW_UNRECONCILED_HISTORY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub event_notifications_allow_unreconciled_history: bool,
 
     /// The jump-in site the event notifications link to
     /// (`JUMP_IN_SITE_URL/events?id=&position=&realm=`, the old service's
@@ -382,6 +404,22 @@ pub struct AbCdnConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn event_site_links_require_an_absolute_https_url() {
+        assert!(super::parse_events_site_url("https://example.org/site").is_ok());
+        for url in [
+            "",
+            "example.org",
+            "https:example.org",
+            "http://example.org",
+            "https://alice@example.org",
+            "https://example.org?x",
+            "https://example.org#x",
+        ] {
+            assert!(super::parse_events_site_url(url).is_err(), "{url}");
+        }
+    }
+
     #[test]
     fn upcoming_summary_opt_in_is_independent_of_a_moderation_webhook() {
         let disabled = crate::config::Config::parse_env_for_tests([

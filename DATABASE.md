@@ -635,6 +635,18 @@ History adoption performs up to 100 wallet/type/event probes per recipient page.
 wallet/type/event and creation order. New carriers leave the partial index;
 unrelated notices without that field do not enter it. The index is a new object
 installed by the schema object pass on existing databases, without a reset.
+A normal build blocks writes to `social.notifications` until it completes.
+On a busy database, prebuild the same index outside a transaction before running
+the schema object pass:
+
+```sql
+CREATE INDEX CONCURRENTLY notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
+```
+
+If the concurrent build is interrupted, check `pg_index.indisvalid` and remove
+an invalid index before retrying. Run the object pass after the index is valid.
 
 Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
