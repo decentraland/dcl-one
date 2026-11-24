@@ -58,12 +58,18 @@ pub const HINT_READS_PER_REFRESH: usize = 1_000;
 /// List indexes read and kept together.
 pub const HINT_CHUNK: usize = 200;
 
+/// The largest list size taken as an answer: no factory lists near this
+/// many collections, so a larger one is a faulty endpoint's.
+pub const MAX_LIST_SIZE: u32 = 1_000_000;
+
 /// What one refresh of the factory lists did: the hints it added or made
-/// final, and the indexes it left for the next one.
+/// final, the indexes below the finalized size it left for the next one,
+/// and the provisional indexes past it the budget left unread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Refreshed {
     pub added: usize,
     pub remaining: usize,
+    pub provisional_unread: usize,
 }
 
 /// Calls per JSON-RPC batch the gate sends (one HTTP request each).
@@ -632,9 +638,10 @@ fn answer_of(envelope: &Value) -> Answer {
 
 /// The answers of `calls` (to, data) at `block`, in their order, in JSON-RPC
 /// batches of at most [`CALLS_PER_BATCH`]. A batch the endpoint refuses (a
-/// transport error or a status) is halved and sent again, down to one call,
-/// whose refusal fails the read; a batch answered with no element at all (an
-/// endpoint that does not take batches) is sent call by call.
+/// transport error or a status) is halved and sent again; a single call it
+/// refuses as a batch is sent as a plain request, whose failure fails the
+/// read. A batch answered with no element at all (an endpoint that does not
+/// take batches) is sent call by call.
 pub async fn eth_calls(
     rpc: &Rpc<'_>,
     calls: &[(String, Vec<u8>)],
@@ -676,7 +683,13 @@ pub async fn eth_calls(
                 todo.push((start + half, len - half));
                 todo.push((start, half));
             }
-            Err(e) => anyhow::bail!("eth_call batch: {e}"),
+            Err(_) => {
+                let envelope = rpc
+                    .call("eth_call", body[0]["params"].clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("eth_call: {e}"))?;
+                out[start] = answer_of(&envelope);
+            }
         }
     }
     Ok(out)
@@ -698,12 +711,18 @@ fn refusals(answers: &[Answer]) -> Option<(usize, i64)> {
 /// it is final. A provisional address a reorg replaced stays a hint the
 /// filter takes in vain; the address read at the finalized block is added
 /// beside it. Once each list is final up to the finalized block, a refresh
-/// costs the four `collectionsSize()` reads. At most
-/// [`HINT_READS_PER_REFRESH`] indexes are read in one refresh (a fresh node's
-/// lists take several; `remaining` counts the rest), in chunks kept as soon
-/// as they are read. An index without an answer (none, a refusal, or not an
-/// address) fails the refresh, so no attempt walks on a list it could not
-/// read whole.
+/// costs the four `collectionsSize()` reads.
+///
+/// At most [`HINT_READS_PER_REFRESH`] indexes are read in one refresh, in
+/// chunks kept as soon as they are read: first the indexes below the
+/// finalized sizes of both lists that have no final row (`remaining`
+/// counts the ones left), then, with what is left of it, the provisional
+/// ones (`provisional_unread` counts the ones left). A size past
+/// [`MAX_LIST_SIZE`] fails the refresh before anything is read, and the
+/// indexes still to read are found from the stored rows, so a refresh's
+/// work is bounded by the table and the budget whatever an endpoint
+/// answers. An index without an answer (none, a refusal, or not an address)
+/// fails the refresh, so no attempt walks on a list it could not read whole.
 pub async fn refresh_hints(
     pool: &PgPool,
     rpc: &Rpc<'_>,
@@ -721,51 +740,73 @@ pub async fn refresh_hints(
             .flatten()
             .and_then(|b| U256::abi_decode(&b).ok())
             .with_context(|| format!("{factory}.collectionsSize() did not answer"))?;
-        u32::try_from(size).context("collectionsSize() out of range")
+        u32::try_from(size)
+            .ok()
+            .filter(|s| *s <= MAX_LIST_SIZE)
+            .with_context(|| {
+                format!("{factory}.collectionsSize() answered {size}, past {MAX_LIST_SIZE}")
+            })
     };
     let final_sizes = eth_calls(rpc, &size_calls, &at_final).await?;
     let latest_sizes = eth_calls(rpc, &size_calls, "latest").await?;
-    let mut added = 0usize;
-    let mut unread = Vec::new();
-    let mut budget = HINT_READS_PER_REFRESH;
-    let mut remaining = 0usize;
+    let mut lists = Vec::new();
     for (((factory, _), final_size), latest_size) in
         FACTORIES.iter().zip(final_sizes).zip(latest_sizes)
     {
-        let final_size = size(final_size, factory)?;
-        let latest_size = size(latest_size, factory)?;
-        let finals: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM shop.collection_hint WHERE network = $1 AND factory = $2 AND finalized",
+        lists.push((
+            *factory,
+            size(final_size, factory)?,
+            size(latest_size, factory)?,
+        ));
+    }
+    let mut out = Refreshed::default();
+    let mut unread = Vec::new();
+    let mut budget = HINT_READS_PER_REFRESH;
+    // The indexes below each finalized size without a final row, every
+    // list's before any provisional read.
+    let mut finals_to_read = Vec::new();
+    for (factory, final_size, _) in &lists {
+        let have: HashSet<i32> = sqlx::query_scalar(
+            "SELECT idx FROM shop.collection_hint WHERE network = $1 AND factory = $2 AND finalized",
         )
         .bind(net.db_name())
         .bind(factory)
-        .fetch_one(pool)
-        .await?;
-        let missing: Vec<i32> = if finals < i64::from(final_size) {
-            sqlx::query_scalar(
-                "SELECT i FROM generate_series(0, $3 - 1) AS i \
-                 WHERE NOT EXISTS (SELECT 1 FROM shop.collection_hint h \
-                                   WHERE h.network = $1 AND h.factory = $2 AND h.idx = i AND h.finalized)",
-            )
-            .bind(net.db_name())
-            .bind(factory)
-            .bind(final_size as i32)
-            .fetch_all(pool)
-            .await?
-        } else {
-            Vec::new()
-        };
-        let provisional: Vec<i32> = (final_size..latest_size).map(|i| i as i32).collect();
-        for (indexes, block, finalized) in [
-            (missing, at_final.as_str(), true),
-            (provisional, "latest", false),
-        ] {
-            let take = indexes.len().min(budget);
-            budget -= take;
-            remaining += indexes.len() - take;
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .collect();
+        let holes = (*final_size as usize).saturating_sub(have.len());
+        let mut indexes = Vec::new();
+        let mut i = 0u32;
+        while i < *final_size && indexes.len() < budget.min(holes) {
+            if !have.contains(&(i as i32)) {
+                indexes.push(i as i32);
+            }
+            i += 1;
+        }
+        budget -= indexes.len();
+        out.remaining += holes - indexes.len();
+        finals_to_read.push((*factory, indexes));
+    }
+    let mut provisional_to_read = Vec::new();
+    for (factory, final_size, latest_size) in &lists {
+        let indexes: Vec<i32> = (*final_size..*latest_size)
+            .take(budget)
+            .map(|i| i as i32)
+            .collect();
+        budget -= indexes.len();
+        out.provisional_unread +=
+            (*latest_size).saturating_sub(*final_size) as usize - indexes.len();
+        provisional_to_read.push((*factory, indexes));
+    }
+    for (reads, block, finalized) in [
+        (finals_to_read, at_final.as_str(), true),
+        (provisional_to_read, "latest", false),
+    ] {
+        for (factory, indexes) in reads {
             // Each chunk is kept as soon as it is read: an error later in
             // the refresh loses none of it.
-            for chunk in indexes[..take].chunks(HINT_CHUNK) {
+            for chunk in indexes.chunks(HINT_CHUNK) {
                 let calls: Vec<(String, Vec<u8>)> = chunk
                     .iter()
                     .map(|i| {
@@ -801,7 +842,7 @@ pub async fn refresh_hints(
                         None => unread.push(format!("{factory}[{i}]")),
                     }
                 }
-                added += sqlx::query(
+                out.added += sqlx::query(
                     "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized) \
                      SELECT $1, $2, i, a, $5 FROM UNNEST($3::int[], $4::text[]) AS u(i, a) \
                      ON CONFLICT (network, address) DO UPDATE \
@@ -821,11 +862,12 @@ pub async fn refresh_hints(
     }
     if let Some(first) = unread.first() {
         anyhow::bail!(
-            "{} factory list indexes did not answer (first {first}); {added} hints kept",
-            unread.len()
+            "{} factory list indexes did not answer (first {first}); {} hints kept",
+            unread.len(),
+            out.added
         );
     }
-    Ok(Refreshed { added, remaining })
+    Ok(out)
 }
 
 /// What `initialize` set without an event, as one read at `read_block`.
@@ -864,7 +906,8 @@ pub fn seed_of(contract: &str, answers: &[Answer], read_block: u64) -> Option<Se
 }
 
 /// Reads the creation state of up to [`SEEDS_PER_GATE`] collections that
-/// have none, walked ones first, at the finalized block `finalized`, into
+/// have none, walked ones first, then the final hints (a provisional one
+/// may never exist), at the finalized block `finalized`, into
 /// `shop.collection_seed`. A collection not deployed at that block, or one
 /// a call was refused for, waits for the next gate. Returns the seeds added.
 pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow::Result<usize> {
@@ -874,7 +917,7 @@ pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow:
              SELECT e.contract_address AS address, 0 AS walked_first, e.block_number AS position \
              FROM shop.collection_event e WHERE e.network = $1 AND e.kind = 'proxy_created' \
              UNION ALL \
-             SELECT h.address, 1, h.idx FROM shop.collection_hint h WHERE h.network = $1 \
+             SELECT h.address, 1, h.idx FROM shop.collection_hint h WHERE h.network = $1 AND h.finalized \
          ) c \
          WHERE NOT EXISTS (SELECT 1 FROM shop.collection_seed s WHERE s.network = $1 AND s.contract_address = c.address) \
          GROUP BY address ORDER BY min(walked_first), min(position), address LIMIT $2",
@@ -942,8 +985,10 @@ pub async fn write_seeds(pool: &PgPool, net: ChainNet, seeds: &[Seed]) -> anyhow
 /// failure fails the attempt: a filter without the newest collections would
 /// fail the windows that walk them), then the creation reads (a failure is
 /// only logged: the walk does not need them), both against Polygon's
-/// finalized block, read once. While the lists are not read whole (a fresh
-/// node's take several attempts) the attempt waits for the next interval.
+/// finalized block, read once. While the lists are not read whole up to the
+/// finalized sizes (a fresh node's take several attempts), the attempt
+/// waits for the next interval; provisional indexes past them never hold
+/// it back (a window that walks a collection the filter lacks still fails).
 pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>> {
     let net = ChainNet::Matic;
     super::ensure_chain(
@@ -964,6 +1009,12 @@ pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>
         tracing::info!(
             hinted = hinted.added,
             "collections matic: new collections in the factory lists"
+        );
+    }
+    if hinted.provisional_unread > 0 {
+        tracing::warn!(
+            unread = hinted.provisional_unread,
+            "collections matic: provisional factory list indexes left for the next refresh"
         );
     }
     if hinted.remaining > 0 {
@@ -1745,15 +1796,20 @@ mod tests {
         assert_eq!(created, 17);
     }
 
+    /// The fake endpoint's `max_batch` for one that answers every JSON array
+    /// with a 400 and takes plain requests.
+    const REFUSES_ARRAYS: usize = usize::MAX;
+
     /// The fake endpoint's `eth_call` answers by (to, data hex, block): a
     /// hex result, or `error:<code>` for a refusal.
     type Answers = Arc<std::sync::Mutex<HashMap<(String, String, String), String>>>;
 
     /// A JSON-RPC endpoint for the gate: chain 137, finalized block 100, and
     /// `calls` answering `eth_call`; "0x" otherwise (no contract there). It
-    /// answers a batch longer than `max_batch` with a 413 and, when
-    /// `max_batch` is 0, every batch with an error object (an endpoint that
-    /// takes none). `seen` counts the `eth_call`s it answered.
+    /// answers a batch longer than `max_batch` with a 413, every batch with
+    /// an error object when `max_batch` is 0 (an endpoint that takes none),
+    /// and every batch with a 400 when it is [`REFUSES_ARRAYS`]. `seen`
+    /// counts the `eth_call`s it answered.
     async fn fake_rpc(
         calls: Answers,
         max_batch: usize,
@@ -1805,6 +1861,7 @@ mod tests {
                     "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": "batches are not supported" }
                 }))
                 .into_response(),
+                Value::Array(_) if max_batch == REFUSES_ARRAYS => StatusCode::BAD_REQUEST.into_response(),
                 Value::Array(reqs) if reqs.len() > max_batch => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
                 Value::Array(reqs) => {
                     Json(Value::Array(reqs.iter().map(|r| answer(&calls, r, &seen)).collect())).into_response()
@@ -2046,6 +2103,110 @@ mod tests {
         assert_eq!(gate(&fresh, &rpc).await.unwrap(), None);
     }
 
+    /// A size no list reaches fails the refresh at once, before any index
+    /// is enumerated or read.
+    #[tokio::test]
+    async fn an_implausible_list_size_fails_without_reading() {
+        let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+            return;
+        };
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        for huge in [
+            U256::from(u64::MAX),
+            U256::from(MAX_LIST_SIZE) + U256::from(1),
+        ] {
+            let mut calls = HashMap::new();
+            for (f, _) in FACTORIES {
+                for block in ["0x64", "latest"] {
+                    calls.insert(call_key(f, size.clone(), block), word(huge));
+                }
+            }
+            let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let url = fake_rpc(Arc::new(std::sync::Mutex::new(calls)), 100, seen.clone()).await;
+            let http = crate::http::Outbound::for_tests();
+            let started = std::time::Instant::now();
+            let err = refresh_hints(&pool, &Rpc::at(&http, &url), 100)
+                .await
+                .unwrap_err();
+            assert!(started.elapsed() < std::time::Duration::from_secs(2));
+            assert!(format!("{err:#}").contains("past 1000000"), "{err:#}");
+            assert_eq!(
+                seen.load(std::sync::atomic::Ordering::SeqCst),
+                4,
+                "the sizes alone"
+            );
+        }
+    }
+
+    /// The final indexes of both lists come before any provisional one, and
+    /// a provisional tail longer than one refresh never holds the attempt
+    /// back once the lists are final: consecutive gates walk.
+    #[tokio::test]
+    async fn a_long_provisional_tail_never_holds_the_walk() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (v2, v3) = (FACTORIES[0].0, FACTORIES[1].0);
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        let tail = HINT_READS_PER_REFRESH as u64 + 1;
+        let mut calls = HashMap::new();
+        calls.insert(call_key(v2, size.clone(), "0x64"), word(U256::from(600)));
+        calls.insert(
+            call_key(v2, size.clone(), "latest"),
+            word(U256::from(600 + tail)),
+        );
+        calls.insert(call_key(v3, size.clone(), "0x64"), word(U256::from(600)));
+        calls.insert(call_key(v3, size.clone(), "latest"), word(U256::from(600)));
+        for i in 0..600 {
+            calls.insert(
+                call_key(v2, nth(i), "0x64"),
+                addr(&format!("0x{:040x}", 0x1000 + i)),
+            );
+            calls.insert(
+                call_key(v3, nth(i), "0x64"),
+                addr(&format!("0x{:040x}", 0x9000 + i)),
+            );
+        }
+        for i in 600..600 + tail {
+            calls.insert(
+                call_key(v2, nth(i), "latest"),
+                addr(&format!("0x{:040x}", 0x1000 + i)),
+            );
+        }
+        let url = fake_rpc(Arc::new(std::sync::Mutex::new(calls)), 100, Arc::default()).await;
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, &url);
+        let first = refresh_hints(&pool, &rpc, 100).await.unwrap();
+        assert_eq!(
+            (first.remaining, first.provisional_unread),
+            (200, tail as usize),
+            "v2's 600 and 400 of v3's: every final read before a provisional one"
+        );
+        let second = refresh_hints(&pool, &rpc, 100).await.unwrap();
+        assert_eq!(
+            (second.remaining, second.provisional_unread),
+            (0, tail as usize - 800)
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                gate(&pool, &rpc).await.unwrap(),
+                None,
+                "the final lists are whole"
+            );
+        }
+        let provisional: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM shop.collection_hint WHERE NOT finalized")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provisional, HINT_READS_PER_REFRESH as i64);
+        let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.collection_seed")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(seeded, 0, "no code anywhere: nothing seeded");
+    }
+
     /// An endpoint that does not take batches is asked each call alone; one
     /// that refuses a large batch is sent halves; a call refused with an
     /// error keeps its code, a call that returned nothing is no answer.
@@ -2075,7 +2236,7 @@ mod tests {
         .into_iter()
         .map(|d| (to.to_string(), d.clone()))
         .collect();
-        for max_batch in [0, 2, 100] {
+        for max_batch in [0, 2, 100, REFUSES_ARRAYS] {
             let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let url = fake_rpc(answers.clone(), max_batch, seen.clone()).await;
             let got = eth_calls(&Rpc::at(&http, &url), &calls, "latest")

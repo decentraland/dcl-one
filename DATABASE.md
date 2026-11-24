@@ -2876,11 +2876,20 @@ beside it. Once every list is final up to the finalized block, a refresh
 costs the four `collectionsSize()` reads.
 
 A refresh reads at most 1,000 indexes, in chunks of 200 kept as soon as
-they are read. While a list is not read whole, the attempt waits for the
-next interval; a fresh node's lists take about seven attempts. If any index
-does not answer, the refresh fails the attempt, so no window walks on a list
-that was not read whole. A JSON-RPC batch the endpoint refuses is halved and sent again, down to
-single calls, and an endpoint that answers batches with nothing gets single
+they are read. Both lists' indexes below their finalized sizes come first,
+and the provisional ones get what is left. While those final indexes are
+not read whole, the attempt waits for the next interval; a fresh node's
+lists take about seven attempts. Provisional indexes the budget leaves
+unread never hold an attempt back; a window that walks one of their
+collections still fails.
+
+A size past 1,000,000 fails the refresh before any index is read. The
+indexes to read are found from the stored rows, so a refresh's work is
+bounded by the table and the budget whatever an endpoint answers. If any
+index does not answer, the refresh fails the attempt, so no window walks on
+a list that was not read whole. A JSON-RPC batch the endpoint refuses is
+halved and sent again; a single call it refuses as a batch goes as a plain
+request, and an endpoint that answers batches with nothing gets single
 calls. A window that walks a `ProxyCreated` of an address outside its
 filter fails before it commits, and the next attempt reads the lists again.
 Every pass reads the hints from the table again, alone or shared. A
@@ -2891,7 +2900,8 @@ chain 137.
 **Creation state.** `initialize` sets a collection's name, symbol, creator,
 approval and editability without an event. The gate reads them once per
 collection into `shop.collection_seed`:
-- walked collections first, then hinted ones;
+- walked collections first, then final hints (a provisional one may never
+  exist);
 - at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
   for each 200 collections;
 - at Polygon's finalized block, recorded in `read_block`.
