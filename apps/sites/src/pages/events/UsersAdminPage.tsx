@@ -13,13 +13,13 @@ import { useEffect, useRef, useState } from "react";
 import { getIdentity } from "@/data/lib/auth/session";
 import { eventAdminKeys, eventGrantsQuery, loadEventProfileSettings, saveEventPermissions, type EventProfile } from "@/data/lib/catalyst/places/event-management";
 import { creatorProfilesQuery } from "@/data/lib/catalyst/social/creator-profiles";
-import { useEventsFooterCopy } from "../../events/locale";
-import { openSignIn } from "../../components/auth/signin-store";
-import SitesLayout from "../../components/chrome/SitesLayout";
-import { AdminAccessGate } from "./AdminAccessGate";
-import { EventAdminTabs } from "./EventAdminTabs";
-import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
-import { useToast } from "./useToast";
+import { useEventsFooterCopy } from "@/features/events/locale";
+import { openSignIn } from "@/features/components/auth/signin-store";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
+import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
+import { useEventAdmin, type EventAdminAccess } from "@/features/explorer/event-management/useEventAdmin";
+import { useToast } from "@/features/explorer/event-management/useToast";
 
 const SELF_LOCKED = "edit_any_profile";
 

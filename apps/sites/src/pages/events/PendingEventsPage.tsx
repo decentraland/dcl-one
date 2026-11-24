@@ -21,14 +21,14 @@ import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-pa
 import {
   editEventHref, eventAdminKeys, eventOccurrence, eventReviewStatus, moderateEvent, moderationQueueQuery, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
-import { useEventsFooterCopy } from "../../events/locale";
-import { eventImage } from "../../events/view";
-import { openSignIn } from "../../components/auth/signin-store";
-import SitesLayout from "../../components/chrome/SitesLayout";
-import { AdminAccessGate } from "./AdminAccessGate";
-import { EventAdminTabs } from "./EventAdminTabs";
-import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
-import { useToast } from "./useToast";
+import { useEventsFooterCopy } from "@/features/events/locale";
+import { eventImage } from "@/features/events/view";
+import { openSignIn } from "@/features/components/auth/signin-store";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
+import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
+import { useEventAdmin, type EventAdminAccess } from "@/features/explorer/event-management/useEventAdmin";
+import { useToast } from "@/features/explorer/event-management/useToast";
 import styles from "./PendingEventsPage.module.css";
 
 /** The Users and Pending pages render in English, as decentraland.org's (its admin copy has no translations). */

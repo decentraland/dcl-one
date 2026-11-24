@@ -10,16 +10,16 @@ import { CatalystError, postJSON, signedGetJSON } from "@/data/lib/catalyst/clie
 import { eventsPageKeys } from "@/data/lib/catalyst/places/events-page";
 import { eventAdminKeys } from "@/data/lib/catalyst/places/event-management";
 import { QueryClient } from "@tanstack/react-query";
-import { openSignIn } from "../../components/auth/signin-store";
-import { CREATOR, currentPath, fakeEventsApi, makeEvent, makeIdentity, MODERATOR, readsOf, renderAdminPage, type FakeEventsApi } from "./admin.test-utils";
+import { openSignIn } from "@/features/components/auth/signin-store";
+import { CREATOR, currentPath, fakeEventsApi, makeEvent, makeIdentity, MODERATOR, readsOf, renderAdminPage, type FakeEventsApi } from "@/features/explorer/event-management/admin.test-utils";
 import PendingEventsPage from "./PendingEventsPage";
 
 const auth = vi.hoisted(() => ({ identity: null as AuthIdentity | null, isConnected: false }));
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
 vi.mock("@/data/lib/auth/session", () => ({ getIdentity: () => auth.identity }));
-vi.mock("../../components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
-vi.mock("../../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("@/data/lib/catalyst/client", async (original) => ({
   ...await original<typeof import("@/data/lib/catalyst/client")>(),
   postJSON: vi.fn(), signedGetJSON: vi.fn(),

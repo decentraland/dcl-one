@@ -423,10 +423,6 @@
     "primitives": 0,
     "tokens": 10
   },
-  "apps/sites/src/features/explorer/event-management/PendingEventsPage.module.css": {
-    "primitives": 0,
-    "tokens": 3
-  },
   "apps/sites/src/features/not-found/NotFoundPage.module.css": {
     "primitives": 0,
     "tokens": 14
@@ -454,6 +450,10 @@
   "apps/sites/src/features/social/submit-hangout/SubmitSuccess.module.css": {
     "primitives": 0,
     "tokens": 17
+  },
+  "apps/sites/src/pages/events/PendingEventsPage.module.css": {
+    "primitives": 0,
+    "tokens": 3
   },
   "apps/ui3/src/explorer/pages/passport.css": {
     "primitives": 25,
