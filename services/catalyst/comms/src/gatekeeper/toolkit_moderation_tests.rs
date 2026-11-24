@@ -335,6 +335,32 @@ async fn toolkit_baseline_optional_parcel_hostname_and_flat_realm_reach_authoriz
     }
 }
 
+/// A world of this node gives its realm name without `.dcl.eth`. The Unity
+/// client signs it beside the worlds host alone, the web Explorer beside the
+/// realm URL.
+#[tokio::test]
+async fn toolkit_stripped_world_realm_from_unity_and_the_web_reaches_authorization() {
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    let app = super::super::router(Arc::new(state));
+    let unity = "worlds-content-server.example";
+    let web = "node.example/world/mixed.dcl.eth";
+    for (realm, hostname, expected) in [
+        ("mixed", unity, StatusCode::FORBIDDEN),
+        ("mixed", web, StatusCode::FORBIDDEN),
+        // Another world, an owner's realm name and another host stay refused.
+        ("colon", unity, StatusCode::BAD_REQUEST),
+        ("Custom-Realm", unity, StatusCode::BAD_REQUEST),
+        ("mixed", "realm-provider.example", StatusCode::BAD_REQUEST),
+    ] {
+        let mut meta = metadata(realm, "SceneB", "1,1");
+        meta["realm"]["hostname"] = json!(hostname);
+        let body = json!({"banned_address":address_of(OUTSIDER_KEY)});
+        let (status, value) = call(&app, "DELETE", "/scene-bans", &meta, body, KEY).await;
+        assert_eq!(status, expected, "{meta}: {value}");
+    }
+}
+
 #[tokio::test]
 async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_storage() {
     let pool = lazy_pool();
@@ -429,10 +455,10 @@ async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_s
     }
 }
 
-struct ActorPolicy {
-    pool: Option<PgPool>,
-    unavailable: bool,
-    protected: BTreeSet<Address>,
+pub(super) struct ActorPolicy {
+    pub(super) pool: Option<PgPool>,
+    pub(super) unavailable: bool,
+    pub(super) protected: BTreeSet<Address>,
 }
 
 #[async_trait::async_trait]
@@ -479,7 +505,7 @@ impl AccessPolicy for ActorPolicy {
         match &self.pool {
             Some(pool) => {
                 super::super::moderation::Moderation::new(pool.clone())
-                    .admin_decision(scene.scene_id().as_str(), actor)
+                    .admin_decision(scene.place(), actor)
                     .await
             }
             None => PermissionDecision::refused("not authorized"),
@@ -720,6 +746,48 @@ async fn toolkit_signature_and_policy_fault_matrix_has_no_media_effect() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{value}");
 }
 
+/// A server reads the admins of the scene it signs, as a scene does: the
+/// resolver's answer is kept, and a `place_id` names that scene (its entity
+/// id, which older servers send, or its place).
+#[tokio::test]
+async fn a_server_signed_admin_list_answers_as_the_resolver_says() {
+    let server = |scene: &str| {
+        let mut meta = metadata("MiXeD.dcl.eth", scene, "1,1");
+        meta["signer"] = json!(crate::gatekeeper::auth::SERVER_SIGNER);
+        meta
+    };
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    let app = super::super::router(Arc::new(state));
+    // 500: the request reached the deliberately closed store.
+    for (scene, path, expected) in [
+        ("SceneB", "/scene-admin", 500),
+        ("SceneB", "/scene-admin?place_id=SceneB", 500),
+        ("SceneB", "/scene-admin?place_id=SceneA", 400),
+        ("Gone", "/scene-admin", 400),
+        ("Gone", "/scene-admin?place_id=Gone", 400),
+    ] {
+        let (status, value) = call(&app, "GET", path, &server(scene), Value::Null, KEY).await;
+        assert_eq!(status.as_u16(), expected, "{scene} {path}: {value}");
+    }
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(crate::interfaces::test_support::StubScenes {
+        room: Err(ResolveError::Db(sqlx::Error::PoolClosed)),
+        ..Default::default()
+    });
+    let app = super::super::router(Arc::new(state));
+    let (status, value) = call(
+        &app,
+        "GET",
+        "/scene-admin",
+        &server("SceneB"),
+        Value::Null,
+        KEY,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{value}");
+}
+
 #[tokio::test]
 async fn toolkit_current_placement_legacy_query_delete_and_mounted_signature_are_preserved() {
     let mut state = comms_state(lazy_pool(), Settings::for_tests());
@@ -796,7 +864,11 @@ async fn toolkit_store_fault_cannot_reach_media() {
             KEY,
         )
         .await;
-        assert!(status.is_server_error(), "{method} {path}: {value}");
+        assert_eq!(
+            (status, value),
+            past_gate_store_fault(method, path, false),
+            "{method} {path}"
+        );
     }
     assert!(
         media
@@ -876,24 +948,13 @@ async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
 
 /// Upstream's `isSceneOwnerOrAdmin` also admits the place's extended
 /// holders to the ban listings: a world deployment or streaming grantee, a
-/// LAND operator and a lease holder reach the store, an outsider and a
+/// LAND-document owner, operator, update operator, update manager or
+/// approved-for-all address and a lease holder reach the store, an outsider and a
 /// stale stored owner still get 401, and grants that cannot be read are 503.
 #[tokio::test]
 async fn toolkit_ban_listings_admit_extended_holders() {
     let holder = address_of(KEY);
-    let lease = axum::Router::new().route(
-        "/authorizations.json",
-        axum::routing::get({
-            let holder = holder.clone();
-            move || async move { Json(json!([{ "addresses": [holder], "plots": ["42,42"] }])) }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let lease_url = format!(
-        "http://{}/authorizations.json",
-        listener.local_addr().unwrap()
-    );
-    let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
+    let (lease_url, server) = lease_document(&checksummed(&holder), "42,42").await;
     let app = |policy: StubPolicy, lease_url: Option<String>| {
         let settings = Settings {
             lease_authorizations_url: lease_url,
@@ -916,14 +977,6 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         protected: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
         ..StubPolicy::default()
     };
-    let operator = StubPolicy {
-        land: Ok(Some(Arc::new(Some(LandOperators {
-            owner: "0x000000000000000000000000000000000000dead".into(),
-            operator: Some(holder.clone()),
-            ..Default::default()
-        })))),
-        ..StubPolicy::default()
-    };
     let unreadable = StubPolicy {
         grantees: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
             store: "world permissions",
@@ -931,38 +984,35 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         }),
         ..StubPolicy::default()
     };
-    for (case, app, meta, outcome) in [
-        (
-            "world grantee",
-            app(grantee, None),
-            &world,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        (
-            "LAND operator",
-            app(operator, None),
-            &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
+    let ise = StatusCode::INTERNAL_SERVER_ERROR;
+    let mut cases = vec![("world grantee", app(grantee, None), &world, true, ise)];
+    for (role, doc) in extended_land_roles(&holder) {
+        cases.push((role, app(land_policy(doc), None), &genesis, false, ise));
+    }
+    cases.extend([
         (
             "lease holder",
             app(StubPolicy::default(), Some(lease_url.clone())),
             &genesis,
-            StatusCode::INTERNAL_SERVER_ERROR,
+            false,
+            ise,
         ),
         (
             "stale stored owner",
             app(stale_owner, None),
             &world,
+            true,
             StatusCode::UNAUTHORIZED,
         ),
         (
             "unreadable world grants",
             app(unreadable, None),
             &world,
+            true,
             StatusCode::SERVICE_UNAVAILABLE,
         ),
-    ] {
+    ]);
+    for (case, app, meta, in_world, outcome) in cases {
         for path in ["/scene-bans", "/scene-bans/addresses"] {
             let (status, value) = call(&app, "GET", path, meta, Value::Null, KEY).await;
             assert_eq!(status, outcome, "{case} {path}: {value}");
@@ -984,7 +1034,11 @@ async fn toolkit_ban_listings_admit_extended_holders() {
             let (status, value) = call(&app, method, path, meta, body.clone(), KEY).await;
             if outcome == StatusCode::INTERNAL_SERVER_ERROR {
                 // Past the gate: the store behind it has no database here.
-                assert!(status.is_server_error(), "{case} {method} {path}: {value}");
+                assert_eq!(
+                    (status, value),
+                    past_gate_store_fault(method, path, in_world),
+                    "{case} {method} {path}"
+                );
             } else if outcome == StatusCode::UNAUTHORIZED {
                 // A write refuses with 403 where a listing answers 401.
                 assert_eq!(
@@ -1457,5 +1511,27 @@ async fn unban_commits_during_inventory_outage_and_preserves_a_reban_during_meta
             }
         }
         server.abort();
+    }
+}
+
+/// The answer of a moderation write whose caller passed the gate and whose
+/// store is closed. Removing an admin looks the target up first, and banning
+/// where the live scene rooms cannot be listed fails there; both answer 503.
+/// The admin 503 only shows "past the gate" because these fixtures' policies
+/// never read `social.scene_admins`; a pooled policy's gate answers the same.
+fn past_gate_store_fault(method: &str, path: &str, rooms_unlisted: bool) -> (StatusCode, Value) {
+    match (method, path) {
+        ("DELETE", "/scene-admin") => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": "could not determine authority: backing store social.scene_admins unavailable"}),
+        ),
+        ("POST", "/scene-bans") if rooms_unlisted => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": "Scene room inventory unavailable; retry the moderation request."}),
+        ),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": "Internal Server Error"}),
+        ),
     }
 }

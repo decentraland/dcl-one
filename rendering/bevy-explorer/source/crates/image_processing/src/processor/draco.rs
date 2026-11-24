@@ -12,11 +12,13 @@ use gltf_json::{
 
 const DRACO_EXTENSION: &str = "KHR_draco_mesh_compression";
 
-#[derive(Debug)]
-#[allow(dead_code)] // we use the ignored debug impl
+#[derive(Debug, thiserror::Error)]
 pub enum DracoError {
+    #[error("decode: {0:?}")]
     Decode(draco_oxide_decoder::Err),
+    #[error("malformed {0}")]
     Malformed(&'static str),
+    #[error("unsupported {0}")]
     Unsupported(&'static str),
 }
 

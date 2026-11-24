@@ -147,8 +147,8 @@ pub struct MovementSlow {
     velocity_y: B3,
     velocity_z_sign: bool,
     velocity_z: B3,
-    #[allow(dead_code)]
-    unused: B2,
+    #[skip]
+    __: B2,
 }
 
 #[bitfield]

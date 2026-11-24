@@ -255,6 +255,10 @@ pub struct DecentralandArguments {
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
+    /// Show the lower-right debug panel button in the HUD
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, help_heading = DEBUG)]
+    pub debug_panel: bool,
     /// Echo scene logs to the console
     #[arg(long = "scene_log_to_console", help_heading = DEBUG)]
     pub scene_log_to_console: bool,
@@ -470,6 +474,7 @@ impl DecentralandApp {
                 server,
                 position: launch.position.clone(),
                 guest: decentraland_app_config.arguments.guest,
+                debug_panel: decentraland_app_config.arguments.debug_panel,
                 autopilot,
             });
         }
@@ -811,8 +816,31 @@ impl DecentralandApp {
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
         app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
+        run_small_schedules_in_order(&mut app);
+
         app
     }
+}
+
+/// Runs the main schedules other than `PostUpdate` one system after another, on the thread that
+/// runs the schedule (the engine worker on the web). Most of their systems take microseconds, and
+/// handing each to a compute thread and waiting for it costs more than running it. `PostUpdate`
+/// stays multi-threaded: its systems (transform propagation, visibility) are large enough to gain
+/// from the compute threads.
+fn run_small_schedules_in_order(app: &mut App) {
+    use bevy::{
+        app::{RunFixedMainLoop, SpawnScene},
+        ecs::schedule::{ExecutorKind, Schedule},
+    };
+
+    let in_order = |schedule: &mut Schedule| {
+        schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+    };
+    app.edit_schedule(PreUpdate, in_order)
+        .edit_schedule(RunFixedMainLoop, in_order)
+        .edit_schedule(Update, in_order)
+        .edit_schedule(SpawnScene, in_order)
+        .edit_schedule(Last, in_order);
 }
 
 fn save_fresh_user_id(config: Res<AppConfig>) {

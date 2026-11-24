@@ -94,12 +94,16 @@ pub fn apply_etag(resp: &mut Response, last_modified_ms: i64, etag: &str, max_ag
 }
 
 pub fn apply(resp: &mut Response, last_modified_ms: i64, max_age: u32, swr: u32) {
-    let headers = resp.headers_mut();
     if let Ok(v) = HeaderValue::from_str(&format_http_date(last_modified_ms)) {
-        headers.insert(header::LAST_MODIFIED, v);
+        resp.headers_mut().insert(header::LAST_MODIFIED, v);
     }
+    apply_policy(resp, max_age, swr);
+}
+
+/// The cache policy alone, for an answer the grid stamp does not validate.
+pub fn apply_policy(resp: &mut Response, max_age: u32, swr: u32) {
     if let Ok(v) = HeaderValue::from_str(&cache_control_value(max_age, swr)) {
-        headers.insert(header::CACHE_CONTROL, v);
+        resp.headers_mut().insert(header::CACHE_CONTROL, v);
     }
 }
 

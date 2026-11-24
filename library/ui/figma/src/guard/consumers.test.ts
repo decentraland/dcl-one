@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   CACHED_LEDGERS,
   LEDGER,
@@ -32,7 +32,7 @@ describe('the lifecycle ledgers', () => {
       expect(file.startsWith('figma/ledger/')).toBe(true)
       expect(() =>
         execFileSync('git', ['-C', libraryRoot, 'check-ignore', '-q', file], { stdio: 'pipe' })
-      ).toThrow()
+      ).toThrow(`Command failed: git -C ${libraryRoot} check-ignore -q ${file}`)
     }
     for (const file of CACHED_LEDGERS)
       expect(
@@ -92,12 +92,14 @@ describe('findConsumers', () => {
       expect(users({ 'docs/note.md': 'hash 0123456789abcdef' })).toEqual(['docs/note.md'])
     })
 
-    it('should count an unresolved basename even when both copies exist', () => {
-      expect(
-        users({
-          'components/places/Card.tsx': `const icon = '${NAME}'`
-        })
-      ).toEqual(['components/places/Card.tsx'])
+    describe('and both copies of the asset exist', () => {
+      it('should still count an unresolved basename', () => {
+        expect(
+          users({
+            'components/places/Card.tsx': `const icon = '${NAME}'`
+          })
+        ).toEqual(['components/places/Card.tsx'])
+      })
     })
 
     it('should count a package specifier in code', () => {
@@ -182,24 +184,33 @@ describe('findConsumers', () => {
   })
 })
 
-describe('readTree in a git checkout', () => {
-  it('should leave out a tracked file Git reports as deleted', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'consumers-git-'))
-    try {
+describe('readTree', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(os.tmpdir(), 'consumers-git-'))
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  describe('when Git reports a tracked file as deleted', () => {
+    beforeEach(async () => {
       await writeFile(path.join(root, 'kept.md'), 'kept')
       await writeFile(path.join(root, 'gone.md'), 'gone')
       execFileSync('git', ['init', '-q'], { cwd: root })
       execFileSync('git', ['add', '-A'], { cwd: root })
       await rm(path.join(root, 'gone.md'))
+    })
+
+    it('should leave the deleted file out', async () => {
       expect([...(await readTree(root)).texts.keys()]).toEqual(['kept.md'])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+    })
   })
 
-  it('should fail closed on a listed file it cannot read', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'consumers-git-'))
-    try {
+  describe('when a listed file cannot be read', () => {
+    beforeEach(async () => {
       await mkdir(path.join(root, 'odd.md'))
       await writeFile(path.join(root, 'odd.md', 'inner.txt'), 'x')
       await writeFile(path.join(root, 'plain.md'), 'x')
@@ -207,9 +218,10 @@ describe('readTree in a git checkout', () => {
       execFileSync('git', ['add', '-A'], { cwd: root })
       await rm(path.join(root, 'plain.md'))
       await mkdir(path.join(root, 'plain.md'))
-      await expect(readTree(root)).rejects.toThrow('plain.md')
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+    })
+
+    it('should fail closed and name the unreadable file', async () => {
+      await expect(readTree(root)).rejects.toThrow('Cannot read plain.md to check asset consumers')
+    })
   })
 })

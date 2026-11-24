@@ -133,6 +133,7 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
+            "worlds_allowance_read_failures_total 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
@@ -149,6 +150,9 @@ pub async fn serve(
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
+    if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
+        tracing::warn!("{warning}");
+    }
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
     let sync_settings = SyncSettings::from_config(&config)?;
@@ -163,6 +167,8 @@ pub async fn serve(
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
+    worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
+    worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -190,9 +196,9 @@ pub async fn serve(
         &content.settings.content_public_url,
     );
 
-    // ONE outbound client: the RPC validator uses it as is (`raw`), every
-    // mirror and upstream reader through the guard; peer sync has its own
-    // (`content::sync::sync_http_client`).
+    // ONE outbound client: every mirror and upstream reader goes through the
+    // guard; peer sync (`content::sync::sync_http_client`) and the RPC
+    // validator have their own.
     let http_client = http::Outbound::new(http::HttpClientCfg::serve(
         config.content.connections_max_idle,
     ))
@@ -251,21 +257,38 @@ pub async fn serve(
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
-        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
+        .map(|url| {
+            // The shared client's settings without redirects: one would hand the check
+            // to another node.
+            let client = http::HttpClientCfg {
+                max_redirects: None,
+                ..http::HttpClientCfg::serve(config.content.connections_max_idle)
+            }
+            .build()
+            .context("building the EIP-1654 RPC client")?;
+            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+        })
+        .transpose()?;
 
     // The content validator of the local write path (src/content/validator):
-    // the old catalyrst-validator rules over the ONE pool (the escrow
+    // the old catalyrst-validator rules over the ONE pool (the opt-in escrow
     // overlay), store and client, the shared EIP-1654 validator and the
     // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
-    let validator_settings = content::validator::Settings::parse(
-        config.validator.ignore_blockchain_access_checks,
-        config.writes.content_writes_enabled,
-        config.validator.additional_decentraland_address.as_deref(),
-        &config.node.eth_network,
-        config.content.eth_rpc_url()?,
-        config.economy.rpc_endpoint_polygon.as_deref(),
-    )
-    .context("content validator configuration")?;
+    if let Some(warning) = config.escrow_lease_flags_warning() {
+        tracing::warn!("{warning}");
+    }
+    let validator_settings = content::validator::Settings {
+        escrow_lease_ownership: config.validator.content_escrow_lease_ownership_enabled,
+        ..content::validator::Settings::parse(
+            config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes(),
+            config.validator.additional_decentraland_address.as_deref(),
+            &config.node.eth_network,
+            config.content.eth_rpc_url()?,
+            config.economy.rpc_endpoint_polygon.as_deref(),
+        )
+        .context("content validator configuration")?
+    };
     // Sync and the read-through validate every entity a peer serves.
     let judges_peer_entities = sync_settings.is_some() || config.content.read_through_enabled;
     if judges_peer_entities {
@@ -280,7 +303,7 @@ pub async fn serve(
         eip1654.clone(),
         validator_settings,
     ));
-    if (config.writes.content_writes_enabled || judges_peer_entities)
+    if (config.writes.content_writes() || judges_peer_entities)
         && !config.validator.ignore_blockchain_access_checks
     {
         content_validator
@@ -559,6 +582,7 @@ pub async fn serve(
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
+    explorer_api.attach_land_authz(land.clone());
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -587,10 +611,22 @@ pub async fn serve(
     .with_land_authz(Some(land.clone()))
     .with_denylist(content.denylist.clone())
     .with_forwarder(content_forwarder);
-    content.attach_writes(config.writes.content_writes_enabled, Arc::new(deployer));
+    content.attach_writes(config.writes.content_writes(), Arc::new(deployer));
+    // Spool directories of POST /entities requests a crashed process left;
+    // older than any live request, so a running replica's are never touched.
+    {
+        let spool_root = content.spool_root.clone();
+        let stale_after = catalyst_storage::gc::orphan_age_floor(
+            config.worlds.multipart_upload_timeout_ms,
+            config.worlds.deployment_processing_timeout_ms,
+        );
+        tokio::spawn(async move {
+            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+        });
+    }
     // Expired partial uploads (content::partial_deployments) are reclaimed
     // only where they can be made: a node taking local writes.
-    if config.writes.content_writes_enabled {
+    if config.writes.content_writes() {
         content::partial_deployments::spawn(
             &jobs,
             pool.clone(),
@@ -621,10 +657,24 @@ pub async fn serve(
         );
     }
     content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
-    if config.writes.content_writes_enabled {
+    let gateway_cap = content::create_entity::gateway_cap_warning(&content.settings);
+    for warning in config
+        .content
+        .upload_limit_warnings()
+        .into_iter()
+        .chain(gateway_cap)
+    {
+        tracing::warn!("{warning}");
+    }
+    if config.writes.content_writes() {
         tracing::warn!(
             denylisted,
             "CONTENT_WRITES_ENABLED=true: this node is the authority for local deployments and unpublishes"
+        );
+    } else if config.writes.read_only {
+        tracing::info!(
+            denylisted,
+            "READ_ONLY=true: POST /entities and DELETE /scenes/{{coord}} answer 404, whatever CONTENT_WRITES_ENABLED says"
         );
     } else {
         tracing::info!(
@@ -681,6 +731,7 @@ pub async fn serve(
         oz_sleep_between_checks: Duration::from_millis(
             config.economy.oz_sleep_time_between_checks_ms,
         ),
+        oz_accounts_first_wait: shop::evm::relayer::ACCOUNTS_FIRST_WAIT,
         meta_tx_broadcast_enabled: config.economy.meta_tx_broadcast_enabled,
         relayer_private_key: Config::non_empty(&config.economy.relayer_private_key),
         transactions_upstream_url: Config::non_empty(&config.economy.transactions_upstream_url),
@@ -719,6 +770,7 @@ pub async fn serve(
         shop::evm::State::new(pool.clone(), http_client.clone(), economy_settings)
             .context("provisioning the economy relayers")?,
     );
+    shop::evm::spawn_jobs(&economy_state, &jobs);
     shop::checkout::spawn_jobs(&economy_state, &jobs);
 
     let price = Arc::new(price::State::new(
@@ -1014,7 +1066,10 @@ pub async fn serve(
             shop::mana::Settings {
                 writes_enabled: config.writes.data_writes_enabled,
                 track_interval: Duration::from_secs(
-                    config.marketplace.marketplace_index_interval_secs,
+                    config
+                        .marketplace
+                        .marketplace_executions_track_interval_secs
+                        .max(1),
                 ),
                 collections_chain_id: config.economy.collections_chain_id,
             },
@@ -1103,6 +1158,11 @@ pub async fn serve(
     social
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
+    if social.communities.flags_configured() {
+        comms_stage
+            .gatekeeper
+            .set_platform_moderator_flags(social.communities.flags.clone());
+    }
     social
         .communities
         .referral
@@ -1404,15 +1464,21 @@ pub async fn serve(
 }
 
 /// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
-/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
-/// written, since upstream concatenates `${url}/contents/` literally. This node's
-/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
-/// route the node serves (the nested `/content` route does not match `//`).
+/// upstream Stats uses one URL for both. Trailing slashes are stripped from
+/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does since
+/// archipelago-workers#141, so `{base}/contents/{hash}` never holds `//` (the nested
+/// `/content` route does not match it). Unlike upstream, whitespace is trimmed and
+/// an all-slash `CONTENT_URL` falls back to this node's `/content`.
 fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
-    match configured.map(str::trim).filter(|url| !url.is_empty()) {
-        Some(url) => url.to_string(),
-        None => content_public_url.trim_end_matches('/').to_string(),
-    }
+    let strip = |url: &str| {
+        url.trim()
+            .trim_end_matches(|c: char| c == '/' || c.is_whitespace())
+            .to_string()
+    };
+    configured
+        .map(strip)
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| strip(content_public_url))
 }
 
 #[cfg(test)]
@@ -1420,7 +1486,7 @@ mod stats_content_url_tests {
     use super::stats_content_url;
 
     #[test]
-    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+    fn trailing_slashes_are_stripped_from_the_node_default_and_the_operator_value() {
         assert_eq!(
             stats_content_url(None, "https://node.example/content/"),
             "https://node.example/content"
@@ -1430,11 +1496,36 @@ mod stats_content_url_tests {
             "https://node.example/content"
         );
         assert_eq!(
+            stats_content_url(Some("/"), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
             stats_content_url(
                 Some("https://cdn.example/content/"),
-                "https://cdn.example/content/"
+                "https://node.example/content/"
             ),
-            "https://cdn.example/content/"
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/// "),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/ /"),
+                "https://node.example/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content"),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
         );
     }
 }

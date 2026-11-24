@@ -22,6 +22,14 @@ import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
 import { portPrepare, portVerify } from './port.js'
 import { fetchFdsSource } from './sources/fds-source.js'
+import {
+  loadMappingManifest,
+  manifestPath,
+  writeMappingManifest
+} from './contract/mapping-manifest.js'
+import { manifestDifferences, mappedNodeIds, readMappedSets } from './contract/manifest-refresh.js'
+import { LIBRARY_MAPPING_ROOT } from './runtime.js'
+import { existsSync } from 'node:fs'
 
 const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
@@ -36,6 +44,7 @@ const USAGE = `Usage:
   dcl-figma resolve (--node-id <id> | --name <name>) [--variant 'Prop=Value']... [--boolean 'Prop=true|false']... [--text 'Layer=Value']... [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma resolve --batch <file|-> [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma manifest refresh | manifest verify
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
 
@@ -91,6 +100,25 @@ async function main(argv: string[]): Promise<number> {
     const result = argv[1] === 'prepare' ? portPrepare(process.cwd()) : portVerify(process.cwd())
     print(result)
     return result.ok ? 0 : 1
+  }
+  // The mapping manifest against the live file (FIGMA_TOKEN and FIGMA_FILE_KEY from the environment): refresh
+  // rewrites it from the nodes the mappings name, verify reports what differs and writes nothing. A node that
+  // cannot be read fails either one, and refresh then leaves the tracked file as it was.
+  if (argv[0] === 'manifest') {
+    if (argv.length !== 2 || (argv[1] !== 'refresh' && argv[1] !== 'verify'))
+      throw new Error('manifest takes refresh or verify')
+    const fileKey = requireFileKey()
+    const file = manifestPath(LIBRARY_MAPPING_ROOT)
+    const nodeIds = await mappedNodeIds(LIBRARY_MAPPING_ROOT)
+    const live = await readMappedSets(new FigmaClient(new EnvTokenProvider()), fileKey, nodeIds)
+    if (argv[1] === 'refresh') {
+      await writeMappingManifest(file, live)
+      print({ ok: true, sets: live.length })
+      return 0
+    }
+    const differences = manifestDifferences(await loadMappingManifest(file), live)
+    print({ ok: differences.length === 0, sets: live.length, differences })
+    return differences.length === 0 ? 0 : 1
   }
   // Materializes the figma-design-system capture pinned in upstream.lock.json; maintainers only, never CI.
   if (argv[0] === 'fetch-source') {
@@ -234,7 +262,21 @@ async function main(argv: string[]): Promise<number> {
     })
     const context = await runtime.resolveContext()
     if (command === 'check-mappings') {
-      const report = await checkMappingsReport(context)
+      // The library's own mappings are checked against its tracked manifest, which must exist. Another mapping
+      // root is checked against its manifest when it has one, and as before when it has none.
+      const manifest = context.mappingRoot ? manifestPath(context.mappingRoot) : undefined
+      const own = context.mappingRoot
+        ? path.resolve(context.mappingRoot) === path.resolve(LIBRARY_MAPPING_ROOT)
+        : false
+      const checked =
+        manifest && (own || existsSync(manifest))
+          ? {
+              ...context,
+              figmaSets: await loadMappingManifest(manifest),
+              identitySource: 'manifest' as const
+            }
+          : context
+      const report = await checkMappingsReport(checked)
       print(report)
       return report.ok ? 0 : 1
     }

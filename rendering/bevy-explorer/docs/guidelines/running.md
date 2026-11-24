@@ -172,7 +172,8 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Runtime debug panel
 
-In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+Launch the desktop client with `--debug-panel` or open the web page with `?debugPanel=1`
+to show the lower-right bug button. Click it to toggle the panel.
 In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
@@ -233,6 +234,22 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
+  only): local demo avatars with random base wearables, up to 1024. `layout grid` (the default)
+  stands new ones in a 32-wide grid in front of the player, each row filled from straight ahead
+  outwards; `layout around` fills a disc centred
+  on the player, nearest first, so part of the crowd is behind the camera.
+  `seed <n>` gives the avatar at each position the same look in every session of one build, so
+  two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range, and
+  `cap all` sets no cap, so real players and scene avatars hide no demo avatar: either wins
+  over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
+  to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
+  hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
+  (what `cap` set, else `null`),
+  `layout`, `seed`, `maleOnly`, `wearables`, `emote`; the avatars a `clear` or `remove-random`
+  removes are not counted in its own reply. The Avatar debug section of the debug panel shows
+  the counts and sets the cap, layout and seed. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
   capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
   `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
@@ -285,6 +302,13 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/scene_topics`: the **Scene messages** debug section's routing, topic-traffic and policy
+  readings. `sceneRooms`, `room`, `running`, `isolated` and `subscribedScenes` describe routing.
+  `published`, `publishDropped`, `received` and `receiveDropped` count topic packets, including
+  rejected banned senders in both received and dropped. `bannedSenderDrops`, `filteredInboundCrdt`,
+  `filteredOutboundCrdt` and `invalidMessages` cover the engine's message policy across channels;
+  `binaryPayloadLimit` is 13,269 bytes on egress. Counters are cumulative since startup, and
+  filtering counts packets whose CRDT records changed.
 - `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
   JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
   requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
@@ -294,12 +318,24 @@ State, in every build:
   `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
   balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
   `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
+- `/home_state`: the home as JSON, the Home debug section's source: `account` (the signed-in
+  wallet address, the key of its home; `null` before sign-in and for a guest with no account),
+  `pinned` (that account's home as
+  `<realm> x,y`; `null` when it has none), `startup` (the home the engine starts in: the stored
+  sign-in's account's, else the last account's), `lastAccount` (the account a home was last read
+  for) and `unadopted` (true while the config still holds a home kept for no account, which the
+  first account to sign in takes). Reading it writes nothing. `/home_clear` takes the signed-in
+  account's home back, and refuses when no account is signed in or the account has no home. The
+  HUD is not told: its home pin and Set as Home stay on until it reads the home again (the lobby
+  opening, a Set as Home press, a reload).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
   `checkedAgoSecs`, `error`), the local user's scene admission
-  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`,
+  `retainedRefusals`: scene id, scope and `retryDue` in elapsed engine seconds, from the active
+  room or its saved deadline while away),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
   `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
@@ -307,7 +343,9 @@ State, in every build:
   through the social service and answer once it has; `/ban_block_refresh` re-checks the
   platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
-  coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
+  coordinates `/click_at` takes, `null` behind the camera, with the same point `normalized` (0 to
+  1 of the window, as `/click_at --normalized` takes it) and the window's `screen` (`width`,
+  `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
@@ -380,7 +418,9 @@ The HUD and input:
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
-  `/click_at <x> <y> [--button left|right|middle]`.
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]`: logical pixels from the top
+  left, or 0 to 1 of the window with `--normalized`. It replies JSON: `x` and `y` in pixels,
+  `normalized`, `button`, `screen` and, on the web, `input` (`trusted` or `synthetic`).
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
   and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
   click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
@@ -408,8 +448,12 @@ always `trusted`, and `/press_key` and `/click_at` feed the engine the window's 
 they get real input when a DevTools client has installed `window.__dclTrustedInput` (the web driver
 does, see below); elsewhere (the DevTools console, a page script) they fall back to DOM events,
 which prove the HUD's handlers but not the browser's input path, and give a page script nothing it
-lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
-are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
+lacks. `/hud_click`, `/hud_fill` and `/click_at` say which in `"input"`: `trusted` or `synthetic`.
+Arguments are split on whitespace, and a double-quoted run is one argument, with `\"` and `\\`
+escaping inside it (`/chat nearby "two  words"`); a command typed in the chat input splits the
+same way. A command that takes JSON (the HUD commands, `/set_component`) takes the rest of the
+line split on whitespace alone, so runs of spaces inside the JSON collapse to one. The [conventions ADR](../../../../docs/adr/2026-11-17-console-command-conventions.md)
+has the rules every automation command follows. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine

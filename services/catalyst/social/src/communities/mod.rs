@@ -13,10 +13,10 @@
 //! write route also accepts, the federation log and its content routes are
 //! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
 //! private community leaves its voice room ([`State::evict_from_private_community_voice`]
-//! through the [`VoiceEviction`] the comms module attaches in `main`). What
-//! did not come along, and why, is listed in `README.md`'s deviations; in
-//! short: the archipelago presence probe, which is configured explicitly and
-//! degrades to "everyone offline".
+//! through the [`VoiceEviction`] the comms module attaches in `main`). The
+//! `onlyOnline` member filter reads the wallet topology (Pulse islands and World
+//! rooms) the social RPC's connectivity stream reads, attached in `serve`
+//! ([`State::set_topology`]).
 //!
 //! Mount it twice: at the root (the old `social-api.decentraland.org` host
 //! paths) and nested under `/social-api` (the gateway prefix); the
@@ -31,7 +31,6 @@ pub mod fed;
 pub mod friendship;
 pub mod http;
 pub mod mirror;
-pub mod presence;
 pub mod profiles;
 pub mod queries;
 pub mod ranking;
@@ -75,7 +74,6 @@ use crate::{Address, CommunityId};
 
 use auth::SignedPath;
 use http::CommError;
-use presence::Presence;
 use profiles::ProfilesCache;
 
 /// The old `catalyrst-communities` service's settings. `main.rs` fills it
@@ -99,13 +97,12 @@ pub struct Settings {
     pub restricted_names: Vec<String>,
     /// `COMMUNITIES_CDN_URL` (the old `CDN_URL`), default `PUBLIC_URL`: the
     /// base of `thumbnailUrl`; this node serves the thumbnail at
-    /// `/social/communities/{id}/raw-thumbnail.png` under it.
+    /// `/social/communities/{id}/raw-thumbnail.png` under it. Emitted URLs
+    /// carry `?v=<hash>`, so a caching CDN must key on `v` only and strip
+    /// other query parameters.
     pub cdn_url: String,
     /// Where profile pictures are served (`profiles::FaceUrls`).
     pub faces: profiles::FaceUrls,
-    /// `ARCHIPELAGO_STATS_URL`: the comms presence source of `onlyOnline`;
-    /// unset renders every member offline.
-    pub archipelago_stats_url: Option<String>,
     /// `COMMUNITIES_PLACES_OWNERSHIP_CHECK` (default true: upstream's
     /// `validateOwnership` always asks the places API, `PLACES_API_URL` being
     /// required): places added to a community must be owned by the caller
@@ -153,7 +150,6 @@ impl Settings {
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
-            archipelago_stats_url: None,
             places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),
             referral: referral::Settings::for_tests(),
@@ -170,7 +166,9 @@ pub struct State {
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
     pub referral: referral::Referral,
-    pub presence: Presence,
+    /// The wallet topology (Pulse islands and World rooms), attached with the
+    /// social RPC's (`serve`): who `onlyOnline` counts as online. Unattached, no one is.
+    pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
     analytics: std::sync::OnceLock<crate::analytics::Analytics>,
@@ -255,9 +253,7 @@ pub type SharedState = Arc<State>;
 const DM_SENDS_PER_MINUTE: u32 = 60;
 
 impl State {
-    /// `http` is the process's outbound client; the presence probe uses its
-    /// raw form because `ARCHIPELAGO_STATS_URL` is operator configuration
-    /// (typically a loopback service), not user input.
+    /// `http` is the process's outbound client.
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
@@ -269,7 +265,6 @@ impl State {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
         let referral =
             referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
-        let presence = Presence::new(http.raw().clone(), settings.archipelago_stats_url.clone());
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
             pool,
@@ -278,7 +273,7 @@ impl State {
             eip1654,
             profiles,
             referral,
-            presence,
+            topology: std::sync::OnceLock::new(),
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
             analytics: std::sync::OnceLock::new(),
             compliance: std::sync::OnceLock::new(),
@@ -328,7 +323,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Result<Address, CommError> {
-        Ok(auth::require_signer(headers, method, path, self.eip1654.as_deref()).await?)
+        Ok(auth::require_signer(headers, method, path, self.eip1654.as_ref()).await?)
     }
 
     pub async fn optional_signer(
@@ -337,7 +332,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Option<Address> {
-        auth::try_extract_signer(headers, method, path, self.eip1654.as_deref()).await
+        auth::try_extract_signer(headers, method, path, self.eip1654.as_ref()).await
     }
 
     pub fn admin_bearer(&self, headers: &HeaderMap) -> bool {
@@ -354,6 +349,11 @@ impl State {
 
     pub fn thumbnail_url(&self, id: CommunityId) -> String {
         thumbnail_url(&self.settings.cdn_url, &id.to_string())
+    }
+
+    /// The thumbnail URL versioned by the stored hash (bare when none).
+    pub fn versioned_thumbnail_url(&self, id: CommunityId, hash: Option<&str>) -> String {
+        versioned_thumbnail_url(&self.settings.cdn_url, &id.to_string(), hash)
     }
 
     /// Attaches the comms module's voice-room kick (once).
@@ -395,14 +395,28 @@ impl State {
         let _ = self.worlds.set(worlds);
     }
 
+    /// Attaches the wallet topology (once).
+    pub fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
+        let _ = self.topology.set(topology);
+    }
+
+    /// The wallets online now, lowercased: the topology's current snapshot
+    /// (shared, not copied), none when it is unattached or has expired.
+    pub fn online_wallets(&self) -> Arc<std::collections::BTreeSet<String>> {
+        self.topology
+            .get()
+            .map(|t| t.snapshot().wallets)
+            .unwrap_or_default()
+    }
+
     /// Attaches the social RPC's fan-out (once).
     pub fn set_updates(&self, updates: crate::rpc::pubsub::PubSub) {
         let _ = self.updates.set(updates);
     }
 
-    /// A join (`online`) or a leave, kick or ban reaches the community's
-    /// members on open community-member connectivity streams and the member
-    /// itself (upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL`).
+    /// A join or removal reaches the affected member as a membership change.
+    /// Co-members on open connectivity streams see the corresponding roster change
+    /// when membership and topology agree with it.
     pub async fn member_status_changed(
         &self,
         community_id: CommunityId,
@@ -491,26 +505,27 @@ impl State {
         extra: serde_json::Value,
         audience: crate::notifications::community::Audience<'_>,
     ) {
-        let name: Option<String> = match sqlx::query_scalar(
-            "SELECT name FROM social.communities WHERE id = $1",
+        let row: Option<(String, Option<String>)> = match sqlx::query_as(
+            "SELECT c.name, t.thumbnail_hash FROM social.communities c \
+             LEFT JOIN social.community_thumbnails t ON t.community_id = c.id WHERE c.id = $1",
         )
         .bind(community_id)
         .fetch_optional(&self.pool)
         .await
         {
-            Ok(name) => name,
+            Ok(row) => row,
             Err(error) => {
                 tracing::warn!(%error, %community_id, kind, "community notification: name lookup failed");
                 None
             }
         };
-        let Some(name) = name else {
+        let Some((name, hash)) = row else {
             return;
         };
         let mut metadata = serde_json::json!({
             "communityId": community_id.as_uuid(),
             "communityName": name,
-            "thumbnailUrl": self.thumbnail_url(community_id),
+            "thumbnailUrl": self.versioned_thumbnail_url(community_id, hash.as_deref()),
         });
         if let (Some(m), serde_json::Value::Object(extra)) = (metadata.as_object_mut(), extra) {
             m.extend(extra);
@@ -570,6 +585,21 @@ pub fn thumbnail_url(cdn: &str, id: &str) -> String {
         cdn.trim_end_matches('/'),
         id
     )
+}
+
+/// The query parameter that versions a thumbnail URL by its content hash.
+pub const THUMBNAIL_VERSION_PARAM: &str = "v";
+
+/// `thumbnail_url` plus `?v=<hash>`, so an update changes the URL; a hash
+/// that is not URL-safe leaves it bare.
+pub fn versioned_thumbnail_url(cdn: &str, id: &str, hash: Option<&str>) -> String {
+    let url = thumbnail_url(cdn, id);
+    match hash {
+        Some(h) if !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+            format!("{url}?{THUMBNAIL_VERSION_PARAM}={h}")
+        }
+        _ => url,
+    }
 }
 
 /// The request's own path (the gateway prefix included when nested) beside

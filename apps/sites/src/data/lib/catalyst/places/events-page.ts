@@ -35,8 +35,21 @@ export const eventsPageKeys = {
     ["events", "place", "world" in target ? `world:${target.world}` : `position:${target.position.join(",")}`] as const,
 };
 
+/** The account-scoped event reads a write can change: My Events and the admin pages' reads. */
+const PRIVATE_EVENT_DOMAINS: readonly unknown[] = ["events", "event-admin"];
+
+/**
+ * After any event write: the public page's reads and every account's private event reads
+ * (`["private", account, "events" | "event-admin", ...]`), which sign-out alone clears.
+ */
 export function invalidateEventsAfterWrite(client: QueryClient) {
-  return client.invalidateQueries({ queryKey: eventsPageKeys.all });
+  return Promise.all([
+    client.invalidateQueries({ queryKey: eventsPageKeys.all }),
+    client.invalidateQueries({
+      queryKey: ["private"],
+      predicate: ({ queryKey }) => PRIVATE_EVENT_DOMAINS.includes(queryKey[2]),
+    }),
+  ]).then(() => undefined);
 }
 
 export type LiveNowData = { events: Event[]; places: Place[] };
@@ -110,9 +123,12 @@ export function readPlaceTarget(params: URLSearchParams): PlaceTarget | null {
   return null;
 }
 
-/** An event id link: any non-empty value; the events service decides whether it exists. */
-export function readEventId(params: URLSearchParams): string | null {
-  return params.get("id")?.trim() || null;
+/**
+ * The event a page URL names (`?id=` on the events page; a community page names it `?event=`): any
+ * non-empty value; the events service decides whether it exists.
+ */
+export function readEventId(params: URLSearchParams, name = "id"): string | null {
+  return params.get(name)?.trim() || null;
 }
 
 export const liveNowQuery = () =>
@@ -152,12 +168,15 @@ export const placeDetailQuery = (target: PlaceTarget) =>
 
 /** What the page's first document holds for agents: the live and upcoming events it dehydrated. */
 export function eventsAgentData(state: DehydratedState | null | undefined): { live: Event[]; upcoming: Event[] } {
-  const read = <T>(key: readonly unknown[]): T | undefined =>
-    state?.queries.find((query) => JSON.stringify(query.queryKey) === JSON.stringify(key))?.state.data as T | undefined;
   return {
-    live: read<LiveNowData>(eventsPageKeys.live())?.events ?? [],
-    upcoming: read<Event[]>(eventsPageKeys.upcoming()) ?? [],
+    live: dehydratedData<LiveNowData>(state, eventsPageKeys.live())?.events ?? [],
+    upcoming: dehydratedData<Event[]>(state, eventsPageKeys.upcoming()) ?? [],
   };
+}
+
+/** What one of the page's reads answered in its first document; undefined when that read failed or never ran. */
+export function dehydratedData<T>(state: DehydratedState | null | undefined, key: readonly unknown[]): T | undefined {
+  return state?.queries.find((query) => JSON.stringify(query.queryKey) === JSON.stringify(key))?.state.data as T | undefined;
 }
 
 /** The event a `?id=` link opened, when the page's first document dehydrated it, for its agent markdown. */

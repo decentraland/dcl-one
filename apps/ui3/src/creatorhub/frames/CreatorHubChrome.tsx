@@ -1,11 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
-import { useChromeAuth } from "../../web/frames/chrome-auth";
+import { useChromeAuth, ChromeLink, SiteLayout } from "@dcl/one-ui";
 import DclTopBar from "../../web/frames/DclTopBar";
-import ChromeLink from "../../web/frames/ChromeLink";
 import AccountMenu from "../../web/frames/AccountMenu";
 import "./creatorhubchrome.css";
-import SiteLayout from "../../web/frames/SiteLayout";
 import SiteSectionNavigation from "../../web/frames/SiteSectionNavigation";
 import { truncateAddress } from "../../data/format";
 
@@ -27,7 +25,7 @@ const CREATORHUB_NAV: NavItem[] = [
     id: "collections",
     group: "Create",
     label: "Collections",
-    href: "/create/wearables",
+    href: "/create/collections",
     icon: (
       <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
         <path d="M3 3h6l8 8-6 6-8-8V3Z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round" />
@@ -39,7 +37,7 @@ const CREATORHUB_NAV: NavItem[] = [
     id: "curate",
     group: "Manage",
     label: "Curate",
-    href: "/create/curate",
+    href: "/create/curation",
     secondary: true,
     hint: "Committee",
     icon: (

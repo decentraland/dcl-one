@@ -228,6 +228,24 @@ pub async fn update_world_settings(
             declared,
         ))
     })??;
+    // The gatekeeper reads a signed realm name as the world it names (a bare
+    // label as `<label>.dcl.eth`: the Unity explorer signs the realm name
+    // alone), so an override naming another world held here would send this
+    // world's visitors to that world's room. `/about` repeats the check.
+    if let Some(name) = input.realm_name_override.as_deref()
+        && crate::queries::override_names_another_world(
+            &state.pool,
+            world.key(),
+            name,
+            &state.settings.realm_name,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("realm name override check: {e}")))?
+    {
+        return Err(SettingsError::invalid(format!(
+            "Invalid realm_name_override: \"{name}\" is the name of another world."
+        )));
+    }
 
     let timeout_ms = limits.deployment_processing_timeout_ms;
     tokio::time::timeout(Duration::from_millis(timeout_ms), async {
@@ -248,17 +266,12 @@ pub async fn update_world_settings(
         if !authorized {
             return Err(SettingsError::Handler { status: StatusCode::FORBIDDEN, message: NOT_ALLOWED_MESSAGE.to_string() });
         }
-        if let Some(bytes) = thumbnail {
-            let hash = crate::auth::hash_bytes_v1(&bytes);
-            state
-                .storage
-                .store(&hash, bytes::Bytes::from(bytes))
-                .await
-                .map_err(|e| ApiError::internal(format!("failed to store thumbnail: {e}")))?;
-            input.thumbnail_hash = Some(hash);
-        }
+        let thumbnail = thumbnail.map(|bytes| {
+            input.thumbnail_hash = Some(crate::auth::hash_bytes_v1(&bytes));
+            (state.storage.as_ref(), bytes::Bytes::from(bytes))
+        });
         // The two spawn refusals are the store's only 400s: upstream's `ValidationError`s.
-        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input)
+        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input, thumbnail)
             .await
             .map_err(|e| match e.is_bad_request() {
                 true => SettingsError::invalid(e.public_message()),
@@ -680,6 +693,25 @@ fn parse_coordinate(s: &str) -> Option<(i32, i32)> {
 mod tests {
     use super::super::deploy_form::test_support::multipart_from;
     use super::*;
+
+    /// The world a client signing an override would stand in: a bare label
+    /// or a full world name; never the shared realms or this node's realm.
+    #[test]
+    fn a_realm_name_override_stands_for_the_world_it_names() {
+        let world =
+            |name| crate::queries::override_world(name, "isla").map(|w| w.key().to_string());
+        for (name, expected) in [
+            ("bob", Some("bob.dcl.eth")),
+            ("MyGallery", Some("mygallery.dcl.eth")),
+            ("Bob.DCL.eth", Some("bob.dcl.eth")),
+            ("bob.eth", Some("bob.eth")),
+            ("main", None),
+            ("Isla", None),
+            ("localpreview", None),
+        ] {
+            assert_eq!(world(name).as_deref(), expected, "{name}");
+        }
+    }
 
     #[test]
     fn coordinate_parse_and_bounds() {

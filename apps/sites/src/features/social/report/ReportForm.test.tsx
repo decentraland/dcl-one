@@ -6,7 +6,7 @@ import { Link, MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { safeRedirectTarget } from "../../auth/login/redirect";
-import { closeSignIn, installHostSignIn, openSignIn } from "../../components/auth/signin-store";
+import { installHostSignIn, openSignIn } from "../../components/auth/signin-store";
 import ReportForm from "./ReportForm";
 
 const auth = vi.hoisted(() => ({ identity: null, address: null as string | null, isConnected: false }));
@@ -21,14 +21,16 @@ vi.hoisted(() =>
 vi.mock("@/data/lib/auth/context", () => ({
   useAuth: () => auth,
 }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({
+vi.mock("../../components/chrome/SitesLayout", () => ({
   default: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
-vi.mock("@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground", () => ({ AnimatedBackground: () => null }));
+vi.mock("@dcl/one-ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@dcl/one-ui")>()),
+  AnimatedBackground: () => null,
+}));
 
 afterEach(() => {
   cleanup();
-  closeSignIn();
   auth.address = null;
   auth.isConnected = false;
   delete (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__;
@@ -46,7 +48,7 @@ describe("when a signed-out visitor fills the report form", () => {
   function openReport(path: string) {
     const { pathname, search, hash } = new URL(path, "http://192.0.2.1:5231");
     vi.stubGlobal("location", { pathname, search, hash, assign });
-    return render(
+    const content = () => (
       <StrictMode>
         <MemoryRouter initialEntries={[path]}>
           <ReportForm trackCtx={{ sid: "sid", story: "report" } as never} />
@@ -55,8 +57,10 @@ describe("when a signed-out visitor fills the report form", () => {
           </button>
           <Link to={returnTo}>Original report</Link>
         </MemoryRouter>
-      </StrictMode>,
+      </StrictMode>
     );
+    const view = render(content());
+    return { ...view, refreshSession: () => view.rerender(content()) };
   }
 
   beforeEach(() => {
@@ -70,6 +74,7 @@ describe("when a signed-out visitor fills the report form", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Reason for Report" }), "scam_phishing");
     await user.upload(screen.getByLabelText("Evidence", { selector: "input" }), new File(["image"], "evidence.png", { type: "image/png" }));
     await user.click(screen.getByRole("button", { name: "Sign In" }));
+    await user.click(screen.getByRole("button", { name: "Continue to sign in" }));
     expect(assign).toHaveBeenCalledWith("/auth/login?redirectTo=" + encodeURIComponent(returnTo));
     report.unmount();
 
@@ -164,18 +169,18 @@ describe("when a signed-out visitor fills the report form", () => {
     }
   });
 
-  it("should keep the live draft without persisting it for desktop shell sign-in", async () => {
+  it("should restore the draft after the desktop shell redirects to sign-in", async () => {
     (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__ = { shell: "tauri" };
     const report = openReport(returnTo);
     const field = screen.getByRole("textbox", { name: "Description" });
     await user.type(field, description);
     await user.click(screen.getByRole("button", { name: "Sign In" }));
-    expect(assign).not.toHaveBeenCalled();
+    expect(assign).toHaveBeenCalledWith("/auth/login?redirectTo=" + encodeURIComponent(returnTo));
     expect(field).toHaveProperty("value", description);
     report.unmount();
 
     openReport(returnTo);
-    expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", "");
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", description);
   });
 
   it("should discard an expired draft on return", async () => {
@@ -187,6 +192,41 @@ describe("when a signed-out visitor fills the report form", () => {
 
     openReport(returnTo);
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", "");
+  });
+
+  describe.each(["Sign In", "Header Sign In"])("and %s is used", (entry) => {
+    it("should keep written text on the page when the draft cannot be stored", async () => {
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+      openReport(returnTo);
+      const field = screen.getByRole("textbox", { name: "Description" });
+      await user.type(field, description);
+      await user.click(screen.getByRole("button", { name: entry }));
+      expect(assign).not.toHaveBeenCalled();
+      expect(field).toHaveProperty("value", description);
+      expect(screen.getByRole("alert").textContent).toMatch(/save your draft/);
+    });
+
+    it("should keep attached evidence after logout until the visitor confirms leaving", async () => {
+      auth.isConnected = true;
+      auth.address = "0x1111111111111111111111111111111111111111";
+      const report = openReport(returnTo);
+      const attachment = new File(["image"], "evidence.png", { type: "image/png" });
+      await user.upload(screen.getByLabelText("Evidence", { selector: "input" }), attachment);
+      auth.isConnected = false;
+      auth.address = null;
+      report.refreshSession();
+      const trigger = screen.getByRole("button", { name: entry });
+      await user.click(trigger);
+      expect(assign).not.toHaveBeenCalled();
+      const cancel = screen.getByRole("button", { name: "Cancel" });
+      expect(document.activeElement).toBe(cancel);
+      await user.click(cancel);
+      expect(screen.getByRole("button", { name: "Remove evidence.png" })).toBeTruthy();
+      expect(document.activeElement).toBe(trigger);
+      await user.click(trigger);
+      await user.click(screen.getByRole("button", { name: "Continue to sign in" }));
+      expect(assign).toHaveBeenCalledExactlyOnceWith("/auth/login?redirectTo=" + encodeURIComponent(returnTo));
+    });
   });
 
   it("should still open sign-in when tab storage is unavailable", async () => {

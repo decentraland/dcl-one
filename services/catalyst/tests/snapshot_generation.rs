@@ -876,6 +876,7 @@ fn sync_settings(peer: &str) -> SyncSettings {
         max_retries: 3,
         retry_concurrency: 2,
         prune_ttl_days: 7,
+        discard_overtaken: false,
     }
 }
 

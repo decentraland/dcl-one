@@ -72,5 +72,13 @@ the player owns.
 - The failed tip a next send checks is kept in the tab's memory for its watch window: after a reload, the next tip
   signs the token's current nonce.
 - A tip that is mined only after its 30-minute watch ends is never forwarded, so its creator gets no notification.
+- The forward route refuses a tip it cannot confirm and stores nothing. With no MANA transfer index (no cursor, a
+  cursor without its whole history, or one nothing has advanced for hours) it answers 503 with the body code
+  `tip-index-unavailable`, and the forward stops there. While the index walk lags, is paused or has not started yet it
+  answers 503 with `Retry-After`, and when it cannot read the index cursor it answers 500; the forward retries both
+  within its window. Once its first head read in a process answers, a walk not held at its stop block marks its cursor
+  as advanced just outside the live window, so an index back after hours down answers the retryable 503, neither the
+  coded one nor a 202, until it really advances; a walk whose RPC is down, or one held at its stop block, keeps its age.
+  The external auth dApp, which posts the same route, receives the same answers.
 - A second tip of the same amount to the same creator, signed in the watch window from another tab, could be taken
   for the first one's Transfer.

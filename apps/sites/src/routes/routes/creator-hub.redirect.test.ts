@@ -10,7 +10,7 @@ describe("/creator-hub/* redirects to /create/*", () => {
     ["/creator-hub", "", "/create"],
     ["/creator-hub/", "", "/create"],
     ["/creator-hub/scenes?sort=recent", "scenes", "/create/scenes?sort=recent"],
-    ["/creator-hub/wearables?tab=published", "wearables", "/create/wearables?tab=published"],
+    ["/creator-hub/collections?status=draft", "collections", "/create/collections?status=draft"],
     ["/creator-hub/multiplayer-test?x=1", "multiplayer-test", "/create/preview?x=1"],
   ])("%s -> %s", (path, splat, expected) => {
     expect(createPathFor(new URL("https://sites.test" + path), splat)).toBe(expected);
@@ -18,11 +18,11 @@ describe("/creator-hub/* redirects to /create/*", () => {
 
   it("answers with a permanent, method-preserving redirect", async () => {
     const response = await loader({
-      request: new Request("https://sites.test/creator-hub/wearables"),
-      params: { "*": "wearables" },
+      request: new Request("https://sites.test/creator-hub/collections"),
+      params: { "*": "collections" },
       context: new RouterContextProvider(),
     } as never);
     expect(response.status).toBe(308);
-    expect(response.headers.get("Location")).toBe("/create/wearables");
+    expect(response.headers.get("Location")).toBe("/create/collections");
   });
 });

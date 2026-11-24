@@ -46,6 +46,18 @@
 .shop-orderbuy__moved input {
   accent-color: var(--ui-accent);
 }
+/* A page that can clear what holds the purchase back (another item's purchase still confirming). */
+.shop-orderbuy__link {
+  color: var(--ui-text);
+  text-decoration: underline;
+}
+.shop-orderbuy__link:hover {
+  color: var(--ui-accent);
+}
+.shop-orderbuy__link:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
 .shop-orderbuy__error {
   margin: 0;
   color: var(--error);

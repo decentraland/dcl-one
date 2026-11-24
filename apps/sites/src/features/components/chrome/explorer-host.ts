@@ -1,5 +1,5 @@
-import { CREATOR_HUB_HOME, CREATOR_HUB_SCOPE, creatorHubHost, type CreatorHubHost } from "@ui/creatorhub/explorer-host";
-import { embedEscapeHref, installEmbedGuards } from "@ui/web/frames/embed";
+import { CREATOR_HUB_HOME, CREATOR_HUB_SCOPE, creatorHubHost, type CreatorHubHost } from "@web-core/creator-hub-host";
+import { embedEscapeHref, installEmbedGuards } from "@/core/lib/embed";
 
 import { claimWalletCookieOnUse, setHostIdentity } from "@/data/lib/auth/session";
 import type { AuthIdentity } from "@/data/lib/auth/types";

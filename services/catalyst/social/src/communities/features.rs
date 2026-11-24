@@ -93,11 +93,21 @@ impl super::State {
         crate::explore::api::feature_flags::reload(&self.flags, &self.pool, "dapps").await
     }
 
+    /// Whether a flags service is configured (`FF_URL`): the refresh job and every
+    /// reader of this snapshot that falls back to local settings key on it.
+    pub fn flags_configured(&self) -> bool {
+        !self.settings.features.base_url.is_empty()
+    }
+
+    /// One refresh. On success it sets `social_dapps_flags_last_refresh_timestamp_seconds`;
+    /// a failure keeps the held document, so that gauge shows how stale it is. The gauge
+    /// exists only after this process's first successful refresh: a staleness alert must
+    /// also fire while it is absent.
     pub async fn refresh_flags(&self, api: &crate::explore::api::Shared) -> anyhow::Result<()> {
-        let settings = &self.settings.features;
-        if settings.base_url.is_empty() {
+        if !self.flags_configured() {
             return Ok(());
         }
+        let settings = &self.settings.features;
         let timeout = if settings.timeout.is_zero() {
             Duration::from_secs(10)
         } else {
@@ -111,13 +121,16 @@ impl super::State {
             &settings.audience,
             timeout,
         )
-        .await
+        .await?;
+        metrics::gauge!("social_dapps_flags_last_refresh_timestamp_seconds")
+            .set(chrono::Utc::now().timestamp() as f64);
+        Ok(())
     }
 
     /// Every process refreshes its own snapshot. The four booleans and the
     /// moderator variant always come from the same successfully stored document.
     pub fn spawn_flags_job(self: &Arc<Self>, jobs: &Jobs, api: crate::explore::api::Shared) {
-        if self.settings.features.base_url.is_empty() {
+        if !self.flags_configured() {
             return;
         }
         let state = self.clone();

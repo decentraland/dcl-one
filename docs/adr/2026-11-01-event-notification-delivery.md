@@ -1,6 +1,6 @@
 # ADR: Event notification delivery and signed profile mutations
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-01
 
 ## Context
@@ -70,6 +70,26 @@ an hour" and links the jump-in site (`JUMP_IN_SITE_URL`), as that service sent i
 even for an occurrence approved with less than an hour to go (its cursor skipped
 those; this node reminds them once).
 
+All six event notice kinds retain one identity per event, type and recipient.
+Occurrence intents remain scan checkpoints and retain per-occurrence Slack work;
+they do not determine inbox or email identity. A later source notice refreshes
+metadata and delivery time on the existing inbox row. Its source time in
+`metadata.occurredAt` must be strictly newer; equal times retain the first stored
+payload, so delayed moderation cannot replace a newer reason. Only the first
+insert creates an email delivery. Keeping notification rows preserves this rule
+after intent cleanup and terminal delivery pruning.
+
+Runtime and imports use the existing `(address, broadcast_key)` uniqueness and
+hold the same numerically ordered wallet-bucket transaction locks while adopting
+history and writing rows. The shared 256-bucket namespace bounds retained locks
+for both recipient pages and whole-transaction imports; hash collisions serialize
+additional wallets without changing their notification identity. An existing keyed carrier wins; otherwise the earliest exact native event
+match keeps its ID, visibility, reads and delivery history. Existing duplicate
+history is not consolidated. Imports retain exact source event keys and source
+times and never create deliveries. An authoritative full notification import
+must repair retained source history before event jobs are activated; missing
+source identities require a prior export and explicit reconciliation.
+
 Event notification channel preferences come from Social subscriptions, including
 per-type settings and community opt-outs. Community UUID scopes are normalized
 on write and lookup; event and community delivery also recognize existing
@@ -82,7 +102,9 @@ Legacy Explore profile notification
 settings remain a separate contract. Event-only in-app suppression does not
 change unrelated producers. Suppressed event rows are stored as read with a
 read timestamp, keeping them out of the unread index while preserving independent
-email delivery.
+email delivery. Visibility is fixed when a row is first stored: refreshing it
+never hides or reveals it. Turning in-app delivery back on does not reveal an
+earlier hidden event notice, including after later occurrences.
 
 Plain profile PATCH requests bind the exact body bytes through `body_sha256` and
 a canonical UUID `nonce` in signed metadata. Nonce consumption and the profile

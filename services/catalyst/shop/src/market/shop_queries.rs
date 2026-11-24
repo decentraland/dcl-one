@@ -103,6 +103,29 @@ pub(super) fn id_contracts(ids: &[String]) -> Vec<String> {
     contracts
 }
 
+/// The contracts a read names, lowercase: its `contractAddress`, else every
+/// contract of its selection ([`unified_selection`]); `None` when it names
+/// none. Every trade row the read keeps sells from one of them, so the
+/// open-trades CTE can read only those.
+pub(super) fn named_contracts(f: &UnifiedCatalogFilters) -> Option<Vec<String>> {
+    if let Some(ca) = f.base.contract_address.as_deref().filter(|c| !c.is_empty()) {
+        return Some(vec![ca.to_lowercase()]);
+    }
+    if f.contract_addresses.is_none() && f.item_ids.is_none() {
+        return None;
+    }
+    let mut contracts = id_contracts(f.item_ids.as_deref().unwrap_or_default());
+    contracts.extend(
+        f.contract_addresses
+            .iter()
+            .flatten()
+            .map(|c| c.to_lowercase()),
+    );
+    contracts.sort();
+    contracts.dedup();
+    Some(contracts)
+}
+
 /// The filters every feed shares, over the `mv` alias of [`branch_base`].
 fn append_unified_filters(
     b: &mut Builder,
@@ -403,12 +426,22 @@ fn outer_page_clauses(
     )
 }
 
-/// The `unified_trades` CTE at now, counting mirrored trades from `since`.
-fn with_trades(b: &mut Builder, since: Option<chrono::NaiveDateTime>) {
+/// The `unified_trades` CTE at now, counting mirrored trades from `since`,
+/// over the trades of `contracts` only when given ([`named_contracts`]).
+fn with_trades(
+    b: &mut Builder,
+    since: Option<chrono::NaiveDateTime>,
+    contracts: Option<Vec<String>>,
+) {
     let now_p = b.bind_time(Utc::now().naive_utc());
     let since_p = b.bind_opt_time(since);
+    let contracts_p = contracts.map(|c| b.bind_strings(&c));
     b.push("WITH ");
-    b.push(&unified_trades_cte(&now_p, &since_p));
+    b.push(&unified_trades_cte_of(
+        &now_p,
+        &since_p,
+        contracts_p.as_deref(),
+    ));
     b.push(" ");
 }
 
@@ -428,7 +461,6 @@ pub fn build_shop_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
     let unified = UnifiedCatalogFilters {
         base: f.clone(),
         source: Some(UnifiedSource::Native),
@@ -436,6 +468,7 @@ pub fn build_shop_listings_sql(
         item_ids: None,
         include_legacy_secondary: false,
     };
+    with_trades(&mut b, since, named_contracts(&unified));
     let inner = unified_branch(
         &mut b,
         UnifiedSource::Native,
@@ -453,9 +486,12 @@ pub fn build_shop_listings_sql(
         ],
     );
     b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
+        ", filtered AS (SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
+         FROM ({inner}) sub {where_clause}) \
+         SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted \
+         LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}",
         compare_at = compare_at_credits_expr("sub"),
+        page_order = order.replace("sub.", "page."),
     ));
     b
 }
@@ -465,7 +501,7 @@ pub fn build_legacy_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, None);
     let unified = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: f.category.clone(),
@@ -495,7 +531,7 @@ pub fn build_legacy_listings_sql(
     };
     let limit_p = b.bind_i64(shop_clamp_first(f.first));
     let offset_p = b.bind_i64(shop_clamp_skip(f.skip));
-    b.push(&format!("SELECT sub.*, COUNT(*) OVER() AS total FROM ({inner}) sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}"));
+    b.push(&format!(", filtered AS (SELECT sub.* FROM ({inner}) sub) SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}, page.trade_id", page_order = order.replace("sub.", "page.")));
     b
 }
 
@@ -504,7 +540,7 @@ pub fn build_importable_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, None);
     let unified = UnifiedCatalogFilters {
         source: Some(UnifiedSource::Legacy),
         include_legacy_secondary: true,
@@ -529,7 +565,7 @@ pub fn build_unified_listings_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, named_contracts(f));
     let inner = unified_inner(&mut b, f, rate);
     let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
         &mut b,
@@ -541,9 +577,12 @@ pub fn build_unified_listings_sql(
         ],
     );
     b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
+        ", filtered AS (SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
+         FROM ({inner}) sub {where_clause}) \
+         SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted \
+         LEFT JOIN LATERAL (SELECT sub.*, true AS page_present FROM filtered sub {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}",
         compare_at = compare_at_credits_expr("sub"),
+        page_order = order.replace("sub.", "page."),
     ));
     b
 }
@@ -568,11 +607,11 @@ pub fn build_unified_items_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, named_contracts(f));
     let core = item_unified_core(&mut b, f, rate);
     let (where_clause, order, limit_p, offset_p) =
         outer_page_clauses(&mut b, "d", &f.base, vec!["d.usd_wei > 0".to_string()]);
-    b.push(&format!("SELECT d.*, COUNT(*) OVER() AS total FROM ({core}) d {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}"));
+    b.push(&format!(", filtered AS (SELECT d.* FROM ({core}) d {where_clause}) SELECT page.*, counted.total FROM (SELECT count(*) AS total FROM filtered) counted LEFT JOIN LATERAL (SELECT d.*, true AS page_present FROM filtered d {order} LIMIT {limit_p} OFFSET {offset_p}) page ON true {page_order}", page_order = order.replace("d.", "page.")));
     b
 }
 
@@ -585,13 +624,7 @@ pub fn build_items_by_ids_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    let now_p = b.bind_time(Utc::now().naive_utc());
-    let since_p = b.bind_opt_time(since);
-    let contracts_p = b.bind_strings(&id_contracts(ids));
-    b.push(&format!(
-        "WITH {} ",
-        unified_trades_cte_of(&now_p, &since_p, Some(&contracts_p))
-    ));
+    with_trades(&mut b, since, Some(id_contracts(ids)));
     let core = item_unified_core(&mut b, f, rate);
     let ids_p = b.bind_strings(ids);
     b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address || '-' || d.item_id) = ANY({ids_p})"));
@@ -649,7 +682,7 @@ pub fn build_related_items_sql(
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
-    with_trades(&mut b, since);
+    with_trades(&mut b, since, None);
     let f = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: Some(reference_category.to_string()),

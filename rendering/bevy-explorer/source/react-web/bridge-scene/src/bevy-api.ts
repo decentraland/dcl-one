@@ -159,6 +159,7 @@ export type BevyApiInterface = {
   getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
   /** Pin the home scene the engine boots into and the HUD's home actions go to. */
   setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
+  clearHomeScene: () => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -252,7 +253,11 @@ export type BevyApiInterface = {
   /** The current realm's satellite map tiles (`configurations.map.satelliteView` in its
    *  `/about`), null or undefined when it advertises none — only Genesis City realms do. */
   getSatelliteView: () => Promise<SatelliteView | null | undefined>
-  setAvatar: (data: SetAvatarData) => Promise<unknown>
+  /** One deep-zoom satellite detail tile, decoded by the engine from its Basis KTX2 file: base64
+   *  JPEG bytes (no `data:` prefix). `path` is relative to the tile source. Rejects on failure;
+   *  absent in builds without tile decoding. */
+  getSatelliteTile?: (path: string) => Promise<string>
+  setAvatar: (data: SetAvatarData) => Promise<number>
   /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
    *  is not the signed-in account, or when the catalyst refuses it. */
   deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>

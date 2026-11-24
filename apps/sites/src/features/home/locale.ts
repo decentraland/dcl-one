@@ -1,5 +1,5 @@
 // Home copy from decentraland/sites at dd905b2a98d3450d73c8f8c562881ad45ff3c83c.
-import type { SitesLocale } from "@ui/web/frames/sites-locale";
+import type { SitesLocale } from "@dcl/one-ui";
 
 const en = {
   hero: {

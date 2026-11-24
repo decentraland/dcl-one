@@ -259,16 +259,16 @@ button.shop-subnav__icon {
   .shop-subnav[data-set="marketplace"] .shop-subnav__tabs a { margin: 0 16px; padding: 0 0 20px; font-size: 15px; }
 }
 
-.site-layout__content > .cs.shop-chrome {
+[data-site-layout-content] > .cs.shop-chrome {
   height: auto;
   min-height: calc(100dvh - var(--site-header-h));
 }
-.site-layout__content > .cs.shop-chrome > .cs__body {
+[data-site-layout-content] > .cs.shop-chrome > .cs__body {
   flex: 1 0 auto;
   overflow: visible;
   overflow-x: clip;
 }
-.site-layout__content > .cs.shop-chrome > .cs__tools {
+[data-site-layout-content] > .cs.shop-chrome > .cs__tools {
   position: sticky;
   top: var(--site-header-h);
 }

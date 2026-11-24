@@ -92,9 +92,13 @@ pub fn parse_range_header(
     None
 }
 
+/// A stored file's headers. A file opened as a page on the node's origin runs sandboxed, and its
+/// declared type is the only one a browser reads.
 pub fn content_file_headers(hash: &str, size: Option<u64>) -> Vec<(&'static str, String)> {
     let mut headers = vec![
         ("Content-Type", "application/octet-stream".to_string()),
+        ("Content-Security-Policy", "sandbox".to_string()),
+        ("X-Content-Type-Options", "nosniff".to_string()),
         ("ETag", to_etag(hash)),
         (
             "Access-Control-Expose-Headers",

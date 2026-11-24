@@ -4,7 +4,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::response::Response;
 use axum::routing::get;
-use dcl_auth::{AuthChain, AuthError, AuthLinkType, is_eth_address, verify_auth_chain};
+use dcl_auth::{AuthChain, AuthError, AuthLinkType, is_eth_address, verify_login_chain};
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use prost::Message as _;
@@ -211,7 +211,7 @@ async fn handshake(socket: &mut WebSocket, st: &CommsState, room_id: &str) -> Re
     Ok(address)
 }
 
-/// [`verify_auth_chain`] over `message`, plus the chain's SIGNER being
+/// [`verify_login_chain`] over `message`, plus the chain's SIGNER being
 /// `owner_address` and at least one signed link following it.
 fn verify_signed_message(
     chain: &AuthChain,
@@ -219,7 +219,7 @@ fn verify_signed_message(
     owner_address: &str,
     now_ms: Option<i64>,
 ) -> Result<(), AuthError> {
-    verify_auth_chain(chain, message, now_ms)?;
+    verify_login_chain(chain, message, now_ms)?;
     let owner = chain
         .first()
         .filter(|link| link.link_type == AuthLinkType::SIGNER)

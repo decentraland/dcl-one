@@ -1,6 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 
-import type { AuthLink } from "../auth/identity";
+import type { AuthLink } from "@web-core/auth/identity";
 import { loadStoredIdentity } from "../auth/signedFetchLocal";
 import { getJSON, catalystBase, type RequestOpts } from "./client";
 import { isRecord, keepRow, keepRows } from "./rows";

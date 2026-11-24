@@ -6,8 +6,8 @@
   .root {
     --profile-pic-size: 72px;
     --profile-pic-ring: 3.6px;
-
-
+    --profile-pic-dot: 12px;
+    --profile-pic-dot-inset: 6px;
 
     position: relative;
     display: inline-flex;
@@ -29,29 +29,29 @@
   .root[data-size='60'] {
     --profile-pic-size: 60px;
     --profile-pic-ring: 3px;
-
-
+    --profile-pic-dot: 10px;
+    --profile-pic-dot-inset: 5px;
   }
 
   .root[data-size='48'] {
     --profile-pic-size: 48px;
     --profile-pic-ring: 2.4px;
-
-
+    --profile-pic-dot: 7.2px;
+    --profile-pic-dot-inset: 3.6px;
   }
 
   .root[data-size='40'] {
     --profile-pic-size: 40px;
     --profile-pic-ring: 2px;
-
-
+    --profile-pic-dot: 6px;
+    --profile-pic-dot-inset: 3px;
   }
 
   .root[data-size='32'] {
     --profile-pic-size: 32px;
     --profile-pic-ring: 2px;
-
-
+    --profile-pic-dot: 6px;
+    --profile-pic-dot-inset: 2px;
   }
 
   .root[data-size='28'] {
@@ -73,6 +73,8 @@
     .root[data-compact-on-mobile] {
       --profile-pic-size: 48px;
       --profile-pic-ring: 2.4px;
+      --profile-pic-dot: 7.2px;
+      --profile-pic-dot-inset: 3.6px;
     }
   }
 
@@ -104,4 +106,11 @@
   }
 
   /* The dot's ring is outside the dot's size, so the offset takes it back. */
+  .status {
+    --connection-status-size: var(--profile-pic-dot);
+
+    position: absolute;
+    top: calc(var(--profile-pic-dot-inset) - var(--profile-pic-dot) / 5);
+    right: calc(var(--profile-pic-dot-inset) - var(--profile-pic-dot) / 5);
+  }
 }

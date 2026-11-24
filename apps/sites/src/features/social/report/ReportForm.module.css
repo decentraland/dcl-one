@@ -176,6 +176,17 @@
   background-color: rgba(254, 156, 42, 0.08);
 }
 
+.signInNotice {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.signInActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-8);
+}
+
 .mismatch {
   background-color: rgba(251, 59, 59, 0.16);
   border: 1px solid var(--dcl-feedback-error);

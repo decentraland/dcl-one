@@ -269,10 +269,20 @@ async fn spawn_fake_chain() -> (String, RawTxs) {
     (format!("http://{addr}"), raws)
 }
 
+/// The relayer list of a fake OZ relayer that lists no relayer accounts.
+fn empty_relayer_list(app: axum::Router) -> axum::Router {
+    app.route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            Json(json!({ "success": true, "data": [], "pagination": { "total_items": 0 } }))
+        }),
+    )
+}
+
 async fn spawn_fake_relayer() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
-    let app = axum::Router::new().route(
+    let app = empty_relayer_list(axum::Router::new()).route(
         "/api/v1/relayers/{relayer_id}/transactions",
         post(|| async {
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -1388,7 +1398,7 @@ async fn oz_app_over(pool: &PgPool, relayer_url: String) -> axum::Router {
 /// A fake OZ relayer whose submission answers `submission` and whose every status check answers
 /// `status`.
 async fn spawn_oz_answering(submission: Value, status: Value) -> String {
-    let app = axum::Router::new()
+    let app = empty_relayer_list(axum::Router::new())
         .route(
             "/api/v1/relayers/{relayer_id}/transactions",
             post(move || {
@@ -1471,6 +1481,265 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
             "terminal hash {terminal_hash}: the slot is released only when nothing was signed"
         );
     }
+}
+
+/// A fake OZ relayer whose API key lists `account`, counting the submissions it receives.
+async fn spawn_oz_listing(account: String) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let submissions = Arc::new(AtomicUsize::new(0));
+    let counted = submissions.clone();
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                let account = account.clone();
+                async move { Json(json!({ "success": true, "data": [{ "id": "other", "address": account }] })) }
+            }),
+        )
+        .route(
+            "/api/v1/relayers/{relayer_id}/transactions",
+            post(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                async { Json(json!({ "success": true, "data": { "id": "oz-1", "hash": format!("0x{:064x}", 1), "status": "submitted" } })) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), submissions)
+}
+
+/// With only the OZ relayer provisioned (no direct signer), a meta-transaction whose
+/// `userAddress` is any account the relayer's API key lists is answered 400 before the contract,
+/// quota or broadcast steps.
+#[tokio::test]
+async fn a_relayer_account_is_refused_as_the_user_with_only_the_oz_relayer() {
+    let relayer_key = PrivateKeySigner::random();
+    let relayer_account = relayer_key.address().to_checksum(None);
+    let (relayer_url, submissions) = spawn_oz_listing(relayer_account.clone()).await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(relayer_url),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            ..Settings::for_tests()
+        },
+    );
+    assert!(state.transaction.has_oz_relayer() && !state.transaction.has_direct_signer());
+    let app = router(state);
+    let user = format!("{:#x}", relayer_key.address());
+    for calldata in [
+        signed_split_calldata(&relayer_key, FS),
+        signed_combined_calldata(&relayer_key, FS),
+    ] {
+        let (status, body) = post_transaction(&app, &user, COLLECTION, &calldata).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["error"], "invalid_transaction", "{body}");
+        assert_eq!(body["message"], "Invalid transaction data.", "{body}");
+        assert_eq!(body["not_sent"], true, "{body}");
+    }
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+/// The `relayer-accounts` job reads the OZ relayer's list on its own, before any relay request.
+#[tokio::test]
+async fn the_relayer_accounts_job_reads_the_list_at_start() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({ "success": true, "data": [] })) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            ..Settings::for_tests()
+        },
+    );
+    let jobs = crate::jobs::Jobs::new();
+    super::spawn_jobs(&state, &jobs);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while reads.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the job reads the list");
+    jobs.shutdown(std::time::Duration::from_secs(5)).await;
+}
+
+/// A user that is not a listed relayer account passes that step and reaches the OZ relayer.
+#[tokio::test]
+async fn an_unlisted_user_reaches_the_oz_relayer() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let listed = PrivateKeySigner::random().address().to_checksum(None);
+    let (relayer_url, submissions) = spawn_oz_listing(listed).await;
+    let app = oz_app_over(&pool, relayer_url).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let (status, body) =
+        post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+    cleanup_user(&pool, &user).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+/// With both the direct signer and the OZ relayer provisioned, the signer's address and every
+/// account the OZ relayer lists are refused as the user.
+#[tokio::test]
+async fn relayer_accounts_are_refused_with_both_the_signer_and_the_oz_relayer() {
+    let signer_key = PrivateKeySigner::random();
+    let listed_key = PrivateKeySigner::random();
+    let (relayer_url, submissions) = spawn_oz_listing(listed_key.address().to_checksum(None)).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(relayer_url),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            polygon_rpc_url: Some(chain_url),
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            ..Settings::for_tests()
+        },
+    );
+    assert!(state.transaction.has_oz_relayer() && state.transaction.has_direct_signer());
+    let app = router(state);
+    for key in [&signer_key, &listed_key] {
+        let user = format!("{:#x}", key.address());
+        let (status, body) =
+            post_transaction(&app, &user, COLLECTION, &signed_split_calldata(key, FS)).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["message"], "Invalid transaction data.", "{body}");
+    }
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(raws.lock().unwrap().is_empty());
+}
+
+/// While the OZ relayer's list has not been read, the direct signer's address is still answered
+/// 400 at once, and any other user 503 (not sent) once the wait for the first read runs out.
+#[tokio::test]
+async fn a_relay_before_the_relayer_list_is_read_is_unavailable() {
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Json(json!({ "success": true, "data": [] }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let signer_key = PrivateKeySigner::random();
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            polygon_rpc_url: Some(chain_url),
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            oz_accounts_first_wait: std::time::Duration::from_millis(50),
+            ..Settings::for_tests()
+        },
+    );
+    let app = router(state);
+    let started = std::time::Instant::now();
+    let user = format!("{:#x}", signer_key.address());
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&signer_key, FS),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let (status, body) =
+        post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+    assert_eq!(status, 503, "{body}");
+    assert_eq!(body["not_sent"], true, "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(raws.lock().unwrap().is_empty());
+}
+
+/// A refused method is answered 400 at once, without waiting for an OZ relayer list that is not
+/// read yet.
+#[tokio::test]
+async fn a_refused_method_does_not_wait_for_the_relayer_list() {
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Json(json!({ "success": true, "data": [] }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let app = router(state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            oz_accounts_first_wait: std::time::Duration::from_secs(30),
+            ..Settings::for_tests()
+        },
+    ));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let mut call = super::abi::createOrderCall::SELECTOR.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    let started = std::time::Instant::now();
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+        &signed_split_calldata(&key, &call),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"], "invalid_transaction", "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
 
 #[tokio::test]

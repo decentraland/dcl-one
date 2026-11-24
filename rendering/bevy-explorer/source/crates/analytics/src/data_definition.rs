@@ -92,6 +92,7 @@ pub enum SegmentEvent {
     ScreenViewed(SegmentEventScreenViewed),
     OpenCamera(SegmentEventOpenCamera),
     TakePhoto(SegmentEventTakePhoto),
+    FeatureFlagsResolved(SegmentEventFeatureFlagsResolved),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -135,6 +136,9 @@ impl SegmentEvent {
             SegmentEvent::ScreenViewed(event) => ("Screen Viewed", serde_json::to_value(event)),
             SegmentEvent::OpenCamera(event) => ("open_camera", serde_json::to_value(event)),
             SegmentEvent::TakePhoto(event) => ("take_photo", serde_json::to_value(event)),
+            SegmentEvent::FeatureFlagsResolved(event) => {
+                ("Feature Flags Resolved", serde_json::to_value(event))
+            }
             SegmentEvent::Page { .. } => return None,
         };
         Some((name.to_string(), properties.unwrap()))
@@ -220,6 +224,17 @@ pub struct SegmentGpuFrameTimes {
     pub gpu_p90_frame_time: f32,
     pub gpu_p95_frame_time: f32,
     pub gpu_p99_frame_time: f32,
+}
+
+/// The session's rollout flags once the read settled.
+#[derive(Serialize)]
+pub struct SegmentEventFeatureFlagsResolved {
+    /// The flags that are on, as an `--ff` / `?ff=` value that reproduces them.
+    pub feature_flags: String,
+    /// The launch option's own overrides, empty without any.
+    pub feature_flags_override: String,
+    /// `service`, `unavailable`, `ignored` or `other-domain`.
+    pub feature_flags_source: String,
 }
 
 #[derive(Serialize)]
