@@ -235,6 +235,26 @@ COMMENT=creator-hub run_upsert desktop $'kept\n<!-- bevy-explorer-ci-status -->\
 [ "$(grep -c 'creator-hub-test-builds\|bevy-explorer-ci-status' <<< "$(body_of 1)")" = 1 ] || fail "creator-hub: a marker line in a body was kept"
 pass "the Creator Hub comment is separate, with its own sections"
 
+# --- 6c. the SDK's comment is a third comment with its one section ----------------------------
+reset_store
+COMMENT=creator-hub run_upsert inspector "INSPECTOR-CONTENT" >/dev/null
+COMMENT=sdk run_upsert packages "SDK-PACKAGES" >/dev/null
+[ "$(count)" = 2 ] || fail "sdk: expected its own comment beside the Creator Hub's"
+BODY="$(body_of 1)"
+[ "$(head -n 1 <<< "$BODY")" = '<!-- sdk-test-builds -->' ] || fail "sdk: marker missing"
+grep -q 'SDK test builds' <<< "$BODY" || fail "sdk: header missing"
+grep -q 'SDK-PACKAGES' <<< "$BODY" || fail "sdk: packages content missing"
+grep -q 'SDK-PACKAGES' <<< "$(body_of 0)" && fail "sdk: its write landed in the Creator Hub comment"
+COMMENT=sdk run_upsert packages $'again\n<!-- sdk-test-builds -->' >/dev/null
+[ "$(count)" = 2 ] || fail "sdk: a rewrite added a comment"
+[ "$(grep -c 'sdk-test-builds' <<< "$(body_of 1)")" = 1 ] || fail "sdk: a marker line in a body was kept"
+set +e
+(cd "$WORK" && COMMENT=sdk SECTION=desktop SECTION_BODY=X bash "$UPSERT") >/dev/null 2>&1
+RC=$?
+set -e
+[ "$RC" = 2 ] || fail "sdk: expected exit 2 for section desktop, got $RC"
+pass "the SDK comment is separate, with its own section"
+
 # --- 7. oversized body from a file truncates and re-closes constructs ------------------------
 reset_store
 BIG="$WORK/big-body.md"

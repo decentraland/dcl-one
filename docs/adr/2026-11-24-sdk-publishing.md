@@ -44,6 +44,15 @@ npm trusted publishing (workflow `sdk.yml`, environment `sdk-release`, `main` on
   tarballs published are the ones `scripts/check-no-local-packages.cjs` checked.
 - **Dry run.** A manual run publishes with `pnpm publish --dry-run` unless it runs on `main` with
   `dry-run` off.
+- **Pull request builds.** A pull request from a branch of this repository packs the same set at
+  its snapshot version and publishes nothing to npm. Each `workspace:` dependency points at its
+  sibling's tarball URL (`make prepare` with `PACKAGE_BASE_URL`), and so does a protocol or hashing
+  snapshot npm does not hold yet. The tarballs go to the SDK bucket under
+  `@dcl/js-sdk-toolchain/branch/<branch>/`, and `playground-assets` goes beside them, where the
+  playground's `?sdk-branch=` reads it. The "SDK test builds" comment gives the install commands.
+  The CLI e2e job runs `init`, `build` and `export-static` with those tarballs and uploads the realm
+  to the bucket's `ipfs/`. `main` uploads its tarballs and playground the same way. The upload
+  role is `CREATOR_HUB_SDK_BUCKET_ROLE_ARN`, the same role as the Inspector's previews.
 - **GitHub releases.** A package release in this repository (`@dcl/sdk`, `@dcl/inspector`,
   `@dcl/asset-packs`) is never a pre-release and never the repository's Latest. dcl-one releases
   several projects, npm carries the packages, and the Creator Hub's updater reads only
@@ -60,8 +69,11 @@ npm trusted publishing (workflow `sdk.yml`, environment `sdk-release`, `main` on
 
 1. Point npm trusted publishing for the eight packages at `decentraland/dcl-one`, workflow
    `sdk.yml`, environment `sdk-release`. Create that environment, limited to `main`.
-2. Tag the last SDK release published from `decentraland/js-sdk-toolchain`: `@dcl/sdk@7.33.0`.
-3. Stop publishing from `decentraland/js-sdk-toolchain`, `decentraland/protocol` and
-   `decentraland/hashing`. Until then, both sides move the same `next` dist-tags.
-4. Add to the first `latest` release's notes the narrowed generated types listed in the
+2. Let the SDK bucket role (`CREATOR_HUB_SDK_BUCKET_ROLE_ARN`) trust `sdk.yml` runs from pull
+   requests and from the `sdk-release` environment.
+3. Tag the last SDK release published from `decentraland/js-sdk-toolchain`: `@dcl/sdk@7.33.0`.
+4. Stop publishing from `decentraland/js-sdk-toolchain`, `decentraland/protocol` and
+   `decentraland/hashing`. Until then, both sides move the same `next` dist-tags and write the
+   same bucket folders.
+5. Add to the first `latest` release's notes the narrowed generated types listed in the
    [SDK decision](2026-10-26-sdk-in-dcl-one.md).

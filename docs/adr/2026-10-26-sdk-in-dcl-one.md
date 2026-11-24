@@ -64,8 +64,8 @@ It installs with pnpm as one workspace with a single lockfile
 
 ## Follow-ups
 
-1. The PR-build tooling: S3 tarballs, the "Test this pull request" comment, the e2e realm and
-   the playground. The first release notes carry the narrowed types above.
+1. The first release notes carry the narrowed types above
+   ([cut-over](2026-11-24-sdk-publishing.md#cut-over)).
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.

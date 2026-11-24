@@ -6,7 +6,8 @@
 #
 # COMMENT=creator-hub writes the Creator Hub's comment instead, the same way: its own marker and
 # heading, and the sections desktop | inspector | asset-packs (the Creator Hub / CI jobs that
-# publish a test build of the pull request).
+# publish a test build of the pull request). COMMENT=sdk writes the SDK's comment, with the one
+# section packages (SDK / CI's pull request tarballs).
 #
 # The comment is keyed by the hidden <!-- bevy-explorer-ci-status --> marker and holds the $HEADER
 # heading plus one fenced block per section:
@@ -96,6 +97,12 @@ case "${COMMENT:-bevy-explorer}" in
     SECTIONS='desktop inspector asset-packs'
     SKELETON='desktop'
     ;;
+  sdk)
+    MARKER="<!-- sdk-test-builds -->"
+    HEADER='### 🧪 SDK test builds'
+    SECTIONS='packages'
+    SKELETON=''
+    ;;
   *) echo "::error::Unknown comment '${COMMENT:-}'."; exit 2 ;;
 esac
 
@@ -148,7 +155,7 @@ skeleton() {
 # open or close a section fence, or it would scramble the comment structure and wedge the survive
 # check below.
 printf '%s\n' "$SECTION_BODY" \
-  | grep -vE '^[[:space:]]*<!-- (ci:[^>]*|bevy-explorer-ci-status|creator-hub-test-builds) -->[[:space:]]*$' > section_body.md || true
+  | grep -vE '^[[:space:]]*<!-- (ci:[^>]*|bevy-explorer-ci-status|creator-hub-test-builds|sdk-test-builds) -->[[:space:]]*$' > section_body.md || true
 WANT="$(cat section_body.md)"
 
 # Replace the content between START and END in $1 with section_body.md.

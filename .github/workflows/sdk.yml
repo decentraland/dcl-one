@@ -124,13 +124,13 @@ jobs:
           PROTOCOL_VERSION: 0.0.0-unpublished.${{ github.sha }}
           HASHING_VERSION: 0.0.0-unpublished.${{ github.sha }}
       - name: Packed manifests name no local dependency
+        if: github.event_name != 'pull_request'
         run: |
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
           node scripts/check-no-local-packages.cjs .packed
   channel:
     name: Release channel
-    if: github.event_name != 'pull_request'
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     outputs:
@@ -161,8 +161,12 @@ jobs:
   publish:
     name: Publish
     needs: [lint, build-test, channel]
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prefix: ${{ steps.version.outputs.prefix }}
     environment: ${{ github.ref == 'refs/heads/main' && 'sdk-release' || '' }}
     concurrency:
       group: ${{ needs.channel.outputs.channel == 'latest' && 'sdk-release-latest' || format('sdk-release-{0}', github.run_id) }}
@@ -177,6 +181,9 @@ jobs:
       CHANNEL: ${{ needs.channel.outputs.channel }}
       BUMP: ${{ needs.channel.outputs.bump }}
       DRY_RUN: ${{ (github.ref != 'refs/heads/main' || inputs.dry-run == true) && 'true' || 'false' }}
+      PREFIX: '@dcl/js-sdk-toolchain/branch/${{ github.head_ref || github.ref }}'
+      PACKAGE_BASE_URL: ${{ github.event_name == 'pull_request' && format('{0}/@dcl/js-sdk-toolchain/branch/{1}', secrets.SDK_TEAM_S3_BASE_URL, github.head_ref) || '' }}
+      CAN_UPLOAD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -207,8 +214,7 @@ jobs:
           esac
           if [ "$CHANNEL" != latest ]; then next="$next-$GITHUB_RUN_ID.commit-${GITHUB_SHA::7}"; fi
           echo "$CHANNEL $previous -> $next (dry run: $DRY_RUN)"
-          echo "previous=$previous" >> "$GITHUB_OUTPUT"
-          echo "version=$next" >> "$GITHUB_OUTPUT"
+          printf 'previous=%s\nversion=%s\nprefix=%s\n' "$previous" "$next" "$PREFIX" >> "$GITHUB_OUTPUT"
       - name: Install (builds library/protocol's out-ts and library/hashing first)
         run: make install
       - name: Pack @dcl/protocol and @dcl/hashing
@@ -223,7 +229,8 @@ jobs:
             if [ -z "$version" ]; then
               version="$(jq -r .version "$dir/package.json")-$GITHUB_RUN_ID.commit-$sha"
               pnpm --dir "$dir" pkg set version="$version"
-              pnpm --dir "$dir" pack --pack-destination "$PWD/.published"
+              file=$(pnpm --dir "$dir" pack --pack-destination "$PWD/.published" --json | jq -r 'if type == "array" then .[0] else . end | .filename')
+              if [ -n "$PACKAGE_BASE_URL" ]; then version="$PACKAGE_BASE_URL/$(basename "$file")"; fi
             fi
             echo "$name@$version"
             echo "$pkg=$version" >> "$GITHUB_OUTPUT"
@@ -241,17 +248,36 @@ jobs:
           PROTOCOL_VERSION: ${{ steps.deps.outputs.protocol }}
           HASHING_VERSION: ${{ steps.deps.outputs.hashing }}
       - name: Packed manifests name no local dependency
+        if: github.event_name != 'pull_request'
         run: |
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
           node scripts/check-no-local-packages.cjs .packed
-      - name: Publish to npm
+      - name: Collect the tarballs
         run: |
-          dry=()
-          [ "$DRY_RUN" = true ] && dry=(--dry-run)
           for pkg in js-runtime ecs react-ecs sdk-commands playground-assets sdk; do
             mv packages/@dcl/$pkg/*.tgz .published/
           done
+      - name: AWS role for the SDK bucket
+        if: env.CAN_UPLOAD == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
+          aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      - name: Upload the tarballs and the playground
+        if: env.CAN_UPLOAD == 'true'
+        env:
+          BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+        run: |
+          aws s3 cp .published "s3://$BUCKET/$PREFIX/" --recursive \
+            --acl public-read --cache-control 'max-age=0,private' --content-type application/gzip
+          aws s3 sync packages/@dcl/playground-assets/dist "s3://$BUCKET/$PREFIX/playground-assets" --delete \
+            --acl public-read --cache-control 'max-age=0,private'
+      - name: Publish to npm
+        if: github.event_name != 'pull_request'
+        run: |
+          dry=()
+          [ "$DRY_RUN" = true ] && dry=(--dry-run)
           for tgz in .published/dcl-hashing-*.tgz .published/dcl-protocol-*.tgz \
             .published/dcl-js-runtime-*.tgz .published/dcl-ecs-*.tgz .published/dcl-react-ecs-*.tgz \
             .published/dcl-sdk-commands-*.tgz .published/dcl-playground-assets-*.tgz .published/dcl-sdk-[0-9]*.tgz; do
@@ -286,3 +312,111 @@ jobs:
           release_notes: ${{ steps.release_notes.outputs.release_notes }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           create_if_not_exists: true
+  notify:
+    name: Test builds comment
+    needs: [publish]
+    if: github.event_name == 'pull_request' && needs.publish.result == 'success'
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Write the packages section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMENT: sdk
+          SECTION: packages
+          S3: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+          PREFIX: ${{ needs.publish.outputs.prefix }}
+          VERSION: ${{ needs.publish.outputs.version }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          base="$S3/$PREFIX"
+          realm="$S3/ipfs/$(tr '/.' '-' <<<"$BRANCH" | tr -d '@')-e2e"
+          export SECTION_BODY_FILE="$RUNNER_TEMP/sdk-section.md"
+          cat > "$SECTION_BODY_FILE" <<EOF
+          **\`@dcl/sdk\` \`$VERSION\`**
+
+          - Install it in a scene:
+            \`\`\`bash
+            pnpm add "$base/dcl-sdk-$VERSION.tgz"
+            \`\`\`
+          - Install \`@dcl/js-runtime\`:
+            \`\`\`bash
+            pnpm add "$base/dcl-js-runtime-$VERSION.tgz"
+            \`\`\`
+          - Create a scene with \`init\`:
+            \`\`\`bash
+            pnpm dlx "$base/dcl-sdk-commands-$VERSION.tgz" init
+            \`\`\`
+          - Try it in the [playground](https://playground.decentraland.org/?sdk-branch=$BRANCH).
+          - Visit the CLI e2e scene in world with \`/changerealm $realm\`.
+          EOF
+          bash .github/actions/bevy-explorer-ci-status/upsert-ci-status.sh
+  cli_e2e:
+    name: CLI e2e
+    needs: [publish]
+    if: github.event_name == 'pull_request' && needs.publish.result == 'success'
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      S3: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      BASE: ${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.prefix }}
+      VERSION: ${{ needs.publish.outputs.version }}
+      BRANCH: ${{ github.head_ref }}
+    defaults:
+      run:
+        working-directory: scene
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+      - run: corepack enable
+      - run: mkdir -p scene
+        working-directory: .
+      - name: Create a scene with the pull request's sdk-commands
+        run: corepack pnpm@12.21.0 dlx "$BASE/dcl-sdk-commands-$VERSION.tgz" init --skip-install
+      - name: Install the scene with the pull request's SDK
+        run: |
+          cat > pnpm-workspace.yaml <<'EOF'
+          nodeLinker: hoisted
+          minimumReleaseAge: 0
+          allowBuilds:
+            '@dcl/sdk-commands': false
+            esbuild: false
+            protobufjs: false
+          EOF
+          corepack pnpm@12.21.0 install
+          corepack pnpm@12.21.0 add "$BASE/dcl-sdk-$VERSION.tgz"
+      - name: Build
+        run: node_modules/.bin/sdk-commands build
+      - name: Export the scene as a static realm
+        run: |
+          realm="$(tr '/.' '-' <<<"$BRANCH" | tr -d '@')-e2e"
+          node_modules/.bin/sdk-commands export-static \
+            --realmName "$realm" \
+            --commsAdapter "ws-room:ws-room-service.decentraland.org/rooms/sdk-$GITHUB_SHA" \
+            --baseUrl "$S3/ipfs" \
+            --dir . \
+            --destination "$GITHUB_WORKSPACE/out-static"
+      - name: AWS role for the SDK bucket
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
+          aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      - name: Upload the realm
+        working-directory: .
+        env:
+          BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+        run: aws s3 sync out-static "s3://$BUCKET/ipfs" --acl public-read

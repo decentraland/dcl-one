@@ -4,6 +4,7 @@ import { resolve } from 'path'
 import { flow, commonChecks } from './common'
 
 import { PNPM, itExecutes, patchJson } from './helpers'
+import { pinWorkspaceDependencies } from './package-urls'
 
 flow('build-all', () => {
   commonChecks()
@@ -18,9 +19,9 @@ flow('build-all', () => {
     detectCyclesTest(graph)
   })
 
-  flow('update versions of packages.json copying it from @dcl/sdk', () => {
-    const { version } = JSON.parse(readFileSync(resolve('./packages/@dcl/sdk/package.json'), 'utf8'))
+  const { version } = JSON.parse(readFileSync(resolve('./packages/@dcl/sdk/package.json'), 'utf8'))
 
+  flow('update versions of packages.json copying it from @dcl/sdk', () => {
     for (const dependency of processWithOptimisticDependencies(graph)) {
       const projectDirectory = resolveProjectPath(dependency)
       it(`set ${dependency} version`, () => {
@@ -34,6 +35,7 @@ flow('build-all', () => {
       const projectDirectory = resolveProjectPath(dependency)
       pinLinked(projectDirectory, '@dcl/protocol', 'PROTOCOL_VERSION')
       pinLinked(projectDirectory, '@dcl/hashing', 'HASHING_VERSION')
+      pinWorkspaceUrls(projectDirectory, version)
       itExecutes(`${PNPM} pack`, projectDirectory)
     }
   })
@@ -125,6 +127,17 @@ function pinLinked(path: string, name: string, variable: string) {
     patchJson('package.json', path, ($) => ({
       ...$,
       dependencies: { ...$.dependencies, [name]: version }
+    }))
+  })
+}
+
+function pinWorkspaceUrls(path: string, version: string) {
+  const baseUrl = process.env.PACKAGE_BASE_URL
+  if (!baseUrl) return
+  it(`pin workspace packages in ${path} to ${baseUrl}`, () => {
+    patchJson('package.json', path, ($) => ({
+      ...$,
+      dependencies: pinWorkspaceDependencies($.dependencies ?? {}, baseUrl, version)
     }))
   })
 }
