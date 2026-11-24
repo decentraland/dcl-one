@@ -5,7 +5,8 @@ import { loader as whatsOn } from "./whats-on";
 import { loader as whatsOnDetail } from "./whats-on_.$id";
 import { loader as whatsOnDeeper } from "./whats-on_.$";
 
-const location = (response: Response) => [response.status, response.headers.get("Location")];
+// The fragment names the legacy redirect event's hand-over (legacy-redirects.test.ts); the destination is before it.
+const location = (response: Response) => [response.status, response.headers.get("Location")?.split("#")[0]];
 
 describe("legacy events links", () => {
   it("should send /whats-on to /events with its query", () => {

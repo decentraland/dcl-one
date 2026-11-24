@@ -4,7 +4,8 @@ import { loader } from "./discover.$";
 const location = (url: string) => {
   const response = loader({ request: new Request(url) });
   expect(response.status).toBe(302);
-  return response.headers.get("Location");
+  // The fragment names the legacy redirect event's hand-over (legacy-redirects.test.ts); the destination is before it.
+  return response.headers.get("Location")?.split("#")[0];
 };
 
 test("/discover lands on /places with its query", () => {
