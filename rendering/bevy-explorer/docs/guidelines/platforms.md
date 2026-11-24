@@ -171,7 +171,7 @@ Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/
 |---|---|---|---|
 | DX12 (Windows) | always | the queue's timestamp frequency | Windows, RTX 5080 Laptop GPU: the GPU tests, and the packaged release standalone with FXC and `--no_gltf` |
 | Vulkan (Windows, Linux) | always | the device's `timestampPeriod` limit | Windows, the same GPU: the GPU tests and the packaged release standalone, which picks Vulkan by itself; Linux not |
-| Metal (macOS) | when the device samples counters at stage boundaries (macOS 11 or newer) | fixed: 1 ns, 83.333 ns when the device name starts with "Intel" | not checked |
+| Metal (macOS) | when the device samples counters at stage boundaries (macOS 11 or newer) | fixed: 1 ns, 83.333 ns when the device name starts with "Intel" | Apple M4 Max: the GPU tests |
 | WebGPU (Chrome) | when the browser's adapter lists `timestamp-query` | 1 ns (WebGPU reports nanoseconds) | Chrome on Windows (RTX 5080 Laptop GPU); Chrome 157 on macOS (Apple M1 Pro) |
 
 - **DX12 and Vulkan** set the feature for every device: `wgpu-hal/src/dx12/adapter.rs` lists it
@@ -187,14 +187,17 @@ Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/
   is unaffected.
 - **Metal.** A compute pass's `timestamp_writes` become the encoder's start and end samples
   (`wgpu-hal/src/metal/command.rs`), which stage-boundary sampling covers
-  (`wgpu-hal/src/metal/adapter.rs`). Native Metal is not checked.
+  (`wgpu-hal/src/metal/adapter.rs`). The GPU tests pass on native Metal (Apple M4 Max).
   wgpu does not convert Metal's GPU timestamps to CPU time; it hard-codes the period, and its own
   comment names Apple silicon (M1, M2) and AMD for the 1 ns. Not checked here.
 - **WebGPU.** `wgpu/src/backend/webgpu.rs` maps the feature to `timestamp-query` and passes the
   pass `timestampWrites` through. In Chrome on macOS (Apple M1 Pro, Metal) a compute pass that
   holds no work does not write its end timestamp, so each bracket pass dispatches one workgroup
   of a shader that does nothing; with it samples arrive, but some frames still read back an end
-  earlier than their begin.
+  earlier than their begin and a run can sit on one value. A web build on macOS therefore marks
+  the GPU frame time unreliable (`common::gpu_time::GpuFrameTimeUnreliable`): the panel, the CSV
+  and `gpuFrameMs` keep the readings, and the performance snapshot, the analytics event built
+  from it, the benchmark summary and the bottleneck take none.
 - **Chrome quantises timestamps** unless its "WebGPU Developer Features" flag is on
   (`chrome://flags/#enable-webgpu-developer-features`;
   [Chrome's WebGPU 121 notes](https://developer.chrome.com/blog/new-in-webgpu-121) give 100 µs).

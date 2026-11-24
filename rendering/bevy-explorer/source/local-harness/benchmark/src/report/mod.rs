@@ -10,6 +10,7 @@
 //! read becomes a note, as do the expected labels that left no section.
 
 mod exceptions;
+mod fleet;
 mod perf_summary;
 mod render;
 mod stats;
@@ -374,17 +375,21 @@ fn compare_builds(
             caveats.push(RunnerCaveat::NewExceptionKinds(new_kinds));
         }
 
-        let gpu_broken = stats::gpu_timing_broken(&change.frame_time_ms, &base.frame_time_ms);
-        let gpu_unreliable = render::chrome_on_macos(&label);
+        let gpu_withheld = if stats::gpu_timing_broken(&change.frame_time_ms, &base.frame_time_ms) {
+            Some(stats::GPU_TIMING_BROKEN)
+        } else if fleet::gpu_timing_unreliable(&label) {
+            Some(stats::GPU_TIMING_UNRELIABLE)
+        } else {
+            None
+        };
         let frame_time_verdicts = std::array::from_fn(|m| {
-            let verdict = stats::frame_time_verdict(
+            stats::frame_time_verdict(
                 m,
                 &change.frame_time_ms[m],
                 &base.frame_time_ms[m],
                 incomparable,
-                gpu_broken,
-            );
-            stats::without_unreliable_gpu_verdict(m, verdict, gpu_unreliable)
+                gpu_withheld,
+            )
         });
         let exceptions_per_run_verdict = stats::incidents_per_run_verdict(
             change.exceptions_per_run,

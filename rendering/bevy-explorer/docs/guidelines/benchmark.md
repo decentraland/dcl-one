@@ -347,11 +347,13 @@ native and web, with no flag; the headless build has none. The CSV writer
   GPU verdict.
 - **Metal in Chrome.** Some frames read back an end timestamp earlier than their begin, and a
   run can sit on one value for its whole window and on another in the next run of the same
-  build (0.1 ms against about 9 ms); the cause is not known. The CSV, the panel and
-  `/performance_state` still carry the values. The report gives no GPU verdict for a fleet leg
-  in Chrome on macOS (`apple-m1-chrome`): its GPU rows read *no verdict — GPU timing unreliable
-  on Metal*. A session under a label typed by hand on a Mac still gets GPU verdicts, so compare
-  its GPU medians across repeated runs before reading them.
+  build (0.1 ms against about 9 ms); the cause is not known. A web build on macOS marks the GPU
+  frame time unreliable: the CSV, the panel and `gpuFrameMs` in `/performance_state` still carry
+  the values, while the performance snapshot (`gpuFrameTimes`, and the analytics event's `gpu_*`
+  fields), the `perf_summary` GPU figures and the bottleneck have none. The report gives no GPU
+  verdict for a fleet leg in Chrome on macOS (`apple-m1-chrome`): its GPU rows read *no verdict
+  — GPU timing unreliable on Metal*. A session under a label typed by hand on a Mac still gets
+  GPU verdicts, so compare its GPU medians across repeated runs before reading them.
 - **Chrome.** It quantises timestamps unless it starts with WebGPU developer features, which the
   runner does not do: a web GPU value is a multiple of Chrome's step, 65.536 µs in the checked
   Chrome (measurements (evidence supplied for the task)), well under the verdict's 0.5 ms threshold. A
