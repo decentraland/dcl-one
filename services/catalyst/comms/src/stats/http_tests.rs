@@ -1328,3 +1328,52 @@ async fn status_reports_the_host_commit_hash() {
     assert_eq!(status["commitHash"], "built-commit");
     assert_eq!(status["version"], "v");
 }
+
+#[tokio::test]
+async fn process_http_metrics_cover_claimed_routes_nested_services_and_compatibility_scrapes() {
+    let (state, _, _, _, _sub) = setup();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _local = dcl_metrics::set_default_local_recorder(&recorder);
+    let catalog = dcl_metrics::http::component(
+        Router::new().route("/items/{id}", get(|| async { "ok" })),
+        "catalog",
+    );
+    let shared = Router::new().nest("/shop", catalog);
+    let app = http::mount_services(
+        shared,
+        state.clone(),
+        http::standalone(state),
+        Router::new(),
+    );
+    for path in [
+        "/peers/sensitive-peer",
+        "/archipelago-ea-stats/peers/another-private-peer",
+        "/shop/items/secret-item/",
+        "/archipelago-ea-stats/metrics",
+    ] {
+        request(app.clone(), "GET", path, &[]).await;
+    }
+    let body = recorder.handle().render();
+    let counts: Vec<_> = body
+        .lines()
+        .filter(|line| line.starts_with("dcl_http_requests_total{"))
+        .collect();
+    assert_eq!(counts.len(), 2, "{body}");
+    assert!(
+        counts
+            .iter()
+            .any(|line| line.contains("component=\"stats\"")
+                && line.contains("route=\"/peers/{id}\"")
+                && line.ends_with(" 2")),
+        "{body}"
+    );
+    assert!(
+        counts
+            .iter()
+            .any(|line| line.contains("component=\"catalog\"")
+                && line.contains("route=\"/shop/items/{id}\"")
+                && line.ends_with(" 1")),
+        "{body}"
+    );
+    assert!(!body.contains("sensitive-peer") && !body.contains("secret-item"));
+}

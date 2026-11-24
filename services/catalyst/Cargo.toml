@@ -167,6 +167,7 @@ rustls-native-certs = "0.8.5"
 rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.15.1"
 async-nats = "0.50.0"
+dcl-metrics = { path = "../../library/dcl-metrics" }
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", features = ["http-listener"] }
 toml = "1.1.8"
@@ -244,7 +245,7 @@ alloy-sol-types.workspace = true
 getrandom.workspace = true
 web-transport-quinn.workspace = true
 async-nats.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]

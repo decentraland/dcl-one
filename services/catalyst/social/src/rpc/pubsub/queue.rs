@@ -105,10 +105,10 @@ impl Queue {
             return;
         }
         if pending.values.len() == CAPACITY {
-            metrics::counter!("social_subscription_queue_overflow").increment(1);
+            dcl_metrics::counter!("social_subscription_queue_overflow").increment(1);
             match &self.policy {
                 OverflowPolicy::DropOldest => {
-                    metrics::counter!("subscription_updates_dropped_total", "event" => self.kind.event()).increment(1);
+                    dcl_metrics::counter!("subscription_updates_dropped_total", "event" => self.kind.event()).increment(1);
                     pending.values.pop_front();
                 }
                 OverflowPolicy::Close {
@@ -118,7 +118,7 @@ impl Queue {
                 } => {
                     pending.overflow = true;
                     pending.values.clear();
-                    metrics::counter!("stream_ws_errors", "type" => "subscription_overflow")
+                    dcl_metrics::counter!("stream_ws_errors", "type" => "subscription_overflow")
                         .increment(1);
                     socket.end(*code, reason);
                     self.changed.notify_one();
@@ -237,11 +237,9 @@ mod tests {
     }
     #[tokio::test]
     async fn rpc_queue_metrics_match_source_latest_thousand_drop_observations() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let bus = PubSub::new();
         let mut rx = bus.subscribe_updates::<BlockUpdate>("me");
         for n in 0..1100 {

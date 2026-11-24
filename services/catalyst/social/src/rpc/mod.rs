@@ -44,8 +44,14 @@ pub mod db;
 mod fanout;
 pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
+mod declarations;
 pub mod limits;
+pub use declarations::FAMILIES;
 mod metrics;
+#[cfg(test)]
+pub(crate) fn metrics_builder() -> anyhow::Result<dcl_metrics::PrometheusBuilder> {
+    dcl_metrics::Registry::new(&[FAMILIES])?.builder(dcl_metrics::PrometheusBuilder::new())
+}
 pub mod profiles;
 pub mod proto;
 pub mod pubsub;

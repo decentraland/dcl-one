@@ -169,11 +169,17 @@ pub fn mount_services(shared: Router, state: State, stats: Router, connector: Ro
     // Camera Reel keeps its route spelling, including the Swagger UI directory.
     let camera_reel = shared.clone();
     let shared = tower_http::normalize_path::NormalizePath::trim_trailing_slash(shared);
-    merge_root(
+    let assembled = merge_root(
         Router::new()
             .fallback_service(shared)
-            .nest("/archipelago-ea-stats", stats)
-            .nest("/archipelago-ea-ws-connector", connector)
+            .nest(
+                "/archipelago-ea-stats",
+                dcl_metrics::http::component(stats, "stats"),
+            )
+            .nest(
+                "/archipelago-ea-ws-connector",
+                dcl_metrics::http::component(connector, "connector"),
+            )
             .layer(middleware::from_fn(move |request: Request, next: Next| {
                 let camera_reel = camera_reel.clone();
                 async move {
@@ -189,7 +195,8 @@ pub fn mount_services(shared: Router, state: State, stats: Router, connector: Ro
                 }
             })),
         state,
-    )
+    );
+    dcl_metrics::http::instrument(assembled, "catalyst")
 }
 /// Apply after assembling root routes. Unknown paths, `/status`, `/ping`, health
 /// probes and metrics remain the other services' responsibility at the shared root.
@@ -206,6 +213,11 @@ pub fn merge_root<S: Clone + Send + Sync + 'static>(router: Router<S>, state: St
             let selected = match state.matcher.matches(&selected_path).await {
                 Ok(matched) => !matched,
                 Err(error) => {
+                    dcl_metrics::http::route(
+                        request.extensions(),
+                        "stats",
+                        candidate.as_ref().map_or("unmatched", Route::template),
+                    );
                     return matcher_failure(
                         &state,
                         error,
@@ -248,6 +260,24 @@ enum Route {
     Diagnostics,
 }
 impl Route {
+    fn template(&self) -> &'static str {
+        match self {
+            Self::Parcels => "/parcels",
+            Self::Peers => "/peers",
+            Self::Peer(_) => "/peers/{id}",
+            Self::Islands => "/islands",
+            Self::Island(_) => "/islands/{id}",
+            Self::HotScenes => "/hot-scenes",
+            Self::CoreStatus => "/core-status",
+            Self::Status => "/status",
+            Self::Live => "/health/live",
+            Self::Ready => "/health/ready",
+            Self::Startup => "/health/startup",
+            Self::Metrics => "/metrics",
+            Self::Ping => "/ping",
+            Self::Diagnostics => "/stats/health",
+        }
+    }
     fn root(&self) -> bool {
         matches!(
             self,
@@ -545,11 +575,22 @@ async fn dispatch_scoped(
 ) -> Response {
     let (request, _body) = request.into_parts();
     let method = request.method.as_str();
+    let label_early_response = || {
+        dcl_metrics::http::route(
+            &request.extensions,
+            "stats",
+            structural_route(request.uri.path(), shared_root)
+                .as_ref()
+                .map_or("unmatched", Route::template),
+        );
+    };
     if let Some(reply) = rejected_method(method) {
+        label_early_response();
         return reply.response(false);
     }
     let head = method == "HEAD";
     if method == "OPTIONS" {
+        label_early_response();
         let mut reply = Reply::empty(204);
         cors(&mut reply, &request.headers, true);
         return reply.response(false);
@@ -563,9 +604,19 @@ async fn dispatch_scoped(
     let matched = match route(path, &state, shared_root, previous_nonmatch).await {
         Ok(route) => route,
         Err(error) => {
+            label_early_response();
             return matcher_failure(&state, error, method, &request.headers, start.elapsed());
         }
     };
+    if matches!(matched, Some(Route::Metrics)) && matches!(method, "GET" | "HEAD") {
+        dcl_metrics::http::exclude(&request.extensions);
+    } else {
+        dcl_metrics::http::route(
+            &request.extensions,
+            "stats",
+            matched.as_ref().map_or("unmatched", Route::template),
+        );
+    }
     let result = if !["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"].contains(&method) {
         Ok(Reply::empty(501).header("allow", if matched.is_some() { "HEAD, GET" } else { "" }))
     } else if matched.is_some() && !matches!(method, "GET" | "HEAD") {

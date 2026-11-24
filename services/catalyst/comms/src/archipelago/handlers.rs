@@ -1,48 +1,8 @@
 use super::AppState;
 use serde::Serialize;
-/// The feed counters are appended, never reordered: the byte-exact shape assertions upstream
-/// parity keeps are written against the first four fields.
-#[derive(Serialize)]
-struct HealthResp {
-    healthy: bool,
-    uptime_secs: i64,
-    peers_total: usize,
-    islands_total: usize,
-    feed_connected: bool,
-    feed_delivered: u64,
-    feed_no_session_socket: u64,
-    feed_deduplicated: u64,
-    feed_undecodable: u64,
-    feed_publish_dropped: u64,
-    statistics_publish_dropped: u64,
-    feed_assignment_coalesced: u64,
-    feed_assignment_oversized: u64,
-    socket_write_timeout: u64,
-    socket_assignments_written: u64,
-    feed_assignment_full: u64,
-}
 
-pub fn diagnostics(s: &AppState) -> String {
-    let snapshot = s.statistics.snapshot();
-    let uptime = s.started_at.elapsed().as_secs() as i64;
-    crate::stats::render::json(&HealthResp {
-        healthy: true,
-        uptime_secs: uptime,
-        peers_total: snapshot.peers.len(),
-        islands_total: crate::stats::render::public_islands(&snapshot).len(),
-        feed_connected: s.outbox.is_linked(),
-        feed_delivered: s.feed.delivered_count(),
-        feed_no_session_socket: s.feed.no_session_socket_count(),
-        feed_deduplicated: s.feed.deduplicated_count(),
-        feed_undecodable: s.feed.undecodable_count(),
-        feed_publish_dropped: s.outbox.dropped(),
-        statistics_publish_dropped: s.observations.dropped(),
-        feed_assignment_coalesced: s.feed.coalesced_count(),
-        feed_assignment_oversized: s.feed.assignment_oversized_count(),
-        socket_write_timeout: s.feed.socket_write_timeout_count(),
-        socket_assignments_written: s.feed.socket_assignments_written_count(),
-        feed_assignment_full: s.feed.assignment_full_count(),
-    })
+pub fn diagnostics(state: &AppState) -> String {
+    super::metrics::diagnostics(state)
 }
 
 /// The connector host has its own status count, methods, CORS and fallback.
@@ -127,9 +87,9 @@ fn connector_configured(
         axum::Router::new()
     };
     sockets.fallback(crate::shared::routing::erase(
-        move |method, uri, headers| {
+        move |method, uri, headers, extensions| {
             let http = http.clone();
-            async move { http.respond(method, uri, headers).await }
+            async move { http.respond(method, uri, headers, extensions).await }
         },
     ))
 }
@@ -148,6 +108,7 @@ impl ConnectorHttp {
         method: axum::http::Method,
         uri: axum::http::Uri,
         headers: axum::http::HeaderMap,
+        extensions: axum::http::Extensions,
     ) -> axum::response::Response {
         use crate::stats::http::Hooks;
         use axum::{body::Body, response::Response};
@@ -165,6 +126,9 @@ impl ConnectorHttp {
         let metric = method == "GET"
             && (path != "/status" || metrics_path.replaces_status())
             && metrics_path.matches(path);
+        if metric {
+            dcl_metrics::http::exclude(&extensions);
+        }
         let (code, body, mime, cors, handler) = if metric {
             let authorized = settings.metrics_bearer_token.as_ref().is_none_or(|token| {
                 let mut parts = headers
@@ -226,6 +190,15 @@ impl ConnectorHttp {
             )
         };
         if !metric {
+            dcl_metrics::http::route(
+                &extensions,
+                "connector",
+                if handler.is_empty() {
+                    "unmatched"
+                } else {
+                    handler
+                },
+            );
             hooks.observe_connector(crate::stats::http::Observation {
                 method: method.into(),
                 handler: handler.into(),
@@ -322,6 +295,27 @@ mod tests {
         let headers = response.headers().clone();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (code, headers, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn process_counter_retains_its_value_across_compatibility_scrapes() {
+        let (app, state) = app_with_state("/metrics").await;
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _local = dcl_metrics::set_default_local_recorder(&recorder);
+        state.feed.on_deduplicated();
+        super::super::metrics::record_diagnostics(&state);
+        let (_, _, compat) = request(app, "GET", "/metrics", true).await;
+        let name = "dcl_ws_connector_island_changed_deduplicated_total";
+        assert!(compat.contains(&format!("{name} 1\n")), "{compat}");
+        state.feed.on_deduplicated();
+        super::super::metrics::record_diagnostics(&state);
+        let body = recorder.handle().render();
+        assert!(body.contains(&format!("{name} 2\n")), "{body}");
+        assert!(body.contains("dcl_connector_peers 0\n"), "{body}");
+        assert!(
+            body.contains("dcl_connector_statistics_publish_dropped_total 0\n"),
+            "{body}"
+        );
     }
 
     #[tokio::test]

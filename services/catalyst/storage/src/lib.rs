@@ -22,6 +22,21 @@ pub(crate) use catalyst_shared as shared;
 pub(crate) use dcl_auth as auth;
 
 mod content;
+const COPY_FALLBACKS: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "storage_store_file_copy_fallbacks",
+    "Files copied when the storage hard link could not be used.",
+    Some(dcl_metrics::Unit::Count),
+    &[],
+);
+const SPOOL_CLEANUP_FAILURES: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "multipart_upload_cleanup_failures",
+    "Upload spool directories that could not be removed.",
+    Some(dcl_metrics::Unit::Count),
+    &["route"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] =
+    &[COPY_FALLBACKS.descriptor, SPOOL_CLEANUP_FAILURES.descriptor];
+
 mod denylist;
 mod file_ids;
 pub mod gc;

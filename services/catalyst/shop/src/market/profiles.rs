@@ -77,9 +77,16 @@ pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
 /// failed, by `route` and `layer` (`entities`, `ownership`). The Registry
 /// and Lambdas can use their normal response statuses for these failures.
 pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+const LOOKUP_FAILURE_COUNTER: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    PROFILE_LOOKUP_FAILURES,
+    "Profile lookups that failed, by route and failed lookup layer.",
+    Some(dcl_metrics::Unit::Count),
+    &["route", "layer"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[LOOKUP_FAILURE_COUNTER.descriptor];
 
 pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
-    metrics::counter!(PROFILE_LOOKUP_FAILURES, "route" => route, "layer" => layer).increment(1);
+    LOOKUP_FAILURE_COUNTER.handle([route, layer]).increment(1);
 }
 
 /// A pointer that can name a profile: an address (`0x` and 40 hex digits,

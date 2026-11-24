@@ -123,24 +123,24 @@ impl Drop for OpenSocket {
         if sockets.remove(&self.id).is_none() {
             return;
         }
-        metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+        dcl_metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
         let count = &self.ctx.0.socket_counts[match self.protocol {
             Protocol::Rpc => 0,
             Protocol::Stream => 1,
         }];
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => self.protocol.label())
+        dcl_metrics::gauge!("ws_active_connections_by_protocol", "protocol" => self.protocol.label())
             .set((count.fetch_sub(1, Ordering::Relaxed) - 1) as f64);
         drop(sockets);
         let protocol = self.protocol.label();
         if matches!(self.protocol, Protocol::Rpc) {
             let code =
                 super::metrics::ws_close_code_label(self.close.observed_code().unwrap_or(1006));
-            metrics::counter!("ws_close_codes", "code" => code).increment(1);
+            dcl_metrics::counter!("ws_close_codes", "code" => code).increment(1);
         }
-        metrics::histogram!("ws_connection_duration_seconds")
+        dcl_metrics::histogram!("ws_connection_duration_seconds")
             .record(self.opened.elapsed().as_secs_f64());
         super::metrics::log("ws-pool", "debug");
-        metrics::histogram!("ws_connection_duration_seconds_by_protocol", "protocol" => protocol)
+        dcl_metrics::histogram!("ws_connection_duration_seconds_by_protocol", "protocol" => protocol)
             .record(self.opened.elapsed().as_secs_f64());
     }
 }
@@ -224,7 +224,7 @@ impl Context {
         let close = Arc::new(SocketClose::default());
         let mut sockets = self.0.sockets.lock();
         if max.is_some_and(|max| sockets.len() >= max) {
-            metrics::counter!("ws_connections_rejected").increment(1);
+            dcl_metrics::counter!("ws_connections_rejected").increment(1);
             return None;
         }
         let id = self.0.next_socket.fetch_add(1, Ordering::Relaxed);
@@ -233,9 +233,9 @@ impl Context {
             Protocol::Rpc => 0,
             Protocol::Stream => 1,
         }];
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
+        dcl_metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
             .set((count.fetch_add(1, Ordering::Relaxed) + 1) as f64);
-        metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+        dcl_metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
         drop(sockets);
         super::metrics::log("ws-pool", "debug");
         Some(OpenSocket {
@@ -316,8 +316,8 @@ impl Context {
     }
 
     pub(crate) fn report_subscriber_metrics(&self) {
-        metrics::gauge!("subscribers_local_count").set(self.0.presence.len() as f64);
-        metrics::gauge!("subscribers_generators_count")
+        dcl_metrics::gauge!("subscribers_local_count").set(self.0.presence.len() as f64);
+        dcl_metrics::gauge!("subscribers_generators_count")
             .set(self.0.pubsub.active_generators() as f64);
     }
 
@@ -905,11 +905,9 @@ mod tests {
     }
     #[tokio::test]
     async fn socket_and_subscriber_metrics_follow_source_owned_lifecycle_counts() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let ctx = Context::new(
             VoiceSettings::default(),
             Db::new(crate::rpc::tests::closed_pool()),
@@ -985,11 +983,9 @@ mod tests {
 
     #[tokio::test]
     async fn socket_drops_bound_client_close_codes_and_keep_mixed_protocol_counts() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let ctx = Context::new(
             VoiceSettings::default(),
             Db::new(crate::rpc::tests::closed_pool()),

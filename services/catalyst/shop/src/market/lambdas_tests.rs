@@ -1759,7 +1759,7 @@ async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &
     let recorder = crate::comms::metrics::prometheus_builder()
         .unwrap()
         .build_recorder();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let app = router(state.clone());
     for modified_since in [None, Some("Wed, 21 Oct 2015 07:28:00 GMT")] {
         let mut request = Request::post("/lambdas/profiles");

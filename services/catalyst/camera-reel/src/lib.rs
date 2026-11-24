@@ -445,7 +445,7 @@ pub fn router(state: SharedState) -> Router {
         .fallback_service(
             tower::ServiceBuilder::new()
                 .map_request(http::routing_request)
-                .service(router),
+                .service(dcl_metrics::http::component(router, "camera-reel")),
         )
         .layer(axum::middleware::map_response(without_allow))
 }

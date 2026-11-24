@@ -12,242 +12,23 @@ use std::sync::Arc;
 
 // The pinned source registers all metadata, but prom-client only creates
 // unlabelled counters and gauges before their first observation.
-const DECLARATIONS: &[(&str, &str, &str)] = &[
-    (
-        "http_request_duration_seconds",
-        "histogram",
-        "Request duration in seconds.",
-    ),
-    (
-        "http_requests_total",
-        "counter",
-        "Total number of HTTP requests",
-    ),
-    (
-        "http_request_size_bytes",
-        "histogram",
-        "Duration of HTTP requests size in bytes",
-    ),
-    (
-        "wkc_logger_logs_total",
-        "counter",
-        "Log amounts per logger and level",
-    ),
-    (
-        "ws_active_connections_by_protocol",
-        "gauge",
-        "Active WebSocket connections by protocol",
-    ),
-    (
-        "ws_connection_duration_seconds_by_protocol",
-        "histogram",
-        "WebSocket connection duration by protocol",
-    ),
-    (
-        "ws_auth_errors_by_protocol",
-        "counter",
-        "Authentication failures by protocol and cause",
-    ),
-    (
-        "ws_admission_evictions",
-        "counter",
-        "Oldest WebSocket connections closed to keep an address within its connection cap",
-    ),
-    (
-        "ws_admission_rejections",
-        "counter",
-        "Subscription starts rejected by the per-address rate limit",
-    ),
-    (
-        "ws_active_connections",
-        "gauge",
-        "Number of WebSocket active connections",
-    ),
-    (
-        "ws_connections_rejected",
-        "counter",
-        "Number of WebSocket connections rejected because the pool reached WS_MAX_CONCURRENT_CONNECTIONS",
-    ),
-    (
-        "ws_messages_received",
-        "counter",
-        "Number of WebSocket messages received",
-    ),
-    (
-        "ws_messages_sent",
-        "counter",
-        "Number of outbound WebSocket messages accepted by the socket (sent or buffered)",
-    ),
-    ("ws_errors", "counter", "Number of WebSocket errors"),
-    (
-        "ws_close_codes",
-        "counter",
-        "Number of WebSocket close codes",
-    ),
-    (
-        "ws_transport_errors",
-        "counter",
-        "Number of WebSocket transport errors",
-    ),
-    (
-        "ws_auth_errors",
-        "counter",
-        "Number of WebSocket authentication errors",
-    ),
-    (
-        "ws_auth_race_condition_aborted",
-        "counter",
-        "Number of authentication attempts aborted due to connection closed during auth",
-    ),
-    (
-        "ws_idle_timeouts",
-        "counter",
-        "Number of WebSocket idle timeouts",
-    ),
-    (
-        "ws_connection_duration_seconds",
-        "histogram",
-        "Duration of WebSocket connections in seconds",
-    ),
-    (
-        "rpc_procedure_call_total",
-        "counter",
-        "Total number of RPC procedure calls",
-    ),
-    (
-        "rpc_procedure_call_duration_seconds",
-        "histogram",
-        "Duration of RPC procedure calls in seconds",
-    ),
-    (
-        "rpc_in_procedure_call_size_bytes",
-        "histogram",
-        "Size of incoming RPC procedure call payloads in bytes",
-    ),
-    (
-        "rpc_out_procedure_call_size_bytes",
-        "histogram",
-        "Size of outgoing RPC procedure call payloads in bytes",
-    ),
-    (
-        "rpc_updates_sent_on_subscription",
-        "counter",
-        "Number of updates sent on RPC subscription streams",
-    ),
-    (
-        "stream_ws_messages_received",
-        "counter",
-        "Number of messages received on the plain WebSocket stream protocol",
-    ),
-    (
-        "stream_ws_updates_sent",
-        "counter",
-        "Number of updates sent on plain WebSocket stream subscriptions",
-    ),
-    (
-        "stream_ws_errors",
-        "counter",
-        "Number of errors reported on the plain WebSocket stream protocol",
-    ),
-    (
-        "stream_ws_authentications",
-        "counter",
-        "Successful plain WebSocket stream authentications by handshake method",
-    ),
-    (
-        "stream_ws_close_codes",
-        "counter",
-        "Number of plain WebSocket stream protocol close codes",
-    ),
-    (
-        "ws_unexpected_send_result_events",
-        "counter",
-        "Number of unexpected send result events",
-    ),
-    (
-        "ws_backpressure_events",
-        "counter",
-        "Number of WebSocket messages that encountered backpressure or were dropped",
-    ),
-    (
-        "ws_drain_events",
-        "counter",
-        "Number of WebSocket drain events",
-    ),
-    (
-        "ws_message_size_bytes",
-        "histogram",
-        "Size of WebSocket messages in bytes",
-    ),
-    (
-        "ws_queue_vs_backpressure_ratio",
-        "gauge",
-        "Ratio of message queue size to uWebSocket buffered amount",
-    ),
-    (
-        "subscribers_local_count",
-        "gauge",
-        "Number of local in-memory subscriber emitters",
-    ),
-    (
-        "subscribers_generators_count",
-        "gauge",
-        "Number of active async generators across all subscribers",
-    ),
-    (
-        "subscribers_stale_cleaned",
-        "counter",
-        "Number of stale subscribers removed by reconciliation",
-    ),
-    (
-        "subscribers_stale_connections_cleaned",
-        "counter",
-        "Number of stale connections (socket gone, address still active) removed by reconciliation",
-    ),
-    (
-        "subscription_duplicates_total",
-        "counter",
-        "Number of duplicate stream subscriptions rejected by the per-(address, event) guard",
-    ),
-    (
-        "subscription_updates_dropped_total",
-        "counter",
-        "Number of subscription updates dropped because a connection's value queue overflowed (slow consumer)",
-    ),
-    (
-        "friendship_rate_limiter_unavailable",
-        "counter",
-        "Number of friendship/block mutations allowed because the Redis rate limiter was unreachable",
-    ),
-    (
-        "ai_compliance_validation_duration_seconds",
-        "histogram",
-        "Duration of AI compliance validation in seconds",
-    ),
-    (
-        "ai_compliance_validation_total",
-        "counter",
-        "Total number of AI compliance validations (compliant, non-compliant, failed)",
-    ),
-];
-
 pub(super) fn register() {
-    metrics::gauge!("ws_active_connections").increment(0.0);
-    metrics::counter!("ws_connections_rejected").increment(0);
-    metrics::counter!("ws_messages_received").increment(0);
-    metrics::counter!("ws_messages_sent").increment(0);
-    metrics::counter!("ws_errors").increment(0);
-    metrics::counter!("ws_transport_errors").increment(0);
-    metrics::counter!("ws_auth_race_condition_aborted").increment(0);
-    metrics::counter!("ws_idle_timeouts").increment(0);
-    metrics::counter!("ws_unexpected_send_result_events").increment(0);
-    metrics::counter!("ws_drain_events").increment(0);
-    metrics::gauge!("ws_queue_vs_backpressure_ratio").increment(0.0);
-    metrics::gauge!("subscribers_local_count").increment(0.0);
-    metrics::gauge!("subscribers_generators_count").increment(0.0);
-    metrics::counter!("subscribers_stale_cleaned").increment(0);
-    metrics::counter!("subscribers_stale_connections_cleaned").increment(0);
-    metrics::counter!("friendship_rate_limiter_unavailable").increment(0);
+    dcl_metrics::gauge!("ws_active_connections").increment(0.0);
+    dcl_metrics::counter!("ws_connections_rejected").increment(0);
+    dcl_metrics::counter!("ws_messages_received").increment(0);
+    dcl_metrics::counter!("ws_messages_sent").increment(0);
+    dcl_metrics::counter!("ws_errors").increment(0);
+    dcl_metrics::counter!("ws_transport_errors").increment(0);
+    dcl_metrics::counter!("ws_auth_race_condition_aborted").increment(0);
+    dcl_metrics::counter!("ws_idle_timeouts").increment(0);
+    dcl_metrics::counter!("ws_unexpected_send_result_events").increment(0);
+    dcl_metrics::counter!("ws_drain_events").increment(0);
+    dcl_metrics::gauge!("ws_queue_vs_backpressure_ratio").increment(0.0);
+    dcl_metrics::gauge!("subscribers_local_count").increment(0.0);
+    dcl_metrics::gauge!("subscribers_generators_count").increment(0.0);
+    dcl_metrics::counter!("subscribers_stale_cleaned").increment(0);
+    dcl_metrics::counter!("subscribers_stale_connections_cleaned").increment(0);
+    dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(0);
 }
 
 // Preserve the two source transports' casing without admitting extension methods
@@ -308,12 +89,12 @@ pub(super) fn http_finished(
 ) {
     let method = http_method_label(&method);
     let code = code.to_string();
-    metrics::counter!("http_requests_total", "method" => method, "handler" => handler, "code" => code.clone()).increment(1);
-    metrics::histogram!("http_request_duration_seconds", "method" => method, "handler" => handler, "code" => code).record(started.elapsed().as_secs_f64());
+    dcl_metrics::counter!("http_requests_total", "method" => method, "handler" => handler, "code" => code.clone()).increment(1);
+    dcl_metrics::histogram!("http_request_duration_seconds", "method" => method, "handler" => handler, "code" => code).record(started.elapsed().as_secs_f64());
 }
 
 pub(super) fn log(logger: &'static str, level: &'static str) {
-    metrics::counter!("wkc_logger_logs_total", "logger" => logger, "level" => match level { "debug" => "DEBUG", "info" => "INFO", "warn" => "WARNING", "error" => "ERROR", value => value }).increment(1);
+    dcl_metrics::counter!("wkc_logger_logs_total", "logger" => logger, "level" => match level { "debug" => "DEBUG", "info" => "INFO", "warn" => "WARNING", "error" => "ERROR", value => value }).increment(1);
 }
 
 fn procedure_label(name: &str) -> String {
@@ -372,16 +153,16 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
 
 pub(super) fn rpc_request(name: &str, request: &serde_json::Value) -> std::time::Instant {
     let started = std::time::Instant::now();
-    metrics::histogram!("rpc_in_procedure_call_size_bytes", "procedure" => procedure_label(name))
+    dcl_metrics::histogram!("rpc_in_procedure_call_size_bytes", "procedure" => procedure_label(name))
         .record(json_bytes(request) as f64);
     started
 }
 
 pub(super) fn rpc_finished(name: &str, code: &'static str, started: std::time::Instant) {
     let procedure = procedure_label(name);
-    metrics::counter!("rpc_procedure_call_total", "code" => code, "procedure" => procedure.clone())
+    dcl_metrics::counter!("rpc_procedure_call_total", "code" => code, "procedure" => procedure.clone())
         .increment(1);
-    metrics::histogram!("rpc_procedure_call_duration_seconds", "code" => code, "procedure" => procedure).record(started.elapsed().as_secs_f64());
+    dcl_metrics::histogram!("rpc_procedure_call_duration_seconds", "code" => code, "procedure" => procedure).record(started.elapsed().as_secs_f64());
 }
 
 fn response_code(response: &serde_json::Value) -> &'static str {
@@ -409,7 +190,7 @@ fn response_code(response: &serde_json::Value) -> &'static str {
 
 pub(super) fn rpc_response(name: &str, response: &serde_json::Value, started: std::time::Instant) {
     let code = response_code(response);
-    metrics::histogram!("rpc_out_procedure_call_size_bytes", "code" => code, "procedure" => procedure_label(name)).record(json_bytes(response) as f64);
+    dcl_metrics::histogram!("rpc_out_procedure_call_size_bytes", "code" => code, "procedure" => procedure_label(name)).record(json_bytes(response) as f64);
     rpc_finished(name, code, started);
 }
 
@@ -430,7 +211,7 @@ impl RpcStream {
         self.failed = true;
     }
     pub(super) fn update(&self, event: &'static str) {
-        metrics::counter!("rpc_updates_sent_on_subscription", "event" => event).increment(1);
+        dcl_metrics::counter!("rpc_updates_sent_on_subscription", "event" => event).increment(1);
     }
 }
 impl Drop for RpcStream {
@@ -491,6 +272,7 @@ pub(super) async fn serve_if_requested(
         http_finished(method, handler, response.status().as_u16(), started);
         return response;
     }
+    dcl_metrics::http::exclude(request.extensions());
     if let Some(expected) = state
         .settings
         .metrics_bearer_token
@@ -533,14 +315,17 @@ pub(super) async fn serve_if_requested(
 
 pub(super) fn filter_families(rendered: &str) -> String {
     let mut out = String::new();
-    for (family, kind, help) in DECLARATIONS {
+    for descriptor in super::FAMILIES {
+        let family = descriptor.name;
+        let kind = descriptor.prometheus_type();
+        let help = descriptor.help;
         out.push_str(&format!("# HELP {family} {help}\n# TYPE {family} {kind}\n"));
         for line in rendered.lines().filter(|line| !line.starts_with('#')) {
             let name = line.split(['{', ' ']).next().unwrap_or("");
-            if name == *family
+            if name == family
                 || ["_sum", "_count", "_bucket"]
                     .iter()
-                    .any(|suffix| name.strip_suffix(suffix) == Some(*family))
+                    .any(|suffix| name.strip_suffix(suffix) == Some(family))
             {
                 out.push_str(line);
                 out.push('\n');
@@ -573,11 +358,9 @@ mod tests {
             let lower = method.to_ascii_lowercase();
             assert_eq!(http_method_label(&lower), lower);
         }
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::with_local_recorder(&recorder, || {
             for i in 0..256 {
                 let method = format!("X-METRIC-{i}");
                 assert_eq!(http_method_label(&method), "other");
@@ -617,11 +400,9 @@ mod tests {
 
     #[tokio::test]
     async fn real_http_extension_methods_share_bounded_counter_and_histogram_labels() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://localhost/unused")
             .unwrap();
@@ -737,11 +518,9 @@ mod tests {
     #[test]
     fn source_registration_has_exact_metadata_and_only_sixteen_initial_zeros() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, register);
+        dcl_metrics::with_local_recorder(&recorder, register);
         let rendered = filter_families(&handle.render());
         let metadata = |body: &str| {
             body.lines()
@@ -764,8 +543,8 @@ mod tests {
             samples(fixture["initial"].as_str().unwrap())
         );
         assert_eq!(samples(&rendered).len(), 16);
-        metrics::with_local_recorder(&recorder, || {
-            metrics::counter!("shop_orders_total").increment(99)
+        dcl_metrics::with_local_recorder(&recorder, || {
+            dcl_metrics::counter!("shop_orders_total").increment(99)
         });
         assert!(!filter_families(&handle.render()).contains("shop_orders_total"));
     }
@@ -774,11 +553,9 @@ mod tests {
     {
         use tower::ServiceExt;
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://localhost/unused")
             .unwrap();
@@ -871,11 +648,9 @@ mod tests {
     fn unary_wrapper_sizes_codes_and_thrown_errors_match_source_observations() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
         for case in fixture["unary"].as_array().unwrap() {
-            let recorder = crate::comms::metrics::prometheus_builder()
-                .unwrap()
-                .build_recorder();
+            let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
             let handle = recorder.handle();
-            metrics::with_local_recorder(&recorder, || {
+            dcl_metrics::with_local_recorder(&recorder, || {
                 let name = case["procedure"].as_str().unwrap();
                 let started = rpc_request(name, &case["params"]);
                 if case["throws"] == true {
@@ -972,11 +747,9 @@ mod tests {
             .nest("/social-api", gateway)
             .route("/other-domain", axum::routing::get(|| async { "native" }));
         for case in fixture["apiCases"].as_array().unwrap() {
-            let recorder = crate::comms::metrics::prometheus_builder()
-                .unwrap()
-                .build_recorder();
+            let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
             let handle = recorder.handle();
-            let _recording = metrics::set_default_local_recorder(&recorder);
+            let _recording = dcl_metrics::set_default_local_recorder(&recorder);
             let body = case["body"].as_str().unwrap_or("");
             let mut request = Request::builder()
                 .method(case["method"].as_str().unwrap())
@@ -1049,11 +822,9 @@ mod tests {
                 );
             }
         }
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         for path in ["/social-api/federation/metrics-fixture", "/other-domain"] {
             assert_eq!(
                 app.clone()

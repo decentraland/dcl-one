@@ -13,6 +13,7 @@ pub mod control_v4;
 pub mod enforcement;
 pub mod feed;
 pub mod handlers;
+pub mod metrics;
 pub mod observations;
 mod reconciliation;
 pub mod registry;
@@ -143,6 +144,7 @@ pub async fn build_state(
 /// The connected-wallet moderation sweep.
 pub fn spawn_jobs(state: &AppState, jobs: &Jobs) {
     state.enforcement.spawn_jobs(jobs);
+    metrics::start_metrics(state, jobs);
 }
 
 /// Routes for the shared root, complete Stats host, and distinct connector host.

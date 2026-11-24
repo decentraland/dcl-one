@@ -237,7 +237,7 @@ impl RetryFailedDeployments {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let evicted = self.evict_exhausted(now_ms).await;
         match self.failed_store.count_undecided().await {
-            Ok(undecided) => metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
+            Ok(undecided) => dcl_metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
             Err(e) => warn!(error = %e, "Failed to count undecided failed deployments"),
         }
         let waiting = self.failed_store.count_waiting(now_ms).await?;

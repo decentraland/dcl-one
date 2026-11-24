@@ -36,9 +36,10 @@ use std::time::{Duration, Instant};
 
 use axum::extract::State as AxumState;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use dcl_metrics::ws::Socket;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -175,7 +176,8 @@ fn counted(verdict: Result<Address, SocketAuthError>) -> Result<String, SocketAu
         } else {
             "client_rejected"
         };
-        metrics::counter!(
+        dcl_metrics::ws::rejected("social_stream", "authentication");
+        dcl_metrics::counter!(
             "ws_auth_errors_by_protocol",
             "protocol" => Protocol::Stream.label(),
             "type" => kind
@@ -209,6 +211,7 @@ pub async fn ws_upgrade(
         Err(rejection) => return rejection.into_response(),
     };
     if !state.initial_fanout_ready() {
+        dcl_metrics::ws::rejected("social_stream", "unavailable");
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let paths = stream_paths();
@@ -229,9 +232,11 @@ pub async fn ws_upgrade(
         None
     };
     ws.max_message_size(state.settings.stream.max_payload_bytes)
-        .on_upgrade(move |mut socket| async move {
+        .on_upgrade(move |socket| async move {
+            let mut socket = Socket::new(socket, "social_stream");
             let max = state.settings.ws_max_concurrent_connections;
             let Some(slot) = state.ctx.open_socket(Protocol::Stream, max) else {
+                dcl_metrics::ws::rejected("social_stream", "capacity");
                 tracing::warn!(max, "rejecting stream connection: pool is full");
                 let _ = socket.send(close_message(POOL_FULL)).await;
                 return;
@@ -244,7 +249,7 @@ pub async fn ws_upgrade(
             } else {
                 "other".into()
             };
-            metrics::counter!("stream_ws_close_codes", "code" => label).increment(1);
+            dcl_metrics::counter!("stream_ws_close_codes", "code" => label).increment(1);
         })
         .into_response()
 }
@@ -313,7 +318,7 @@ impl Drop for Outbox {
 
 impl Outbox {
     fn spawn(
-        mut sink: SplitSink<WebSocket, Message>,
+        mut sink: SplitSink<Socket, Message>,
         max_backpressure: usize,
         idle: IdleTimer,
         close: Arc<SocketClose>,
@@ -374,7 +379,7 @@ impl Outbox {
     async fn close(
         mut self,
         frame: Option<(u16, &'static str)>,
-        mut incoming: SplitStream<WebSocket>,
+        mut incoming: SplitStream<Socket>,
     ) {
         if let (Some(tx), Some(frame)) = (self.tx.take(), frame) {
             let _ = tx.send(close_message(frame));
@@ -423,7 +428,7 @@ fn message_len(message: &Message) -> usize {
 
 struct Session {
     state: Arc<State>,
-    incoming: SplitStream<WebSocket>,
+    incoming: SplitStream<Socket>,
     idle: IdleTimer,
     outbox: Outbox,
     close: Arc<SocketClose>,
@@ -435,7 +440,7 @@ struct Session {
 }
 
 impl Session {
-    fn new(state: Arc<State>, socket: WebSocket, close: Arc<SocketClose>) -> Self {
+    fn new(state: Arc<State>, socket: Socket, close: Arc<SocketClose>) -> Self {
         let (sink, incoming) = socket.split();
         let limits = state.settings.stream;
         let idle = IdleTimer::new(state.settings.ws_idle_timeout_secs);
@@ -489,13 +494,13 @@ impl Session {
     /// Upstream `closeForPolicy`: counted under its type, then closed 1008.
     fn policy_close(&self, kind: &'static str, (code, reason): (u16, &'static str)) {
         if !self.close.is_ended() {
-            metrics::counter!("stream_ws_errors", "type" => kind).increment(1);
+            dcl_metrics::counter!("stream_ws_errors", "type" => kind).increment(1);
         }
         self.close.end(code, reason);
     }
 
     fn error(&self, code: &'static str, message: &str, id: Option<&str>) -> bool {
-        metrics::counter!("stream_ws_errors", "type" => code).increment(1);
+        dcl_metrics::counter!("stream_ws_errors", "type" => code).increment(1);
         let mut error = json!({ "type": "error", "code": code, "message": message });
         if let Some(id) = id {
             error["id"] = json!(id);
@@ -528,7 +533,7 @@ impl Session {
     async fn run(mut self, paths: Vec<String>, verified: Option<String>) -> u16 {
         let address = match verified {
             Some(address) => {
-                metrics::counter!("stream_ws_authentications", "method" => "upgrade_headers")
+                dcl_metrics::counter!("stream_ws_authentications", "method" => "upgrade_headers")
                     .increment(1);
                 Some(address)
             }
@@ -597,7 +602,7 @@ impl Session {
         };
         match verdict {
             Ok(address) => {
-                metrics::counter!("stream_ws_authentications", "method" => "first_frame")
+                dcl_metrics::counter!("stream_ws_authentications", "method" => "first_frame")
                     .increment(1);
                 Some(address)
             }
@@ -681,7 +686,7 @@ impl Session {
                 });
                 let sent = self.send(event);
                 if sent {
-                    metrics::counter!("stream_ws_updates_sent", "event" => stream).increment(1);
+                    dcl_metrics::counter!("stream_ws_updates_sent", "event" => stream).increment(1);
                 }
                 sent
             }
@@ -697,7 +702,8 @@ impl Session {
     fn handle(&mut self, address: &str, tx: &mpsc::Sender<Outgoing>, raw: &[u8]) -> bool {
         let message = match parse_message(raw) {
             Err(e) => {
-                metrics::counter!("stream_ws_messages_received", "type" => e.received).increment(1);
+                dcl_metrics::counter!("stream_ws_messages_received", "type" => e.received)
+                    .increment(1);
                 return self.error(e.code, e.message, e.id.as_deref());
             }
             Ok(message) => message,
@@ -707,7 +713,7 @@ impl Session {
             ClientMessage::Subscribe { .. } => "subscribe",
             ClientMessage::Unsubscribe { .. } => "unsubscribe",
         };
-        metrics::counter!("stream_ws_messages_received", "type" => kind).increment(1);
+        dcl_metrics::counter!("stream_ws_messages_received", "type" => kind).increment(1);
         match message {
             ClientMessage::Ping => self.send(json!({ "type": "pong" })),
             ClientMessage::Unsubscribe { id } => {

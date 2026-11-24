@@ -547,6 +547,7 @@ class DevTest(unittest.TestCase):
 
     def test_two_stacks_on_one_machine_do_not_share_the_metrics_exporter(self):
         env = dev.runtime_env(self.config)
+        self.assertEqual(env['INDEX_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 6}")
         self.assertEqual(env['SERVE_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 1}", "not the binary's default 5006")
         with socket.socket() as busy:
             busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

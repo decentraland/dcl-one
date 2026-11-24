@@ -337,6 +337,8 @@ the original `server` check from the actual listener lifecycle;
 NATS and content add no probes. Rust exposes actual available process measurements rather than
 invented Node/V8 series. Node-specific default runtime metrics remain a compatibility gap.
 
+The shared `dcl-metrics` crate installs the process recorder. Serve records canonical HTTP and WebSocket traffic and samples connector diagnostics every 15 seconds. Pulse registers simulation and cluster metrics in its own process. See the [scrape addresses and recording conventions](../../../../docs/adr/2026-11-24-shared-service-metrics.md).
+
 ## Bus messages
 
 Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contracts in the architecture model.
@@ -688,4 +690,4 @@ as `authoritative-server`):
 
 Read the architecture decisions, divergence findings and readiness evidence supplied for the task before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.
 
-Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. `WKC_METRICS_COLLECT_DEFAULT=false` disables these collectors.
+Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. `WKC_METRICS_COLLECT_DEFAULT=false` disables process collection on the compatibility views. The private process scrape samples the OS independently.

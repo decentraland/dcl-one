@@ -36,9 +36,21 @@ pub(super) fn connector_routes(
 ) -> Router<AppState> {
     Router::new().route(
         "/ws",
-        any(move |method, uri, headers, peer, ws, raw, state| {
-            connector_upgrade(method, uri, headers, peer, ws, raw, state, http.clone())
-        }),
+        any(
+            move |method, uri, headers, extensions, peer, ws, raw, state| {
+                connector_upgrade(
+                    method,
+                    uri,
+                    headers,
+                    extensions,
+                    peer,
+                    ws,
+                    raw,
+                    state,
+                    http.clone(),
+                )
+            },
+        ),
     )
 }
 
@@ -46,6 +58,7 @@ async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
     headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
     peer: Peer,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     raw: Option<axum::Extension<raw_transport::Signal>>,
@@ -57,7 +70,7 @@ async fn connector_upgrade(
             .get("sec-websocket-key")
             .is_some_and(|key| key.as_bytes().len() == 24)
     {
-        return http.respond(method, uri, headers).await;
+        return http.respond(method, uri, headers, extensions).await;
     }
     match ws {
         Ok(ws) => ws_upgrade(ws, State(state), headers, peer, raw)
@@ -123,6 +136,7 @@ fn upgrade(
     raw: Option<raw_transport::Signal>,
 ) -> axum::response::Response {
     let too_many = || {
+        dcl_metrics::ws::rejected("archipelago", "rate_limited");
         (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             [(axum::http::header::RETRY_AFTER, "5")],
@@ -139,6 +153,7 @@ fn upgrade(
     let permit = match state.sockets.clone().try_acquire_owned() {
         Ok(permit) if handler.is_ok() && !state.restart.is_cancelled() => permit,
         _ => {
+            dcl_metrics::ws::rejected("archipelago", "unavailable");
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
                 [(axum::http::header::RETRY_AFTER, "5")],

@@ -334,6 +334,8 @@ async fn openapi_describes_visible_person_screen_rect() {
 
 #[tokio::test]
 async fn metrics_enforces_bearer_before_recording_and_preserves_service_series() {
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _local = dcl_metrics::set_default_local_recorder(&recorder);
     let (unconfigured, dir) = app().await;
     let response = unconfigured
         .oneshot(
@@ -354,6 +356,7 @@ async fn metrics_enforces_bearer_before_recording_and_preserves_service_series()
     std::fs::remove_dir_all(dir).unwrap();
 
     let (app, dir) = app_with_token(Some("camera-token")).await;
+    let app = dcl_metrics::http::instrument(app, "catalyst");
     for (token, message) in [
         (None, "Token not present"),
         (Some("Basic wrong"), "Wrong schema"),
@@ -436,6 +439,22 @@ async fn metrics_enforces_bearer_before_recording_and_preserves_service_series()
         "previous successful scrape counted"
     );
     assert!(!body.contains("401"));
+    let canonical = recorder.handle().render();
+    let counts = canonical
+        .lines()
+        .filter(|line| line.starts_with("dcl_http_requests_total{"))
+        .collect::<Vec<_>>();
+    assert_eq!(counts.len(), 2, "{canonical}");
+    assert!(
+        counts.iter().any(
+            |l| l.contains("component=\"camera-reel\"") && l.contains("route=\"/health/live\"")
+        ),
+        "{canonical}"
+    );
+    assert!(
+        !canonical.contains("/metrics") && !canonical.contains("/api/missing"),
+        "{canonical}"
+    );
     for bucket in [
         "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10", "20", "30",
         "60", "+Inf",

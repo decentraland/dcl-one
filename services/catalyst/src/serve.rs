@@ -125,7 +125,7 @@ mod metrics_tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, super::register_metrics);
+        dcl_metrics::with_local_recorder(&recorder, super::register_metrics);
         let rendered = handle.render();
         for sample in [
             "comms_nats_connected 0",

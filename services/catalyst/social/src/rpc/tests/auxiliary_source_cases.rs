@@ -18,13 +18,11 @@ async fn uws_auxiliary_routes_match_executed_source_configuration_and_authentica
         "/services/catalyst/tests/fixtures/conformance/social/auxiliary-cases.json"
     )))
     .unwrap();
-    let recorder = crate::comms::metrics::prometheus_builder()
-        .unwrap()
-        .build_recorder();
+    let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
     let handle = recorder.handle();
-    metrics::with_local_recorder(&recorder, || {
-        metrics::counter!("ws_messages_received").increment(3);
-        metrics::counter!("shop_orders_total").increment(99);
+    dcl_metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::counter!("ws_messages_received").increment(3);
+        dcl_metrics::counter!("shop_orders_total").increment(99);
     });
     let privacy_address = "0x9711111111111111111111111111111111111111";
     for case in fixture["cases"].as_array().unwrap() {

@@ -1175,9 +1175,9 @@ async fn the_next_assignment_names_the_room_the_peer_came_from() {
 /// Invalid internal assignments must not mint, evict or reach any socket.
 #[tokio::test(flavor = "current_thread")]
 async fn invalid_sessions_are_dropped_and_counted_without_side_effects() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
     for malformed in ["", "not-a-session", "0xABCDEF", "0x", "0x11.22"] {
         let mut event = change("c1", malformed);
@@ -1198,9 +1198,9 @@ async fn invalid_sessions_are_dropped_and_counted_without_side_effects() {
 /// The direct public entry point shares the feed's reject-before-side-effects rule.
 #[tokio::test(flavor = "current_thread")]
 async fn direct_processing_drops_invalid_sessions_before_mint_or_eviction() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
     for displaced in [false, true] {
         for malformed in ["", "not-a-session", "0xABCDEF", "0x", "0x11.22"] {
@@ -1241,9 +1241,9 @@ async fn the_wallet_is_taken_from_the_subject_and_lower_cased() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_banned_wallet_is_skipped_entirely() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.gateway.denied.lock().unwrap().insert(WALLET.into());
     h.feed(WALLET, &change("c1", SESSION_A)).await;
@@ -1263,9 +1263,9 @@ async fn a_banned_wallet_is_skipped_entirely() {
 /// An undecided ban lookup defers the assignment; the next hint after the store recovers mints.
 #[tokio::test(flavor = "current_thread")]
 async fn an_access_check_failure_defers_the_assignment() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.gateway.deny_error.store(true, Ordering::Relaxed);
     h.feed(WALLET, &change("c1", SESSION_A)).await;
@@ -1562,9 +1562,9 @@ async fn an_accepted_but_stale_successor_cannot_cancel_the_current_quarantine() 
 #[tokio::test(flavor = "current_thread")]
 async fn an_assignment_with_no_sockets_attached_reaches_nobody_and_records_nothing() {
     let (logs, _guard) = LogBuffer::capture(tracing::Level::WARN);
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
     let bus = h.bus.clone();
     let gateway = h.gateway.clone();
@@ -1625,9 +1625,9 @@ async fn an_assignment_with_no_sockets_attached_reaches_nobody_and_records_nothi
 /// as a submitted publish was, so the next assignment names it as the room the peer came from.
 #[tokio::test(flavor = "current_thread")]
 async fn an_assignment_no_socket_takes_is_counted_undelivered_and_still_recorded() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.feed(WALLET, &change("c1", SESSION_A)).await;
 

@@ -427,6 +427,9 @@ pub(crate) async fn observe(
     next: axum::middleware::Next,
 ) -> Response {
     if request.uri().path() == "/metrics" {
+        if request.method() == axum::http::Method::GET {
+            dcl_metrics::http::exclude(request.extensions());
+        }
         let Some(expected) = state
             .settings
             .metrics_bearer_token

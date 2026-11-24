@@ -13,10 +13,29 @@ pub(super) fn register_metrics() {
 
 pub(super) fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
     let bind = comms::metrics::serve_metrics_bind(raw)?;
-    let handle = comms::metrics::install_prometheus_exporter(bind)?;
+    let registry = registry()?;
+    let handle = registry.listen(dcl_metrics::PrometheusBuilder::new(), bind)?;
     register_metrics();
     tracing::info!(%bind, "serve /metrics listening");
     Ok(handle)
+}
+
+fn registry() -> anyhow::Result<dcl_metrics::Registry> {
+    dcl_metrics::Registry::new(&[
+        crate::builder::handlers::collections::FAMILIES,
+        jobs::FAMILIES,
+        crate::storage::FAMILIES,
+        crate::worlds::core::metrics::FAMILIES,
+        crate::social::rpc::FAMILIES,
+        crate::social::SERVICE_FAMILIES,
+        crate::comms::metrics::FAMILIES,
+        crate::content::metrics::FAMILIES,
+        comms::archipelago::metrics::FAMILIES,
+        crate::chain_index::portal::FAMILIES,
+        crate::explore::api::auth_api::FAMILIES,
+        crate::explore::api::auth_api::SOCKET_FAMILIES,
+        crate::shop::market::profiles::FAMILIES,
+    ])
 }
 
 /// Installs the shutdown signal handlers now and returns the wait for one of
@@ -77,4 +96,12 @@ pub(super) async fn run_http(
     })
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn all_serve_metric_declarations_can_share_one_recorder() {
+        super::registry().unwrap();
+    }
 }

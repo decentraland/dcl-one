@@ -8,11 +8,14 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use dcl_metrics::process;
+
+#[cfg(test)]
 #[path = "process_metrics.rs"]
-mod process;
+mod process_tests;
 
 struct Registry {
-    recorder: metrics_exporter_prometheus::PrometheusRecorder,
+    recorder: dcl_metrics::PrometheusRecorder,
     next_reset_ms: i64,
     feed: [u64; 3],
     cpu_origin: Option<[f64; 2]>,
@@ -63,17 +66,17 @@ impl Metrics {
     }
     fn record(&self, observation: Observation, size: bool) {
         let registry = self.registry.lock();
-        metrics::with_local_recorder(&registry.recorder, || {
+        dcl_metrics::with_local_recorder(&registry.recorder, || {
             let labels = [
                 ("method", observation.method),
                 ("handler", observation.handler),
                 ("code", observation.code.to_string()),
             ];
-            metrics::counter!("http_requests_total", &labels).increment(1);
-            metrics::histogram!("http_request_duration_seconds", &labels)
+            dcl_metrics::counter!("http_requests_total", &labels).increment(1);
+            dcl_metrics::histogram!("http_request_duration_seconds", &labels)
                 .record(observation.duration.as_secs_f64());
             if size {
-                metrics::histogram!("http_request_size_bytes", &labels)
+                dcl_metrics::histogram!("http_request_size_bytes", &labels)
                     .record(observation.request_size);
             }
         });
@@ -96,7 +99,7 @@ impl Metrics {
     ) -> String {
         let process = self.collect_default.then(sample);
         let mut registry = self.registry.lock();
-        metrics::with_local_recorder(&registry.recorder, || {
+        dcl_metrics::with_local_recorder(&registry.recorder, || {
             if let Some(feed) = feed {
                 for (index, name) in [
                     "dcl_ws_connector_island_changed_no_session_socket_total",
@@ -106,7 +109,7 @@ impl Metrics {
                 .iter()
                 .enumerate()
                 {
-                    metrics::counter!(*name)
+                    dcl_metrics::counter!(*name)
                         .increment(feed[index].saturating_sub(registry.feed[index]));
                 }
             }
@@ -269,7 +272,7 @@ fn declared_metadata(body: &mut String, connector: bool) {
     }
 }
 
-fn recorder() -> metrics_exporter_prometheus::PrometheusRecorder {
+fn recorder() -> dcl_metrics::PrometheusRecorder {
     crate::metrics::prometheus_builder()
         .expect("static metric bucket configuration")
         .build_recorder()
@@ -539,8 +542,8 @@ mod tests {
         let counter = {
             let mut registry = metrics.registry.lock();
             registry.next_reset_ms = boundary.timestamp_millis();
-            metrics::with_local_recorder(&registry.recorder, || {
-                metrics::counter!("render_clock_probe_total")
+            dcl_metrics::with_local_recorder(&registry.recorder, || {
+                dcl_metrics::counter!("render_clock_probe_total")
             })
         };
         counter.increment(1);
