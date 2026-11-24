@@ -3060,6 +3060,39 @@ async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_de
     server.abort();
 }
 
+/// A partial batch not decided within `DEPLOYMENT_PROCESSING_TIMEOUT_MS`
+/// answers the same 503, counted as a staging `error`.
+#[tokio::test]
+async fn a_partial_batch_past_its_processing_deadline_is_a_staging_error() {
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let settings = Settings {
+        deployment_processing_timeout: std::time::Duration::from_millis(300),
+        ..Settings::for_tests()
+    };
+    // A form without files skips the byte-rate probe; staging stalls.
+    let (node, server) = stalled_deploying_node("partial-deadline", 0, settings).await;
+    let mut form = entity_form();
+    form.push(("partial".to_string(), "true".to_string()));
+    let (status, _, body) = call(&node.router(), form_request("203.0.113.42", &form)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errors": ["Deployment processing exceeded the 300ms deadline."]})
+        )
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::PARTIAL_STAGING.descriptor.name,
+            &[("kind", "error")]
+        ),
+        Some(1.0)
+    );
+    server.abort();
+}
+
 /// A deploy stalled before validation (the newer-entity lookup on a database
 /// that never answers) holds its upload budget and its source's share until
 /// its processing deadline, then lets both go; it never holds its pointer.

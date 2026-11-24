@@ -1253,7 +1253,8 @@ async fn commit(
     crate::series::partial_stage("store", store_started);
     stored?;
     // A write that outlived the upload stays unrecorded; cleanup reclaims it.
-    let progress_started = Instant::now();
+    // Timed however it ends, as upstream's `finally`.
+    let progress_timer = crate::series::StageTimer::start("progress");
     let mut tx = pool.begin().await?;
     let batches: Option<i32> = sqlx::query_scalar(
         "UPDATE content.pending_deployments SET initialized = true, batches = batches + 1
@@ -1279,7 +1280,7 @@ async fn commit(
     tx.commit().await?;
 
     let progress = stored_files(pool, entity_id).await?;
-    crate::series::partial_stage("progress", progress_started);
+    drop(progress_timer);
     let missing: Vec<String> = content_hashes
         .iter()
         .filter(|h| !progress.contains_key(*h))

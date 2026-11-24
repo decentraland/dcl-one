@@ -500,6 +500,13 @@ async fn read_form(
 
 /// Upstream's 503 for a spool the disk refuses (full, failing): the cause
 /// is logged, the client told to retry.
+/// Removes the spool directories under `root` older than `stale_after` (those of `POST
+/// /entities` requests a crashed process left) and counts them.
+pub async fn reclaim_stale_spool(root: &std::path::Path, stale_after: std::time::Duration) {
+    let swept = crate::storage::upload_spool::sweep_stale(root, stale_after).await;
+    crate::series::upload_spool_reclaimed(swept);
+}
+
 fn spool_unavailable(e: &std::io::Error) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
     crate::metrics::SPOOL_FAILURES
@@ -547,17 +554,9 @@ async fn uploads_of(
         .get("entityId")
         .and_then(|id| parts.iter().position(|part| part.names(id)));
     let received: u64 = parts.iter().map(|part| part.len() as u64).sum();
-    // A partial batch refused here is counted as its staging answer.
+    // A partial batch whose entity file cannot be read back is counted as its staging answer;
+    // one the memory budget sheds is not, as upstream's handler takes that share before staging.
     let partial = fields.get("partial").map(String::as_str) == Some("true");
-    let refused = |kind| {
-        if partial {
-            crate::series::partial_answered(kind, None);
-        }
-    };
-    let budget_exhausted_after = |received| {
-        refused("busy");
-        budget_exhausted_after(received)
-    };
     if !memory.grow(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES) {
         return Err(budget_exhausted_after(received));
     }
@@ -568,7 +567,9 @@ async fn uploads_of(
             return Err(budget_exhausted_after(received));
         }
         let bytes = Bytes::from(part.read().await.map_err(|e| {
-            refused("error");
+            if partial {
+                crate::series::partial_answered("error", None);
+            }
             spool_unavailable(&e)
         })?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
@@ -1306,7 +1307,10 @@ async fn partial_batch(
         ),
     )
     .await
-    .unwrap_or_else(|_| processing_timed_out(timeout));
+    .unwrap_or_else(|_| {
+        crate::series::partial_answered("error", None);
+        processing_timed_out(timeout)
+    });
     if admission.created
         || admission.counted_replay
         || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted)
@@ -1322,6 +1326,36 @@ async fn partial_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Startup counts each spool directory of an exited process it removes, and leaves the
+    /// rest of the folder.
+    #[tokio::test]
+    async fn stale_spool_directories_are_reclaimed_and_counted() {
+        let root = std::env::temp_dir().join(format!(
+            "catalyst-spool-reclaim-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        for name in [
+            format!("1-{}", uuid::Uuid::new_v4().simple()),
+            format!("2-{}", uuid::Uuid::new_v4().simple()),
+            "operator-files".to_string(),
+        ] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let recorder = crate::series::test_support::recorder();
+        let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+        reclaim_stale_spool(&root, std::time::Duration::ZERO).await;
+        assert_eq!(
+            crate::series::test_support::sample(
+                &recorder.handle().render(),
+                crate::series::UPLOAD_SPOOL_RECLAIMED.descriptor.name,
+                &[]
+            ),
+            Some(2.0)
+        );
+        assert!(root.join("operator-files").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// The route's read of a spooled form: the entity file comes onto the
     /// heap, the reservation grows by it and by the thumbnail its validation

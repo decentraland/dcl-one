@@ -366,14 +366,16 @@ impl BatchDeployer {
             return Ok(());
         }
         let deployed = deployed_entity_ids(&self.pool, &hits).await?;
+        let checked = records.len();
         records.retain(|e| {
             let known = deployed.contains(&e.entity_id);
-            crate::series::bloom_filter_checked(known, 1);
             if known {
                 skipped(e, Skip::AlreadyDeployed, report);
             }
             !known
         });
+        crate::series::bloom_filter_checked(true, checked - records.len());
+        crate::series::bloom_filter_checked(false, records.len());
         Ok(())
     }
 
@@ -633,7 +635,7 @@ mod tests {
             BloomFilter::with_capacity(100),
         );
         batch.set_peers(vec![base.clone()]).await;
-        let (_metrics, rendered) = crate::sync::metrics::local_recorder();
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
         let report = Arc::new(DeploymentReport::new(
             crate::sync::metrics::SyncSource::pointer_changes(&base),
         ));
@@ -729,7 +731,7 @@ mod tests {
         );
         // Processed: the recorded failure, the ignored type, the deployment and the skip.
         let origin = crate::sync::metrics::remote_server(&base);
-        let rendered = rendered.render();
+        let rendered = handle.render();
         for (series, value) in [
             (
                 format!(
@@ -769,6 +771,30 @@ mod tests {
         assert!(
             crate::sync::metrics::sample(&rendered, &bytes).is_some_and(|b| b > 0.0),
             "{bytes}:\n{rendered}"
+        );
+
+        // One bloom probe per record of a batch: the deployed one hits, the others miss.
+        let bloom = |rendered: &str, hit| {
+            crate::series::test_support::sample(
+                rendered,
+                crate::series::BLOOM_FILTER_CHECKS.descriptor.name,
+                &[("hit", hit)],
+            )
+            .unwrap_or(0.0)
+        };
+        let before = [bloom(&rendered, "true"), bloom(&rendered, "false")];
+        let mut records = vec![
+            announce(entity_id.clone(), "scene".into(), entity_id.clone()).await,
+            announce(format!("{prefix}-new"), "scene".into(), entity_id.clone()).await,
+            announce(format!("{prefix}-other"), "scene".into(), entity_id.clone()).await,
+        ];
+        batch.retain_undeployed(&mut records, None).await.unwrap();
+        assert_eq!(records.len(), 2, "the deployed record is dropped");
+        let rendered = handle.render();
+        assert_eq!(
+            [bloom(&rendered, "true"), bloom(&rendered, "false")],
+            [before[0] + 1.0, before[1] + 2.0],
+            "{rendered}"
         );
 
         server.abort();
