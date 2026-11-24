@@ -197,6 +197,12 @@
   background: transparent;
 }
 
+/* Camera style before the engine has drawn: the colour its camera clears to, so the map does not
+   change when the hole opens. */
+.covered {
+  background: var(--black);
+}
+
 /* The rectangle the engine draws in: the square inside its border. */
 .cutoutFill {
   position: absolute;

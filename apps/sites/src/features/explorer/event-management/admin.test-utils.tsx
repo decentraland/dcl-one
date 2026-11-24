@@ -46,7 +46,7 @@ export type FakeEventsApi = {
    */
   settings?: Record<string, EventProfile>;
   /** Fails the next request of each kind once, with this error. */
-  failNext: Partial<Record<"profile" | "events" | "moderate" | "settings" | "save", Error>>;
+  failNext: Partial<Record<"profile" | "profiles" | "events" | "moderate" | "settings" | "save", Error>>;
 };
 
 /**
@@ -65,6 +65,7 @@ export function fakeEventsApi(api: FakeEventsApi) {
       return { ok: true, data: api.profile } as never;
     }
     if (path === "/events/api/profiles/settings") {
+      take("profiles");
       if (api.profiles === "forbidden") throw new CatalystError("Forbidden", path, 403);
       return { ok: true, data: api.profiles } as never;
     }
@@ -128,10 +129,10 @@ export const currentPath = () => screen.getByRole("status", { name: "Location" }
 /**
  * Renders a page at `path` beside a /events probe, under a fresh query client. `strict` wraps it in
  * StrictMode, as the Sites client entry renders it, so effects run, clean up and run again as in
- * development; it also repeats the page's reads, so tests that count reads leave it off.
+ * development; it also repeats the page's reads, so tests that count reads leave it off. `client` lets a
+ * test seed the cache the page opens on.
  */
-export function renderAdminPage(page: ReactElement, path: string, { strict = false } = {}) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+export function renderAdminPage(page: ReactElement, path: string, { strict = false, client = new QueryClient({ defaultOptions: { queries: { retry: false } } }) } = {}) {
   const Wrap = strict ? StrictMode : Fragment;
   const view = render(
     <Wrap>

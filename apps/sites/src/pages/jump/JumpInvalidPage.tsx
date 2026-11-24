@@ -1,5 +1,4 @@
-import { JumpInvalid } from "@dcl/one-ui/apps/sites/jump/JumpInvalid";
-import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
+import { JumpInvalid, JumpPage } from "@dcl/one-ui";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { jumpTravelHref } from "@/data/lib/catalyst/jump/jump";

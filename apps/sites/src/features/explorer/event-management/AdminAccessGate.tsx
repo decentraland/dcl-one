@@ -1,8 +1,4 @@
-import { adminCopy } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
-import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { adminCopy, adminPageStyles, Busy, Notice, SitesButton as Button } from "@dcl/one-ui";
 import type { ReactNode } from "react";
 import { Navigate } from "react-router";
 

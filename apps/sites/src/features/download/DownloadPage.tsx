@@ -1,15 +1,18 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
-import { Button } from "@dcl/one-ui";
-import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
-import googlePlayBadge from "@dcl/one-ui/apps/sites/assets/google_play_cta.svg?url";
-import { VerifiedIcon } from "@dcl/one-ui/apps/sites/download/VerifiedIcon";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import {
+  dclLogoUrl as logo,
+  googlePlayCtaUrl as googlePlayBadge,
+  VerifiedIcon,
+  useChromeAuth,
+  Button,
+} from "@dcl/one-ui";
 import SitesLayout from "../components/chrome/SitesLayout";
 
 import { successHref, type Installer } from "@/data/lib/download/installers";
 
 import { trackDownloadClick, type DownloadClick } from "./download-click";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { googlePlayHref } from "./google-play";
 
 import appleLogo from "./assets/apple-logo.svg?url";
@@ -61,8 +64,9 @@ const CLICKS = {
 type OptionsProps = Pick<DownloadPageProps, "primary" | "secondary" | "downloads" | "sid" | "userId"> & { googlePlay: string };
 
 function DownloadOptions({ primary, secondary, downloads, sid, userId, googlePlay }: OptionsProps) {
+  const scope = useLegacyTrackScope();
   if (!primary?.url) return null;
-  const send = (click: DownloadClick) => () => trackDownloadClick(click, { sid, userId });
+  const send = (click: DownloadClick) => () => trackDownloadClick(click, { sid, userId, scope });
   return (
     <div className={styles.actions}>
       <div className={styles.buttons}>
@@ -148,6 +152,7 @@ export default function DownloadPage({
   userId,
   googlePlay = googlePlayHref(),
 }: DownloadPageProps) {
+  const scope = useLegacyTrackScope();
   const auth = useChromeAuth();
   const signedIn = auth.signedIn && !!auth.account;
   const page = (
@@ -193,7 +198,7 @@ export default function DownloadPage({
           href={android ? googlePlay : APP_STORE_URL}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={() => trackDownloadClick(android ? CLICKS.googlePlay : CLICKS.appStore, { sid, userId })}
+          onClick={() => trackDownloadClick(android ? CLICKS.googlePlay : CLICKS.appStore, { sid, userId, scope })}
         >
           <img className={styles.storeBadge} src={android ? googlePlayBadge : appStoreBadge} alt={android ? "Get it on Google Play" : "Download on the App Store"} />
         </a>

@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
-import { trackDownloadClick } from "./download-click";
+import { createLegacyTrackScope, type LegacySession } from "@/core/lib/telemetry/legacy-click";
+
+import { trackDownloadClick as trackInThisDocument, type DownloadClick, type DownloadClickOptions } from "./download-click";
+
+type Session = Omit<LegacySession, "scope">;
+
+/** A scope standing for the mounted control, as a component's `useLegacyTrackScope` would give it. */
+const trackDownloadClick = (click: DownloadClick, session: Session, options?: DownloadClickOptions) =>
+  trackInThisDocument(click, { ...session, scope: createLegacyTrackScope() }, options);
 
 // The serialized Segment body a download Click leaves the browser with, through the real transport.
 
@@ -83,7 +91,14 @@ async function loadDocument(path = "/") {
   vi.resetModules();
   const telemetry = await import("@/core/lib/telemetry/track");
   const download = await import("./download-click");
-  return { page: telemetry.page, trackDownloadClick: download.trackDownloadClick };
+  const legacy = await import("@/core/lib/telemetry/legacy-click");
+  const scope = legacy.createLegacyTrackScope();
+  return {
+    page: telemetry.page,
+    scope,
+    trackDownloadClick: (click: DownloadClick, session: Session, options?: DownloadClickOptions) =>
+      download.trackDownloadClick(click, { ...session, scope }, options),
+  };
 }
 
 async function clicks(): Promise<Array<Record<string, unknown>>> {
@@ -108,9 +123,8 @@ describe("track_deferred", () => {
   it("is true for a conversion clicked before the document's first page view, sent at once", async () => {
     const { trackDownloadClick } = await loadDocument("/");
     trackDownloadClick(CLICK, { sid: "sid-1" });
-    const [click] = await clicks();
-    expect(click).toMatchObject({ track_deferred: true });
-    expect(click!.track_delivered_at).toBe(click!.track_called_at);
+    expect(sendBeacon).toHaveBeenCalledOnce();
+    expect(await clicks()).toEqual([expect.objectContaining({ track_deferred: true })]);
   });
 
   it("holds a non-conversion click until the first page view, then sends it deferred", async () => {
@@ -125,6 +139,22 @@ describe("track_deferred", () => {
       expect.objectContaining({ track_called_at: 1_700_000_000_000, track_delivered_at: 1_700_000_000_400, track_deferred: true }),
     ]);
     now.mockRestore();
+  });
+
+  it("drops a non-conversion click whose control unmounted before the first page view", async () => {
+    const { page, scope, trackDownloadClick } = await loadDocument("/download/creator-hub");
+    trackDownloadClick({ ...CLICK, place: "Download", download_target: "creator_hub" }, { sid: "sid-1", userId: "0xabc" }, TRACK_CLICK);
+    scope.close();
+    window.history.replaceState(null, "", "/");
+    page("/", {}, { sid: "sid-1" });
+    expect(await clicks()).toEqual([]);
+  });
+
+  it("still sends a conversion whose control unmounted at once", async () => {
+    const { scope, trackDownloadClick } = await loadDocument("/");
+    trackDownloadClick(CLICK, { sid: "sid-1" });
+    scope.close();
+    expect(await clicks()).toEqual([expect.objectContaining({ place: "Landing Hero", track_deferred: true })]);
   });
 
   it("is true for every conversion in a session that started on /download, whose page view is held back", async () => {

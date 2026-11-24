@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 import ChDialogShell from "../components/ChDialogShell";
-import { FALLBACK_PROFILES } from "./rules";
-import type { MpReplayOutcome } from "./types";
+import { FALLBACK_PROFILES } from "@web-core/multiplayer-test/rules";
+import type { MpReplayOutcome } from "@web-core/multiplayer-test/types";
 
 import "./mpreplaydialog.css";
 

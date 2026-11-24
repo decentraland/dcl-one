@@ -21,14 +21,7 @@ export function buildMockIdentity(address: string = MOCK_ADDRESS) {
   };
 }
 
-/**
- * A stubbed HTTP reply. `body` is JSON-serialized; omit it for a bodiless response.
- *
- * The JS fetch stub is the only mechanism in this suite that can set a status — see the
- * `installFetchStub` note on `route.fulfill()` — which is what makes the auth failure paths
- * in `lib/auth.ts` (404 → not_found, 410 → expired, 403 → network, other !ok → unknown)
- * testable at all.
- */
+/** A stubbed HTTP reply. The optional body is serialized as JSON. */
 export type StubResponse = { status: number; body?: unknown };
 
 export type AuthMockOptions = {
@@ -57,21 +50,7 @@ export type AuthMockRecorder = {
   fetchCalls: () => Promise<RecordedFetch[]>;
 };
 
-/**
- * Patches `window.fetch` inside the renderer to answer only the two auth-server
- * endpoints, passing everything else through. Runs both as an init script (so a reload
- * re-installs it) and immediately (the packaged app's first navigation has already
- * happened by the time `firstWindow()` resolves). Idempotent.
- *
- * **Why not `context.route()`.** Network-layer interception is the more faithful
- * mechanism and it *does* fire for Electron renderer requests — but `route.fulfill()`
- * delivers the body while losing the status code: the renderer sees `status: 0`, so
- * `response.ok` is false and `createSignInRequest` throws
- * `Failed to create auth request (0)`. Verified directly, and independent of CORS
- * headers (an un-intercepted cross-origin POST from the `file://` renderer returns a
- * normal 400, so cross-origin fetch itself is fine). Patching `fetch` in JS sidesteps
- * the network stack entirely and therefore controls the status.
- */
+/** Records renderer request creation without reaching the relay. */
 type StubWindow = {
   __e2eFetchCalls?: {
     url: string;
@@ -80,15 +59,15 @@ type StubWindow = {
     verifier?: string | null;
   }[];
   __e2eFetchPatched?: boolean;
-  __e2eResponses?: { requests: StubResponse; identity: StubResponse };
+  __e2eRequestResponse?: StubResponse;
   fetch: typeof fetch;
 };
 
-function installFetchStub(page: Page, payload: { requests: StubResponse; identity: StubResponse }) {
-  const script = ({ requests, identity }: { requests: StubResponse; identity: StubResponse }) => {
+function installRequestStub(page: Page, requests: StubResponse) {
+  const script = (requests: StubResponse) => {
     const w = window as unknown as StubWindow;
     w.__e2eFetchCalls ??= [];
-    w.__e2eResponses = { requests, identity };
+    w.__e2eRequestResponse = requests;
     if (w.__e2eFetchPatched) return;
     w.__e2eFetchPatched = true;
 
@@ -105,24 +84,50 @@ function installFetchStub(page: Page, payload: { requests: StubResponse; identit
 
       if (url.includes('/requests') && method === 'POST') {
         w.__e2eFetchCalls!.push({ url, method, body: (init?.body as string) ?? null });
-        return reply(w.__e2eResponses!.requests);
-      }
-      if (url.includes('/identities/')) {
-        const verifier = new Headers(init?.headers).get('x-identity-verifier');
-        w.__e2eFetchCalls!.push({ url, method, body: (init?.body as string) ?? null, verifier });
-        return reply(w.__e2eResponses!.identity);
+        return reply(w.__e2eRequestResponse!);
       }
       return realFetch(input, init);
     };
   };
 
-  return Promise.all([page.addInitScript(script, payload), page.evaluate(script, payload)]);
+  return Promise.all([page.addInitScript(script, requests), page.evaluate(script, requests)]);
 }
 
-/** Overrides the stubbed `GET /identities/:id` reply for the next sign-in attempt. */
-export function setIdentityResponse(page: Page, identity: StubResponse): Promise<void> {
-  return page.evaluate(response => {
-    (window as unknown as StubWindow).__e2eResponses!.identity = response;
+type MainAuthStub = typeof globalThis & {
+  __e2eIdentityResponse: StubResponse;
+  __e2eIdentityCalls: RecordedFetch[];
+};
+
+async function installIdentityStub(electronApp: ElectronApplication, identity: StubResponse) {
+  await electronApp.evaluate((_, reply) => {
+    const main = globalThis as MainAuthStub;
+    main.__e2eIdentityResponse = reply;
+    main.__e2eIdentityCalls = [];
+    const realFetch = main.fetch.bind(main);
+    main.fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const relayHost = /^auth-api\.decentraland\.(org|zone|today)$/.test(url.hostname);
+      const gateway = url.hostname === 'dcl.dev' && url.pathname.startsWith('/auth-api/');
+      if ((relayHost || gateway) && /\/identities\/[^/]+$/.test(url.pathname)) {
+        const request = new Request(input, init);
+        main.__e2eIdentityCalls.push({
+          url: url.href,
+          method: request.method,
+          body: null,
+          verifier: request.headers.get('x-identity-verifier'),
+        });
+        const { status, body } = main.__e2eIdentityResponse;
+        return new Response(body === undefined ? null : JSON.stringify(body), { status });
+      }
+      return realFetch(input, init);
+    };
+  }, identity);
+}
+
+/** Overrides the auth relay's reply for the next identity pickup. */
+export function setIdentityResponse(electronApp: ElectronApplication, identity: StubResponse) {
+  return electronApp.evaluate((_, response) => {
+    (globalThis as MainAuthStub).__e2eIdentityResponse = response;
   }, identity);
 }
 
@@ -149,19 +154,20 @@ export async function installAuthMocks(
   const requestId = options.requestId ?? 'e2e-request-id';
   const identity = buildMockIdentity(options.address ?? MOCK_ADDRESS);
 
-  await installFetchStub(page, {
-    requests: options.requestsResponse ?? { status: 200, body: { requestId } },
-    identity: options.identityResponse ?? { status: 200, body: { identity } },
-  });
+  await installRequestStub(page, options.requestsResponse ?? { status: 200, body: { requestId } });
+  await installIdentityStub(
+    electronApp,
+    options.identityResponse ?? { status: 200, body: { identity } },
+  );
 
   const openCalls = await captureOpenExternal(electronApp);
 
   return {
     openCalls,
-    fetchCalls: () =>
-      page.evaluate(
-        () => (window as unknown as { __e2eFetchCalls?: RecordedFetch[] }).__e2eFetchCalls ?? [],
-      ),
+    fetchCalls: async () => [
+      ...(await page.evaluate(() => (window as unknown as StubWindow).__e2eFetchCalls ?? [])),
+      ...(await electronApp.evaluate(() => (globalThis as MainAuthStub).__e2eIdentityCalls)),
+    ],
   };
 }
 

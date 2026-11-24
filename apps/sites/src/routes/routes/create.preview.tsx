@@ -1,18 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMachine } from "@xstate/react";
 
-import MpLaunchForm from "@ui/creatorhub/mp/MpLaunchForm";
-import MpLiveRunView from "@ui/creatorhub/mp/MpLiveRunView";
-import MpReportView, { type MpPerfSeries } from "@ui/creatorhub/mp/MpReportView";
+import { MpLaunchForm, MpLiveRunView, type MpPerfSeries, MpReportView, MpUnpaired } from "@dcl/one-ui";
 import MpReplayDialog from "@ui/creatorhub/mp/MpReplayDialog";
-import MpUnpaired from "@ui/creatorhub/mp/MpUnpaired";
-import type { MpLane, MpLaunchRequest } from "@ui/creatorhub/mp/rules";
+import type { MpLane, MpLaunchRequest } from "@web-core/multiplayer-test/rules";
 import {
   MpSidecar,
   readPairing,
   type MpConnState,
   type MpPairing,
-} from "@ui/creatorhub/mp/sidecar";
+} from "@web-core/multiplayer-test/sidecar";
 import {
   normalizeBot,
   normalizeReport,
@@ -25,7 +22,7 @@ import {
   type MpRunSummary,
   type MpTimelineEntry,
   type MpVerdict,
-} from "@ui/creatorhub/mp/types";
+} from "@web-core/multiplayer-test/types";
 
 import { isDesktopShell } from "@/data/lib/auth/native-shell";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
