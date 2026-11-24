@@ -23,6 +23,7 @@ pub struct LandNft {
     /// The marketplace subgraph exposes the transfer time only.
     pub transfer_block: Option<i64>,
     pub membership_block: i64,
+    pub metadata_block: i64,
     pub membership_checked_at: Option<i64>,
 }
 
@@ -85,6 +86,10 @@ pub(super) async fn nft_by_contract_token(
         data_block: Option<i64>,
     }
 
+    let land_head = snapshot
+        .cursor
+        .folded_block
+        .ok_or(NftReadError::Unavailable)?;
     let row = sqlx::query_as::<_, IndexedAsset>(
         "SELECT tr.token_address || '-' || tr.token_id AS nft_id,
                 CASE WHEN tr.token_address = $3 THEN 'parcel' ELSE 'estate' END AS category,
@@ -102,6 +107,7 @@ pub(super) async fn nft_by_contract_token(
                     ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1
                 ) END AS membership_checked_at,
                 CASE WHEN tr.token_address = $4 THEN $5::bigint ELSE 0 END AS membership_block,
+                LEAST($5::bigint, $6::bigint) AS metadata_block,
                 coalesce(transfer.block_number, 0) AS transfer_block, d.updated_block AS data_block
          FROM land_authz.token_right tr
          LEFT JOIN shop.land_data d ON d.token_address = tr.token_address AND d.token_id = tr.token_id
@@ -118,11 +124,13 @@ pub(super) async fn nft_by_contract_token(
          ) members ON tr.token_address = $4
          LEFT JOIN LATERAL (
              SELECT block_time FROM land_authz.authz_event WHERE token_address = tr.token_address
-                 AND token_id = tr.token_id AND kind = 'transfer' ORDER BY block_number, log_index LIMIT 1
+                 AND token_id = tr.token_id AND kind = 'transfer' AND block_number <= $5
+             ORDER BY block_number, log_index LIMIT 1
          ) mint ON true
          LEFT JOIN LATERAL (
              SELECT block_number, block_time FROM land_authz.authz_event WHERE token_address = tr.token_address
-                 AND token_id = tr.token_id AND kind = 'transfer' ORDER BY block_number DESC, log_index DESC LIMIT 1
+                 AND token_id = tr.token_id AND kind = 'transfer' AND block_number <= $5
+             ORDER BY block_number DESC, log_index DESC LIMIT 1
          ) transfer ON true
          WHERE tr.token_address = $1 AND tr.token_id = $2::numeric AND tr.token_address IN ($3, $4)
            AND tr.owner IS NOT NULL",
@@ -131,15 +139,13 @@ pub(super) async fn nft_by_contract_token(
     .bind(token_id)
     .bind(net.land_registry)
     .bind(net.estate_registry)
-    .bind(snapshot.cursor.last_block)
+    .bind(land_head)
+    .bind(metadata_head)
     .fetch_optional(&mut *snapshot.tx)
     .await?;
     let Some(row) = row else { return Ok(None) };
     // A newer document cannot date the owner or estate membership beyond the rights fold.
-    if row
-        .data_block
-        .is_some_and(|block| block > snapshot.cursor.last_block)
-    {
+    if row.data_block.is_some_and(|block| block > land_head) {
         return Err(NftReadError::Unavailable);
     }
     if row.asset.created_at <= 0 || row.asset.transferred_at <= 0 {

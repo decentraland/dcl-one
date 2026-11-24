@@ -7,8 +7,9 @@
 -- wire's `nft_id` as a UNIQUE, uuids come from gen_random_uuid (no uuid-ossp),
 -- every timestamp is `timestamp without time zone` UTC. The asset's owner and
 -- LAND columns come from the published chain indexes on walking nodes and the
--- configured marketplace subgraph on non-walking nodes at create/refresh time; `fetched_at` records the metadata refresh. Status
--- comes from the `rentals` chain index (shop.rental_event) and from the
+-- configured marketplace subgraph on non-walking nodes at create/refresh time.
+-- `metadata_block` versions that source; `fetched_at` records the refresh.
+-- Status comes from the `rentals` chain index (shop.rental_event) and from the
 -- `rental-listing-status` pass (transfer, dissolution, expiry); no sync row
 -- exists. Writes are local authority behind DATA_WRITES_ENABLED.
 
@@ -30,6 +31,8 @@ CREATE TABLE signatures.rental_assets (
     nft_created_at timestamp without time zone NOT NULL,
     nft_updated_at timestamp without time zone NOT NULL,
     fetched_at timestamp without time zone NOT NULL,
+    -- Source block for the latest metadata snapshot; imported rows start at zero.
+    metadata_block bigint NOT NULL DEFAULT 0,
     -- Published LAND block for estate membership, zero on imported rows and parcels.
     membership_block bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (contract_address, token_id),

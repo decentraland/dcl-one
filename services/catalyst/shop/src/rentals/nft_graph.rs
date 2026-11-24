@@ -48,6 +48,9 @@ fn parse(
     }
     let time = |key: &str| integer(&nft[key]).filter(|v| *v > 0).ok_or_else(incomplete);
     let updated_at = time("updatedAt")?;
+    let metadata_block = integer(&data["_meta"]["block"]["number"])
+        .filter(|block| *block >= 0)
+        .ok_or_else(incomplete)?;
     let owner = nft["owner"]["id"]
         .as_str()
         .filter(|address| crate::market::is_valid_eth_address(address))
@@ -64,11 +67,8 @@ fn parse(
         updated_at,
         transferred_at: time("transferredAt")?,
         transfer_block: None,
-        membership_block: if estate {
-            integer(&data["_meta"]["block"]["number"]).ok_or_else(incomplete)?
-        } else {
-            0
-        },
+        membership_block: if estate { metadata_block } else { 0 },
+        metadata_block,
         membership_checked_at: if estate {
             Some(
                 integer(&data["_meta"]["block"]["timestamp"])

@@ -84,6 +84,7 @@ async fn insert(
             adjacent_to_road: Some(true),
             estate_size: None,
             membership_block: 0,
+            metadata_block: 0,
             updated_at: now,
         },
         now,
@@ -226,6 +227,7 @@ async fn refresh_updates_metadata_and_returns_the_listing() {
         adjacent_to_road: Some(false),
         estate_size: Some(4),
         membership_block: 0,
+        metadata_block: 0,
         updated_at: later,
     };
     let refreshed = db
@@ -525,6 +527,8 @@ async fn create_refresh_and_list_from_the_published_land_index() {
     assert_eq!(headers.get(header::RETRY_AFTER).unwrap(), "60");
 
     publish_land(&pool).await;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)")
+        .execute(&pool).await.unwrap();
     let state = state_over(pool.clone(), Some(market()), true);
     let app = || router(state.clone());
 
@@ -908,7 +912,15 @@ async fn create_refresh_and_list_from_the_published_land_index() {
 
     // Refresh after a transfer: a newer reader row with another owner
     // cancels the listing, and the route answers the synced status.
-    transfer(&pool, LAND, &token, LESSOR, 5, 1_700_000_100).await;
+    transfer(
+        &pool,
+        LAND,
+        &token,
+        LESSOR,
+        5,
+        chrono::Utc::now().timestamp() + 100,
+    )
+    .await;
     let (status, _, out) = send(
         app(),
         "PATCH",
@@ -923,9 +935,9 @@ async fn create_refresh_and_list_from_the_published_land_index() {
     cleanup(&pool, &[token]).await;
 }
 
-/// A reader that lags answers from older blocks: neither read replaces the
-/// newer stored asset row, so the stored time stays and the second, less
-/// stale read (the previous owner's) is still too old to close the listing.
+/// A reader that lags answers from older published blocks: neither read
+/// replaces newer metadata or closes the listing. Once the publication passes
+/// the saved version, a real post-listing transfer closes it.
 #[tokio::test]
 async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
@@ -933,6 +945,8 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
     };
     let db = Database::new(pool.clone());
     publish_land(&pool).await;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)")
+        .execute(&pool).await.unwrap();
     let state = state_over(pool.clone(), Some(market()), true);
     let token = random_token_id();
     let listing = insert(&db, &token, LESSOR, &format!("0xsig-{token}"))
@@ -941,7 +955,8 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
     // The lessor received the asset at T5.
     let (t3, t4, t5) = (1_700_000_300i64, 1_700_000_400i64, 1_700_000_500i64);
     sqlx::query(
-        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC' \
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC', metadata_block = 101, \
+         category = 'estate', search_text = 'stored name' \
          WHERE contract_address = $1 AND token_id = $2::numeric",
     )
     .bind(LAND)
@@ -964,7 +979,7 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
         .await;
         assert_eq!(status, StatusCode::OK, "{label}: {out}");
         assert_eq!(out["data"]["status"], "open", "{label}: {out}");
-        assert_eq!(out["data"]["searchText"], "-10,20", "{label}: {out}");
+        assert_eq!(out["data"]["searchText"], "stored name", "{label}: {out}");
         let (stored_at, search_text): (i64, String) = sqlx::query_as(
             "SELECT extract(epoch FROM nft_updated_at)::bigint, search_text FROM signatures.rental_assets \
              WHERE contract_address = $1 AND token_id = $2::numeric",
@@ -974,7 +989,11 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!((stored_at, search_text.as_str()), (t5, "-10,20"), "{label}");
+        assert_eq!(
+            (stored_at, search_text.as_str()),
+            (t5, "stored name"),
+            "{label}"
+        );
     }
     // The name is newer than the stored asset, but the previous owner's transfer is older.
     sqlx::query(
@@ -992,10 +1011,73 @@ async fn a_stale_refresh_keeps_the_stored_asset_row_and_the_listing() {
     let (code, _, out) = send(router(state.clone()), "PATCH", &patch, vec![], None).await;
     assert_eq!(code, StatusCode::OK, "{out}");
     assert_eq!(out["data"]["status"], "open");
-    transfer(&pool, LAND, &token, &previous_owner, 4, t5 + 200).await;
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block=110,last_block=110")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=110,last_block=110 WHERE indexer='nft'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    transfer(
+        &pool,
+        LAND,
+        &token,
+        &previous_owner,
+        110,
+        chrono::Utc::now().timestamp() + 100,
+    )
+    .await;
     let (code, _, out) = send(router(state), "PATCH", &patch, vec![], None).await;
     assert_eq!(code, StatusCode::OK, "{out}");
     assert_eq!(out["data"]["status"], "cancelled");
+    cleanup(&pool, &[token]).await;
+}
+
+#[tokio::test]
+async fn current_index_metadata_refreshes_legacy_rows_with_newer_subgraph_times() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)")
+        .execute(&pool).await.unwrap();
+    let state = state_over(pool.clone(), Some(market()), true);
+    let token = random_token_id();
+    let db = Database::new(pool.clone());
+    let listing = insert(&db, &token, LESSOR, &format!("0xsig-{token}"))
+        .await
+        .unwrap();
+    let future = chrono::Utc::now().timestamp() + 3_600;
+    transfer(&pool, LAND, &token, LESSOR, 1, future - 120).await;
+    sqlx::query("INSERT INTO shop.land_data (token_address,token_id,name,updated_block,updated_log) VALUES ($1,$2::numeric,'Indexed name',2,0)")
+        .bind(LAND).bind(&token).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.nft_event (network,block_number,log_index,block_time,kind,emitter,contract_address,token_id) VALUES ('ethereum',2,0,$3,'land_data',$1,$1,$2::numeric)")
+        .bind(LAND).bind(&token).bind(future - 60).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE signatures.rental_assets SET nft_updated_at=to_timestamp($3) AT TIME ZONE 'UTC', category='estate', search_text='legacy name' WHERE contract_address=$1 AND token_id=$2::numeric")
+        .bind(LAND).bind(&token).bind(future as f64).execute(&pool).await.unwrap();
+
+    let (code, _, body) = send(
+        router(state),
+        "PATCH",
+        &format!("/v1/rentals-listings/{}", listing.id),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["searchText"], "-10,-140,indexed name");
+    let (updated_at, metadata_block): (i64, i64) = sqlx::query_as(
+        "SELECT extract(epoch FROM nft_updated_at)::bigint, metadata_block FROM signatures.rental_assets WHERE contract_address=$1 AND token_id=$2::numeric",
+    ).bind(LAND).bind(&token).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        updated_at, future,
+        "the reported timestamp never moves backwards"
+    );
+    assert_eq!(
+        metadata_block, 100,
+        "the indexed snapshot version advances independently"
+    );
     cleanup(&pool, &[token]).await;
 }
 
@@ -1052,7 +1134,7 @@ async fn a_relisting_never_lowers_the_stored_asset_time() {
         ahead + 60,
     );
     sqlx::query(
-        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC', \
+        "UPDATE signatures.rental_assets SET nft_updated_at = to_timestamp($3) AT TIME ZONE 'UTC', metadata_block = 10, \
                 category = $4, search_text = $5, distance_to_plaza = $6, adjacent_to_road = $7, estate_size = $8, \
                 fetched_at = to_timestamp($9) AT TIME ZONE 'UTC' \
          WHERE contract_address = $1 AND token_id = $2::numeric",
@@ -1095,7 +1177,25 @@ async fn a_relisting_never_lowers_the_stored_asset_time() {
     .unwrap();
     cancel(second.id.clone()).await;
     let before = chrono::Utc::now().timestamp();
-    let third = insert(&db, &token, LESSOR, &format!("0xsig-c-{token}"))
+    let newer_read = chrono::Utc::now().naive_utc();
+    let third = db
+        .insert_listing(
+            &format!("{LAND}-{token}"),
+            &ListingMetadata {
+                category: "parcel",
+                search_text: "-10,20",
+                distance_to_plaza: Some(3),
+                adjacent_to_road: Some(true),
+                estate_size: None,
+                membership_block: 0,
+                metadata_block: 11,
+                updated_at: newer_read,
+            },
+            chrono::Utc::now().naive_utc(),
+            &creation(&token, &format!("0xsig-c-{token}")),
+            LESSOR,
+            chrono::Utc::now().naive_utc(),
+        )
         .await
         .unwrap();
     let (updated_at, category, search_text, distance, road, size, fetched_at) = stored().await;
@@ -1159,6 +1259,7 @@ async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
                 adjacent_to_road: Some(true),
                 estate_size: None,
                 membership_block: 0,
+                metadata_block: 0,
                 updated_at: at,
             },
             now,
@@ -1195,6 +1296,14 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
     };
     let wallet = wallet();
     let owner = wallet.address.clone();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('rentals', 'ethereum', 0, 100, 100, timezone('UTC', now()), true, 1), \
+                ('rentals_sepolia', 'ethereum', 0, 100, 100, timezone('UTC', now()), true, 11155111)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let reads = Arc::new(AtomicUsize::new(0));
     let count = reads.clone();
     let graph = Router::new().route("/", axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
@@ -1267,6 +1376,7 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
         let (code, _, out) = post(state).await;
         assert_eq!(code, StatusCode::CREATED, "{out}");
         assert_eq!(out["data"]["searchText"], format!("estate {}", before + 1));
+        assert_eq!(out["data"]["status"], "open");
         let refresh = format!("{path}/{}", out["data"]["id"].as_str().unwrap());
         let (code, _, out) = send(
             router(node(network, chain, enabled, Some(url.clone()))),
@@ -1279,6 +1389,53 @@ async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
         assert_eq!(code, StatusCode::OK, "{out}");
         assert_eq!(out["data"]["searchText"], format!("estate {}", before + 2));
         assert_eq!(reads.load(Ordering::Relaxed), before + 2);
+        if chain == 11155111 {
+            sqlx::query(
+                "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals_sepolia'",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            let mut refused = creation(&random_token_id(), "");
+            refused.chain_id = chain;
+            refused.contract_address = registry.estate_registry.into();
+            refused.rental_contract_address = super::signature::rentals_contract(chain as u64)
+                .unwrap()
+                .into();
+            refused.signature = sign_listing(&wallet, &refused).await;
+            let (code, _, out) = send(
+                router(node(network, chain, enabled, Some(url.clone()))),
+                "POST",
+                path,
+                signed_headers(&wallet, "post", path).await,
+                Some(creation_json(&refused)),
+            )
+            .await;
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+            assert_eq!(out["source"], "rentals-index");
+            let (code, _, out) = send(
+                router(node(network, chain, enabled, Some(url.clone()))),
+                "PATCH",
+                &refresh,
+                vec![],
+                None,
+            )
+            .await;
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+            assert_eq!(out["source"], "rentals-index");
+
+            // Sepolia unavailability must not make the mainnet cursor unavailable.
+            assert!(
+                super::index::ready_on(
+                    &pool,
+                    super::index::RentalsChain::Mainnet,
+                    chrono::Utc::now(),
+                )
+                .await
+            );
+            sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE indexer='rentals_sepolia'")
+                .execute(&pool).await.unwrap();
+        }
     }
     // A configured URL never substitutes for a walking node's withdrawn NFT publication.
     publish_land(&pool).await;
@@ -1310,6 +1467,8 @@ async fn graph_refresh_dates_membership_guards_concurrent_fills_and_retries_inva
     let Some(pool) = crate::db::scratch::isolated_pool(5).await else {
         return;
     };
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)")
+        .execute(&pool).await.unwrap();
     let id =
         super::index::tests::seed_listing(&pool, ESTATE, "7", ["0"; 3], "0x17", LESSOR, RENTALS)
             .await;
@@ -1439,8 +1598,8 @@ async fn repeated_patch_resolves_custody_when_only_the_rentals_publication_chang
         .bind(n).bind(time).bind(RENTALS).bind(LAND).bind(signer).bind(ESTATE).execute(&pool).await.unwrap();
         let path = format!("/v1/rentals-listings/{id}");
         let (code, _, body) = send(app.clone(), "PATCH", &path, vec![], None).await;
-        assert_eq!(code, StatusCode::OK, "{body}");
-        assert_eq!(body["data"]["status"], "open");
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "rentals-index");
         paths.push(path);
     }
     sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
@@ -1459,6 +1618,8 @@ async fn a_signed_mainnet_listing_cannot_use_sepolia_registry_rights() {
         return;
     };
     publish_land(&pool).await;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)")
+        .execute(&pool).await.unwrap();
     sqlx::query(
         "UPDATE land_authz.index_cursor SET network=$1, land_registry=$2, estate_registry=$3",
     )
@@ -1643,6 +1804,26 @@ async fn a_listing_is_refused_off_the_served_chain_or_rentals_contract() {
             "{out}"
         );
     }
+    let body = creation(&random_token_id(), "");
+    let contract = ContractRentalListing::from_creation(&w.address, &body);
+    let wrong_chain_digest = listing_digest(&contract, 11_155_111).unwrap();
+    let signature = w
+        .signer
+        .sign_hash(&B256::from(wrong_chain_digest))
+        .await
+        .unwrap();
+    let mut mismatched = body;
+    mismatched.signature = format!("0x{}", hex::encode(signature.as_bytes()));
+    let (status, _, out) = send(
+        app,
+        "POST",
+        path,
+        signed_headers(&w, "post", path).await,
+        Some(creation_json(&mismatched)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+    assert_eq!(out["error"], "The provided signature is invalid");
 }
 
 /// The asset's rents at the served Rentals contract: a running one refuses
@@ -1728,7 +1909,9 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
     .execute(&pool)
     .await
     .unwrap();
-    rent(12, LESSOR.to_string(), now - 40 * 86_400).await;
+    // The cursor is ready, but this rent predates the transfer into custody.
+    // Complete publication proves no lessor covers the current transfer.
+    rent(11, LESSOR.to_string(), now - 40 * 86_400).await;
     let (status, _, out) = post().await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{out}");
 
@@ -1744,17 +1927,24 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
 #[tokio::test]
 async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
     assert_eq!(
-        super::handlers::held_for_lessor(None, Some(1), 1, LESSOR),
+        super::handlers::held_for_lessor(None, Some(1), Some(1), 1, LESSOR),
         Some(false)
     );
     let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
         return;
     };
-    let evidence = super::index::rent_evidence(&pool, RENTALS, LAND, "1")
-        .await
-        .unwrap();
+    let evidence = super::index::rent_evidence(
+        &pool,
+        super::index::RentalsChain::Mainnet,
+        RENTALS,
+        LAND,
+        "1",
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        super::handlers::held_for_lessor(Some(&evidence), Some(1), 1, LESSOR),
+        super::handlers::held_for_lessor(Some(&evidence), Some(1), Some(1), 1, LESSOR),
         None
     );
 }

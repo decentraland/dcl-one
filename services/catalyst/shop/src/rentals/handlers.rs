@@ -187,6 +187,7 @@ fn reader_unavailable(err: NftReadError) -> Response {
     }
     if let NftReadError::Database(e) = err {
         tracing::warn!(error = %e, "failed to read the indexed rental asset");
+        return ApiError::from(e).into_response();
     }
     crate::market::nft_reads::land_unavailable()
 }
@@ -205,6 +206,7 @@ pub(super) fn listing_metadata(nft: &LandNft, now: chrono::NaiveDateTime) -> Lis
         adjacent_to_road: nft.adjacent_to_road,
         estate_size: nft.estate_size,
         membership_block: nft.membership_block,
+        metadata_block: nft.metadata_block,
         updated_at: naive_secs(nft.updated_at, now),
     }
 }
@@ -214,21 +216,23 @@ pub(super) fn listing_metadata(nft: &LandNft, now: chrono::NaiveDateTime) -> Lis
 pub(super) fn held_for_lessor(
     evidence: Option<&super::index::RentEvidence>,
     transfer_block: Option<i64>,
+    observed_block: Option<i64>,
     transferred_at: i64,
     signer: &str,
 ) -> Option<bool> {
     let Some(evidence) = evidence else {
         return Some(false);
     };
-    if !evidence.covers_transfer(transfer_block, transferred_at) {
-        return None;
+    match evidence.coverage(transfer_block, observed_block, transferred_at) {
+        super::index::RentCoverage::Pending => None,
+        super::index::RentCoverage::NoCoveringRent => Some(false),
+        super::index::RentCoverage::Covered => Some(
+            evidence
+                .signer
+                .as_deref()
+                .is_some_and(|lessor| lessor.eq_ignore_ascii_case(signer)),
+        ),
     }
-    Some(
-        evidence
-            .signer
-            .as_deref()
-            .is_some_and(|lessor| lessor.eq_ignore_ascii_case(signer)),
-    )
 }
 
 pub async fn create_rentals_listing(
@@ -273,6 +277,11 @@ pub async fn create_rentals_listing(
             "There is no rentals contract for chain id {served_chain}"
         )));
     };
+    let Some(rentals_chain) = super::index::RentalsChain::from_id(served_chain) else {
+        return Err(ApiError::bad_request(format!(
+            "There is no rentals index for chain id {served_chain}"
+        )));
+    };
     if !body.rental_contract_address.eq_ignore_ascii_case(rentals) {
         return Err(ApiError::bad_request(
             "The rental contract address does not match the Rentals contract of the given chain",
@@ -294,7 +303,6 @@ pub async fn create_rentals_listing(
         }
         Err(e) => return Err(ApiError::bad_request(e.to_string())),
     }
-
     let nft = match state
         .nft(body.chain_id, &body.contract_address, &body.token_id)
         .await
@@ -309,22 +317,37 @@ pub async fn create_rentals_listing(
         Some(
             super::index::rent_evidence(
                 state.db.pool(),
+                rentals_chain,
                 rentals,
                 &body.contract_address,
                 &body.token_id,
+                now,
             )
             .await?,
         )
     } else {
         None
     };
+    // A raw active rent can conservatively block a duplicate listing while
+    // the Rentals cursor is unavailable; only published evidence can name
+    // the lessor or authorize custody.
     if rent_evidence
         .as_ref()
-        .and_then(|r| r.ends_at)
+        .and_then(|r| r.observed_ends_at)
         .is_some_and(|ends_at| ends_at > now.timestamp())
     {
         return Err(ApiError::conflict(
             "An open rental already exists for this token",
+        ));
+    }
+    if super::index::walks(rentals)
+        && !rent_evidence
+            .as_ref()
+            .is_some_and(|evidence| evidence.published_through.is_some())
+    {
+        return Ok(unavailable(
+            Source::RentalsIndex,
+            "The Rentals index for the listing chain is not ready",
         ));
     }
 
@@ -332,6 +355,7 @@ pub async fn create_rentals_listing(
         let Some(held) = held_for_lessor(
             rent_evidence.as_ref(),
             nft.transfer_block,
+            Some(nft.metadata_block),
             nft.transferred_at,
             &signer,
         ) else {
@@ -394,8 +418,13 @@ pub async fn refresh_rentals_listing(
     let clock = chrono::Utc::now();
     let now = clock.naive_utc();
     let nft = state.nft(chain_id, &contract_address, &token_id).await;
-    if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id)) {
-        super::status::sync_listing(state.db.pool(), uuid, nft.as_ref(), clock).await?;
+    if let (Ok(nft), Ok(uuid)) = (&nft, uuid::Uuid::parse_str(&id))
+        && !super::status::sync_listing(state.db.pool(), uuid, nft.as_ref(), clock).await?
+    {
+        return Ok(unavailable(
+            Source::RentalsIndex,
+            "The Rentals index for the listing chain is not ready",
+        ));
     }
     match nft {
         Ok(Some(nft)) => {
@@ -470,6 +499,12 @@ mod tests {
         assert_eq!(rental_days(raw), vec![7]);
         assert!(all_values(raw, "missing").is_empty());
         assert_eq!(urldecode("a+b%20c%zz"), "a b c%zz");
+    }
+
+    #[test]
+    fn database_reader_errors_are_server_errors_not_index_readiness() {
+        let response = reader_unavailable(NftReadError::Database(sqlx::Error::RowNotFound));
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]

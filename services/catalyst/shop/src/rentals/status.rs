@@ -76,15 +76,19 @@ pub fn cancel_reason(
 /// and block time. The arguments are the SQL for the venue, the asset's
 /// contract and its token id.
 macro_rules! latest_rent_sql {
-    ($venue:literal, $contract:literal, $token:literal) => {
+    ($venue:literal, $contract:literal, $token:literal, $head:literal, $network:literal) => {
         concat!(
             "SELECT lower(x.signer) AS signer, x.block_number, x.block_time FROM shop.rental_event x \
-             WHERE x.network = 'ethereum' AND x.rentals_address = ",
+             WHERE x.network = ",
+            $network,
+            " AND x.rentals_address = ",
             $venue,
             " AND x.kind = 'rented' AND x.contract_address = ",
             $contract,
             " AND x.token_id = ",
             $token,
+            " AND x.block_number <= ",
+            $head,
             " ORDER BY x.block_number DESC, x.log_index DESC LIMIT 1"
         )
     };
@@ -108,8 +112,7 @@ async fn cancel(
              JOIN signatures.rentals r ON r.id=u.id
              JOIN signatures.rental_assets a USING (contract_address, token_id)
              WHERE r.status='open' AND (u.reason <> 'dissolved' OR
-                 (a.membership_block <= $4 AND a.nft_updated_at < to_timestamp($5) AT TIME ZONE 'UTC'
-                  AND r.created_at < to_timestamp($5) AT TIME ZONE 'UTC'))
+                 (a.membership_block <= $4 AND r.created_at < to_timestamp($5) AT TIME ZONE 'UTC'))
              ORDER BY a.contract_address, a.token_id FOR UPDATE OF a
          )
          UPDATE signatures.rentals r SET status='cancelled', cancel_reason=u.reason, updated_at=$3
@@ -153,6 +156,17 @@ const OWNERSHIP_SQL: &str = concat!(
     "
 SELECT r.id, l.lessor, r.rental_contract_address, t.owner,
        COALESCE(to_timestamp(lt.block_time) AT TIME ZONE 'UTC' > r.created_at, false) AS moved,
+       COALESCE(
+           $4::bigint >= lt.block_number
+           AND ren.block_number IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM shop.rental_event pending
+               WHERE pending.network=$6 AND pending.rentals_address=r.rental_contract_address
+                 AND pending.contract_address=r.contract_address AND pending.token_id=r.token_id
+                 AND pending.kind='rented'
+                 AND pending.block_number > $4::bigint AND pending.block_number >= lt.block_number
+           ), false
+       ) AS custody_known,
        (r.contract_address = $2
         AND to_timestamp($5) AT TIME ZONE 'UTC' > r.created_at
         AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el WHERE el.estate_token_id = r.token_id)) AS dissolved,
@@ -170,10 +184,12 @@ LEFT JOIN LATERAL (",
     latest_rent_sql!(
         "r.rental_contract_address",
         "r.contract_address",
-        "r.token_id"
+        "r.token_id",
+        "$4::bigint",
+        "$6"
     ),
-    ") ren ON ren.block_number BETWEEN lt.block_number AND $4::bigint AND r.chain_id=1
-WHERE r.status = 'open' AND r.contract_address IN ($1, $2)"
+    ") ren ON ren.block_number BETWEEN lt.block_number AND $4::bigint AND r.chain_id=$7
+WHERE r.status = 'open' AND r.contract_address IN ($1, $2) AND r.chain_id=$7"
 );
 
 /// Closes the open listings whose asset changed owner or whose estate was
@@ -197,16 +213,31 @@ pub async fn cancel_moved(
     .bind(folded)
     .fetch_optional(&mut *snapshot.tx)
     .await?;
-    let ready = crate::market::chain_walk::ready_sql("c", "$1::timestamp");
-    let rentals_head: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT folded_block FROM shop.chain_cursor c WHERE indexer='rentals' AND network='ethereum' AND {ready}"
-    ))).bind(now.naive_utc()).fetch_optional(&mut *snapshot.tx).await?;
+    let Some(chain) = index::RentalsChain::from_land_network(land.network) else {
+        return Ok(None);
+    };
+    let rentals_cursor = crate::market::chain_walk::cursor(
+        &mut *snapshot.tx,
+        chain.indexer(),
+        crate::market::chain_walk::ChainNet::Ethereum,
+    )
+    .await?;
+    let Some(rentals_cursor) = rentals_cursor
+        .filter(|cursor| crate::market::chain_walk::is_ready_on(cursor, chain.id(), now))
+    else {
+        return Ok(None);
+    };
+    let Some(rentals_head) = rentals_cursor.folded_block else {
+        return Ok(None);
+    };
     let rows = sqlx::query(OWNERSHIP_SQL)
         .bind(land.land_registry.to_ascii_lowercase())
         .bind(land.estate_registry.to_ascii_lowercase())
         .bind(folded)
         .bind(rentals_head)
         .bind(head_time.unwrap_or(0) as f64)
+        .bind(chain.event_network())
+        .bind(chain.id())
         .fetch_all(&mut *snapshot.tx)
         .await?;
     snapshot.tx.rollback().await?;
@@ -223,6 +254,16 @@ pub async fn cancel_moved(
                 (_, false) => None,
                 (Some(o), true) => Some(o),
                 (None, true) => Some(alloy_primitives::Address::ZERO.to_string()),
+            };
+            let custody = if owner
+                .as_deref()
+                .is_some_and(|owner| owner.eq_ignore_ascii_case(&venue))
+                && r.get::<bool, _>("custody_known")
+                && custody.is_none()
+            {
+                Some(String::new())
+            } else {
+                custody
             };
             cancel_reason(
                 false,
@@ -278,23 +319,18 @@ pub async fn sync_listing(
     id: Uuid,
     nft: Option<&LandNft>,
     now: DateTime<Utc>,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let venue: Option<String> =
         sqlx::query_scalar("SELECT rental_contract_address FROM signatures.rentals WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
     let Some(venue) = venue else {
-        return Ok(());
+        return Ok(true);
     };
-    let rentals_ready = index::ready(pool, now).await;
-    if rentals_ready {
-        index::fold_listing(pool, &venue, id, now).await?;
-    }
     let row = sqlx::query(
         "SELECT r.status::text AS status, r.expiration < $2 AS expired, l.lessor, \
-                r.created_at, r.contract_address, r.token_id::text AS token_id, a.membership_block, \
-                extract(epoch FROM a.nft_updated_at)::bigint AS stored_at \
+                r.created_at, r.contract_address, r.token_id::text AS token_id, r.chain_id::bigint AS chain_id, a.membership_block, a.metadata_block \
          FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id \
          JOIN signatures.rental_assets a ON a.contract_address = r.contract_address AND a.token_id = r.token_id \
          WHERE r.id = $1",
@@ -304,40 +340,53 @@ pub async fn sync_listing(
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else {
-        return Ok(());
+        return Ok(true);
     };
-    if row.get::<String, _>("status") != "open" {
-        return Ok(());
+    let chain = index::RentalsChain::from_id(row.get("chain_id"));
+    let Some(chain) = chain else {
+        return Ok(false);
+    };
+    if !index::ready_on(pool, chain, now).await {
+        return Ok(false);
+    }
+    index::fold_listing(pool, chain, &venue, id, now).await?;
+    let still_open: bool =
+        sqlx::query_scalar("SELECT status = 'open' FROM signatures.rentals WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
+    if !still_open {
+        return Ok(true);
     }
     let lessor: String = row.get("lessor");
-    // Date transfer and membership observations independently of metadata fills.
-    let stored_at: i64 = row.get("stored_at");
+    // Compare published source versions independently from legacy metadata timestamps.
+    let stored_metadata_block: i64 = row.get("metadata_block");
     let created_at = row
         .get::<NaiveDateTime, _>("created_at")
         .and_utc()
         .timestamp();
     // Metadata can be filled while custody evidence is still unpublished.
     // Recheck the covering rent for a current venue observation on each refresh.
-    let transfer = nft.filter(|n| {
-        n.transferred_at > stored_at
-            || (n.owner_address.eq_ignore_ascii_case(&venue) && n.updated_at >= stored_at)
-    });
+    let current = nft.filter(|n| n.metadata_block >= stored_metadata_block);
+    let transfer = current
+        .filter(|n| n.transferred_at > created_at || n.owner_address.eq_ignore_ascii_case(&venue));
     let owner = transfer.map(|n| n.owner_address.as_str());
     let custody: Option<String> = match transfer {
-        Some(n) if rentals_ready && n.owner_address.eq_ignore_ascii_case(&venue) => {
+        Some(n) if n.owner_address.eq_ignore_ascii_case(&venue) => {
             let evidence = index::rent_evidence(
                 pool,
+                chain,
                 &venue,
                 row.get("contract_address"),
                 row.get("token_id"),
+                now,
             )
             .await?;
-            let later_custody = n.transferred_at > stored_at
-                || n.transferred_at > created_at
-                || evidence.rent_time.is_some_and(|time| time > created_at);
-            (later_custody && evidence.covers_transfer(n.transfer_block, n.transferred_at))
-                .then_some(evidence.signer)
-                .flatten()
+            match evidence.coverage(n.transfer_block, Some(n.metadata_block), n.transferred_at) {
+                index::RentCoverage::Pending | index::RentCoverage::NoCoveringRent => None,
+                index::RentCoverage::Covered => evidence.signer,
+            }
         }
         _ => None,
     };
@@ -345,9 +394,9 @@ pub async fn sync_listing(
     let dissolved = nft.is_some_and(|n| {
         n.category == "estate"
             && n.estate_size == Some(0)
+            && n.metadata_block >= stored_metadata_block
             && n.membership_block >= row.get::<i64, _>("membership_block")
-            && n.membership_checked_at
-                .is_some_and(|at| at > stored_at && at > created_at)
+            && n.membership_checked_at.is_some_and(|at| at > created_at)
     });
     if let Some(reason) = cancel_reason(
         row.get("expired"),
@@ -365,7 +414,7 @@ pub async fn sync_listing(
         )
         .await?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Attaches the leased `rental-listing-status` job: [`run_pass`] every
@@ -459,7 +508,9 @@ mod tests {
     }
 
     use crate::db::scratch::{OwnedDatabase, Schema};
-    use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET};
+    use crate::land_authz::{
+        ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET, LAND_SEPOLIA,
+    };
     use crate::rentals::index::tests::seed_listing;
 
     async fn listing(pool: &PgPool, contract: &str, token: &str, sig: u8) -> Uuid {
@@ -571,6 +622,7 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        publish_rentals_index(pool).await;
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
@@ -595,6 +647,7 @@ mod tests {
             return;
         };
         let pool = &db.pool;
+        publish_rentals_index(pool).await;
         let row = |owner: &str, category: &str, estate_size: Option<i32>| LandNft {
             nft_id: "x".into(),
             category: category.into(),
@@ -609,6 +662,7 @@ mod tests {
             transferred_at: Utc::now().timestamp() + 60,
             transfer_block: Some(1),
             membership_block: 1,
+            metadata_block: 1,
             membership_checked_at: Some(Utc::now().timestamp() + 60),
         };
         let now = Utc::now();
@@ -692,6 +746,10 @@ mod tests {
 
         // A nonce bump the rentals index holds counts once it is published.
         let bumped = listing(pool, LAND_REGISTRY_MAINNET, "3", 4).await;
+        sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='rentals'")
+            .execute(pool)
+            .await
+            .unwrap();
         let bump = index::decode_log(
             &index::tests::asset_index_log(
                 LESSOR,
@@ -744,7 +802,7 @@ mod tests {
                 50,
                 1,
             ),
-            1_700_000_000,
+            Utc::now().timestamp() + 120,
         )
         .unwrap()
         .unwrap();
@@ -792,6 +850,90 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn sepolia_status_uses_only_the_published_sepolia_rentals_cursor() {
+        let Some(db) = OwnedDatabase::new("rental_sepolia_status", Schema::Full, 2).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let venue = crate::rentals::signature::rentals_contract(11_155_111).unwrap();
+        let id = seed_listing(
+            pool,
+            LAND_SEPOLIA.land_registry,
+            "55",
+            ["0", "0", "0"],
+            &format!("0x{}", hex::encode([55u8; 65])),
+            LESSOR,
+            venue,
+        )
+        .await;
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, 40, 40, timezone('UTC', now()), true)",
+        )
+        .bind(LAND_SEPOLIA.network)
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(LAND_SEPOLIA.estate_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('rentals_sepolia', 'ethereum', 1, 40, 40, timezone('UTC', now()), true, 11155111)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 55, $2, 40, 0)",
+        )
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(venue)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, token_id, account, kind) VALUES (40, 0, $1, $2, 55, $3, 'transfer')",
+        )
+        .bind(now + 60)
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(venue)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, signer, tenant, rental_days, price_per_day, signature, tx_hash) \
+             VALUES ('sepolia', 40, 0, $1, $2, 'rented', $3, 55, $4, $5, 1, 1, '0x55', '0xtx')",
+        )
+        .bind(now + 60)
+        .bind(venue)
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(LESSOR)
+        .bind(OTHER)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            cancel_moved(pool, LAND_SEPOLIA, Utc::now()).await.unwrap(),
+            Some(0)
+        );
+        assert_eq!(state_of(pool, id).await, open());
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals_sepolia'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            cancel_moved(pool, LAND_SEPOLIA, Utc::now()).await.unwrap(),
+            None
+        );
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
     }
 
     /// Publishes the land-authz index at `block`, or moves it there.
@@ -847,7 +989,7 @@ mod tests {
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, Some(0), "the rentals index is not published");
+        assert_eq!(pass.moved, None, "the rentals index is not published");
         assert_eq!(state_of(pool, rented_by_other).await, open());
 
         publish_rentals_index(pool).await;
@@ -933,6 +1075,7 @@ mod tests {
         .unwrap();
 
         publish_land_index(pool, 2).await;
+        publish_rentals_index(pool).await;
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
@@ -992,6 +1135,7 @@ mod tests {
             transferred_at: arrived,
             transfer_block: Some(40),
             membership_block: 0,
+            metadata_block: 1,
             membership_checked_at: None,
         };
         publish_rentals_index(pool).await;
@@ -1049,9 +1193,10 @@ mod tests {
         index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
             .await
             .unwrap();
-        let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
-            .await
-            .unwrap();
+        let verdicts =
+            index::changed_verdicts(&mut conn, index::RentalsChain::Mainnet, RENTALS, -1, None)
+                .await
+                .unwrap();
         assert_eq!(
             verdicts
                 .iter()
@@ -1083,9 +1228,10 @@ mod tests {
         index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
             .await
             .unwrap();
-        let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
-            .await
-            .unwrap();
+        let verdicts =
+            index::changed_verdicts(&mut conn, index::RentalsChain::Mainnet, RENTALS, -1, None)
+                .await
+                .unwrap();
         let written = index::apply_verdicts(&mut conn, &verdicts, Utc::now().naive_utc())
             .await
             .unwrap();

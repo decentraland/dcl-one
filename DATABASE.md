@@ -1934,26 +1934,31 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 - One snapshot select over the open rows of the LAND and Estate registries,
   with one primary-key probe into `land_authz.token_right` per row, one
   `authz_event_ownership_idx` probe for the latest transfer, one
-  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
-  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+  `estate_land_estate_idx` probe per estate and, while the chain-matched
+  Rentals index is published, one `rental_event_asset_idx` probe for the
+  asset's latest rent.
 - One batched `UPDATE` by id, guarded by `status = 'open'`.
 
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- Step `0063_rental_asset_membership_block` records the published LAND block
-  of an estate metadata fill. Existing rows, parcels, and imported metadata
-  carry zero. Create and refresh compare this block and the indexed asset
-  time independently. Equal evidence can refresh the row.
-- The routes never move `rental_assets.nft_updated_at` backwards, and a
-  reader row older than the stored one replaces no asset detail. The refresh
-  route skips such a row. The create route still creates the listing, and
-  its upsert keeps the stored category, search text, distance to plaza, road
-  adjacency, estate size, `fetched_at` and time; a row that is not older
-  replaces them. A reader that answers from an older block
-  and then from a less old one therefore cannot pass the refresh route's
-  newer-row test. The signatures-server import writes the upstream time as
-  it is.
+- Step `0063_rental_asset_membership_block` adds the metadata source block
+  and published LAND membership block. Existing rows, parcels, and imported
+  metadata start at zero; the next indexed fill records the versions. Create
+  and refresh compare both block versions independently of the legacy
+  `nft_updated_at` timestamp, so a current indexed snapshot replaces
+  preexisting subgraph-era metadata even when its event timestamp is older.
+  `nft_updated_at` remains the greatest observed timestamp. Equal block
+  evidence can refresh the row.
+- The routes never move `rental_assets.nft_updated_at` backwards. Metadata
+  details are guarded by `metadata_block` and `membership_block`, not by that
+  legacy timestamp; an older published source version replaces no details,
+  while the next current snapshot can replace imported or subgraph-era values.
+  Create still creates the listing when its source version is older, and its
+  upsert keeps the stored metadata. The refresh route skips an older source
+  version. A reader that answers from an older block and then a less old one
+  cannot pass the newer-row test. The signatures-server import resets both
+  block versions to zero.
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
 - A reopening never makes a second open listing of an asset

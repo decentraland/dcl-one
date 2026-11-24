@@ -3,9 +3,9 @@
 //! old crate's SQL: `metadata` is `rental_assets` keyed by
 //! `(contract_address, token_id numeric)` with the wire's `nft_id` as a
 //! UNIQUE (so a listing's asset is the chain identity, not a string), the
-//! asset row is refreshed on conflict (the reader just fetched it; its
-//! `nft_updated_at` keeps the greater time), every
-//! row-stamping clock is a bound parameter (`now`), never `now()`, and the
+//! asset row is refreshed on conflict (the reader just fetched it;
+//! `nft_updated_at` keeps the greater time, block versions guard detail
+//! writes), every row-stamping clock is a bound parameter (`now`), never `now()`, and the
 //! status values and numeric filters are validated before they reach the
 //! statement (the old crate let Postgres answer 500 on a bad `status` or
 //! `tokenId`).
@@ -74,6 +74,8 @@ pub struct ListingMetadata<'a> {
     pub adjacent_to_road: Option<bool>,
     pub estate_size: Option<i32>,
     pub membership_block: i64,
+    /// Published block for the source snapshot that supplied this metadata.
+    pub metadata_block: i64,
     /// The asset's indexed update time.
     pub updated_at: NaiveDateTime,
 }
@@ -199,6 +201,7 @@ impl Database {
             .bind(max_days)
             .bind(prices)
             .bind(metadata.membership_block)
+            .bind(metadata.metadata_block)
             .fetch_one(&self.pool)
             .await?;
         Ok(row_to_listing(&row))
@@ -262,6 +265,7 @@ impl Database {
             .bind(metadata.updated_at)
             .bind(now)
             .bind(metadata.membership_block)
+            .bind(metadata.metadata_block)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.map(|r| row_to_listing(&r)))
@@ -520,19 +524,20 @@ const INSERT_LISTING_SQL: &str = "\
 WITH a AS ( \
   INSERT INTO signatures.rental_assets \
     (contract_address, token_id, nft_id, network, chain_id, category, search_text, distance_to_plaza, \
-     adjacent_to_road, estate_size, nft_created_at, nft_updated_at, fetched_at, membership_block) \
-  VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::smallint, $9, $10::smallint, $11, $12, $13, $23) \
+     adjacent_to_road, estate_size, nft_created_at, nft_updated_at, fetched_at, membership_block, metadata_block) \
+  VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::smallint, $9, $10::smallint, $11, $12, $13, $23, $24) \
   ON CONFLICT (contract_address, token_id) DO UPDATE SET
-    (category, search_text, distance_to_plaza, adjacent_to_road, estate_size, fetched_at, nft_updated_at, membership_block) = (
+    (category, search_text, distance_to_plaza, adjacent_to_road, estate_size, fetched_at, nft_updated_at, membership_block, metadata_block) = (
       SELECT CASE WHEN fresh THEN EXCLUDED.category ELSE rental_assets.category END,
              CASE WHEN fresh THEN EXCLUDED.search_text ELSE rental_assets.search_text END,
              CASE WHEN fresh THEN EXCLUDED.distance_to_plaza ELSE rental_assets.distance_to_plaza END,
              CASE WHEN fresh THEN EXCLUDED.adjacent_to_road ELSE rental_assets.adjacent_to_road END,
              CASE WHEN fresh THEN EXCLUDED.estate_size ELSE rental_assets.estate_size END,
              CASE WHEN fresh THEN EXCLUDED.fetched_at ELSE rental_assets.fetched_at END,
-             CASE WHEN fresh THEN EXCLUDED.nft_updated_at ELSE rental_assets.nft_updated_at END,
-             CASE WHEN fresh THEN EXCLUDED.membership_block ELSE rental_assets.membership_block END
-      FROM (SELECT EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at
+             GREATEST(EXCLUDED.nft_updated_at, rental_assets.nft_updated_at),
+             CASE WHEN fresh THEN EXCLUDED.membership_block ELSE rental_assets.membership_block END,
+             CASE WHEN fresh THEN EXCLUDED.metadata_block ELSE rental_assets.metadata_block END
+      FROM (SELECT EXCLUDED.metadata_block >= rental_assets.metadata_block
                    AND EXCLUDED.membership_block >= rental_assets.membership_block AS fresh) AS evidence)
   RETURNING contract_address, token_id, nft_id, category, search_text, nft_created_at \
 ), r AS ( \
@@ -562,10 +567,10 @@ WITH upd AS ( \
   UPDATE signatures.rental_assets a SET \
     category = $2, search_text = $3, distance_to_plaza = $4::smallint, \
     adjacent_to_road = $5, estate_size = $6::smallint, \
-    nft_updated_at = $7, fetched_at = $8, membership_block = $9 \
+    nft_updated_at = GREATEST(a.nft_updated_at, $7), fetched_at = $8, membership_block = $9, metadata_block = $10 \
   FROM signatures.rentals r \
   WHERE r.id = $1 AND a.contract_address = r.contract_address AND a.token_id = r.token_id \
-    AND a.nft_updated_at <= $7 AND a.membership_block <= $9 \
+    AND a.metadata_block <= $10 AND a.membership_block <= $9 \
   RETURNING a.contract_address, a.token_id, a.nft_id, a.category, a.search_text, a.nft_created_at \
 ) \
 SELECT rentals.id, rentals.contract_address, rentals.token_id::text AS token_id, rentals.network, rentals.chain_id, \
