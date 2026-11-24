@@ -20,7 +20,8 @@ pub struct LandNft {
     pub created_at: i64,
     pub updated_at: i64,
     pub transferred_at: i64,
-    pub transfer_block: i64,
+    /// The marketplace subgraph exposes the transfer time only.
+    pub transfer_block: Option<i64>,
     pub membership_block: i64,
     pub membership_checked_at: Option<i64>,
 }
@@ -31,25 +32,33 @@ pub enum NftReadError {
     Unavailable,
     #[error("NFT metadata index unavailable")]
     MetadataUnavailable,
+    #[error("marketplace subgraph unavailable: {0}")]
+    Subgraph(String),
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 }
 
-pub async fn nft_by_contract_token(
-    pool: &PgPool,
+pub(super) fn listing_network(
     network: Option<LandNetwork>,
     chain_id: i64,
-    contract_address: &str,
-    token_id: &str,
-) -> Result<Option<LandNft>, NftReadError> {
+) -> Result<LandNetwork, NftReadError> {
     let expected = match chain_id {
         1 => LAND_MAINNET,
         11155111 => LAND_SEPOLIA,
         _ => return Err(NftReadError::Unavailable),
     };
-    let net = network
+    network
         .filter(|net| *net == expected)
-        .ok_or(NftReadError::Unavailable)?;
+        .ok_or(NftReadError::Unavailable)
+}
+
+pub(super) async fn nft_by_contract_token(
+    pool: &PgPool,
+    net: LandNetwork,
+    chain_id: i64,
+    contract_address: &str,
+    token_id: &str,
+) -> Result<Option<LandNft>, NftReadError> {
     let mut snapshot = crate::land_authz::indexer::ready_snapshot(
         pool,
         net.network,
@@ -136,7 +145,10 @@ pub async fn nft_by_contract_token(
     if row.asset.created_at <= 0 || row.asset.transferred_at <= 0 {
         return Err(NftReadError::Unavailable);
     }
-    if row.asset.transfer_block > metadata_head
+    if row
+        .asset
+        .transfer_block
+        .is_some_and(|block| block > metadata_head)
         || row.data_block.is_some_and(|block| block > metadata_head)
     {
         return Err(NftReadError::MetadataUnavailable);

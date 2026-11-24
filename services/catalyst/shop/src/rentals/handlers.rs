@@ -172,6 +172,13 @@ pub async fn get_rentals_listings(
 }
 
 fn reader_unavailable(err: NftReadError) -> Response {
+    if let NftReadError::Subgraph(detail) = err {
+        tracing::warn!(error = %detail, "marketplace subgraph reader unavailable on a rentals route");
+        return unavailable(
+            Source::MarketplaceSubgraph,
+            "The marketplace subgraph is unavailable for the listing asset",
+        );
+    }
     if matches!(err, NftReadError::MetadataUnavailable) {
         return unavailable(
             Source::NftIndex,
@@ -206,13 +213,14 @@ pub(super) fn listing_metadata(nft: &LandNft, now: chrono::NaiveDateTime) -> Lis
 /// both cover the transfer into the venue.
 pub(super) fn held_for_lessor(
     evidence: Option<&super::index::RentEvidence>,
-    transfer_block: i64,
+    transfer_block: Option<i64>,
+    transferred_at: i64,
     signer: &str,
 ) -> Option<bool> {
     let Some(evidence) = evidence else {
         return Some(false);
     };
-    if !evidence.covers_transfer(transfer_block) {
+    if !evidence.covers_transfer(transfer_block, transferred_at) {
         return None;
     }
     Some(
@@ -253,8 +261,8 @@ pub async fn create_rentals_listing(
     }
 
     // One chain is served: a listing signed for another is not fillable here.
-    let served_chain = crate::market::catalog::served_chains().0;
-    if body.chain_id != served_chain || body.network != "ETHEREUM" {
+    let served_chain = body.chain_id;
+    if Some(served_chain) != state.served_chain() || body.network != "ETHEREUM" {
         return Err(ApiError::bad_request(
             "The chain id and network of the listing are not the ones supported by the server",
         ));
@@ -321,8 +329,12 @@ pub async fn create_rentals_listing(
     }
 
     let relist = if nft.owner_address.eq_ignore_ascii_case(rentals) {
-        let Some(held) = held_for_lessor(rent_evidence.as_ref(), nft.transfer_block, &signer)
-        else {
+        let Some(held) = held_for_lessor(
+            rent_evidence.as_ref(),
+            nft.transfer_block,
+            nft.transferred_at,
+            &signer,
+        ) else {
             return Ok(unavailable(
                 Source::RentalsIndex,
                 "The asset is held by the Rentals contract and the rentals index is not ready to name its lessor",
@@ -397,7 +409,7 @@ pub async fn refresh_rentals_listing(
             // No row: the reader's is older than the stored one, which stays.
         }
         Ok(None) => {
-            tracing::debug!(rental_id = %id, "NFT not found in the land-authz index during refresh; metadata unchanged");
+            tracing::debug!(rental_id = %id, "NFT not found by the listing asset reader during refresh; metadata unchanged");
         }
         Err(e) => return Ok(reader_unavailable(e)),
     }

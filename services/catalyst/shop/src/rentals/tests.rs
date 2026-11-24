@@ -264,10 +264,12 @@ async fn refresh_updates_metadata_and_returns_the_listing() {
 }
 
 fn market() -> Arc<MarketplaceState> {
+    let mut settings = crate::market::Settings::for_tests();
+    settings.market.indexes.nft_enabled = true;
     Arc::new(MarketplaceState::new(
         lazy_pool(),
         crate::http::Outbound::for_tests(),
-        crate::market::Settings::for_tests(),
+        settings,
     ))
 }
 
@@ -1184,6 +1186,123 @@ async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
 }
 
 #[tokio::test]
+async fn non_walking_nodes_use_the_configured_graph_for_create_and_refresh() {
+    use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let wallet = wallet();
+    let owner = wallet.address.clone();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let count = reads.clone();
+    let graph = Router::new().route("/", axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
+        let n = count.fetch_add(1, Ordering::Relaxed) + 1;
+        let owner = owner.clone();
+        async move {
+            let vars = &request["variables"];
+            axum::Json(json!({"data":{
+                "_meta":{"block":{"number": 100 + n}},
+                "nfts":[{
+                    "contractAddress": vars["contract"], "tokenId": vars["tokenId"],
+                    "category":"estate", "owner":{"id":owner}, "searchText":format!("estate {n}"),
+                    "searchDistanceToPlaza":3, "searchAdjacentToRoad":true,"searchEstateSize":4,
+                    "createdAt":"1600000000","updatedAt":"1700000000","transferredAt":"1650000000"
+                }]
+            }}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, graph).await.unwrap() });
+    let node = |network: &str, chain, enabled, graph_url: Option<String>| {
+        let mut settings = crate::market::Settings::for_tests();
+        settings.eth_network = network.into();
+        settings.market.indexes.chain_id_ethereum = chain;
+        settings.market.indexes.nft_enabled = enabled;
+        settings.marketplace_subgraph_url = graph_url;
+        let market =
+            MarketplaceState::new(pool.clone(), crate::http::Outbound::for_tests(), settings);
+        market.test_allow_loopback.store(true, Ordering::Relaxed);
+        state_over(pool.clone(), Some(Arc::new(market)), true)
+    };
+    let path = "/v1/rentals-listings";
+    for (network, chain, enabled, registry) in [
+        ("mainnet", 1, false, LAND_MAINNET),
+        ("sepolia", 11155111, true, LAND_SEPOLIA),
+    ] {
+        let mut listing = creation(&random_token_id(), "");
+        listing.chain_id = chain;
+        listing.contract_address = registry.estate_registry.into();
+        listing.rental_contract_address = super::signature::rentals_contract(chain as u64)
+            .unwrap()
+            .into();
+        listing.signature = sign_listing(&wallet, &listing).await;
+        let post = |state| {
+            let wallet = &wallet;
+            let doc = creation_json(&listing);
+            async move {
+                send(
+                    router(state),
+                    "POST",
+                    path,
+                    signed_headers(wallet, "post", path).await,
+                    Some(doc),
+                )
+                .await
+            }
+        };
+        let missing = node(network, chain, enabled, None);
+        assert!(!missing.reader_configured());
+        let (code, headers, out) = post(missing).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+        assert_eq!(out["source"], "marketplace-subgraph");
+        assert_eq!(out["configure"], "MARKETPLACE_SUBGRAPH_URL");
+        assert_eq!(headers[header::RETRY_AFTER], "60");
+
+        let state = node(network, chain, enabled, Some(url.clone()));
+        assert!(state.reader_configured());
+        let before = reads.load(Ordering::Relaxed);
+        let (code, _, out) = post(state).await;
+        assert_eq!(code, StatusCode::CREATED, "{out}");
+        assert_eq!(out["data"]["searchText"], format!("estate {}", before + 1));
+        let refresh = format!("{path}/{}", out["data"]["id"].as_str().unwrap());
+        let (code, _, out) = send(
+            router(node(network, chain, enabled, Some(url.clone()))),
+            "PATCH",
+            &refresh,
+            vec![],
+            None,
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{out}");
+        assert_eq!(out["data"]["searchText"], format!("estate {}", before + 2));
+        assert_eq!(reads.load(Ordering::Relaxed), before + 2);
+    }
+    // A configured URL never substitutes for a walking node's withdrawn NFT publication.
+    publish_land(&pool).await;
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='nft'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = reads.load(Ordering::Relaxed);
+    let mut listing = creation(&random_token_id(), "");
+    listing.signature = sign_listing(&wallet, &listing).await;
+    let (code, _, out) = send(
+        router(node("mainnet", 1, true, Some(url))),
+        "POST",
+        path,
+        signed_headers(&wallet, "post", path).await,
+        Some(creation_json(&listing)),
+    )
+    .await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "nft-index");
+    assert_eq!(reads.load(Ordering::Relaxed), before);
+}
+
+#[tokio::test]
 async fn a_signed_mainnet_listing_cannot_use_sepolia_registry_rights() {
     use crate::land_authz::LAND_SEPOLIA;
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
@@ -1227,7 +1346,7 @@ async fn a_signed_mainnet_listing_cannot_use_sepolia_registry_rights() {
     assert!(matches!(
         super::nft::nft_by_contract_token(
             &pool,
-            Some(LAND_SEPOLIA),
+            LAND_SEPOLIA,
             11155111,
             &body.contract_address,
             "17"
@@ -1475,7 +1594,7 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
 #[tokio::test]
 async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
     assert_eq!(
-        super::handlers::held_for_lessor(None, 1, LESSOR),
+        super::handlers::held_for_lessor(None, Some(1), 1, LESSOR),
         Some(false)
     );
     let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
@@ -1485,7 +1604,7 @@ async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
         .await
         .unwrap();
     assert_eq!(
-        super::handlers::held_for_lessor(Some(&evidence), 1, LESSOR),
+        super::handlers::held_for_lessor(Some(&evidence), Some(1), 1, LESSOR),
         None
     );
 }

@@ -302,7 +302,7 @@ pub async fn sync_listing(
             )
             .await?;
             evidence
-                .covers_transfer(n.transfer_block)
+                .covers_transfer(n.transfer_block, n.transferred_at)
                 .then_some(evidence.signer)
                 .flatten()
         }
@@ -571,7 +571,7 @@ mod tests {
             // Newer than the seeded `nft_updated_at`.
             updated_at: Utc::now().timestamp() + 60,
             transferred_at: Utc::now().timestamp() + 60,
-            transfer_block: 1,
+            transfer_block: Some(1),
             membership_block: 1,
             membership_checked_at: Some(Utc::now().timestamp() + 60),
         };
@@ -945,7 +945,7 @@ mod tests {
             created_at: 0,
             updated_at: arrived,
             transferred_at: arrived,
-            transfer_block: 40,
+            transfer_block: Some(40),
             membership_block: 0,
             membership_checked_at: None,
         };

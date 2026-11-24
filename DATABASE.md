@@ -1854,13 +1854,20 @@ route then writes the row to `signatures.rental_assets` only when it is no
 older than the stored one, so a lagging reader replaces no metadata.
 
 Create and refresh bind the asset read to the signed or stored listing chain.
-They read the NFT index publication and LAND rights in one database snapshot.
+On mainnet nodes with the NFT walk enabled, they read the NFT index
+publication and LAND rights in one database snapshot.
 Incomplete mint or transfer times, an unavailable publication, or a document
 beyond the LAND fold returns the unavailable envelope. A transfer beyond the
 NFT publication also waits for metadata to catch up. The NFT index publishes
 Ethereum mainnet metadata. A listing by a lessor whose asset is in Rentals
 custody requires a published Rentals cursor and a rent at or after the LAND
 transfer into custody. The lookup reads the rent and its publication together.
+
+Nodes that do not walk the NFT index, including Sepolia, read listing assets
+from the configured marketplace subgraph. The subgraph reports transfer time
+in seconds and the block of its estate membership snapshot. A missing or
+unavailable subgraph returns the marketplace-subgraph unavailable envelope.
+A walking node always uses its local publications.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:

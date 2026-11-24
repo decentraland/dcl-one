@@ -660,18 +660,30 @@ pub fn walks(venue: &str) -> bool {
 pub(super) struct RentEvidence {
     pub(super) published_through: Option<i64>,
     pub(super) rent_block: Option<i64>,
+    rent_time: Option<i64>,
     pub(super) signer: Option<String>,
     pub(super) ends_at: Option<i64>,
 }
 
 impl RentEvidence {
-    pub(super) fn covers_transfer(&self, block: i64) -> bool {
-        self.published_through.is_some_and(|head| {
-            head >= block
-                && self
-                    .rent_block
-                    .is_none_or(|rent| (block..=head).contains(&rent))
-        })
+    pub(super) fn covers_transfer(&self, block: Option<i64>, transferred_at: i64) -> bool {
+        let Some(head) = self.published_through else {
+            return false;
+        };
+        match block {
+            Some(block) => {
+                head >= block
+                    && self
+                        .rent_block
+                        .is_none_or(|rent| (block..=head).contains(&rent))
+            }
+            // The subgraph dates transfers in seconds. On Ethereum, later
+            // blocks have strictly increasing timestamps.
+            None => {
+                self.rent_block.is_some_and(|rent| rent <= head)
+                    && self.rent_time.is_some_and(|time| time >= transferred_at)
+            }
+        }
     }
 }
 
@@ -685,10 +697,10 @@ pub(super) async fn rent_evidence(
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT (SELECT folded_block FROM shop.chain_cursor c WHERE indexer='rentals'
                    AND network='ethereum' AND {ready}) AS published_through,
-                r.block_number AS rent_block, r.signer, r.ends_at
+                r.block_number AS rent_block, r.block_time AS rent_time, r.signer, r.ends_at
          FROM (VALUES (1)) AS anchor(n)
          LEFT JOIN LATERAL (
-             SELECT block_number, signer, block_time + rental_days::bigint * 86400 AS ends_at
+             SELECT block_number, block_time, signer, block_time + rental_days::bigint * 86400 AS ends_at
              FROM shop.rental_event WHERE network='ethereum' AND rentals_address=$1
                AND contract_address=$2 AND token_id=$3::numeric AND kind='rented'
              ORDER BY block_number DESC, log_index DESC LIMIT 1
@@ -728,6 +740,21 @@ pub(crate) mod tests {
     use super::*;
     use alloy_primitives::{U256, keccak256};
     use alloy_sol_types::SolValue;
+
+    #[test]
+    fn graph_custody_requires_a_published_rent_covering_the_reported_transfer_time() {
+        let mut rent = RentEvidence {
+            published_through: Some(12),
+            rent_block: Some(12),
+            rent_time: Some(120),
+            signer: Some("lessor".into()),
+            ends_at: Some(200),
+        };
+        assert!(!rent.covers_transfer(None, 130));
+        assert!(rent.covers_transfer(None, 120));
+        rent.published_through = Some(11);
+        assert!(!rent.covers_transfer(None, 120));
+    }
 
     /// A fold at the present time by the projection's owner, claimed as a
     /// process without leases claims it.

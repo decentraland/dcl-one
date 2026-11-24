@@ -14,9 +14,11 @@
 //! - `POST /v1/rentals-listings`: local authority behind
 //!   `DATA_WRITES_ENABLED` and signed fetch (ADR-44, the 6.x payload then the
 //!   legacy one, as the old crate accepted); the asset's owner, category and
-//!   LAND search columns come from a published land-authz snapshot joined
+//!   LAND search columns on a node that walks NFTs come from a published land-authz snapshot joined
 //!   to the indexed LAND data and proximity map. Until the index is ready,
-//!   the route answers the land-authz unavailable envelope. A listing must name the
+//!   the route answers the unavailable envelope for the missing publication. On a node
+//!   that does not walk NFTs, the configured marketplace subgraph supplies the asset.
+//!   A listing must name the
 //!   served Ethereum chain and its Rentals contract (stored as the
 //!   contract's address); an asset whose last rent at that contract is
 //!   still running answers 409, and an asset the contract still holds may
@@ -66,6 +68,7 @@ pub mod handlers;
 pub mod http;
 pub mod index;
 pub mod nft;
+mod nft_graph;
 pub mod notices;
 pub mod signature;
 pub mod status;
@@ -101,6 +104,7 @@ pub struct Settings {
 pub struct State {
     pub settings: Settings,
     pub db: db::Database,
+    graph_cache: nft_graph::Cache,
     /// The served network and marketplace rollout settings.
     market: Option<Arc<MarketplaceState>>,
     eip1654: Option<Arc<dyn Eip1654Validator>>,
@@ -133,6 +137,7 @@ impl State {
         Self {
             settings,
             db: db::Database::new(pool),
+            graph_cache: nft_graph::cache(),
             market,
             eip1654,
         }
@@ -143,8 +148,18 @@ impl State {
     pub fn reader_configured(&self) -> bool {
         self.market
             .as_ref()
-            .and_then(|m| m.land_network())
-            .is_some()
+            .is_some_and(|m| Self::walks_nfts(m) || m.settings.marketplace_subgraph_url.is_some())
+    }
+
+    fn walks_nfts(market: &MarketplaceState) -> bool {
+        market.settings.market.indexes.nft_enabled
+            && market.settings.eth_network.trim() == "mainnet"
+    }
+
+    fn served_chain(&self) -> Option<i64> {
+        self.market
+            .as_ref()
+            .map(|m| m.settings.market.indexes.chain_id_ethereum)
     }
 
     pub(crate) async fn nft(
@@ -153,17 +168,18 @@ impl State {
         contract_address: &str,
         token_id: &str,
     ) -> Result<Option<nft::LandNft>, nft::NftReadError> {
-        if chain_id != crate::market::catalog::served_chains().0 {
+        let market = self.market.as_ref().ok_or_else(|| {
+            nft::NftReadError::Subgraph("no marketplace reader is configured".into())
+        })?;
+        if Some(chain_id) != self.served_chain() {
             return Err(nft::NftReadError::Unavailable);
         }
-        nft::nft_by_contract_token(
-            self.db.pool(),
-            self.market.as_ref().and_then(|m| m.land_network()),
-            chain_id,
-            contract_address,
-            token_id,
-        )
-        .await
+        let net = nft::listing_network(market.land_network(), chain_id)?;
+        if !Self::walks_nfts(market) {
+            return nft_graph::read(market, &self.graph_cache, net, contract_address, token_id)
+                .await;
+        }
+        nft::nft_by_contract_token(self.db.pool(), net, chain_id, contract_address, token_id).await
     }
 
     async fn verify(
