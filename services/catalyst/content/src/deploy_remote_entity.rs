@@ -816,7 +816,8 @@ pub(crate) const MAX_FILE_REDIRECTS: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadPolicy {
     /// A file the entity needs. Sync allows ten attempts with a one-second wait after a
-    /// transient failure. Read-through allows three attempts with its shorter backoff.
+    /// transient failure. Read-through can try every configured source after definitive
+    /// misses, and allows three transient failures with its shorter backoff.
     Required,
     /// A best-effort file, such as a render a profile names only in its metadata. Each of up
     /// to [`BEST_EFFORT_ATTEMPTS`] peers gets one request with no wait between them, so a
@@ -854,6 +855,7 @@ pub async fn download_file(
     let mut tried = HashSet::new();
     let mut rejected = HashSet::new();
     let mut attempt = 0;
+    let mut request = 0u32;
     let mut delay = None;
     while attempt < attempts {
         let server = match servers
@@ -869,22 +871,25 @@ pub async fn download_file(
             tokio::time::sleep(delay).await;
             continue;
         }
-        match fetch_verified(client, hash, &server, attempt, budget).await {
+        let result = fetch_verified(client, hash, &server, request, budget).await;
+        request = request.saturating_add(1);
+        match result {
             Ok((bytes, reservation)) => {
                 storage.store(hash, bytes.into()).await?;
                 drop(reservation);
                 debug!(hash, "Downloaded content file");
                 return Ok(true);
             }
-            Err(error @ SyncError::NotFound(_)) => {
+            Err(error @ (SyncError::NotFound(_) | SyncError::ContentHashMismatch { .. })) => {
                 rejected.insert(server);
-                if required {
+                if required || matches!(&error, SyncError::ContentHashMismatch { .. }) {
                     failure = Some(error);
                 }
-            }
-            Err(error @ SyncError::ContentHashMismatch { .. }) => {
-                rejected.insert(server);
-                failure = Some(error);
+                if required && !live_peers {
+                    // A definitive miss eliminates one fixed source. The backoff budget
+                    // still applies to transient failures.
+                    continue;
+                }
             }
             Err(error) => {
                 tried.insert(server);
@@ -1800,6 +1805,54 @@ mod tests {
             assert!(matches!(outcome, Err(SyncError::Other(_))), "{outcome:?}");
             assert_eq!(hits.swap(0, Ordering::Relaxed), expected);
         }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn read_through_reaches_the_next_source_after_three_definitive_misses() {
+        use axum::{Router, extract::Path, http::StatusCode, routing::get};
+
+        let hits = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let observed = hits.clone();
+        let app = Router::new().route(
+            "/{peer}/contents/{hash}",
+            get(move |Path((peer, _hash)): Path<(String, String)>| {
+                let mut hits = observed.lock();
+                hits.push(peer);
+                let response = match hits.len() {
+                    1 | 3 => (StatusCode::NOT_FOUND, ""),
+                    2 => (StatusCode::OK, "wrong content"),
+                    _ => (StatusCode::OK, "fresh content"),
+                };
+                async move { response }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let peers = (0..4)
+            .map(|peer| format!("{base}/{peer}"))
+            .collect::<Vec<_>>();
+        let (storage, tmp) = temp_storage("read-through-definitive-misses").await;
+        let _cleanup = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(b"fresh content");
+
+        let copied = download_file(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &hash,
+            &DownloadPeers::fixed(&peers),
+            None,
+            DownloadPolicy::Required,
+        )
+        .await
+        .unwrap();
+
+        assert!(copied);
+        assert!(storage.exist(&hash).await.unwrap());
+        let hits = hits.lock();
+        assert_eq!(hits.len(), 4);
+        assert_eq!(hits.iter().collect::<HashSet<_>>().len(), 4);
         server.abort();
     }
 
