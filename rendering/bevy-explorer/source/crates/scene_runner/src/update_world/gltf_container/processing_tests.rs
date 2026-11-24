@@ -689,56 +689,130 @@ fn two_scenes_with_the_same_mesh_draw_one_copy() {
     }
 }
 
-const FIRST: Handle<Gltf> = bevy::asset::weak_handle!("00000000-0000-0000-0000-000000000001");
-const SECOND: Handle<Gltf> = bevy::asset::weak_handle!("00000000-0000-0000-0000-000000000002");
 const URL: &str = "https://content.example/contents/bafkreimodel";
 
-#[test]
-fn scenes_that_load_a_model_at_the_same_time_take_the_first_copy() {
-    let mut shared = SharedGltfs::default();
-    let live = |_| true;
-    assert_eq!(
-        shared.share(URL.to_owned(), FIRST.id(), true, live),
-        FIRST.id()
-    );
-    // the second copy finished loading too: it takes the first, and its own goes
-    assert_eq!(
-        shared.share(URL.to_owned(), SECOND.id(), true, live),
-        FIRST.id()
-    );
-    // the first copy, back for its next container, keeps itself
-    assert_eq!(
-        shared.share(URL.to_owned(), FIRST.id(), true, live),
-        FIRST.id()
-    );
-    assert_eq!(shared.models(), 1);
+/// An app that keeps the shared caches as the explorer does.
+fn sharing_app() -> App {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Gltf>()
+        .init_asset::<Mesh>()
+        .init_resource::<GltfNameCache>()
+        .init_resource::<SharedGltfs>()
+        .init_resource::<SharedMeshes>()
+        .add_systems(Update, (maintain_gltf_caches, maintain_shared_meshes));
+    app
+}
+
+/// A model loaded through the asset server, as a scene's glTF is.
+fn load_model(app: &mut App) -> Handle<Gltf> {
+    let model = Gltf {
+        scenes: Vec::new(),
+        named_scenes: HashMap::default(),
+        meshes: Vec::new(),
+        named_meshes: HashMap::default(),
+        materials: Vec::new(),
+        named_materials: HashMap::default(),
+        nodes: Vec::new(),
+        named_nodes: HashMap::default(),
+        skins: Vec::new(),
+        named_skins: HashMap::default(),
+        default_scene: None,
+        animations: Vec::new(),
+        named_animations: HashMap::default(),
+        source: None,
+    };
+    let handle = app.world().resource::<AssetServer>().add(model);
+    app.update();
+    handle
+}
+
+/// What a container whose model loaded as `h_gltf` from [`URL`] takes instead.
+fn adopt(app: &mut App, h_gltf: &Handle<Gltf>, references_no_file: bool) -> Option<AssetId<Gltf>> {
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    app.world_mut()
+        .resource_mut::<SharedGltfs>()
+        .adopt(&asset_server, URL.to_owned(), h_gltf, references_no_file)
+        .map(|h_shared| h_shared.id())
+}
+
+/// Frames enough for a dropped asset's removal to reach the caches.
+fn settle(app: &mut App) {
+    for _ in 0..3 {
+        app.update();
+    }
 }
 
 #[test]
-fn a_copy_replaces_a_shared_model_that_is_gone() {
-    let mut shared = SharedGltfs::default();
-    shared.share(URL.to_owned(), FIRST.id(), true, |_| true);
-    let first_gone = |id| id != FIRST.id();
-    assert_eq!(
-        shared.share(URL.to_owned(), SECOND.id(), true, first_gone),
-        SECOND.id()
-    );
-    assert_eq!(
-        shared.share(URL.to_owned(), FIRST.id(), true, |_| true),
-        SECOND.id()
-    );
+fn scenes_that_load_a_model_at_the_same_time_end_on_the_first_copy() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    let second = load_model(&mut app);
+
+    assert_eq!(adopt(&mut app, &first, true), None);
+    // the second copy finished loading too: its container takes the first
+    assert_eq!(adopt(&mut app, &second, true), Some(first.id()));
+    // the first copy, back for its next container, keeps itself
+    assert_eq!(adopt(&mut app, &first, true), None);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 1);
+}
+
+#[test]
+fn a_copy_that_loads_after_the_shared_one_goes_is_shared_instead() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &first, true), None);
+    let second = load_model(&mut app);
+
+    // the scene that held the first copy lets it go while the second is still loading
+    drop(first);
+    assert_eq!(adopt(&mut app, &second, true), None);
+
+    let third = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &third, true), Some(second.id()));
 }
 
 #[test]
 fn a_model_that_references_other_files_is_not_shared() {
-    let mut shared = SharedGltfs::default();
-    assert_eq!(
-        shared.share(URL.to_owned(), FIRST.id(), false, |_| true),
-        FIRST.id()
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    let second = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &first, false), None);
+    assert_eq!(adopt(&mut app, &second, false), None);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 0);
+}
+
+#[test]
+fn a_removed_model_is_no_longer_shared() {
+    let mut app = sharing_app();
+    let first = load_model(&mut app);
+    assert_eq!(adopt(&mut app, &first, true), None);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 1);
+
+    drop(first);
+    settle(&mut app);
+    assert_eq!(app.world().resource::<SharedGltfs>().models(), 0);
+}
+
+#[test]
+fn a_removed_mesh_leaves_the_shared_meshes() {
+    let mut app = sharing_app();
+    let mesh = app.world().resource::<AssetServer>().add(triangle());
+    app.update();
+    let mut shared = app.world_mut().resource_mut::<SharedMeshes>();
+    shared.hash_by_id.insert(mesh.id(), 7);
+    shared.by_hash.insert(
+        (7, true),
+        CachedMeshData {
+            mesh_id: mesh.id(),
+            is_skinned: false,
+            shape: None,
+            maybe_collider: None,
+        },
     );
-    assert_eq!(
-        shared.share(URL.to_owned(), SECOND.id(), false, |_| true),
-        SECOND.id()
-    );
-    assert_eq!(shared.models(), 0);
+    assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 1);
+
+    drop(mesh);
+    settle(&mut app);
+    assert_eq!(app.world().resource::<SharedMeshes>().meshes(), 0);
 }

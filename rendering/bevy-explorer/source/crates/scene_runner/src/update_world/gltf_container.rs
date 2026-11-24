@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeMap,
     f32::consts::{PI, TAU},
-    hash::{BuildHasher, Hash, Hasher, RandomState},
+    hash::{Hash, Hasher},
 };
 
 use bevy::{
@@ -305,24 +305,27 @@ impl SharedGltfs {
         self.0.len()
     }
 
-    /// The asset a model loaded as `id` from `url` uses: the live asset shared under `url`, else
-    /// `id`, which is shared from then on when its file references no other.
-    fn share(
+    /// The asset a container whose model loaded as `h_gltf` from `url` takes instead: the live
+    /// asset shared under `url`, when that is another. Otherwise `h_gltf` is shared from then on,
+    /// when its file references no other.
+    fn adopt(
         &mut self,
+        asset_server: &AssetServer,
         url: String,
-        id: AssetId<Gltf>,
+        h_gltf: &Handle<Gltf>,
         references_no_file: bool,
-        live: impl Fn(AssetId<Gltf>) -> bool,
-    ) -> AssetId<Gltf> {
-        match self.0.get(&url) {
-            Some(shared) if live(*shared) => *shared,
-            _ => {
-                if references_no_file {
-                    self.0.insert(url, id);
-                }
-                id
-            }
+    ) -> Option<Handle<Gltf>> {
+        if let Some(h_shared) = self
+            .0
+            .get(&url)
+            .and_then(|shared| asset_server.get_id_handle(*shared))
+        {
+            return (h_shared.id() != h_gltf.id()).then_some(h_shared);
         }
+        if references_no_file {
+            self.0.insert(url, h_gltf.id());
+        }
+        None
     }
 }
 
@@ -667,13 +670,12 @@ fn update_gltf(
             .flatten()
             .and_then(|path| ipfas.ipfs().immutable_source_url(path.path()));
         if let Some(url) = url {
-            let shared = shared_gltfs.share(url, id, references_no_file(gltf), |shared| {
-                gltfs.contains(shared)
-            });
-            if let Some(h_shared) = (shared != id)
-                .then(|| ipfas.asset_server().get_id_handle(shared))
-                .flatten()
-            {
+            if let Some(h_shared) = shared_gltfs.adopt(
+                ipfas.asset_server(),
+                url,
+                &h_gltf.0,
+                references_no_file(gltf),
+            ) {
                 // spawned next frame, from the shared asset, which keeps the upload priority of
                 // the scene that loaded it
                 commands.entity(ent).try_insert(GltfHandle(h_shared));
@@ -784,7 +786,7 @@ fn retry_repaired_gltfs(
 pub struct GltfMaterialName(String);
 
 #[derive(Clone)]
-pub struct CachedMeshData {
+pub(crate) struct CachedMeshData {
     pub mesh_id: AssetId<Mesh>,
     pub is_skinned: bool,
     /// the collision shape, which only colliders read: built for a part that may make colliders,
@@ -806,14 +808,29 @@ pub struct SceneResourceLookup {
 /// mesh converted for one scene serves each other scene with the same data, with one copy on the
 /// gpu and one collision shape. A colliders part's meshes stay in main-world memory, apart from
 /// those that are drawn.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct SharedMeshes {
-    /// keyed at random for the process, so no scene can make a mesh whose hash matches another
-    /// scene's mesh and have that scene draw it and collide with it
-    hash_state: RandomState,
+    /// random for the process and hashed in first, so no scene can make a mesh whose hash
+    /// matches another scene's mesh and have that scene draw it and collide with it.
+    /// `getrandom` has an entropy source on web too, where std's hash keys do not
+    hash_salt: [u8; 16],
     by_hash: HashMap<(u64, bool), CachedMeshData>,
     /// a mesh asset's hash, taken before conversion changes the mesh
     hash_by_id: HashMap<AssetId<Mesh>, u64>,
+}
+
+impl Default for SharedMeshes {
+    fn default() -> Self {
+        let mut hash_salt = [0; 16];
+        if let Err(e) = getrandom::fill(&mut hash_salt) {
+            error!("no random salt for mesh hashes, which other scenes can then match: {e}");
+        }
+        Self {
+            hash_salt,
+            by_hash: HashMap::default(),
+            hash_by_id: HashMap::default(),
+        }
+    }
 }
 
 impl SharedMeshes {
@@ -1072,7 +1089,7 @@ impl NodeProcessing<'_, '_> {
             // get or create hash
             // note we must use the handle lookup rather than recomputing the hash as we may modify the mesh on first load,
             // then recalculating would yield a different hash result
-            let hash_state = shared_meshes.hash_state.clone();
+            let hash_salt = shared_meshes.hash_salt;
             let maybe_hash = if read_only_mesh_data.has_morph_targets() {
                 // we can't include morph targets in the hash, so just skip hashing for them
                 // TODO: this means we reprocess these meshes even if already loaded which is not optimal
@@ -1083,7 +1100,8 @@ impl NodeProcessing<'_, '_> {
                         .hash_by_id
                         .entry(h_gltf_mesh.id())
                         .or_insert_with(|| {
-                            let hasher = &mut hash_state.build_hasher();
+                            let hasher = &mut std::hash::DefaultHasher::new();
+                            hash_salt.hash(hasher);
 
                             for (attr, data) in read_only_mesh_data.attributes() {
                                 attr.id.hash(hasher);
