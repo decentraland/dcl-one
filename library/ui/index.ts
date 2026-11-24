@@ -134,4 +134,4 @@ export type {
 
 export * from './apps/sites'
 
-export * from './apps/shop/ShopCartDrawer'
+export * from './apps/shop'
