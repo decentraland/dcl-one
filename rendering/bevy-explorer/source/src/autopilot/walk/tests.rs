@@ -45,7 +45,7 @@ fn the_walk_target_may_be_a_negative_parcel() {
     ])
     .unwrap();
 
-    assert_eq!(arguments.autopilot_walk_to, Some(IVec2::new(-3, 5)));
+    assert_eq!(arguments.client.autopilot_walk_to.as_deref(), Some("-3,5"));
 }
 
 #[test]

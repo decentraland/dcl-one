@@ -129,6 +129,24 @@ pub struct ClientOptions {
     #[arg(long, help_heading = DEBUG)]
     pub autopilot: bool,
 
+    /// Benchmark walk-in (`autopilot` with a CSV): once measuring starts, walk from where the run
+    /// arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way
+    /// load during play, with no loading screen. Without it the run stands at spawn
+    #[arg(
+        long,
+        value_name = "x,y",
+        allow_hyphen_values = true,
+        value_parser = parse_parcel,
+        help_heading = DEBUG
+    )]
+    pub autopilot_walk_to: Option<String>,
+
+    /// Benchmark crowd (`autopilot` with a CSV): once measuring starts, spawn this many demo
+    /// avatars, the same looks every run, in a grid in front of the player, every one shown
+    /// whatever the Max Avatars setting; the measured time includes building them
+    #[arg(long, value_name = "n", help_heading = DEBUG)]
+    pub autopilot_avatars: Option<usize>,
+
     /// Embedded in a scene editor (creator hub). Set by editor front-ends.
     #[arg(long, help_heading = HOST)]
     pub editor: bool,
@@ -161,6 +179,19 @@ pub struct ClientOptions {
     #[arg(hide = true, value_name = "decentraland://…")]
     #[serde(skip)]
     pub deep_link: Option<String>,
+}
+
+/// A parcel written `x,y`: two integers.
+pub fn parcel(value: &str) -> Option<(i32, i32)> {
+    let (x, y) = value.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+/// `--autopilot-walk-to`'s check: a [`parcel`], kept as the text it was given.
+fn parse_parcel(value: &str) -> Result<String, String> {
+    parcel(value)
+        .map(|_| value.to_string())
+        .ok_or_else(|| format!("expected a parcel as x,y, got '{value}'"))
 }
 
 /// The web page's `engine_run` options: both structs as ONE flat object, which is also what the
@@ -206,6 +237,7 @@ impl EngineRunOptions {
             &mut self.launch.base_domain,
             &mut self.launch.portables,
             &mut self.client.system_scene,
+            &mut self.client.autopilot_walk_to,
             &mut self.client.imposter_source,
             &mut self.client.bevy_variants,
             &mut self.client.session_id,
@@ -269,6 +301,29 @@ mod tests {
         // most of Genesis City is negative, and the value arrives as its own argv entry
         let cli = Cli::try_parse_from(["x", "--position", "-125,-96"]).unwrap();
         assert_eq!(cli.launch.position.as_deref(), Some("-125,-96"));
+    }
+
+    #[test]
+    fn the_walk_target_is_a_parcel() {
+        let cli = Cli::try_parse_from(["x", "--autopilot-walk-to", "-3,5"]).unwrap();
+        assert_eq!(cli.client.autopilot_walk_to.as_deref(), Some("-3,5"));
+        assert_eq!(parcel("-3,5"), Some((-3, 5)));
+        for bad in ["3", "3,", "a,5", "3,5,1", ""] {
+            assert_eq!(parcel(bad), None, "{bad}");
+            assert!(
+                Cli::try_parse_from(["x", "--autopilot-walk-to", bad]).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_crowd_arrives_from_the_web_as_a_number() {
+        let options =
+            EngineRunOptions::from_json(r#"{"autopilotAvatars": 200, "autopilotWalkTo": "0,2"}"#)
+                .unwrap();
+        assert_eq!(options.client.autopilot_avatars, Some(200));
+        assert_eq!(options.client.autopilot_walk_to.as_deref(), Some("0,2"));
     }
 
     #[test]

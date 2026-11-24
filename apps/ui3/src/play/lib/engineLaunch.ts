@@ -3,7 +3,7 @@
 // resolved for itself (lib/baseDomain.ts), the ui scene (our bundled bridge scene unless a link
 // overrode it, or the Creator Hub editor's), and the pinned engine artifact Sites serves.
 import type { EngineLaunch } from '@explorer-core/hostContract'
-import { launchOptionsFromUrl } from '@explorer-core/lib/webParams'
+import { AUTOPILOT_PARAMS, launchOptionsFromUrl } from '@explorer-core/lib/webParams'
 import { trackAudioContexts } from './audioUnlock'
 import { engineServiceOptions } from './baseDomain'
 import { bootMode } from './bootMode'
@@ -24,10 +24,10 @@ export function seedBridgeSession(): void {
 export function engineLaunch(params: URLSearchParams): EngineLaunch {
   const editor = editorSession(bootMode().systemScene, location.hash)
   return {
-    // `autopilot` is never handed over, on any host: /play has no benchmark run, and the key stays
-    // out of the options altogether (not `false`), so an engine that predates the field still launches.
+    // The autopilot's params are never handed over, on any host: /play has no benchmark run, and the
+    // keys stay out of the options altogether (not `false`), so an engine that predates them still launches.
     options: {
-      ...launchOptionsFromUrl(params, ['autopilot']),
+      ...launchOptionsFromUrl(params, AUTOPILOT_PARAMS),
       ...engineServiceOptions(),
       // the engine takes a bare value for a world name, so the editor scene goes as its full url
       systemScene: (() => {

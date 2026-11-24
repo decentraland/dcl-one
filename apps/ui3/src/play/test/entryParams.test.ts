@@ -4,14 +4,15 @@
 import { MOCK_SWITCHES } from '@explorer-core/engine/mockBridge'
 import { describe, expect, it } from 'vitest'
 import { WEB_PARAMS } from '@explorer-core/engine/generated'
+import { AUTOPILOT_PARAMS } from '@explorer-core/lib/webParams'
 import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from '../lib/entryParams'
 
 describe('acceptedEntryParams', () => {
   it('is every link-settable engine param plus the page switches, with a doc each', () => {
     const accepted = acceptedEntryParams()
     const names = accepted.map((p) => p.name)
-    // /play carries no benchmark run, so `autopilot` is not something a link can set here
-    for (const p of WEB_PARAMS) expect(names.includes(p.name)).toBe(p.delivery !== 'host' && p.name !== 'autopilot')
+    // /play carries no benchmark run, so the autopilot's params are not something a link can set here
+    for (const p of WEB_PARAMS) expect(names.includes(p.name)).toBe(p.delivery !== 'host' && !AUTOPILOT_PARAMS.includes(p.name))
     for (const p of accepted) expect(p.doc.length).toBeGreaterThan(0)
     expect(new Set(names).size).toBe(names.length)
     expect(names).toContain('guest')

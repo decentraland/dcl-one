@@ -254,6 +254,23 @@ fn write_report(args: ReportArgs) -> Result<i32, Failure> {
         "wrote the report to {}",
         out::safe(&out_file.to_string_lossy())
     ));
+    if let Some(machines_file) = given(&args.machines) {
+        // a label is the text of a leg's file: no tab or line end may split its line
+        let field = |text: &str| text.replace(['\t', '\r', '\n'], " ");
+        let lines: String = report
+            .machines
+            .iter()
+            .map(|machine| {
+                format!(
+                    "{}\t{}\t{}\n",
+                    field(&machine.label),
+                    field(&machine.name),
+                    field(&machine.verdict)
+                )
+            })
+            .collect();
+        fs::write(machines_file, lines)?;
+    }
     if report.has_data {
         Ok(0)
     } else {

@@ -5,6 +5,9 @@ Reads the triggering event (GITHUB_EVENT_NAME, GITHUB_EVENT_PATH) and writes the
 .github/workflows/bevy-explorer-benchmark.yml. A trigger that does not apply (a fork, a failed CI
 run, a CI run that built no web app because the PR changes no web input) skips silently; an unfit
 build skips with notes, which the workflow writes into the PR's CI status comment.
+
+A leg is one scenario of benchmark-scenarios.json on one laptop. Every explorer change runs the
+first scenario; a PR with the suite label, or a manual run asking for the suite, runs them all.
 """
 import io
 import json
@@ -32,6 +35,40 @@ RUNNER = 'bevy-explorer-benchmark-'
 # to close Chrome and settle) must stay under 3600 (bevy-explorer-benchmark-leg.yml).
 MAX_RUNS = (3600 - 1) // (2 * (480 + 45))
 SHA = re.compile(r'[0-9a-f]{40}')
+SCENARIOS = Path(__file__).with_name('benchmark-scenarios.json')
+# Adding this label to a PR runs every scenario; while it stays on, so does every passed CI run.
+SUITE_LABEL = 'performance-suite'
+# A scenario's name names its legs' artifacts, `benchmark-result-<name>--<label>`.
+SCENARIO_NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
+# The realm and the page parameters go into the page URL as they are: no space, fragment or line
+# end, and a realm adds no parameter of its own.
+SCENARIO_FIELDS = {'realm': re.compile(r'[A-Za-z0-9_.,:/%+-]+'), 'query': re.compile(r'[A-Za-z0-9_.,:/=&%+-]*')}
+
+
+def load_scenarios(path=SCENARIOS):
+    """The scenario list: each a name, a title for the report, the realm and extra page parameters."""
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    rows = data.get('scenarios') if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f'{path} lists no scenario')
+    scenarios = []
+    for row in rows:
+        if not isinstance(row, dict) or set(row) - {'name', 'title', 'realm', 'query'}:
+            raise ValueError(f'{path}: a scenario has a name, a title, a realm and optionally a query: {row}')
+        scenario = {key: row.get(key, '') for key in ('name', 'title', 'realm', 'query')}
+        if not all(isinstance(value, str) for value in scenario.values()):
+            raise ValueError(f'{path}: every field of a scenario is text: {row}')
+        if not SCENARIO_NAME.fullmatch(scenario['name']):
+            raise ValueError(f"{path}: {scenario['name']!r} is not a lowercase-and-hyphens name")
+        if any(scenario['name'] == other['name'] for other in scenarios):
+            raise ValueError(f"{path}: two scenarios are called {scenario['name']}")
+        if not scenario['title'].strip() or any(c in scenario['title'] for c in '\r\n\t|'):
+            raise ValueError(f"{path}: {scenario['name']} needs a one-line title without |")
+        for key, allowed in SCENARIO_FIELDS.items():
+            if not allowed.fullmatch(scenario[key]):
+                raise ValueError(f"{path}: {scenario['name']} needs a {key} a page URL carries as it is")
+        scenarios.append(scenario)
+    return scenarios
 
 
 def api(path, raw=False):
@@ -113,8 +150,11 @@ def base_runs(repo, base_sha):
     return [run for run in runs if ci_run(run, repo, ('push',)) and run['head_branch'] == 'main']
 
 
-def resolve(event_name, event, repo, enabled='', runs=''):
+def resolve(event_name, event, repo, enabled='', runs='', scenarios=None):
+    scenarios = load_scenarios() if scenarios is None else scenarios
     inputs = {}
+    # None: whether the PR carries the suite label decides
+    suite = None
     if event_name == 'workflow_run':
         trigger = event['workflow_run']
         if trigger['event'] != 'pull_request' or (trigger.get('head_repository') or {}).get('full_name') != repo:
@@ -128,6 +168,12 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     elif event_name == 'workflow_dispatch':
         inputs = event.get('inputs') or {}
         number = pr_number(inputs.get('pr'), repo)
+        suite = str(inputs.get('suite') or '').strip().lower() == 'true'
+    elif event_name == 'pull_request_target':
+        if event.get('action') != 'labeled' or (event.get('label') or {}).get('name') != SUITE_LABEL:
+            return skip(f'only adding the {SUITE_LABEL} label starts the benchmark')
+        number = event['pull_request']['number']
+        suite = True
     else:
         return skip(f'{event_name} does not start the benchmark')
 
@@ -136,6 +182,9 @@ def resolve(event_name, event, repo, enabled='', runs=''):
         return skip(f'#{number} comes from a fork')
     if pr['state'] != 'open':
         return skip(f'#{number} is not open')
+    if suite is None:
+        suite = any(label.get('name') == SUITE_LABEL for label in pr.get('labels') or [])
+    chosen = scenarios if suite else scenarios[:1]
 
     change_sha = (inputs.get('change_sha') or '').strip() or pr['head']['sha']
     base_sha = (inputs.get('base_sha') or '').strip()
@@ -152,7 +201,11 @@ def resolve(event_name, event, repo, enabled='', runs=''):
 
     result = {'run': False, 'pr': str(number), 'change_sha': change_sha, 'base_sha': '', 'runs': runs,
               'legs': [], 'expected_labels': '', 'report_runner_artifact': '', 'report_runner_run_id': '',
-              'notes': ''}
+              'notes': '', 'suite': suite,
+              # one report each; a suite's names its scenario, the one scenario's keeps the plain title
+              'scenarios': [{'name': scenario['name'], 'title': scenario['title'],
+                             'heading': f"Benchmark: {scenario['title']}" if suite else 'Benchmark'}
+                            for scenario in chosen]}
     candidates = api(f'repos/{repo}/{RUNS_PATH}?head_sha={change_sha}&status=success&per_page=100')['workflow_runs']
     changes = [run for run in candidates if ci_run(run, repo, ('pull_request', 'workflow_dispatch'))
                and run['head_sha'] == change_sha]
@@ -206,24 +259,30 @@ def resolve(event_name, event, repo, enabled='', runs=''):
                             f'nor {base_where} has one.')
     report_name, report_run = runners[PLATFORMS['linux']]
     notes = []
+    laptops = []
     for label, system in fleet:
         if PLATFORMS[system] not in runners:
             notes.append(f'{label}-chrome did not run: neither the change run nor {base_where} has a benchmark '
                          f'runner for {PLATFORMS[system]}.')
             continue
         runner_name, runner_run = runners[PLATFORMS[system]]
-        result['legs'].append({
+        laptops.append({
             'label': f'{label}-chrome', 'runs_on': label, 'os': system,
             'runner_artifact': runner_name, 'runner_run_id': str(runner_run['id']),
             'change_artifact': change_web, 'change_run_id': str(change['id']),
             'base_artifact': base_web, 'base_run_id': str(base['id']),
         })
-    if not result['legs']:
+    if not laptops:
         return stop(result, 'No laptop can run the benchmark.', notes)
-    labels = [leg['label'] for leg in result['legs']]
+    # scenario by scenario, so each laptop measures the first scenario first
+    result['legs'] = [{**laptop, 'scenario': scenario['name'], 'realm': scenario['realm'], 'query': scenario['query']}
+                      for scenario in chosen for laptop in laptops]
+    labels = [laptop['label'] for laptop in laptops]
+    measured = ', '.join(scenario['name'] for scenario in chosen)
     return {**result, 'run': True, 'expected_labels': ','.join(labels), 'notes': ' '.join(notes),
             'report_runner_artifact': report_name, 'report_runner_run_id': str(report_run['id']),
-            'reason': f"#{number} at {change_sha} against main at {base['head_sha']} on {', '.join(labels)}"}
+            'reason': f"#{number} at {change_sha} against main at {base['head_sha']} on {', '.join(labels)}: "
+                      f'{measured}'}
 
 
 def write_outputs(values):

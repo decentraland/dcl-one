@@ -11,6 +11,7 @@ import { WEB_PARAMS } from '@explorer-core/engine/generated'
 import { DEBUG_PANEL_PARAM } from '@explorer-core/lib/debugPanelLauncher'
 import { MOCK_SWITCHES } from '@explorer-core/engine/mockSwitches'
 import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@explorer-core/lib/analytics'
+import { AUTOPILOT_PARAMS } from '@explorer-core/lib/webParams'
 
 export type { AcceptedParam } from '@explorer-core/hostContract'
 
@@ -66,9 +67,9 @@ const INTERNAL_PARAMS = [
 ]
 
 /** What the dialog advertises: every link-settable engine param, then the page's own. Not
- *  `autopilot`, the benchmark's run, which /play never carries: a link with it is told it was ignored. */
+ *  the autopilot's params, the benchmark's run, which /play never carries: a link with one is told it was ignored. */
 export function acceptedEntryParams(): AcceptedParam[] {
-  const engine = WEB_PARAMS.filter((p) => p.delivery !== 'host' && p.name !== 'autopilot').map((p) => ({
+  const engine = WEB_PARAMS.filter((p) => p.delivery !== 'host' && !AUTOPILOT_PARAMS.includes(p.name)).map((p) => ({
     name: p.name,
     doc: p.doc,
     reader: 'engine' as const

@@ -11,8 +11,8 @@ worst) and exceptions per run, with a verdict for each. It has three parts:
   page streams back ([Browser stream](#browser-stream)) and writes the report
   ([The report](#the-report), [The runner](#the-runner));
 - the workflow *Bevy Explorer / Benchmark*, which finds the builds in CI's artifacts, runs a leg on
-  each laptop and posts the report ([How a run starts](#how-a-run-starts),
-  [The workflow](#the-workflow), [The fleet](#the-fleet)).
+  each laptop for each scenario and posts the report ([How a run starts](#how-a-run-starts),
+  [Scenarios](#scenarios), [The workflow](#the-workflow), [The fleet](#the-fleet)).
 
 For comparisons with unity-explorer, obtain its benchmark source and dated results through
 authorized task context; record the revisions, workload and hardware with the comparison.
@@ -30,10 +30,16 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   with a web app built (`workflow_run`). CI builds the web app when the pull request changes a web
   input (the engine, the HUD, the page), so a run that built none, such as a backend-only change,
   starts nothing.
+- **The performance suite.** Adding the `performance-suite` label to a pull request
+  (`pull_request_target`) measures every [scenario](#scenarios) instead of the first, from the
+  head's passed CI run; with none yet, the performance section says the suite starts when one
+  passes. While the label stays on, every passed CI run of the head measures the suite too; remove
+  it to go back to the first scenario. Labelling takes triage access. Any other label starts
+  nothing.
 - **By hand.** *Run workflow* on *Bevy Explorer / Benchmark* (`workflow_dispatch`) with `pr` (its
   number or its URL) and optionally `change_sha` (a commit of the pull request; its head by
   default), `base_sha` (a commit on main; by default the newest main build that has each
-  artifact) and `runs` (1 to 3). Starting one takes write access.
+  artifact), `runs` (1 to 3) and `suite` (every scenario). Starting one takes write access.
 - **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main,
   unless `BENCHMARK_ENABLED_RUNNERS` is `none`: then a pull request that compiles the engine skips
   it, while one that reuses main's compiled engine stays optimized. Setup reads `engine.optimized`
@@ -50,14 +56,17 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   it (CI built none, or the artifact expired).
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
   any passed CI run of it that a `pull_request` event started (a re-run of an older commit's
-  included, which then skips), or a manual run naming it by number (one naming it by URL is a
-  group of its own). A manual CI run on its branch cancels nothing.
+  included, which then skips), adding the suite label, or a manual run naming it by number (one
+  naming it by URL is a group of its own). A manual CI run on its branch cancels nothing.
 
 ## What a leg runs
 
-Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-hosted runner
-(*Chrome*, in `bevy-explorer-benchmark-leg.yml`), labelled `<runner label>-chrome`, for example
-`intel-i5-chrome`. The job checks nothing out:
+Each enabled laptop of [the fleet](#the-fleet) runs one leg per measured [scenario](#scenarios),
+a job on its self-hosted runner (*Chrome*, in `bevy-explorer-benchmark-leg.yml`), named
+`<runner label>-chrome (<scenario>)` and labelled `<runner label>-chrome`, for example
+`intel-i5-chrome`. A laptop runs one job at a time, so its legs run one after another, the first
+scenario first. The scenario's realm and page parameters (`REALM`, `EXTRA_QUERY`) apply to the
+warm-ups and the measured runs alike. The job checks nothing out:
 
 1. It removes an earlier session's files: the runner, both web app folders, `runs_on.txt` and every
    run file (`runner`, `runs_on.txt`, `change_build*`, `base_build*`). A file it cannot remove,
@@ -69,28 +78,56 @@ Each enabled laptop of [the fleet](#the-fleet) runs one leg, a job on its self-h
 4. `benchmark measure` runs change, base, change, base ..., `RUNS` times each (3 by default), with
    a 15 s settle after each run. Each run's files become `change_build_<i>.csv/.log` and
    `base_build_<i>.csv/.log`; `runs_on.txt`, holding the label, comes last.
-5. It uploads `benchmark-result-<label>`: `runs_on.txt` and every run's `.csv`, `.csv.partial`
+5. It uploads `benchmark-result-<scenario>--<label>`: `runs_on.txt` and every run's `.csv`, `.csv.partial`
    and `.log`, kept 7 days. It does so after a failed or cut-off `measure` too, so the runs that
    finished can be looked at in the artifact, but not when `measure` never started. The report
    reads a leg only once `measure` wrote its `runs_on.txt`, at the end: after a failed or cut-off
    `measure` it says the leg "produced no results" ([The report](#the-report)). A re-run of the
    job replaces the artifact.
 
-Every run is the explorer's unattended session ([The run](#the-run)) in the live
-`supportteam.dcl.eth`: sign in as the local guest, wait until in world, stand at the spawn point
-for 90 s recording each frame's CPU and GPU time, then quit. The character does not move: the
-smallest, most repeatable workload. Both builds are measured fresh in one session, interleaved,
-so they see the same world content, thermal state and background load, and a drift of the
-machine or the world between sessions cannot read as a regression.
+Every run is the explorer's unattended session ([The run](#the-run)) of the leg's scenario: sign
+in as the local guest, wait until in world, record each frame's CPU and GPU time for 90 s, then
+quit. Both builds are measured fresh in one session, interleaved, so they see the same world
+content, thermal state and background load, and a drift of the machine or the world between
+sessions cannot read as a regression.
 
-`supportteam.dcl.eth` is live content: editing it changes the workload of every later run. Both
+The scenarios' worlds are live content: editing one changes the workload of every later run. Both
 builds of a leg see the same content, so an edit gives no false verdict, but it shifts every
-absolute number: do not edit it casually, and never during a run.
+absolute number: do not edit them casually, and never during a run.
 
 Limits: a measured run 480 s (`RUN_TIMEOUT_SECONDS`), a warm-up 300 s (`WARMUP_TIMEOUT_SECONDS`,
 a backstop), each warm-up step 10 minutes, the `measure` step 60 minutes, the job 90 minutes.
 Closing Chrome takes up to 30 s and the settle 15 s, so `runs` × 2 × (480 + 45) must stay under
-3600: setup refuses more than 3 runs.
+3600: setup refuses more than 3 runs. A suite takes about an hour per scenario on each laptop.
+
+## Scenarios
+
+[`tooling/benchmark-scenarios.json`](../../../../tooling/benchmark-scenarios.json) lists what a
+leg measures, in order. Every run measures the first scenario; the
+[performance suite](#how-a-run-starts) measures them all. Adding, changing or removing a scenario
+is an edit of that file alone: the workflow takes the list from it, the legs and the report from
+the list. Each scenario has:
+
+- `name`: lowercase letters, digits and single hyphens; it names the legs' jobs and artifacts.
+- `title`: one line, without `|`; it heads the scenario's report and its row in the suite's table.
+- `realm`: the realm the runs enter (`REALM`), with no `&`, `=` or space.
+- `query`: optional page parameters the runner appends (`EXTRA_QUERY`), for example
+  `position=-12,2&autopilotWalkTo=0,2`; no space or `#`.
+
+The autopilot's [launch options](#launch-options) set the workload: `position` where the run
+arrives, `autopilotWalkTo` a walk-in, `autopilotAvatars` a crowd of demo avatars.
+
+| Scenario | Measures |
+| --- | --- |
+| `spawn` | Standing at the spawn point of `supportteam.dcl.eth`: the smallest, most repeatable workload. |
+| `genesis-walk` | Arriving on an empty parcel west of Genesis Plaza and walking in, so the plaza's scenes load during play ([walk-in](#launch-options)). |
+| `avatars-100`, `avatars-400` | 100 or 400 demo avatars spawned in front of the player as measuring starts: building them, then drawing them, every one shown. |
+
+Every scenario runs about as long as `spawn` (warm-ups, then `RUNS` × 2 measured runs), so the
+suite's length grows with the list; the same per-run limits hold. The *Queue watchdog* job runs
+until each laptop has started its last leg, within a GitHub-hosted job's six hours: keep the list
+short enough that a laptop reaches its last scenario in that time. Setup refuses the list when a
+scenario breaks a rule above, so a broken edit fails the *Inputs* job, not a leg.
 
 ## The report
 
@@ -110,6 +147,18 @@ comment ([The workflow](#the-workflow)).
   "*name* produced no results (its job failed, timed out or was skipped)".
 - **Exit code.** 0 when a section has data; 2 when none has, after writing the file anyway; 64 for
   a `--pr` or `--expected-runs` that is not a whole number, with no file written.
+- **Machine lines.** With `--machines <file>` (`REPORT_MACHINES`), it also writes one line per
+  section and per expected label without one: the label, the section's title and its verdicts in
+  one cell, tab-separated. The cell lists every 🔴 verdict, then every 🟢 one (`CPU average 6%
+  slower`, `Peak memory 9% less`, `Exceptions per run more`), one per line; or `⚪ no significant
+  change`, `⚠️ not compared` (no base run), `⚠️ no results` or `⚠️ results unreadable`. A cell is
+  one laptop's own verdicts: unlike the headline, it does not wait for a second laptop.
+
+The workflow writes one report per measured scenario. A run of one scenario posts its report as
+it is, titled *Benchmark*. A suite's reports would outgrow the comment, so the comment holds the
+*Performance suite* table instead: a row per scenario with its **Overall** line and each laptop's
+cell, a column per laptop; the reports, titled *Benchmark: <scenario title>*, are in the report
+job's summary and the `benchmark-report` artifact.
 
 ### Reading the results
 
@@ -181,16 +230,18 @@ Treat small GPU differences with caution: in this scene the GPU average is a few
 | Write the CSV | `--csv <path>` | `?perfCsv` (page param): the stream carries the CSV |
 | Write the log | `--log-file <path>`, or `-logFile <path>` | `?perfStream=<same-origin path>` (page param): the log streams there |
 | World | `--realm supportteam.dcl.eth` | `?realm=supportteam.dcl.eth` |
-| Walk in while measuring (by hand only) | `--autopilot-walk-to <x,y>` | — |
+| Walk in while measuring | `--autopilot-walk-to <x,y>` | `?autopilotWalkTo=<x,y>` (launch param) |
+| A crowd while measuring | `--autopilot-avatars <n>` | `?autopilotAvatars=<n>` (launch param) |
 
 The page hands `perfStream` and `perfCsv` to `engine_set_perf_stream(path, csv)` before
 `engine_run` (`src/web.rs`). A launch with no CSV destination is the warm-up.
 
 The web switches act only on a loopback host (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`),
-where the runner serves the web app. Anywhere else the page ignores `autopilot`, `perfStream`
-and `perfCsv` outright: it does not boot in autopilot mode, leaves the `autopilot` key out of the
-engine's launch options (absent, not `false`), starts no stream, and offers no warning to click
-through. A link cannot start an unattended session or send the log anywhere. Natively
+where the runner serves the web app. Anywhere else the page ignores `autopilot`,
+`autopilotWalkTo`, `autopilotAvatars`, `perfStream` and `perfCsv` outright: it does not boot in
+autopilot mode, leaves the autopilot's keys out of the engine's launch options (absent, not
+`false`; `AUTOPILOT_PARAMS` in `library/explorer-core/lib/webParams.ts`), starts no stream, and
+offers no warning to click through. A link cannot start an unattended session or send the log anywhere. Natively
 `--autopilot` is the user's own flag. The Sites `/play` page never runs the benchmark: it ignores
 the switches on every host. `perfStream` is a path on the page's own origin: a leading slash, no
 query or fragment.
@@ -203,9 +254,11 @@ supportteam.dcl.eth`, where `<build>` is `change_build` or `base_build`. Then wr
 leaves no CSV counts as crashed.
 
 A walk-in measures content that loads during play instead of behind the loading backdrop:
-- **How it moves:** with `--autopilot-walk-to <x,y>` (native only), once measuring starts the
-  player moves in a straight line from where it arrived to the centre of that parcel at 6 m/s,
-  facing it, then stands there for the rest of the 90 s.
+- **How it moves:** with `--autopilot-walk-to <x,y>` (`?autopilotWalkTo=<x,y>` on the web), once
+  measuring starts the player moves in a straight line from where it arrived to the centre of
+  that parcel at 6 m/s, facing it, then stands there for the rest of the 90 s. A web value that
+  is not a parcel as `x,y` fails the run (exit code 1) instead of standing still; natively the
+  flag refuses it.
 - **Where to start:** arrive with `--position` more than the load distance from the target scene,
   so it loads on the way. Walking never raises the backdrop; only a teleport or a realm change
   does.
@@ -218,7 +271,16 @@ A walk-in measures content that loads during play instead of behind the loading 
 - **Example, into Genesis Plaza** (parcels −3…3, −4…9): `--realm
   https://realm-provider-ea.decentraland.org/main --position -12,2 --distance 100
   --autopilot-walk-to 0,2` arrives on an empty parcel 136 m west of it and walks 192 m in,
-  through the SDK7 "Genesis Plaza - Roads".
+  through the SDK7 "Genesis Plaza - Roads". The `genesis-walk` [scenario](#scenarios) is this
+  walk on the web, at the default load distance.
+
+A crowd measures avatars: with `--autopilot-avatars <n>` (`?autopilotAvatars=<n>` on the web),
+on the first measured frame the run spawns `n` demo avatars (at most 1024) in the grid in front of
+the player that `/avatar_demo` uses, each with the same seeded look in every run and build, and
+lifts the Max Avatars cap for the session, so every one is built and drawn. The measured 90 s
+include loading and building them, then drawing the whole crowd (`spawn_autopilot_crowd` in
+`crates/avatar/src/debug_avatars.rs`). It needs no scene preview mode. Without a CSV destination
+(the warm-up) neither the walk nor the crowd happens.
 
 ## The run
 
@@ -439,14 +501,14 @@ ready for review.
 | `fetch` | Downloads or unpacks a web app (a folder, a `.zip` or the URL of one) into `--dir`. Under Actions only a folder or a `.zip` on the machine: an address or a network path (`\\host\share`, `//host/share`) is refused. |
 | `measure` | Change, base, change, base ... (`--runs` 3, `--settle` 15 s); each run's files become `change_build_<i>.csv/.log` and `base_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt` and every `change_build_<n>` and `base_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. |
 | `leg` | `fetch` both builds, warm both up, `measure`: the whole leg by hand. Its label is `local-chrome` unless `--label` gives one. |
-| `report [DIR]` | The report ([The report](#the-report)) of every folder under `DIR` (the working directory by default) that holds a `runs_on.txt`, written to `--out` (`summary.md` by default). The header takes `--title` (`Benchmark` by default), `--pr`, `--change` and `--base` (how it names the two builds) and `--run-url`; `--expected-runs` (3 by default: fewer CSVs mean crashed runs) and `--expected-labels` (comma-separated: one without results gets a line) shape the notes. |
+| `report [DIR]` | The report ([The report](#the-report)) of every folder under `DIR` (the working directory by default) that holds a `runs_on.txt`, written to `--out` (`summary.md` by default). The header takes `--title` (`Benchmark` by default), `--pr`, `--change` and `--base` (how it names the two builds) and `--run-url`; `--expected-runs` (3 by default: fewer CSVs mean crashed runs) and `--expected-labels` (comma-separated: one without results gets a line) shape the notes. `--machines` also writes each laptop's verdicts, a line each ([The report](#the-report)). |
 
 Every option but four has an environment variable (`benchmark <command> --help` lists them), so a
 workflow step needs no shell-specific syntax: `--keep-service-worker` (by hand only), `leg`'s
 `--change` and `--base` and `fetch`'s `--source` have none. `--chrome-arg` takes its flags from
 `CHROME_EXTRA_ARGS`, space-separated, which `--help` does not list. `report` reads
 `GITHUB_STEP_SUMMARY`, `RUN_NAME`, `PR_NUMBER`, `CHANGE_DESCRIPTION`, `BASE_DESCRIPTION`,
-`RUN_URL`, `EXPECTED_RUNS` and `EXPECTED_LABELS`; its `DIR` is an argument.
+`RUN_URL`, `EXPECTED_RUNS`, `EXPECTED_LABELS` and `REPORT_MACHINES`; its `DIR` is an argument.
 
 `run` exits 0 when the page ended the run with exit code 0, 1 when it ended with another code or
 an incomplete stream, 2 at the timeout, 3 when Chrome exited first, 130 when interrupted; 64 is a
@@ -545,7 +607,7 @@ A/B for `leg`. The workflow's resolver has its own tests, with the GitHub API fa
 ## The workflow
 
 [`bevy-explorer-benchmark.yml`](../../../../.github/workflows/bevy-explorer-benchmark.yml)
-(*Bevy Explorer / Benchmark*) and the leg it calls once per laptop,
+(*Bevy Explorer / Benchmark*) and the leg it calls once per laptop and scenario,
 [`bevy-explorer-benchmark-leg.yml`](../../../../.github/workflows/bevy-explorer-benchmark-leg.yml).
 They use `GITHUB_TOKEN` only, with no permission at the top and each job's own:
 
@@ -554,10 +616,10 @@ They use `GITHUB_TOKEN` only, with no permission at the top and each job's own:
 | *Inputs* (`setup`) | GitHub-hosted | read contents, actions, pull requests | Runs [`tooling/benchmark-inputs.py`](../../../../tooling/benchmark-inputs.py) on the event: decides whether the benchmark runs and finds the builds, the runners and the legs. |
 | *Notice* | GitHub-hosted | write pull requests | When nothing runs and setup left notes, writes them into the performance section (*Not run*). |
 | *Running* | GitHub-hosted | write pull requests | When the benchmark runs, sets the performance section to *Running* with the run, the builds and the legs. |
-| *Queue watchdog* | GitHub-hosted | write actions, pull requests | Cancels the run when a leg never starts, saying so in the performance section ([The fleet](#the-fleet)). |
-| `<label>` / *Chrome* (`leg`) | the laptop | read actions | [What a leg runs](#what-a-leg-runs); a failed leg does not stop the others. |
-| *Report* (`gather`) | GitHub-hosted | read actions | Unless the run was cancelled: downloads every `benchmark-result-*` and the Linux runner, writes the report and uploads it as `benchmark-report`. |
-| *Post* | GitHub-hosted | write pull requests | Unless the run was cancelled, after a report: downloads `benchmark-report`, puts a badge read from its *Overall* line above it and writes it into the performance section. |
+| *Queue watchdog* | GitHub-hosted | write actions, pull requests | Cancels the run when a laptop with a leg still to start runs none of them, saying so in the performance section ([The fleet](#the-fleet)). |
+| `<label> (<scenario>)` / *Chrome* (`leg`) | the laptop | read actions | [What a leg runs](#what-a-leg-runs); a failed leg does not stop the others. |
+| *Report* (`gather`) | GitHub-hosted | read actions | Unless the run was cancelled: downloads every `benchmark-result-*` and the Linux runner, writes a report per scenario and the comment's text, and uploads them as `benchmark-report`. |
+| *Post* | GitHub-hosted | write pull requests | Unless the run was cancelled, after a report: downloads `benchmark-report`, puts a badge read from the reports' *Overall* lines above the comment's text and writes it into the performance section. |
 
 The jobs that write to the pull request use the repository's
 [`bevy-explorer-ci-status`](../../../../.github/actions/bevy-explorer-ci-status/action.yml) action, which keeps
@@ -572,8 +634,8 @@ its merge commit.
 | --- | --- | --- |
 | `bevy-explorer-web-<sha>` | the web app, `apps/bevy-explorer/dist/web/`, with its `build-info.json` | CI's web job; 90 days on main, 7 otherwise |
 | `bevy-explorer-benchmark-<os>-<arch>-<sha>` | the `benchmark` binary | CI's *Test Suite* ([The runner](#the-runner)) |
-| `benchmark-result-<label>` | a leg's `runs_on.txt` and run files | the leg; 7 days |
-| `benchmark-report` | the report, `report.md` | the report job; 7 days |
+| `benchmark-result-<scenario>--<label>` | a leg's `runs_on.txt` and run files | the leg; 7 days |
+| `benchmark-report` | the reports, `report.md`, and the comment's text, `comment.md` | the report job; 7 days |
 
 **What setup finds**, after the checks in [How a run starts](#how-a-run-starts):
 
@@ -586,20 +648,32 @@ its merge commit.
   from the change run when it has one, so a pull request that changes the runner is measured with
   its own, else from main's runs, searched as for the base. A laptop whose operating system has no
   runner is left out, with a note in the report; without a Linux runner nothing runs.
-- **The legs:** the fleet's laptops that `BENCHMARK_ENABLED_RUNNERS` enables, each with its runner
-  and both web apps; their labels, which the report expects; and the runs per build.
+- **The scenarios:** the first of [the list](#scenarios), or all of them for the suite (the label
+  on the pull request, or a manual run's `suite`).
+- **The legs:** each scenario on each of the fleet's laptops that `BENCHMARK_ENABLED_RUNNERS`
+  enables, scenario by scenario, each with its runner, both web apps and the scenario's realm and
+  page parameters; the laptops' labels, which each report expects; and the runs per build.
 
-**The report job** runs `benchmark report results` with `PR_NUMBER`, `CHANGE_DESCRIPTION`
-(`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`), `RUN_URL`, `EXPECTED_RUNS` and
-`EXPECTED_LABELS`, appends setup's notes, copies the result to the job summary and uploads it, with
-the report's exit code as a job output. The post job then puts a badge above it, read from the
-**Overall** line (*Regression*, *Improved*, *No change*, *Not compared*; *No data* on exit 2), and
-writes it into the performance section. The action truncates a section over 12000 characters with
-a note, so the full report stays in the report job's summary and the `benchmark-report` artifact;
-a write it cannot confirm after five attempts warns and does not fail the job. A report without
-data (exit 2) is written, then fails the post job. A cancelled run, by the watchdog or by a newer
+**The report job** moves each scenario's leg artifacts into a folder of their own and runs
+`benchmark report` on each, in the list's order, with `RUN_NAME` (the scenario's heading),
+`PR_NUMBER`, `CHANGE_DESCRIPTION` (`#<pr> at <commit>`), `BASE_DESCRIPTION` (`main at <commit>`),
+`RUN_URL`, `EXPECTED_RUNS`, `EXPECTED_LABELS` and `REPORT_MACHINES`. It appends setup's notes,
+copies the reports to the job summary, writes the comment's text ([The report](#the-report)) and
+uploads both, with exit code 2 as a job output when no scenario's report has data, else 0. The
+post job then puts a badge above the comment's text, read from the reports' **Overall** lines, a
+regression in any scenario first (*Regression*, *Improved*, *No change*, *Not compared*; *No data*
+on exit 2), and writes it into the performance section. The action truncates a section over
+12000 characters with a note, so the full reports stay in the report job's summary and the
+`benchmark-report` artifact; a write it cannot confirm after five attempts warns and does not fail
+the job. A run without data (exit 2) is written, then fails the post job. A cancelled run, by the watchdog or by a newer
 run of the pull request, writes no report, so the section keeps what the watchdog or the newer
 run wrote.
+
+**The label trigger.** `pull_request_target` runs the workflow file of main, as `workflow_run` and
+`workflow_dispatch` do, and the workflow checks out nothing of the pull request's branch: its legs
+take only the web apps and runners CI built, as for any other run. Setup's condition and the
+concurrency group admit only the `performance-suite` label on a pull request from this
+repository, so other labels and forks start nothing.
 
 **Trust.** This repository is public. Benchmark legs execute the selected revision's app and may execute its runner. Before enabling self-hosted runners, verify the current workflow event filters, ref selection, token permissions and runner-group access. Keep untrusted PR code off persistent machines that hold credentials or can reach private resources. Fork filtering alone does not establish trust in a same-repository branch. Use an explicitly reviewed revision and an isolated runner environment. Jobs that consume untrusted artifacts must not gain write permissions; a comment-only job must treat the report as data. Repository settings and runner authorization require an administrator's verification, not an assumption from this guide.
 
@@ -630,9 +704,11 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
 - `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 60 when unset.
 
 **The watchdog.** A leg sent to an offline, stuck or busy laptop waits in the queue, and a job's
-timeout counts only once it starts. The *Queue watchdog* job reads the run's jobs every minute;
-when one is still queued after `BENCHMARK_QUEUE_TIMEOUT_MINUTES`, it sets the performance section
-to *Cancelled* with a message naming it and cancels the run. The message says the laptop is
+timeout counts only once it starts. A laptop runs its legs one after another, so the watchdog
+waits per laptop: the *Queue watchdog* job reads the run's jobs every minute, and when a laptop
+with a leg still to start has run none of this run's legs for `BENCHMARK_QUEUE_TIMEOUT_MINUTES`
+(since it was last seen running one, or since the watchdog first saw it waiting), it sets the
+performance section to *Cancelled* with a message naming the laptop and cancels the run. The message says the laptop is
 offline, stuck or busy with another job, and suggests *Re-run
 failed jobs* once it is free, which keeps the legs that finished and their results, raising
 `BENCHMARK_QUEUE_TIMEOUT_MINUTES`, or leaving the laptop out of `BENCHMARK_ENABLED_RUNNERS`. It

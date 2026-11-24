@@ -3,7 +3,7 @@
 // resolved for itself (lib/baseDomain.ts), the ui scene (our bundled bridge scene unless a link
 // overrode it), and the benchmark's switches where they count.
 import type { EngineLaunch } from '@explorer-core/hostContract'
-import { launchOptionsFromUrl, type LaunchOptions } from '@explorer-core/lib/webParams'
+import { AUTOPILOT_PARAMS, launchOptionsFromUrl, type LaunchOptions } from '@explorer-core/lib/webParams'
 import { BASE_DOMAIN, SERVICE_OVERRIDES } from './baseDomain'
 import { benchmarkSwitchesHonoured, bootMode } from './bootMode'
 import { perfStreamPath } from './entryParams'
@@ -14,7 +14,8 @@ import { SYSTEM_SCENE } from './systemScene'
  * What the entry url asks of the engine: its launch options and the benchmark stream (`perfStream`,
  * with `perfCsv` for the CSV). The benchmark's switches count only where `benchmark` says so,
  * which is `benchmarkSwitchesHonoured` (lib/bootMode.ts); anywhere else the engine is told nothing
- * of them: `autopilot` is left out of the launch options (absent, not `false`) and there is no stream.
+ * of them: the autopilot's params are left out of the launch options (absent, not `false`) and there
+ * is no stream.
  */
 export function entryEngineOptions(
   params: URLSearchParams,
@@ -22,7 +23,7 @@ export function entryEngineOptions(
 ): { launch: LaunchOptions; perfStream: { path: string; csv: boolean } | null } {
   const path = benchmark ? perfStreamPath(params) : null
   return {
-    launch: launchOptionsFromUrl(params, benchmark ? [] : ['autopilot']),
+    launch: launchOptionsFromUrl(params, benchmark ? [] : AUTOPILOT_PARAMS),
     perfStream: path == null ? null : { path, csv: params.has('perfCsv') }
   }
 }

@@ -2,6 +2,7 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use collectibles::base_wearables;
+use common::autopilot::{AutopilotCrowd, AutopilotPhase};
 use common::structs::{
     AppConfig, AttachPoints, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser,
     SessionGraphics,
@@ -109,6 +110,10 @@ pub(super) struct DebugAvatarsPlugin;
 
 impl Plugin for DebugAvatarsPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            spawn_autopilot_crowd.run_if(resource_exists::<AutopilotCrowd>),
+        );
         if !app
             .world()
             .get_resource::<common::structs::PreviewMode>()
@@ -432,57 +437,14 @@ fn demo_command(
                     )
                 };
                 let slot = index % MAX_DEMOS as u64;
-                let offset = demo_offset(creator.layout, slot);
-                let shape = AvatarShape(PbAvatarShape {
-                    id: format!("debug-avatar-{index}"),
-                    body_shape: Some(format!(
-                        "{BASE_AVATARS}{}",
-                        if male { "BaseMale" } else { "BaseFemale" }
-                    )),
+                spawn_demo(
+                    &mut commands,
+                    index,
+                    male,
                     wearables,
-                    ..default()
-                });
-                // a demo avatar stands in for a player: it carries a nametag too, every other
-                // one with a claimed name
-                let attach_points = AttachPoints::new(&mut commands);
-                let claimed = index & 1 == 0;
-                let name = format!("Demo{index}");
-                let address = format!("{index:040x}");
-                let nametag = NametagContent {
-                    suffix: if claimed {
-                        String::new()
-                    } else {
-                        format!("#{index:04x}")
-                    },
-                    color: name_color(&name, &address, claimed),
-                    verified: claimed,
-                    official: false,
-                    name,
-                };
-                let mut entity = commands.spawn((
-                    DemoAvatar,
-                    Transform::from_translation(player.translation() + offset),
-                    Visibility::Inherited,
-                    AvatarDynamicState::default(),
-                    AvatarSelection {
-                        scene: None,
-                        shape,
-                        automatic_delete: false,
-                        disable_dither: false,
-                    },
-                    nametag,
-                ));
-                entity
-                    .add_children(&attach_points.entities())
-                    .insert(attach_points);
-                if let Some(name) = &creator.emote {
-                    entity.insert(EmoteCommand {
-                        urn: format!("urn:decentraland:off-chain:base-emotes:{name}"),
-                        timestamp: 1,
-                        r#loop: true,
-                        mask: EmoteMask::FullBody,
-                    });
-                }
+                    player.translation() + demo_offset(creator.layout, slot),
+                    creator.emote.as_deref(),
+                );
             }
             count += n;
         }
@@ -512,6 +474,106 @@ fn demo_command(
         }
     }
     cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":cap_json(session.max_avatars(&config)), "sessionCap":session.max_avatars.map(cap_json), "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+}
+
+/// One demo avatar standing at `translation`: a stand-in player with its nametag, every other one
+/// with a claimed name, looping `emote` when given.
+fn spawn_demo(
+    commands: &mut Commands,
+    index: u64,
+    male: bool,
+    wearables: Vec<String>,
+    translation: Vec3,
+    emote: Option<&str>,
+) {
+    let shape = AvatarShape(PbAvatarShape {
+        id: format!("debug-avatar-{index}"),
+        body_shape: Some(format!(
+            "{BASE_AVATARS}{}",
+            if male { "BaseMale" } else { "BaseFemale" }
+        )),
+        wearables,
+        ..default()
+    });
+    let attach_points = AttachPoints::new(commands);
+    let claimed = index & 1 == 0;
+    let name = format!("Demo{index}");
+    let address = format!("{index:040x}");
+    let nametag = NametagContent {
+        suffix: if claimed {
+            String::new()
+        } else {
+            format!("#{index:04x}")
+        },
+        color: name_color(&name, &address, claimed),
+        verified: claimed,
+        official: false,
+        name,
+    };
+    let mut entity = commands.spawn((
+        DemoAvatar,
+        Transform::from_translation(translation),
+        Visibility::Inherited,
+        AvatarDynamicState::default(),
+        AvatarSelection {
+            scene: None,
+            shape,
+            automatic_delete: false,
+            disable_dither: false,
+        },
+        nametag,
+    ));
+    entity
+        .add_children(&attach_points.entities())
+        .insert(attach_points);
+    if let Some(name) = emote {
+        entity.insert(EmoteCommand {
+            urn: format!("urn:decentraland:off-chain:base-emotes:{name}"),
+            timestamp: 1,
+            r#loop: true,
+            mask: EmoteMask::FullBody,
+        });
+    }
+}
+
+/// The seed of the benchmark crowd's looks, so every run and build measures the same crowd.
+const AUTOPILOT_CROWD_SEED: u64 = 1;
+
+/// The benchmark crowd ([`AutopilotCrowd`]): on the first `Measuring` frame, `count` demo avatars
+/// with seeded looks in the grid in front of the player, and no Max Avatars cap for the session,
+/// so every one of them is built and drawn.
+fn spawn_autopilot_crowd(
+    mut commands: Commands,
+    crowd: Res<AutopilotCrowd>,
+    phase: Option<Res<AutopilotPhase>>,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    mut session: ResMut<SessionGraphics>,
+    mut spawned: Local<bool>,
+) {
+    if *spawned || phase.is_none_or(|phase| *phase != AutopilotPhase::Measuring) {
+        return;
+    }
+    let Ok(player) = player.single() else {
+        return;
+    };
+    *spawned = true;
+    session.max_avatars = Some(UNCAPPED);
+    let count = crowd.count.min(MAX_DEMOS);
+    for index in 0..count as u64 {
+        let (male, wearables) = random_look(
+            &mut StdRng::seed_from_u64(look_seed(AUTOPILOT_CROWD_SEED, index)),
+            false,
+        );
+        spawn_demo(
+            &mut commands,
+            index,
+            male,
+            wearables,
+            player.translation() + demo_offset(DemoLayout::Grid, index),
+            None,
+        );
+    }
+    info!(target: common::autopilot::LOG_TARGET, "spawned a crowd of {count} demo avatars");
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.

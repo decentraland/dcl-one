@@ -45,6 +45,13 @@ pub struct Autopilot {
     pub measure: bool,
 }
 
+/// `--autopilot-avatars` (`?autopilotAvatars` on the web) in a measured run: the avatar crate
+/// spawns `count` demo avatars on the first `Measuring` frame, so building them is measured.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct AutopilotCrowd {
+    pub count: usize,
+}
+
 /// Where the autopilot's run stands; inserted with [`Autopilot`].
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AutopilotPhase {

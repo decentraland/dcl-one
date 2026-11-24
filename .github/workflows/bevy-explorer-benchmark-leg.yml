@@ -1,8 +1,9 @@
-# One laptop's leg of Bevy Explorer / Benchmark: Chrome runs the change and base web apps,
-# warm-up first, then measured runs interleaved (change, base, change, base, ...), and the run
-# files are uploaded as benchmark-result-<label>. The job runs on a self-hosted laptop and checks
-# nothing out: it downloads the benchmark runner and both web apps from their CI runs. The
-# runner's commands are in rendering/bevy-explorer/docs/guidelines/benchmark.md.
+# One laptop's leg of Bevy Explorer / Benchmark, one scenario of tooling/benchmark-scenarios.json:
+# Chrome runs the change and base web apps, warm-up first, then measured runs interleaved (change,
+# base, change, base, ...), and the run files are uploaded as benchmark-result-<scenario>--<label>.
+# The job runs on a self-hosted laptop and checks nothing out: it downloads the benchmark runner
+# and both web apps from their CI runs. The runner's commands are in
+# rendering/bevy-explorer/docs/guidelines/benchmark.md.
 #
 # Laptop prerequisites: Google Chrome, a logged-in desktop session with the screen on (the window
 # must be visible), and the runner's job-started hook that empties the workspace before each job
@@ -20,6 +21,19 @@ name: Bevy Explorer / Benchmark leg
         description: Names the report section (runs_on.txt) and the artifact, <runs_on>-chrome
         type: string
         required: true
+      scenario:
+        description: The scenario's name, which names the artifact
+        type: string
+        required: true
+      realm:
+        description: The realm the runs enter
+        type: string
+        required: true
+      query:
+        description: The scenario's extra page parameters (empty for none)
+        type: string
+        required: false
+        default: ''
       runner_artifact:
         description: The benchmark runner for the laptop's operating system
         type: string
@@ -64,6 +78,9 @@ jobs:
       RUN_TIMEOUT_SECONDS: '480'
       # Per warm-up, a backstop; each warm-up step is cut off after 10 minutes.
       WARMUP_TIMEOUT_SECONDS: '300'
+      # The scenario, for the warm-ups and the measured runs alike.
+      REALM: ${{ inputs.realm }}
+      EXTRA_QUERY: ${{ inputs.query }}
     steps:
       # The only steps with a shell of their own per OS (PowerShell on Windows, bash on macOS) are
       # these and the PATH steps: every later step calls `benchmark` from the PATH and takes its
@@ -141,7 +158,7 @@ jobs:
         if: ${{ always() && steps.measure.outcome != 'skipped' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: benchmark-result-${{ inputs.label }}
+          name: benchmark-result-${{ inputs.scenario }}--${{ inputs.label }}
           overwrite: true
           path: |
             runs_on.txt

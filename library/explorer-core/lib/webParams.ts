@@ -5,6 +5,11 @@
 
 import { WEB_PARAMS, type WebParam } from '../engine/generated/index'
 
+/** The benchmark autopilot's params (rendering/bevy-explorer/docs/guidelines/benchmark.md): the
+ *  unattended run and the scenario it measures. A host hands them to the engine only where it
+ *  honours the benchmark's switches. */
+export const AUTOPILOT_PARAMS: readonly string[] = ['autopilot', 'autopilotWalkTo', 'autopilotAvatars']
+
 /** A table row by name. Throws so a renamed/removed row fails at module load, not at launch. */
 export function webParam(name: string): WebParam {
   const p = WEB_PARAMS.find((p) => p.name === name)
