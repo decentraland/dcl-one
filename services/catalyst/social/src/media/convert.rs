@@ -1409,4 +1409,8 @@ mod tests {
         let big = Bytes::from(vec![0u8; CONVERT_CACHE_MAX_BODY + 1]);
         assert!(cacheable(StatusCode::OK, "image/png", big).is_err());
     }
+
+    mod poster_tests {
+        include!("convert/poster_tests.rs");
+    }
 }
