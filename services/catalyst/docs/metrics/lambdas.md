@@ -44,10 +44,12 @@ rentals, social), as the old services' registries covered theirs. The
 `catalyst index` process declares and emits them too, for its mirrors and
 readers, on its own `/metrics`.
 
-`url` is the configured subgraph URL, except that the path segment after
-`/api/`, where a gateway URL carries its API key, reads `[redacted]`:
-`/api/<key>/subgraphs/id/<id>` becomes `/api/[redacted]/subgraphs/id/<id>`.
+`url` is the configured subgraph URL without the places a URL can carry a
+key: its userinfo (`user:token@`), query string and fragment are dropped, and
+the path segment after `/api/`, where a gateway URL carries its API key, reads
+`[redacted]`: `/api/<key>/subgraphs/id/<id>` becomes
+`/api/[redacted]/subgraphs/id/<id>`.
 A keyless gateway URL (`/api/subgraphs/...` or `/api/deployments/...`) and a
 URL without an `/api/` segment keep their path.
-The old component exported the key, so a keyed URL's label value differs from
-the legacy one.
+The old component exported the whole URL, so the label value of a URL with a
+key, userinfo, query string or fragment differs from the legacy one.

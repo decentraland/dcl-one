@@ -260,7 +260,7 @@ pub async fn graph_query_classified(
 
 /// The subgraph series lamb2 and the content server exported
 /// (`@dcl/thegraph-component` 0.1.2), labelled by the configured subgraph URL
-/// with any API key redacted ([`url_label`]):
+/// without any key it may carry ([`url_label`]):
 /// every attempt's duration, each valid answer, and each failed attempt or
 /// invalid answer by `kind` (`timeout`, `invalid_block`, `syntax_error`,
 /// `unknown`).
@@ -301,22 +301,32 @@ fn has_data(data: &Value) -> bool {
     }
 }
 
-/// The `url` label of a subgraph URL: the path segment after `/api/`, where
-/// a gateway URL carries its API key (`/api/<key>/subgraphs/id/<id>`), reads
-/// `[redacted]`, so the key never reaches a scrape. A keyless gateway URL
-/// (`/api/subgraphs/...`, `/api/deployments/...`) keeps its path.
+/// The `url` label of a subgraph URL, without the places a URL can carry a
+/// secret, so no key reaches a scrape: userinfo (`user:token@`), the query
+/// string and the fragment are dropped, and the path segment after `/api/`,
+/// where a gateway URL carries its API key (`/api/<key>/subgraphs/id/<id>`),
+/// reads `[redacted]`. A keyless gateway URL (`/api/subgraphs/...`,
+/// `/api/deployments/...`) keeps its path.
 fn url_label(url: &str) -> String {
-    let host = url.find("://").map_or(0, |scheme| scheme + 3);
-    let path = url[host..].find('/').map_or(url.len(), |at| host + at);
-    let Some(api) = url[path..].find("/api/") else {
-        return url.to_owned();
+    let url = &url[..url.find(['?', '#']).unwrap_or(url.len())];
+    let authority = url.find("://").map_or(0, |scheme| scheme + 3);
+    let path = url[authority..]
+        .find('/')
+        .map_or(url.len(), |at| authority + at);
+    let host = url[authority..path]
+        .rfind('@')
+        .map_or(authority, |at| authority + at + 1);
+    let label = format!("{}{}", &url[..authority], &url[host..]);
+    let path = path - (host - authority);
+    let Some(api) = label[path..].find("/api/") else {
+        return label;
     };
     let key = path + api + "/api/".len();
-    match url[key..].find('/') {
-        Some(end) if !matches!(&url[key..key + end], "" | "subgraphs" | "deployments") => {
-            format!("{}[redacted]{}", &url[..key], &url[key + end..])
+    match label[key..].find('/') {
+        Some(end) if !matches!(&label[key..key + end], "" | "subgraphs" | "deployments") => {
+            format!("{}[redacted]{}", &label[..key], &label[key + end..])
         }
-        _ => url.to_owned(),
+        _ => label,
     }
 }
 
@@ -1225,7 +1235,7 @@ mod tests {
     }
 
     #[test]
-    fn the_url_label_redacts_a_gateway_api_key() {
+    fn the_url_label_drops_every_place_a_key_can_hide() {
         for (url, label) in [
             (
                 "https://gateway.thegraph.com/api/example-key-123/subgraphs/id/Qm1",
@@ -1241,6 +1251,26 @@ mod tests {
                 "https://gateway.thegraph.com/api/subgraphs/id/Qm1",
             ),
             ("http://127.0.0.1:1/subgraph", "http://127.0.0.1:1/subgraph"),
+            (
+                "https://api.example.com/subgraphs/name/x?api-key=example-key-123",
+                "https://api.example.com/subgraphs/name/x",
+            ),
+            (
+                "https://api.example.com/subgraphs/name/x#example-key-123",
+                "https://api.example.com/subgraphs/name/x",
+            ),
+            (
+                "https://user:example-key-123@api.example.com/subgraphs/name/x",
+                "https://api.example.com/subgraphs/name/x",
+            ),
+            (
+                "https://example-key-123@api.example.com",
+                "https://api.example.com",
+            ),
+            (
+                "https://user:example-key-123@gateway.example.com/api/example-key-123/subgraphs/id/Qm1?token=example-key-123",
+                "https://gateway.example.com/api/[redacted]/subgraphs/id/Qm1",
+            ),
         ] {
             assert_eq!(url_label(url), label);
         }
