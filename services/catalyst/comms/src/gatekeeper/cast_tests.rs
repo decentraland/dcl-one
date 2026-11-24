@@ -1996,6 +1996,85 @@ async fn an_expired_credential_does_not_promote_admins_on_join() {
     assert!(!promoted);
 }
 
+/// Concurrent resets never leave two active credentials, and an unused
+/// replacement's ingress is not kept.
+#[tokio::test]
+async fn concurrent_resets_leave_one_active_credential() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let metadata = scene_metadata(&scene);
+    let (status, body) = h
+        .signed(KEY, "POST", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (first, second) = tokio::join!(
+        h.signed(KEY, "PUT", "/scene-stream-access", &metadata, None),
+        h.signed(KEY, "PUT", "/scene-stream-access", &metadata, None),
+    );
+    assert!(
+        [first.0, second.0].contains(&StatusCode::OK),
+        "{first:?} {second:?}"
+    );
+    let active: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.scene_stream_access WHERE place_id=$1 AND active",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(active, 1);
+}
+
+/// Issuance has no per-place limit, as upstream: more than six new keys in
+/// an hour all succeed, by reset, re-creation and Cast, and reuse mints none.
+#[tokio::test]
+async fn stream_key_issuance_has_no_hourly_limit() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(
+        pool.clone(),
+        Some(room.clone()),
+        PermissionDecision::Allowed,
+        None,
+    )
+    .await;
+    let metadata = scene_metadata(&scene);
+    let access = "/scene-stream-access";
+    let (status, body) = h.signed(KEY, "POST", access, &metadata, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for _ in 0..7 {
+        let (status, body) = h.signed(KEY, "PUT", access, &metadata, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let ingresses = h.livekit.ingresses.load(Ordering::SeqCst);
+    assert_eq!(ingresses, 8);
+    for (method, path) in [
+        ("GET", access),
+        ("POST", access),
+        ("GET", "/cast/generate-stream-link"),
+    ] {
+        let (status, body) = h.signed(KEY, method, path, &metadata, None).await;
+        assert_eq!(status, StatusCode::OK, "reuse: {body}");
+    }
+    assert_eq!(
+        h.livekit.ingresses.load(Ordering::SeqCst),
+        ingresses,
+        "reuse mints no ingress"
+    );
+    let (status, body) = h.signed(KEY, "DELETE", access, &metadata, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, body) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), ingresses + 1);
+}
+
 /// A reset whose new credential cannot be stored: the old key stays in
 /// force, no cleanup is recorded for it, and the new ingress is deleted.
 #[tokio::test]

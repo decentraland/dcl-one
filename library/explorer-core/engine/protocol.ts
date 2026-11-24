@@ -1044,6 +1044,12 @@ export interface AvatarPreviewReadyMessage {
   kind: 'avatarPreviewReady'
 }
 
+/** The minimap's Camera style is drawing its top-down view (scene → page), so the page can open the
+ *  map's hole onto it. Sent again for every camera the scene creates. */
+export interface MinimapReadyMessage {
+  kind: 'minimapReady'
+}
+
 export interface SceneInfoMessage {
   kind: 'sceneInfo'
   title: string
@@ -2664,6 +2670,7 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
   | AvatarPreviewReadyMessage
+  | MinimapReadyMessage
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
