@@ -703,6 +703,63 @@ async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A month-old window that lists an overwritten entity and is also marked outdated is
+/// labelled `inactive_entities`, as upstream's, which checks inactive entities before
+/// the outdated mark.
+#[tokio::test]
+async fn an_outdated_window_with_inactive_entities_is_labelled_inactive_entities() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("outdated-inactive");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let (end, golden) = golden_pass(0);
+    let year = golden[0].range;
+    let (first, _) = generator.generate(end).await.unwrap();
+    assert_eq!(first[0].hash, golden[0].hash);
+
+    // As in `a_month_old_window_listing_an_overwritten_entity_is_regenerated`, plus the
+    // deleter repair's mark.
+    let generated = sqlx::query_scalar::<_, chrono::NaiveDateTime>(
+        "UPDATE content.snapshots SET generation_time = '2021-01-07 07:00', outdated = true
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         RETURNING generation_time",
+    )
+    .bind(year.init_timestamp as f64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+    .and_utc()
+    .timestamp_millis();
+    sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    let recorder = content_recorder();
+    let metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let (rows, _) = generator
+        .generate(generated + 28 * DAY + DAY)
+        .await
+        .unwrap();
+    drop(metrics);
+    assert_eq!(
+        generations(
+            &recorder,
+            &[("interval_size", "year"), ("reason", "inactive_entities")]
+        ),
+        1.0
+    );
+    assert_eq!(generations(&recorder, &[("reason", "is_outdated")]), 0.0);
+    let rebuilt = rows.iter().find(|r| r.time_range == year).unwrap();
+    assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
+
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn content_router(state: Arc<ContentState>) -> Router {
     catalyst::content::build_router(state)
 }

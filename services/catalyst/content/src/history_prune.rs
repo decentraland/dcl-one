@@ -90,6 +90,9 @@ pub struct PruneOptions {
     pub interval: Duration,
     /// `GLOBAL_SCENES_URN`: scenes whose files are never unlinked.
     pub global_scenes_urn: Vec<String>,
+    /// How long an unlink batch waits for the exclusive store lock before the
+    /// pass defers ([`gc::STORE_LOCK_TIMEOUT`]).
+    pub store_lock_wait: Duration,
 }
 
 impl PruneOptions {
@@ -117,6 +120,7 @@ impl PruneOptions {
                 .as_deref()
                 .map(|r| r.split_whitespace().map(str::to_string).collect())
                 .unwrap_or_default(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 
@@ -252,13 +256,14 @@ async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,
     global_scenes_urn: &[String],
+    store_lock_wait: Duration,
     keys: &[String],
     report: &mut PruneReport,
 ) -> anyhow::Result<()> {
     if keys.is_empty() {
         return Ok(());
     }
-    let mut lock = gc::lock_store_exclusive(pool).await?;
+    let mut lock = gc::lock_store_exclusive_within(pool, store_lock_wait).await?;
     let referenced: HashSet<String> =
         gc::referenced_among_on(&mut lock, gc::Pins::new(storage, global_scenes_urn), keys).await?;
     for key in keys {
@@ -353,6 +358,7 @@ async fn pass(
             pool,
             storage,
             &opts.global_scenes_urn,
+            opts.store_lock_wait,
             &pruned.keys,
             &mut report,
         )
@@ -500,6 +506,7 @@ mod tests {
             pause_between_batches: Duration::ZERO,
             interval: Duration::from_secs(3600),
             global_scenes_urn: Vec::new(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 
@@ -909,6 +916,75 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(active, None, "the predecessor is not restored");
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pass whose unlink batch finds the exclusive store lock held past its wait (a
+    /// deployment holds the shared side) fails with `LockTimeout` and counts as `deferred`.
+    #[tokio::test]
+    async fn a_pass_behind_a_held_store_lock_counts_as_deferred() {
+        let Some((pool, admin, name)) = own_database().await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-history-prune-deferred-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let blob = put(&storage, format!("deferred {tag}").as_bytes()).await;
+        let entity = crate::auth::hash::hash_bytes_v1(format!("entity deferred {tag}").as_bytes());
+        let orphan = deployment(&pool, &entity, &format!("{tag}:0,0"), 172_800, None).await;
+        content_file(&pool, orphan, &blob, "d.glb").await;
+
+        let mut deploying = pool.begin().await.unwrap();
+        gc::lock_store_shared(&mut deploying).await.unwrap();
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
+        let result = run_once(
+            &pool,
+            &storage,
+            &PruneOptions {
+                store_lock_wait: Duration::from_millis(100),
+                ..options(Duration::from_secs(86_400), 10)
+            },
+        )
+        .await;
+        drop(metrics_guard);
+        deploying.rollback().await.unwrap();
+        let err = result.expect_err("the unlink batch cannot take the store lock");
+        assert!(
+            matches!(err.downcast_ref(), Some(gc::GcError::LockTimeout)),
+            "{err:?}"
+        );
+        assert!(storage.exist(&blob).await.unwrap(), "nothing is unlinked");
+        {
+            use crate::series::{GC_RUNS, test_support::sample};
+            let rendered = recorder.handle().render();
+            assert_eq!(
+                sample(
+                    &rendered,
+                    GC_RUNS.descriptor.name,
+                    &[("outcome", "deferred")]
+                ),
+                Some(1.0),
+                "{rendered}"
+            );
+            for outcome in ["success", "error"] {
+                assert_eq!(
+                    sample(&rendered, GC_RUNS.descriptor.name, &[("outcome", outcome)]),
+                    None,
+                    "{rendered}"
+                );
+            }
+        }
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(

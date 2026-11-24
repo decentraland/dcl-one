@@ -498,8 +498,6 @@ async fn read_form(
     Ok(Form::Read(fields, files))
 }
 
-/// Upstream's 503 for a spool the disk refuses (full, failing): the cause
-/// is logged, the client told to retry.
 /// Removes the spool directories under `root` older than `stale_after` (those of `POST
 /// /entities` requests a crashed process left) and counts them.
 pub async fn reclaim_stale_spool(root: &std::path::Path, stale_after: std::time::Duration) {
@@ -507,6 +505,8 @@ pub async fn reclaim_stale_spool(root: &std::path::Path, stale_after: std::time:
     crate::series::upload_spool_reclaimed(swept);
 }
 
+/// Upstream's 503 for a spool the disk refuses (full, failing): the cause
+/// is logged, the client told to retry.
 fn spool_unavailable(e: &std::io::Error) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
     crate::metrics::SPOOL_FAILURES

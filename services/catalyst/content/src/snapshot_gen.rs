@@ -432,15 +432,20 @@ impl SnapshotGenerator {
                             warn!(error = %e, "outdated probe failed; regenerating the window");
                             true
                         });
-                // A failed count keeps the window: rebuilding every month-old
-                // window while the database struggles is the heaviest work at
-                // the worst time, and the next pass counts again. An outdated
-                // window is rebuilt anyway; it is counted for its label, which
-                // names inactive entities first as upstream's does.
+                // A failed count keeps a window that is not outdated: rebuilding
+                // every month-old window while the database struggles is the
+                // heaviest work at the worst time, and the next pass counts
+                // again. An outdated window is rebuilt anyway; it is counted for
+                // its label, which names inactive entities first as upstream's does.
+                let outdated = why.outdated;
                 why.inactive = has_inactive_entities(pool, candidate, end_ms)
                     .await
                     .unwrap_or_else(|e| {
-                        warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
+                        if outdated {
+                            warn!(error = %e, "inactive-entities count failed; regenerating the outdated window");
+                        } else {
+                            warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
+                        }
                         false
                     });
                 if !why.outdated && !why.inactive {
