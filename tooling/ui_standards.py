@@ -32,6 +32,13 @@ A script under apps/ that imports a library/ui module by a relative path
 (`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
 way; stylesheets and the Node-only Figma review tooling listed in
 SHARED_RELATIVE_TOOLING keep their paths.
+
+`--kit-ceiling` is a check: for every component kit under KIT_PATHS (the kits an
+app or the HUD still owns beside library/ui/components) it fails when the number
+of component files differs from what tooling/ui-kit-ceiling.json records. A kit
+may only shrink, and a smaller kit lowers its ceiling in the same change:
+`--write-kit-ceiling` records the current counts
+(docs/adr/2026-11-24-library-ui-single-source.md).
 """
 import argparse
 import json
@@ -589,6 +596,41 @@ def floor_issues(floor, current):
     return issues
 
 
+KIT_FILE = ROOT / 'tooling' / 'ui-kit-ceiling.json'
+# The component kits an app or the HUD still owns. library/ui/components replaces each of them.
+KIT_PATHS = ('apps/creator-hub/packages/inspector/src/components/ui', 'apps/ui3/src/atoms', 'apps/ui3/src/components',
+             'library/ui/apps/hud/design', 'library/ui/apps/sites/shared')
+KIT_TEST = re.compile(r'\.(?:test|spec|stories)\.[jt]sx$')
+
+
+def kit_counts(paths=KIT_PATHS, root=None):
+    """The number of component files (.tsx and .jsx, tests and stories aside) under each kit path."""
+    root = ROOT if root is None else root
+    counts = {}
+    for given in paths:
+        path = root / given
+        counts[given] = sum(1 for extension in COMPONENT_EXTENSIONS for file in path.rglob(f'*{extension}')
+                            if not KIT_TEST.search(file.name)
+                            and not SKIPPED_DIRECTORIES.intersection(file.relative_to(path).parts))
+    return counts
+
+
+def kit_issues(ceiling, current):
+    """Each kit that grew above its ceiling, each kit that shrank without lowering it, and each ceiling
+    entry that names no kit."""
+    issues = [f'{name}: the ceiling records a kit that is not in KIT_PATHS; run --write-kit-ceiling'
+              for name in sorted(ceiling.keys() - current.keys())]
+    for name, count in sorted(current.items()):
+        recorded = ceiling.get(name, 0)
+        if count > recorded:
+            issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
+                          'add shared components to library/ui/components instead')
+        elif count < recorded:
+            issues.append(f'{name}: {count} component files, the ceiling is {recorded}; '
+                          'lower it with --write-kit-ceiling')
+    return issues
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', help='Compare changes with this Git revision (default: merge base with origin/main)')
@@ -601,7 +643,26 @@ def main():
                         help='Record the current token counts as the floor')
     parser.add_argument('--shared-imports', action='store_true',
                         help='Check that shared UI is imported from @dcl/one-ui, not by path')
+    parser.add_argument('--kit-ceiling', action='store_true',
+                        help='Check that the component kits under KIT_PATHS have not grown')
+    parser.add_argument('--write-kit-ceiling', action='store_true',
+                        help='Record the current kit sizes as the ceiling')
     args = parser.parse_args()
+    if args.write_kit_ceiling:
+        KIT_FILE.write_text(json.dumps(kit_counts(), indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        return 0
+    if args.kit_ceiling:
+        try:
+            ceiling = json.loads(KIT_FILE.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as error:
+            print(f'UI standards kit ceiling could not be read: {error}', file=sys.stderr)
+            return 2
+        issues = kit_issues(ceiling, kit_counts())
+        if issues:
+            print('\n'.join(issues), file=sys.stderr)
+            return 1
+        print(f'UI standards: kit ceiling holds for {len(KIT_PATHS)} component kits')
+        return 0
     if args.shared_imports:
         def read(name):
             return (ROOT / name).read_text(encoding='utf-8', errors='replace')

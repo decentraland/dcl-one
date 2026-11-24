@@ -4,7 +4,7 @@ The visual language for the two UIs in this repo: the **`@dcl/inspector`** web U
 
 **Scope: two systems, one boundary.** Creator Hub renders the inspector inside an `<iframe>`, and no token crosses that boundary. Inspector code uses only the `vars.css` tokens documented in most of this file. Creator Hub renderer code uses only the ui3 atoms and the tokens in `theme.css` and `ui3-bridge.css` ([Creator Hub (renderer)](#creator-hub-renderer)). Don't import renderer tokens into the inspector, and don't apply `vars.css` to Creator Hub.
 
-**The UI moves to ui3.** The inspector and Creator Hub UI is being rebuilt in dcl-one's [`apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3), a plain-CSS React UI, and token names follow ui3's ([Token naming](#token-naming)). Until then this file documents the current inspector and Creator Hub, and Figma still wins where it draws.
+**The UI moves to `library/ui`.** The components the inspector and Creator Hub share with other apps move to dcl-one's [`library/ui`](../../../library/ui) and are imported from `@dcl/one-ui`; `apps/ui3` is not their destination ([ADR](../../../docs/adr/2026-11-24-library-ui-single-source.md)). Today the renderer uses the `apps/ui3` atoms and token names follow ui3's ([Token naming](#token-naming)). Until a component moves, this file documents the current inspector and Creator Hub, and Figma still wins where it draws.
 
 **Not our brand kit.** Anthropic brand assets (Poppins/Lora, orange `#d97757`, etc.) and the `brand-guidelines` skill do **not** apply to this codebase. The inspector's brand is Decentraland: pink `--primary-main #ff2d55`, the cyan UI-Designer accent, and Inter.
 

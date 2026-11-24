@@ -286,6 +286,34 @@ class TokensReportTest(unittest.TestCase):
         self.assertEqual(sorted(recorded), ['a.css', 'b.css'])
         self.assertEqual(ui_standards.floor_issues(recorded, current), [])
 
+    def test_kit_ceiling_counts_components_and_skips_tests_stories_and_build_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('kit/Button.tsx', 'kit/menu/Menu.jsx', 'kit/Button.test.tsx', 'kit/Button.spec.tsx',
+                         'kit/Button.stories.tsx', 'kit/Button.browser.test.tsx', 'kit/index.ts',
+                         'kit/Button.module.css', 'kit/node_modules/x/X.tsx'):
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text('')
+            self.assertEqual(ui_standards.kit_counts(('kit', 'gone'), root), {'kit': 2, 'gone': 0})
+
+    def test_kit_ceiling_fails_when_a_kit_grows_or_shrinks_without_lowering_it(self):
+        ceiling = {'kit': 3, 'other': 1}
+        self.assertEqual(ui_standards.kit_issues(ceiling, {'kit': 3, 'other': 1}), [])
+        self.assertEqual(ui_standards.kit_issues(ceiling, {'kit': 4, 'other': 0}), [
+            'kit: 4 component files, the ceiling is 3; add shared components to library/ui/components instead',
+            'other: 0 component files, the ceiling is 1; lower it with --write-kit-ceiling'])
+
+    def test_kit_ceiling_fails_on_an_unrecorded_kit_and_on_an_entry_that_names_no_kit(self):
+        self.assertEqual(ui_standards.kit_issues({}, {'new': 1}), [
+            'new: 1 component files, the ceiling is 0; add shared components to library/ui/components instead'])
+        self.assertEqual(ui_standards.kit_issues({}, {'empty': 0}), [])
+        self.assertEqual(ui_standards.kit_issues({'removed': 2}, {}), [
+            'removed: the ceiling records a kit that is not in KIT_PATHS; run --write-kit-ceiling'])
+
+    def test_recorded_kit_ceiling_matches_the_tree(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), '--kit-ceiling'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 class UiStandardsIntegrationTest(unittest.TestCase):
     def setUp(self):

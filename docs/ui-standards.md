@@ -214,6 +214,7 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   still accepts the in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`,
   `@dcl/one-ui/apps/hud/`), which resolve their host's aliases and are not in
   the entry yet.
+- `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each component kit an app or the HUD still owns beside `library/ui/components` (the `KIT_PATHS` of the script) it fails when the number of component files differs from the count in `tooling/ui-kit-ceiling.json`. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
