@@ -1,6 +1,7 @@
 """Creator Hub e2e selection: what a pull request's changes require, and when the label runs it."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -29,6 +30,11 @@ PUSHED_AT = '2026-11-24T12:00:00Z'
 def pull_request(*changed, labels=(), action='opened', labelled_at=None, event_at=PUSHED_AT, impact=None):
     return ci.plan('pull_request', action, list(changed), list(labels), ci.load_selection(), impact,
                    ci.e2e_importers(), labelled_at=labelled_at, event_at=event_at)
+
+
+def tracked_files():
+    return subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], cwd=ROOT,
+                                   text=True).splitlines()
 
 
 class SelectionTest(unittest.TestCase):
@@ -221,11 +227,10 @@ class PlanTest(unittest.TestCase):
 class SelectionFileTest(unittest.TestCase):
 
     def test_every_file_the_renderer_typechecks_from_ui3_or_the_library_requires_the_offline_suite(self):
-        renderer = ROOT / CH / 'renderer'
-        tsconfig = json.loads((renderer / 'tsconfig.ui3.json').read_text())
-        files = {str(path.resolve().relative_to(ROOT)) for include in tsconfig['include']
-                 for path in renderer.glob(include)}
-        outside = sorted(path for path in files
+        renderer = CH + 'renderer'
+        tsconfig = json.loads((ROOT / renderer / 'tsconfig.ui3.json').read_text())
+        includes = [os.path.normpath(os.path.join(renderer, include)) for include in tsconfig['include']]
+        outside = sorted(path for path in ci.paths.matching_paths(tracked_files(), includes)
                          if not path.startswith('apps/creator-hub/') and not re.search(r'\.(test|spec)\.', path))
         self.assertTrue(outside)
         for path in outside:
@@ -240,7 +245,7 @@ class SelectionFileTest(unittest.TestCase):
         self.assertEqual(listed, ci.load_selection()['creator-hub'])
 
     def test_every_pattern_names_a_tracked_file(self):
-        tracked = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
+        tracked = tracked_files()
         for name, patterns in ci.patterns(ci.load_selection()):
             for pattern in patterns:
                 if pattern.startswith('!'):

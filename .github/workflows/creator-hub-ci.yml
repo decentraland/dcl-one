@@ -90,6 +90,7 @@ jobs:
             .github
             tooling
             apps/creator-hub/packages/inspector/test/e2e
+            apps/creator-hub/packages/creator-hub/renderer
       - name: Test the e2e selection
         run: python3 -m unittest discover -s tooling/tests -p test_creator_hub_ci.py
       - name: Which e2e does this change require?
