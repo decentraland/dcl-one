@@ -101,6 +101,11 @@ export function useHangoutSignInDraft(returnTo: string, account: string | null, 
     return false;
   }), [returnTo]);
   const remember = useCallback((draft: HangoutDraft) => { latest.current = draft; }, []);
+  // A submitted draft is done: keeping it would reopen it after a sign-in and invite a duplicate submission.
+  const forget = useCallback(() => {
+    latest.current = null;
+    takeHangoutSignInDraft(returnTo);
+  }, [returnTo]);
   const restored = kept && kept.account === account ? kept.draft : null;
-  return { restored, remember, saveFailed };
+  return { restored, remember, forget, saveFailed };
 }

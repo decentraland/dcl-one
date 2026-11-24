@@ -139,6 +139,43 @@ describe("when the hangout editor keeps its draft across a browser sign-in", () 
     });
   });
 
+  describe("and the draft was submitted", () => {
+    let hook: ReturnType<typeof renderHook<ReturnType<typeof useHangoutSignInDraft>, { ended: boolean }>>;
+
+    beforeEach(() => {
+      vi.stubGlobal("location", { origin: "https://example.org", pathname: EDITOR, search: "", hash: "", assign: vi.fn() });
+      hook = renderHook(({ ended }) => useHangoutSignInDraft(EDITOR, OWNER, emptyDraft(), ended), { initialProps: { ended: false as boolean } });
+      hook.result.current.remember(draft);
+      hook.result.current.forget();
+    });
+
+    it("should keep nothing when the session ends on the success screen", () => {
+      hook.rerender({ ended: true });
+      expect(sessionStorage.getItem(KEY)).toBeNull();
+    });
+
+    it("should keep nothing when sign-in leaves for this editor", () => {
+      openSignIn({ redirectTo: EDITOR });
+      expect(sessionStorage.getItem(KEY)).toBeNull();
+    });
+
+    it("should keep a new draft written after it", () => {
+      const next = { ...draft, name: "Second party" };
+      hook.result.current.remember(next);
+      hook.rerender({ ended: true });
+      expect(takeHangoutSignInDraft(EDITOR)).toEqual({ account: OWNER, draft: next });
+    });
+  });
+
+  describe("and a draft was already kept when the editor submits", () => {
+    it("should drop the kept copy", () => {
+      saveHangoutSignInDraft(EDITOR, { account: OWNER, draft });
+      const { result } = renderHook(() => useHangoutSignInDraft(EDITOR, null, emptyDraft()));
+      result.current.forget();
+      expect(sessionStorage.getItem(KEY)).toBeNull();
+    });
+  });
+
   describe("and a draft kept for one account is read back", () => {
     beforeEach(() => { saveHangoutSignInDraft(EDITOR, { account: OWNER, draft }); });
 

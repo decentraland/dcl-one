@@ -254,6 +254,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
         originalSchedule={original}
         submit={async (input) => {
           const result = await submit(input);
+          signInDraft.forget();
           void invalidateEventsAfterWrite(queryClient);
           return result;
         }}

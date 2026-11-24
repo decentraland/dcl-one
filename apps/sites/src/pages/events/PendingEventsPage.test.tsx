@@ -377,6 +377,29 @@ describe("when opening the Pending Events page", () => {
     });
   });
 
+  describe("and the read made for a deep link is cancelled before it settles", () => {
+    beforeEach(async () => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      client.setQueryData(eventAdminKeys.queue(MODERATOR), { events: [], recentlyApproved: [], hasMore: false });
+      // The first queue read never answers, so it is still in flight when it is cancelled.
+      const answer = vi.mocked(signedGetJSON).getMockImplementation()!;
+      let held = false;
+      vi.mocked(signedGetJSON).mockImplementation((path, ...rest) => {
+        if (path === EVENTS && !held) { held = true; return new Promise(() => {}); }
+        return answer(path, ...rest);
+      });
+      renderAdminPage(<PendingEventsPage />, `${PATH}?id=pending-one`, { client });
+      await waitFor(() => expect(readsOf(EVENTS)).toBe(1));
+      await client.cancelQueries({ queryKey: eventAdminKeys.queue(MODERATOR) });
+    });
+
+    it("should read the queue again and open the event", async () => {
+      expect(await screen.findByRole("dialog", { name: "Moon concert" })).toBeTruthy();
+      expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+      expect(readsOf(EVENTS)).toBe(2);
+    });
+  });
+
   describe("and a deep link names an event neither the cached nor the fresh queue holds", () => {
     beforeEach(() => {
       const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
