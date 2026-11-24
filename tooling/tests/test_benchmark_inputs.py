@@ -292,7 +292,9 @@ class MainTest(Fixture):
             'runner_artifact': f'bevy-explorer-benchmark-windows-amd64-{MAIN[0]}', 'runner_run_id': '90',
             'change_artifact': f'bevy-explorer-web-{MAIN[0]}', 'change_run_id': '90',
             'base_artifact': f'bevy-explorer-web-{RELEASE}', 'base_run_id': '88'})
-        self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ' '}})['base_sha'], RELEASE)
+        self.assertEqual(self.resolve('workflow_dispatch', {'inputs': {'pr': ''}})['base_sha'], RELEASE)
+        with self.assertRaises(ValueError):
+            self.resolve('workflow_dispatch', {'inputs': {'pr': ' '}})
 
     def test_main_without_a_newer_web_build_than_the_release_starts_nothing(self):
         for run_id in (90, 89):
@@ -305,6 +307,16 @@ class MainTest(Fixture):
         result = self.resolve('schedule', {})
         self.assertEqual(self.github.deployments[1]['sha'], MAIN[0])
         self.assertEqual((result['base_sha'], result['legs'][0]['base_run_id']), (RELEASE, '88'))
+
+    def test_a_release_built_by_a_run_whose_guard_failed_is_still_measured(self):
+        self.github.main_runs[2]['conclusion'] = 'failure'
+        result = self.resolve('schedule', {})
+        self.assertTrue(result['run'])
+        self.assertEqual(result['base_sha'], RELEASE)
+
+    def test_an_unoptimized_release_build_names_its_commit(self):
+        self.github.build_info = {f'bevy-explorer-web-{RELEASE}': {'engine': {'optimized': False}}}
+        self.assertIn(f'({RELEASE}, CI run 88)', self.resolve('schedule', {})['notes'])
 
     def test_a_partial_or_unsuccessful_rollout_is_not_the_release(self):
         self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
@@ -321,7 +333,7 @@ class MainTest(Fixture):
         self.assertFalse(result['run'])
         self.assertIn('has expired', result['notes'])
         self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-88.commit-ddddddd')]
-        self.assertIn('not a passed Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
+        self.assertIn('not a completed Bevy Explorer / CI run', self.resolve('schedule', {})['notes'])
 
     def test_a_manual_run_measures_any_built_commit_against_a_given_base(self):
         self.github.change_runs = [ci_run(100, HEAD)]

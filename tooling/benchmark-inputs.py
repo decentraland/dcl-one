@@ -146,6 +146,13 @@ def release(repo):
     return None
 
 
+def released_by(run, repo, short):
+    """Whether a completed CI run of this repository built the commit a release version names."""
+    return (run['path'] == WORKFLOW and run['status'] == 'completed' and run['event'] in ('push', 'workflow_dispatch')
+            and (run.get('head_repository') or {}).get('full_name') == repo
+            and SHA.fullmatch(run['head_sha']) and run['head_sha'].startswith(short))
+
+
 def run_count(inputs, runs):
     """The legs' RUNS and the report's EXPECTED_RUNS: a plain integer, which the report requires."""
     runs = (inputs.get('runs') or '').strip() or (runs or '').strip() or '3'
@@ -167,7 +174,8 @@ def resolve(event_name, event, repo, enabled='', runs=''):
     inputs = {}
     if event_name == 'schedule':
         return resolve_main({}, repo, enabled, runs)
-    if event_name == 'workflow_dispatch' and not ((event.get('inputs') or {}).get('pr') or '').strip():
+    # Only an empty pr is a run of main: the concurrency group compares it untrimmed.
+    if event_name == 'workflow_dispatch' and ((event.get('inputs') or {}).get('pr') or '') == '':
         return resolve_main(event.get('inputs') or {}, repo, enabled, runs)
     if event_name == 'workflow_run':
         trigger = event['workflow_run']
@@ -277,9 +285,10 @@ def resolve_main(inputs, repo, enabled, runs):
                                 'recorded as a deployment.')
         version, run_id, short = latest
         base = api(f'repos/{repo}/actions/runs/{run_id}')
-        if not ci_run(base, repo, ('push', 'workflow_dispatch')) or not base['head_sha'].startswith(short):
-            return stop(result, f'Release {version} names CI run {run_id}, which is not a passed Bevy Explorer / CI '
-                                f'run of commit {short}.')
+        # Not its conclusion: on main a failed guard does not stop the build from being published.
+        if not released_by(base, repo, short):
+            return stop(result, f'Release {version} names CI run {run_id}, which is not a completed Bevy Explorer / '
+                                f'CI run of commit {short}.')
         base_names = artifacts(repo, run_id)
         base_web = named(base_names, WEB)
         if not base_web:
@@ -299,7 +308,7 @@ def resolve_main(inputs, repo, enabled, runs):
     if not optimized(repo, change_names[change_web]):
         return stop(result, f"The change web build (CI run {change['id']}) is not optimized.")
     if not optimized(repo, base_web_id):
-        return stop(result, f'The base web build ({base_sha}, CI run {base["id"]}) is not optimized.')
+        return stop(result, f"The base web build ({base['head_sha']}, CI run {base['id']}) is not optimized.")
     # The runner comes from the change run, else from main's newest run that has it: it reads
     # files of the newest format.
     return measure(repo, result, enabled, (change, change_names, change_web), (base, base_web),

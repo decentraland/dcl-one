@@ -55,7 +55,9 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   it (CI built none, or the artifact expired).
 - **Runs of main queue.** Nightly and manual runs of main share one concurrency group: a new one
   waits for the running one, so they never share the laptops, and GitHub keeps only the newest
-  waiting run.
+  waiting run. A nightly run that a later manual run replaces while it waits is cancelled, not
+  failed: that night is not measured and nothing reports it. A manual run of main takes `pr`
+  empty; a `pr` of spaces is refused.
 - **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
   an expired release build, no runner, no laptop, an unoptimized build), so a nightly never stays
   green without measuring. Main unchanged since the release skips and passes.
@@ -601,8 +603,9 @@ its merge commit.
   [`bevy-explorer-rollout-manual.yml`](../../../../.github/workflows/bevy-explorer-rollout-manual.yml)
   writes when it rolls a version out to decentraland.org. The deployment's own commit is where the
   rollout was dispatched from, not the build: the build is the CI run its `version` names
-  (`<semver>-<CI run ID>.commit-<short commit>`), which must be a passed run of that commit and
-  supplies the web app, kept 90 days on main.
+  (`<semver>-<CI run ID>.commit-<short commit>`), which must be a completed run of that commit and
+  supplies the web app, kept 90 days on main. Its conclusion does not matter: on main a failed guard
+  does not stop the web package from being published.
 - **The runners,** for each operating system the legs need and for Linux, which writes the report:
   from the change run when it has one, so a pull request that changes the runner is measured with
   its own, else from main's runs, searched as for the base (for main, its newest runs, never the
