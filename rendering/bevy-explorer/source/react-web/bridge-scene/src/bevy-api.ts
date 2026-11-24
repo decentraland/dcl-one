@@ -277,6 +277,8 @@ export type BevyApiInterface = {
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */
   getServiceUrls: () => Promise<Record<string, string>>
+  /** The official wallets the nametags mark (lowercase `0x` addresses). Older engines lack it. */
+  getOfficialWallets?: () => Promise<string[]>
   getRealmProvider: () => Promise<string>
   getPreviousLogin: () => Promise<{ userId: string | null }>
   loginPrevious: () => Promise<{ success: boolean; error: string }>

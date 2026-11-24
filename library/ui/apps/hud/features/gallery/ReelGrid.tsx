@@ -272,19 +272,19 @@ function ReelMenu({
   menu: ReelGridMenu
   onClose: () => void
 }): React.JSX.Element {
-  const [isPublic, setIsPublic] = useState(photo.isPublic === true)
+  const [choice, setChoice] = useState<{ isPublic: boolean; turn: number } | null>(null)
+  const choiceTurn = useRef(0)
   const openExternalUrl = useOptionalSession()?.openExternalUrl
   const icon = (src: string): React.JSX.Element => <MaskIcon src={src} size={18} />
   const items: ContextMenuItem[] = [
     {
       kind: 'toggle',
       label: 'Set as Public',
-      checked: isPublic,
+      checked: choice?.isPublic ?? photo.isPublic === true,
       onChange: (next) => {
-        setIsPublic(next)
-        void menu.onSetPublic(photo, next).then((ok) => {
-          if (!ok) setIsPublic(!next)
-        })
+        const turn = ++choiceTurn.current
+        setChoice({ isPublic: next, turn })
+        void menu.onSetPublic(photo, next).then(() => setChoice((cur) => (cur?.turn === turn ? null : cur)))
       }
     },
     { kind: 'separator' },
