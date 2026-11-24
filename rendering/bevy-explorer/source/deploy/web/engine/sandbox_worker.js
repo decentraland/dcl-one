@@ -23,6 +23,18 @@ Object.defineProperty(Error, "prepareStackTrace", {
   configurable: false,
 });
 
+// MEASUREMENT ONLY (local measurement build, not for merge; crates/dcl_wasm/src/inner/tick_marks.rs):
+// stage marks of this scene's tick on the clock the workers share (performance.timeOrigin +
+// performance.now(), ms), captured before scene code. The relay reads them (relay_tick_mark)
+// when it forwards a reply, and only for the movement scene.
+const markPerformance = performance;
+const markNow = Performance.prototype.now;
+const markOrigin = performance.timeOrigin;
+const markClock = () => markOrigin + markNow.call(markPerformance);
+// 0 onUpdate start, 1 the previous onUpdate's end, 2 reply put (op_crdt_send_to_renderer
+// returned), 3 onUpdate count at 0
+const tickMarks = new Float64Array([NaN, NaN, NaN, NaN]);
+
 // self.WebSocket = {}
 
 console.log("[Sandbox Worker] Starting");
@@ -188,6 +200,7 @@ function createJsContext(wasmApi, context) {
   for (const exportName in wasmApi) {
     if (exportName.substring(0, 3) === "op_") {
       const traced = !UNTRACED_OPS.has(exportName);
+      const marksPut = exportName === "op_crdt_send_to_renderer";
       Object.defineProperty(ops, exportName, {
         configurable: false,
         get() {
@@ -197,6 +210,11 @@ function createJsContext(wasmApi, context) {
               lastOp.at = performance.now();
             }
             // wrap ops to inject context arg
+            if (marksPut) {
+              const result = wasmApi[exportName](context, ...args);
+              tickMarks[2] = markClock();
+              return result;
+            }
             return wasmApi[exportName](context, ...args);
           };
         },
@@ -520,6 +538,9 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
     relay_b_next_len: callB(scene.relay_b_next_len),
     relay_b_next_ptr: callB(scene.relay_b_next_ptr),
     relay_b_pop: callB(scene.relay_b_pop),
+    // MEASUREMENT ONLY (tick_marks.rs): no call into B, so A is not left
+    relay_now: markClock,
+    relay_tick_mark: (i) => (i >= 0 && i < 4 ? tickMarks[i] : NaN),
   };
 
   let relay;
@@ -789,9 +810,13 @@ self.onmessage = async (event) => {
         const dt = ops.op_begin_tick();
         var err = undefined;
         setPhase(`onUpdate ${count}`);
+        tickMarks[3] = count;
+        tickMarks[0] = markClock();
         try {
           await module.onUpdate(dt);
+          tickMarks[1] = markClock();
         } catch (e) {
+          tickMarks[1] = markClock();
           err = e;
           reportedErrors += 1;
           if (reportedErrors <= 10) {

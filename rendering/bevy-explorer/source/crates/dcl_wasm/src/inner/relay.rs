@@ -30,7 +30,7 @@ use wasm_bindgen::prelude::*;
 
 use super::{
     relay_proto::{RelayInit, ToEngine, ToScene},
-    SceneInitializationData, SCENE_QUEUE,
+    tick_marks, SceneInitializationData, SCENE_QUEUE,
 };
 use crate::{
     relay_wake::{self, RelayWake},
@@ -50,6 +50,9 @@ extern "C" {
     fn relay_b_next_len() -> u32;
     fn relay_b_next_ptr() -> u32;
     fn relay_b_pop();
+    // MEASUREMENT ONLY (tick_marks): the shared clock, and the scene worker's marks of its tick
+    fn relay_now() -> f64;
+    fn relay_tick_mark(index: u32) -> f64;
 }
 
 // Everything from the scene runtime is untrusted: scene code can reach its memory. These bound
@@ -96,10 +99,49 @@ struct Relay {
     ended: bool,
     // whether the engine wakes this scene, as it sets it each frame
     scene_wake: SceneWake,
+    // MEASUREMENT ONLY (tick_marks): the movement scene's tick in flight, from its pick-up
+    marks: Option<(u64, [f64; tick_marks::RELAY_FIELDS])>,
     // registered on the engine channels when the scene loop mode wakes relays and the engine wakes
     // this scene
     wake: Arc<RelayWake>,
     waker: Waker,
+}
+
+// MEASUREMENT ONLY (tick_marks): when the movement scene's relay last finished a pump
+thread_local! {
+    static LAST_PUMP_END: std::cell::Cell<f64> = const { std::cell::Cell::new(f64::NAN) };
+}
+
+struct PumpEnd;
+
+impl Drop for PumpEnd {
+    fn drop(&mut self) {
+        let _ = LAST_PUMP_END.try_with(|end| end.set(relay_now()));
+    }
+}
+
+/// MEASUREMENT ONLY (tick_marks): stamps and publishes the movement scene's tick just before its
+/// reply is forwarded; nothing when the reply is about to be held for a tick credit.
+fn mark_forward(relay: &mut Relay, pump: Option<(f64, f64)>, held: bool) {
+    let Some((pump_start, slept)) = pump else {
+        return;
+    };
+    if relay.tick_credits == 0 {
+        return;
+    }
+    let Some((seq, mut fields)) = relay.marks.take() else {
+        return;
+    };
+    use tick_marks::*;
+    fields[FWD_PUMP] = pump_start;
+    fields[FWD_SLEPT] = slept;
+    fields[FWD] = relay_now();
+    fields[B_START] = relay_tick_mark(0);
+    fields[B_PREV_END] = relay_tick_mark(1);
+    fields[B_PUT] = relay_tick_mark(2);
+    fields[B_N] = relay_tick_mark(3);
+    fields[HELD] = held as u8 as f64;
+    publish(seq, &fields);
 }
 
 // what an engine message lets the scene send back
@@ -318,6 +360,7 @@ pub fn relay_init() -> u32 {
         allocation_requests: VecDeque::new(),
         ended: false,
         scene_wake,
+        marks: None,
         wake: wake.clone(),
         waker: Waker::from(wake),
     };
@@ -367,9 +410,12 @@ pub fn relay_wake_ptr() -> u32 {
 #[wasm_bindgen]
 pub fn relay_wake_mode() -> u32 {
     with_relay(|relay| {
-        relay
+        let waits = relay
             .wake
-            .update_waits(scene_loop_mode::get(), relay.scene_wake.get()) as u32
+            .update_waits(scene_loop_mode::get(), relay.scene_wake.get());
+        // MEASUREMENT ONLY (tick_marks): which way each step of each relay went
+        tick_marks::count_relay_step(waits);
+        waits as u32
     })
     .unwrap_or(0)
 }
@@ -386,6 +432,17 @@ pub fn relay_pump() -> u32 {
     with_relay(|relay| {
         if relay.ended {
             return 0;
+        }
+        // MEASUREMENT ONLY (tick_marks): this pump's start and the sleep before it, for the
+        // movement scene only; PumpEnd stamps the pump's end whichever way it returns
+        let pump = tick_marks::is_movement_scene(relay.scene_id.0.to_bits()).then(|| {
+            let start = relay_now();
+            let last_end = LAST_PUMP_END.try_with(|end| end.get()).unwrap_or(f64::NAN);
+            (start, start - last_end)
+        });
+        let _pump_end = pump.map(|_| PumpEnd);
+        if let (Some(_), Some((_, fields))) = (pump, relay.marks.as_mut()) {
+            fields[tick_marks::PUMPS] += 1.0;
         }
         let _runtime = relay.runtime.enter();
         // run the close watchers of senders decoded so far
@@ -410,6 +467,14 @@ pub fn relay_pump() -> u32 {
                     ..
                 } => Reply::Allocation(explicit_ids.as_ref().map_or(*count, Vec::len)),
             };
+            if let (Some((pump_start, slept)), Reply::Tick) = (pump, &reply) {
+                let mut fields = [f64::NAN; tick_marks::RELAY_FIELDS];
+                fields[tick_marks::PICK_PUMP] = pump_start;
+                fields[tick_marks::PICK_SLEPT] = slept;
+                fields[tick_marks::PICK] = relay_now();
+                fields[tick_marks::PUMPS] = 1.0;
+                relay.marks = Some((tick_marks::dispatch_seq(), fields));
+            }
             let delivered = to_b(&ToScene::Update(response));
             if delivered.is_ok() {
                 match reply {
@@ -449,6 +514,7 @@ pub fn relay_pump() -> u32 {
 
         // scene -> engine, pulled only as fast as the engine ticks the scene
         if let Some(held) = relay.held_tick.take() {
+            mark_forward(relay, pump, true);
             if !relay.forward_tick(held) {
                 return moved;
             }
@@ -479,6 +545,7 @@ pub fn relay_pump() -> u32 {
                         relay.end(reason);
                         break;
                     }
+                    mark_forward(relay, pump, false);
                     if !relay.forward_tick(response) {
                         break;
                     }

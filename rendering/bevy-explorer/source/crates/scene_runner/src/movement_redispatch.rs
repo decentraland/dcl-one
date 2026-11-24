@@ -34,6 +34,8 @@ pub(crate) struct MovementTickTimes {
     pub(crate) staged_rotations: u64,
     /// The yaw (degrees) of the last staged rotation sent.
     pub(crate) last_staged_yaw: Option<f32>,
+    /// MEASUREMENT ONLY (`/movement_redispatch off`): late replies are counted, none re-dispatched.
+    pub(crate) off: bool,
 }
 
 impl MovementTickTimes {
@@ -101,7 +103,8 @@ impl MovementTickTimes {
             previous_loop_end,
         ));
         self.late_replies += u64::from(late);
-        if !late
+        if self.off
+            || !late
             || context.sender().is_none()
             || context.last_sent >= now
             || !context.blocked.is_empty()

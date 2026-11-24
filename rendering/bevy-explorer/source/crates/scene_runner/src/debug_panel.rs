@@ -181,6 +181,7 @@ impl Plugin for SceneDebugPanelPlugin {
                 inputs: &[],
             })
             .add_console_command::<MovementRedispatchState, _>(movement_redispatch_state)
+            .add_console_command::<MovementRedispatchSwitch, _>(movement_redispatch_switch)
             .add_debug_section(DebugSection {
                 title: "Movement Re-dispatch",
                 query: "/movement_redispatch_state",
@@ -231,6 +232,7 @@ fn movement_redispatch_state(
             "lastStagedYaw": ticks.last_staged_yaw,
             "p90": ticks.p90().map(|p90| p90.as_secs_f64() * 1000.0),
             "samples": ticks.samples(),
+            "redispatch": if ticks.off { "off" } else { "on" },
             "unavailable": {
                 "scene": "No scene drives the player's movement.",
                 "lastStagedYaw": "No re-dispatch has been sent a staged rotation.",
@@ -239,6 +241,40 @@ fn movement_redispatch_state(
         })
         .to_string(),
     );
+}
+
+/// MEASUREMENT ONLY: `/movement_redispatch on|off` turns the movement scene's re-dispatch on or
+/// off in session (off still counts late replies), for an A/B in one session.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/movement_redispatch")]
+struct MovementRedispatchSwitch {
+    mode: Option<String>,
+}
+
+fn movement_redispatch_switch(
+    mut input: ConsoleCommand<MovementRedispatchSwitch>,
+    mut updates: ResMut<SceneUpdates>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    match command.mode.as_deref() {
+        None => {}
+        Some("on") => updates.movement_ticks.off = false,
+        Some("off") => updates.movement_ticks.off = true,
+        Some(other) => {
+            input.reply_failed(format!("unknown mode {other}: on or off"));
+            return;
+        }
+    }
+    input.reply_ok(format!(
+        "movement redispatch {}",
+        if updates.movement_ticks.off {
+            "off"
+        } else {
+            "on"
+        }
+    ));
 }
 
 #[derive(Resource, Default)]
