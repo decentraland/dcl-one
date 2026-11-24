@@ -1659,7 +1659,6 @@ impl SessionNames {
         Some(crate::chain_index::names::Observation {
             folded_block: 1,
             folded_at_us: 1,
-            fresh_until_ms: i64::MAX,
         })
     }
 

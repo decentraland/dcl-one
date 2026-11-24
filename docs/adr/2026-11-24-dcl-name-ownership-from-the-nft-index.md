@@ -35,10 +35,13 @@ reads its items too:
 - An authorization (a world's owner for writes, admission, scene-admin
   rights and read-through signers; comms' Admin Toolkit target; a
   community's creation, federated creation and ownership transfer) needs
-  the whole history walked and every walked block folded and published
-  (`folded_block = last_block`), within 30 minutes, bound to chain 1 and out
-  of quarantine. While a pass has walked a transfer it has not folded, the
-  fold still names the former holder, so no holder is authorized.
+  the whole history walked and published within 30 minutes, bound to chain
+  1 and out of quarantine, and the published fold to be every NAME's state:
+  every walked block folded (`folded_block = last_block`), or no NAME
+  registrar event walked past the fold. A pass commits its walked events
+  with its `last_block` before it folds and publishes, so every new block
+  opens such a window; while it holds a registrar transfer, the fold still
+  names the former holder, and no holder is authorized.
 - A display read (lists, `namesForExtraSlots`, comms' scene names) needs
   the fold published within 30 minutes. A profile's `hasClaimedName` takes
   the profile's own rule instead: the index complete on the networks the
@@ -52,8 +55,9 @@ under it and, on every hit, asks the index whether that publication still
 stands for the purpose; after an advance or a rewind the answer is read
 again. Worlds' admission memo works this way: it validates the exact entry it
 returns, joined in flight included, within the same 3-second deadline as the
-read, and an owner the worlds code proves by other means is never noted into
-it for an indexed NAME. Comms' display memo keeps no answer of the index and
+read; it does not keep a refusal for an index that is not current (the next
+caller reads again); and an owner the worlds code proves by other means is
+never noted into it for an indexed NAME. Comms' display memo keeps no answer of the index and
 no failure. A profile reads its items and its NAMEs in one snapshot and is
 filed under every network's publication, Ethereum included even when it
 names no Ethereum item; an outfit too, and it is not served past the
@@ -82,10 +86,13 @@ A walking node answers NAMEs without a hosted subgraph, and starts with
 require the subgraph only where the node does not walk the index.
 
 Authorization trails the chain head by the confirmation depth plus a pass,
-and is refused for the part of each pass between walking and publishing, and
-for as long as the index is behind or quarantined. A profile or an outfit on
-a walking node needs the Ethereum index published even when its items are
-all on Polygon. A node that does not walk the index and has no subgraph
+and is refused for the part of a pass between walking a NAME registrar event
+and publishing its fold (NAME transfers are rare, so most passes refuse
+nothing), and for as long as the index is behind or quarantined. A profile
+or an outfit on a walking node needs the Ethereum index complete even when
+its items are all on Polygon. On a walking node `/lambdas/names/{name}/owner`
+answers the `nft-index` envelope while the index is not published, where it
+used to fall back to the subgraph. A node that does not walk the index and has no subgraph
 (an island) serves profiles and outfits with no claimed name, as before.
 
 Revisit when the walk covers the testnets, which would retire step 2.

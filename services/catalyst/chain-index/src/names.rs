@@ -26,7 +26,10 @@ pub use crate::graph::OwnedName;
 pub enum Purpose {
     /// Grants or refuses a permission: a world mutation or admission, a
     /// community's creation or ownership transfer, the target of a
-    /// moderation write. The index must have folded every block it walked.
+    /// moderation write. The index must have folded every block it walked,
+    /// or, between walking and publishing a pass, have walked no NAME
+    /// registrar event past its published fold (which is then every NAME's
+    /// state still).
     Authorize,
     /// Shown to someone (lists, enrichment): published recently.
     Display,
@@ -41,9 +44,6 @@ pub struct Observation {
     /// When that fold was published (unix microseconds, the database's
     /// precision: two publications at one block differ here).
     pub folded_at_us: i64,
-    /// When the answer stops being usable for its purpose (unix
-    /// milliseconds): the publication's freshness deadline.
-    pub fresh_until_ms: i64,
 }
 
 /// Why the authority gave no answer. Neither is "nobody holds it".
@@ -79,7 +79,8 @@ pub trait NameAuthority: Send + Sync {
 
     /// Who holds the bare `label` (compared lowercased), lowercased; `None`
     /// when nobody does. Two holders of one label once lowercased are
-    /// [`NamesError::NotEstablished`], never a choice.
+    /// [`NamesError::NotEstablished`], never a choice, for a source that can
+    /// hold both (the index); see [`SubgraphNames`] for the subgraph.
     async fn name_owner(
         &self,
         label: &str,
@@ -136,7 +137,10 @@ pub trait NameAuthority: Send + Sync {
 
 /// The marketplace subgraph as the NAME source, where the operator selects
 /// it (a testnet node). Its answers carry no observation; an empty URL
-/// answers [`NamesError::NotEstablished`], never an empty holder list.
+/// answers [`NamesError::NotEstablished`], never an empty holder list. It
+/// answers a label's first holder by NFT id (`first: 1`), for every purpose:
+/// it keys a NAME by the registrar's lowercased `searchText`, so it cannot
+/// see the two holders the index refuses.
 pub struct SubgraphNames(pub Arc<ChainIndex>);
 
 impl SubgraphNames {

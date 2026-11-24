@@ -296,24 +296,41 @@ fn store_unavailable(store: &'static str, e: &sqlx::Error) -> AuthorityNotEstabl
 /// it was read under (`None` for a source without publications).
 type MemoizedOwner = (Result<Option<Address>, String>, Option<Observation>);
 
-/// `lookup`, waited on at most [`ADMISSION_OWNER_TIMEOUT`] in a task of its
-/// own (a caller that stops waiting leaves it to finish): the answer or the
-/// fault as the admission memo keeps it, with the lookup's observation.
-async fn timed_owner_lookup(lookup: OwnerLookup) -> MemoizedOwner {
+/// `lookup`, waited on at most `within` in a task of its own (a caller that
+/// stops waiting leaves it to finish): the answer or the fault as the
+/// admission memo keeps it, with the lookup's observation, and whether the
+/// fault is the index not being current for an authorization (a pass
+/// between walking and publishing it), which the memo does not keep.
+async fn timed_owner_lookup(
+    lookup: OwnerLookup,
+    within: std::time::Duration,
+) -> (MemoizedOwner, bool) {
     let lookup = tokio::spawn(lookup);
-    match tokio::time::timeout(ADMISSION_OWNER_TIMEOUT, lookup).await {
-        Ok(Ok((answer, observed))) => (
-            answer.map_err(|e| match e {
-                AuthorityNotEstablished::UndeterminedStoreUnavailable {
-                    reason_for_operators,
+    match tokio::time::timeout(within, lookup).await {
+        Ok(Ok((answer, observed))) => {
+            let not_current = matches!(
+                answer,
+                Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
+                    store: NAMES_NOT_CURRENT,
                     ..
-                } => reason_for_operators,
-                other => other.to_string(),
-            }),
-            observed,
-        ),
-        Ok(Err(join)) => (Err(format!("owner lookup failed: {join}")), None),
-        Err(_) => (Err("owner lookup timed out".to_string()), None),
+                })
+            );
+            (
+                (
+                    answer.map_err(|e| match e {
+                        AuthorityNotEstablished::UndeterminedStoreUnavailable {
+                            reason_for_operators,
+                            ..
+                        } => reason_for_operators,
+                        other => other.to_string(),
+                    }),
+                    observed,
+                ),
+                not_current,
+            )
+        }
+        Ok(Err(join)) => ((Err(format!("owner lookup failed: {join}")), None), false),
+        Err(_) => ((Err("owner lookup timed out".to_string()), None), false),
     }
 }
 
@@ -349,8 +366,16 @@ fn owner_answer(
 
 /// The NAME source could not answer: undetermined, never "nobody holds it".
 fn names_unavailable(e: &NamesError) -> AuthorityNotEstablished {
-    reader_unavailable("DCL NAME source", &e.to_string())
+    match e {
+        NamesError::NotEstablished(_) => reader_unavailable(NAMES_NOT_CURRENT, &e.to_string()),
+        NamesError::Failed(_) => reader_unavailable("DCL NAME source", &e.to_string()),
+    }
 }
+
+/// The store a refusal names when the NAME source cannot establish an owner
+/// now (the index not current for an authorization, an ambiguous label):
+/// undetermined, and short-lived.
+const NAMES_NOT_CURRENT: &str = "DCL NAME source (not established)";
 
 fn reader_unavailable(store: &'static str, reason: &str) -> AuthorityNotEstablished {
     AuthorityNotEstablished::UndeterminedStoreUnavailable {
@@ -832,12 +857,14 @@ impl Policy {
     }
 
     /// [`Self::current_owner`] for admission: the memo's answer, filled here
-    /// or joined in flight, a fault included, shared by every caller for
-    /// [`ADMISSION_OWNER_MEMO`]. The exact entry returned is validated: one
-    /// read under a publication is served only while that publication stands
-    /// and is current enough to authorize; otherwise the owner is read again
-    /// and filed over it (a slot another caller waits on is never dropped).
-    /// The wait, the validation and any re-read share one
+    /// or joined in flight, shared by every caller for
+    /// [`ADMISSION_OWNER_MEMO`], a fault included except the source's "not
+    /// established now" (the index between walking and publishing a pass),
+    /// which the next caller reads again. The exact entry returned is
+    /// validated: one read under a publication is served only while that
+    /// publication stands and is current enough to authorize; otherwise the
+    /// owner is read again and filed over it (a slot another caller waits on
+    /// is never dropped). The wait, the validation and any re-read share one
     /// [`ADMISSION_OWNER_TIMEOUT`] deadline.
     async fn admission_owner(
         &self,
@@ -850,17 +877,22 @@ impl Policy {
         }
         let key = world.key().to_string();
         let deadline = tokio::time::Instant::now() + ADMISSION_OWNER_TIMEOUT;
+        let left = move || deadline.saturating_duration_since(tokio::time::Instant::now());
         let answer = tokio::time::timeout_at(deadline, async {
             let lookup = self.name_owner_lookup(world);
+            // A refusal for an index that is not current is not kept: the
+            // pass publishes within moments, and the next caller reads again.
             let entry = match self
                 .admission_owners
                 .get_or_fetch(key.clone(), || async move {
-                    Ok::<_, std::convert::Infallible>(timed_owner_lookup(lookup).await)
+                    match timed_owner_lookup(lookup, left()).await {
+                        (entry, false) => Ok(entry),
+                        (entry, true) => Err(entry),
+                    }
                 })
                 .await
             {
-                Ok(entry) => entry,
-                Err(never) => match never {},
+                Ok(entry) | Err(entry) => entry,
             };
             let Some(observed) = entry.1 else {
                 return entry;
@@ -875,8 +907,11 @@ impl Policy {
             if current {
                 return entry;
             }
-            let fresh = timed_owner_lookup(self.name_owner_lookup(world)).await;
-            self.admission_owners.insert(key.clone(), fresh.clone());
+            let (fresh, not_current) =
+                timed_owner_lookup(self.name_owner_lookup(world), left()).await;
+            if !not_current {
+                self.admission_owners.insert(key.clone(), fresh.clone());
+            }
             fresh
         })
         .await
@@ -2781,7 +2816,6 @@ mod tests {
             Ok(Observation {
                 folded_block: block,
                 folded_at_us: block,
-                fresh_until_ms: i64::MAX,
             })
         }
 
@@ -2928,11 +2962,8 @@ mod tests {
                 .http_status(),
             403
         );
-        // Admission keeps the fault it filed for its memo's few seconds
-        // (fail closed), then reads the published B.
-        assert!(p.world_owner(&world).await.is_err());
-        p.admission_owners
-            .backdate(&world.key().to_string(), ADMISSION_OWNER_MEMO);
+        // The held fold's refusal was not kept: admission reads the
+        // published B at once.
         assert_eq!(p.world_owner(&world).await.unwrap(), Some(b.clone()));
     }
 

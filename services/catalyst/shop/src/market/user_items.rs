@@ -387,7 +387,7 @@ pub async fn user_names(
         let authority = match state.names() {
             Ok(authority) => authority,
             Err(e) => {
-                return super::unavailable(super::Source::MarketplaceSubgraph, &e.to_string());
+                return super::unavailable(state.name_source(), &e.to_string());
             }
         };
         if authority.observes() {

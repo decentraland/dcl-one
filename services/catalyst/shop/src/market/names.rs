@@ -7,11 +7,14 @@
 //!
 //! - [`Purpose::Authorize`]: [`chain_walk::is_ready_on`]: the whole history
 //!   walked, every walked block folded and published (`folded_block =
-//!   last_block`), within [`READY_WINDOW`], bound to chain 1, out of
-//!   quarantine. While a pass has walked a transfer it has not folded yet,
-//!   the fold still names the former holder, so no holder is authorized.
+//!   last_block`), within [`chain_walk::READY_WINDOW`], bound to chain 1, out
+//!   of quarantine; or, between walking and publishing a pass, the same with
+//!   no NAME registrar event walked past the published fold, which is then
+//!   still every NAME's state. While a pass has walked a registrar transfer
+//!   it has not folded, the fold still names the former holder, so no
+//!   holder is authorized.
 //! - [`Purpose::Display`]: [`owned_items::Rule::Fresh`]: complete and
-//!   published within [`READY_WINDOW`].
+//!   published within [`chain_walk::READY_WINDOW`].
 //!
 //! Every answer carries the [`Observation`] of its read. A memo files it
 //! under that observation and asks [`IndexNames::still_current`] on every
@@ -29,7 +32,7 @@ use crate::chain_index::names::{
     Answer, NameAuthority, NamesError, Observation, OwnedName, Purpose,
 };
 
-use super::chain_walk::{self, CURSOR_COLUMNS, ChainNet, Cursor, INDEXER_NFT, READY_WINDOW};
+use super::chain_walk::{self, CURSOR_COLUMNS, ChainNet, Cursor, INDEXER_NFT};
 use super::nft_index::DCL_REGISTRAR;
 use super::owned_items;
 
@@ -48,31 +51,53 @@ impl IndexNames {
     }
 }
 
-/// Whether `cursor` may be trusted for `purpose` at `now`.
-pub(crate) fn holds(cursor: &Cursor, purpose: Purpose, now: DateTime<Utc>) -> bool {
+/// Whether `cursor` may be trusted for `purpose` at `now`. `names_walked`:
+/// whether the walk holds a NAME registrar event past the published fold
+/// (a pass between walking and publishing it).
+pub(crate) fn holds(
+    cursor: &Cursor,
+    names_walked: bool,
+    purpose: Purpose,
+    now: DateTime<Utc>,
+) -> bool {
     match purpose {
         Purpose::Authorize => {
-            chain_walk::is_ready_on(cursor, chain_walk::mainnet_chain(ChainNet::Ethereum), now)
+            let ethereum = chain_walk::mainnet_chain(ChainNet::Ethereum);
+            if chain_walk::is_ready_on(cursor, ethereum, now) {
+                return true;
+            }
+            // Each pass commits its walk before it folds and publishes, so
+            // every new block opens a window in which the published fold
+            // trails the walk. The fold is still every NAME's state there
+            // when the walk holds no registrar event past it; otherwise it
+            // may name a former holder, and nobody is authorized.
+            !names_walked
+                && cursor.folded_block.is_some_and(|f| f < cursor.last_block)
+                && chain_walk::is_ready_on(
+                    &Cursor {
+                        folded_block: Some(cursor.last_block),
+                        ..cursor.clone()
+                    },
+                    ethereum,
+                    now,
+                )
         }
         Purpose::Display => owned_items::Rule::Fresh.holds(cursor, now),
     }
 }
 
-/// The observation of a cursor that holds: its published fold and the end
-/// of its freshness window.
+/// The observation of a cursor that holds: its published fold.
 pub(crate) fn observation(cursor: &Cursor) -> Option<Observation> {
     let (block, at) = cursor.folded_block.zip(cursor.folded_at)?;
-    let at = at.and_utc();
     Some(Observation {
         folded_block: block,
-        folded_at_us: at.timestamp_micros(),
-        fresh_until_ms: (at + READY_WINDOW).timestamp_millis(),
+        folded_at_us: at.and_utc().timestamp_micros(),
     })
 }
 
 fn not_established(purpose: Purpose) -> NamesError {
     NamesError::NotEstablished(match purpose {
-        Purpose::Authorize => "DCL NAMEs read the ethereum nft index, which has not folded every block it walked or is not published (catching up, a pass between walking and publishing, rewound after a reorg, quarantined, or MARKETPLACE_NFT_INDEX_ENABLED off): NAME ownership cannot be established".to_string(),
+        Purpose::Authorize => "DCL NAMEs read the ethereum nft index, which has walked a NAME registrar event it has not published or is not published (catching up, rewound after a reorg, quarantined, or MARKETPLACE_NFT_INDEX_ENABLED off): NAME ownership cannot be established".to_string(),
         Purpose::Display => "DCL NAMEs read the ethereum nft index, which is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_NFT_INDEX_ENABLED off)".to_string(),
     })
 }
@@ -81,15 +106,43 @@ fn failed(e: sqlx::Error) -> NamesError {
     NamesError::Failed(format!("ethereum nft index: {e}"))
 }
 
+/// The Ethereum nft cursor (`c`) as a NAME read selects it beside its rows,
+/// every row carrying it: its columns, and `names_walked`, whether the walk
+/// holds an event of the registrar (`registrar`, a bind placeholder) past
+/// the published fold. A pass commits its walked events with its
+/// `last_block`, so the statement's snapshot sees both or neither.
+fn cursor_select(registrar: &str) -> String {
+    let columns = CURSOR_COLUMNS
+        .split(", ")
+        .map(|column| format!("c.{column}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{columns}, EXISTS (SELECT 1 FROM shop.nft_event e \
+             WHERE e.network = 'ethereum' AND e.contract_address = {registrar} \
+               AND e.block_number > c.folded_block AND e.block_number <= c.last_block) AS names_walked"
+    )
+}
+
+/// The cursor a one-statement read carried (and whether it walked a
+/// registrar event past its fold), `None` when there is none (the
+/// statement then returned no row).
+fn cursor_of(rows: &[PgRow]) -> Result<Option<(Cursor, bool)>, NamesError> {
+    rows.first()
+        .map(|row| Ok((Cursor::from_row(row)?, row.try_get("names_walked")?)))
+        .transpose()
+        .map_err(failed)
+}
+
 /// `cursor` checked for `purpose` at `now`: its observation, or the refusal.
 fn checked(
-    cursor: Option<Cursor>,
+    cursor: Option<(Cursor, bool)>,
     purpose: Purpose,
     now: DateTime<Utc>,
 ) -> Result<Observation, NamesError> {
     cursor
-        .filter(|c| holds(c, purpose, now))
-        .and_then(|c| observation(&c))
+        .filter(|(c, walked)| holds(c, *walked, purpose, now))
+        .and_then(|(c, _)| observation(&c))
         .ok_or_else(|| not_established(purpose))
 }
 
@@ -99,35 +152,42 @@ pub(crate) async fn check(
     purpose: Purpose,
     now: DateTime<Utc>,
 ) -> Result<Observation, NamesError> {
-    let cursor = chain_walk::cursor(&mut *conn, INDEXER_NFT, ChainNet::Ethereum)
-        .await
-        .map_err(|e| NamesError::Failed(format!("ethereum nft cursor: {e}")))?;
-    checked(cursor, purpose, now)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {cursor} FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = 'ethereum'",
+        cursor = cursor_select("$2")
+    )))
+    .bind(INDEXER_NFT)
+    .bind(DCL_REGISTRAR)
+    .fetch_all(conn)
+    .await
+    .map_err(|e| NamesError::Failed(format!("ethereum nft cursor: {e}")))?;
+    checked(cursor_of(&rows)?, purpose, now)
 }
 
-/// `shop.chain_cursor`'s columns for a statement that reads the Ethereum
-/// nft cursor (`c`) beside its rows: every row carries it.
-fn cursor_columns() -> String {
-    CURSOR_COLUMNS
-        .split(", ")
-        .map(|column| format!("c.{column}"))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// The NAMEs the owners in `$1` (lowercased) hold, `$2` the registrar, `$3`
+/// now (unix ms): minted spelling, the price of the token's open, unexpired
+/// legacy order when its seller still holds it, and the subgraph's order key
+/// (by NFT id, `<contract>-<token id>` as text). One statement for
+/// [`owned_on`] and [`read_owned_names_of`].
+const OWNED_NAMES_SQL: &str = "\
+SELECT n.owner, n.ens_subdomain AS name, n.contract_address AS name_contract, n.token_id::text AS name_token, \
+       o.price::text AS price, n.contract_address || '-' || n.token_id::text AS sort_key \
+FROM shop.nft n \
+LEFT JOIN shop.nft_order o ON o.network = n.network AND o.contract_address = n.contract_address \
+    AND o.token_id = n.token_id AND o.status = 'open' AND o.expires_at > $3 AND o.seller = n.owner \
+WHERE n.owner = ANY($1) AND n.network = 'ethereum' AND n.contract_address = $2 AND n.ens_subdomain IS NOT NULL";
+
+fn owned_name(r: &PgRow) -> Option<OwnedName> {
+    Some(OwnedName {
+        name: r.get::<Option<String>, _>("name")?,
+        contract_address: r.get("name_contract"),
+        token_id: r.get("name_token"),
+        price: r.get("price"),
+    })
 }
 
-/// The cursor a one-statement read carried, `None` when there is none (the
-/// statement then returned no row).
-fn cursor_of(rows: &[PgRow]) -> Result<Option<Cursor>, NamesError> {
-    rows.first()
-        .map(Cursor::from_row)
-        .transpose()
-        .map_err(failed)
-}
-
-/// The NAMEs `owner` holds, read on `conn` in one statement with the
-/// cursor: minted spelling, ordered as the subgraph ordered them (by NFT id,
-/// `<contract>-<token id>` as text), with the price of the token's open,
-/// unexpired legacy order when its seller still holds it.
+/// The NAMEs `owner` holds ([`OWNED_NAMES_SQL`]), read on `conn` in one
+/// statement with the cursor.
 async fn owned_on(
     conn: &mut PgConnection,
     owner: &str,
@@ -137,19 +197,12 @@ async fn owned_on(
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {cursor}, x.name, x.name_contract, x.name_token, x.price \
          FROM shop.chain_cursor c \
-         LEFT JOIN LATERAL ( \
-             SELECT n.ens_subdomain AS name, n.contract_address AS name_contract, n.token_id::text AS name_token, \
-                    o.price::text AS price, n.contract_address || '-' || n.token_id::text AS sort_key \
-             FROM shop.nft n \
-             LEFT JOIN shop.nft_order o ON o.network = n.network AND o.contract_address = n.contract_address \
-                 AND o.token_id = n.token_id AND o.status = 'open' AND o.expires_at > $3 AND o.seller = n.owner \
-             WHERE n.owner = $1 AND n.network = 'ethereum' AND n.contract_address = $2 AND n.ens_subdomain IS NOT NULL \
-         ) x ON true \
+         LEFT JOIN LATERAL ({OWNED_NAMES_SQL}) x ON true \
          WHERE c.indexer = $4 AND c.network = 'ethereum' \
          ORDER BY x.sort_key",
-        cursor = cursor_columns()
+        cursor = cursor_select("$2")
     )))
-    .bind(owner.to_lowercase())
+    .bind(vec![owner.to_lowercase()])
     .bind(DCL_REGISTRAR)
     .bind(now.timestamp_millis())
     .bind(INDEXER_NFT)
@@ -157,19 +210,8 @@ async fn owned_on(
     .await
     .map_err(failed)?;
     let observed = checked(cursor_of(&rows)?, purpose, now)?;
-    let names = rows
-        .iter()
-        .filter_map(|r| {
-            Some(OwnedName {
-                name: r.get::<Option<String>, _>("name")?,
-                contract_address: r.get("name_contract"),
-                token_id: r.get("name_token"),
-                price: r.get("price"),
-            })
-        })
-        .collect();
     Ok(Answer {
-        value: Arc::new(names),
+        value: Arc::new(rows.iter().filter_map(owned_name).collect()),
         observation: Some(observed),
     })
 }
@@ -192,7 +234,7 @@ async fn holders_on(
                AND n.network = 'ethereum' AND n.contract_address = $2 AND n.owner IS NOT NULL \
          ) h ON true \
          WHERE c.indexer = $3 AND c.network = 'ethereum'",
-        cursor = cursor_columns()
+        cursor = cursor_select("$2")
     )))
     .bind(labels)
     .bind(DCL_REGISTRAR)
@@ -213,39 +255,30 @@ async fn holders_on(
     Ok((observed, out))
 }
 
-/// The NAMEs of many owners in one statement on `conn`, for a caller that
-/// checks the cursor in the same snapshot (the profiles' and outfits'
-/// composite read): owner (lowercased) -> its NAMEs as [`owned_on`] lists
-/// them; an owner holding none is absent.
+/// The NAMEs of many owners ([`OWNED_NAMES_SQL`]) in one statement on
+/// `conn`, for a caller that checks the cursor in the same snapshot (the
+/// profiles' and outfits' composite read): owner (lowercased) -> its NAMEs
+/// in the subgraph's order; an owner holding none is absent.
 pub(crate) async fn read_owned_names_of(
     conn: &mut PgConnection,
     owners: &[String],
 ) -> Result<HashMap<String, Vec<OwnedName>>, sqlx::Error> {
     let owners: Vec<String> = owners.iter().map(|o| o.to_lowercase()).collect();
-    let now_ms = Utc::now().timestamp_millis();
-    let rows = sqlx::query(
-        "SELECT n.owner, n.ens_subdomain AS name, n.contract_address, n.token_id::text AS token_id, o.price::text AS price \
-         FROM shop.nft n \
-         LEFT JOIN shop.nft_order o ON o.network = n.network AND o.contract_address = n.contract_address \
-             AND o.token_id = n.token_id AND o.status = 'open' AND o.expires_at > $3 AND o.seller = n.owner \
-         WHERE n.owner = ANY($1) AND n.network = 'ethereum' AND n.contract_address = $2 AND n.ens_subdomain IS NOT NULL \
-         ORDER BY n.owner, n.contract_address || '-' || n.token_id::text",
-    )
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT x.* FROM ({OWNED_NAMES_SQL}) x ORDER BY x.owner, x.sort_key"
+    )))
     .bind(&owners)
     .bind(DCL_REGISTRAR)
-    .bind(now_ms)
+    .bind(Utc::now().timestamp_millis())
     .fetch_all(conn)
     .await?;
     let mut out: HashMap<String, Vec<OwnedName>> = HashMap::new();
     for r in &rows {
-        out.entry(r.get::<String, _>("owner").to_lowercase())
-            .or_default()
-            .push(OwnedName {
-                name: r.get("name"),
-                contract_address: r.get("contract_address"),
-                token_id: r.get("token_id"),
-                price: r.get("price"),
-            });
+        if let Some(name) = owned_name(r) {
+            out.entry(r.get::<String, _>("owner").to_lowercase())
+                .or_default()
+                .push(name);
+        }
     }
     Ok(out)
 }
@@ -397,6 +430,23 @@ mod tests {
         .unwrap();
     }
 
+    /// A walked event at `block` of `contract`'s `token` (a pass commits it
+    /// with its `last_block`, before folding it).
+    async fn walked(pool: &PgPool, block: i64, contract: &str, token: i64) {
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+             VALUES ('ethereum', $1, 0, 1, 'transfer', $2, $2, $3, $4, $5)",
+        )
+        .bind(block)
+        .bind(contract)
+        .bind(token)
+        .bind(A)
+        .bind(B)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     async fn published() -> Option<(OwnDb, IndexNames)> {
         let db = OwnDb::create("names").await?;
         publish(&db.pool, &[ChainNet::Ethereum], false, Duration::ZERO).await;
@@ -431,6 +481,7 @@ mod tests {
                 .unwrap()
         );
 
+        walked(&db.pool, 101, DCL_REGISTRAR, 7).await;
         cursor_at(&db.pool, 101, 100).await;
         for refused in [
             names
@@ -639,5 +690,73 @@ mod tests {
             ..crate::market::Settings::for_tests()
         });
         assert!(none.name_authority.is_none() && none.authorizing_names.is_none());
+    }
+
+    /// Every new block opens a window in which the published fold trails the
+    /// walk. With no registrar event walked past it the fold is still every
+    /// NAME's state: an authorization holds under the same observation, a
+    /// memo keeps it, and another contract's events change nothing. The
+    /// first registrar event walked refuses until the pass publishes.
+    #[tokio::test]
+    async fn a_walk_past_the_fold_without_registrar_events_keeps_authorizing() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        mint(&db.pool, 7, A, "Alice").await;
+        let warm = names.name_owner("alice", Purpose::Authorize).await.unwrap();
+        let observed = warm.observation.unwrap();
+        walked(&db.pool, 101, "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d", 1).await;
+        cursor_at(&db.pool, 101, 100).await;
+        let gap = names.name_owner("alice", Purpose::Authorize).await.unwrap();
+        assert_eq!(gap.value.as_deref(), Some(A));
+        assert_eq!(gap.observation, Some(observed));
+        assert!(names.still_current(&observed, Purpose::Authorize).await.unwrap());
+        assert!(!names.owned_names(A, Purpose::Authorize).await.unwrap().value.is_empty());
+
+        walked(&db.pool, 102, DCL_REGISTRAR, 7).await;
+        cursor_at(&db.pool, 102, 100).await;
+        assert!(matches!(
+            names.name_owner("alice", Purpose::Authorize).await,
+            Err(NamesError::NotEstablished(_))
+        ));
+        assert!(!names.still_current(&observed, Purpose::Authorize).await.unwrap());
+        db.drop().await;
+    }
+
+    /// The cursor states no authorization trusts: none at all, quarantined,
+    /// bound to another chain, published past the freshness window (which a
+    /// display read refuses too).
+    #[tokio::test]
+    async fn an_unusable_cursor_establishes_nothing() {
+        let Some((db, names)) = published().await else {
+            return;
+        };
+        mint(&db.pool, 7, A, "Alice").await;
+        let refused = |purpose| {
+            let names = &names;
+            async move {
+                matches!(
+                    names.name_owner("alice", purpose).await,
+                    Err(NamesError::NotEstablished(_))
+                )
+            }
+        };
+        let set = |sql: &'static str| {
+            let pool = db.pool.clone();
+            async move {
+                sqlx::query(sql).execute(&pool).await.unwrap();
+            }
+        };
+        set("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()) WHERE indexer = 'nft' AND network = 'ethereum'").await;
+        assert!(refused(Purpose::Authorize).await, "quarantined");
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, chain_id = 137 WHERE indexer = 'nft' AND network = 'ethereum'").await;
+        assert!(refused(Purpose::Authorize).await, "another chain");
+        set("UPDATE shop.chain_cursor SET chain_id = 1, folded_at = timezone('UTC', now()) - interval '31 minutes' WHERE indexer = 'nft' AND network = 'ethereum'").await;
+        assert!(refused(Purpose::Authorize).await, "stale for an authorization");
+        assert!(refused(Purpose::Display).await, "stale for a display read");
+        set("DELETE FROM shop.chain_cursor WHERE indexer = 'nft' AND network = 'ethereum'").await;
+        assert!(refused(Purpose::Authorize).await, "no cursor");
+        assert!(refused(Purpose::Display).await, "no cursor");
+        db.drop().await;
     }
 }
