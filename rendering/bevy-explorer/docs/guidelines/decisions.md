@@ -29,10 +29,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
   overlap shallower than the edge threshold gets no line, so a curved surface draws none on
   itself; creases inside the silhouette darken, which the look relies on; an orthographic
-  view (the Backpack) skips the cutoff, in place of Unity's preview flag; and an alpha-blended
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag; an alpha-blended
   mesh draws no line, since the line reads the depth and normal prepass and a blended mesh is not
-  in it (it would trace the edges of the scene behind). As with Unity's hull, the line never
-  covers a mesh's emission, so a glowing mesh glows to its edge.
+  in it (it would trace the edges of the scene behind); and a single-sided mesh seen from its
+  back draws nothing, where Unity's hull, made of back faces, fills its shape with the outline
+  colour (the Epic Arrival Shield's particles, seen from the front). As with Unity's hull, the
+  line never covers a mesh's emission, so a glowing mesh glows to its edge.
 - **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
   and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
