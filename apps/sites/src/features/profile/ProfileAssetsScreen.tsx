@@ -1,13 +1,13 @@
 import { useState } from "react";
 
-import { Button } from "@dcl/one-ui";
 import {
   BackpackUpperBody,
   GeneralGrid,
   GeneralMapPin,
   GeneralName,
   GeneralSecondaryBarEmotes,
-} from "@dcl/one-ui/foundations/icons";
+  Button,
+} from "@dcl/one-ui";
 
 import {
   CollectiblesItem,

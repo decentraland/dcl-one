@@ -1,7 +1,6 @@
 import { useEventsCopy, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
 import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui/foundations/icons";
-import { Button as OneButton } from "@dcl/one-ui";
+import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
 import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
 import { Notice, type NoticeTone } from "@dcl/one-ui/apps/sites/events/Notice";

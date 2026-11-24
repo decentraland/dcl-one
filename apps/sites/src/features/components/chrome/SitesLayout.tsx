@@ -1,9 +1,7 @@
 import { useContext, useId, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { NavCreditsBalance } from "@dcl/one-ui";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-import SiteLayout from "@dcl/one-ui/components/AppChrome/SiteLayout";
+import { useChromeAuth, SiteLayout, NavCreditsBalance } from "@dcl/one-ui";
 import SitesFooter, { type FooterCopy } from "@dcl/one-ui/apps/sites/chrome/SitesFooter";
 import SitesSectionNavigation, { type SitesSectionItem } from "@dcl/one-ui/apps/sites/chrome/SitesSectionNavigation";
 import { ProfileNavigationContext } from "@dcl/one-ui/apps/sites/chrome/profile-navigation";

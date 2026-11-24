@@ -25,6 +25,51 @@ class UiStandardsTest(unittest.TestCase):
         self.assertFalse(ui_standards.is_ui_source('rendering/bevy-explorer/source/src/file.ts'))
         self.assertFalse(ui_standards.is_ui_source('services/catalyst/src/main.rs'))
 
+    def test_deep_shared_imports(self):
+        found = ui_standards.deep_shared_imports(
+            'import { Button } from "@dcl/one-ui"\n'
+            'import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth"\n'
+            "import type { IconProps } from '@dcl/one-ui/foundations/icons'\n"
+            'export { theme } from "@dcl/one-ui/foundations"\n'
+            'const page = await import("@dcl/one-ui/components/NavBar/NavBar")\n'
+            'vi.mock("@dcl/one-ui/components/AppChrome/chrome-nav", () => ({}))\n')
+        self.assertEqual(found, ['@dcl/one-ui/components/AppChrome/chrome-auth', '@dcl/one-ui/foundations/icons',
+                                 '@dcl/one-ui/foundations', '@dcl/one-ui/components/NavBar/NavBar',
+                                 '@dcl/one-ui/components/AppChrome/chrome-nav'])
+
+    def test_deep_shared_imports_allow_stylesheets_app_ui_and_comments(self):
+        self.assertEqual(ui_standards.deep_shared_imports(
+            'import "@dcl/one-ui/foundations.css"\n'
+            'import "@dcl/one-ui/foundations/colors/colors.css"\n'
+            'import styles from "@dcl/one-ui/text-styles.module.css"\n'
+            'import { shopSession } from "@dcl/one-ui/apps/shop/session"\n'
+            'import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url"\n'
+            '// import { NavBar } from "@dcl/one-ui/components/NavBar/NavBar"\n'
+            'const ALIAS = "@dcl/one-ui/"\n'
+            'const other = "@dcl/one-ui-extra/components/X"\n'), [])
+
+    def test_shared_import_scope(self):
+        deep = 'import { NavBar } from "@dcl/one-ui/components/NavBar/NavBar"\n'
+        sources = {
+            'apps/sites/src/Page.tsx': deep,
+            'apps/sites/scripts/check.mts': deep,
+            'tooling/shop-parity/page.mts': deep,
+            'library/shop/cart.ts': deep,
+            'library/ui/test/consumer/types.ts': deep,
+            'rendering/bevy-explorer/source/react-web/src/App.tsx': deep,
+            'apps/sites/README.md': deep,
+            'apps/sites/src/Clean.tsx': 'import { NavBar } from "@dcl/one-ui"\n',
+            next(iter(ui_standards.SHARED_IMPORT_PENDING)): deep,
+        }
+        issues = ui_standards.shared_import_issues(sources, sources.__getitem__)
+        self.assertEqual([issue.split(':')[0] for issue in issues],
+                         ['apps/sites/scripts/check.mts', 'apps/sites/src/Page.tsx', 'library/shop/cart.ts',
+                          'tooling/shop-parity/page.mts'])
+        self.assertIn("from '@dcl/one-ui' instead", issues[0])
+
+    def test_shared_import_scope_empty(self):
+        self.assertEqual(ui_standards.shared_import_issues(set(), lambda name: ''), [])
+
     def test_forbidden_imports(self):
         self.assertTrue(ui_standards.forbidden_imports("import styled from 'styled-components'"))
         self.assertTrue(ui_standards.forbidden_imports("import { styled } from '@mui/material'"))
