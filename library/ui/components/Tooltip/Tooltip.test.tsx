@@ -729,11 +729,12 @@ describe('when the tip unmounts', () => {
     const { rerender } = render(<Anchored show />)
     const tile = screen.getByRole('button', { name: 'Tile' })
     await user.hover(tile)
-    expect(tile).toHaveAttribute('aria-describedby', screen.getByRole('tooltip').id)
+    expect(tile).toHaveAttribute('aria-describedby', `hint ${screen.getByRole('tooltip').id}`)
 
+    tile.setAttribute('aria-describedby', tile.getAttribute('aria-describedby') + ' additional-hint')
     rerender(<Anchored show={false} />)
 
-    expect(tile).toHaveAttribute('aria-describedby', 'hint')
+    expect(tile).toHaveAttribute('aria-describedby', 'hint additional-hint')
     expect(screen.queryByRole('tooltip')).toBeNull()
   })
 
@@ -805,5 +806,80 @@ describe('when a consumer styles the tip', () => {
 
     expect(html).toContain('role="tooltip"')
     expect(html).toContain('Rare')
+  })
+})
+
+describe('when tooltip content or availability changes', () => {
+  it.each([false, ''])('uses the label for empty rich content (%s)', (content) => {
+    render(
+      <Tooltip content={content} label="Save" labelChild>
+        <button>Action</button>
+      </Tooltip>
+    )
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Save')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeVisible()
+  })
+
+  it('renders numeric zero as content', () => {
+    render(
+      <Tooltip label="Count" content={0}>
+        <button>Action</button>
+      </Tooltip>
+    )
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/^0$/)
+  })
+
+  it('does not show a shortcut on its own', () => {
+    render(
+      <Tooltip label="" shortcut="S">
+        <button>Action</button>
+      </Tooltip>
+    )
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('opens when a hovered portal trigger gains content', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <Tooltip portal label="">
+        <button>Action</button>
+      </Tooltip>
+    )
+    await user.hover(screen.getByRole('button'))
+    rerender(
+      <Tooltip portal label="Save">
+        <button>Action</button>
+      </Tooltip>
+    )
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Save')
+  })
+
+  it('cancels the opening delay when disabled', () => {
+    vi.useFakeTimers()
+    const onOpenChange = vi.fn()
+    const { rerender } = render(
+      <Tooltip label="Save" enterDelay={50} onOpenChange={onOpenChange}>
+        <button>Action</button>
+      </Tooltip>
+    )
+    fireEvent.mouseEnter(screen.getByRole('button'))
+    rerender(
+      <Tooltip disabled label="Save" enterDelay={50} onOpenChange={onOpenChange}>
+        <button>Action</button>
+      </Tooltip>
+    )
+    act(() => vi.advanceTimersByTime(100))
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('renders the trigger on the server for an open portal', () => {
+    const html = renderToString(
+      <Tooltip portal open label="Save">
+        <button>Action</button>
+      </Tooltip>
+    )
+    expect(html).toContain('Action')
+    expect(html).not.toContain('role="tooltip"')
   })
 })

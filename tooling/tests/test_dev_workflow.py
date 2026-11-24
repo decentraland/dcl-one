@@ -1,5 +1,6 @@
 """Development CI keeps platform coverage and reusable, isolated build snapshots."""
 from pathlib import Path
+import fnmatch
 import json
 import os
 import re
@@ -544,6 +545,26 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     current = fingerprint()
                     self.assertNotEqual(previous, current)
                     previous = current
+
+    def test_creator_hub_workflows_track_shared_tooltip_sources(self):
+        ci = CREATOR_HUB.read_text()
+        push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
+        pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
+        shared = ['library/ui/components/Tooltip/Tooltip.module.css',
+                  'library/ui/index.ts', 'library/ui/package.json']
+        for path in shared:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
+                self.assertRegex(path, pr_pattern)
+        self.assertNotRegex('docs/ui-components.md', pr_pattern)
+
+        inspector = CREATOR_HUB.with_name('creator-hub-inspector.yml').read_text()
+        version_paths = re.search(r'change_path: "([^"]+)"', inspector)[1].split()
+        note_paths = re.search(r"paths: '([^']+)'", inspector)[1].split(',')
+        sections = re.search(r"section_names: '([^']+)'", inspector)[1].split(',')
+        self.assertEqual(set(version_paths), set(note_paths))
+        self.assertEqual(len(note_paths), len(sections))
+        self.assertIn('library/ui/components/Tooltip', version_paths)
 
     def test_creator_hub_desktop_builds_need_the_label_on_pull_requests(self):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]

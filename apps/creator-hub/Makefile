@@ -29,7 +29,7 @@ BEVY_AGENT_PATH = packages/inspector/agents/bevy
 # One install covers every workspace package; CI installs exactly what the lock records.
 PNPM_INSTALL = pnpm install $(if $(CI),--frozen-lockfile)
 
-install:
+install: install-shared-ui
 	$(PNPM_INSTALL)
 	make install-protoc
 	make install-bevy-agent
@@ -46,7 +46,10 @@ install-inspector:
 install-bevy-agent:
 	cd $(BEVY_AGENT_PATH); $(PNPM_INSTALL)
 
-install-creator-hub:
+install-shared-ui:
+	pnpm --dir ../../library/ui install --frozen-lockfile --ignore-scripts
+
+install-creator-hub: install-shared-ui
 	$(PNPM_INSTALL)
 	make fetch-devtools
 

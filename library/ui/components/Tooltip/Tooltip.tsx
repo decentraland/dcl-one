@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './Tooltip.module.css'
@@ -84,7 +84,11 @@ function placeInViewport(
   const maxLeft = window.innerWidth - EDGE - width
   const maxTop = window.innerHeight - EDGE - height
   const along = (start: number, length: number, own: number) =>
-    align === 'start' ? start : align === 'end' ? start + length - own : start + length / 2 - own / 2
+    align === 'start'
+      ? start
+      : align === 'end'
+        ? start + length - own
+        : start + length / 2 - own / 2
   const at = (s: TooltipSide) => ({
     left:
       s === 'right'
@@ -115,11 +119,10 @@ function placeInViewport(
   }
 }
 
-function isEmpty(label: string | undefined, content: ReactNode): boolean {
-  const noLabel = label === undefined || label === ''
-  const noContent = content === undefined || content === null || content === false || content === ''
-  return noLabel && noContent
-}
+// During hydration the server markup contains only the trigger. Attach a portal on the client.
+const subscribeToHydration = () => () => {}
+const clientBody = () => document.body
+const serverBody = () => null
 
 export function Tooltip({
   label,
@@ -150,7 +153,9 @@ export function Tooltip({
   const tipRef = useRef<HTMLSpanElement>(null)
   const id = useId()
   // With nothing to say the tip never opens and names nothing; the children still render.
-  const disabled = disabledProp || isEmpty(label, content)
+  const rich = content != null && typeof content !== 'boolean' && content !== ''
+  const disabled = disabledProp || (!rich && !label)
+  const portalBody = useSyncExternalStore(subscribeToHydration, clientBody, serverBody)
   const controlled = openProp !== undefined
   const anchored = anchor !== undefined
   const floating =
@@ -164,8 +169,10 @@ export function Tooltip({
     enterDelay !== undefined
   const [openState, setOpen] = useState(false)
   const [position, setPosition] = useState<TipPosition>(UNPLACED)
-  const open = !disabled && (controlled ? openProp : openState)
+  const open = !!portalBody && !disabled && (controlled ? openProp : openState)
 
+  const hovered = useRef(false)
+  const previousDisabled = useRef(disabled)
   const wanted = useRef(false)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -198,12 +205,21 @@ export function Tooltip({
   )
   const enter = useCallback(() => {
     if (document.pointerLockElement) return
+    hovered.current = true
+    if (disabled) return
     if (!enterDelay) return request(true)
     clearTimeout(closeTimer.current)
     clearTimeout(openTimer.current)
     openTimer.current = setTimeout(() => request(true), enterDelay)
-  }, [request, enterDelay])
+  }, [disabled, request, enterDelay])
+  useEffect(() => {
+    if (previousDisabled.current === disabled) return
+    previousDisabled.current = disabled
+    if (disabled) clearTimeout(openTimer.current)
+    else if (hovered.current) enter()
+  }, [disabled, enter])
   const leave = useCallback(() => {
+    hovered.current = false
     if (!interactive) return request(false)
     clearTimeout(closeTimer.current)
     clearTimeout(openTimer.current)
@@ -245,11 +261,15 @@ export function Tooltip({
   }, [floating, anchor, enter, leave, focus, blur])
   useEffect(() => {
     if (!open || !anchor || labelChild) return
-    const before = anchor.getAttribute('aria-describedby')
-    anchor.setAttribute('aria-describedby', id)
+    const descriptionIds = () =>
+      (anchor.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+    const previous = descriptionIds()
+    if (previous.includes(id)) return
+    anchor.setAttribute('aria-describedby', [...previous, id].join(' '))
     return () => {
-      if (before === null) anchor.removeAttribute('aria-describedby')
-      else anchor.setAttribute('aria-describedby', before)
+      const remaining = descriptionIds().filter((value) => value !== id)
+      if (remaining.length) anchor.setAttribute('aria-describedby', remaining.join(' '))
+      else anchor.removeAttribute('aria-describedby')
     }
   }, [open, anchor, id, labelChild])
   // A plain label is the name at all times; rich content names the control while the tip is in the page.
@@ -259,15 +279,11 @@ export function Tooltip({
     const target = anchored ? anchor : ref.current?.firstElementChild
     if (!target || target === tipRef.current) return
     const attribute =
-      content === undefined && label !== undefined
-        ? 'aria-label'
-        : inPage
-          ? 'aria-labelledby'
-          : null
+      !rich && label !== undefined ? 'aria-label' : inPage ? 'aria-labelledby' : null
     if (!attribute || target.hasAttribute(attribute)) return
     target.setAttribute(attribute, attribute === 'aria-label' ? (label ?? '') : id)
     return () => target.removeAttribute(attribute)
-  }, [labelChild, disabled, anchored, anchor, content, label, inPage, id])
+  }, [labelChild, disabled, anchored, anchor, rich, label, inPage, id])
 
   useEffect(() => {
     if (!floating || !open) return
@@ -399,7 +415,7 @@ export function Tooltip({
     styles[placed],
     HOOK_TIP,
     `${HOOK_TIP}--${placed}`,
-    content !== undefined && styles.rich,
+    rich && styles.rich,
     maxWidth !== undefined && styles.wrapText,
     interactive && styles.interactive,
     bare && styles.bare,
@@ -419,11 +435,17 @@ export function Tooltip({
       onMouseEnter={interactive ? enter : undefined}
       onMouseLeave={interactive ? leave : undefined}
     >
-      {content ?? label}
+      {rich ? content : label}
       {shortcut ? <span className={styles.shortcut}>[{shortcut}]</span> : null}
     </span>
   )
-  if (anchored) return <>{children}{open && anchor ? createPortal(tip, document.body) : null}</>
+  if (anchored)
+    return (
+      <>
+        {children}
+        {open && anchor && portalBody ? createPortal(tip, portalBody) : null}
+      </>
+    )
   return (
     <span
       ref={ref}
@@ -435,7 +457,7 @@ export function Tooltip({
       onBlur={floating ? (event) => blur(event.relatedTarget) : undefined}
     >
       {children}
-      {floating ? open && createPortal(tip, document.body) : disabled ? null : tip}
+      {floating ? open && portalBody && createPortal(tip, portalBody) : disabled ? null : tip}
     </span>
   )
 }

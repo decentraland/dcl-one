@@ -29,6 +29,10 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
+      - name: Install shared UI types when the Creator Hub dependencies are cached
+        if: steps.setup.outputs.node-modules-cache-hit == 'true'
+        run: make install-shared-ui
+
       # Reuse the shared build instead of regenerating protoc / rebuilding asset-packs.
       - uses: ./.github/actions/creator-hub-download-build
 
