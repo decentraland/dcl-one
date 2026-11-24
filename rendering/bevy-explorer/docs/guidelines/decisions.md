@@ -40,8 +40,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the clock and show once no scene sets the time. The HUD's Skybox menu is locked meanwhile and
   the minimap's restrictions list says so. Two exceptions. `/time --force` beats a scene's time
   until the next `/time` that sets a time or a speed: the scene editor lights a stopped scene
-  with it. A portable's time wins only over a running clock, never locks the menu and is not
-  listed: a portable follows the player everywhere, so the player's own stopped time beats it.
+  with it. A portable's time comes after the scene's, wins only over a running clock, never
+  locks the menu and is not listed: a portable follows the player everywhere, so the player's
+  own stopped time beats it.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest direction;
   SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene restrictions list.** The minimap lists `Experiences disabled` where the scene's

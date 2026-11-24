@@ -49,19 +49,30 @@ enum SkySource {
     Clock,
 }
 
-/// The time of the scene the player stands in always wins over the clock. A portable's time
+/// The time of the scene the player stands in always wins: over the clock and over a portable's
+/// time, its SDK `SkyboxTime` before its `scene.json` time. A portable's time comes next and
 /// wins only over a running clock: a time the player set by hand beats it. A forced clock beats
-/// both.
+/// them all.
 fn sky_source(
     clock: &RunningClock,
     skybox: Option<&SkyboxTimeSource>,
     has_scene_time: bool,
     scene: Option<&SceneTimeSource>,
 ) -> SkySource {
-    let holds = |portable: bool| !clock.forced && !(portable && clock.speed == 0.0);
-    if skybox.is_some_and(|source| holds(source.portable)) {
+    if clock.forced {
+        return SkySource::Clock;
+    }
+    let skybox_portable = skybox.map(|source| source.portable);
+    // the keeper's scene time with no source is the placeholder it starts with
+    let scene_portable = has_scene_time.then(|| scene.is_some_and(|source| source.portable));
+    let portables_hold = clock.speed != 0.0;
+    if skybox_portable == Some(false) {
         SkySource::Skybox
-    } else if has_scene_time && holds(scene.is_some_and(|source| source.portable)) {
+    } else if scene_portable == Some(false) {
+        SkySource::Scene
+    } else if skybox_portable == Some(true) && portables_hold {
+        SkySource::Skybox
+    } else if scene_portable == Some(true) && portables_hold {
         SkySource::Scene
     } else {
         SkySource::Clock
@@ -488,7 +499,7 @@ pub struct TimeOfDayConsoleCommand {
     pub resume: bool,
     /// The time set here beats a scene's time, until the next `/time` that sets a time or a
     /// speed. The scene editor's lighting uses it.
-    #[arg(long)]
+    #[arg(long, requires = "time")]
     pub force: bool,
     pub time: Option<f32>,
     pub speed: Option<f32>,
@@ -930,6 +941,42 @@ mod tests {
         time(&mut app, "6 12");
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
+    }
+
+    #[test]
+    fn the_parcel_scenes_time_wins_over_a_portables_under_a_running_clock() {
+        let mut app = app();
+        time(&mut app, "12 12");
+        let follower = portable(&mut app);
+        app.world_mut()
+            .entity_mut(follower)
+            .insert(skybox_time(18. * ONE_HOUR));
+        let scene = parcel_scene(&mut app);
+        app.world_mut()
+            .entity_mut(scene)
+            .insert(SceneTime { time: NIGHT });
+        settle(&mut app);
+        assert_eq!(sky(&app), NIGHT);
+        assert!(locked(&app));
+
+        // stopping the clock changes nothing: the scene held the sky already
+        time(&mut app, "6 0");
+        settle(&mut app);
+        assert_eq!(sky(&app), NIGHT);
+        assert!(locked(&app));
+    }
+
+    #[test]
+    fn force_needs_a_time() {
+        let mut app = app();
+        let (tx, rx) = mpsc::channel();
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/time".into(),
+            args: vec!["--force".into()],
+            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+        });
+        app.update();
+        assert!(rx.try_recv().unwrap().is_err());
     }
 
     #[test]
