@@ -109,7 +109,8 @@ async fn reseeding_a_world_moves_its_name_to_the_new_owner() {
         Some(crate::chain_index::graph::test_support::index_reading(
             NAMES.clone(),
         )),
-    );
+    )
+    .with_subgraph_names();
     assert!(matches!(
         policy.is_owner(&world, &current).await,
         crate::shared::identity::PermissionDecision::Allowed
@@ -240,13 +241,16 @@ async fn grant(
 }
 
 fn state_with(pool: &PgPool, settings: Settings) -> SharedState {
-    let policy = Arc::new(Policy::new(
-        pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        Some(crate::chain_index::graph::test_support::index_reading(
-            NAMES.clone(),
-        )),
-    ));
+    let policy = Arc::new(
+        Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(crate::chain_index::graph::test_support::index_reading(
+                NAMES.clone(),
+            )),
+        )
+        .with_subgraph_names(),
+    );
     Arc::new(StorageState::new(pool.clone(), policy, settings, None))
 }
 
@@ -2988,11 +2992,14 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
         },
     );
     market.allow_loopback_for_tests();
-    let policy = Arc::new(Policy::new(
-        pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        Some(Arc::new(market)),
-    ));
+    let policy = Arc::new(
+        Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(Arc::new(market)),
+        )
+        .with_subgraph_names(),
+    );
     let app = router(Arc::new(StorageState::new(
         pool.clone(),
         policy,

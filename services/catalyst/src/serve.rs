@@ -953,7 +953,8 @@ pub async fn serve(
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
-            .with_name_deny_list(worlds.names.clone()),
+            .with_name_deny_list(worlds.names.clone())
+            .with_name_authority(market.authorizing_names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1153,7 +1154,11 @@ pub async fn serve(
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
-    social.communities.set_chain_index(market.index.clone());
+    // The shop selected the node's DCL NAME source once; without one that
+    // may authorize, a community creation or ownership transfer answers 503.
+    if let Some(names) = market.authorizing_names.clone() {
+        social.communities.set_name_authority(names);
+    }
     social
         .communities
         .set_explorer_flags(explorer_api.flags.clone());
@@ -2052,5 +2057,97 @@ mod referral_settings_tests {
             trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["10.0.0.0/8", "2001:db8::/32"]
         );
+    }
+}
+
+#[cfg(test)]
+mod name_source_wiring_tests {
+    use crate::config::Config;
+    use crate::worlds::policy::{PersonalWorldsPolicy, Policy};
+
+    /// A `serve` that neither walks the nft index nor reads the subgraph,
+    /// with chain checks skipped so it starts (personal worlds only), over a
+    /// database another process published a NAME into: the Admin Toolkit's
+    /// lookup reads that publication, and the worlds policy, built from the
+    /// source `serve` hands it, owns no DCL NAME world with it.
+    #[tokio::test]
+    async fn a_shared_database_reader_serves_lookups_and_authorizes_no_world() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("WORLDS_WRITES_ENABLED", "true"),
+            ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+            ("MARKETPLACE_SUBGRAPH_URL", ""),
+            ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true"),
+        ])
+        .unwrap();
+        assert!(
+            catalyst_config::posture::worlds_names_reader(&config)
+                .unwrap()
+                .is_some(),
+            "starts with the personal-worlds warning"
+        );
+        let label = format!("w{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let holder = crate::shared::identity::Address::parse(&format!(
+            "0x{}",
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2)[..40]
+        ))
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'ethereum', 1, 100, 100, timezone('UTC', now()), true, 1) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = 100, folded_block = 100, \
+                 folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 1, quarantined_at = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token =
+            i64::from_str_radix(&uuid::Uuid::new_v4().simple().to_string()[..12], 16).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2, $3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+        .bind(token)
+        .bind(holder.as_str())
+        .bind(&label)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let market = crate::shop::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::settings::market_settings(&config, &[]).unwrap(),
+        );
+        assert_eq!(
+            market.name_owner(&label).await.unwrap(),
+            Some(holder.clone())
+        );
+        assert!(market.authorizing_names.is_none());
+        // As `serve` builds it.
+        let policy = Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(market.index.clone()),
+        )
+        .with_name_authority(market.authorizing_names.clone());
+        let world =
+            crate::comms::world_identity::WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let refused = policy
+            .is_owner(&world, &holder)
+            .await
+            .into_result()
+            .unwrap_err();
+        assert_eq!(refused.http_status(), 403, "{refused}");
+        sqlx::query("DELETE FROM shop.nft WHERE contract_address = $1 AND token_id = $2")
+            .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

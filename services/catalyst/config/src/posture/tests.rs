@@ -131,9 +131,20 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         check(&c, &lookup(&map))
     };
     check_of(&[db, (ENV, "mirror")]).unwrap();
-    let err = check_of(&[db, (ENV, "mirror"), ("MARKETPLACE_SUBGRAPH_URL", "")])
-        .unwrap_err()
-        .to_string();
+    // On mainnet the names read the nft index the mirror walks: the
+    // marketplace subgraph is no profile ownership source there.
+    check_of(&[db, (ENV, "mirror"), ("MARKETPLACE_SUBGRAPH_URL", "")]).unwrap();
+    // Off mainnet it is the names' only source.
+    let sepolia = ("ETH_NETWORK", "sepolia");
+    check_of(&[db, (ENV, "mirror"), sepolia]).unwrap();
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        sepolia,
+        ("MARKETPLACE_SUBGRAPH_URL", ""),
+    ])
+    .unwrap_err()
+    .to_string();
     assert!(
         err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
         "{err}"
@@ -1375,11 +1386,26 @@ fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
         "MARKETPLACE_SUBGRAPH_URL",
         "https://reader.example/subgraph",
     );
+    let walks = ("MARKETPLACE_NFT_INDEX_ENABLED", "true");
     let skip = ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true");
+    let sepolia = ("ETH_NETWORK", "sepolia");
     let run = |pairs: &[(&str, &str)]| worlds_names_reader(&parsed(pairs));
 
-    let err = run(&[db, writes]).unwrap_err().to_string();
-    assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{err}");
+    // A node that walks the nft index reads the holders there; the indexer
+    // process publishes, `serve` reads the same database.
+    for pairs in [
+        &[db, writes, walks][..],
+        &[db, writes, walks, ("MARKETPLACE_SUBGRAPH_URL", " ")][..],
+        &[db, writes, walks, ("ETH_NETWORK", " mainnet ")][..],
+    ] {
+        assert_eq!(run(pairs).unwrap(), None, "{pairs:?}");
+    }
+
+    // One that does not (the index off, or off mainnet) needs the subgraph.
+    for pairs in [&[db, writes][..], &[db, writes, walks, sepolia][..]] {
+        let err = run(pairs).unwrap_err().to_string();
+        assert!(err.contains("MARKETPLACE_SUBGRAPH_URL"), "{pairs:?}: {err}");
+    }
     assert!(
         run(&[db, writes, ("MARKETPLACE_SUBGRAPH_URL", " ")]).is_err(),
         "a blank reader is no reader"
@@ -1397,7 +1423,12 @@ fn world_writes_need_the_names_reader_unless_chain_checks_are_skipped() {
         "no chain access: starts and warns"
     );
 
-    for pairs in [&[db, writes, reader][..], &[db][..], &[db, skip][..]] {
+    for pairs in [
+        &[db, writes, reader][..],
+        &[db, writes, sepolia, reader][..],
+        &[db][..],
+        &[db, skip][..],
+    ] {
         assert_eq!(run(pairs).unwrap(), None, "{pairs:?}");
     }
 }

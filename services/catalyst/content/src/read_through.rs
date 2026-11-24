@@ -33,7 +33,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError, watch};
 use tokio::time::Instant;
 
 use super::deploy_remote_entity::{
-    BufferSink, ByteBudget, ByteReservation, ContentSource, RemoteDeployment,
+    BufferSink, ByteBudget, ByteReservation, ContentSource, DownloadPeers, RemoteDeployment,
     deploy_entity_streaming, fetch_verified, stream_body,
 };
 use super::failed_deployments_store::LiveFailedDeploymentsStore;
@@ -829,7 +829,7 @@ impl Upstream {
             ContentSource {
                 client: &self.client,
                 storage: self.storage.clone(),
-                servers: &servers,
+                servers: DownloadPeers::fixed(&servers),
                 content_semaphore: self.downloads.files.clone(),
             },
             &self.deployer,
