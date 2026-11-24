@@ -2133,6 +2133,24 @@ target (no unearned tier on the next write), and a completed single badge
 reads its target as reached. The rest of upstream's
 catalog reaches it through the TS database import.
 
+### Historical marketplace sale inputs
+
+The Ethereum sales cursor watches accepted bids at the ERC721Bid contract and purchases at both names controllers. An accepted bid occupies one row in `shop.sale_event`. Each `NameBought` occupies one row in `shop.name_purchase` with its caller, beneficiary, name and fee in MANA base units. The original controller burns the price. The second pays its configured fee collector. Multiple purchases in one transaction have distinct log positions. The walk inserts its rows with its cursor advance. A rewind deletes both tables' Ethereum rows above the retained block in the same transaction.
+
+On Ethereum and Polygon, `shop.sale_event.bid_fee` records the integer emitted by `BidAccepted`. Older rows can have a null fee. Replaying the original event fills it, including an emitted zero. The off-chain marketplace walk keeps each executed asset's `extra` bytes in `shop.trade_event.assets`. On Polygon the MANA leg can carry the royalty recipients chosen during execution. A replay of the same transaction and signature fills these bytes on older rows.
+
+A Polygon store purchase ends at its `Bought` log. Each explicitly priced line matches one preceding `Issue` with the same transaction, collection, item and beneficiary, after the previous purchase in that transaction. Repeated copies keep their line order. The sales cursor records historical changes to venue rates and recipients in `shop.sale_fee_change`. Rates take effect at their log position.
+
+The accounting job reads three mainnet cursors per network. Step `0061_shop_sale_accounting` leaves their new decoder version and verified height empty on upgraded databases. Each cursor owner repairs at most 10,000 old blocks per pass, checking its stored tip hash around each RPC window. A Polygon repair asks for issues from the collections named by the store even when a collection has yet to reach the mirror. A rewind clips the verified height. A repair changes the history revision even if the tip stays at the same height.
+
+`shop.sale_execution` stores one row per store purchase, accepted bid, successful order, off-chain execution or NAME fee. `shop.sale_asset` and `shop.sale_payment` store the ordered asset and consideration legs. The asset ID combines the network, transaction hash, execution number in that transaction and asset ordinal. A block or log position can change when the same transaction is included on a replacement branch. Store line prices and single-asset prices with one currency support per-item counts. An unpriced bundle retains its execution consideration in each currency and its individual unpriced assets. NAME fees have their own payment and no asset sale.
+
+`shop.sale_payout` records the integer amount and recipient of each matched payment leg. Receipts are checked against their transaction, block hash and venue log. The split covers seller, creator royalty, venue fee, store fee and any division remainder retained by an off-chain payer. A missing receipt or ambiguous match leaves `settled` false. A missing receipt is retried. Store mints read collection creatorship at the receipt block and reverse later changes in the same block to identify the seller separately from the payee.
+
+The fold groups payments by currency. UTC-day rows keep gross volume, counts, NAME fees, creator earnings, venue fees, store fees and transfers to the historical MANA burners. Item and wallet rows keep priced activity per day. Wallet totals use the wallet's days, and first-purchase rows date the first buyer, seller and item relationship for cumulative distinct counts. Recomputing a day replaces its rows and recomputes all affected wallets. A semantic history change removes the old network groups before replay.
+
+`shop.sale_publication` records the common block and hash and the three source identities and revisions. All three source tips must match the RPC branch. The accounting job locks and rechecks the input cursors before committing the facts and their marker together. Readers can obtain a read-only repeatable-read transaction for one network or both. Each requested network needs a recent whole-history publication, no newly owed history, matching source revisions and a recent accounting marker. The earliest of those freshness deadlines bounds use of the snapshot.
+
 ### Badge processor
 
 The writers of evaluated progress are four leased jobs

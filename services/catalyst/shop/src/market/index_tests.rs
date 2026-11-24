@@ -149,6 +149,7 @@ struct FakeChain {
     finalized_available: std::sync::atomic::AtomicBool,
     reorg_on_logs: std::sync::atomic::AtomicBool,
     logs: Mutex<Vec<Value>>,
+    receipts: Mutex<HashMap<String, Value>>,
     max_span: u64,
     max_addresses: usize,
     forks: Mutex<HashMap<u64, String>>,
@@ -237,6 +238,7 @@ impl FakeChain {
         max_addresses: usize,
     ) -> Arc<Self> {
         Arc::new(Self {
+            receipts: Mutex::default(),
             head: Mutex::new(head),
             finalized_lag: std::sync::atomic::AtomicU64::new(64),
             finalized_available: std::sync::atomic::AtomicBool::new(true),
@@ -399,10 +401,11 @@ async fn rpc(
             let answers: Vec<Value> = calls
                 .iter()
                 .filter(|c| {
-                    !chain
-                        .drop_in_batch
-                        .lock()
-                        .contains(&hex_u64(&c["params"][0]))
+                    c["method"] != "eth_getBlockByNumber"
+                        || !chain
+                            .drop_in_batch
+                            .lock()
+                            .contains(&hex_u64(&c["params"][0]))
                 })
                 .map(|c| answer(&chain, c))
                 .collect();
@@ -426,6 +429,14 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
     let reply = |result: Value| json!({ "jsonrpc": "2.0", "id": id, "result": result });
     let refuse = |message: String| json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": message } });
     match body["method"].as_str() {
+        Some("eth_getTransactionReceipt") => reply(
+            chain
+                .receipts
+                .lock()
+                .get(body["params"][0].as_str().unwrap())
+                .cloned()
+                .unwrap_or(Value::Null),
+        ),
         Some("eth_blockNumber") => reply(json!(format!("0x{:x}", *chain.head.lock()))),
         Some("eth_chainId") if chain.fail_chain_id.load(Ordering::SeqCst) => {
             json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": format!("upstream refused {}", chain.echo.lock()) } })
@@ -5775,13 +5786,15 @@ mod supervisor {
         .unwrap()
     }
 
-    const PROJECTION_TABLES: [&str; 6] = [
+    const PROJECTION_TABLES: [&str; 8] = [
         "shop.nft",
         "shop.nft_event",
         "shop.nft_contract",
         "shop.nft_order",
         "shop.nft_bid",
         "shop.sale_event",
+        "shop.store_sale_line",
+        "shop.sale_fee_change",
     ];
 
     /// The nft and sales walks standing at one checkpoint read their next
@@ -6019,6 +6032,8 @@ mod supervisor {
             logs.clone(),
             logs.clone(),
             logs,
+            // Historical fee changes across the configured venues.
+            format!("logs {}..{} x5", s + 499, s + 1_498),
             // The checkpoint both extend, read in the window's bracket.
             format!("header {}", s + 498),
             format!("header {}", s + 1_498),
@@ -6030,8 +6045,8 @@ mod supervisor {
         ]
         .into();
         assert_eq!(together_calls, expected, "{together_calls:#?}");
-        assert_eq!(sent, 9, "the shared walk's own requests");
-        assert_eq!(alone_calls.len(), 19, "{alone_calls:#?}");
+        assert_eq!(sent, 10, "the shared walk's own requests");
+        assert_eq!(alone_calls.len(), 20, "{alone_calls:#?}");
         for table in PROJECTION_TABLES {
             assert_eq!(
                 table_rows(&together.pool, table).await,
@@ -11091,3 +11106,5 @@ mod compare_sources_tests {
         );
     }
 }
+
+mod sale_accounting;

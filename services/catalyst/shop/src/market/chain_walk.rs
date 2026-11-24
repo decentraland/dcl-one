@@ -655,6 +655,9 @@ pub async fn advance(
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
+             sale_covered_rewinds = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN reorg_rewinds ELSE sale_covered_rewinds END, \
+             sale_input_version = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN $9 ELSE sale_input_version END, \
+             sale_verified_through = CASE WHEN $8 AND ($3 = start_block - 1 OR (sale_covered_rewinds = reorg_rewinds AND sale_input_version = $9 AND sale_verified_through = $3)) THEN $5 ELSE sale_verified_through END, \
              updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block < $5",
@@ -666,6 +669,8 @@ pub async fn advance(
     .bind(header.number as i64)
     .bind(&header.hash)
     .bind(header.timestamp)
+    .bind(super::sale_history::required(indexer))
+    .bind(super::sale_history::VERSION)
     .execute(&mut *conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -726,7 +731,9 @@ pub async fn rewind(
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, diverged_at = NULL, \
-             reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
+             sale_covered_rewinds = CASE WHEN sale_covered_rewinds = reorg_rewinds THEN reorg_rewinds + 1 END, \
+             sale_verified_through = CASE WHEN sale_verified_through IS NOT NULL THEN least(sale_verified_through, $5) END, \
+             sale_history_revision = sale_history_revision + 1, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block >= $5",
     )
@@ -1452,6 +1459,7 @@ async fn rebuild(
     }
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
+             sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              updated_at = timezone('UTC', now()) \
@@ -1881,6 +1889,9 @@ pub(crate) async fn commit_window(
     times: &HashMap<i64, i64>,
 ) -> anyhow::Result<usize> {
     let mut tx = pool.begin().await?;
+    if super::sale_history::required(ix.indexer()) {
+        super::sale_history::validate_window(ix, logs, times)?;
+    }
     let written = ix.write(&mut tx, logs, times).await?;
     advance(&mut tx, ix.indexer(), ix.net(), expected, header)
         .await
@@ -1944,10 +1955,28 @@ async fn walk(
         .as_deref()
         .filter(|_| cur.last_block >= cur.start_block)
         .map(|h| (cur.last_block as u64, h));
-    let spent = match ix
-        .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
-        .await
-    {
+    let lanes = async {
+        let mut used = if settings.sales_enabled {
+            super::sale_history::repair(pool, source, ix, owner, durable, total, &mut chunk).await?
+        } else {
+            Spent::default()
+        };
+        let own = ix
+            .lanes(
+                pool,
+                source,
+                anchor,
+                total.saturating_sub(used.charge),
+                &mut chunk,
+                owner,
+                durable,
+            )
+            .await?;
+        used.charge += own.charge;
+        used.requests += own.requests;
+        anyhow::Ok(used)
+    };
+    let spent = match lanes.await {
         Ok(spent) => spent,
         Err(e) if e.downcast_ref::<Diverged>().is_some() => {
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);

@@ -425,7 +425,12 @@ pub async fn walk_together(
                 .holdings
                 .owner(pool, member.lease.as_ref(), ix.as_ref(), settings)
                 .await?;
-            if ix.walks_alone(pool).await? {
+            if ix.walks_alone(pool).await?
+                || (settings.sales_enabled
+                    && super::sale_history::pending(pool, ix.as_ref())
+                        .await?
+                        .is_some())
+            {
                 return Ok(Err(MemberEnd::Regroup {
                     checkpoint: None,
                     solo: true,

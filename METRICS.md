@@ -1,5 +1,15 @@
 # Measured query workloads
 
+## Marketplace sales day rollups
+
+On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
+spaced five minutes apart. Selecting one UTC day returned 288 rows. With the
+network and block primary key, PostgreSQL scanned 1,667 local buffers and
+filtered out 199,712 rows. The index on network and the UTC day expression
+reduced that read to six local buffers and three shared buffer hits. The index
+occupied 1,458,176 bytes. This measures the day lookup that precedes rebuilding
+its aggregates.
+
 ## Credit revocation sweep
 
 A disposable PostgreSQL 18 table held 200,000 revocations across two chains,
