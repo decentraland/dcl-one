@@ -619,7 +619,7 @@ async fn the_linked_publications_release_keeps_each_submitted_cheque_and_repeats
         .unwrap();
     sqlx::raw_sql(include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0072_builder_linked_publications_retired.sql"
+        "/schemas/migrations/0073_builder_linked_publications_retired.sql"
     )))
     .execute(&pool)
     .await
@@ -735,7 +735,7 @@ async fn the_linked_publications_release_needs_its_step_and_the_forum_release() 
     );
     accepted(
         &pool,
-        "DELETE FROM meta.schema_steps WHERE step = '0072_builder_linked_publications_retired'",
+        "DELETE FROM meta.schema_steps WHERE step = '0073_builder_linked_publications_retired'",
     )
     .await;
     let error = sqlx::raw_sql(sqlx::AssertSqlSafe(linked_release()))
@@ -782,7 +782,7 @@ async fn a_linked_forum_release_preserves_links_and_repeats_without_a_second_sou
     .await;
     let migration = include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0071_builder_collection_forum_claim.sql"
+        "/schemas/migrations/0072_builder_collection_forum_claim.sql"
     ));
     sqlx::raw_sql(migration).execute(&pool).await.unwrap();
     let backfilled: Option<String> =
@@ -847,7 +847,7 @@ async fn linked_forum_retirement_requires_the_additive_migration() {
     legacy_linked_publications(&pool, true).await;
     accepted(
         &pool,
-        "DELETE FROM meta.schema_steps WHERE step = '0071_builder_collection_forum_claim'",
+        "DELETE FROM meta.schema_steps WHERE step = '0072_builder_collection_forum_claim'",
     )
     .await;
     let release = include_str!(concat!(

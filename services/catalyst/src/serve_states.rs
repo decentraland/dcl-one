@@ -612,7 +612,6 @@ pub(super) fn social_states(
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
-    metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -932,11 +931,6 @@ pub(super) fn social_states(
             writes_enabled: config.writes.social_writes_enabled,
             commit_hash: config.node.commit_hash.clone(),
             current_version: config.social.social_rpc_current_version.clone(),
-            metrics_path: config.social.wkc_metrics_public_path.clone(),
-            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
-            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
-                == Some("true"),
-            metrics_handle: Some(metrics_handle),
             profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
@@ -1019,21 +1013,9 @@ mod event_notice_configuration_tests {
             settings.jump_in_site_url = config.explore.jump_in_site_url.clone();
             let explore = Arc::new(explore::ExploreState::new(pool.clone(), settings, None));
             let onboarding = Arc::new(explore::api::onboarding::OnboardingState::new(pool.clone()));
-            let recorder = comms::metrics::prometheus_builder()
-                .unwrap()
-                .build_recorder();
             let social = social_states(
-                &config,
-                &pool,
-                &storage,
-                &http,
-                &content,
-                &market,
-                comms,
-                None,
-                &explore,
+                &config, &pool, &storage, &http, &content, &market, comms, None, &explore,
                 onboarding,
-                recorder.handle(),
             )
             .unwrap();
             let settings = &social.notifications.settings;

@@ -35,6 +35,7 @@ pub use crate::shared::{cors, nul_guard, query_params};
 pub mod entity;
 pub mod errors;
 pub mod formatters;
+pub mod metrics;
 pub mod queries;
 pub mod sync_types;
 pub mod validation;

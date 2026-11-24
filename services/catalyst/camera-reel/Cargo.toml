@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 dcl-auth.workspace = true
+dcl-metrics.workspace = true
 catalyst-shared = { path = "../shared" }
 catalyst-storage = { path = "../storage" }
 catalyst-content = { path = "../content" }

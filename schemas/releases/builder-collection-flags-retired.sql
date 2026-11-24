@@ -9,7 +9,7 @@ BEGIN
     IF to_regclass('meta.schema_steps') IS NULL THEN
         RAISE EXCEPTION 'not a migrated catalyst database (no meta.schema_steps)';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM meta.schema_steps WHERE step = '0064_builder_collection_flags_retired') THEN
+    IF NOT EXISTS (SELECT 1 FROM meta.schema_steps WHERE step = '0065_builder_collection_flags_retired') THEN
         RAISE EXCEPTION 'run catalyst schema migrate with the binary that derives collection state first';
     END IF;
     SELECT count(*) INTO present

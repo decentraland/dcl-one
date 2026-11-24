@@ -9,7 +9,7 @@ BEGIN
     IF to_regclass('meta.schema_steps') IS NULL THEN
         RAISE EXCEPTION 'not a migrated catalyst database (no meta.schema_steps)';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM meta.schema_steps WHERE step = '0066_builder_item_contents_order') THEN
+    IF NOT EXISTS (SELECT 1 FROM meta.schema_steps WHERE step = '0067_builder_item_contents_order') THEN
         RAISE EXCEPTION 'run catalyst schema migrate with the binary that keeps item documents in order first';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_constraint WHERE contype = 'f' AND confrelid = 'builder.uploaded_contents'::regclass) THEN

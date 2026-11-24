@@ -27,6 +27,9 @@
 //! fleet-wide job whose durable effects must not be applied twice fences them
 //! itself (a row lock, a claim, or a compare against a stamp it read).
 
+mod instrumentation;
+pub use instrumentation::FAMILIES;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -630,6 +633,7 @@ async fn run_periodic(
     cfg: PeriodicCfg,
     task: Arc<tokio::sync::Mutex<JobBody>>,
 ) -> anyhow::Result<()> {
+    let metrics = instrumentation::PeriodicJob::new(&log_name);
     let first_delay = cfg.first_delay(&log_name);
     tracing::info!(
         job = %log_name,
@@ -649,9 +653,22 @@ async fn run_periodic(
     loop {
         pass += 1;
         let started = tokio::time::Instant::now();
-        let fut = (task.lock().await)(ctx.clone());
-        let outcome = catch_panic(fut).await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let observation = metrics.begin();
+        let outcome = catch_panic(async {
+            let fut = (task.lock().await)(ctx.clone());
+            fut.await
+        })
+        .await;
+        let elapsed = started.elapsed();
+        let elapsed_ms = elapsed.as_millis() as u64;
+        observation.finish(
+            match &outcome {
+                Ok(Ok(())) => "success",
+                Ok(Err(_)) => "error",
+                Err(_) => "panic",
+            },
+            elapsed,
+        );
         let wait = match outcome {
             Ok(Ok(())) => {
                 failures = 0;
@@ -776,6 +793,7 @@ pub struct Leases {
 /// release and control operation names the acquisition, so one that ended
 /// never touches the same name taken again.
 struct Holding {
+    _metric: instrumentation::HeldLease,
     lost: CancellationToken,
     acquisition: u64,
 }
@@ -1002,6 +1020,7 @@ impl Leases {
                 self.held.lock().insert(
                     name.to_string(),
                     Holding {
+                        _metric: instrumentation::HeldLease::new(),
                         lost: lost.clone(),
                         acquisition,
                     },

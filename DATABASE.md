@@ -990,7 +990,7 @@ Rollout, in order:
 
 1. Deploy the binary without the scene routes on every replica and run its
    `catalyst schema migrate`, which records step
-   `0062_builder_scenes_retired`. Confirm no `serve` of the old build is
+   `0063_builder_scenes_retired`. Confirm no `serve` of the old build is
    left. From this point the new binary's collector no longer counts
    `builder.asset_catalog`, so the asset-pack files the catalogue pulled into
    the store become collectable; the other scene blobs stay protected by
@@ -1007,7 +1007,7 @@ Rollout, in order:
    names, then `catalyst storage gc --delete` to unlink them.
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0062_builder_scenes_retired` is not
+`meta.schema_steps`, one where step `0063_builder_scenes_retired` is not
 recorded (the new binary has not migrated it), one that holds only some of
 the seven tables, and one whose `builder.projects` or `builder.asset_packs`
 changed in the last ten minutes (an old `serve` still editing). It runs in
@@ -1024,7 +1024,7 @@ release drops them again. Do not reset a database.
 
 The builder stores no published or approved flag on a collection: it derives
 both on read ("Builder chain state workload" below). Step
-`0064_builder_collection_flags_retired` drops the two checks that tied a
+`0065_builder_collection_flags_retired` drops the two checks that tied a
 contract address to the flag (`collections_contract_published_check`,
 `collections_pending_not_published_check`), so a draft can hold the contract
 address computed before its deployment. A database bootstrapped before the
@@ -1058,7 +1058,7 @@ Rollout, in order:
    binary, whether or not the release has run.
 2. Deploy the binary that derives collection state on every replica and run
    its `catalyst schema migrate`, which records step
-   `0064_builder_collection_flags_retired`. Confirm no `serve` of the old
+   `0065_builder_collection_flags_retired`. Confirm no `serve` of the old
    build is left, then set `CREATE_WRITES_ENABLED` back.
 3. Take a restore point: back up the database and test the restore. The
    drop is not reversible without that backup.
@@ -1069,7 +1069,7 @@ Rollout, in order:
    ```
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0064_builder_collection_flags_retired` is
+`meta.schema_steps`, one where step `0065_builder_collection_flags_retired` is
 not recorded, one that holds only one of the two columns, and one where a
 collection flagged published has no row in the Polygon collections copy, no
 verified publication, no submitted linked publication and no item with an
@@ -1111,7 +1111,7 @@ Rollout, in order:
 1. Set `CREATE_WRITES_ENABLED=false` on every replica.
 2. Deploy the binary that keeps item curations on every replica and run its
    `catalyst schema migrate`, which records step
-   `0070_builder_collection_forum`. Until the release runs, a third-party
+   `0071_builder_collection_forum`. Until the release runs, a third-party
    item the node submitted itself reads as unpublished.
 3. Take a restore point: back up the database and test the restore.
 4. Run the release once, with the administrative role, then set
@@ -1122,7 +1122,7 @@ Rollout, in order:
    ```
 
 The release refuses, changing nothing, a database without
-`meta.schema_steps`, one where step `0070_builder_collection_forum` is not
+`meta.schema_steps`, one where step `0071_builder_collection_forum` is not
 recorded, one that holds only one of the two columns, and one with a
 third-party item submitted here, without an item curation, whose
 `local_content_hash` is not 64 lowercase hex digits. It runs in one
@@ -1156,7 +1156,7 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 A third-party collection is submitted through `POST
 /v1/collections/{id}/publish` alone, so `builder.linked_collection_publications`
 has no reader or writer. Fresh databases don't have it. Step
-`0072_builder_linked_publications_retired` clears `publication_pending` on
+`0073_builder_linked_publications_retired` clears `publication_pending` on
 every third-party collection, which only that flow set, so an attempt left
 in flight doesn't keep its collection's drafts at 423.
 
@@ -1168,7 +1168,7 @@ It copies the cheque of each `submitted` row into `builder.slot_usage_cheques`
 salt its provider already used skipped and counted in a notice), clears
 `publication_pending` on third-party collections again and drops the table,
 in one transaction with a 10 s lock timeout. It refuses, changing nothing, a
-database without step 0072, one that still holds the linked forum column or
+database without step 0073, one that still holds the linked forum column or
 the builder collection flags (whose release reads this table), and one with a
 submitted row whose cheque a cheque row can't keep, a missing field included.
 A second run notes the table is gone. Until it runs,
@@ -1269,7 +1269,7 @@ Invariants:
   a stored state of the node's flow, not a published flag.
 - `builder.collections.contract_address` is stored lowercase
   (`collections_contract_address_lowercase_check`; step
-  `0077_builder_collection_contract_lowercase` sets it on an applied
+  `0078_builder_collection_contract_lowercase` sets it on an applied
   database), so its unique key holds for the lowercased address every read
   joins on.
 - Approved is the copy's `is_approved` for a standard collection. A
@@ -1376,7 +1376,7 @@ Invariants:
   of a standard draft whose contract the copy doesn't hold, which a
   complete pass of any age serves, as the owner's listing does.
 
-Indexes created with step `0065_builder_collection_listings` (the step adds the
+Indexes created with step `0066_builder_collection_listings` (the step adds the
 columns, checks and the unique constraint; the object pass that follows it
 builds the indexes, the function and the trigger):
 
@@ -1476,10 +1476,10 @@ Tables and what they hold:
   route reads.
   An upload stores only a hash its item names, verified against the bytes.
   `size` is at most 250,000,000 bytes, the largest item video
-  (`uploaded_contents_size_check`; step `0073_builder_uploaded_video_size`
+  (`uploaded_contents_size_check`; step `0074_builder_uploaded_video_size`
   sets it on an applied database). `video` is true only on a record the
   videos route wrote after its MP4 check (step
-  `0076_builder_uploaded_video_checked` adds it, false, to an applied
+  `0077_builder_uploaded_video_checked` adds it, false, to an applied
   database); both publications and the approval's video pin take no other
   record for a `video.mp4` entry.
 
@@ -1548,12 +1548,12 @@ Invariants:
   `a_standard_publication_takes_only_files_each_names_writer_uploaded` and
   `every_refusal_answers_before_anything_is_written`).
 
-Upgrade: step `0066_builder_item_contents_order` adds `item_contents.position`
+Upgrade: step `0067_builder_item_contents_order` adds `item_contents.position`
 and drops the key from `item_contents.hash` to `uploaded_contents`. A step
 can't retype a column or change a primary key, so the release
 `schemas/releases/builder-item-documents-and-uploaders.sql` turns `data` and
 `metrics` into `json` and keys `uploaded_contents` by hash and uploader. It
-refuses a database without step 0066, one where a table still references
+refuses a database without step 0067, one where a table still references
 `builder.uploaded_contents` by key (run `builder-scenes-retired.sql` first)
 and one where only one of the two documents is `json`; a second run notes
 it's done. Until it runs, item saves and uploads answer 503 naming the
@@ -1565,7 +1565,7 @@ Rollout, in order:
 
 1. Deploy the binary on every replica with creator writes closed
    (`CREATE_WRITES_ENABLED=false`) and run its `catalyst schema migrate`,
-   which records step 0066. Confirm no `serve` of an older build is left.
+   which records step 0067. Confirm no `serve` of an older build is left.
    Once the release has run, an older binary answers 500 to every item file
    upload (its upload record names a key the release replaces) and to a
    collection listing filtered by tag, and its item saves store documents in
@@ -1684,14 +1684,14 @@ Invariants:
   retired scene project) stays readable by its uploader alone and keeps its
   blob from the collector.
 
-Upgrade: step `0068_builder_item_video_named_by` adds `video_named_by`
+Upgrade: step `0069_builder_item_video_named_by` adds `video_named_by`
 (nullable, a check that refuses an empty or uppercase writer) and fills each
 video from the writer of the item's own entry for that hash, one holding an
 upload record first; a video no entry of its item names keeps no writer, so it
 opens nothing until a save writes it again. `schema migrate` builds
 `items_video_idx` from `schemas/50_create.sql`.
 
-Upgrade: step `0067_builder_item_contents_named_by` adds `named_by` (`NOT
+Upgrade: step `0068_builder_item_contents_named_by` adds `named_by` (`NOT
 NULL DEFAULT ''`, a check that refuses an empty or uppercase writer) and fills
 it in place. Each existing name goes to the first wallet that could have
 written it and holds the bytes, else to the item's owner: in order, the
@@ -1911,7 +1911,7 @@ Invariants:
 - The forward is at least once: at most six attempts, the wait doubling from
   a minute; a row the warehouse took is never claimed again.
 
-Upgrade: step `0069_builder_collection_lock` adds `collections.lock`; the
+Upgrade: step `0070_builder_collection_lock` adds `collections.lock`; the
 schema's object pass creates `builder.terms_acceptances` and its indexes.
 
 ## Builder third parties workload
@@ -2013,7 +2013,7 @@ Tables and what they hold:
   provider), `qty` (positive). Never updated by a route. A deleted
   collection's cheques stay with `collection_id` NULL (the foreign key sets
   it), so a spent salt stays spent; step
-  `0075_builder_slot_cheques_outlive_collections` drops the column's
+  `0076_builder_slot_cheques_outlive_collections` drops the column's
   `NOT NULL` and recreates the key with `ON DELETE SET NULL` on a database
   that has the table.
 - `builder.collections.forum_link` (an `http(s)` URL without spaces, at
@@ -2109,12 +2109,12 @@ Invariants code upholds:
   contents name, in the same transaction.
 
 Upgrade: the object pass creates the four tables; step
-`0070_builder_collection_forum` adds the forum columns and their checks. The
+`0071_builder_collection_forum` adds the forum columns and their checks. The
 import's `collection_curation`, `item_curation`, `collection_event` and
 `slot_usage_cheque` steps copy upstream's rows
 (`tooling/migration/sources/builder-server/MAPPING.md`).
 
-Step `0071_builder_collection_forum_claim` adds the claim timestamp and copies
+Step `0072_builder_collection_forum_claim` adds the claim timestamp and copies
 any linked publication's retained forum link into its collection before
 writes resume. It preserves an existing collection link. With writers
 stopped and a verified backup, run
@@ -2146,7 +2146,7 @@ The builder records the wearable validator's work in
 `handlers/validator.rs`; decided in
 [the validator ADR](docs/adr/2026-11-21-builder-validator-pulls-reviews.md)).
 The object pass creates both tables. Step
-`0074_builder_validation_retry` widens `validation_requests_trigger_check`
+`0075_builder_validation_retry` widens `validation_requests_trigger_check`
 to the trigger `retry` on a database that has the table; the object pass
 creates it with that check where it doesn't.
 
@@ -3812,7 +3812,59 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
-With `INDEX_METRICS_BIND` set, the index process reads these bounded cursor
+`shop.land_data` stores the latest parcel Update and the latest valid estate
+document. A malformed parcel Update clears the fields at its log position.
+The Ethereum NFT walk reads estate names at creation and on update. After
+an upgrade, a published cursor can already be past creations that the old
+walk skipped.
+Using spare log budget after publication, each pass reads one window of
+`CreateEstate` from the Estate registry, starting at deployment block 6,236,547.
+The `nft_estate_creations` row in `shop.worker_progress` records the last
+repaired block, its hash, and the original cursor height. Each archive window
+is checked against the published cursor and the hashes of its creation logs.
+The marker also records the forward NFT checkpoint and the cursor's rewind
+count. In its worker_progress arrays, key_ceiling[1] and [2] hold the
+forward block and hash; key_position[1] and [2] hold the archive predecessor
+hash and the rewind count. An upgraded writer moves both in its fenced cursor
+transactions.
+
+The repair intentionally writes shop.land_data even though land_authz also
+stores estate documents. Existing estate and parcel readers consume the
+published NFT projection from shop.land_data; using land_authz here would
+require changing those readers and would leave the historical gap dependent
+on an operator replay. The repair instead self-heals that projection after
+publication without delaying ownership or profile reads.
+
+Historical names keep their existing values until the final window rebuilds
+the estate rows by block and log index. Estate documents with valid empty
+fields are stored as empty strings, including descriptions; rejected
+documents do not clear the previous valid estate data. Estates with only
+rejected documents then have no row. Ownership and profiles remain available
+during the repair. A rewind removes orphaned events and shortens the repair
+range before the walk resumes. If the rewind removes the remaining archive
+windows, it reconciles the retained estates in its own fenced transaction.
+Migration 0062 installs a reset trigger for the repair marker. It invalidates
+the marker only when the Ethereum NFT cursor completes a full rebuild reset to
+its start block; ordinary reorg rewinds preserve the repaired prefix and are
+reconciled by the walker.
+
+The default window is at most 10,000 blocks. The historical prefix is roughly
+17 million blocks, so it takes at least about 1,700 successful repair passes;
+archive retries and dense creation blocks can extend that time. A pass runs
+one archive window only when its log budget has room, and uses the remaining
+budget to cap extra per-creation block-header reads. The safety bracket still
+uses the chain id and up to eight header/window reads, so a repair can exceed
+the leftover log budget by that bounded amount. A provider may internally
+split one eth_getLogs window into several RPC requests as well. Failed or
+timed-out repair attempts are retried and omitted from the pass request count.
+
+An operator can see completion when the marker's position equals its ceiling:
+SELECT position, ceiling FROM shop.worker_progress
+WHERE worker = 'nft_estate_creations' AND scope = 1;
+The final registry replacement commits in the same transaction that reaches
+equality. A missing marker means the next published pass must initialize or
+reopen the repair.
+With `INDEX_METRICS_BIND` set, each index process reads these bounded cursor
 tables once per minute. It samples the height, stored history mode, fold
 publication and quarantine from `shop.chain_cursor` and the height, replay
 mode and fold from `land_authz.index_cursor` for its configured registries
@@ -4025,6 +4077,14 @@ advance drops only the points past the checkpoint it extends, which does not
 cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
+
+The schema migration object pass adds the Ethereum NFT cursor's estate
+repair trigger. It clears the marker when a writer completes a requested
+rebuild by resetting the cursor to its start. During a reorg the upgraded
+writer shortens the archived prefix and records the new rewind count.
+An older writer can advance past missing creations, or rewind and replay
+to the very same height and hash. On upgrade, a checkpoint or rewind-count
+mismatch automatically reopens the historical prefix through that tip.
 
 ## Curation committee
 
@@ -4246,6 +4306,121 @@ readers use the subgraph fallbacks and Genesis collaborator grants fail
 closed. Its duration is not measured. Completeness check: `SELECT
 min(block_number) FROM land_authz.estate_data_event` is at or below the
 first `CreateEstate` block.
+
+## Map grid build workload
+
+`explore_api.map_grid` (`schemas/11_explore_api.sql`) holds the tile grid
+behind the explorer map routes (`/api/v{1,2}/tiles`, `/api/v2/tiles/info`,
+`map.png`, the minimaps and the parcel and estate metadata). The node
+builds it from its own indexes.
+
+- **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `run_pass`),
+  leased, every 60 s with 10 s of jitter, started once the land-authz index
+  and Shop's reader are attached. A failed pass backs off up to 5 minutes.
+  It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
+  marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
+  Every process also runs `explorer-map-grid-reload` every 60 s (`follow`):
+  one primary-key read of the row's stamp, a reload only when another
+  process stored a newer grid, and one read of the pass marker for what the
+  build waits for.
+- **One snapshot:** every read below runs in one REPEATABLE READ, READ ONLY
+  transaction, the one the land-authz index opens once it finds itself
+  published for the configured registries
+  (`indexer::ready_snapshot`; a database error fails the pass as itself,
+  not as an unpublished index). The build's clock is that snapshot's
+  `now()`: every comparison the build makes (the readiness windows, expiry,
+  the stamp, the publication floor) uses that one PostgreSQL transaction
+  clock. Shop's readiness checks and rows run
+  on the same connection, which `serve` hands to Shop through
+  `src/serve_adapters.rs` (Shop sits above Explore). The LAND facts, the
+  index cursors and Shop's rows are therefore one state of the database: a
+  rewind committed during the build, a withdrawn publication or deleted
+  rows, is invisible to it, and the next pass sees it whole.
+- **LAND reads** (`explore/src/api/map/build.rs`): every LAND `token_right`
+  row with coordinates, its `estate_land` row and the `authz_event` row its
+  `(updated_block, updated_log)` names, by primary key, for the time of its
+  last rights event. Every Estate `token_right` row that holds LAND, with
+  the same event join and the name of its latest `estate_data_event`
+  (`estate_data_event_estate_idx`, one probe per estate).
+- **Shop reads** (`shop/src/market/land_map.rs`): the Ethereum
+  `shop.nft_order` rows of the LAND and Estate registries, whatever their
+  status (primary-key range). The `shop.land_data` rows of both registries,
+  with the `shop.nft_event` row their `(updated_block, updated_log)` names,
+  by primary key. The open `public_nft_order` trades that sell a token of
+  either registry (`catalog::unified_trades_cte_of` scoped to the two
+  contracts, `idx_trade_assets_sent_contract`), priced in MANA: received
+  as an ERC-20 (asset type 1) whose token is the chain's MANA
+  (`listings::mana_token`); another token or a USD-pegged price is not a
+  MANA amount. The open, unexpired
+  `signatures.rentals` rows of both registries signed for the grid's chain
+  and its Rentals contract, with their periods.
+- **Readiness:** the land-authz index published for the configured
+  registries; the grid's chain being Ethereum mainnet, the only chain the
+  nft index walks (a Sepolia LAND index reports the nft index as not
+  ready); the nft index published on Ethereum and bound to chain 1
+  (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
+  readable (a recent complete trades-mirror pass read in the snapshot, or
+  local authority). The trade-events verdicts (`shop.trade_chain_state`)
+  close a sold or cancelled trade while that index is published on
+  Ethereum, as in the Shop's own listings. A source that is not ready fails
+  the pass, naming it in the marker's `last_error`, and nothing is built.
+  The held grid keeps serving. Until a grid exists, every map route answers
+  the unavailable envelope (503, `Retry-After: 60`, `no-store`, no
+  validators, even to a conditional request), naming the source the build
+  recorded, or the grid itself (`map-grid`, no `configure`) before any
+  build has.
+- **Write:** the stored row is the grid's revision. `etag` holds the hex
+  SHA-256 of the body a build stored (the canonical JSON, tiles in key
+  order), and `last_updated_at` its stamp, which only grows. A pass reads
+  the row (or its absence) in its input snapshot, as the revision its
+  inputs follow, and compares its body with that revision, not with what
+  its process holds. An equal body writes nothing, and a process holding an
+  older grid reloads the row. A different body waits until that revision
+  was built 5 minutes earlier (`fetched_at`, `MIN_PUBLISH_INTERVAL`), so a
+  token relisted every
+  minute does not write a 4.4 MB row and make every process reload it every
+  minute. Then it is gzipped and written with an `UPDATE` guarded on that
+  revision's stamp and `etag` (an `INSERT ...
+  ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
+  in milliseconds and at least one second past it. A leased build runs that
+  write on its lease's own session (`LeaseControl::with_connection`): it
+  commits while the process holds the lease or not at all, and a lease lost
+  while the statement waits takes the statement with it. If another publisher
+  stored a revision after the snapshot began, the write stores nothing and
+  the build is discarded: a pass never overwrites a revision published
+  since its snapshot. A process serves a grid only if its stamp
+  is newer than the one it holds, decided under its grid lock, so a slow
+  reload never brings back an older revision. An order or rental that
+  expires changes the body on the next pass, published under the same
+  5-minute floor. A PNG answer takes one grid
+  for its validators, cache key and body, and for an estate's
+  dissolved-estate redirect.
+- **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
+  `getEstateFlags` and `applyTrades`, with its roads and plazas vendored
+  (`special_tiles.json`). The rules and the known differences are in the
+  `build.rs` module docs. An order whose seller no longer owns the token
+  shows no price, while the atlas still prices it until it expires: 19 of
+  the 412 tiles the atlas priced by a legacy order on 2026-11-24. Bids do
+  not move `updatedAt`. Rental listings are this node's own, and a listing
+  is not checked against the token's current owner: the
+  `rental-listing-status` job cancels one whose asset left its lessor.
+  While a source is not ready, the held grid keeps its prices and listings,
+  including ones that expire meanwhile, until a pass builds again.
+- **Volume and cost:** mainnet holds 92,598 LAND, 65,086 of them in about
+  2,700 estates. On a synthetic database of that size (1.02M rights
+  events, 30,866 orders, 69,448 names among 1.07M `nft_event` rows, 52,000
+  trades), measured on a laptop with Postgres 17 and a release build: the
+  LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
+  names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
+  serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
+- **Deploy:** no schema step. Stop every process of a binary that runs
+  the `explorer-map-mirror` job before this one's first build: that job
+  rewrites the row's stamp without a guard. An environment that still sets
+  `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts, as
+  the binary and the posture checks read neither. A node without the
+  land-authz index, the nft index (`MARKETPLACE_NFT_INDEX_ENABLED`, mainnet
+  only) or a trades source never builds a grid, and its map routes answer
+  the envelope.
 
 ## Place removal feed
 

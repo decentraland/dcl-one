@@ -19,11 +19,11 @@ RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edi
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
-PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
+PostgreSQL +3, LiveKit +4..+6, index metrics on TCP +6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. Behind a [public origin](#serving-over-https) Pulse's ENet is UDP 7777 instead.
 The ingress takes the first free block 10000 above the base (`ingress_port`):
-Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
-saved port fails startup.
+Valkey +0, RTMP +1 (every interface), the ingress relay +2, health +3 and the message
+router's `/metrics` and `/health` +4. An occupied saved port fails startup.
 
 A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
 (`foundation-dev status` prints it). Behind a public origin that URL names the origin's
@@ -51,6 +51,27 @@ and shows no other avatars:
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="$(mktemp -d)" \
   --webtransport-developer-mode --ignore-certificate-errors-spki-list=<hash from status>
 ```
+
+Community chat needs the message router, which the stack runs only when
+`.cache/dev/settings.json` names its binary:
+
+```sh
+(cd services/catalyst && cargo build -p catalyst-message-router --features livekit --bin catalyst-message-router)
+# settings.json: "message_router_bin": "<checkout>/services/catalyst/target/debug/catalyst-message-router"
+foundation-dev down && foundation-dev up
+```
+
+The `message-router` task then starts after LiveKit and the API, restarts
+whenever it exits with an error (as Pulse does), and is ready once its
+`/health/ready` on `ingress_port + 4` answers. It signs its token requests with the generated
+`MESSAGE_ROUTER_KEY`, and the API mints its LiveKit identity. That identity is
+`message-router-prd-0` on loopback or behind an origin with a port, and
+`message-router-dev-0` behind a bare host. Those are the identities `/play`'s
+Explorer trusts. A native Explorer trusts `-dev-0` only when started with a
+`--base-domain` other than decentraland.org. With `public_origin` on a bare host,
+chat routes only from the page at that origin: `foundation-dev desktop` and a
+browser on the loopback URL keep decentraland.org and look for `-prd-0`. A path
+that is not executable only prints a warning.
 
 `/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
 restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it
@@ -96,7 +117,7 @@ Status values:
 | Worlds content server `worlds-content-server` (`/index`, `/world/{name}/{about,scenes,permissions}`, content). `WORLDS_CONTENT_MIRROR_SOURCE`. Read-through only in dev. Status: mirror | `services/catalyst/worlds/src/mirror.rs`, `content/src/read_through.rs` | `@decentraland/apis` | No target yet |
 | Communities `social-api` (`/v1/communities`), thumbnails from `assets-cdn`. `COMMUNITIES_UPSTREAM_URL`, `COMMUNITIES_MIRROR_THUMBNAIL_URL`, and the `catalyst communities mirror` CLI defaults (`src/main.rs`). Off in dev. Status: mirror | `services/catalyst/social/src/communities/mirror.rs` | `@decentraland/apis` | No target yet |
 | Denylists `asset-bundle-registry` (`/denylist`, every 120 s) and `config` (`/denylist.json`). `DENYLIST_URLS`, `EXPLORER_DENYLIST_SOURCE_URL`, `DENY_LIST_URL` (comms; not set in dev). Status: mirror | `content/src/denylist.rs`, `explore/src/api/denylist.rs`, `comms/src/archipelago/mod.rs` | `@decentraland/apis` | No target yet |
-| Explorer lists, flags and map: `dcl-lists` (`/pois`, `/banned-names`), `feature-flags` (`/explorer.json`), `api` (`/v2/tiles`, `/v2/tiles/info`). `EXPLORER_LISTS_SOURCE_URL`, `EXPLORER_FEATURE_FLAGS_SOURCE_URL`, `EXPLORER_MAP_SOURCE_URL`. Status: mirror | `explore/src/api/lists.rs`, `explore/src/api/feature_flags.rs`, `explore/src/api/map/mod.rs` | `@decentraland/apis` | No target yet |
+| Explorer lists and flags: `dcl-lists` (`/pois`, `/banned-names`), `feature-flags` (`/explorer.json`). `EXPLORER_LISTS_SOURCE_URL`, `EXPLORER_FEATURE_FLAGS_SOURCE_URL`. Status: mirror | `explore/src/api/lists.rs`, `explore/src/api/feature_flags.rs` | `@decentraland/apis` | No target yet |
 | Asset-bundle registry `asset-bundle-registry` (`/entities/{active,versions,status}`, `/worlds/{name}/manifest`, `/queues/status`). `EXPLORER_REGISTRY_SOURCE_URL`. Status: mirror | `explore/src/api/registry.rs` | `@decentraland/apis` | The local abgen runtime with native Registry state ([registry ADR](adr/2026-11-09-registry-local-catalyst.md)) |
 | Asset-bundle CDN `ab-cdn` (`/{key}`). `ABGEN_UPSTREAM_AB_CDN`. Status: mirror | `explore/src/api/ab_cdn.rs` | `@decentraland/apis` | Empty: every object comes from this node's cache and abgen (`config/src/explore.rs`) |
 | Imposter CDN `bevy-imposters.dclregenesislabs.xyz` (`/imposters/realms/{realm}/{level}/{x},{y}.{crc}.zip`). `BVIMPOSTERS_UPSTREAM_URL`, `BVIMPOSTERS_UPSTREAM_REALM`. Status: mirror | `explore/src/imposters/mod.rs` | `@decentraland/apis` | Temporary. Removed once bake-on-miss (`BVIMPOSTERS_BAKE_ENABLED`) runs with the `impost` renderer shipped in the node (#1711) |

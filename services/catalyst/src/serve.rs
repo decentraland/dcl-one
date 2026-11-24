@@ -97,10 +97,11 @@ mod metrics_tests {
         let bind = reserved.local_addr().unwrap();
         drop(reserved);
         super::install_metrics(&bind.to_string()).unwrap();
-        let response = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
-            .unwrap()
+            .unwrap();
+        let response = client
             .get(format!("http://{bind}/metrics"))
             .send()
             .await
@@ -110,6 +111,23 @@ mod metrics_tests {
         for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
+        for path in ["/", "/metrics/", "/social-rpc/metrics", "/custom"] {
+            let response = client
+                .get(format!("http://{bind}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        }
+        assert_eq!(
+            client
+                .post(format!("http://{bind}/metrics"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::METHOD_NOT_ALLOWED
+        );
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let failed_bind = reserved.local_addr().unwrap();
         drop(reserved);
@@ -125,7 +143,7 @@ mod metrics_tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, super::register_metrics);
+        dcl_metrics::with_local_recorder(&recorder, super::register_metrics);
         let rendered = handle.render();
         for sample in [
             "comms_nats_connected 0",
@@ -140,15 +158,9 @@ mod metrics_tests {
     }
 }
 
-/// Run with Stats prepared before creating workers. The unsafe preparation
-/// contract applies through every route clone, canceled blocking operation and
-/// final isolate teardown; an arbitrary preexisting runtime is not supported.
-pub async fn serve(
-    mut config: Config,
-    mut prepared: crate::metrics_matcher::PreparedStats,
-) -> anyhow::Result<()> {
+pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
@@ -196,11 +208,13 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
-    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
-    prepared.settings.content_url = stats_content_url(
-        config.node.content_url.as_deref(),
-        &content.settings.content_public_url,
-    );
+    let statistics_settings = comms::stats::http::Settings {
+        commit_hash: Some(config.commit_hash().unwrap_or_default()),
+        content_url: stats_content_url(
+            config.node.content_url.as_deref(),
+            &content.settings.content_public_url,
+        ),
+    };
 
     // ONE outbound client: every mirror and upstream reader goes through the
     // guard; peer sync (`content::sync::sync_http_client`) and the RPC
@@ -473,7 +487,6 @@ pub async fn serve(
     .await
     .context("starting the explorer-api readers and mirrors")?;
     explorer_api.attach_eip1654(eip1654.clone());
-    explorer_api.spawn_jobs(&jobs);
     // An island's /about advertises its own minimap once the grid it draws is loaded.
     let grid = Arc::downgrade(&explorer_api);
     content.attach_parcel_grid(Arc::new(move || {
@@ -589,6 +602,10 @@ pub async fn serve(
     ));
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());
+    explorer_api.attach_land_market(Arc::new(adapters::ShopLandMarket(market.clone())));
+    // Its jobs start once the tile grid's sources are attached, so the first
+    // build does not record them as missing.
+    explorer_api.spawn_jobs(&jobs);
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -858,7 +875,6 @@ pub async fn serve(
             max_images_per_user: config.create.camera_reel_max_images_per_user,
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
-            metrics_bearer_token: config.create.camera_reel_metrics_bearer_token.clone(),
             places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
             places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },
@@ -1132,7 +1148,6 @@ pub async fn serve(
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
-        metrics_handle,
     )?;
     social
         .rpc
@@ -1223,7 +1238,7 @@ pub async fn serve(
                 pool: pool.clone(),
                 denylist: content.denylist.clone(),
             }),
-            prepared.settings.content_url.clone(),
+            statistics_settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1449,7 +1464,7 @@ pub async fn serve(
     let connector_lifecycle = comms_stage.archipelago.clone();
     let app = build_routes(
         &config,
-        prepared,
+        statistics_settings,
         primary,
         Routes {
             content,

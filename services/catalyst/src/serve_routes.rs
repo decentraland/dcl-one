@@ -4,6 +4,7 @@ use crate::{
     builder, camera_reel, comms, config::Config, content, explore, land_authz, ops, presence,
     price, shared, shop, social, worlds,
 };
+use dcl_metrics::http::component;
 use std::sync::Arc;
 
 /// The old transactions-server surface: the relay (`economy`) plus the
@@ -90,7 +91,7 @@ pub(super) struct Routes<'a> {
 
 pub(super) fn build_routes(
     config: &Config,
-    prepared: crate::metrics_matcher::PreparedStats,
+    statistics_settings: comms::stats::http::Settings,
     primary: bool,
     routes: Routes<'_>,
 ) -> axum::Router {
@@ -139,111 +140,161 @@ pub(super) fn build_routes(
     // connector answers at the root and under /archipelago-ea-stats; its
     // socket routes only on the primary.
     let connector_lifecycle = archipelago_state.clone();
-    let (statistics_settings, statistics_matcher) = prepared.into_parts();
     let archipelago = crate::comms::archipelago::mounts(
         archipelago_state,
         primary,
         statistics_settings,
-        statistics_matcher,
         content.denylist.clone(),
     );
     let statistics = archipelago.statistics.clone();
     let blobs = content.clone();
     let report_storage = blobs.storage.clone();
     let max_deploy_body = content::create_entity::max_deployment_body_bytes(&content.settings);
-    let app = content::build_router(content)
-        .merge(shop::market::router(market.clone()))
-        .merge(shop_routes(shop::States {
-            market: market.clone(),
-            credits: stage5_ops.credits.clone(),
-            economy: economy_state,
-            signatures,
-            outfits,
-            subscriptions,
-            mana,
-        }))
+    let app = component(content::build_router(content), "content")
+        .merge(component(shop::market::router(market.clone()), "shop"))
+        .merge(component(
+            shop_routes(shop::States {
+                market: market.clone(),
+                credits: stage5_ops.credits.clone(),
+                economy: economy_state,
+                signatures,
+                outfits,
+                subscriptions,
+                mana,
+            }),
+            "shop",
+        ))
         // events-notifier.<domain> reaches /events-notifier (gateway subdomain rule).
         .nest(
             "/events-notifier",
-            shop::market::tips::router(market.clone()),
+            component(shop::market::tips::router(market.clone()), "shop"),
         )
-        .merge(registry_profiles(market.clone()))
-        .nest("/marketplace-api", shop::market::market_router(market))
-        .merge(land_authz::router(land))
-        .merge(shop::evm::contracts_document_router())
-        .merge(price::router(price.clone()))
-        .nest("/price", price::router(price))
-        .nest("/presence", presence::router(presence))
-        .merge(explore::router(explore.clone()));
+        .merge(component(registry_profiles(market.clone()), "shop"))
+        .nest(
+            "/marketplace-api",
+            component(shop::market::market_router(market), "shop"),
+        )
+        .merge(component(land_authz::router(land), "land-authz"))
+        .merge(component(shop::evm::contracts_document_router(), "shop"))
+        .merge(component(price::router(price.clone()), "price"))
+        .nest("/price", component(price::router(price), "price"))
+        .nest(
+            "/presence",
+            component(presence::router(presence), "presence"),
+        )
+        .merge(component(explore::router(explore.clone()), "explore"));
     let app = explore::NESTS.into_iter().fold(app, |app, nest| {
-        app.nest(nest, explore::router(explore.clone()))
+        app.nest(nest, component(explore::router(explore.clone()), "explore"))
     });
     let app = app
-        .merge(worlds::app_router(worlds, blobs, stage5))
-        .merge(live_presence_routes(live_presence, stage5.writes_enabled))
-        .merge(if primary {
-            comms::archipelago::socket_router(connector_lifecycle.clone())
-        } else {
-            axum::Router::new()
-        })
-        .merge(explore::api::router(explorer_api))
+        .merge(component(
+            worlds::app_router(worlds, blobs, stage5),
+            "worlds",
+        ))
+        .merge(component(
+            live_presence_routes(live_presence, stage5.writes_enabled),
+            "comms",
+        ))
+        .merge(component(
+            if primary {
+                comms::archipelago::socket_router(connector_lifecycle.clone())
+            } else {
+                axum::Router::new()
+            },
+            "comms",
+        ))
+        .merge(component(explore::api::router(explorer_api), "explore"))
         // The scene workers' routing map and proxy (`scene_proxy`).
-        .nest("/_scene", crate::scene_proxy::router(scene_proxy))
+        .nest(
+            "/_scene",
+            component(crate::scene_proxy::router(scene_proxy), "scene-proxy"),
+        )
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
         // room authority, the message router's token route, the world comms mints and the LiveKit webhook (the
         // worlds content server's root path) at the root, the mints and the
         // webhook under `/worlds-content-server`, and the gatekeeper's routes
         // with social's MLS routes under `/comms-gatekeeper` behind the
         // social writes switch.
-        .merge(comms::gatekeeper::room_authority_router(gatekeeper))
-        .merge(comms::gatekeeper::message_router_token_router(gatekeeper))
-        .merge(comms::gatekeeper::admission::world_mint::router(
-            gatekeeper.clone(),
+        .merge(component(
+            comms::gatekeeper::room_authority_router(gatekeeper),
+            "comms",
         ))
-        .merge(social::writes::guard(
-            comms::gatekeeper::webhook_router(gatekeeper.clone()),
-            config.writes.social_writes_enabled,
+        .merge(component(
+            comms::gatekeeper::message_router_token_router(gatekeeper),
+            "comms",
+        ))
+        .merge(component(
+            comms::gatekeeper::admission::world_mint::router(gatekeeper.clone()),
+            "comms",
+        ))
+        .merge(component(
+            social::writes::guard(
+                comms::gatekeeper::webhook_router(gatekeeper.clone()),
+                config.writes.social_writes_enabled,
+            ),
+            "comms",
         ))
         .nest(
             "/worlds-content-server",
-            comms::gatekeeper::admission::world_mint::router(gatekeeper.clone()).merge(
-                social::writes::guard(
-                    comms::gatekeeper::webhook_router(gatekeeper.clone()),
-                    config.writes.social_writes_enabled,
+            component(
+                comms::gatekeeper::admission::world_mint::router(gatekeeper.clone()).merge(
+                    social::writes::guard(
+                        comms::gatekeeper::webhook_router(gatekeeper.clone()),
+                        config.writes.social_writes_enabled,
+                    ),
                 ),
+                "comms",
             ),
         )
         .nest(
             "/comms-gatekeeper",
-            social::writes::guard(
-                comms::gatekeeper::router(gatekeeper.clone())
-                    .merge(social::messaging::router(social.messaging.clone())),
-                config.writes.social_writes_enabled,
+            component(
+                social::writes::guard(
+                    comms::gatekeeper::router(gatekeeper.clone())
+                        .merge(social::messaging::router(social.messaging.clone())),
+                    config.writes.social_writes_enabled,
+                ),
+                "comms",
             ),
         )
-        .merge(social::router(social, config.writes.social_writes_enabled))
-        .merge(builder::root_router(builder.clone()))
-        .nest("/builder-api", builder::router(builder))
-        .nest("/camera-reel-service", camera_reel::router(camera_reel))
+        .merge(component(
+            social::router(social, config.writes.social_writes_enabled),
+            "social",
+        ))
+        .merge(component(builder::root_router(builder.clone()), "builder"))
+        .nest(
+            "/builder-api",
+            component(builder::router(builder), "builder"),
+        )
+        .nest(
+            "/camera-reel-service",
+            component(camera_reel::router(camera_reel), "camera-reel"),
+        )
         // The Cast presenter under upstream's host label (cast-presenter-service);
         // its sessions live in this process and their bots in `cast-bot` processes.
         .nest(
             "/cast-presenter-service",
-            comms::cast_presenter::router(comms::cast_presenter::presenter(
-                gatekeeper.clone(),
-                config.social.cast_bot_bin.clone(),
-                comms::cast_presenter::LiveKitTarget::from_livekit(&gatekeeper.livekit),
-                config.social.max_concurrent_presentations,
-                Config::non_empty(&config.social.cast_presenter_public_url),
-            )),
+            component(
+                comms::cast_presenter::router(comms::cast_presenter::presenter(
+                    gatekeeper.clone(),
+                    config.social.cast_bot_bin.clone(),
+                    comms::cast_presenter::LiveKitTarget::from_livekit(&gatekeeper.livekit),
+                    config.social.max_concurrent_presentations,
+                    Config::non_empty(&config.social.cast_presenter_public_url),
+                )),
+                "comms",
+            ),
         )
         // The player report intake (`gatekeeper::reports`). Reports and their
         // evidence are social rows and blobs, so the social writes switch gates them.
         .nest(
             "/report-user",
-            social::writes::guard(
-                comms::gatekeeper::reports::router(gatekeeper.clone(), report_storage),
-                config.writes.social_writes_enabled,
+            component(
+                social::writes::guard(
+                    comms::gatekeeper::reports::router(gatekeeper.clone(), report_storage),
+                    config.writes.social_writes_enabled,
+                ),
+                "comms",
             ),
         );
     // The operator plane under the old gateway's prefixes: credits under
@@ -253,19 +304,28 @@ pub(super) fn build_routes(
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
-        .nest("/credits", shop::credits::router(stage5_ops.credits))
-        .nest("/rpc", ops::rpc::router(stage5_ops.rpc))
+        .nest(
+            "/credits",
+            component(shop::credits::router(stage5_ops.credits), "shop"),
+        )
+        .nest("/rpc", component(ops::rpc::router(stage5_ops.rpc), "ops"))
         .nest(
             "/bvimposters",
-            explore::imposters::router(stage5_ops.imposters),
+            component(explore::imposters::router(stage5_ops.imposters), "explore"),
         )
-        .merge(ops::admin::content::router(ops_admin.clone()))
-        .merge(ops::admin::snapshots::router(
-            ops_admin.clone(),
-            snapshot_gen,
+        .merge(component(
+            ops::admin::content::router(ops_admin.clone()),
+            "ops",
         ))
-        .merge(ops::admin::router(ops_admin))
-        .merge(shared::writes::status_router(write_switches(config)));
+        .merge(component(
+            ops::admin::snapshots::router(ops_admin.clone(), snapshot_gen),
+            "ops",
+        ))
+        .merge(component(ops::admin::router(ops_admin), "ops"))
+        .merge(component(
+            shared::writes::status_router(write_switches(config)),
+            "shared",
+        ));
     // A request a gate, an auth check or a handler answers before reading
     // its body is drained, not reset: nginx is still writing the upload
     // after the answer, and a reset fails that write, answers 502 and counts

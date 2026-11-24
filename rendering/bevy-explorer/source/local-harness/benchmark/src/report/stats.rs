@@ -237,16 +237,24 @@ pub fn gpu_timing_broken(change: &[MedianAndRange; 6], base: &[MedianAndRange; 6
     min(change[GPU_AVERAGE].median, base[GPU_AVERAGE].median) < MIN_PLAUSIBLE_MS
 }
 
+/// Why a GPU metric gets no verdict when [`gpu_timing_broken`].
+pub const GPU_TIMING_BROKEN: &str = "GPU timing not working";
+
+/// Why a GPU metric gets no verdict in Chrome on macOS: its readings there settle on one value
+/// for a whole run and differ between runs of one build, so separated runs can be chance.
+pub const GPU_TIMING_UNRELIABLE: &str = "GPU timing unreliable on Metal";
+
 /// The verdict of metric `m`. A change counts only when the builds' runs are fully separated
 /// (every change run faster, or every one slower, than every baseline run: with three runs a
 /// build, the most extreme outcome of a permutation test, one-sided p = 0.05) and the median
-/// difference clears both the relative and the absolute floor.
+/// difference clears both the relative and the absolute floor. `gpu_withheld` is why this
+/// section's GPU metrics get no verdict, when they get none.
 pub fn frame_time_verdict(
     m: usize,
     change: &MedianAndRange,
     base: &MedianAndRange,
     incomparable: Option<SessionsNotComparable>,
-    gpu_broken: bool,
+    gpu_withheld: Option<&'static str>,
 ) -> FrameTimeVerdict {
     if let Some(incomparable) = incomparable {
         return FrameTimeVerdict::Withheld(incomparable.reason());
@@ -254,8 +262,8 @@ pub fn frame_time_verdict(
     if !FRAME_TIME_METRIC_HAS_VERDICT[m] {
         return FrameTimeVerdict::Informational;
     }
-    if gpu_broken && FRAME_TIME_METRICS[m].starts_with("GPU") {
-        return FrameTimeVerdict::Withheld("GPU timing not working");
+    if let Some(reason) = gpu_withheld.filter(|_| FRAME_TIME_METRICS[m].starts_with("GPU")) {
+        return FrameTimeVerdict::Withheld(reason);
     }
     if min(change.median, base.median) < MIN_PLAUSIBLE_MS {
         return FrameTimeVerdict::Withheld("implausibly small values");
@@ -500,7 +508,7 @@ mod tests {
     #[test]
     fn a_verdict_needs_separated_runs_and_both_floors() {
         let base = agg(20.0, 19.5, 20.5);
-        let v = |change| frame_time_verdict(0, &change, &base, None, false);
+        let v = |change| frame_time_verdict(0, &change, &base, None, None);
         assert_eq!(v(agg(18.0, 17.5, 18.5)), FrameTimeVerdict::Faster(0.1));
         assert_eq!(v(agg(22.0, 21.5, 22.5)), FrameTimeVerdict::Slower(0.1));
         assert_eq!(
@@ -515,7 +523,7 @@ mod tests {
         );
         let small = agg(5.0, 5.0, 5.0);
         assert_eq!(
-            frame_time_verdict(0, &agg(4.6, 4.6, 4.6), &small, None, false),
+            frame_time_verdict(0, &agg(4.6, 4.6, 4.6), &small, None, None),
             FrameTimeVerdict::WithinNoise,
             "8% but under 0.5 ms"
         );
@@ -524,25 +532,51 @@ mod tests {
     #[test]
     fn what_stops_a_verdict_in_the_c_sharp_order() {
         let (a, b) = (agg(10.0, 10.0, 10.0), agg(20.0, 20.0, 20.0));
+        let broken = Some(GPU_TIMING_BROKEN);
         assert_eq!(
-            frame_time_verdict(2, &a, &b, Some(SessionsNotComparable::TooFewRuns), true),
+            frame_time_verdict(2, &a, &b, Some(SessionsNotComparable::TooFewRuns), broken),
             FrameTimeVerdict::Withheld("too few runs")
         );
         assert_eq!(
-            frame_time_verdict(5, &a, &b, None, true),
+            frame_time_verdict(5, &a, &b, None, broken),
             FrameTimeVerdict::Informational
         );
         assert_eq!(
-            frame_time_verdict(4, &a, &b, None, true),
-            FrameTimeVerdict::Withheld("GPU timing not working")
+            frame_time_verdict(4, &a, &b, None, broken),
+            FrameTimeVerdict::Withheld(GPU_TIMING_BROKEN)
         );
         assert_eq!(
-            frame_time_verdict(1, &a, &b, None, true),
+            frame_time_verdict(1, &a, &b, None, broken),
             FrameTimeVerdict::Faster(0.5)
         );
         assert_eq!(
-            frame_time_verdict(1, &agg(0.9, 0.9, 0.9), &b, None, false),
+            frame_time_verdict(1, &agg(0.9, 0.9, 0.9), &b, None, None),
             FrameTimeVerdict::Withheld("implausibly small values")
+        );
+    }
+
+    #[test]
+    fn a_gpu_withhold_reason_reaches_the_gpu_metrics_with_a_verdict_and_no_other() {
+        let (a, b) = (agg(10.0, 10.0, 10.0), agg(20.0, 20.0, 20.0));
+        let unreliable = Some(GPU_TIMING_UNRELIABLE);
+        for gpu in [3, 4] {
+            assert_eq!(
+                frame_time_verdict(gpu, &a, &b, None, unreliable),
+                FrameTimeVerdict::Withheld(GPU_TIMING_UNRELIABLE)
+            );
+            assert_eq!(
+                frame_time_verdict(gpu, &a, &b, None, None),
+                FrameTimeVerdict::Faster(0.5)
+            );
+        }
+        assert_eq!(
+            frame_time_verdict(1, &a, &b, None, unreliable),
+            FrameTimeVerdict::Faster(0.5),
+            "CPU"
+        );
+        assert_eq!(
+            frame_time_verdict(5, &a, &b, None, unreliable),
+            FrameTimeVerdict::Informational
         );
     }
 
