@@ -499,43 +499,6 @@ jobs:
             rendering/bevy-explorer/source/target/sccache-stats.json
           if-no-files-found: ignore
           retention-days: 7
-      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
-      - name: Check that the prune keeps every live unit
-        if: github.event_name == 'pull_request'
-        env:
-          WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
-        run: |
-          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
-          mkdir -p target/cargo-messages
-          [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
-          cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target \
-            --no-run --message-format=json-render-diagnostics > target/cargo-messages/basisu.jsonl
-          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
-            --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests \
-            --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests.jsonl
-          RUSTC_WRAPPER="$WRAPPER" cargo test --all --profile ci-test --locked \
-            --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl ||
-            cargo test --all --profile ci-test --locked \
-              --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl
-          if [ "$RUNNER_OS" = Linux ]; then
-            cargo test -p visuals --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
-              > target/cargo-messages/visuals.jsonl
-            cargo test --all --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
-              > target/cargo-messages/gateway.jsonl
-          fi
-          RUSTC_WRAPPER="$WRAPPER" cargo build --package benchmark --release --locked \
-            --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl ||
-            cargo build --package benchmark --release --locked \
-              --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl
-          python3 - <<'EOF'
-          import glob, json
-          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
-                            for path in glob.glob('target/cargo-messages/*.jsonl')
-                            for line in open(path, encoding='utf-8') if line.startswith('{')
-                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
-          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
-          raise SystemExit(bool(rebuilt))
-          EOF
       # Main saves an entry for each change of the workspace. A pull request of this repository
       # saves one only when the restored entry was not built for its dependencies: its later
       # pushes restore that one. A pull request from a fork saves none.
@@ -696,23 +659,6 @@ jobs:
           path: rendering/bevy-explorer/source/deploy/headless/dist/*.tgz
           if-no-files-found: error
           retention-days: 14
-      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
-      - name: Check that the prune keeps every live unit
-        if: github.event_name == 'pull_request'
-        env:
-          CARGO_MESSAGES: ${{ github.workspace }}/rendering/bevy-explorer/source/target/cargo-messages/headless.jsonl
-        run: |
-          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
-          python3 ../../../apps/bevy-explorer/build-headless.py
-          python3 - <<'EOF'
-          import glob, json
-          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
-                            for path in glob.glob('target/cargo-messages/*.jsonl')
-                            for line in open(path, encoding='utf-8') if line.startswith('{')
-                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
-          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
-          raise SystemExit(bool(rebuilt))
-          EOF
       # Main saves an entry for each change of the workspace. A pull request of this repository
       # saves one only when the restored entry was not built for its dependencies: its later
       # pushes restore that one. A pull request from a fork saves none.
@@ -852,26 +798,6 @@ jobs:
         shell: bash
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
-      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
-      - name: Check that the prune keeps every live unit
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
-          mkdir -p target/cargo-messages
-          cargo clippy --locked --workspace --all-targets --message-format=json-render-diagnostics -- -D warnings \
-            > target/cargo-messages/clippy.jsonl
-          cargo check --locked -p avatar --no-default-features --message-format=json-render-diagnostics \
-            > target/cargo-messages/avatar.jsonl
-          python3 - <<'EOF'
-          import glob, json
-          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
-                            for path in glob.glob('target/cargo-messages/*.jsonl')
-                            for line in open(path, encoding='utf-8') if line.startswith('{')
-                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
-          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
-          raise SystemExit(bool(rebuilt))
-          EOF
       # Main saves an entry for each change of the workspace. A pull request of this repository
       # saves one only when the restored entry was not built for its dependencies: its later
       # pushes restore that one. A pull request from a fork saves none.
@@ -971,23 +897,6 @@ jobs:
           cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
-      # TEMPORARY, remove before merge: prunes this run's target and replays every cargo call; on a pull request that saves, the real prune and save follow.
-      - name: Check that the prune keeps every live unit
-        if: github.event_name == 'pull_request'
-        run: |
-          python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
-          mkdir -p target/cargo-messages
-          cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown \
-            --no-run --message-format=json-render-diagnostics > target/cargo-messages/relay-wake.jsonl
-          python3 - <<'EOF'
-          import glob, json
-          rebuilt = sorted({f'{m["target"]["name"]} ({",".join(m["target"]["kind"])})'
-                            for path in glob.glob('target/cargo-messages/*.jsonl')
-                            for line in open(path, encoding='utf-8') if line.startswith('{')
-                            for m in [json.loads(line)] if m.get('reason') == 'compiler-artifact' and not m.get('fresh')})
-          print(f'{len(rebuilt)} units rebuilt after the prune', *rebuilt, sep='\n')
-          raise SystemExit(bool(rebuilt))
-          EOF
       # Saved as the Clippy job saves its cache.
       - name: Prune the wasm test build cache
         if: >-

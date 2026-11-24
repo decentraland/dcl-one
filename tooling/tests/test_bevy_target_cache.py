@@ -453,11 +453,10 @@ class WorkflowTest(unittest.TestCase):
             owners = set()
             for step in re.split(r'^      - ', self.job(name), flags=re.M):
                 # One file per step, or a later step overwrites the units an earlier one named.
-                if not step.startswith('name: Check that the prune keeps every live unit'):
-                    for file in set(re.findall(r'target/cargo-messages/([\w.-]+\.jsonl)', step)):
-                        with self.subTest(job=name, file=file):
-                            self.assertNotIn(file, owners)
-                        owners.add(file)
+                for file in set(re.findall(r'target/cargo-messages/([\w.-]+\.jsonl)', step)):
+                    with self.subTest(job=name, file=file):
+                        self.assertNotIn(file, owners)
+                    owners.add(file)
                 listed = None
                 for line in re.sub(r'\\\n\s*', ' ', step).splitlines():
                     if not call.search(line) or line.lstrip().startswith('#'):
