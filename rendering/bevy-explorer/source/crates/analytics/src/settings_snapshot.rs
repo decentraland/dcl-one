@@ -65,8 +65,8 @@ const REPORTED: &[&str] = &[
     "System Volume",
     "Avatar Volume",
     "Mute Mic in Background",
-    // Chat
-    "Receive direct messages from",
+    // Chat. "Receive direct messages from" is left out: it is the server's value, unset until
+    // social reads it after sign-in, so a snapshot taken at startup would always skip it.
     "Language",
     // Graphics: the settings the HUD's Graphics Preset sets
     // (`react-web/bridge-scene/src/domains/graphicsPresets.ts`), so the preset can be told apart
