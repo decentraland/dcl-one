@@ -439,11 +439,21 @@ function tearDown() {
 const relayAtomicsStore = Atomics.store;
 const relayAtomicsLoad = Atomics.load;
 const relayAtomicsWait = Atomics.wait;
-// Waiting for the engine's send (relay.rs RelayWake): the view of the wake word is a view of engine
-// memory, so it only ever goes to these captured functions, and `then` is called through a bound
-// `call` rather than looked up on the promise.
+// Waiting for the engine's send (crates/dcl_wasm/src/relay_wake.rs, `RelayWake`): the view of the
+// wake word is a view of engine memory, so it only ever goes to these captured functions.
 const relayWaitAsync = Atomics.waitAsync;
 const relayThen = Function.prototype.call.bind(Promise.prototype.then);
+const relayDefineProperty = Object.defineProperty;
+// Calls `f` once the wait's promise settles. `then`, even captured, reads the promise's
+// `constructor` and that constructor's `Symbol.species`, both of which scene code can redefine on
+// `Promise.prototype` and `Promise`: a getter that throws, or a constructor that never calls back,
+// would stop the relay for good. The promise gets its own `constructor`, undefined, so `then`
+// reads neither and chains with the built-in Promise. The descriptor has no prototype, so a
+// `get` or `set` scene code put on Object.prototype can't make it invalid.
+const relayOnSettled = (promise, f) => {
+  relayDefineProperty(promise, "constructor", { __proto__: null, value: undefined });
+  relayThen(promise, f);
+};
 const RelayInt32Array = Int32Array;
 const relaySetTimeout = setTimeout;
 const relayPostTask = self.scheduler?.postTask?.bind(self.scheduler);
@@ -640,7 +650,7 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
     }
     // outside A (IN_RUST clear), so the engine may terminate the worker during the wait
     const waited = relayWaitAsync(wakeView, 0, seen, RELAY_IDLE_MS);
-    if (waited.async) relayThen(waited.value, step);
+    if (waited.async) relayOnSettled(waited.value, step);
     // "not-equal": the engine sent something since the load
     else sleep(0, step);
   };
