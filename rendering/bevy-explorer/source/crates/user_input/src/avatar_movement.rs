@@ -766,7 +766,6 @@ pub(crate) fn apply_movement(
     time_res: Res<Time>,
     mut info: ResMut<AvatarMovementInfo>,
     mut last_step: ResMut<LastMovementStep>,
-    mut jumping: Local<bool>,
     movement_control: Res<EngineMovementControl>,
     central: Res<CentralCollisions>,
 ) {
@@ -872,16 +871,10 @@ pub(crate) fn apply_movement(
     transform.translation = position.with_y(position.y.max(0.0));
 
     // for now we hack in the old dynamic state values for animations
+    let rose = dynamic_state.velocity.y > 0.0;
     dynamic_state.velocity = velocity;
-    if requested.y > 10.0 {
-        if !*jumping {
-            dynamic_state.jump_time = time_res.elapsed_secs_f64();
-            *jumping = true;
-        }
-    } else {
-        *jumping = false;
-    }
     dynamic_state.ground_height = ground_height(&mut scenes, transform.translation);
+    start_jump_on_take_off(&mut dynamic_state, rose, time_res.elapsed_secs_f64());
     end_jump_on_landing(&mut dynamic_state);
 }
 
@@ -909,6 +902,18 @@ fn ground_height(scenes: &mut Query<(Entity, &mut SceneColliderData)>, feet: Vec
                     .unwrap_or(f32::INFINITY),
             )
         })
+}
+
+/// Record the take-off time when the player rises off the ground, or starts rising again in the
+/// air (an air jump): off the ground is past [`PLAYER_LANDED_THRESHOLD`], where
+/// [`end_jump_on_landing`] stops. `rose` is whether the player rose on the previous frame. The
+/// rise, not its speed, marks the jump, so any jump height the movement scene uses counts.
+fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, rose: bool, now: f64) {
+    let rising = dynamic_state.velocity.y > 0.0;
+    let airborne = dynamic_state.ground_height >= PLAYER_LANDED_THRESHOLD;
+    if rising && airborne && (dynamic_state.jump_time <= 0.0 || !rose) {
+        dynamic_state.jump_time = now;
+    }
 }
 
 /// Forget the take-off time once the player is back on the ground and no longer rising, so that
@@ -1861,5 +1866,67 @@ mod jump_tests {
         let mut airborne = state(1.5, -3.0);
         end_jump_on_landing(&mut airborne);
         assert_eq!(airborne.jump_time, 5.0);
+    }
+
+    /// The take-off time a jump of `height` records, rising from the ground at 60 frames a second
+    /// as the movement scene launches it, and checks that the rise keeps it.
+    fn take_off_of_a_jump(height: f32) -> f64 {
+        // the movement scene's deceleration of a jump's rise (`JUMP_RISE_DECEL`)
+        const RISE_DECEL: f32 = 40.0;
+        let dt = 1.0 / 60.0;
+        let mut dynamic_state = AvatarDynamicState::default();
+        let mut vertical_velocity = (2.0 * height * RISE_DECEL).sqrt();
+        let mut take_off = None;
+        for frame in 1..120 {
+            if vertical_velocity <= 0.0 {
+                break;
+            }
+            let rose = dynamic_state.velocity.y > 0.0;
+            dynamic_state.velocity.y = vertical_velocity;
+            dynamic_state.ground_height += vertical_velocity * dt;
+            start_jump_on_take_off(&mut dynamic_state, rose, f64::from(frame) * f64::from(dt));
+            end_jump_on_landing(&mut dynamic_state);
+            if dynamic_state.jump_time > 0.0 {
+                assert_eq!(
+                    *take_off.get_or_insert(dynamic_state.jump_time),
+                    dynamic_state.jump_time
+                );
+            }
+            vertical_velocity -= RISE_DECEL * dt;
+        }
+        take_off.expect("the jump records its take-off")
+    }
+
+    #[test]
+    fn a_jump_records_its_take_off_whatever_its_height() {
+        // the default jump, and a lower one a scene's locomotion settings may ask for
+        assert!(take_off_of_a_jump(1.0) < 0.1);
+        assert!(take_off_of_a_jump(0.5) < 0.1);
+    }
+
+    #[test]
+    fn rising_on_the_ground_is_no_jump() {
+        // following the ground up a slope or a step
+        let mut walking = state(0.0, 3.0);
+        walking.jump_time = -1.0;
+        start_jump_on_take_off(&mut walking, true, 9.0);
+        assert!(walking.jump_time <= 0.0);
+    }
+
+    #[test]
+    fn an_air_jump_records_a_new_take_off() {
+        // the air jump holds the height, then launches
+        let mut hovering = state(1.5, 0.0);
+        start_jump_on_take_off(&mut hovering, false, 6.0);
+        assert_eq!(hovering.jump_time, 5.0);
+
+        let mut launched = state(1.5, 8.0);
+        start_jump_on_take_off(&mut launched, false, 6.2);
+        assert_eq!(launched.jump_time, 6.2);
+
+        let mut rising = state(2.0, 6.0);
+        rising.jump_time = 6.2;
+        start_jump_on_take_off(&mut rising, true, 6.3);
+        assert_eq!(rising.jump_time, 6.2);
     }
 }
