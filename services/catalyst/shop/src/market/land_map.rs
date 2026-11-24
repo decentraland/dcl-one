@@ -118,27 +118,145 @@ LEFT JOIN shop.nft_event e
   ON e.network = 'ethereum' AND e.block_number = d.updated_block AND e.log_index = d.updated_log
 WHERE d.token_address = ANY($1)";
 
-const RENTALS_SQL: &str = "\
-SELECT r.contract_address, r.token_id::text AS token_id, r.expiration, r.updated_at,
-       (SELECT jsonb_agg(jsonb_build_array(p.min_days, p.max_days, p.price_per_day::text) ORDER BY p.min_days, p.max_days)
-          FROM signatures.rental_periods p WHERE p.rental_id = r.id) AS periods
-FROM signatures.rentals r
-WHERE r.status = 'open' AND r.contract_address = ANY($1) AND r.expiration >= $2
-  AND r.chain_id = $3 AND lower(r.rental_contract_address) = $4
-  AND EXISTS (SELECT 1 FROM signatures.rental_periods p WHERE p.rental_id = r.id)";
+/// The open, unexpired rental listings of the registries `contracts_p` at
+/// `now_p` signed for chain `chain_p` and its Rentals contract `venue_p`, with
+/// their periods: what the build reads, and what [`marks_sql`] digests.
+fn rentals_sql(contracts_p: &str, now_p: &str, chain_p: &str, venue_p: &str) -> String {
+    format!(
+        "SELECT r.id, r.contract_address, r.token_id::text AS token_id, r.expiration, r.updated_at, \
+           (SELECT jsonb_agg(jsonb_build_array(p.min_days, p.max_days, p.price_per_day::text) ORDER BY p.min_days, p.max_days) \
+              FROM signatures.rental_periods p WHERE p.rental_id = r.id) AS periods \
+         FROM signatures.rentals r \
+         WHERE r.status = 'open' AND r.contract_address = ANY({contracts_p}) AND r.expiration >= {now_p} \
+           AND r.chain_id = {chain_p} AND lower(r.rental_contract_address) = {venue_p} \
+           AND EXISTS (SELECT 1 FROM signatures.rental_periods p WHERE p.rental_id = r.id)"
+    )
+}
+
+/// The `unified_trades` rows the map prices LAND and Estate tokens with:
+/// sells of a token on Ethereum, received in the MANA token `mana_p`.
+fn land_trades_filter(mana_p: &str) -> String {
+    format!(
+        "u.type = 'public_nft_order' AND u.token_id IS NOT NULL AND lower(u.network) = 'ethereum' \
+         AND u.received_asset_type = 1 AND lower(u.received_contract) = {mana_p}"
+    )
+}
+
+/// The columns the build reads of a `unified_trades` row, and [`marks_sql`]
+/// digests.
+const TRADE_COLUMNS: &str = "u.id::text AS id, u.contract_address_sent, u.token_id, u.signer, \
+    u.amount_received::text AS price, (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at_ms";
 
 /// The open trades of the LAND and Estate registries on Ethereum priced in
 /// MANA: `$1` now, `$2` the trades floor (`trades::mirrored_since`), `$3`
 /// the two registries, `$4` the chain's MANA token.
 fn trades_sql() -> String {
     format!(
-        "WITH {} SELECT u.id::text AS id, u.contract_address_sent, u.token_id, u.signer, \
-           u.amount_received::text AS price, (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at_ms \
-         FROM unified_trades u \
-         WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL AND lower(u.network) = 'ethereum' \
-           AND u.received_asset_type = 1 AND lower(u.received_contract) = $4",
-        super::catalog::unified_trades_cte_of("$1", "$2", Some("$3"))
+        "WITH {} SELECT {TRADE_COLUMNS} FROM unified_trades u WHERE {}",
+        super::catalog::unified_trades_cte_of("$1", "$2", Some("$3")),
+        land_trades_filter("$4")
     )
+}
+
+/// The hex SHA-256 of the rows of `rows_sql` (a subquery), in the order
+/// `order_by` (its unique key), as text: equal digests, equal rows.
+fn rows_digest(rows_sql: &str, order_by: &str) -> String {
+    format!(
+        "(SELECT encode(sha256(convert_to(coalesce(string_agg(x::text, ',' ORDER BY {order_by}), ''), 'UTF8')), 'hex') \
+          FROM ({rows_sql}) x)"
+    )
+}
+
+/// What the map build watches on Shop's side ([`land_market_marks`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LandMarketMarks {
+    /// Every source [`land_market`] needs is ready.
+    pub ready: bool,
+    /// Moves whenever a row [`land_market`] reads changes, or its readiness
+    /// does; opaque, compared for equality only.
+    pub marks: String,
+}
+
+/// [`land_market_marks`]' one statement: `$1` now, `$2` now in ms, `$3` the
+/// two registries, `$4` the trades floor, `$5` the MANA token, `$6` the
+/// chain, `$7` its Rentals contract. The nft index's orders and names are
+/// marked by the cursor's rewrite counts (`reorg_rewinds`, `rebuilds`, each
+/// raised in the statement that rewrites rows in place) and their newest
+/// positions and counts: between two rewrites the walk only appends events
+/// and the fold stamps each row with the event it applies, so a change moves
+/// a position or a count. The open orders are counted at `$1`, so one that
+/// expires moves them. The trades and rentals are small sets, marked by a
+/// digest of the very rows [`land_market`] reads at `$1` (the trades after
+/// the trade-events verdicts the CTE applies).
+fn marks_sql() -> String {
+    format!(
+        "WITH {cte} \
+         SELECT EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'nft' AND c.network = 'ethereum' AND {nft_ready}) AS nft_ready, \
+           concat_ws('|', \
+             EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'trade_events' AND c.network = 'ethereum' AND {verdicts_ready}), \
+             coalesce((SELECT c.reorg_rewinds || '.' || c.rebuilds FROM shop.chain_cursor c WHERE c.indexer = 'nft' AND c.network = 'ethereum'), '-'), \
+             (SELECT count(*) FILTER (WHERE status = 'open' AND expires_at > $2) FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3)), \
+             coalesce((SELECT updated_block || '.' || updated_log FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3) \
+                       ORDER BY updated_block DESC, updated_log DESC LIMIT 1), '-'), \
+             (SELECT count(*) FROM shop.land_data WHERE token_address = ANY($3)), \
+             coalesce((SELECT updated_block || '.' || updated_log FROM shop.land_data WHERE token_address = ANY($3) \
+                       ORDER BY updated_block DESC, updated_log DESC LIMIT 1), '-'), \
+             {trades}, \
+             {rentals}) AS marks",
+        cte = super::catalog::unified_trades_cte_of("$1", "$4", Some("$3")),
+        nft_ready = chain_walk::ready_sql("c", "$1"),
+        verdicts_ready = super::trade_events::verdicts_ready_sql("c", "$1"),
+        trades = rows_digest(
+            &format!(
+                "SELECT {TRADE_COLUMNS} FROM unified_trades u WHERE {}",
+                land_trades_filter("$5")
+            ),
+            "x.id",
+        ),
+        rentals = rows_digest(&rentals_sql("$3", "$1", "$6", "$7"), "x.id"),
+    )
+}
+
+/// The marks of what [`land_market`] would read for `land` and `estate` on
+/// chain `chain_id` at `now`, on `conn`: one read-only statement, cheap
+/// enough to run every few seconds, so the map rebuilds when Shop's side of
+/// its inputs changes rather than on a timer.
+pub async fn land_market_marks(
+    state: &MarketplaceState,
+    conn: &mut PgConnection,
+    chain_id: i64,
+    land: &str,
+    estate: &str,
+    now: DateTime<Utc>,
+) -> Result<LandMarketMarks, LandMarketError> {
+    let mainnet = chain_walk::mainnet_chain(ChainNet::Ethereum);
+    let (Some(mana), true) = (super::listings::mana_token(chain_id), chain_id == mainnet) else {
+        return Ok(LandMarketMarks {
+            ready: false,
+            marks: format!("chain {chain_id}"),
+        });
+    };
+    let trades_ready = match super::trades::readiness_on(state, conn, now).await {
+        Ok(_) => true,
+        Err(super::trades::NotReady::Refused(_)) => false,
+        Err(super::trades::NotReady::Database(e)) => return Err(e.into()),
+    };
+    let contracts = vec![land.to_ascii_lowercase(), estate.to_ascii_lowercase()];
+    let naive_now = now.naive_utc();
+    let (nft_ready, marks): (bool, String) = sqlx::query_as(sqlx::AssertSqlSafe(marks_sql()))
+        .bind(naive_now)
+        .bind(now.timestamp_millis())
+        .bind(&contracts)
+        .bind(super::trades::mirrored_since(&state.settings, naive_now))
+        .bind(mana)
+        .bind(chain_id as i32)
+        .bind(rentals_contract(chain_id as u64))
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(LandMarketMarks {
+        ready: nft_ready && trades_ready,
+        marks: format!("{nft_ready}|{trades_ready}|{marks}"),
+    })
 }
 
 /// The LAND and Estate facts of `land` and `estate` (lowercase registry
@@ -260,7 +378,7 @@ async fn read(
     })
     .collect();
     let rentals = match rentals_contract(chain_id as u64) {
-        Some(venue) => sqlx::query(RENTALS_SQL)
+        Some(venue) => sqlx::query(sqlx::AssertSqlSafe(rentals_sql("$1", "$2", "$3", "$4")))
             .bind(&contracts)
             .bind(naive_now)
             .bind(chain_id as i32)
@@ -739,6 +857,274 @@ mod tests {
             ["5"],
             "the sold estate trade is closed"
         );
+        db.drop().await;
+    }
+
+    async fn marks_at(state: &MarketplaceState, now: DateTime<Utc>) -> LandMarketMarks {
+        let mut tx = snapshot(&state.pool).await;
+        land_market_marks(state, &mut tx, 1, LAND, ESTATE, now)
+            .await
+            .unwrap()
+    }
+
+    /// The marks move with every row [`land_market`] reads for the two
+    /// registries (an expiry at `now` included) and with readiness, and stay
+    /// put for another contract.
+    #[tokio::test]
+    async fn the_marks_move_with_every_input_and_not_for_another_contract() {
+        let Some(db) = OwnDb::create("land_map_marks").await else {
+            return;
+        };
+        let state = state_over(&db.pool, local_trades());
+        let now = Utc::now();
+        let unpublished = marks_at(&state, now).await;
+        assert!(!unpublished.ready, "the nft index has not published");
+        let mut tx = snapshot(&db.pool).await;
+        let sepolia = land_market_marks(&state, &mut tx, SEPOLIA, LAND, ESTATE, now)
+            .await
+            .unwrap();
+        assert!(!sepolia.ready, "only mainnet is read");
+        drop(tx);
+
+        publish_nft(&db.pool).await;
+        let mut last = marks_at(&state, Utc::now()).await;
+        assert!(last.ready);
+        assert_ne!(last.marks, unpublished.marks, "publication moves them");
+        // Each step must move the marks.
+        fn step(last: &mut LandMarketMarks, what: &str, next: LandMarketMarks) {
+            assert_ne!(next.marks, last.marks, "{what} moves the marks");
+            *last = next;
+        }
+
+        insert_orders(&db.pool).await;
+        step(&mut last, "an order", marks_at(&state, Utc::now()).await);
+        // An order of another contract.
+        sqlx::query(
+            "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+             VALUES ('ethereum', $1, 9, '0x09', $1, 'open', $1, 1, 4102444800000, 1, 1, 999, 0)",
+        )
+        .bind(addr('3'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            marks_at(&state, Utc::now()).await.marks,
+            last.marks,
+            "another contract's order does not"
+        );
+        sqlx::query(
+            "INSERT INTO shop.land_data (token_address, token_id, name, description, updated_block, updated_log) VALUES ($1, 5, 'Corner', NULL, 60, 3)",
+        )
+        .bind(LAND)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        step(&mut last, "a name", marks_at(&state, Utc::now()).await);
+        trade(&db.pool, "land", LAND, "5", &addr('a'), 42, "1 hour").await;
+        step(&mut last, "a trade", marks_at(&state, Utc::now()).await);
+        trade(&db.pool, "other", &addr('3'), "5", &addr('a'), 42, "1 day").await;
+        assert_eq!(
+            marks_at(&state, Utc::now()).await.marks,
+            last.marks,
+            "another contract's trade does not"
+        );
+        sqlx::query(
+            "INSERT INTO shop.trade_cancellations (target_hashed_signature, kind, signer, signature) VALUES ('hash-land', 'signer', $1, 'sig')",
+        )
+        .bind(addr('a'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        step(
+            &mut last,
+            "a cancellation",
+            marks_at(&state, Utc::now()).await,
+        );
+        trade(&db.pool, "estate", ESTATE, "7", &addr('b'), 1200, "1 day").await;
+        step(
+            &mut last,
+            "another trade",
+            marks_at(&state, Utc::now()).await,
+        );
+        let estate_trade: uuid::Uuid =
+            sqlx::query_scalar("SELECT id FROM shop.trades WHERE signature = 'sig-estate'")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)",
+        )
+        .bind(estate_trade)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('trade_events', 'ethereum', 1, 10, 10, 10, timezone('UTC', now()), true, 1)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        step(
+            &mut last,
+            "a published sale verdict",
+            marks_at(&state, Utc::now()).await,
+        );
+        rental(
+            &db.pool,
+            ESTATE,
+            7,
+            1,
+            rentals_contract(1).unwrap(),
+            "2 hours",
+        )
+        .await;
+        step(
+            &mut last,
+            "a rental listing",
+            marks_at(&state, Utc::now()).await,
+        );
+
+        // What a count, a newest time and a sum of times would miss.
+        let same_created_at = |tag: &'static str, like: &'static str| {
+            let pool = db.pool.clone();
+            async move {
+                sqlx::query(
+                    "UPDATE shop.trades SET created_at = (SELECT created_at FROM shop.trades WHERE signature = $2) \
+                     WHERE signature = $1",
+                )
+                .bind(format!("sig-{tag}"))
+                .bind(format!("sig-{like}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        trade(&db.pool, "swap-a", LAND, "5", &addr('a'), 50, "1 day").await;
+        step(&mut last, "a trade", marks_at(&state, Utc::now()).await);
+        trade(&db.pool, "swap-b", LAND, "5", &addr('a'), 60, "1 day").await;
+        same_created_at("swap-b", "swap-a").await;
+        sqlx::query(
+            "INSERT INTO shop.trade_cancellations (target_hashed_signature, kind, signer, signature) VALUES ('hash-swap-a', 'signer', $1, 'sig')",
+        )
+        .bind(addr('a'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        step(
+            &mut last,
+            "a trade replaced by another created at the same time",
+            marks_at(&state, Utc::now()).await,
+        );
+        trade(&db.pool, "verdict-a", ESTATE, "7", &addr('b'), 70, "1 day").await;
+        trade(&db.pool, "verdict-b", ESTATE, "7", &addr('b'), 80, "1 day").await;
+        same_created_at("verdict-b", "verdict-a").await;
+        let trade_id = |tag: &'static str| {
+            let pool = db.pool.clone();
+            async move {
+                sqlx::query_scalar::<_, uuid::Uuid>(
+                    "SELECT id FROM shop.trades WHERE signature = $1",
+                )
+                .bind(format!("sig-{tag}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let (verdict_a, verdict_b) = (trade_id("verdict-a").await, trade_id("verdict-b").await);
+        let sold = "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)";
+        sqlx::query(sold)
+            .bind(verdict_a)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        step(
+            &mut last,
+            "two trades, one sold on chain",
+            marks_at(&state, Utc::now()).await,
+        );
+        sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1")
+            .bind(verdict_a)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query(sold)
+            .bind(verdict_b)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        step(
+            &mut last,
+            "the verdict moved to the other trade",
+            marks_at(&state, Utc::now()).await,
+        );
+        sqlx::query("UPDATE signatures.rental_periods SET price_per_day = price_per_day + 1 WHERE min_days = 30")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        step(
+            &mut last,
+            "a rental period repriced in place",
+            marks_at(&state, Utc::now()).await,
+        );
+        // The nft index rewrites rows in place only in a reorg rewind or a
+        // rebuild, each counted in the cursor by its own statement.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET reorg_rewinds = reorg_rewinds + 1 WHERE indexer = 'nft'",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        step(
+            &mut last,
+            "a reorg rewind of the nft index",
+            marks_at(&state, Utc::now()).await,
+        );
+        sqlx::query("UPDATE shop.chain_cursor SET rebuilds = rebuilds + 1 WHERE indexer = 'nft'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        step(
+            &mut last,
+            "a rebuild of the nft index",
+            marks_at(&state, Utc::now()).await,
+        );
+
+        // Expiries, read at a later clock (the cursors published then, so
+        // both reads are ready): the order (2100) outlives it, the rental
+        // (2 hours) does not.
+        let at_now = marks_at(&state, Utc::now()).await;
+        let later = Utc::now() + chrono::Duration::hours(3);
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = $1::timestamp WHERE indexer IN ('nft', 'trade_events')")
+            .bind(later.naive_utc())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.trades SET expires_at = expires_at + interval '1 day' WHERE signature = 'sig-land'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let at_later = marks_at(&state, later).await;
+        assert!(at_now.ready && at_later.ready);
+        assert_ne!(
+            at_later.marks, at_now.marks,
+            "an expiry at the clock moves them"
+        );
+
+        // Readiness withdrawn.
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE indexer IN ('nft', 'trade_events')")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let published = marks_at(&state, Utc::now()).await;
+        assert!(published.ready);
+        sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'nft'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let withdrawn = marks_at(&state, Utc::now()).await;
+        assert!(!withdrawn.ready);
+        assert_ne!(withdrawn.marks, published.marks);
         db.drop().await;
     }
 

@@ -421,7 +421,7 @@ include the shared sources so that changes invalidate the affected artifacts.
   to `library/explorer-core` and `@hud-host` to `src/host.ts`; the bridge scene
   (`react-web/bridge-scene/tsconfig.json`) maps `@explorer-core/*` too, for the
   wire protocol;
-- `shared-inputs.json` records the actual compiler/Vite shared dependency closure, across `library/ui`, `library/shop`, `library/catalyst-api` and `library/explorer-core`. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public foundation entry, so generated components stay outside that closure.
+- `shared-inputs.json` records the actual compiler/Vite shared dependency closure, across `library/ui`, `library/shop`, `library/catalyst-api` and `library/explorer-core`. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public foundation entry and, by its path, the one component it renders (`components/Tag`), so the other components stay outside that closure.
 - Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
   `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
   `foundations/typography/font-source.json` pins

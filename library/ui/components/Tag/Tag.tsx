@@ -1,6 +1,7 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import {
   GeneralFeatured,
+  GeneralHistory,
   GeneralListen,
   GeneralLive,
   GeneralMapPin,
@@ -13,7 +14,8 @@ import styles from './Tag.module.css'
 /**
  * Status: `live`, `online`, `streaming`, `listening`, `voiceStream`, `featured`. Location:
  * `location` (coordinates or a World's name). Community: `public`, `private` and `role` (owner,
- * moderator). `realm`. Age rating: `teen`, `adult`, `restricted`.
+ * moderator). `realm`. Age rating: `teen`, `adult`, `restricted`. Data age: `updated` ("Updated
+ * 12 min ago" over a map whose data is late).
  */
 export type TagVariant =
   | 'live'
@@ -30,14 +32,15 @@ export type TagVariant =
   | 'teen'
   | 'adult'
   | 'restricted'
+  | 'updated'
 
 export type TagProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   variant: TagVariant
   appearance?: 'emphasized'
   /**
    * The text. `live`, `listening`, `voiceStream`, `featured`, `public`, `private` and the age
-   * ratings have an English default; pass the localized word. `location`, `role` and `realm` show
-   * what the caller gives; `online` and `streaming` show their status text when the count is absent.
+   * ratings have an English default; pass the localized word. `location`, `role`, `realm` and
+   * `updated` show what the caller gives; `online` and `streaming` show their status text when the count is absent.
    */
   children?: ReactNode
   /** The number after the players mark of `online`, `streaming`, `voiceStream` and `realm`. */
@@ -126,6 +129,8 @@ function mark(variant: TagVariant): ReactNode {
       return <GeneralPublic className={styles.icon} size={10} {...hidden} />
     case 'private':
       return <GeneralPrivate className={styles.icon} size={10} {...hidden} />
+    case 'updated':
+      return <GeneralHistory className={styles.icon} size={14} {...hidden} />
     default:
       return null
   }

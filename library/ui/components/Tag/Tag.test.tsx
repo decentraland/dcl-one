@@ -29,7 +29,7 @@ describe('Tag', () => {
   })
 
   describe('when the variant shows what the caller gives', () => {
-    it.each(['location', 'role', 'realm'] as const)('shows the text of a %s tag', (variant) => {
+    it.each(['location', 'role', 'realm', 'updated'] as const)('shows the text of a %s tag', (variant) => {
       render(<Tag variant={variant}>genesis</Tag>)
       expect(screen.getByText('genesis')).toBeVisible()
     })
@@ -41,7 +41,7 @@ describe('Tag', () => {
   })
 
   describe('when the variant has a mark', () => {
-    it.each(['live', 'streaming', 'voiceStream', 'listening', 'featured', 'location', 'public', 'private'] as const)(
+    it.each(['live', 'streaming', 'voiceStream', 'listening', 'featured', 'location', 'public', 'private', 'updated'] as const)(
       'hides the mark of a %s tag from assistive technology',
       (variant) => {
         render(<Tag variant={variant} data-testid="tag" />)
@@ -79,7 +79,7 @@ describe('Tag', () => {
       expect(screen.queryByText('ignored')).toBeNull()
     })
 
-    it.each(['live', 'featured', 'location', 'role', 'teen'] as TagVariant[])('draws no count for a %s tag', (variant) => {
+    it.each(['live', 'featured', 'location', 'role', 'teen', 'updated'] as TagVariant[])('draws no count for a %s tag', (variant) => {
       render(<Tag variant={variant} count={24} data-testid="tag" />)
       expect(screen.getByTestId('tag')).not.toHaveTextContent('24')
     })

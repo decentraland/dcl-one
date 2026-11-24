@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { DEFAULT_REALM } from '@hud-host'
+import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import type { SceneToPage } from '@explorer-core/engine/protocol'
 import { fixMapPublicReads, receiveMapReply, setMapTransport, type MapRequest } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
@@ -101,8 +101,22 @@ async function search(text: string): Promise<void> {
   await userEvent.type(field, `${text}{Enter}`)
 }
 
+// The map API's answer about its parcel grid (`/v2/tiles/info`), which the parcels map reads for its age;
+// every other request goes out as it would.
+let tilesInfo: () => Promise<Response>
+const tilesInfoReads: string[] = []
+
 beforeEach(() => {
   fixMapPublicReads({ pois: [], peers: [] })
+  tilesInfo = async () => new Response(null, { status: 503 })
+  tilesInfoReads.length = 0
+  const realFetch = globalThis.fetch
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    const url = input instanceof Request ? input.url : String(input)
+    if (!url.endsWith('/v2/tiles/info')) return realFetch(input, init)
+    tilesInfoReads.push(url)
+    return tilesInfo()
+  })
 })
 
 afterEach(() => {
@@ -248,6 +262,51 @@ describe('map layers', () => {
     expect(within(layers).getByRole('radio', { name: 'Parcels' })).toBeChecked()
     expect(within(layers).getByRole('radio', { name: 'Satellite' })).not.toBeChecked()
     expect(view().querySelector('img[src*="/v1/map.png"]')).not.toBeNull()
+  })
+})
+
+describe('the parcels map age', () => {
+  const MINUTE = 60_000
+
+  async function pickMap(name: 'Parcels' | 'Satellite'): Promise<void> {
+    if (screen.queryByRole('region', { name: 'Layers' }) == null) await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
+    await userEvent.click(within(screen.getByRole('region', { name: 'Layers' })).getByRole('radio', { name }))
+  }
+
+  it("says how long ago the map API last found its grid current, on the parcels map only", async () => {
+    tilesInfo = async () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE, checkedAt: Date.now() - 12 * MINUTE })
+    serve()
+    renderMap()
+    await pickMap('Parcels')
+    expect(await screen.findByText('Updated 12 min ago')).toBeInTheDocument()
+    expect(tilesInfoReads).toEqual([`${serviceUrl('mapApi')}/v2/tiles/info`])
+
+    await pickMap('Satellite')
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument()
+  })
+
+  it('reads nothing for the satellite map', async () => {
+    tilesInfo = async () => Response.json({ checkedAt: Date.now() - 12 * MINUTE })
+    serve()
+    renderMap()
+    expect(await within(view()).findByRole('img', { name: 'You are here' })).toBeInTheDocument()
+    expect(tilesInfoReads).toEqual([])
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['a grid found current in the last five minutes', () => Response.json({ checkedAt: Date.now() - 4 * MINUTE })],
+    ['an answer without checkedAt', () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE })],
+    ['a map API that cannot serve its grid', () => new Response(null, { status: 503 })],
+    ['a failed read', () => Promise.reject(new TypeError('Failed to fetch'))]
+  ])('shows no age for %s', async (_case, answer) => {
+    tilesInfo = async () => answer()
+    serve()
+    renderMap()
+    await pickMap('Parcels')
+    await waitFor(() => expect(tilesInfoReads).toHaveLength(1))
+    await act(async () => {})
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument()
   })
 })
 

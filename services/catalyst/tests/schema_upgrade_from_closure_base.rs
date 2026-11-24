@@ -73,7 +73,10 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
 fn expected_pending_steps() -> Vec<&'static str> {
     PREPARED_PENDING_STEPS
         .into_iter()
-        .chain(["0060_shop_third_party_registry_index"])
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0062_map_grid_change_marks",
+        ])
         .collect()
 }
 

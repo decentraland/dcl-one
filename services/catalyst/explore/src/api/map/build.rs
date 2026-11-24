@@ -138,7 +138,44 @@ pub trait LandMarket: Send + Sync {
         estate: &'a str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'a, Result<LandMarketSnapshot, LandMarketError>>;
+
+    /// The marks of what [`Self::snapshot`] would read, on `conn` at `now`:
+    /// cheap enough to read every few seconds, moving whenever a row it
+    /// reads changes (an expiry at `now` included) or a source's readiness
+    /// does. The build job rebuilds when they move ([`super::Watcher`]).
+    fn marks<'a>(
+        &'a self,
+        conn: &'a mut PgConnection,
+        chain_id: i64,
+        land: &'a str,
+        estate: &'a str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'a, Result<Marks, LandMarketError>>;
 }
+
+/// The marks of a side of the build's inputs: whether every source it
+/// needs is ready, and an opaque text that moves when an input changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marks {
+    pub ready: bool,
+    pub marks: String,
+}
+
+/// The land-authz side of the marks: the cursor's count of the log's
+/// rewrites (`rewrites`, raised in the statement of every rewind and of the
+/// block-time repair), and the newest folded LAND/Estate rights event and
+/// estate data document, each found by a backward scan of its primary key
+/// from the published block (O(1)). Between two rewrites both logs only grow
+/// past the published block, and the rights and estate data are their fold,
+/// so a change the build can read moves one of the three. `$1` the cursor's
+/// network.
+pub(super) const LAND_MARKS_SQL: &str = "\
+SELECT concat_ws('|', c.rewrites,
+  coalesce((SELECT e.block_number || '.' || e.log_index FROM land_authz.authz_event e
+            WHERE e.block_number <= c.folded_block ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1), '-'),
+  coalesce((SELECT d.block_number || '.' || d.log_index FROM land_authz.estate_data_event d
+            WHERE d.block_number <= c.folded_block ORDER BY d.block_number DESC, d.log_index DESC LIMIT 1), '-'))
+FROM land_authz.index_cursor c WHERE c.network = $1";
 
 /// The chain of a land-authz network (`index_cursor.network`).
 pub fn land_chain_id(network: &str) -> Option<i64> {

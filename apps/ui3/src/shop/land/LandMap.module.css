@@ -37,3 +37,11 @@
   height: 100%;
   pointer-events: none;
 }
+
+/* The atlas's age, in the corner the zoom buttons, the legend and the land page's filters leave free. */
+.age {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  pointer-events: none;
+}

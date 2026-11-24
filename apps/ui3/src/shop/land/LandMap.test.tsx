@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import LandMap from "./LandMap";
@@ -217,6 +217,51 @@ describe("LandMap over the atlas image", () => {
     renderMap({ surface: "atlas", withLegend: true });
     fireEvent.click(screen.getByRole("button", { name: "Map colors" }));
     expect(screen.getAllByRole("listitem").map((li) => li.textContent?.trim())).toEqual(["Plaza", "Your LAND", "Your rented LAND", "On sale or on rent", "Taken"]);
+  });
+});
+
+describe("LandMap age of the atlas", () => {
+  const MINUTE = 60_000;
+
+  /** Answers the map API's tiles info with `answer`, and records the reads. */
+  function serveTilesInfo(answer: () => Promise<Response>) {
+    const reads: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      reads.push(url);
+      return answer();
+    }));
+    return reads;
+  }
+
+  it("says how long ago the map API last found its grid current, over the atlas image", async () => {
+    stubBrowser();
+    const reads = serveTilesInfo(async () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE, checkedAt: Date.now() - 12 * MINUTE }));
+    render(<LandMap tiles={landGrid()} initialZoom={10} />);
+    expect(await screen.findByText("Updated 12 min ago")).toBeInTheDocument();
+    expect(reads).toEqual(["/v2/tiles/info"]);
+  });
+
+  it.each([
+    ["a grid found current in the last five minutes", () => Response.json({ checkedAt: Date.now() - 4 * MINUTE })],
+    ["an answer without checkedAt", () => Response.json({ lastUpdatedAt: Date.now() - 600 * MINUTE })],
+    ["a map API that cannot serve its grid", () => new Response(null, { status: 503 })],
+    ["a failed read", () => Promise.reject(new TypeError("Failed to fetch"))],
+  ])("shows no age for %s", async (_case, answer) => {
+    stubBrowser();
+    const reads = serveTilesInfo(async () => answer());
+    render(<LandMap tiles={landGrid()} initialZoom={10} />);
+    await waitFor(() => expect(reads).toHaveLength(1));
+    await act(async () => {});
+    expect(screen.queryByText(/^Updated /)).toBeNull();
+  });
+
+  it("reads no age for a map of tile data, which is not drawn from the grid", async () => {
+    stubBrowser();
+    const reads = serveTilesInfo(async () => Response.json({ checkedAt: Date.now() - 12 * MINUTE }));
+    renderMap();
+    await act(async () => {});
+    expect(reads).toEqual([]);
+    expect(screen.queryByText(/^Updated /)).toBeNull();
   });
 });
 

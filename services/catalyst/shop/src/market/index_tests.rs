@@ -9336,6 +9336,13 @@ mod recovery {
             .unwrap();
         assert!(pass(&st, &url, &MANA).await.rebuilt);
         assert!(points(&db.pool, INDEXER_MANA).await.is_empty());
+        let rebuilds: i32 = sqlx::query_scalar(
+            "SELECT rebuilds FROM shop.chain_cursor WHERE indexer = 'mana_transfers'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(rebuilds, 1, "the rebuild counts itself in the cursor");
         db.drop().await;
     }
 

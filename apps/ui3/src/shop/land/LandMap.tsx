@@ -9,7 +9,10 @@
 
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
+import { Tag } from "@dcl/one-ui";
+import { useMapGridAge } from "@hud/features/map/useMapGridAge";
 import MapSurface, { GRID_PARCELS } from "../../explorer/components/MapSurface";
+import { serviceHref } from "../../data/catalyst/client";
 import { landTokenId } from "../../data/catalyst/landListing";
 import { shortAddress } from "@shop/model/address";
 import { landChainId } from "./chain";
@@ -155,6 +158,8 @@ export default function LandMap({
 }: LandMapProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // The atlas image is drawn from the map API's parcel grid; a "tiles" map paints the Shop's own data.
+  const gridAge = useMapGridAge(serviceHref("map"), surface !== "tiles");
   const [size, setSize] = useState<MapSize>({ w: 480, h: 480 });
   // The view as asked for: the parcel at the middle of the shell, and the zoom. It is kept through a
   // resize, and `view` is what the shell's size allows of it.
@@ -433,6 +438,12 @@ export default function LandMap({
           <ShopLayer cells={cells} />
         </div>
       </div>
+
+      {gridAge != null ? (
+        <Tag variant="updated" className={styles.age}>
+          {gridAge}
+        </Tag>
+      ) : null}
 
       {withZoomControls ? (
         <div className="shop-landmap__zoom">

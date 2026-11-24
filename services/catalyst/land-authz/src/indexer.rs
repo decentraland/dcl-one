@@ -419,8 +419,11 @@ async fn repair_timestamps(
             .iter()
             .map(|n| headers[&(*n as u64)].timestamp)
             .collect();
-        sqlx::query("UPDATE land_authz.authz_event e SET block_time = b.time FROM unnest($1::bigint[], $2::bigint[]) b(number, time) WHERE e.block_number = b.number AND e.block_time <= 0 AND e.token_address IN ($3, $4)")
-            .bind(&repaired).bind(&times).bind(&settings.land_registry).bind(&settings.estate_registry).execute(pool).await?;
+        // One statement: the log's rewrite count moves with the times it
+        // rewrote, so a reader comparing it sees the change (`rewrites`).
+        sqlx::query("WITH fixed AS (UPDATE land_authz.authz_event e SET block_time = b.time FROM unnest($1::bigint[], $2::bigint[]) b(number, time) WHERE e.block_number = b.number AND e.block_time <= 0 AND e.token_address IN ($3, $4) RETURNING 1) \
+                     UPDATE land_authz.index_cursor SET rewrites = rewrites + 1 WHERE network = $5 AND EXISTS (SELECT 1 FROM fixed)")
+            .bind(&repaired).bind(&times).bind(&settings.land_registry).bind(&settings.estate_registry).bind(&settings.network).execute(pool).await?;
     }
 }
 
@@ -798,6 +801,7 @@ const REWIND_SET: &str = "last_block = CASE WHEN $6 THEN $4 ELSE LEAST(c.last_bl
      full_replay_started = c.full_replay_started OR $5, \
      history_timestamps_ready = c.history_timestamps_ready AND NOT $6, \
      land_registry = $2, estate_registry = $3, \
+     rewrites = c.rewrites + 1, \
      updated_at = timezone('UTC', now())";
 
 /// What [`begin_replay`] did.
@@ -1539,7 +1543,8 @@ pub async fn rewind_reorg(
     sqlx::query(
         "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = $3, \
              checkpoint_block = NULL, checkpoint_hash = NULL, \
-             folded_block = NULL, folded_at = NULL, updated_at = timezone('UTC', now()) \
+             folded_block = NULL, folded_at = NULL, rewrites = rewrites + 1, \
+             updated_at = timezone('UTC', now()) \
          WHERE network = $1",
     )
     .bind(&settings.network)

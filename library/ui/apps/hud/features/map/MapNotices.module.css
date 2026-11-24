@@ -1,5 +1,5 @@
-/* Notices over the map: the worlds warning at the top, the destination banner and the credits
-   at the bottom. */
+/* Notices over the map: the worlds warning at the top, the destination banner, the credits and
+   the parcels map's age at the bottom. */
 .warning {
   position: absolute;
   top: 10px;
@@ -120,6 +120,14 @@
 .destinationExit:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
+}
+
+/* Beside the zoom controls, under the layers panel when that is open. */
+.age {
+  position: absolute;
+  left: 64px;
+  bottom: 13px;
+  pointer-events: none;
 }
 
 .credits {

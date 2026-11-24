@@ -1637,6 +1637,13 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "an existing cursor does not prove its full history was scanned"
     );
 
+    let rewrites = || async {
+        sqlx::query_scalar::<_, i64>("SELECT rewrites FROM land_authz.index_cursor")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let before = rewrites().await;
     begin_replay(pool, &settings, START).await.unwrap();
     assert_eq!(
         cursor(pool, NETWORK_MAINNET)
@@ -1649,6 +1656,11 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
     begin_replay(pool, &settings, (base + 95) as u64)
         .await
         .unwrap();
+    assert_eq!(
+        rewrites().await,
+        before + 2,
+        "each replay rewind counts the log's rewrite in its own statement"
+    );
     assert_eq!(
         cursor(pool, NETWORK_MAINNET)
             .await
@@ -2766,9 +2778,21 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_canonical_event_is_
         vec![transfer(START + 1_000, 0, LAND, ALICE, CARL, TOKEN_37_55)],
     );
     chain.head.store(START + 1_005, Ordering::SeqCst);
+    let rewrites = || async {
+        sqlx::query_scalar::<_, i64>("SELECT rewrites FROM land_authz.index_cursor")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(rewrites().await, 0);
     let out = indexer::run_pass(&state, &ctx).await.unwrap();
     let rewound = checkpoint as i64;
     assert_eq!(out.reorg_rewound_to, Some(rewound), "{out:?}");
+    assert_eq!(
+        rewrites().await,
+        1,
+        "the rewind counts the log's rewrite in its own statement"
+    );
     let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
     assert_eq!(row.last_block, rewound);
     assert_eq!(
@@ -4010,9 +4034,20 @@ async fn indexer_repairs_omitted_and_legacy_zero_timestamps_before_collaborator_
         token_leg(&db.pool, &token, "owner").await.as_deref(),
         Some(BOB)
     );
+    let rewrites = || async {
+        sqlx::query_scalar::<_, i64>("SELECT rewrites FROM land_authz.index_cursor")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+    };
+    let before = rewrites().await;
     chain.header_time.store(u64::MAX, Ordering::SeqCst);
     let repair = indexer::run_pass(&state, &ctx).await.unwrap();
     assert!(repair.published);
+    assert!(
+        rewrites().await > before,
+        "the repair rewrote published times in place, and counts it in the same statement"
+    );
     let ready: bool =
         sqlx::query_scalar("SELECT history_timestamps_ready FROM land_authz.index_cursor")
             .fetch_one(&db.pool)

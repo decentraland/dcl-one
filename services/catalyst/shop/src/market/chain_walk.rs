@@ -1459,7 +1459,7 @@ async fn rebuild(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
-             updated_at = timezone('UTC', now()) \
+             rebuilds = rebuilds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
     )
     .bind(owner.indexer)

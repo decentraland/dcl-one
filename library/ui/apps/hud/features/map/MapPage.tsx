@@ -2,7 +2,7 @@
 // and Layers panel, and the panel of search results, places and events on the right.
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { DEFAULT_REALM } from '@hud-host'
+import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
 import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
@@ -14,6 +14,7 @@ import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMa
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
 import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
+import { Tag } from '../../../../components/Tag/Tag'
 import { showToast } from '../../design'
 import { usePhotoViewer } from '../gallery/usePhotoViewer'
 import { travelToPhoto } from '../gallery/reelActions'
@@ -35,6 +36,7 @@ import { SearchBar } from './panel/SearchBar'
 import { SearchResults } from './panel/SearchResults'
 import { useMapCamera } from './useMapCamera'
 import { useMapLayerData } from './useMapLayerData'
+import { useMapGridAge } from './useMapGridAge'
 import noticeStyles from './MapNotices.module.css'
 import styles from './MapPage.module.css'
 
@@ -76,6 +78,8 @@ export function MapPage({
   const address = profile.data?.address
   const { pose } = minimap
   const data = useMapLayerData(open, layers, address)
+  // The parcels map is drawn from the map API's grid; the satellite map is not.
+  const gridAge = useMapGridAge(serviceUrl('mapApi'), open && layers.has('parcels'))
 
   const { translateTo, setPosition, resetZoom } = camera
   useEffect(() => {
@@ -261,6 +265,11 @@ export function MapPage({
           onCenterHome={showHome}
           onToggleLayers={() => setLayersOpen((v) => !v)}
         />
+        {gridAge != null && (
+          <Tag variant="updated" className={noticeStyles.age}>
+            {gridAge}
+          </Tag>
+        )}
         {layersOpen && <LayersPanel />}
         <div className={noticeStyles.credits}>Powered by the Decentraland Foundation</div>
 

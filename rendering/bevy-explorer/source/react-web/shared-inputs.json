@@ -477,6 +477,10 @@
           "kind": "regular"
         },
         {
+          "name": "gridAge.ts",
+          "kind": "regular"
+        },
+        {
           "name": "home.ts",
           "kind": "regular"
         },
@@ -841,6 +845,10 @@
         },
         {
           "name": "googleTagSignInReturn.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "gridAge.test.ts",
           "kind": "regular"
         },
         {
@@ -4400,6 +4408,10 @@
           "kind": "regular"
         },
         {
+          "name": "useMapGridAge.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useMapLayerData.ts",
           "kind": "regular"
         }
@@ -5214,6 +5226,10 @@
           "kind": "regular"
         },
         {
+          "name": "mapGridAge.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "mapPins.test.tsx",
           "kind": "regular"
         },
@@ -5768,6 +5784,220 @@
         },
         {
           "name": "worldAccess.test.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components",
+      "entries": [
+        {
+          "name": "AnimatedBackground",
+          "kind": "directory"
+        },
+        {
+          "name": "AppChrome",
+          "kind": "directory"
+        },
+        {
+          "name": "BlogBanner",
+          "kind": "directory"
+        },
+        {
+          "name": "BlogCard",
+          "kind": "directory"
+        },
+        {
+          "name": "Button",
+          "kind": "directory"
+        },
+        {
+          "name": "CardActionButton",
+          "kind": "directory"
+        },
+        {
+          "name": "CardImage",
+          "kind": "directory"
+        },
+        {
+          "name": "Checkbox",
+          "kind": "directory"
+        },
+        {
+          "name": "CheckboxLabel",
+          "kind": "directory"
+        },
+        {
+          "name": "CloseButton",
+          "kind": "directory"
+        },
+        {
+          "name": "CommunityCard",
+          "kind": "directory"
+        },
+        {
+          "name": "CopyFeedback",
+          "kind": "directory"
+        },
+        {
+          "name": "Dropdown",
+          "kind": "directory"
+        },
+        {
+          "name": "EventCard",
+          "kind": "directory"
+        },
+        {
+          "name": "FriendCTA",
+          "kind": "directory"
+        },
+        {
+          "name": "InputExplorerNames",
+          "kind": "directory"
+        },
+        {
+          "name": "InputField",
+          "kind": "directory"
+        },
+        {
+          "name": "InputWebCreatorTools",
+          "kind": "directory"
+        },
+        {
+          "name": "ItemLabel",
+          "kind": "directory"
+        },
+        {
+          "name": "JumpInCTA",
+          "kind": "directory"
+        },
+        {
+          "name": "Modal",
+          "kind": "directory"
+        },
+        {
+          "name": "NavBar",
+          "kind": "directory"
+        },
+        {
+          "name": "NavCreditsBalance",
+          "kind": "directory"
+        },
+        {
+          "name": "NavMenuItem",
+          "kind": "directory"
+        },
+        {
+          "name": "NavMenuTab",
+          "kind": "directory"
+        },
+        {
+          "name": "NavNotificationsButton",
+          "kind": "directory"
+        },
+        {
+          "name": "NavProfileButton",
+          "kind": "directory"
+        },
+        {
+          "name": "PlaceCard",
+          "kind": "directory"
+        },
+        {
+          "name": "ProfilePic",
+          "kind": "directory"
+        },
+        {
+          "name": "ProgressBar",
+          "kind": "directory"
+        },
+        {
+          "name": "SearchBar",
+          "kind": "directory"
+        },
+        {
+          "name": "ShopCard",
+          "kind": "directory"
+        },
+        {
+          "name": "Skeleton",
+          "kind": "directory"
+        },
+        {
+          "name": "Spinner",
+          "kind": "directory"
+        },
+        {
+          "name": "Switch",
+          "kind": "directory"
+        },
+        {
+          "name": "Tabs",
+          "kind": "directory"
+        },
+        {
+          "name": "TabsBar",
+          "kind": "directory"
+        },
+        {
+          "name": "Tag",
+          "kind": "directory"
+        },
+        {
+          "name": "TitleBar",
+          "kind": "directory"
+        },
+        {
+          "name": "Toast",
+          "kind": "directory"
+        },
+        {
+          "name": "generation.json",
+          "kind": "regular"
+        },
+        {
+          "name": "promotion.json",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/Tag",
+      "entries": [
+        {
+          "name": "AgeRatingAlpha.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "CommunityType.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "Location.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "ModeratonType.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "Realm.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "Status.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "Tag.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Tag.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Tag.tsx",
           "kind": "regular"
         }
       ]
@@ -6899,6 +7129,10 @@
       "sha256": "e270e2b27fc08f135b5659ab77c1731a202ff095d0ac4af93f27cb409ea86731"
     },
     {
+      "path": "library/explorer-core/features/map/gridAge.ts",
+      "sha256": "7842adf0fcd291daf35106e8d76c1a2aa67474f83d2a69fae01b6c9c64eec91c"
+    },
+    {
       "path": "library/explorer-core/features/map/home.ts",
       "sha256": "cfbd18f3d2d74cb6388ecb070ddef4eb25976d0b318f72ddbbf1a9b8e05f0dfd"
     },
@@ -7213,6 +7447,10 @@
     {
       "path": "library/explorer-core/test/googleTagSignInReturn.test.ts",
       "sha256": "8009219f000ad7d58b8238a18bbe3798d2c741a40ab8c88c0f53f7bf7afb04c1"
+    },
+    {
+      "path": "library/explorer-core/test/gridAge.test.ts",
+      "sha256": "904df0935c7203766dcf34184299f60b6bcea0eac974b6434e1494ff2d9b94c7"
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
@@ -9972,7 +10210,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
-      "sha256": "051cea8524a2c8216e3363d0c3f130cd78fb53ef1426b72f91d390e4c4b656e5"
+      "sha256": "f37eccb4c3c4b5c391c62d5ad49c727bf5b0d91aefb3bf11033bb641e1723fe8"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
@@ -9980,7 +10218,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "15aa558665dcacebc58dbdea56f36c8aee9bb41310af4c7aa3d094e419a4adce"
+      "sha256": "fd0e9c90e0160c9c98f275bade0314d63aa1fb0aef643edf28fad902574de611"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -10037,6 +10275,10 @@
     {
       "path": "library/ui/apps/hud/features/map/useMapCamera.ts",
       "sha256": "87fc66a010db1fe616084100454d329b22647adf7ddbd01848a60f8469d1d202"
+    },
+    {
+      "path": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "sha256": "afa661cd33aae31011af8d53fb3f0ce009dddf54a59d2303781f845844f3bebf"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
@@ -10936,7 +11178,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "436e78801c2e40d4cb8bf7afd79d8379bd2f5f9ead35ff29ad37c5714770fa56"
+      "sha256": "1c0507582394e5ca17d991d72b48619d2d409556e405d83b0552eaa6d68e408d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -11135,6 +11377,10 @@
       "sha256": "5a0540c05192d6514efc813bdad21337f6dc4859e6ef88eb3addba603eca9b5d"
     },
     {
+      "path": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "sha256": "2e09763db12b3c0f01c328eb697cc90431b3f381d288e44a448e25fcb5df3846"
+    },
+    {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",
       "sha256": "f202cf95d71538789f66193bccf6739eb42ca4900e166d4cb47524e8bd2e2e92"
     },
@@ -11233,6 +11479,14 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
+    },
+    {
+      "path": "library/ui/components/Tag/Tag.module.css",
+      "sha256": "caf8382418bab1ed27d53289de2c7a1c426b9da1a930acadd1ceb3b7b8a4ab64"
+    },
+    {
+      "path": "library/ui/components/Tag/Tag.tsx",
+      "sha256": "ec090cfa64310a995876a476f1eea42e77e514b6d987fea34a6ba6b7528c243b"
     },
     {
       "path": "library/ui/foundations/colors/colors.css",
@@ -13340,6 +13594,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/guestIdentity.test.ts",
       "to": "library/explorer-core/features/auth/guest.ts",
       "kind": "native:runtime"
@@ -28131,6 +28400,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/map/useMapLayerData.ts",
       "kind": "native:runtime"
     },
@@ -28187,6 +28471,21 @@
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/components/Tag/Tag.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/components/Tag/Tag.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "test:runtime"
     },
     {
@@ -29957,6 +30256,21 @@
     {
       "from": "library/ui/apps/hud/features/map/useMapCamera.ts",
       "to": "library/explorer-core/features/map/mapZoom.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
       "kind": "test:runtime"
     },
     {
@@ -44795,6 +45109,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/mapPins.test.tsx",
       "to": "library/explorer-core/features/map/mapPins.ts",
       "kind": "native:runtime"
@@ -45602,6 +45931,36 @@
     {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/Tag/Tag.tsx",
+      "to": "library/ui/components/Tag/Tag.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Tag/Tag.tsx",
+      "to": "library/ui/components/Tag/Tag.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Tag/Tag.tsx",
+      "to": "library/ui/components/Tag/Tag.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/Tag/Tag.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Tag/Tag.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Tag/Tag.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
       "kind": "test:runtime"
     },
     {
@@ -47051,6 +47410,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/map/home.ts",
       "kind": "type"
     },
@@ -47442,6 +47806,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/googleTagSignInReturn.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/gridAge.test.ts",
       "kind": "type"
     },
     {
@@ -48457,6 +48826,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
       "kind": "type"
     },
     {
@@ -49596,6 +49970,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/mapPins.test.tsx",
       "kind": "type"
     },
@@ -49717,6 +50096,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/Tag/Tag.tsx",
       "kind": "type"
     },
     {

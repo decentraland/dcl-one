@@ -2894,15 +2894,56 @@ behind the explorer map routes (`/api/v{1,2}/tiles`, `/api/v2/tiles/info`,
 `map.png`, the minimaps and the parcel and estate metadata). The node
 builds it from its own indexes.
 
-- **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `run_pass`),
-  leased, every 60 s with 10 s of jitter, started once the land-authz index
-  and Shop's reader are attached. A failed pass backs off up to 5 minutes.
-  It runs whatever `EXPLORER_MIRRORS_ENABLED` says. Its pass
-  marker is `map-grid` in `explore_api.mirror_passes` (`GET /mirrors`).
-  Every process also runs `explorer-map-grid-reload` every 60 s (`follow`):
-  one primary-key read of the row's stamp, a reload only when another
-  process stored a newer grid, and one read of the pass marker for what the
-  build waits for.
+- **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `watch`),
+  leased, started once the land-authz index and Shop's reader are attached,
+  whatever `EXPLORER_MIRRORS_ENABLED` says. It builds when its inputs
+  change, not on a timer: every 5 s it reads their marks (`Watcher`), and a
+  pass (`run_pass`) runs when they moved since the ones read before the
+  last pass, when a change held back by the publication floor may publish,
+  when a failed pass's retry is due (1 minute, doubling to 5), or after 10
+  minutes without one (a safety net for any change the marks miss). The
+  marks are read before the pass, so a change during it moves them for the
+  next one.
+  Each mark is a durable counter raised in the statement that rewrites
+  rows in place, a position in an append-only log, or a digest of the very
+  rows the build reads, so equal marks mean equal inputs:
+  - The land-authz marks (`LAND_MARKS_SQL`): the cursor's readiness, its
+    `rewrites` count and the newest folded LAND/Estate rights event and
+    estate data document, each a backward scan of its primary key from the
+    published block. `land_authz.index_cursor.rewrites` is raised in the
+    statement of a reorg rewind, a replay rewind and the legacy block-time
+    repair (which can run while the index is published); between two
+    raises both logs only grow past the published block and the rights are
+    their fold, so a rewind that refolds to the same positions with other
+    facts still moves the marks. An event past the published block moves
+    nothing.
+  - Shop's marks (`land_map::land_market_marks`, one statement on the
+    same connection and database clock): the nft, trade-events and trades
+    readiness; the Ethereum nft cursor's `reorg_rewinds` and `rebuilds`
+    (`shop.chain_cursor`, each raised in the statement of its rewrite); the
+    two registries' live orders at that clock and their newest order
+    event; their names' count and newest document; and the SHA-256 of the
+    open MANA trades and of the open rental listings exactly as the build
+    reads them at the clock (the trades after the trade-events verdicts).
+    The counts and digests are taken at the clock, so an expiry moves them
+    too. Digesting every order and name instead would cost about 170 ms a
+    read on the synthetic database below; the statement takes 27 ms.
+  - With nothing moving and every source ready, the job records the
+    revision the last pass left current checked again: an `UPDATE` of
+    `explore_api.map_grid.checked_at` guarded on that revision's stamp and
+    `etag`, on the lease's session, at most once a minute. A check that
+    finds another revision stored records nothing and runs a pass at once.
+    A pass that stores a grid or finds its body equal to the stored one
+    sets `checked_at` too. `checked_at` is `/v2/tiles/info`'s `checkedAt`,
+    the time the map's age label reads, and stops moving while a source is
+    down or the build is not running. The pass marker, `map-grid` in
+    `explore_api.mirror_passes` (`GET /mirrors`), records build passes
+    only; a check is not one.
+  Every process also runs `explorer-map-grid-reload` every 10 s (`follow`):
+  one primary-key read of the row's stamp and `checked_at`, a reload only
+  when another process stored a newer grid, `checkedAt` only for the
+  revision it serves, and one read of the pass marker for what the build
+  waits for.
 - **One snapshot:** every read below runs in one REPEATABLE READ, READ ONLY
   transaction, the one the land-authz index opens once it finds itself
   published for the configured registries
@@ -2956,10 +2997,10 @@ builds it from its own indexes.
   inputs follow, and compares its body with that revision, not with what
   its process holds. An equal body writes nothing, and a process holding an
   older grid reloads the row. A different body waits until that revision
-  was built 5 minutes earlier (`fetched_at`, `MIN_PUBLISH_INTERVAL`), so a
-  token relisted every
-  minute does not write a 4.4 MB row and make every process reload it every
-  minute. Then it is gzipped and written with an `UPDATE` guarded on that
+  was built 1 minute earlier (`fetched_at`, `MIN_PUBLISH_INTERVAL`), so a
+  token relisted many times a minute writes at most one 4.4 MB row, and
+  causes one reload in every process, a minute; the job runs the pass that
+  publishes it when the minute is up. Then it is gzipped and written with an `UPDATE` guarded on that
   revision's stamp and `etag` (an `INSERT ...
   ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
   in milliseconds and at least one second past it. A leased build runs that
@@ -2971,8 +3012,8 @@ builds it from its own indexes.
   since its snapshot. A process serves a grid only if its stamp
   is newer than the one it holds, decided under its grid lock, so a slow
   reload never brings back an older revision. An order or rental that
-  expires changes the body on the next pass, published under the same
-  5-minute floor. A PNG answer takes one grid
+  expires moves the marks at its expiry; the pass then publishes the change
+  under the same floor. A PNG answer takes one grid
   for its validators, cache key and body, and for an estate's
   dissolved-estate redirect.
 - **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
@@ -2993,7 +3034,20 @@ builds it from its own indexes.
   LAND snapshot read takes 0.47 s, the estates 16 ms, the orders 10 ms, the
   names 34 ms and the trades 16 ms. Composing the grid takes 0.14 s,
   serializing it 0.19 s (a 36.5 MB body) and gzip 0.04 s (4.4 MB stored).
-- **Deploy:** no schema step. Stop every process of a binary that runs
+  A published revision then costs the guarded write (60 to 85 ms, 4.7 to
+  4.8 MB of WAL), a reload in every process (70 to 93 ms to fetch, inflate
+  and parse, 50 to 130 MB of transient memory) and, for every map client
+  that fetches `/v2/tiles` again, 36.5 MB (the node does not compress it).
+  The 1-minute floor allows at most 60 revisions an hour (about 290 MB of
+  WAL and 60 reloads per process); the earlier 5-minute floor allowed 12
+  (about 58 MB). The live atlas published no revision in 80 minutes on
+  2026-11-24 (its `landVersion` and `overlayVersion` held), so the floor
+  bounds bursts, not the usual rate. Watching costs the marks every 5 s
+  (about 7 ms for land-authz and 27 ms for Shop, under 25 s of database
+  time an hour) and at most 60 single-row `checked_at` updates an hour,
+  which leave the stored body untouched.
+- **Deploy:** one additive step, `0062_map_grid_change_marks` (the
+  `rewrites`, `rebuilds` and `checked_at` columns). Stop every process of a binary that runs
   the `explorer-map-mirror` job before this one's first build: that job
   rewrites the row's stamp without a guard. An environment that still sets
   `EXPLORER_MAP_SOURCE_URL` or `EXPLORER_MAP_MIN_REFRESH_SECS` starts, as
