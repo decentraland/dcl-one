@@ -134,4 +134,5 @@ export type {
   ConnectionStatusValue
 } from './components/ProfilePic/ConnectionStatus'
 
+export { ShopFooter } from './apps/shop/ShopFooter'
 export * from './apps/sites'
