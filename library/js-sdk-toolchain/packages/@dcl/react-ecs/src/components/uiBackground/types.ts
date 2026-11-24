@@ -16,7 +16,7 @@ export interface UiBackgroundProps {
   uvs?: number[]
   /** AvatarTexture for the background */
   avatarTexture?: UiAvatarTexture
-  /** VideoTexture for the background: the frames of a VideoPlayer on another entity */
+  /** VideoTexture for the background: the frames of a VideoPlayer on another entity. Supported only by the Bevy Explorer; other clients ignore it. */
   videoTexture?: UiVideoTexture
   /** Texture for the background */
   texture?: UiTexture
@@ -32,7 +32,7 @@ export interface UiAvatarTexture {
 }
 
 /**
- * Video Texture
+ * Video Texture. Supported only by the Bevy Explorer; other clients ignore it.
  * @public
  */
 export interface UiVideoTexture {

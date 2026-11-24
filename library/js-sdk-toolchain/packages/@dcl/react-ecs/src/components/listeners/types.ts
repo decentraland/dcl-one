@@ -20,11 +20,11 @@ export type Listeners = {
   onMouseEnter?: Callback
   /** triggered on mouse leave event */
   onMouseLeave?: Callback
-  /** triggered while the pointer is dragged after pressing on the element */
+  /** triggered while the pointer is dragged after pressing on the element. Supported only by the Bevy Explorer; other clients ignore it. */
   onMouseDrag?: Callback
-  /** triggered while the pointer is dragged with the cursor locked in place */
+  /** triggered while the pointer is dragged with the cursor locked in place. Supported only by the Bevy Explorer; other clients ignore it. */
   onMouseDragLocked?: Callback
-  /** triggered when a drag that started on the element ends */
+  /** triggered when a drag that started on the element ends. Supported only by the Bevy Explorer; other clients ignore it. */
   onMouseDragEnd?: Callback
 }
 

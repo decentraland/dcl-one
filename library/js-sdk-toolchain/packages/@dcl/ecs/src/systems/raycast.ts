@@ -26,9 +26,9 @@ export type RaycastSystemOptions = {
   queryType: RaycastQueryType
   continuous?: boolean | undefined
   collisionMask?: number | undefined
-  /** shape to sweep along the ray, default RS_RAY (a point) */
+  /** shape to sweep along the ray, default RS_RAY (a point). Supported only by the Bevy Explorer; other clients ignore it. */
   shape?: RaycastShape | undefined
-  /** include colliders from other scenes, default false */
+  /** include colliders from other scenes, default false. Supported only by the Bevy Explorer; other clients ignore it. */
   includeWorld?: boolean | undefined
 }
 

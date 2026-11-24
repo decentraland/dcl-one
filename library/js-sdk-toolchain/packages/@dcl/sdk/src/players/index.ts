@@ -20,6 +20,7 @@ type GetPlayerDataRes = {
   avatar?: PBAvatarBase
   wearables: PBAvatarEquippedData['wearableUrns']
   emotes: PBAvatarEquippedData['emoteUrns']
+  /** Supported only by the Bevy Explorer; other clients leave it empty. */
   forceRender: PBAvatarEquippedData['forceRender']
   position: TransformType['position'] | undefined
 }

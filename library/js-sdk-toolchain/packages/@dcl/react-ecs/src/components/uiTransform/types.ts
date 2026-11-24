@@ -156,16 +156,16 @@ export interface UiTransformProps {
   opacity?: number
   /** default 0 */
   zIndex?: number
-  /** A reference id for the element, e.g. as a scrollPosition target or for SetUiFocus. default empty */
+  /** A reference id for the element, e.g. as a scrollPosition target or for SetUiFocus. default empty. Supported only by the Bevy Explorer; other clients ignore it. */
   elementId?: string
-  /** Scroll offset when overflow is 'scroll': a position, or the elementId of a child to scroll to. default (0, 0) */
+  /** Scroll offset when overflow is 'scroll': a position, or the elementId of a child to scroll to. default (0, 0). Supported only by the Bevy Explorer; other clients ignore it. */
   scrollPosition?: Vector2 | string
-  /** Which scrollbars to show when overflow is 'scroll'. default 'both' */
+  /** Which scrollbars to show when overflow is 'scroll'. default 'both'. Supported only by the Bevy Explorer; other clients ignore it. */
   scrollVisible?: ScrollVisibleType
 }
 
 /**
- * Which scrollbars are shown when the overflow is scrollable
+ * Which scrollbars are shown when the overflow is scrollable. Supported only by the Bevy Explorer; other clients ignore it.
  * @public
  */
 export type ScrollVisibleType = 'horizontal' | 'vertical' | 'both' | 'hidden'

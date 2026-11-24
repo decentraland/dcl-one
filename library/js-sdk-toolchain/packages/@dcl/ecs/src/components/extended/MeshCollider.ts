@@ -47,7 +47,8 @@ export interface MeshColliderComponentDefinitionExtended
 
   /**
    * @public
-   * Set a mesh from inside a gltf in the MeshCollider component
+   * Set a mesh from inside a gltf in the MeshCollider component.
+   * Supported only by the Bevy Explorer; other clients ignore it.
    * @param entity - entity to create or replace the MeshCollider component
    * @param source - the path to the gltf
    * @param meshName - the name of the mesh in the gltf (see GltfContainerLoadingState.meshNames)

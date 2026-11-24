@@ -181,7 +181,8 @@ export interface PointerEventsSystem {
 
   /**
    * @public
-   * Execute callback while the user holds the button pressed and moves the pointer, having pressed it on the entity
+   * Execute callback while the user holds the button pressed and moves the pointer, having pressed it on the entity.
+   * Supported only by the Bevy Explorer; other clients ignore it.
    * @param pointerData - Entity to attach the callback - Opts to trigger Feedback and Button
    * @param cb - Function to execute on every drag update
    */
@@ -189,7 +190,8 @@ export interface PointerEventsSystem {
 
   /**
    * @public
-   * Same as onPointerDrag, but the cursor is locked in place for the duration of the drag
+   * Same as onPointerDrag, but the cursor is locked in place for the duration of the drag.
+   * Supported only by the Bevy Explorer; other clients ignore it.
    * @param pointerData - Entity to attach the callback - Opts to trigger Feedback and Button
    * @param cb - Function to execute on every drag update
    */
@@ -200,7 +202,8 @@ export interface PointerEventsSystem {
 
   /**
    * @public
-   * Execute callback when the user releases the button after a drag that started on the entity
+   * Execute callback when the user releases the button after a drag that started on the entity.
+   * Supported only by the Bevy Explorer; other clients ignore it.
    * @param pointerData - Entity to attach the callback - Opts to trigger Feedback and Button
    * @param cb - Function to execute when the drag ends
    */

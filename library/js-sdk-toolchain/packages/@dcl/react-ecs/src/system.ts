@@ -157,6 +157,7 @@ export interface ReactBasedUiSystem {
    * Render a UI tree to a texture. The tree is rooted at `entity`, which must carry a UiCanvas
    * describing the texture; the result can be sampled through `TextureUnion.uiTexture`. Replaces
    * any texture renderer already set on the entity, and is torn down when the entity is removed.
+   * Supported only by the Bevy Explorer; other clients ignore it.
    *
    * @param entity - The UiCanvas entity the UI tree hangs from
    * @param ui - The UI component to render
