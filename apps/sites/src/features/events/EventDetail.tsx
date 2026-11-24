@@ -1,8 +1,6 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import type { JumpIn, RemindControl } from "@dcl/one-ui/apps/sites/events/types";
+import { EventDetailModal, useEventsCopy, type JumpIn, type RemindControl } from "@dcl/one-ui";
 
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";

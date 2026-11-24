@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readRejectionReason, rejectionReason } from "@dcl/one-ui/apps/sites/events/admin-copy";
+import { readRejectionReason, rejectionReason } from "@dcl/one-ui";
 
 import { rejectedNotice } from "./review-notice";
 

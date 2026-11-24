@@ -1,11 +1,17 @@
-import { adminCopy, rejectionReason, relativeDateLabel, type RejectReasonId } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { AdminPage, adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
-import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { PendingEventCard } from "@dcl/one-ui/apps/sites/events/PendingEventCard";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { RejectEventModal } from "@dcl/one-ui/apps/sites/events/RejectEventModal";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import {
+  adminCopy,
+  rejectionReason,
+  relativeDateLabel,
+  type RejectReasonId,
+  AdminPage,
+  adminPageStyles,
+  Busy,
+  EventDetailModal,
+  PendingEventCard,
+  Notice,
+  RejectEventModal,
+  SitesButton as Button,
+} from "@dcl/one-ui";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";

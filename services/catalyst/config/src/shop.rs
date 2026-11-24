@@ -75,8 +75,8 @@ pub struct MarketUpstreamsConfig {
 
     /// Take this node's extended filters on `/lambdas/collections/wearables`
     /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
-    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
-    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    /// `direction`). Off by default to match lamb2.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub lambdas_catalog_extensions_enabled: bool,
 }
 
