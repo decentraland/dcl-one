@@ -137,3 +137,5 @@ export type {
 } from './components/ProfilePic/ConnectionStatus'
 
 export * from './apps/sites'
+
+export * from './apps/shop/ShopSearch'
