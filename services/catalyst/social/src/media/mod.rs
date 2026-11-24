@@ -337,8 +337,10 @@ impl MediaState {
 pub fn router(state: SharedState) -> Router {
     let converter = common_middleware(
         Router::new()
-            .route("/convert", get(convert::convert))
-            .route("/media/convert", get(convert::convert)),
+            .route("/convert", get(convert::native))
+            .route("/metamorph-api/convert", get(convert::native))
+            .route("/media/convert", get(convert::convert))
+            .route("/metamorph-api/media/convert", get(convert::convert)),
     )
     .layer(axum::middleware::map_response(convert::response_headers));
     common_middleware(Router::new().route("/translate", post(translate::translate)))
