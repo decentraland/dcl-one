@@ -14,7 +14,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
   const cookies = ownedSessionCookies(request, session);
 
-  track("creator_builder_redirect", { from: FROM, to: TO }, { sid });
+  track("creator_builder_redirect", { from: FROM, to: TO }, { sid, requestUserAgent: request.headers.get("user-agent") });
 
   return redirect(
     TO,

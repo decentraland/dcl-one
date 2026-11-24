@@ -48,13 +48,14 @@ struct Recipient {
     address: String,
     community: bool,
     community_name: Option<String>,
-    community_thumbnail: bool,
+    /// The stored thumbnail hash of the community, when one exists.
+    community_thumbnail: Option<String>,
 }
 
 /// The sites the notices point at and the Slack switch.
 #[derive(Clone, Debug)]
 pub struct Links {
-    /// The events site (`/whats-on/{id}`): the link of the notices the old
+    /// The Sites origin of the Events pages: the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
     /// Backend events asset mount (`<origin>/events`) for the bundled default image.
@@ -173,10 +174,10 @@ fn text<'a>(event: &'a Value, field: &str) -> &'a str {
 static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "WITH candidates AS ( \
-            SELECT $3::text AS address,false AS community,NULL::text AS community_name,false AS community_thumbnail \
+            SELECT $3::text AS address,false AS community,NULL::text AS community_name,NULL::text AS community_thumbnail \
             WHERE $2 IN ('event_approved','event_rejected','event_deleted') AND $3 > $6 \
             UNION ALL \
-            (SELECT a.signer,false,NULL,false FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
+            (SELECT a.signer,false,NULL,NULL FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
             WHERE a.event_id=$1 AND a.signer > $6 AND a.action='going' AND $2 IN ('events_starts_soon','events_started') \
               AND e.approved AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
@@ -188,7 +189,7 @@ static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
                     AND EXISTS ({opt_out}))) \
             ORDER BY a.signer LIMIT $7) \
             UNION ALL \
-            (SELECT m.member_address,true,c.name,EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id=c.id) \
+            (SELECT m.member_address,true,c.name,(SELECT t.thumbnail_hash FROM social.community_thumbnails t WHERE t.community_id=c.id) \
             FROM social.community_members m \
             JOIN social.communities c ON c.id=m.community_id \
             JOIN explore.event e ON e.id=$1 AND CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END=$5::uuid AND e.origin='local' \
@@ -199,7 +200,7 @@ static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
               AND NOT EXISTS ({opt_out}) \
             ORDER BY m.member_address LIMIT $7) \
         ) SELECT address,bool_or(community) AS community,max(community_name) AS community_name, \
-                 bool_or(community_thumbnail) AS community_thumbnail \
+                 max(community_thumbnail) AS community_thumbnail \
           FROM candidates WHERE address > $6 GROUP BY address ORDER BY address LIMIT $7",
         opt_out = community_opt_out("m.member_address", "$5::uuid")
     )
@@ -251,7 +252,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
                 &intent.event,
             )
         }
-        _ => format!("{base}/whats-on/{}", urlencoding::encode(&intent.event_id)),
+        // A rejected event is not public, so its owner lands in its editor; a
+        // deleted one has no page left, so My Events.
+        "event_rejected" => format!(
+            "{base}/events/edit-event/{}",
+            urlencoding::encode(&intent.event_id)
+        ),
+        "event_deleted" => format!("{base}/events?tab=my"),
+        _ => format!("{base}/events?id={}", urlencoding::encode(&intent.event_id)),
     };
     let (title, description) = match intent.kind.as_str() {
         // `Notifications/index.ts:56-57`
@@ -306,18 +314,21 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         let community = text(&intent.event, "community_id");
         metadata["communityId"] = json!(community);
         metadata["communityName"] = json!(community_name);
-        if recipient.community_thumbnail {
+        if let Some(hash) = recipient.community_thumbnail.as_deref() {
             // The stored thumbnail lives under the canonical UUID.
             let id = Uuid::parse_str(community).map_or(community.to_string(), |id| id.to_string());
-            metadata["communityThumbnail"] =
-                json!(crate::communities::thumbnail_url(&links.community_cdn, &id));
+            metadata["communityThumbnail"] = json!(crate::communities::versioned_thumbnail_url(
+                &links.community_cdn,
+                &id,
+                Some(hash)
+            ));
         }
     }
     if matches!(
         intent.kind.as_str(),
         "event_approved" | "event_rejected" | "event_deleted"
     ) {
-        metadata["myHangouts"] = json!(format!("{base}/whats-on?tab=my"));
+        metadata["myHangouts"] = json!(format!("{base}/events?tab=my"));
     }
     if intent.kind == "event_rejected" {
         metadata["reason"] = json!(text(&intent.event, "rejection_reason"));
@@ -424,7 +435,16 @@ async fn dispatch_page(
         .filter_map(|recipient| {
             let address: Address = recipient.address.parse().ok()?;
             Some(NewNotification {
-                id: Uuid::new_v5(&intent.id, address.as_str().as_bytes()),
+                id: Uuid::new_v5(
+                    &Uuid::NAMESPACE_URL,
+                    format!(
+                        "event-notice:{}:{}:{}",
+                        intent.event_id,
+                        intent.kind,
+                        address.as_str()
+                    )
+                    .as_bytes(),
+                ),
                 address,
                 kind: intent.kind.clone(),
                 metadata: metadata(&intent, recipient, links),
@@ -432,7 +452,7 @@ async fn dispatch_page(
             })
         })
         .collect();
-    let inserted = insert_event_notifications(&mut *tx, &batch).await?;
+    let inserted = insert_event_notifications(&mut tx, &batch).await?;
     let finished = recipients.len() < PAGE as usize;
     if finished
         && suppression.is_none()
@@ -662,6 +682,332 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_notice_lock_count_is_bounded_and_reverse_batches_complete() {
+        let pool = crate::db::scratch::isolated_pool(8)
+            .await
+            .expect("real PostgreSQL required");
+        let now = Utc::now().naive_utc();
+        let batch: Vec<NewNotification> = (0..1024)
+            .map(|i| NewNotification {
+                id: Uuid::new_v4(),
+                address: Address::parse(&format!("0x{i:040x}")).unwrap(),
+                kind: "events_started".into(),
+                metadata: json!({"eventId":"lock-series","occurredAt":js_iso(now)}),
+                occurred_at: now,
+            })
+            .collect();
+        let write = |batch: Vec<NewNotification>| {
+            let pool = pool.clone();
+            async move {
+                let mut tx = pool.begin().await.unwrap();
+                insert_event_notifications(&mut tx, &batch).await.unwrap();
+                let locks: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_locks WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted")
+                    .fetch_one(&mut *tx).await.unwrap();
+                assert!(
+                    locks <= 256,
+                    "event writer retained {locks} locks for 1024 recipients"
+                );
+                tx.commit().await.unwrap();
+            }
+        };
+        let mut reversed = batch.clone();
+        reversed.reverse();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(write(batch), write(reversed));
+        })
+        .await
+        .expect("reverse recipient orders must not deadlock");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.notifications WHERE metadata->>'eventId'='lock-series'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1024);
+    }
+
+    #[tokio::test]
+    async fn event_notice_import_and_runtime_serialize_history_adoption() {
+        let pool = crate::db::scratch::isolated_pool(8)
+            .await
+            .expect("real PostgreSQL required");
+        let old_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.notifications(id,address,type,metadata,occurred_at,in_app,read,read_at) VALUES($1,$2,'event_rejected','{}','2026-01-01',false,true,'2026-01-01')")
+            .bind(old_id).bind(HOST).execute(&pool).await.unwrap();
+        let mut imported = pool.begin().await.unwrap();
+        let import_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *imported)
+            .await
+            .unwrap();
+        sqlx::raw_sql("CREATE TEMP TABLE stage(id uuid,event_key text,address text,type text,metadata jsonb,occurred_at timestamptz,read_at timestamptz,created_at timestamptz,updated_at timestamptz) ON COMMIT DROP")
+            .execute(&mut *imported).await.unwrap();
+        sqlx::query("INSERT INTO stage VALUES($1,'import-series',$2,'event_rejected','{\"name\":\"Imported\"}','2026-01-01Z',NULL,'2026-01-01Z','2026-01-01Z')")
+            .bind(old_id).bind(HOST).execute(&mut *imported).await.unwrap();
+        let load = include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/tooling/migration/sources/notifications-workers/notification.load.sql"
+        ));
+        sqlx::raw_sql(load).execute(&mut *imported).await.unwrap();
+        let mut runtime = pool.begin().await.unwrap();
+        let runtime_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *runtime)
+            .await
+            .unwrap();
+        let writer = tokio::spawn(async move {
+            let row = NewNotification {
+                id: Uuid::new_v4(),
+                address: Address::parse(HOST).unwrap(),
+                kind: "event_rejected".into(),
+                metadata: json!({"eventId":"import-series","name":"Runtime","occurredAt":"2026-02-01T00:00:00Z"}),
+                occurred_at: chrono::NaiveDate::from_ymd_opt(2026, 2, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            };
+            insert_event_notifications(&mut runtime, &[row])
+                .await
+                .unwrap();
+            runtime.commit().await.unwrap();
+        });
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let blockers: Vec<i32> = sqlx::query_scalar("SELECT pg_blocking_pids($1)")
+                    .bind(runtime_pid)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                if blockers.contains(&import_pid) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("runtime must wait for the import's wallet lock");
+        imported.commit().await.unwrap();
+        writer.await.unwrap();
+        let row: (Uuid,String,bool,bool,i64) = sqlx::query_as("SELECT id,metadata->>'name',in_app,read,(SELECT count(*) FROM social.notification_deliveries d WHERE d.notification_id=n.id) FROM social.notifications n WHERE address=$1 AND type='event_rejected'")
+            .bind(HOST).fetch_one(&pool).await.unwrap();
+        assert_eq!(row, (old_id, "Runtime".into(), false, true, 0));
+    }
+
+    #[tokio::test]
+    async fn recurring_event_notifies_and_emails_once_per_event() {
+        let pool = crate::db::scratch::isolated_pool(8)
+            .await
+            .expect("real PostgreSQL required");
+        let event = Uuid::new_v4().to_string();
+        let start = chrono::DateTime::parse_from_rfc3339("2099-06-01T18:00:00Z")
+            .unwrap()
+            .naive_utc();
+        crate::explore::events::mirror::upsert_event(
+            &pool,
+            &json!({
+                "id":event,"name":"Series","user":HOST,"approved":true,
+                "start_at":"2099-06-01T18:00:00Z","finish_at":"2099-06-02T19:00:00Z",
+                "duration":3600000,"recurrent_dates":["2099-06-01T18:00:00Z","2099-06-02T18:00:00Z"]
+            }),
+        )
+        .await
+        .unwrap();
+        crate::explore::events::attendees::rsvp_going(&pool, &event, RSVP, None)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO social.subscriptions(address,email) VALUES($1,'recipient@example.org')",
+        )
+        .bind(RSVP)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Imported RSVPs occupy the same authoritative attendance relation.
+        sqlx::query("INSERT INTO explore.event_attendance_local(event_id,signer,action,signed_payload) VALUES($1,$2,'going','{\"user_name\":\"Imported\"}')")
+            .bind(&event).bind(DUAL).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.subscriptions(address,email,details) VALUES($1,'imported@example.org','{\"ignore_all_in_app\":true}')")
+            .bind(DUAL).execute(&pool).await.unwrap();
+        let links = test_links("https://site.example.org");
+        for day in 0..2 {
+            let soon = start + Span::days(day) - Span::minutes(30);
+            let (a, b) = tokio::join!(run_once(&pool, &links, soon), run_once(&pool, &links, soon));
+            a.unwrap();
+            b.unwrap();
+            run_once(&pool, &links, start + Span::days(day) + Span::minutes(1))
+                .await
+                .unwrap();
+            if day == 0 {
+                sqlx::query("UPDATE social.subscriptions SET details=CASE WHEN address=$1 THEN '{\"ignore_all_in_app\":true}'::jsonb ELSE '{}'::jsonb END")
+                    .bind(RSVP).execute(&pool).await.unwrap();
+            }
+        }
+        for kind in ["events_starts_soon", "events_started"] {
+            assert_eq!(
+                count(&pool, &event, kind, RSVP).await,
+                1,
+                "one notice per event and type"
+            );
+            let row: (Value,i64) = sqlx::query_as("SELECT metadata,(SELECT count(*) FROM social.notification_deliveries d WHERE d.notification_id=n.id) FROM social.notifications n WHERE address=$1 AND type=$2 AND metadata->>'eventId'=$3")
+                .bind(RSVP).bind(kind).bind(&event).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                row.0["startsAt"], "2099-06-02T18:00:00.000Z",
+                "later occurrence refreshes inbox"
+            );
+            assert_eq!(row.1, 1, "later occurrence never schedules another email");
+            assert_eq!(
+                count(&pool, &event, kind, DUAL).await,
+                1,
+                "imported RSVP gets the same reminder"
+            );
+            let hidden: (bool,bool,bool) = sqlx::query_as("SELECT in_app,read,read_at IS NOT NULL FROM social.notifications WHERE address=$1 AND type=$2 AND metadata->>'eventId'=$3")
+                .bind(DUAL).bind(kind).bind(&event).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                hidden,
+                (false, true, true),
+                "later occurrence cannot surface a hidden row"
+            );
+            let visible: bool = sqlx::query_scalar("SELECT in_app FROM social.notifications WHERE address=$1 AND type=$2 AND metadata->>'eventId'=$3")
+                .bind(RSVP).bind(kind).bind(&event).fetch_one(&pool).await.unwrap();
+            assert!(
+                visible,
+                "later occurrence cannot hide a previously visible row"
+            );
+        }
+        sqlx::query("DELETE FROM social.notification_deliveries")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM social.event_notification_intents")
+            .execute(&pool)
+            .await
+            .unwrap();
+        run_once(&pool, &links, start + Span::days(1) + Span::minutes(2))
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM social.notification_deliveries")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0,
+            "pruned deliveries are never recreated"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_notice_history_order_visibility_and_concurrency() {
+        let pool = crate::db::scratch::isolated_pool(8)
+            .await
+            .expect("real PostgreSQL required");
+        let links = test_links("https://site.example.org");
+        let now = Utc::now().naive_utc();
+        for kind in ["event_approved", "event_rejected", "event_deleted"] {
+            let event = Uuid::new_v4().to_string();
+            let old_id = Uuid::new_v4();
+            sqlx::query("INSERT INTO social.notifications(id,address,type,metadata,in_app,read,occurred_at,read_at) VALUES($1,$2,$3,$4,false,true,timezone('UTC',now()),timezone('UTC',now()))")
+                .bind(old_id).bind(HOST).bind(kind).bind(json!({"eventId":event,"occurredAt":js_iso(now-Span::minutes(1))})).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO social.subscriptions(address,email,details) VALUES($1,'owner@example.org','{}') ON CONFLICT(address) DO UPDATE SET details='{}'")
+                .bind(HOST).execute(&pool).await.unwrap();
+            for (offset, reason) in [(2, "Newest"), (1, "Older"), (2, "Equal")] {
+                sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,$3,$4,false,$5)")
+                    .bind(Uuid::new_v4()).bind(&event).bind(kind).bind(json!({"user":HOST,"rejection_reason":reason,"name":reason})).bind(now+Span::seconds(offset)).execute(&pool).await.unwrap();
+                dispatch_page(&pool, &links, now).await.unwrap();
+            }
+            assert_eq!(
+                count(&pool, &event, kind, HOST).await,
+                1,
+                "reuse preexisting arbitrary identity"
+            );
+            let row: (Uuid,Value,bool,bool,i64) = sqlx::query_as("SELECT id,metadata,in_app,read,(SELECT count(*) FROM social.notification_deliveries d WHERE d.notification_id=n.id) FROM social.notifications n WHERE address=$1 AND type=$2 AND metadata->>'eventId'=$3")
+                .bind(HOST).bind(kind).bind(&event).fetch_one(&pool).await.unwrap();
+            assert_eq!(row.0, old_id);
+            assert_eq!(row.1["name"], "Newest");
+            assert!(!row.2);
+            assert!(row.3);
+            assert_eq!(
+                row.4, 0,
+                "history refresh cannot email or surface hidden rows"
+            );
+        }
+        let event = Uuid::new_v4().to_string();
+        for i in 0..4 {
+            sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_rejected',$3,false,$4)")
+                .bind(Uuid::new_v4()).bind(&event).bind(json!({"user":HOST,"name":format!("Round {i}"),"rejection_reason":format!("Round {i}")})).bind(now+Span::seconds(i)).execute(&pool).await.unwrap();
+        }
+        for _ in 0..3 {
+            let (a, b) = tokio::join!(
+                dispatch_page(&pool, &links, now),
+                dispatch_page(&pool, &links, now)
+            );
+            a.unwrap();
+            b.unwrap();
+        }
+        assert_eq!(count(&pool, &event, "event_rejected", HOST).await, 1);
+        sqlx::query("UPDATE social.subscriptions SET details='{\"ignore_all_in_app\":true}' WHERE address=$1").bind(HOST).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_rejected',$3,false,$4)")
+            .bind(Uuid::new_v4()).bind(&event).bind(json!({"user":HOST,"rejection_reason":"Final"})).bind(now+Span::seconds(10)).execute(&pool).await.unwrap();
+        dispatch_page(&pool, &links, now).await.unwrap();
+        let row: (bool,i64) = sqlx::query_as("SELECT in_app,(SELECT count(*) FROM social.notification_deliveries d WHERE d.notification_id=n.id) FROM social.notifications n WHERE address=$1 AND type='event_rejected' AND metadata->>'eventId'=$2")
+            .bind(HOST).bind(&event).fetch_one(&pool).await.unwrap();
+        assert!(row.0, "visible first insert stays visible after opting out");
+        assert_eq!(row.1, 1);
+    }
+
+    #[tokio::test]
+    async fn event_moderation_transitions_refresh_without_repeating_email() {
+        let pool = crate::db::scratch::isolated_pool(8)
+            .await
+            .expect("real PostgreSQL required");
+        let settings = catalyst_explore::Settings::for_tests();
+        let body: CreateEvent = serde_json::from_value(json!({"name":"Moderated","start_at":"2099-06-01T18:00:00Z","duration":3600000,"x":0,"y":0})).unwrap();
+        let event = moderation::create_as(&pool, &body, HOST, HOST, &settings, None)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO social.subscriptions(address,email) VALUES($1,'owner@example.org')",
+        )
+        .bind(HOST)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for round in 0..6 {
+            let patch = if round % 2 == 0 {
+                AdminPatch {
+                    approved: Some(true),
+                    ..Default::default()
+                }
+            } else {
+                AdminPatch {
+                    rejected: Some(true),
+                    reason: Some(format!("Reason {round}")),
+                    ..Default::default()
+                }
+            };
+            moderation::moderate(&pool, &event, &patch, "moderator", &settings)
+                .await
+                .unwrap();
+            run_once(
+                &pool,
+                &test_links("https://site.example.org"),
+                Utc::now().naive_utc(),
+            )
+            .await
+            .unwrap();
+        }
+        for kind in ["event_approved", "event_rejected"] {
+            assert_eq!(
+                count(&pool, &event, kind, HOST).await,
+                1,
+                "repeated moderation refreshes its first notice"
+            );
+            let emails: i64 = sqlx::query_scalar("SELECT count(*) FROM social.notification_deliveries d JOIN social.notifications n ON n.id=d.notification_id WHERE n.address=$1 AND n.type=$2 AND n.metadata->>'eventId'=$3")
+                .bind(HOST).bind(kind).bind(&event).fetch_one(&pool).await.unwrap();
+            assert_eq!(emails, 1, "email only the first corresponding transition");
+        }
+        let reason: String = sqlx::query_scalar("SELECT metadata->>'reason' FROM social.notifications WHERE address=$1 AND type='event_rejected' AND metadata->>'eventId'=$2")
+            .bind(HOST).bind(&event).fetch_one(&pool).await.unwrap();
+        assert_eq!(reason, "Reason 5");
+    }
+
+    #[tokio::test]
     async fn event_notices_recover_without_duplicates_respect_consent_and_separate_channels() {
         let _guard = super::super::event_ended::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
@@ -821,7 +1167,7 @@ mod tests {
             .bind(&event).bind(HOST).fetch_one(&pool).await.unwrap();
         assert_eq!(
             hosted["communityThumbnail"],
-            format!("{CDN}/social/communities/{community}/raw-thumbnail.png")
+            format!("{CDN}/social/communities/{community}/raw-thumbnail.png?v=hash")
         );
         let (state,visible): (String,bool) = sqlx::query_as("SELECT d.state,n.in_app FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.metadata->>'eventId'=$1 AND n.type='events_starts_soon' AND n.address=$2")
             .bind(&event).bind(DUAL).fetch_one(&pool).await.unwrap();
@@ -851,8 +1197,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             count(&pool, &event, "events_starts_soon", RSVP).await,
-            2,
-            "each occurrence has a distinct idempotency key"
+            1,
+            "later occurrences refresh the event notice"
         );
 
         moderation::moderate(
@@ -1786,7 +2132,7 @@ mod tests {
             address: "0x1111111111111111111111111111111111111111".into(),
             community,
             community_name: community.then(|| "Club".to_string()),
-            community_thumbnail,
+            community_thumbnail: community_thumbnail.then(|| "bafkreihash".to_string()),
         }
     }
 
@@ -1873,8 +2219,20 @@ mod tests {
                     "https://assets.example.org/events/"
                 ),
             )["link"],
-            "https://web.example.org/whats-on/legacy-event",
-            "notices upstream sent without a link keep this node's event page"
+            "https://web.example.org/events/edit-event/legacy-event",
+            "a rejected event is not public, so its notice opens the owner's editor"
+        );
+        assert_eq!(
+            metadata(
+                &intent("event_deleted", json!({"name":"Legacy"})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events/"
+                ),
+            )["link"],
+            "https://web.example.org/events?tab=my",
+            "a deleted event has no page, so its notice opens My Events"
         );
     }
 
@@ -1893,7 +2251,7 @@ mod tests {
                 &links,
             );
             assert_eq!(
-                payload["myHangouts"], "https://web.example.org/whats-on?tab=my",
+                payload["myHangouts"], "https://web.example.org/events?tab=my",
                 "{kind}"
             );
             assert_eq!(payload["title"], "Party", "{kind}");
@@ -1924,7 +2282,7 @@ mod tests {
         assert_eq!(deleted["reason"], "Duplicate");
 
         let thumbnail = format!(
-            "{CDN}/social/communities/{}/raw-thumbnail.png",
+            "{CDN}/social/communities/{}/raw-thumbnail.png?v=bafkreihash",
             community.to_lowercase()
         );
         for kind in ["event_created", "events_started"] {
@@ -2023,7 +2381,7 @@ mod tests {
             address: "0x1111111111111111111111111111111111111111".into(),
             community: false,
             community_name: None,
-            community_thumbnail: false,
+            community_thumbnail: None,
         };
         let reminder = metadata(&intent, &attendee, &links);
         assert_eq!(reminder["title"], "Event starts in an hour");
@@ -2053,7 +2411,7 @@ mod tests {
             address: "0x2222222222222222222222222222222222222222".into(),
             community: true,
             community_name: Some("Builders".into()),
-            community_thumbnail: false,
+            community_thumbnail: None,
         };
         let community = metadata(&started, &member, &links);
         assert_eq!(community["title"], "Community Event starting");

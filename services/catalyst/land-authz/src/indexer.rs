@@ -45,7 +45,7 @@ impl From<RpcError> for IndexError {
         match error {
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
-            RpcError::Rpc(message) => Self::Rpc(message),
+            RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
         }
     }
 }
@@ -555,12 +555,24 @@ pub async fn ready_snapshot(
     land_registry: &str,
     estate_registry: &str,
 ) -> Result<Option<ReadySnapshot>, sqlx::Error> {
+    ready_snapshot_within(pool, network, land_registry, estate_registry, READY_WINDOW).await
+}
+
+pub(crate) async fn ready_snapshot_within(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> Result<Option<ReadySnapshot>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
     Ok(match cursor_observed(&mut *tx, network).await? {
-        Some(observation) if observation_ready(&observation, land_registry, estate_registry) => {
+        Some(observation)
+            if observation_ready_within(&observation, land_registry, estate_registry, max_age) =>
+        {
             Some(ReadySnapshot {
                 cursor: observation.cursor,
                 tx,
@@ -891,13 +903,17 @@ pub async fn mark_folded(
 /// is recent. Production passes the database observation time; unit tests
 /// can inject a clock without affecting production readiness authority.
 pub fn index_ready(cursor: &Cursor, now: DateTime<Utc>) -> bool {
+    index_ready_within(cursor, now, READY_WINDOW)
+}
+
+fn index_ready_within(cursor: &Cursor, now: DateTime<Utc>, max_age: ChronoDuration) -> bool {
     let Some(folded_at) = cursor.folded_at else {
         return false;
     };
     let age = now.naive_utc().signed_duration_since(folded_at);
     cursor.folded_block == Some(cursor.last_block)
         && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+        && age <= max_age
 }
 
 /// Whether a reader of `land_registry` and `estate_registry` may answer from
@@ -913,9 +929,22 @@ pub fn observation_ready(
     land_registry: &str,
     estate_registry: &str,
 ) -> bool {
+    observation_ready_within(observation, land_registry, estate_registry, READY_WINDOW)
+}
+
+pub(crate) fn observation_ready_within(
+    observation: &CursorObservation,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> bool {
     observation.cursor.land_registry == land_registry
         && observation.cursor.estate_registry == estate_registry
-        && index_ready(&observation.cursor, observation.observed_at.and_utc())
+        && index_ready_within(
+            &observation.cursor,
+            observation.observed_at.and_utc(),
+            max_age,
+        )
 }
 
 /// `Some(cursor)` when the local index of these registries may answer on the

@@ -1,4 +1,5 @@
-use std::{collections::BTreeMap, sync::Mutex, time::Instant};
+use common::sync::MutexExt;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use bevy::{
     app::{PluginGroupBuilder, ScheduleRunnerPlugin},
@@ -19,7 +20,6 @@ use dcl_deno_ipc::init_runtime;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use scene_material::SceneBoundPlugin;
-use spin_sleep::SpinSleeper;
 use system_bridge::SystemBridgePlugin;
 use ui_core::{scrollable::ScrollTargetEvent, stretch_uvs_image::StretchUvMaterial};
 
@@ -38,9 +38,9 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed,
-        PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance,
-        ServerConfiguration, TimeOfDay, ToolTips,
+        AppConfig, AudioSettings, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings,
+        PermissionUsed, PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight,
+        SceneLoadDistance, ServerConfiguration, TimeOfDay, ToolTips,
     },
 };
 use comms::CommsPlugin;
@@ -67,7 +67,7 @@ impl PluginGroup for TestPlugins {
     fn build(self) -> PluginGroupBuilder {
         let builder = PluginGroupBuilder::start::<Self>();
 
-        let mut log_added = LOG_ADDED.lock().unwrap();
+        let mut log_added = LOG_ADDED.lock_ignore_poison();
         let builder = if !*log_added {
             *log_added = true;
             builder.add(LogPlugin::default())
@@ -120,6 +120,7 @@ fn init_test_app(entity_json: &str) -> App {
 
     // Add our systems
     app.insert_resource(ClientWindowFocus::Focused);
+    app.init_resource::<AudioSettings>();
     app.insert_resource(AppConfig {
         graphics: GraphicsSettings {
             fps_target: 0,
@@ -218,8 +219,6 @@ fn init_test_app(entity_json: &str) -> App {
     });
     app.world_mut().insert_resource(SceneLoopSchedule {
         schedule: skip_loop_schedule,
-        next_frame_end: Instant::now(),
-        sleeper: SpinSleeper::default(),
     });
 
     // run app once to get the scene initialized
@@ -238,8 +237,6 @@ fn init_test_app(entity_json: &str) -> App {
 
     app.world_mut().insert_resource(SceneLoopSchedule {
         schedule: Schedule::new(SceneLoopLabel),
-        next_frame_end: Instant::now(),
-        sleeper: SpinSleeper::default(),
     });
 
     app

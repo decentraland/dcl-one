@@ -6,15 +6,16 @@
 // browser and phone wallets directly; every session lasts a month, as upstream's. Upstream's Fortmatic option goes
 // through decentraland-connect, which this site does not carry, so it is not wired yet.
 
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
+import { dclLogoUrl as logo, DesktopLogin, Button } from "@dcl/one-ui";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
-import { Button } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
-import { getIdentity, setIdentity } from "@/data/lib/auth/session";
-import { recordSignIn } from "@/data/lib/auth/signin-kind";
+import { beginShellBrowserSignIn, isDesktopShell } from "@/data/lib/auth/native-shell";
+import { getIdentity, getSuspendedWalletSigner, setBrowserWalletIdentity } from "@/data/lib/auth/session";
+import { browserWalletRdnsFor } from "@/data/lib/auth/signin-kind";
+import { browserWalletProvider, getConnectedAddress, selectWallet } from "@/data/lib/auth/wallet";
 
 import appleIcon from "./assets/apple.svg?url";
 import coinbaseIcon from "./assets/coinbase.svg?url";
@@ -210,6 +211,7 @@ function EmailInput({ busy, error, onSubmit, onChange }: { busy: boolean; error:
 }
 
 type Modal = { state: ConnectionState; detail: string | null; pairing: PairingCode | null };
+type Client = { userAgent: string; touch: number; injected: boolean; metamask: boolean; desktopShell: boolean };
 
 export type LoginPageProps = {
   /** The query's `redirectTo`, as given; it is checked before any use. */
@@ -220,13 +222,14 @@ export type LoginPageProps = {
   magicApiKey: string | null;
   /** A method the player already picked in the Explorer: started once the page knows its layout, if it offers it. */
   loginMethod?: ConnectionOption | null;
+  walletSwitch?: boolean;
 };
 
-export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, loginMethod = null }: LoginPageProps) {
+export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, loginMethod = null, walletSwitch = false }: LoginPageProps) {
   const auth = useAuth();
-  const [client, setClient] = useState<{ userAgent: string; touch: number; injected: boolean; metamask: boolean } | null>(null);
+  const [client, setClient] = useState<Client | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
-  const [pending, setPending] = useState<ConnectionOption | null>(null);
+  const [pending, setPending] = useState<{ option: ConnectionOption | null; walletRdns?: string } | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -243,9 +246,13 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       touch: navigator.maxTouchPoints ?? 0,
       injected: !!window.ethereum,
       metamask: hasMetaMask(),
+      desktopShell: isDesktopShell(),
     });
   }, []);
-  useEffect(() => () => walletConnect.current?.abort(), []);
+  useEffect(() => () => {
+    attempt.current++;
+    walletConnect.current?.abort();
+  }, []);
   // A reader who is already signed in goes straight on, as upstream sends them.
   // The store is read directly: during hydration `useAuth` still reports the server's empty session.
   useEffect(() => {
@@ -267,14 +274,15 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   );
 
   const target = useCallback(() => safeRedirectTarget(redirectTo, new URL(window.location.href)), [redirectTo]);
+  const returnToSite = useCallback(() => window.location.assign(target()), [target]);
   const metamask = client?.metamask ?? false;
   const finish = useCallback(() => {
     setModal({ state: "redirecting", detail: null, pairing: null });
-    window.location.assign(target());
-  }, [target]);
+    returnToSite();
+  }, [returnToSite]);
 
   const connect = useCallback(
-    async (option: ConnectionOption) => {
+    async (option: ConnectionOption | null, walletRdns?: string) => {
       if (option === "email") {
         const input = document.getElementById("dcl-email-input");
         input?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -283,10 +291,10 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       }
       const mine = ++attempt.current;
       const live = () => attempt.current === mine;
-      setPending(option);
+      setPending({ option, walletRdns });
       walletConnect.current?.abort();
 
-      if (SOCIAL_OPTIONS.includes(option)) {
+      if (option && SOCIAL_OPTIONS.includes(option)) {
         if (!magicApiKey) {
           setModal({ state: "error-generic", detail: "Social sign-in is not configured on this site.", pairing: null });
           return;
@@ -305,19 +313,37 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
         return;
       }
 
-      const browserWallet = option === "metamask" ? walletFor("metamask") ?? "injected" : option === "coinbase" ? walletFor("coinbase") : null;
+      const browserWallet = walletRdns ?? (option === "metamask" ? walletFor("metamask") ?? "injected" : option === "coinbase" ? walletFor("coinbase") : null);
       if (browserWallet) {
         let askedToSign = false;
         try {
-          const identity = await signInWithBrowserWallet(browserWallet, SESSION_MS, (phase) => {
-            askedToSign = phase === "signing";
-            if (live()) setModal({ state: phase, detail: null, pairing: null });
-          });
-          if (!live()) return;
-          recordSignIn(identity.signer, "web3");
-          setIdentity(identity);
-          rememberEmail(null);
-          finish();
+          const signIn = async () => {
+            if (!live()) return;
+            const active = walletRdns && getIdentity();
+            if (active && !isIdentityExpired(active) && browserWalletProvider(browserWallet)) {
+              selectWallet(browserWallet);
+              if ((await getConnectedAddress()) === active.signer) {
+                if (live()) finish();
+                return;
+              }
+              if (!live()) return;
+            }
+            const identity = await signInWithBrowserWallet(browserWallet, SESSION_MS, (phase) => {
+              askedToSign = phase === "signing";
+              if (live()) setModal({ state: phase, detail: null, pairing: null });
+            });
+            if (!live()) return;
+            setBrowserWalletIdentity(identity, browserWallet);
+            rememberEmail(null);
+            finish();
+          };
+          // Tabs on this origin wait for the signing tab to publish its session before asking the wallet again.
+          if (walletRdns && navigator.locks) {
+            setModal({ state: "connecting", detail: null, pairing: null });
+            await navigator.locks.request("dcl:browser-wallet-switch", signIn);
+          } else {
+            await signIn();
+          }
         } catch (err) {
           if (live()) setModal({ ...failureState(err, askedToSign), pairing: null });
         }
@@ -353,10 +379,13 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   // one that fails or is closed, leaves the page's own options.
   const requested = useRef(false);
   useEffect(() => {
-    if (requested.current || client == null || loginMethod == null || loginMethod === "email") return;
+    if (requested.current || client == null || client.desktopShell) return;
     requested.current = true;
-    if (layoutOffers(layout, loginMethod)) void connect(loginMethod);
-  }, [client, layout, loginMethod, connect]);
+    const signer = walletSwitch ? getSuspendedWalletSigner() : null;
+    const walletRdns = signer && browserWalletRdnsFor(signer);
+    if (typeof walletRdns === "string") void connect(null, walletRdns);
+    else if (loginMethod && loginMethod !== "email" && layoutOffers(layout, loginMethod)) void connect(loginMethod);
+  }, [client, layout, loginMethod, walletSwitch, connect]);
 
   const closeModal = useCallback(() => {
     attempt.current++;
@@ -412,30 +441,36 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
               </div>
               <div className={styles.content}>
                 <h1 className={styles.title}>{t("connection.title")}</h1>
-                <EmailInput busy={emailBusy} error={emailError} onSubmit={(email) => void sendCode(email)} onChange={() => setEmailError(null)} />
-                {layout.first || layout.second ? <div className={styles.divider}>{t("connection.or_continue_with")}</div> : null}
-                <div className={styles.primaryList}>
-                  {layout.first ? <PrimaryOption option={layout.first} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
-                  {layout.second ? <PrimaryOption option={layout.second} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
-                </div>
+                {client?.desktopShell ? (
+                  <DesktopLogin beginSignIn={beginShellBrowserSignIn} onSignedIn={returnToSite} />
+                ) : (
+                  <>
+                    <EmailInput busy={emailBusy} error={emailError} onSubmit={(email) => void sendCode(email)} onChange={() => setEmailError(null)} />
+                    {layout.first || layout.second ? <div className={styles.divider}>{t("connection.or_continue_with")}</div> : null}
+                    <div className={styles.primaryList}>
+                      {layout.first ? <PrimaryOption option={layout.first} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
+                      {layout.second ? <PrimaryOption option={layout.second} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} /> : null}
+                    </div>
+                  </>
+                )}
               </div>
-              <div className={styles.more}>
-                {layout.more.length > 0 ? (
+              {!client?.desktopShell && layout.more.length > 0 ? (
+                <div className={styles.more}>
                   <button type="button" className={styles.moreButton} aria-expanded={showMore} onClick={() => setShowMore((v) => !v)} data-testid="show-more-button">
                     {t("connection.more_options")}
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                       <path d={showMore ? "m12 8-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" : "M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"} />
                     </svg>
                   </button>
-                ) : null}
-                {showMore && layout.more.length > 0 ? (
-                  <div className={styles.grid} data-testid="more-options">
-                    {layout.more.map((option) => (
-                      <GridOption key={option} option={option} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+                  {showMore ? (
+                    <div className={styles.grid} data-testid="more-options">
+                      {layout.more.map((option) => (
+                        <GridOption key={option} option={option} busy={busy} metamask={metamask} onConnect={(o) => void connect(o)} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -447,9 +482,9 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
           pairing={modal.pairing}
           onClose={closeModal}
           onTryAgain={() => {
-            const option = pending;
+            const retry = pending;
             closeModal();
-            if (option) void connect(option);
+            if (retry) void connect(retry.option, retry.walletRdns);
           }}
         />
       ) : null}

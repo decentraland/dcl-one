@@ -381,6 +381,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         denylist: Default::default(),
         flags: std::sync::Arc::new(feature_flags::Snapshot::from_document(
             feature_flags::embedded_document(),
+            false,
         )),
         map: map::MapState::new(),
         ab_cdn: ab_cdn::Cache::new(tmp.0.join("ab-cdn"), u64::MAX).unwrap(),
@@ -393,6 +394,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
         contract_checks: Default::default(),
+        auth_sockets: Default::default(),
         land_authz: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
@@ -1818,6 +1820,13 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     let task = tokio::spawn(axum::serve(listener, server).into_future());
     let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
     let snapshot = feature_flags::Snapshot::empty();
+    feature_flags::reload(&snapshot, &db.pool, "dapps")
+        .await
+        .unwrap();
+    assert!(
+        !snapshot.is_sourced(),
+        "a fresh database holds no dapps document from the service"
+    );
     let url = format!("http://{addr}/dapps.json");
     let audience = "https://social.example.invalid";
     feature_flags::refresh_app(
@@ -1832,6 +1841,7 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     .unwrap();
     assert_eq!(observed.lock()[0][header::REFERER], audience);
     assert!(observed.lock()[0].get(header::IF_NONE_MATCH).is_none());
+    assert!(snapshot.is_sourced(), "a fetched document is sourced");
     assert_eq!(
         snapshot.variant_values("dapps", "communities_global_moderators"),
         Some(vec!["0xabc".into()])
@@ -1858,11 +1868,19 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
             .is_err()
         );
         assert_eq!(snapshot.document(), last_good);
+        assert!(
+            snapshot.is_sourced(),
+            "a failed refresh keeps the sourced document"
+        );
         let restarted = feature_flags::Snapshot::empty();
         feature_flags::reload(&restarted, &db.pool, "dapps")
             .await
             .unwrap();
         assert_eq!(restarted.document(), last_good);
+        assert!(
+            restarted.is_sourced(),
+            "a stored document is sourced after a restart"
+        );
     }
     task.abort();
     db.teardown().await;
@@ -2145,6 +2163,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
         [
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
+            "auth-api-socket-push",
             "explorer-denylist-mirror",
             "explorer-denylist-reload",
             "explorer-flags-mirror",

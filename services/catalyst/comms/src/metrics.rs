@@ -1,5 +1,8 @@
 //! One Prometheus exporter installer for the Pulse and serve processes.
-use crate::pulse::metrics::{CLUSTER_SIZE_BUCKETS, RESYNC_SEQ_GAP_BUCKETS};
+use crate::pulse::metrics::{
+    CLUSTER_SIZE_BUCKETS, RESYNC_SEQ_GAP_BUCKETS, SIMULATION_TICK_DELAY, SIMULATION_TICK_DURATION,
+    SIMULATION_TICK_TIMING_BUCKETS,
+};
 pub use metrics_exporter_prometheus::PrometheusHandle;
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 use std::net::SocketAddr;
@@ -103,6 +106,14 @@ pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
         .set_buckets_for_metric(
             Matcher::Full("pulse_cluster_size".into()),
             &CLUSTER_SIZE_BUCKETS,
+        )?
+        .set_buckets_for_metric(
+            Matcher::Full(SIMULATION_TICK_DURATION.into()),
+            &SIMULATION_TICK_TIMING_BUCKETS,
+        )?
+        .set_buckets_for_metric(
+            Matcher::Full(SIMULATION_TICK_DELAY.into()),
+            &SIMULATION_TICK_TIMING_BUCKETS,
         )
 }
 
@@ -129,12 +140,15 @@ pub fn install_prometheus_exporter(bind: SocketAddr) -> anyhow::Result<Prometheu
 
 /// Serve's exporter is operator-local; exposing it requires an explicit proxy.
 pub fn serve_metrics_bind(raw: &str) -> anyhow::Result<SocketAddr> {
-    let bind: SocketAddr = raw
-        .parse()
-        .map_err(|e| anyhow::anyhow!("SERVE_METRICS_BIND `{raw}`: {e}"))?;
+    operator_metrics_bind("SERVE_METRICS_BIND", raw)
+}
+
+/// Parse a process's private scrape socket, naming the setting on startup errors.
+pub fn operator_metrics_bind(setting: &str, raw: &str) -> anyhow::Result<SocketAddr> {
+    let bind: SocketAddr = raw.parse().map_err(|e| anyhow::anyhow!("{setting}: {e}"))?;
     anyhow::ensure!(
         bind.ip().is_loopback(),
-        "SERVE_METRICS_BIND must use a loopback address"
+        "{setting} must use a loopback address"
     );
     Ok(bind)
 }

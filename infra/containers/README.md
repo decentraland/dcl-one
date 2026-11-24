@@ -42,9 +42,25 @@ are external. Explorer images: pipeline.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
 - `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
 
+## Magic account deletion
+
+Set `MAGIC_CLIENT_ID`, `MAGIC_SECRET_KEY_FILE`, and
+`ACCOUNT_DELETION_ALLOWED_ORIGINS` on the APIs deployment to enable
+`DELETE /auth-api/accounts` from the browser. The origin list is
+semicolon-delimited and empty by default. Set it to the exact URLs that
+serve Account Settings, for example
+`https://decentraland.org;https://account.decentraland.org;https://play.decentraland.org`
+for those production front ends.
+
+Set the same hourly limits on all API replicas. `ACCOUNT_DELETION_WALLET_LIMIT`
+defaults to 3, `ACCOUNT_DELETION_NETWORK_LIMIT` to 20 and
+`ACCOUNT_DELETION_GLOBAL_LIMIT` to 120. A zero limit refuses all attempts.
+
 ## Sites Explorer build input
 
 Sites bundles our Bevy web build under `/play/`; no other engine is used.
+
+Sites also serves the runtime component gallery (`library/ui/gallery`, [README](../../library/ui/gallery/README.md)) under `/ui-gallery/`: `infra/packages/ui-gallery.nix` builds its hosted mode from `library/ui` with the package's pinned pnpm dependencies, and `infra/packages/sites.nix` links it into the client directory, so the server answers it as static files before its routes. The gateway sends `/ui-gallery` and `/ui-gallery/` to Sites. Its pages carry `noindex`. Only a Sites deploy from main publishes a change to it. An images build that can publish (main push, tag, manual run on main with publish) passes only with a key-scan receipt for the gallery bytes it ships (`tooling/ui-gallery-receipt.py`): a run of the trusted `ui-library-key-scan.yml` on the default branch, for the head or the newest ancestor that changed a gallery input, whose log names the commit and the `ui-review-<sha>` artifact it scanned, and whose artifact holds identical bytes ([ADR](../../docs/adr/2026-11-20-ui-gallery-on-sites.md)).
 
 - `--production` imports only a fully successful main CI artifact and rejects `--from-build`.
 - Dev and PR images may import once the web job uploads its artifact, or `--from-build` a local `make bevy-web`.
@@ -80,21 +96,24 @@ python3 tooling/image-smoke.py
   compiles, the build builds the Sites dependencies, so those failures report
   within minutes.
 - Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
-  the compiled API (`catalyst` and `cast-bot`) and Sites app runtime closures, keyed by exact Nix derivation
+  the compiled API (`catalyst` and `cast-bot`), Sites app and UI gallery (`ui-gallery`) runtime closures, keyed by exact Nix derivation
   identities and architecture. The Sites app (`sites-app`) is the compiled server and
   client with their production dependencies; the Explorer build and the docs media are
   assembled beside it as their own store paths, so neither changes its identity or its
   image layer. Its cache entry also holds the app of `image-sites-polygon-credits`
   (`sites-app-polygon-credits`), so an exact hit leaves neither Sites build to compile.
+  The UI gallery is a separate entry: a change to `apps/sites` or to the gallery alone misses
+  only its own entry, while a change to the `library/ui` sources both compile (components,
+  foundations, `apps/hud`, `library/explorer-core`, their tests included) misses both.
   A compiled closure restored under its exact identity skips that
   package's dependency restore, import and toolchain build: nothing is left to compile.
   Container revision labels are still rebuilt for each commit. `cast-bot` has no
   dependency cache: when the APIs entry misses, it compiles whole beside `catalyst`.
 - In Bevy CI the compile job (`apis-sites-compile.yml`) runs beside the web build, and
-  the image build starts after both. The compile job looks for the two compiled closures
+  the image build starts after both. The compile job looks for the three compiled closures
   under their exact keys without a download. When one is missing and this run can save it
   (the first attempt of a main push or of a PR), the job compiles the packages and saves
-  the four cache groups, with the keys, the export checks and the save gate of the image
+  the five cache groups, with the keys, the export checks and the save gate of the image
   build. The image build restores them and has nothing left to compile. Without a saved
   entry it compiles the packages itself, as tag and manual builds do. An entry holds the
   output of one derivation, so its content does not depend on which job saved it; the
@@ -106,7 +125,7 @@ python3 tooling/image-smoke.py
   A stale Catalyst hit reuses vendored sources; changed dependency derivations still
   compile from scratch. The fallback downloads the whole dependency archive.
   Main and tag builds require exact main identities and never select PR namespaces.
-  The APIs and Sites app runtime caches require an exact identity for every event.
+  The APIs, Sites app and UI gallery runtime caches require an exact identity for every event.
 - A Sites cache miss rebuilds the pnpm dependency sets; the Node toolchain
   substitutes from cache.nixos.org on both architectures.
   Fully cold ARM64 main/tag dependency builds have not been timed. They retain the
@@ -122,7 +141,7 @@ python3 tooling/image-smoke.py
   the APIs archive is written while Sites compiles, and it loads into Docker beside
   the Sites archives.
   Cache keys and export (`.`) and image builds (`git+file:.?lfs=1`) must resolve the
-  same Catalyst and Sites app derivations. The Catalyst fileset takes from
+  same Catalyst, Sites app and UI gallery derivations. The Catalyst fileset takes from
   `library/` only what the backend build reads (the `dcl-*` crates, `vendor/rusty_enet`, the
   protocol sources and the OpenAPI documents), none of it LFS-tracked. Before each export,
   the job evaluates both references, using the image build's `--impure` mode for its
@@ -180,6 +199,25 @@ Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API
 
 Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Builder's committee routes admit only `BUILDER_ADMIN_ADDRESSES` until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee.
 
+Third-party registry upgrade: run `catalyst schema migrate` before deploying the updated index worker.
+Use the mirror posture or set `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED=true` and supply a Polygon
+mainnet RPC via `TRADE_RPC_URLS` (chain 137) or, on mainnet, `RPC_ENDPOINT_POLYGON`. During catch-up,
+API replicas can keep their existing `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` to serve provider lists.
+Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` publishes the full
+registry history, API replicas prefer the native index and can serve manager and slot details.
+The NFT worker supplies wallet holdings for open mappings.
+
+Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
+their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with
+no posture; island, journey and posture-less nodes listed active leases in the explorer backpack
+before. Where the item ownership check runs (not with `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, which journey
+sets), profile and outfits deploys no longer accept an item held only by a lease. To keep both, set `EXPLORER_ESCROW_GRANTS_ENABLED=true` and
+`CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`; startup warns when only one is set. Peers that
+check ownership on chain only refuse to sync a profile or outfit that a lease alone made valid
+([decision](../../docs/adr/2026-11-03-deploy-access-from-live-rpcs.md)).
+
+On-chain bid notices upgrade: run `catalyst schema migrate` before deploying the API. Step `0053_shop_bid_received_producer` admits the `bid_received` producer in `shop.notification_cursor`. Sellers hear of Polygon ERC721BidV2 bids once `MARKETPLACE_SALES_INDEX_ENABLED` and `MARKETPLACE_NFT_INDEX_ENABLED` have published their indexes. The producer seeds its cursor at the published block, so bids indexed before it are not announced. To announce the bids placed since a previous notifier stopped, seed the cursor with `catalyst shop notice-rewind --producer bid_received` (`--since` or `--from-block`) at the first Polygon block that notifier did not cover.
+
 Scene admin upgrade: the release script
 `schemas/releases/scene-admin-place-keys.sql` requires a maintenance window. Stop old API
 replicas before `catalyst schema migrate`. Then run
@@ -197,6 +235,16 @@ Cast upgrade:
 - Redeploy the gateway image with the APIs: the rule that sends the `/comms-gatekeeper/` and `/cast-presenter-service/` paths of the realm hosts (`worlds-content-server`, `realm-provider`, `realm-provider-ea`) to the APIs unprefixed is in the gateway image. Check: `curl -s -o /dev/null -w '%{http_code}\n' https://worlds-content-server.<base domain>/comms-gatekeeper/scene-admin` prints `400` (the gatekeeper refuses the unsigned request); `404` means that the gateway is the old one.
 - The first start of the stream key listener (`comms-streaming-key-listener`) checks every active stream key and revokes each key whose scene was deployed again or removed since the key was made. Expect one burst of owner notices after the deploy.
 - After the deploy, watch the rate of 5xx answers of `POST /livekit-webhook`: a Cast join guard that fails now answers 5xx, and LiveKit sends the event again.
+
+Community place id upgrade: after the new binaries replace every old API replica, run
+`psql -v ON_ERROR_STOP=1 -f schemas/releases/community-place-ids-lowercase.sql`
+with the administrative role. It merges community place rows whose ids differ only in case
+and lowercases the rest, then adds and validates a check that keeps place ids lowercase
+(an old replica's mixed-case write fails afterwards). It is safe while the API serves,
+holds an exclusive lock on the table for its first run and is safe to run again.
+Keep the pre-run database backup: rollback must restore it.
+
+Rental listing status upgrade: run `catalyst schema migrate` before deploying the API. Step `0056_signatures_rental_cancel_reason` adds the nullable `signatures.rentals.cancel_reason`, which the `rentals` index fold, the `rental-listing-status` job and the listing refresh route read and write; existing cancellations keep no reason.
 
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and

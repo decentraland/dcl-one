@@ -1,6 +1,8 @@
-//! Admission for `POST /entities` before its body is read: a byte budget
-//! shared by every in-flight deploy (the forms are held in memory), each
-//! client's share of it ([`SourceUploads`]), a
+//! Admission for `POST /entities` before its body is read: two byte budgets
+//! shared by every in-flight deploy, one for the memory a deploy buffers
+//! (its fields, its entity file and the largest file its validation reads)
+//! and one for the disk its spooled files take,
+//! each client's share of the bytes in flight ([`SourceUploads`]), a
 //! per-client burst limit (upstream's `POST_ENTITIES_RATE_LIMIT_MAX` per
 //! `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`, every request counted) and a
 //! per-client daily deploy quota, checked before the body and counted once
@@ -31,8 +33,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-/// The least a request reserves, covering its fields and per-request
-/// overhead, so the budget also bounds how many deploys run at once.
+/// A request's fixed share of the memory budget: its fields and parsing.
+/// It must fit at admission and is held, beside the real sizes, once the
+/// form is read; the spool budget never holds it.
 pub const MIN_UPLOAD_RESERVATION_BYTES: u64 = 16 * 1024 * 1024;
 
 pub const BUDGET_EXHAUSTED_MESSAGE: &str =
@@ -65,6 +68,7 @@ impl UploadBudget {
 
     /// Reserves `bytes` (at least [`MIN_UPLOAD_RESERVATION_BYTES`]); `None`
     /// when they do not fit beside what is already reserved.
+    #[cfg(test)]
     pub fn try_reserve(&self, bytes: u64) -> Option<Reservation<'_>> {
         let bytes = bytes.max(MIN_UPLOAD_RESERVATION_BYTES);
         let mut reserved = self.reserved.lock();
@@ -76,6 +80,59 @@ impl UploadBudget {
             budget: self,
             bytes,
         })
+    }
+
+    /// Admits a request when `fits` bytes (a declared payload, a fixed
+    /// share) would fit beside what is reserved now, as upstream's
+    /// `acquire(0, declaredPayload)`, but holds only `hold`: the reservation
+    /// grows with what is real ([`Reservation::grow`]), so a body declaring
+    /// more than it sends never holds the bytes it does not send.
+    pub fn try_admit(&self, fits: u64, hold: u64) -> Option<Reservation<'_>> {
+        let mut reserved = self.reserved.lock();
+        if reserved.saturating_add(fits.max(hold)) > self.capacity {
+            return None;
+        }
+        *reserved += hold;
+        Some(Reservation {
+            budget: self,
+            bytes: hold,
+        })
+    }
+}
+
+impl Reservation<'_> {
+    /// Grows the reservation to `bytes` when it holds less; `false`, keeping
+    /// what it holds, when the rest does not fit.
+    pub fn grow(&mut self, bytes: u64) -> bool {
+        if bytes <= self.bytes {
+            return true;
+        }
+        let mut reserved = self.budget.reserved.lock();
+        let more = bytes - self.bytes;
+        if reserved.saturating_add(more) > self.budget.capacity {
+            return false;
+        }
+        *reserved += more;
+        self.bytes = bytes;
+        true
+    }
+
+    /// The bytes this reservation holds.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+#[cfg(test)]
+impl UploadBudget {
+    /// The bytes it admits at once.
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
+    /// The bytes reserved now, across every reservation.
+    pub fn reserved(&self) -> u64 {
+        *self.reserved.lock()
     }
 }
 
@@ -124,12 +181,15 @@ impl SourceUploads {
         }
     }
 
-    /// Admits an upload of up to `bytes` from `client_ip`: `Err` when the
-    /// source already has its share in flight, `Ok(None)` without a source.
+    /// Admits an upload declaring `declared` bytes from `client_ip` when the
+    /// source has an upload slot and the bytes would fit beside what its
+    /// uploads hold now; the lease holds nothing until bytes arrive
+    /// ([`SourceLease::grow`]). `Err` when the source is busy, `Ok(None)`
+    /// without a source.
     pub fn try_acquire(
         &self,
         client_ip: &str,
-        bytes: u64,
+        declared: u64,
     ) -> Result<Option<SourceLease<'_>>, SourceBusy> {
         if client_ip.trim().is_empty() {
             return Ok(None);
@@ -137,15 +197,36 @@ impl SourceUploads {
         let key = source_key(client_ip);
         let mut in_flight = self.in_flight.lock();
         let (uploads, held) = in_flight.get(&key).copied().unwrap_or((0, 0));
-        if uploads >= self.max_uploads || held.saturating_add(bytes) > self.max_bytes {
+        if uploads >= self.max_uploads || held.saturating_add(declared) > self.max_bytes {
             return Err(SourceBusy);
         }
-        in_flight.insert(key.clone(), (uploads + 1, held + bytes));
+        in_flight.insert(key.clone(), (uploads + 1, held));
         Ok(Some(SourceLease {
             limits: self,
             key,
-            bytes,
+            bytes: 0,
         }))
+    }
+}
+
+impl SourceLease<'_> {
+    /// Grows the lease to `bytes` when it holds less; `false`, keeping what
+    /// it holds, when the source's share does not have the room.
+    pub fn grow(&mut self, bytes: u64) -> bool {
+        if bytes <= self.bytes {
+            return true;
+        }
+        let mut in_flight = self.limits.in_flight.lock();
+        let Some((_, held)) = in_flight.get_mut(&self.key) else {
+            return false;
+        };
+        let more = bytes - self.bytes;
+        if held.saturating_add(more) > self.limits.max_bytes {
+            return false;
+        }
+        *held += more;
+        self.bytes = bytes;
+        true
     }
 }
 
@@ -287,12 +368,21 @@ mod tests {
     #[test]
     fn a_source_holds_at_most_its_uploads_and_bytes_in_flight() {
         let limits = SourceUploads::new(2, 100);
-        let first = limits.try_acquire("203.0.113.1", 60).unwrap();
+        let mut first = limits.try_acquire("203.0.113.1", 100).unwrap().unwrap();
+        assert!(
+            limits
+                .try_acquire("203.0.113.1", 100)
+                .is_ok_and(|lease| lease.is_some()),
+            "a declared size holds nothing before its bytes arrive"
+        );
+        assert!(first.grow(60));
         assert!(
             limits.try_acquire("203.0.113.1", 41).is_err(),
             "past the byte share"
         );
-        let second = limits.try_acquire("203.0.113.1", 40).unwrap();
+        let mut second = limits.try_acquire("203.0.113.1", 40).unwrap().unwrap();
+        assert!(!second.grow(41), "a grow past the share fails");
+        assert!(second.grow(40));
         assert!(
             limits.try_acquire("203.0.113.1", 0).is_err(),
             "past the upload count"
@@ -306,6 +396,58 @@ mod tests {
         let third = limits.try_acquire("203.0.113.1", 60).unwrap();
         drop((second, third));
         assert!(limits.in_flight.lock().is_empty());
+    }
+
+    #[test]
+    fn a_reservation_grows_while_the_rest_fits() {
+        let min = MIN_UPLOAD_RESERVATION_BYTES;
+        let budget = UploadBudget::new(3 * min);
+        let mut growing = budget.try_reserve(0).unwrap();
+        let other = budget.try_reserve(0).unwrap();
+        assert!(growing.grow(min / 2), "within what it holds");
+        assert!(growing.grow(2 * min));
+        assert_eq!((growing.bytes(), budget.reserved()), (2 * min, 3 * min));
+        assert!(!growing.grow(2 * min + 1), "past the capacity");
+        assert_eq!(growing.bytes(), 2 * min, "a failed grow keeps what it held");
+        drop(other);
+        assert!(growing.grow(3 * min));
+        drop(growing);
+        assert_eq!(budget.reserved(), 0);
+    }
+
+    #[test]
+    fn admission_checks_the_declared_size_but_holds_only_what_it_is_given() {
+        let min = MIN_UPLOAD_RESERVATION_BYTES;
+        let budget = UploadBudget::new(4 * min);
+        let mut slow = budget.try_admit(4 * min, 1).expect("fits an empty budget");
+        assert_eq!(budget.reserved(), 1, "only the hold is held");
+        assert!(slow.grow(2 * min), "grows with what arrives");
+        assert!(
+            budget.try_admit(3 * min, 1).is_none(),
+            "does not fit beside it"
+        );
+        let other = budget
+            .try_admit(2 * min, 1)
+            .expect("fits beside what it holds");
+        assert!(!slow.grow(4 * min), "the rest is taken");
+        drop((slow, other));
+        assert_eq!(budget.reserved(), 0);
+
+        let memory = UploadBudget::new(2 * min);
+        let mut reading = memory.try_admit(min, 0).expect("its share fits");
+        assert_eq!(
+            memory.reserved(),
+            0,
+            "nothing is held while the body arrives"
+        );
+        let busy = memory.try_reserve(2 * min).unwrap();
+        assert!(memory.try_admit(min, 0).is_none(), "no room for its share");
+        assert!(
+            !reading.grow(min),
+            "real sizes are reserved once known, if they fit"
+        );
+        drop(busy);
+        assert!(reading.grow(min));
     }
 
     #[test]

@@ -28,9 +28,13 @@
 //!   contract, so off mainnet no rent is read and an asset the contract
 //!   holds is refused as not the lessor's (401).
 //! - `PATCH /v1/rentals-listings/{id}`: the same reader refreshes the asset
-//!   row; behind the write switch; the same envelope without a reader (the
-//!   old crate answered the stored row unchanged, which presents stale
-//!   metadata as a refresh).
+//!   row, unless its row is older than the stored one, and syncs the
+//!   listing's status ([`status::sync_listing`]: its own
+//!   Rentals logs while the `rentals` index is published, then expiry, a
+//!   transfer away from the lessor and a dissolved estate); behind the
+//!   write switch; the same envelope without a reader (the old crate
+//!   answered the stored row unchanged, which presents stale metadata as a
+//!   refresh).
 //! - Rental status sync (`open -> executed | cancelled | claimed`): the
 //!   `rentals` chain index ([`index`], `shop.rental_event`, the Rentals
 //!   contract's own logs instead of the rentals subgraph the old crate
@@ -38,7 +42,14 @@
 //!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
 //!   `GET /v1/rentals-index` reports its cursor. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
-//!   (`shop::mana`) reads the nonces on chain.
+//!   (`shop::mana`) reads the nonces on chain. The leased
+//!   `rental-listing-status` job ([`status`]) cancels expired open
+//!   listings, and, from the land-authz index while it is published, those
+//!   whose asset left the lessor or whose estate was dissolved.
+//! - `GET /v1/rentals/{address}?chainId=1`: current LAND and Estate rentals
+//!   from the published index for the requested chain. The tenant's list
+//!   ends at expiry, and the lessor's includes unclaimed expired rentals.
+//!   Sepolia (`11155111`) publishes a separate history.
 //! - The rent, claim and cancel calls ([`calls`]) are pure builders the
 //!   `shop::mana` quote and action routes serve over the chain readers.
 //!
@@ -56,6 +67,7 @@
 //! proxy; the create checks the signature over the request's own path first
 //! and the route-local one second.
 
+mod active;
 pub mod calls;
 pub mod db;
 pub mod handlers;
@@ -64,6 +76,7 @@ pub mod index;
 pub mod nft;
 pub mod notices;
 pub mod signature;
+pub mod status;
 pub mod types;
 
 #[cfg(test)]
@@ -108,7 +121,6 @@ pub struct State {
 pub type SharedState = Arc<State>;
 
 pub use crate::shared::signed_fetch::SignedPath;
-pub use index::spawn_job;
 
 pub(crate) fn signed_path(original: &axum::http::Uri, local: impl Into<String>) -> SignedPath {
     SignedPath::at(original, local)
@@ -227,9 +239,18 @@ pub fn router(state: SharedState) -> Router {
     let router = Router::new()
         .nest("/v1", v1)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(state);
+        .with_state(state.clone());
     // Outside the gate, so a refused write still carries the CORS headers.
-    DataWrites::guard(router, writes_enabled).layer(axum::middleware::from_fn(
-        crate::shared::cors::decentraland_cors,
-    ))
+    DataWrites::guard(router, writes_enabled)
+        .layer(axum::middleware::from_fn(
+            crate::shared::cors::decentraland_cors,
+        ))
+        .merge(
+            Router::new()
+                .route("/v1/rentals/{address}", get(active::get_wallet_rentals))
+                .layer(axum::middleware::from_fn(
+                    crate::shared::cors::cors_without_credentials,
+                ))
+                .with_state(state),
+        )
 }

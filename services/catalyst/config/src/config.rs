@@ -28,14 +28,16 @@ pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
 /// The L1 and L2 RPCs a node reads unless the operator names others
 /// (`L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` in the reference): mainnet
 /// with polygon on mainnet, sepolia with amoy on any other `ETH_NETWORK`.
+/// `project=dcl-one` tells these calls apart from other catalysts' in
+/// rpc.decentraland.org's request logs. It names no node: an operator that
+/// wants its own tag sets both URLs.
 pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
     let (l1, l2) = if eth_network.trim() == "mainnet" {
         ("mainnet", "polygon")
     } else {
         ("sepolia", "amoy")
     };
-    let url =
-        |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=catalyst-content");
+    let url = |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=dcl-one");
     (url(l1), url(l2))
 }
 
@@ -166,9 +168,16 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        // Read as the posture checks read it (trimmed), so a padded value
+        // derives the list the checks then require.
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || self.node.eth_network.trim() != "mainnet"
         {
             return;
         }
@@ -274,7 +283,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 81] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 83] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -447,6 +456,10 @@ impl Config {
             ),
             ("TRADE_RPC_URLS", &mut self.marketplace.trade_rpc_urls),
             (
+                "CHAIN_LOGS_PORTAL_API_KEY",
+                &mut self.marketplace.chain_logs_portal_api_key,
+            ),
+            (
                 "CATALYRST_CREDITS_ADMIN_TOKEN",
                 &mut self.shop.catalyrst_credits_admin_token,
             ),
@@ -499,6 +512,7 @@ impl Config {
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
+            ("MAGIC_SECRET_KEY", &mut self.node.magic_secret_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
                 &mut self.explore.places_admin_auth_token,
@@ -575,6 +589,19 @@ impl Config {
                 self.shop.mana_price_max_staleness_secs,
                 self.price.price_poll_interval_secs,
                 Self::PRICE_UPSTREAM_LAG_SECS
+            )
+        })
+    }
+
+    /// The warning for escrow-lease opt-ins set apart: a node that accepts
+    /// a deploy wearing a leased item without listing that item in the
+    /// explorer backpack (or the reverse) shows its user two answers.
+    pub fn escrow_lease_flags_warning(&self) -> Option<String> {
+        let ownership = self.validator.content_escrow_lease_ownership_enabled;
+        let backpack = self.market_upstreams.explorer_escrow_grants_enabled;
+        (ownership != backpack).then(|| {
+            format!(
+                "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED={ownership} but EXPLORER_ESCROW_GRANTS_ENABLED={backpack}: set both, or neither, so that leased items are both wearable and listed in the explorer backpack"
             )
         })
     }
@@ -785,6 +812,7 @@ mod tests {
         "ANALYTICS_API_TOKEN",
         "OPEN_AI_API_KEY",
         "SENDGRID_API_KEY",
+        "MAGIC_SECRET_KEY",
         // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
         "SIGNING_KEY",
         "SLACK_WEBHOOK",
@@ -811,6 +839,7 @@ mod tests {
         "OZ_RELAYER_API_KEY",
         "RPC_ENDPOINT_POLYGON",
         "TRADE_RPC_URLS",
+        "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
@@ -969,6 +998,31 @@ mod tests {
             .price_staleness_warning()
             .expect("300 s is one poll interval");
         assert!(warning.contains("at least 420"), "{warning}");
+    }
+
+    #[test]
+    fn escrow_lease_opt_ins_set_apart_warn() {
+        let with = |flags: &[&str]| {
+            let mut args = vec!["catalyst", "--database-url", "postgres://x/y"];
+            args.extend_from_slice(flags);
+            parse(&args).unwrap().escrow_lease_flags_warning()
+        };
+        assert!(with(&[]).is_none());
+        let both = [
+            "--content-escrow-lease-ownership-enabled",
+            "true",
+            "--explorer-escrow-grants-enabled",
+            "true",
+        ];
+        assert!(with(&both).is_none());
+        for one in [&both[..2], &both[2..]] {
+            let warning = with(one).expect("one opt-in without the other");
+            assert!(
+                warning.contains("CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED")
+                    && warning.contains("EXPLORER_ESCROW_GRANTS_ENABLED"),
+                "{warning}"
+            );
+        }
     }
 
     #[test]
@@ -1260,6 +1314,7 @@ mod tests {
             "CATALYRST_ECONOMY_ADMIN_TOKEN",
             "RPC_ENDPOINT_POLYGON",
             "TRADE_RPC_URLS",
+            "CHAIN_LOGS_PORTAL_API_KEY",
             "CATALYRST_CREDITS_ADMIN_TOKEN",
             "CREDITS_CAPTCHA_SECRET",
             "STRIPE_SECRET_KEY",

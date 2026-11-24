@@ -88,7 +88,7 @@ describe('Explorer', () => {
           address: '0x' + '1'.repeat(40),
           blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
           platformBan: { state: 'checked', isBanned: false, source: null, reason: null, matchedOn: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
-          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
+          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1', retainedRefusals: [{ sceneId: 'refused-scene', scope: 'scene', retryDue: 45 }] },
           sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
           lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,
           unavailable: line.endsWith(other) ? {} : { lookup: 'no address given' }
@@ -101,6 +101,7 @@ describe('Explorer', () => {
     assert.equal(state.blocks.state, 'live')
     assert.deepEqual(state.blocks.blocked, [other])
     assert.equal(state.platformBan.isBanned, false)
+    assert.deepEqual(state.sceneAdmission.retainedRefusals, [{ sceneId: 'refused-scene', scope: 'scene', retryDue: 45 }])
     assert.equal(state.lookup, null)
     assert.equal(state.unavailable.lookup, 'no address given')
     const lookup = await explorer.banBlockState(other)
@@ -160,9 +161,9 @@ describe('Explorer', () => {
   })
 
   test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
-    const tag = { player: 'local', sceneAvatar: false, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
+    const tag = { player: 'local', sceneAvatar: false, nameShown: true, plate: { label: 'VIP', labelColor: '#FCFCFC', backgroundColor: '#161518', borderColor: '#161518' }, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
     const fake = new FakeConsole({
-      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, plates: 1, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
       nametag_bubble: JSON.stringify({ bubbles: 1 })
     })
     const explorer = new Explorer(fake)
@@ -170,6 +171,9 @@ describe('Explorer', () => {
     assert.equal(state.shown, 1)
     assert.equal(state.tags[0]?.suffix, '#12ab')
     assert.equal(state.tags[0]?.sceneAvatar, false)
+    assert.equal(state.plates, 1)
+    assert.equal(state.tags[0]?.nameShown, true)
+    assert.equal(state.tags[0]?.plate?.label, 'VIP')
     assert.equal(await explorer.nametagBubble('local', 'nearby', 'hello there'), 1)
     assert.equal(fake.lines.at(-1), '/nametag_bubble local nearby hello there')
   })
@@ -397,20 +401,29 @@ describe('Explorer', () => {
   })
 
   test('hud.hover clicks the control centre once it takes a click', async () => {
-    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: 'clicked at (30, 35)' })
+    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     await new Explorer(fake).hud.hover('Backpack')
     assert.deepEqual(fake.sent('click_at'), ['/click_at 30 35'])
   })
 
   test('key, escape and clickAt compose the lines', async () => {
-    const fake = new FakeConsole({ press_key: 'pressed', click_at: 'clicked' })
+    const fake = new FakeConsole({ press_key: 'pressed', click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     const explorer = new Explorer(fake)
     await explorer.key('KeyB')
     await explorer.key('ShiftLeft', 'down')
     await explorer.escape()
     await explorer.clickAt(1, 2)
     await explorer.clickAt(1, 2, 'right')
-    assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
+    const reply = await explorer.clickAt(0.5, 0.25, 'left', { normalized: true })
+    assert.deepEqual(reply.screen, { width: 1600, height: 900, scale: 2 })
+    assert.deepEqual(fake.lines, [
+      '/press_key KeyB',
+      '/press_key ShiftLeft --state down',
+      '/press_key Escape',
+      '/click_at 1 2',
+      '/click_at 1 2 --button right',
+      '/click_at 0.5 0.25 --normalized'
+    ])
   })
 
   test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {

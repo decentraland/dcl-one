@@ -9,7 +9,7 @@
 import { createElement, useState, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 
-import type { AuthIdentity } from "../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { shopCart, type CartStore } from "../cart/store";
 import type { EvmAddress } from "@shop/model/address";

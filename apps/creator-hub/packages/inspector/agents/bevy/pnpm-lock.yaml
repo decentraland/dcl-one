@@ -174,6 +174,7 @@ settings:
 overrides:
   '@dcl/quests-client>@dcl/sdk': 7.22.6-25007982108.commit-83012ab
   '@dcl/sdk-commands>typescript': 7.0.2
+  '@dcl/sdk-commands>undici': 7.30.2
   protobufjs: 7.6.6
   extract-zip: file:../../../zip-extract
   '@dcl/inspector>@dcl/asset-packs': '-'
@@ -444,10 +445,6 @@ packages:
     engines: {node: '>=12'}
     cpu: [x64]
     os: [win32]
-
-  '@fastify/busboy@2.1.1':
-    resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
-    engines: {node: '>=14'}
 
   '@lukeed/csprng@1.1.0':
     resolution: {integrity: sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA==}
@@ -1466,9 +1463,9 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@5.29.0:
-    resolution: {integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==}
-    engines: {node: '>=14.0'}
+  undici@7.30.2:
+    resolution: {integrity: sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==}
+    engines: {node: '>=20.18.1'}
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
@@ -1690,7 +1687,7 @@ snapshots:
       prompts: 2.4.2
       qrcode: 1.5.4
       typescript: 7.0.2
-      undici: 5.29.0
+      undici: 7.30.2
       uuid: 9.0.1
     transitivePeerDependencies:
       - '@well-known-components/interfaces'
@@ -1786,8 +1783,6 @@ snapshots:
 
   '@esbuild/win32-x64@0.18.20':
     optional: true
-
-  '@fastify/busboy@2.1.1': {}
 
   '@lukeed/csprng@1.1.0': {}
 
@@ -2851,9 +2846,7 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@5.29.0:
-    dependencies:
-      '@fastify/busboy': 2.1.1
+  undici@7.30.2: {}
 
   util-deprecate@1.0.2: {}
 

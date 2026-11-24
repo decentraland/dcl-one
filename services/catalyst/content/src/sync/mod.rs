@@ -124,9 +124,7 @@ pub fn names_a_source(raw: &str) -> bool {
         .any(|entry| !normalize_source(entry).is_empty())
 }
 
-/// The `SYNC_ENTITY_TYPES` allowlist: `None` (empty) means every type. The
-/// existing implementation marks snapshots processed for the configured subset,
-/// so widening this later needs explicit replay/resync handling.
+/// The `SYNC_ENTITY_TYPES` allowlist: `None` (empty) means every type.
 pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConfigError> {
     let mut set = HashSet::new();
     for t in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -146,15 +144,27 @@ pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConf
 pub fn sync_http_client(
     config: &crate::config::Config,
 ) -> anyhow::Result<crate::http::CheckedRedirectClient> {
-    let max_idle = config.content.connections_max_idle;
+    checked_client(config.content.connections_max_idle, trusted_hosts(config)?)
+}
+
+/// [`sync_http_client`] for an operator command that reads `sources` (`SYNC_SOURCE` entries,
+/// trusted as sync trusts them).
+pub fn sources_http_client(
+    sources: &[String],
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
+    checked_client(1, hosts_of(sources.iter().map(String::as_str)))
+}
+
+fn checked_client(
+    max_idle: usize,
+    trusted: Vec<String>,
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
     let client = crate::http::HttpClientCfg {
         max_redirects: None,
         ..crate::http::HttpClientCfg::serve(max_idle)
     }
     .builder()
-    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted_hosts(
-        config,
-    )?))
+    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted))
     .no_proxy()
     .build()?;
     Ok(crate::http::CheckedRedirectClient::new(
@@ -191,13 +201,20 @@ fn trusted_hosts(config: &crate::config::Config) -> anyhow::Result<Vec<String>> 
     } else {
         None
     };
-    Ok([content.sync_source.as_str(), mirror]
-        .into_iter()
-        .flat_map(|raw| raw.split(','))
-        .chain(rpc.as_deref())
+    Ok(hosts_of(
+        [content.sync_source.as_str(), mirror]
+            .into_iter()
+            .flat_map(|raw| raw.split(','))
+            .chain(rpc.as_deref()),
+    ))
+}
+
+/// The host each URL in `entries` names; an entry that is no URL names none.
+fn hosts_of<'a>(entries: impl Iterator<Item = &'a str>) -> Vec<String> {
+    entries
         .filter_map(|entry| url::Url::parse(normalize_source(entry).as_str()).ok())
         .filter_map(|url| url.host_str().map(str::to_string))
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]

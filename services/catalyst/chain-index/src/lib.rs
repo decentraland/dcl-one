@@ -1,7 +1,9 @@
 //! The chain-derived readers every domain shares: the collections,
 //! marketplace and land-manager subgraph clients (`graph`, `land_graph`),
+//! the DCL NAME authority interface (`names`),
 //! the LAND registries per network (`registries`), Ethereum RPC logs and
-//! headers (`rpc`), and the unavailable
+//! headers (`rpc`), the log source the chain walks read (`logs`), a read-only portal
+//! client the walks are compared with (`portal`), and the unavailable
 //! envelope naming a missing source (`source`). [`ChainIndex`] holds the
 //! ONE outbound client, the subgraph URLs and the readers' memos; the shop's
 //! `MarketplaceState` builds it, and content, land_authz, worlds, social and
@@ -13,6 +15,9 @@ pub(crate) use dcl_http as http;
 
 pub mod graph;
 pub mod land_graph;
+pub mod logs;
+pub mod names;
+pub mod portal;
 pub mod registries;
 pub mod rpc;
 pub mod source;

@@ -63,3 +63,17 @@ async fn index_process_restarts_without_binding_or_stopping_the_api_port() {
         previous = Some(pid);
     }
 }
+
+#[test]
+fn index_rejects_invalid_and_non_loopback_metrics_sockets_before_opening_the_database() {
+    for raw in ["invalid", "0.0.0.0:5006"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_catalyst"))
+            .args(["index", "--index-metrics-bind", raw])
+            .env_clear()
+            .env("DATABASE_URL", "postgres:///unused")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("INDEX_METRICS_BIND"));
+    }
+}

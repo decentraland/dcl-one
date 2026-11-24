@@ -15,7 +15,7 @@
   Fixture commands, in every mode:
     /fixture_events   the recorded events, as JSON
     /fixture_reset    clear them, reset the field ({"value": "..."}, default "old") and the focus
-    /fixture_state    {crossOriginIsolated, hasFocus, active, value}
+    /fixture_state    {crossOriginIsolated, hasFocus, active, value, size: [innerWidth, innerHeight]}
     /fixture_log      console.log the text ({"text": "..."}), for the driver's console capture
     /fixture_reload   load the whole page again and never answer, as a confirmed sign-out does
 -->
@@ -92,7 +92,8 @@
           crossOriginIsolated: window.crossOriginIsolated,
           hasFocus: document.hasFocus(),
           active: document.activeElement?.id || document.activeElement?.tagName.toLowerCase(),
-          value: search.value
+          value: search.value,
+          size: [window.innerWidth, window.innerHeight]
         })
       }
     }

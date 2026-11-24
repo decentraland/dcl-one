@@ -25,7 +25,8 @@
 //! one the mirror reports only after the walk passed its creation gets a
 //! backfill lane (`nft_contract.backfill_from_block`), walked before the
 //! main range and refolded whole when it completes. A network publishes only
-//! with no backfill owed.
+//! with no backfill owed, and a fold that still owes one clears the publish
+//! marker in the transaction that commits its rows.
 
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
@@ -37,7 +38,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
-use crate::chain_index::rpc::{Rpc, RpcLog};
+use crate::chain_index::rpc::RpcLog;
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
 
 pub const TOPIC_TRANSFER: &str =
@@ -516,18 +517,33 @@ ON CONFLICT (network, contract_address, token_id) DO UPDATE SET
     created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at,
     updated_block = EXCLUDED.updated_block, updated_log = EXCLUDED.updated_log";
 
+/// The contracts of a network (`$1`) whose backfill is not finished.
+const BACKFILLS_OWED_SQL: &str = "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
+     AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FoldCounts {
     pub nfts: u64,
     pub orders: u64,
     pub land_data: u64,
+    /// The contracts whose backfill the lane still owes, counted in the
+    /// fold's transaction.
+    pub backfills_owed: i64,
 }
 
 /// The three folds of `net` in one transaction: the keys an event past
 /// `since` touched (`None`: every key) and every token of a contract whose
 /// backfill completed since (`refold_owed`, cleared here), each over its
-/// whole history; `land_data` reads only the window.
-pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::Result<FoldCounts> {
+/// whole history; `land_data` reads only the window. While a contract
+/// still owes its backfill the fold is unpublishable, and the same
+/// transaction clears the network's publish marker, so no reader takes
+/// these rows for a complete index.
+pub async fn fold(
+    pool: &PgPool,
+    net: ChainNet,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<FoldCounts> {
     let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
     // A job, not a request (the land_authz fold's reasons): the rebuild
@@ -586,11 +602,26 @@ pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::R
             .execute(&mut *tx)
             .await?;
     }
+    let backfills_owed: i64 = sqlx::query_scalar(BACKFILLS_OWED_SQL)
+        .bind(net.db_name())
+        .fetch_one(&mut *tx)
+        .await?;
+    if backfills_owed > 0 {
+        // At the end, beside the fence that locks the same row, so the
+        // cursor's row lock lasts only until the commit.
+        sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2")
+            .bind(INDEXER_NFT)
+            .bind(net.db_name())
+            .execute(&mut *tx)
+            .await?;
+    }
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
         orders,
         land_data,
+        backfills_owed,
     })
 }
 
@@ -771,6 +802,26 @@ impl ChainIndex for NftIndex {
         INDEXER_NFT
     }
 
+    fn abandon(&self) {
+        self.reset();
+    }
+
+    fn begin_pass(&self) {
+        self.reset();
+    }
+
+    /// A walk that owes a backfill runs its lanes, alone.
+    async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
+             WHERE network = $1 AND backfill_from_block IS NOT NULL \
+               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
+        )
+        .bind(self.net.db_name())
+        .fetch_one(pool)
+        .await?)
+    }
+
     fn net(&self) -> ChainNet {
         self.net
     }
@@ -936,13 +987,30 @@ impl ChainIndex for NftIndex {
             .bind(to)
             .execute(&mut *conn)
             .await?;
+        // The bids fold inferred sellers from these transfers: it infers
+        // again the seller of every bid created past the rewind.
+        if self.net == ChainNet::Matic {
+            sqlx::query(
+                "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
+            )
+            .bind(self.net.db_name())
+            .bind(to)
+            .execute(&mut *conn)
+            .await?;
+        }
         // The cleared marker makes the next fold a rebuild, which also
         // restores the deleted keys' rows from their remaining history.
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let counts = fold(pool, self.net, since).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let counts = fold(pool, self.net, since, owner).await?;
         tracing::info!(
             network = self.net.db_name(),
             nfts = counts.nfts,
@@ -950,24 +1018,19 @@ impl ChainIndex for NftIndex {
             land_data = counts.land_data,
             "nft index: folded"
         );
-        let owed: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1",
-        )
-        .bind(self.net.db_name())
-        .fetch_one(pool)
-        .await?;
-        Ok(owed == 0)
+        Ok(counts.backfills_owed == 0)
     }
 
     async fn lanes(
         &self,
         pool: &PgPool,
-        rpc: &Rpc<'_>,
+        source: &dyn chain_walk::LogSource,
         _anchor: (u64, i64),
         budget: usize,
         chunk: &mut usize,
-    ) -> anyhow::Result<usize> {
+        owner: &chain_walk::Owner,
+        cursor: Option<(u64, &str)>,
+    ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
@@ -978,7 +1041,10 @@ impl ChainIndex for NftIndex {
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
-        let mut used = 0usize;
+        let mut used = chain_walk::Spent::default();
+        // The cursor block's header that closed the last lane window opens
+        // the next one: one read a window, the bracket unbroken.
+        let mut opened: Option<crate::chain_index::rpc::BlockHeader> = None;
         for contract in owed {
             let Some((mut next, last)) = contract.owed() else {
                 continue;
@@ -988,18 +1054,51 @@ impl ChainIndex for NftIndex {
                 topics: collection_topics(self.net),
             }];
             while next <= last {
-                if used >= budget {
+                if used.charge >= budget {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
-                let w = chain_walk::fetch_window(rpc, next as u64, to as u64, &group, chunk)
+                // Bracketed by the cursor block's header: rows below the
+                // cursor join its prefix only when read on its branch.
+                let before = match (cursor, opened.take()) {
+                    (Some(_), Some(last)) => Some(last),
+                    (Some((block, _)), None) => {
+                        let h = source.header(block).await?;
+                        used.read(h.requests);
+                        Some(h.value)
+                    }
+                    (None, _) => None,
+                };
+                let w = source
+                    .window(next as u64, to as u64, &group, chunk)
                     .await
                     .with_context(|| {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
                     })?;
-                used += w.requests;
-                let (times, extra) = chain_walk::block_times(rpc, &w.logs).await?;
-                used += extra;
+                used.window(&w);
+                source.lane_read();
+                let times = source.block_times(&w.logs).await?;
+                used.read(times.requests);
+                let times = times.value;
+                if let (Some(before), Some((block, stored))) = (before, cursor) {
+                    let after = source.header(block).await?;
+                    used.read(after.requests);
+                    anyhow::ensure!(
+                        before == after.value,
+                        "chain changed while backfilling {}",
+                        contract.contract_address
+                    );
+                    if after.value.hash != stored {
+                        return Err(chain_walk::Diverged {
+                            block,
+                            stored: stored.to_string(),
+                            chain: after.value.hash,
+                            requests: used.requests,
+                        }
+                        .into());
+                    }
+                    opened = Some(after.value);
+                }
                 let mut rows = Vec::new();
                 for log in &w.logs {
                     if let Ok(Some(row)) = decode_log(
@@ -1029,6 +1128,7 @@ impl ChainIndex for NftIndex {
                 .bind(w.reached as i64)
                 .execute(&mut *tx)
                 .await?;
+                owner.check(&mut tx).await?;
                 tx.commit().await?;
                 next = w.reached as i64 + 1;
             }
@@ -1056,7 +1156,7 @@ pub async fn status(pool: &PgPool) -> serde_json::Value {
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "backfillsOwed": owed,
+            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)

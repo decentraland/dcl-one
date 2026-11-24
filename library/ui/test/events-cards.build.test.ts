@@ -1,9 +1,10 @@
-import path from 'node:path'
-import { createServer, type ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
+import { serveConsumerPage } from './consumer-page.helpers'
 
 let server: ViteDevServer
+let disruptions: string[] = []
 let session: Awaited<ReturnType<typeof openSession>>
 
 async function evaluate<T = unknown>(expression: string): Promise<T> {
@@ -21,26 +22,10 @@ async function evaluate<T = unknown>(expression: string): Promise<T> {
 }
 
 beforeAll(async () => {
-  const root = path.resolve(import.meta.dirname, '..')
-  server = await createServer({
-    configFile: false,
-    root,
-    appType: 'custom',
-    logLevel: 'error',
-    resolve: { dedupe: ['react', 'react-dom'] },
-    server: { host: '127.0.0.1', port: 0 }
-  })
-  server.middlewares.use(async (request, response, next) => {
-    if (request.url !== '/') return next()
-    response.setHeader('Content-Type', 'text/html')
-    response.end(
-      await server.transformIndexHtml(
-        '/',
-        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day],[data-live-day],[data-live-small],[data-calendar]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
-      )
-    )
-  })
-  await server.listen()
+  ;({ server, disruptions } = await serveConsumerPage(
+    'test/consumer/events-cards-browser.tsx',
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day],[data-live-day],[data-live-small],[data-calendar]{width:300px}</style>'
+  ))
   session = await openSession(
     await findBrowser([
       process.env.BROWSER_PATH,
@@ -224,7 +209,7 @@ describe('when Events cards reveal their controls', () => {
       })
     })
 
-    it('should keep the future hover highlight inset with the card partly clipped by the column', async () => {
+    it('should show the future hover state with the card partly clipped by the column, without a line around it', async () => {
       await evaluate(`(() => {
         const column = document.querySelector('${column}')
         column.scrollIntoView({block:'center'})
@@ -242,8 +227,16 @@ describe('when Events cards reveal their controls', () => {
       await evaluate(`new Promise(resolve => setTimeout(resolve, 250))`)
       expect(await rect(future)).toEqual(before)
       expect(
-        await evaluate(`getComputedStyle(document.querySelector('${future}')).boxShadow`)
-      ).toContain('inset')
+        await evaluate(`(() => {
+          const card = document.querySelector('${future}')
+          return {
+            hovered: card.matches(':hover'),
+            actions: getComputedStyle(card.querySelector('[class*="_actions_"]')).opacity,
+            shadow: getComputedStyle(card).boxShadow,
+            outline: getComputedStyle(card).outlineStyle
+          }
+        })()`)
+      ).toEqual({ hovered: true, actions: '1', shadow: 'none', outline: 'none' })
       expect(
         await evaluate(`getComputedStyle(document.querySelector('${column}')).overflowY`)
       ).toBe('auto')
@@ -596,5 +589,13 @@ describe('when Events cards reveal their controls', () => {
         `getComputedStyle(document.querySelector(${JSON.stringify(UPCOMING)}).querySelector('[class*="smallTime"]')).opacity`
       )
     ).toBe('1')
+  })
+})
+
+describe('when the Events cards page is served', () => {
+  // A failed dependency scan or a re-optimization reloads the page under the tests above, which then fail with
+  // "Inspected target navigated or closed".
+  it('should load it without a dependency scan error or a dependency reload', () => {
+    expect(disruptions).toEqual([])
   })
 })

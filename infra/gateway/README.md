@@ -4,7 +4,30 @@ Nginx public entry for APIs and Sites (routing source).
 
 The exact `/places/place?position=...` and `/places/world?name=...` endpoints, including their trailing-slash forms, stay backend social cards; `/places/place/<position>`, `/places/world/<name>` and their `.data` requests go to Sites, and the JSON catalogue stays under `/places/api`.
 
-The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
+The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the legacy website origin used by sitemaps, world-event default posters and Slack links. Notification page links use the independent `EVENTS_SITE_URL` Sites origin (default `https://decentraland.org`).
+
+## Event poster conversion
+
+A native player requests an event poster through `/metamorph-api/convert` without a width. For the configured node's poster mounts, its bundled default and the canonical event bucket, JPEG and PNG sources retain their original bytes on the first and repeat requests. WebP and GIF sources produce a still image with a longest side of up to 960 pixels. Opaque stills use JPEG. Stills with transparency use PNG and are resized once more to fit within 640 × 640 pixels if the first PNG exceeds 2 MiB. Other image formats, including AVIF, return HTTP 415 on this native route.
+
+The browser converter `/media/convert` accepts an explicit width of 80, 160, 320, 640 or 960. Direct asset requests return the original artwork.
+
+Set `node_base` to the public node URL, including any deployment prefix. These examples inspect the response headers for the same bundled poster.
+
+```sh
+node_base=https://node.example.org
+poster="$node_base/events/assets/event-default.webp"
+
+# Native player's final raster
+curl --head --get --data-urlencode "url=$poster" "$node_base/metamorph-api/convert"
+
+# Browser's 640-pixel thumbnail
+curl --head --get --data-urlencode "url=$poster" --data-urlencode 'width=640' "$node_base/media/convert"
+```
+
+The node's remote-source policy applies to both requests. A restricted node may return 403. A saturated thumbnail queue returns 503 with `Retry-After: 1`. Successes advertise a one-day public cache lifetime. When checking a change of representation, compare a previously requested native URL with a fresh one. A CDN or player can serve a cached copy until its one-day freshness lifetime expires. If an immediate refresh is required, invalidate the affected native conversion URLs at the edge and check the player cache separately. [Event poster decision](../../docs/adr/2026-11-24-event-poster-raster-delivery.md)
+
+## Gateway operations
 
 Referral quotas, the `POST /entities` burst limit and daily quota, the
 `/auth-api` pending sign-in caps and the
@@ -62,7 +85,8 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse`, `/internal/message-router` and `/metrics` are not public; internal callers use the APIs' private address.
-- Limits: bodies 1 MiB (content deployments 248, worlds deployments 360, world settings 12, world storage 529,408 bytes (the service's largest body plus slack), builder 21, report evidence 5; `/_scene` is the node's and keeps the 1 MiB default); 100 r/s per client with a burst of 300 (`GATEWAY_READ_RATE`, `GATEWAY_READ_BURST`; content 100, worlds writes and admin routes 30, Segment webhooks under `/events-notifier` 300 with a burst of 600, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment or report evidence uploads in flight per client, then 429; `%3F` in paths returns 400, except in a `/world-storage` path forwarded unrewritten.
+- Limits: bodies 1 MiB (content deployments 2,096, worlds deployments 360, world settings 12, world storage 529,408 bytes (the service's largest body plus slack), builder 21, report evidence 5; `/_scene` is the node's and keeps the 1 MiB default); 100 r/s per client with a burst of 300 (`GATEWAY_READ_RATE`, `GATEWAY_READ_BURST`; content 100, worlds writes and admin routes 30, Segment webhooks under `/events-notifier` 300 with a burst of 600, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment or report evidence uploads in flight per client, then 429; `%3F` in paths returns 400, except in a `/world-storage` path forwarded unrewritten.
+- Request bodies are buffered in `/tmp/gateway` before the APIs see them, except content deployments, which stream to the APIs, where they are spooled to the storage disk. With `--tmpfs /tmp` as above, that buffer is memory, and a body that does not fit fails with nginx's own 500. Size the tmpfs for the buffered uploads in flight (10 per client, worlds deployments up to 360 MiB each), or mount a disk volume at `/tmp`.
 - World storage keys: a `storage.<domain>`, `world-storage.<domain>` or `gateway.<domain>/storage` request is forwarded from the path as the client sent it, under `/world-storage`, so `%2F` and `%3F` in a key reach the service; a path with dot or empty segments takes the normalized rewrite instead. The storage body cap answers the service's JSON 413.
 - `/world-storage` (after host rewriting): reads 100 r/s per client (burst 400), writes also 30 r/s (burst 60). Each client address in `GATEWAY_STORAGE_TRUSTED_CIDRS` gets a separate 1000 r/s budget (burst 1000); the allowance is per address, not per CIDR, and never disables limiting. Startup rejects overlaps with `GATEWAY_TRUSTED_PROXY_CIDRS`.
 

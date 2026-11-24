@@ -7,6 +7,8 @@ import { fakeSession, renderSettled } from '../harness'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { mapPins } from '@explorer-core/features/map/mapPins'
+import { MARKER_ART } from '../../features/map/mapArt'
+import { saveOpen } from '@explorer-core/features/minimap/minimapPrefs'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
 // The layer data is one store for the page, read the first time a map asks: the live event is there
@@ -72,7 +74,7 @@ describe('minimap menu', () => {
   // the place has no scene (no `donatePlace`) in each case: the realm alone tells
   async function openMenu(
     linkRealm: string | null,
-    { at = { x: 10, y: 20 }, home = null, referrer }: { at?: { x: number; y: number }; home?: { realm: string | null; parcel: string } | null; referrer?: string } = {}
+    { at = { x: 10, y: 20 }, home = null, referrer }: { at?: { x: number; y: number }; home?: { realm: string | null; parcel: string; pinned: boolean } | null; referrer?: string } = {}
   ): Promise<ReturnType<typeof fakeSession>> {
     const session = fakeSession()
     session.map = { ...session.map, ...at, home }
@@ -93,7 +95,20 @@ describe('minimap menu', () => {
     const session = await openMenu('boedo.dcl.eth')
     expect(screen.getByRole('menuitem', { name: 'Copy Link' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Jump back to Genesis City' }))
-    expect(session.map.changeRealm).toHaveBeenCalledWith(DEFAULT_REALM)
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(0, 0)
+    expect(session.map.changeRealm).not.toHaveBeenCalled()
+  })
+
+  it('jumps back to the Genesis City home parcel', async () => {
+    const session = await openMenu('boedo.dcl.eth', { home: { realm: null, parcel: '52,-3', pinned: true } })
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back to Genesis City' }))
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(52, -3)
+  })
+
+  it('jumps back to Genesis Plaza when home is a World', async () => {
+    const session = await openMenu('boedo.dcl.eth', { home: { realm: 'boedo.dcl.eth', parcel: '5,5', pinned: true } })
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back to Genesis City' }))
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(0, 0)
   })
 
   it('leaves Copy Link out where the place has none', async () => {
@@ -123,12 +138,12 @@ describe('minimap menu', () => {
     expect(session.map.setHome).toHaveBeenCalledWith('boedo.dcl.eth', { x: 0, y: 0 })
   })
 
-  it('reads on, and cannot be turned off, where the player stands in the home place', async () => {
+  it('reads on where the player stands in the home place, and turning it off takes the home back', async () => {
     placeAt.place = { id: 'p', title: 'Plaza', positions: ['10,20', '11,20'], base_position: '10,20' }
-    const session = await openMenu(DEFAULT_REALM, { at: { x: 11, y: 20 }, home: { realm: null, parcel: '10,20' } })
+    const session = await openMenu(DEFAULT_REALM, { at: { x: 11, y: 20 }, home: { realm: null, parcel: '10,20', pinned: true } })
     const toggle = await screen.findByRole('switch', { name: 'Set as Home', checked: true })
     fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(session.map.clearHome).toHaveBeenCalledTimes(1)
     expect(session.map.setHome).not.toHaveBeenCalled()
   })
 
@@ -142,6 +157,17 @@ describe('minimap menu', () => {
   it('in a preview offers Reload Scene but no Set as Home', async () => {
     await openMenu(null)
     expect(screen.getByRole('menuitem', { name: 'Reload Scene' })).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Set as Home' })).toBeNull()
+  })
+
+  it('offers no Set as Home to a guest with no account', async () => {
+    const session = fakeSession()
+    session.map = { ...session.map, canPinHome: false }
+    await renderSettled(
+      <Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Minimap settings' }))
+    expect(screen.getByRole('menuitem', { name: 'Copy Link' })).toBeInTheDocument()
     expect(screen.queryByRole('switch', { name: 'Set as Home' })).toBeNull()
   })
 
@@ -178,14 +204,14 @@ describe('minimap menu, closing', () => {
 describe('minimap home pin', () => {
   it('marks a Genesis City home on the map', async () => {
     const session = fakeSession()
-    session.map = { ...session.map, home: { realm: null, parcel: '1,2' } }
+    session.map = { ...session.map, home: { realm: null, parcel: '1,2', pinned: true } }
     const { container } = await renderSettled(<Minimap minimap={session.minimap} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
     expect(container.querySelector('[data-marker="home"]')).not.toBeNull()
   })
 
   it('draws none in a World, for a Genesis City home', async () => {
     const session = fakeSession()
-    session.map = { ...session.map, home: { realm: null, parcel: '1,2' } }
+    session.map = { ...session.map, home: { realm: null, parcel: '1,2', pinned: true } }
     const { container } = await renderSettled(
       <Minimap minimap={{ ...session.minimap, satelliteView: null, linkRealm: 'boedo.dcl.eth' }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />
     )
@@ -194,7 +220,7 @@ describe('minimap home pin', () => {
 
   it('draws none for a World home', async () => {
     const session = fakeSession()
-    session.map = { ...session.map, home: { realm: 'boedo.dcl.eth', parcel: '0,0' } }
+    session.map = { ...session.map, home: { realm: 'boedo.dcl.eth', parcel: '0,0', pinned: true } }
     const { container } = await renderSettled(<Minimap minimap={session.minimap} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
     expect(container.querySelector('[data-marker="home"]')).toBeNull()
   })
@@ -218,13 +244,13 @@ describe('minimap layers', () => {
     const container = await renderAt()
     act(() =>
       mapPins.receive([
-        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid', icon: null },
-        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' }
+        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid' },
+        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally' }
       ])
     )
     const pins = container.querySelectorAll('[data-marker="pins"]')
     expect(pins.length).toBe(2)
-    expect(pins[1].querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
+    expect(pins[1].querySelector('img')).toHaveAttribute('src', MARKER_ART.quest)
     act(() => mapLayers.set('pins', false))
     expect(container.querySelectorAll('[data-marker="pins"]').length).toBe(0)
   })
@@ -252,6 +278,34 @@ describe('minimap layers', () => {
     const edge = container.querySelector<HTMLElement>('[data-marker="destination-edge"]')
     await new Promise((r) => setTimeout(r, 50))
     expect(edge?.hidden).toBe(true)
+  })
+})
+
+describe('minimap Camera style', () => {
+  // Outside Genesis City the Camera style is the only one, whatever the preference says.
+  async function renderCamera(cameraReady: boolean): Promise<HTMLElement> {
+    saveOpen(false, true)
+    const session = fakeSession()
+    const { container } = await renderSettled(
+      <Minimap minimap={{ ...session.minimap, satelliteView: null, cameraReady }} map={session.map} sceneTitle="A World" setEngineViewport={vi.fn()} />
+    )
+    return container
+  }
+
+  it("keeps the map covered until the engine is drawing in it, so the player's own view does not show", async () => {
+    const container = await renderCamera(false)
+    const map = screen.getByRole('button', { name: 'Open map' })
+    expect(map.className).toContain('covered')
+    expect(map.className).not.toContain('cutout')
+    expect(container.firstElementChild?.className).not.toContain('cutoutRoot')
+  })
+
+  it('opens the hole onto the engine once it is', async () => {
+    const container = await renderCamera(true)
+    const map = screen.getByRole('button', { name: 'Open map' })
+    expect(map.className).toContain('cutout')
+    expect(map.className).not.toContain('covered')
+    expect(container.firstElementChild?.className).toContain('cutoutRoot')
   })
 })
 

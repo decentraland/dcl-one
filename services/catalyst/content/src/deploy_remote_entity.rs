@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::{Arc, OnceLock};
 
-use crate::http::CheckedRedirectClient;
+use crate::http::{CheckedRedirectClient, TransferRateGuard};
 use futures::StreamExt;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, warn};
@@ -19,8 +19,9 @@ use crate::auth::{is_canonical_cid, verify_hash};
 use crate::entity::{is_ipfs_v1, is_ipfs_v2};
 use crate::storage::Storage;
 
-const MAX_DOWNLOAD_RETRIES: u32 = 3;
-const RETRY_WAIT_MS: u64 = 500;
+const MAX_DOWNLOAD_ATTEMPTS: u32 = 10;
+const READ_THROUGH_DOWNLOAD_ATTEMPTS: u32 = 3;
+const BEST_EFFORT_ATTEMPTS: u32 = 3;
 
 const MAX_BODY_BYTES: usize = 512 * 1024 * 1024;
 
@@ -162,7 +163,12 @@ pub(crate) async fn stream_body<S: DecodedSink>(
     };
     let mut run: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    let mut rate = TransferRateGuard::default();
+    loop {
+        let read_started = tokio::time::Instant::now();
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
         // A body error names the URL, which is stripped as `SendError` strips it from a
         // transport error.
         let chunk = chunk.map_err(|e| e.without_url().to_string())?;
@@ -170,6 +176,8 @@ pub(crate) async fn stream_body<S: DecodedSink>(
         if stats.wire_len > cap as u64 {
             return Err(format!("response body exceeds the {cap} byte cap"));
         }
+        rate.check(chunk.len() as u64, read_started.elapsed())
+            .map_err(|e| e.to_string())?;
         for piece in chunk.chunks(decoder.input_step()) {
             // `run` holds decoded bytes not yet counted in `decoded_len`.
             let left = (cap as u64).saturating_sub(stats.decoded_len) as usize;
@@ -388,28 +396,43 @@ fn eviction_locks() -> &'static parking_lot::Mutex<HashMap<String, Arc<tokio::sy
     LOCKS.get_or_init(Default::default)
 }
 
-async fn evict_corrupt_entity_file(storage: &Storage, entity_id: &str) -> &'static str {
-    let lock = {
-        let mut map = eviction_locks().lock();
-        map.entry(entity_id.to_string()).or_default().clone()
-    };
+/// An entity's entry in [`eviction_locks`], removed on drop (also on unwind or cancellation)
+/// once no other eviction holds it.
+struct EvictionLock {
+    entity_id: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
 
-    let outcome = {
-        let _guard = lock.lock().await;
-        evict_corrupt_entity_file_locked(storage, entity_id).await
-    };
-
-    {
-        let mut map = eviction_locks().lock();
-        if let Some(existing) = map.get(entity_id)
-            && Arc::ptr_eq(existing, &lock)
-            && Arc::strong_count(existing) == 2
-        {
-            map.remove(entity_id);
+impl EvictionLock {
+    fn of(entity_id: &str) -> Self {
+        let lock = eviction_locks()
+            .lock()
+            .entry(entity_id.to_string())
+            .or_default()
+            .clone();
+        Self {
+            entity_id: entity_id.to_string(),
+            lock,
         }
     }
+}
 
-    outcome
+impl Drop for EvictionLock {
+    fn drop(&mut self) {
+        let mut map = eviction_locks().lock();
+        if let Some(existing) = map.get(&self.entity_id)
+            && Arc::ptr_eq(existing, &self.lock)
+            && Arc::strong_count(existing) == 2
+        {
+            map.remove(&self.entity_id);
+        }
+    }
+}
+
+async fn evict_corrupt_entity_file(storage: &Storage, entity_id: &str) -> &'static str {
+    let entry = EvictionLock::of(entity_id);
+    let _held = entry.lock.lock().await;
+    evict_corrupt_entity_file_locked(storage, entity_id).await
 }
 
 async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) -> &'static str {
@@ -435,10 +458,93 @@ async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) ->
     }
 }
 
+pub(crate) type CurrentDownloadPeers = Arc<tokio::sync::RwLock<Vec<String>>>;
+
+/// The peers available to a transfer. Sync downloads prefer the peers advertising the
+/// deployment and consult the current membership at each attempt.
+#[derive(Clone)]
+pub struct DownloadPeers {
+    advertisers: Arc<[String]>,
+    available: AvailablePeers,
+}
+
+#[derive(Clone)]
+enum AvailablePeers {
+    Fixed(Arc<[String]>),
+    Current(CurrentDownloadPeers),
+}
+
+impl DownloadPeers {
+    pub fn fixed(peers: &[String]) -> Self {
+        Self {
+            advertisers: Arc::default(),
+            available: AvailablePeers::Fixed(Arc::from(peers)),
+        }
+    }
+
+    pub(crate) fn current(advertisers: &[String], peers: CurrentDownloadPeers) -> Self {
+        Self {
+            advertisers: Arc::from(advertisers),
+            available: AvailablePeers::Current(peers),
+        }
+    }
+
+    async fn next(
+        &self,
+        tried: &mut HashSet<String>,
+        rejected: &HashSet<String>,
+        rotation: usize,
+        retry: bool,
+    ) -> Result<Option<String>, SyncError> {
+        match &self.available {
+            AvailablePeers::Fixed(peers) => {
+                self.next_available(peers, tried, rejected, rotation, retry)
+            }
+            AvailablePeers::Current(peers) => {
+                self.next_available(&peers.read().await, tried, rejected, rotation, retry)
+            }
+        }
+    }
+
+    fn next_available(
+        &self,
+        available: &[String],
+        tried: &mut HashSet<String>,
+        rejected: &HashSet<String>,
+        rotation: usize,
+        retry: bool,
+    ) -> Result<Option<String>, SyncError> {
+        if available.is_empty() {
+            return Err(SyncError::NoServers);
+        }
+        let first_advertiser = rotation % self.advertisers.len().max(1);
+        let first_fallback = rotation % available.len();
+        let choose = |tried: &HashSet<String>| {
+            let advertisers = self.advertisers[first_advertiser..]
+                .iter()
+                .chain(&self.advertisers[..first_advertiser])
+                .filter(|peer| available.contains(peer));
+            let fallback = available[first_fallback..]
+                .iter()
+                .chain(&available[..first_fallback]);
+            advertisers
+                .chain(fallback)
+                .find(|peer| !tried.contains(peer.as_str()) && !rejected.contains(peer.as_str()))
+                .cloned()
+        };
+        let selected = choose(tried);
+        if selected.is_none() && retry && !tried.is_empty() {
+            tried.clear();
+            return Ok(choose(tried));
+        }
+        Ok(selected)
+    }
+}
+
 pub struct ContentSource<'a> {
     pub client: &'a CheckedRedirectClient,
     pub storage: Arc<Storage>,
-    pub servers: &'a [String],
+    pub servers: DownloadPeers,
     pub content_semaphore: Arc<Semaphore>,
 }
 
@@ -448,9 +554,30 @@ pub struct RemoteDeployment<'a> {
     pub context: DeploymentContext,
     pub report: Option<&'a Arc<DeploymentReport>>,
     pub retry_state: Option<(u32, u64)>,
+    /// Refuse with [`SyncError::Overtaken`], before content is fetched or validated, an entity
+    /// whose file hashes to its id and that a newer active entity overtook
+    /// ([`LiveSyncDeployer::is_overtaken`]).
+    pub discard_overtaken: bool,
 }
 
+/// A panic in the deployment is returned as an error, so every caller records it like any
+/// other failure (backed off and counted against the retry cap) instead of unwinding.
 pub async fn deploy_entity_streaming(
+    source: ContentSource<'_>,
+    deployer: &LiveSyncDeployer,
+    target: RemoteDeployment<'_>,
+) -> Result<(), SyncError> {
+    // Unwind safe: every lock, permit and reservation it holds is RAII or poison-tolerant.
+    crate::jobs::catch_panic(deploy_entity_streaming_unguarded(source, deployer, target))
+        .await
+        .unwrap_or_else(|panic| {
+            Err(SyncError::Other(format!(
+                "the deployment panicked: {panic}"
+            )))
+        })
+}
+
+async fn deploy_entity_streaming_unguarded(
     source: ContentSource<'_>,
     deployer: &LiveSyncDeployer,
     target: RemoteDeployment<'_>,
@@ -467,11 +594,20 @@ pub async fn deploy_entity_streaming(
         context,
         report,
         retry_state,
+        discard_overtaken,
     } = target;
     // The read-through never removes a file held here until the flush takes the entity.
     let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
     let budget = deployer.inflight_bytes();
-    download_file_with_retries(client, storage.as_ref(), entity_id, servers, Some(budget)).await?;
+    download_file(
+        client,
+        storage.as_ref(),
+        entity_id,
+        &servers,
+        Some(budget),
+        DownloadPolicy::Required,
+    )
+    .await?;
 
     let entity_data =
         storage
@@ -500,12 +636,28 @@ pub async fn deploy_entity_streaming(
             "the stored entity file was empty",
         ));
     }
-    let hashes = extract_content_hashes(&entity_data)
-        .map_err(|e| entity_parse_error(entity_id, verification, e))?;
+    let files =
+        entity_files(&entity_data).map_err(|e| entity_parse_error(entity_id, verification, e))?;
+    let snapshot_hashes: HashSet<&str> = files.snapshots.iter().map(|(_, h)| h.as_str()).collect();
+
+    // Only a file proven to hash to its id may discard: any other file is left to validation.
+    if discard_overtaken
+        && verification == CachedEntityVerification::Match
+        && deployer.is_overtaken(&entity_data, entity_id).await?
+    {
+        return Err(SyncError::Overtaken {
+            entity_id: entity_id.to_string(),
+        });
+    }
 
     let mut tasks: tokio::task::JoinSet<Result<(), SyncError>> = tokio::task::JoinSet::new();
 
-    let refs: Vec<&str> = hashes.iter().map(String::as_str).collect();
+    let refs: Vec<&str> = files
+        .content
+        .iter()
+        .map(String::as_str)
+        .chain(snapshot_hashes.iter().copied())
+        .collect();
     let present = storage.exist_multiple(&refs).await?;
     for (hash, exists) in present {
         if exists {
@@ -514,14 +666,21 @@ pub async fn deploy_entity_streaming(
 
         let client = client.clone();
         let storage = storage.clone();
-        let servers = servers.to_vec();
+        let servers = servers.clone();
         let sem = content_semaphore.clone();
         let budget = budget.clone();
+        let render = snapshot_hashes.contains(hash.as_str());
 
         tasks.spawn(async move {
             let _permit = sem.acquire().await.map_err(|_| SyncError::Stopped)?;
-            download_file_with_retries(&client, storage.as_ref(), &hash, &servers, Some(&budget))
+            let policy = if render {
+                DownloadPolicy::BestEffort
+            } else {
+                DownloadPolicy::Required
+            };
+            download_file(&client, &storage, &hash, &servers, Some(&budget), policy)
                 .await
+                .map(drop)
         });
     }
 
@@ -530,7 +689,8 @@ pub async fn deploy_entity_streaming(
         match result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
-                if first_error.is_none() {
+                // Missing peers leave the deployment unevaluated even if another file failed.
+                if first_error.is_none() || matches!(e, SyncError::NoServers) {
                     first_error = Some(e);
                 }
             }
@@ -547,17 +707,44 @@ pub async fn deploy_entity_streaming(
     }
 
     deployer
-        .deploy_entity(
+        .deploy_entity_with_files(
             &entity_data,
             entity_id,
             auth_chain,
             context,
             report,
             retry_state,
+            Some((storage.as_ref(), files.snapshots)),
         )
         .await?;
 
     Ok(())
+}
+
+/// The renders of `entity_id` the store holds, each touched first: a render already stored may
+/// be an aged orphan the collector is about to take, and touching it restarts the age floor
+/// that covers the gap until the flush commits its row. A render absent from the store, or one
+/// the process may not touch (another uid's blob), gets no row; the second is logged at `warn`.
+/// Any other store fault is an error.
+pub(crate) async fn touch_renders(
+    storage: &Storage,
+    entity_id: &str,
+    renders: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, SyncError> {
+    let mut held = Vec::with_capacity(renders.len());
+    for (key, hash) in renders {
+        match storage.touch(&hash).await {
+            Ok(true) => held.push((key, hash)),
+            Ok(false) => {}
+            Err(crate::storage::StorageError::Io(e))
+                if e.kind() == std::io::ErrorKind::PermissionDenied =>
+            {
+                warn!(entity_id, hash, error = %e, "a stored render could not be touched; it gets no row");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(held)
 }
 
 fn entity_parse_error(
@@ -579,106 +766,153 @@ fn entity_parse_error(
     ))
 }
 
-/// The hashes sync downloads for an entity: every content file, a profile's avatar renders
-/// (`face.png`, `face128.png`, `face256.png`, `body.png`) included, as the reference catalyst
-/// stores them, so every hash this node lists in `/deployments`, `/pointer-changes` and its
-/// snapshots is one `/contents/{hash}` serves. An entity other than a profile that carries
-/// avatars (`metadata.avatars` or a top-level `avatars`) also has their snapshot hashes fetched.
-fn extract_content_hashes(entity_data: &[u8]) -> Result<Vec<String>, serde_json::Error> {
-    let entity: serde_json::Value = serde_json::from_slice(entity_data)?;
-    let is_profile = entity.get("type").and_then(|t| t.as_str()) == Some("profile");
-    let mut seen = HashSet::new();
-    let mut hashes = Vec::new();
-
-    if let Some(content) = entity.get("content").and_then(|c| c.as_array()) {
-        for entry in content {
-            if let Some(hash) = entry.get("hash").and_then(|h| h.as_str())
-                && seen.insert(hash.to_string())
-            {
-                hashes.push(hash.to_string());
-            }
-        }
-    }
-
-    let avatars = entity
-        .pointer("/metadata/avatars")
-        .or_else(|| entity.get("avatars"))
-        .and_then(|a| a.as_array());
-
-    if let Some(avatar_list) = avatars.filter(|_| !is_profile) {
-        for avatar_entry in avatar_list {
-            let snapshots = avatar_entry.pointer("/avatar/snapshots");
-            if let Some(obj) = snapshots.and_then(|s| s.as_object()) {
-                for (_key, val) in obj {
-                    if let Some(raw) = val.as_str() {
-                        let hash = extract_hash_from_snapshot_value(raw);
-                        if !hash.is_empty() && seen.insert(hash.to_string()) {
-                            hashes.push(hash.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(hashes)
+/// The files sync downloads for an entity.
+#[derive(Debug, PartialEq)]
+struct EntityFiles {
+    /// Every `content[]` hash, once: each must be stored before the entity deploys.
+    content: Vec<String>,
+    /// A profile's avatar renders named only in its metadata
+    /// ([`crate::profile_snapshots::snapshot_files`]): fetched when a peer has them, and
+    /// recorded in `content_files` once stored.
+    snapshots: Vec<(String, String)>,
 }
 
-fn extract_hash_from_snapshot_value(s: &str) -> &str {
-    if let Some(idx) = s.rfind("/contents/") {
-        &s[idx + "/contents/".len()..]
-    } else {
-        s
+fn entity_files(entity_data: &[u8]) -> Result<EntityFiles, String> {
+    let entity: serde_json::Value =
+        serde_json::from_slice(entity_data).map_err(|e| e.to_string())?;
+    if !entity.is_object() {
+        return Err("entity must be a JSON object".into());
     }
+    let declared: Vec<_> = entity
+        .get("content")
+        .map(crate::entity::parse_peer_content)
+        .transpose()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| (entry.file, entry.hash))
+        .collect();
+    let mut seen = HashSet::new();
+    let content = declared
+        .iter()
+        .filter(|(_, hash)| seen.insert(hash.as_str()))
+        .map(|(_, hash)| hash.clone())
+        .collect();
+    let is_profile = entity
+        .get("type")
+        .and_then(|t| t.as_str())
+        .and_then(crate::validator::entity_parser::parse_entity_type)
+        == Some(crate::validator::EntityType::Profile);
+    let snapshots = if is_profile {
+        crate::profile_snapshots::snapshot_files(entity.pointer("/metadata/avatars"), &declared)
+    } else {
+        Vec::new()
+    };
+    Ok(EntityFiles { content, snapshots })
 }
 
 /// Redirects a content file download follows (a peer may serve its files elsewhere).
 pub(crate) const MAX_FILE_REDIRECTS: usize = 2;
 
-/// Tries up to [`MAX_DOWNLOAD_RETRIES`] peers, starting at a random one, and stores the file
-/// only once its decoded bytes hash to `hash`. With a `budget`, the decoded body is held
-/// against it from its first chunk until the file is stored.
-pub async fn download_file_with_retries(
+/// How [`download_file`] treats a file no server serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadPolicy {
+    /// A file the entity needs. Sync allows ten attempts with a one-second wait after a
+    /// transient failure. Read-through can try every configured source after definitive
+    /// misses, and allows three transient failures with its shorter backoff.
+    Required,
+    /// A best-effort file, such as a render a profile names only in its metadata. Each of up
+    /// to [`BEST_EFFORT_ATTEMPTS`] peers gets one request with no wait between them, so a
+    /// missing hash costs no backoff while the caller holds a download permit. No available
+    /// copy returns `Ok(false)`. An error beyond a 404 is logged at `warn`. Store faults are
+    /// returned.
+    BestEffort,
+}
+
+/// Downloads `hash` from `servers` and stores the file only once its
+/// decoded bytes hash to `hash`; `Ok(true)` once it is stored (or already was). With a
+/// `budget`, the decoded body is held against it from its first chunk until the file is
+/// stored. `policy` sets the attempts and what a failure answers.
+pub async fn download_file(
     client: &CheckedRedirectClient,
     storage: &Storage,
     hash: &str,
-    servers: &[String],
+    servers: &DownloadPeers,
     budget: Option<&ByteBudget>,
-) -> Result<(), SyncError> {
+    policy: DownloadPolicy,
+) -> Result<bool, SyncError> {
     if storage.exist(hash).await? {
-        return Ok(());
+        return Ok(true);
     }
+    let required = policy == DownloadPolicy::Required;
+    let live_peers = matches!(servers.available, AvailablePeers::Current(_));
+    let attempts = match policy {
+        DownloadPolicy::Required if live_peers => MAX_DOWNLOAD_ATTEMPTS,
+        DownloadPolicy::Required => READ_THROUGH_DOWNLOAD_ATTEMPTS,
+        DownloadPolicy::BestEffort => BEST_EFFORT_ATTEMPTS,
+    };
 
-    if servers.is_empty() {
-        return Err(SyncError::Other("No servers available".into()));
-    }
-
-    let mut last_error = None;
-    let start = (uuid::Uuid::new_v4().as_u128() % servers.len() as u128) as usize;
-    for attempt in 0..MAX_DOWNLOAD_RETRIES {
-        let server = &servers[(start + attempt as usize) % servers.len()];
-        match fetch_verified(client, hash, server, attempt, budget).await {
+    let mut failure = None;
+    let rotation = uuid::Uuid::new_v4().as_u128() as usize;
+    let mut tried = HashSet::new();
+    let mut rejected = HashSet::new();
+    let mut attempt = 0;
+    let mut request = 0u32;
+    let mut delay = None;
+    while attempt < attempts {
+        let server = match servers
+            .next(&mut tried, &rejected, rotation, required)
+            .await
+        {
+            Ok(Some(server)) => server,
+            Err(error) if required => return Err(error),
+            _ => break,
+        };
+        if let Some(delay) = delay.take() {
+            // Select again after waiting to use the latest peer membership.
+            tokio::time::sleep(delay).await;
+            continue;
+        }
+        let result = fetch_verified(client, hash, &server, request, budget).await;
+        request = request.saturating_add(1);
+        match result {
             Ok((bytes, reservation)) => {
                 storage.store(hash, bytes.into()).await?;
                 drop(reservation);
                 debug!(hash, "Downloaded content file");
-                return Ok(());
+                return Ok(true);
             }
-            Err(e) => last_error = Some(e),
+            Err(error @ (SyncError::NotFound(_) | SyncError::ContentHashMismatch { .. })) => {
+                rejected.insert(server);
+                if required || matches!(&error, SyncError::ContentHashMismatch { .. }) {
+                    failure = Some(error);
+                }
+                if required && !live_peers {
+                    // A definitive miss eliminates one fixed source. The backoff budget
+                    // still applies to transient failures.
+                    continue;
+                }
+            }
+            Err(error) => {
+                tried.insert(server);
+                if required {
+                    let wait_ms = if live_peers { 1_000 } else { 500 << attempt };
+                    delay = Some(std::time::Duration::from_millis(wait_ms));
+                }
+                failure = Some(error);
+            }
         }
-
-        if attempt + 1 < MAX_DOWNLOAD_RETRIES {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                RETRY_WAIT_MS
-                    .saturating_mul(1u64 << attempt.min(6))
-                    .min(30_000),
-            ))
-            .await;
-        }
+        attempt += 1;
     }
 
-    Err(last_error
-        .unwrap_or_else(|| SyncError::Other(format!("Failed to download {} after retries", hash))))
+    if required {
+        return Err(failure.unwrap_or(SyncError::NoServers));
+    }
+    match failure {
+        Some(error) => warn!(hash, %error, "a best-effort file could not be downloaded"),
+        None => debug!(hash, "no peer has a best-effort file"),
+    }
+    Ok(false)
 }
 
 /// One `GET {server}/contents/{hash}`: the decoded body, only when it hashes to `hash`, and
@@ -698,7 +932,7 @@ pub(crate) async fn fetch_verified(
             SyncError::from(e)
         })?;
     if resp.status().as_u16() == 404 {
-        return Err(SyncError::Other(format!(
+        return Err(SyncError::NotFound(format!(
             "404 fetching {} from {}",
             hash, server
         )));
@@ -749,10 +983,10 @@ pub(crate) async fn fetch_verified(
             attempt,
             "Downloaded content failed hash verification"
         );
-        return Err(SyncError::Other(format!(
-            "content hash mismatch for {} from {}",
-            hash, server
-        )));
+        return Err(SyncError::ContentHashMismatch {
+            hash: hash.to_owned(),
+            server: server.to_owned(),
+        });
     }
     Ok((bytes, reservation))
 }
@@ -871,117 +1105,160 @@ mod tests {
     use crate::auth::{hash_bytes, hash_bytes_v1};
     #[cfg(unix)]
     use crate::storage::hex_prefix;
-    use crate::sync_test_support::{spawn_content_server, temp_storage};
+    use crate::sync_test_support::{RemoveOnDrop, spawn_content_server, temp_storage};
+
+    fn files_of(entity: serde_json::Value) -> EntityFiles {
+        entity_files(&serde_json::to_vec(&entity).unwrap()).unwrap()
+    }
 
     #[test]
-    fn test_extract_content_hashes() {
-        let entity = serde_json::json!({
+    fn content_hashes_are_listed_once_in_order() {
+        let first = hash_bytes_v1(b"scene");
+        let second = hash_bytes_v1(b"model");
+        let files = files_of(serde_json::json!({
+            "type": "scene",
             "content": [
-                {"file": "scene.json", "hash": "bafabc"},
-                {"file": "model.glb", "hash": "bafdef"},
+                {"file": "scene.json", "hash": first},
+                {"file": "model.glb", "hash": second},
+                {"file": "copy.glb", "hash": second},
             ]
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes, vec!["bafabc", "bafdef"]);
+        }));
+        assert_eq!(files.content, vec![first, second]);
+        assert!(files.snapshots.is_empty());
     }
 
     #[test]
-    fn test_extract_content_hashes_deduplicates() {
-        let entity = serde_json::json!({
-            "content": [
-                {"file": "body.png", "hash": "bafbody"},
-            ],
-            "metadata": {
-                "avatars": [{
-                    "avatar": {
-                        "snapshots": {
-                            "face256": "bafface",
-                            "body": "bafbody",
-                        }
-                    }
-                }]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes.len(), 2);
-        assert!(hashes.contains(&"bafbody".to_string()));
-        assert!(hashes.contains(&"bafface".to_string()));
-    }
-
-    #[test]
-    fn test_extract_content_hashes_multi_avatar() {
-        let entity = serde_json::json!({
-            "content": [],
-            "metadata": {
-                "avatars": [
-                    {"avatar": {"snapshots": {"face": "baf1"}}},
-                    {"avatar": {"snapshots": {"face": "baf2"}}},
-                ]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes.len(), 2);
-        assert!(hashes.contains(&"baf1".to_string()));
-        assert!(hashes.contains(&"baf2".to_string()));
-    }
-
-    #[test]
-    fn test_extract_content_hashes_url_snapshots() {
-        let entity = serde_json::json!({
-            "content": [],
-            "metadata": {
-                "avatars": [{
-                    "avatar": {
-                        "snapshots": {
-                            "face": "https://peer.decentraland.org/content/contents/bafurlhash"
-                        }
-                    }
-                }]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        let hashes = extract_content_hashes(&data).unwrap();
-        assert_eq!(hashes, vec!["bafurlhash"]);
-    }
-
-    #[test]
-    fn profiles_fetch_every_avatar_render() {
-        let entity = serde_json::json!({
-            "type": "profile",
-            "content": [
-                {"file": "body.png", "hash": "bafbody"},
-                {"file": "face256.png", "hash": "bafface256"},
-                {"file": "face.png", "hash": "bafface512"},
-                {"file": "./face128.png", "hash": "bafface128"},
-                {"file": "extra.json", "hash": "bafextra"},
-            ],
-            "metadata": {
-                "avatars": [{
-                    "avatar": {
-                        "snapshots": {
-                            "face": "bafface512",
-                            "face128": "https://peer.decentraland.org/content/contents/bafface128",
-                            "face256": "bafface256",
-                            "body": "bafbody",
-                        }
-                    }
-                }]
-            }
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
+    fn local_and_synced_manifests_accept_omitted_content_and_historical_cids() {
+        let base = serde_json::json!({"type":"scene", "pointers":["0,0"], "timestamp":1});
+        let bytes = serde_json::to_vec(&base).unwrap();
+        assert!(entity_files(&bytes).unwrap().content.is_empty());
+        assert!(
+            serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                .unwrap()
+                .content
+                .is_empty()
+        );
+        let legacy = hash_bytes(b"historical content");
+        let mut entity = base;
+        entity["content"] = serde_json::json!([{"file":"a.txt","hash":legacy}]);
+        let bytes = serde_json::to_vec(&entity).unwrap();
+        assert_eq!(entity_files(&bytes).unwrap().content, vec![legacy.clone()]);
         assert_eq!(
-            extract_content_hashes(&data).unwrap(),
+            serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                .unwrap()
+                .content[0]
+                .hash,
+            legacy
+        );
+    }
+
+    #[test]
+    fn peer_replay_reads_legacy_null_content_as_empty() {
+        let entity = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":null}"#;
+
+        assert!(entity_files(entity).unwrap().content.is_empty());
+        assert!(
+            crate::validator::entity_parser::parse_entity_from_bytes(entity, "id")
+                .unwrap()
+                .content
+                .is_empty()
+        );
+        assert!(serde_json::from_slice::<crate::entity::Entity>(entity).is_err());
+    }
+
+    #[test]
+    fn local_and_synced_manifests_reject_the_same_invalid_content() {
+        for (content, explanation) in [
+            (serde_json::json!("not an array"), "array"),
+            (
+                serde_json::json!([{"file":"missing-hash"}]),
+                "valid strings",
+            ),
+            (
+                serde_json::json!([{"file":"invalid","hash":"not-a-cid"}]),
+                "invalid hash",
+            ),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "type":"scene", "pointers":["0,0"], "timestamp":1, "content":content
+            }))
+            .unwrap();
+            assert!(entity_files(&bytes).unwrap_err().contains(explanation));
+            assert!(
+                serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(explanation)
+            );
+            assert!(
+                crate::validator::entity_parser::parse_entity_from_bytes(&bytes, "id")
+                    .unwrap_err()
+                    .to_string()
+                    .contains(explanation)
+            );
+        }
+    }
+
+    #[test]
+    fn content_file_cap_counts_declarations_before_deduplicating_hashes() {
+        let hash = hash_bytes_v1(b"duplicate");
+        let entry = serde_json::json!({"file": "a", "hash": hash});
+        let mut entries = vec![entry.clone(); 25_000];
+        assert_eq!(
+            files_of(serde_json::json!({"content": entries})).content,
+            vec![hash.clone()]
+        );
+        entries.push(entry);
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "type":"scene", "pointers":["0,0"], "timestamp":1, "content": entries
+        }))
+        .unwrap();
+        assert!(
+            entity_files(&bytes)
+                .unwrap_err()
+                .contains("maximum of 25000")
+        );
+        assert!(
+            serde_json::from_slice::<crate::entity::Entity>(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("maximum of 25000")
+        );
+    }
+
+    /// As snapshots-fetcher: only a profile's renders missing from `content[]` are added, and
+    /// only to a profile.
+    #[test]
+    fn a_profile_adds_the_renders_its_content_does_not_list() {
+        let (face, body, face256) = (
+            hash_bytes_v1(b"face"),
+            hash_bytes_v1(b"body"),
+            hash_bytes_v1(b"face256"),
+        );
+        let entity = |kind: &str| {
+            serde_json::json!({
+                "type": kind,
+                "content": [{"file": "face256.png", "hash": face256}],
+                "metadata": {"avatars": [{"avatar": {"snapshots": {
+                    "face256": face256,
+                    "face": format!("https://peer.example/content/contents/{face}"),
+                    "body": body,
+                }}}]}
+            })
+        };
+        let mut files = files_of(entity("profile"));
+        files.snapshots.sort();
+        assert_eq!(files.content, vec![face256.clone()]);
+        assert_eq!(
+            files.snapshots,
             vec![
-                "bafbody",
-                "bafface256",
-                "bafface512",
-                "bafface128",
-                "bafextra"
+                ("body.png".to_string(), body.clone()),
+                ("face.png".to_string(), face.clone()),
             ]
         );
+        // The type is read as the deployment stores it.
+        assert_eq!(files_of(entity("Profiles")).snapshots.len(), 2);
+        assert!(files_of(entity("wearable")).snapshots.is_empty());
     }
 
     const ENTITY_JSON: &[u8] = br#"{"type":"scene","content":[]}"#;
@@ -1044,7 +1321,7 @@ mod tests {
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let (storage, tmp) = temp_storage("in-flight").await;
-        let deployer = LiveSyncDeployer::new(
+        let deployer = LiveSyncDeployer::without_store(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
@@ -1059,7 +1336,7 @@ mod tests {
             ContentSource {
                 client: &client,
                 storage,
-                servers: &servers,
+                servers: DownloadPeers::fixed(&servers),
                 content_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             },
             &deployer,
@@ -1069,6 +1346,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         );
         let observe = async {
@@ -1086,6 +1364,639 @@ mod tests {
         );
         server.abort();
         let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A profile's renders named only in its metadata are fetched and recorded once stored; one
+    /// no peer has leaves the entity deployable, without a row, one already held is touched, and
+    /// a second render under a key already taken never reaches the flush.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_synced_profile_stores_and_records_the_renders_its_content_omits() {
+        let Some(pool) = crate::sync_test_support::test_pool(2).await else {
+            return;
+        };
+        let tag = crate::sync_test_support::unique();
+        let blob = |name: &str| format!("{name} {tag}").into_bytes();
+        let (face256, body, face, face128, second_body) = (
+            blob("face256"),
+            blob("body"),
+            blob("face"),
+            blob("face128"),
+            blob("second body"),
+        );
+        let [
+            face256_hash,
+            body_hash,
+            face_hash,
+            face128_hash,
+            second_body_hash,
+        ] = [&face256, &body, &face, &face128, &second_body].map(|b| hash_bytes_v1(b));
+        let pointer = format!("0x{}", &tag[..32]);
+        let entity = serde_json::to_vec(&serde_json::json!({
+            "version": "v3",
+            "type": "profile",
+            "pointers": [pointer],
+            "timestamp": 1_700_000_000_000u64,
+            "content": [{"file": "face256.png", "hash": face256_hash}],
+            "metadata": {"avatars": [
+                {"avatar": {"snapshots": {
+                    "face256": face256_hash, "body": body_hash, "face": face_hash,
+                    "face128": face128_hash,
+                }}},
+                // A second avatar's `body` would reuse `body.png`: the flush must not see it.
+                {"avatar": {"snapshots": {"body": second_body_hash}}},
+            ]},
+        }))
+        .unwrap();
+        let id = hash_bytes_v1(&entity);
+        let (url, server) = crate::sync_test_support::blob_peer(HashMap::from([
+            (id.clone(), entity),
+            (face256_hash.clone(), face256),
+            (body_hash.clone(), body),
+            (second_body_hash, second_body),
+        ]))
+        .await;
+        let (storage, tmp) = temp_storage("profile-renders").await;
+        let _tmp = RemoveOnDrop(tmp.clone());
+        // A render the store already holds, past the collector's age floor.
+        storage.store(&face128_hash, face128.into()).await.unwrap();
+        let held = storage.file_path(&face128_hash).await.unwrap().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&held)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200))
+            .unwrap();
+        let deployer = LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let (client, chain, servers) = (
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            crate::sync_test_support::signed_chain(&id).await,
+            vec![url],
+        );
+        deploy_entity_streaming(
+            ContentSource {
+                client: &client,
+                storage: storage.clone(),
+                servers: DownloadPeers::fixed(&servers),
+                content_semaphore: Arc::new(tokio::sync::Semaphore::new(2)),
+            },
+            &deployer,
+            RemoteDeployment {
+                entity_id: &id,
+                auth_chain: &chain,
+                context: DeploymentContext::Synced,
+                report: None,
+                retry_state: None,
+                discard_overtaken: false,
+            },
+        )
+        .await
+        .unwrap();
+        deployer.flush().await.unwrap();
+
+        assert!(storage.exist(&body_hash).await.unwrap());
+        let held_age = std::fs::metadata(&held)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .elapsed()
+            .unwrap_or_default();
+        assert!(
+            held_age < std::time::Duration::from_secs(600),
+            "a held render is touched before the entity is buffered: {held_age:?}"
+        );
+        let mut rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT cf.key, cf.content_hash FROM content.content_files cf \
+             JOIN content.deployments d ON d.id = cf.deployment WHERE d.entity_id = $1",
+        )
+        .bind(&id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                ("body.png".to_string(), body_hash),
+                ("face128.png".to_string(), face128_hash),
+                ("face256.png".to_string(), face256_hash),
+            ]
+        );
+        server.abort();
+    }
+
+    /// A stored profile whose only file is a render named in its metadata, and a deployer that is
+    /// never reached.
+    async fn stored_profile_with_a_render(
+        tag: &str,
+    ) -> (Arc<Storage>, std::path::PathBuf, String, String, Vec<u8>) {
+        let render = format!("render {tag} {}", uuid::Uuid::new_v4()).into_bytes();
+        let render_hash = hash_bytes_v1(&render);
+        let entity = serde_json::to_vec(&serde_json::json!({
+            "type": "profile",
+            "pointers": ["0x0000000000000000000000000000000000000001"],
+            "timestamp": 1_700_000_000_000u64,
+            "content": [],
+            "metadata": {"avatars": [{"avatar": {"snapshots": {"body": render_hash}}}]},
+        }))
+        .unwrap();
+        let id = hash_bytes_v1(&entity);
+        let (storage, tmp) = temp_storage(tag).await;
+        storage.store(&id, entity.into()).await.unwrap();
+        (storage, tmp, id, render_hash, render)
+    }
+
+    async fn deploy_stored(
+        storage: Arc<Storage>,
+        id: &str,
+        servers: &[String],
+        content_semaphore: Arc<Semaphore>,
+    ) -> Result<(), SyncError> {
+        let deployer = LiveSyncDeployer::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        deploy_entity_streaming(
+            ContentSource {
+                client: &client,
+                storage,
+                servers: DownloadPeers::fixed(servers),
+                content_semaphore,
+            },
+            &deployer,
+            RemoteDeployment {
+                entity_id: id,
+                auth_chain: &Vec::new(),
+                context: DeploymentContext::Synced,
+                report: None,
+                retry_state: None,
+                discard_overtaken: false,
+            },
+        )
+        .await
+    }
+
+    /// A render is best-effort, but a stopped sync still fails the attempt.
+    #[tokio::test]
+    async fn a_stop_while_fetching_a_render_fails_the_deploy() {
+        let (storage, tmp, id, _, _) = stored_profile_with_a_render("render-stop").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let closed = Arc::new(Semaphore::new(1));
+        closed.close();
+        let servers = vec!["http://127.0.0.1:1".to_string()];
+        let result = deploy_stored(storage, &id, &servers, closed).await;
+        assert!(matches!(result, Err(SyncError::Stopped)), "{result:?}");
+    }
+
+    /// A render is best-effort, but a store that cannot keep the bytes a peer served fails the
+    /// attempt instead of deploying without them.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_store_fault_on_a_render_fails_the_deploy() {
+        let (storage, tmp, id, render_hash, render) =
+            stored_profile_with_a_render("render-store").await;
+        let _tmp = RemoveOnDrop(tmp.clone());
+        // A dangling link where the render's shard belongs: a read finds it absent, a write
+        // cannot create the shard (even as root).
+        let shard = storage.root().join(hex_prefix(&render_hash));
+        assert_ne!(hex_prefix(&render_hash), hex_prefix(&id));
+        std::os::unix::fs::symlink(tmp.join("nowhere"), &shard).unwrap();
+        assert!(!storage.exist(&render_hash).await.unwrap());
+        let (url, server) =
+            crate::sync_test_support::blob_peer(HashMap::from([(render_hash, render)])).await;
+        let result = deploy_stored(storage, &id, &[url], Arc::new(Semaphore::new(1))).await;
+        assert!(matches!(result, Err(SyncError::Storage(_))), "{result:?}");
+        server.abort();
+    }
+
+    /// An entity whose signature does not verify never touches the renders it names: the touch
+    /// runs only once the entity is verified, so an unsigned entity cannot keep an orphan alive.
+    #[tokio::test]
+    async fn an_unverified_profile_leaves_its_held_render_aged() {
+        let (storage, tmp, id, render_hash, render) =
+            stored_profile_with_a_render("render-unverified").await;
+        let _tmp = RemoveOnDrop(tmp);
+        storage.store(&render_hash, render.into()).await.unwrap();
+        let held = storage.file_path(&render_hash).await.unwrap().unwrap();
+        let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::File::options()
+            .write(true)
+            .open(&held)
+            .unwrap()
+            .set_modified(aged)
+            .unwrap();
+
+        let result = deploy_stored(storage, &id, &[], Arc::new(Semaphore::new(1))).await;
+        assert!(
+            matches!(&result, Err(SyncError::DeploymentRejected(reason))
+                if reason.contains("auth chain verification failed")),
+            "the signature check rejects it: {result:?}"
+        );
+        assert_eq!(std::fs::metadata(&held).unwrap().modified().unwrap(), aged);
+    }
+
+    /// A render the process may not touch gets no row and fails nothing; an absent one gets no
+    /// row either. `refused` is another uid's `0644` file the store can stat, so its refusal
+    /// comes from setting its times; `hidden` sits in a shard the process may not enter, so its
+    /// refusal comes from the stat.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_render_that_cannot_be_touched_is_skipped() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if running_as_root() {
+            eprintln!("skipping: permissions do not bind when running as root");
+            return;
+        }
+        let (storage, tmp) = temp_storage("render-untouchable").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let own_uid = std::fs::metadata(storage.root()).unwrap().uid();
+        let foreign = std::path::Path::new("/etc/passwd");
+        match std::fs::metadata(foreign) {
+            Ok(meta) if meta.is_file() && meta.uid() != own_uid => {}
+            _ => {
+                eprintln!(
+                    "skipping: no file owned by another uid at {}",
+                    foreign.display()
+                );
+                return;
+            }
+        }
+        let [held, refused, hidden, absent] =
+            [b"held".as_slice(), b"refused", b"hidden", b"absent"].map(hash_bytes_v1);
+        assert_ne!(hex_prefix(&held), hex_prefix(&hidden));
+        assert_ne!(hex_prefix(&refused), hex_prefix(&hidden));
+        for (hash, bytes) in [(&held, "held"), (&refused, "refused"), (&hidden, "hidden")] {
+            storage.store(hash, bytes.as_bytes().into()).await.unwrap();
+        }
+        let refused_path = crate::storage::resolve_file_path(storage.root(), &refused).unwrap();
+        std::fs::remove_file(&refused_path).unwrap();
+        std::os::unix::fs::symlink(foreign, &refused_path).unwrap();
+        assert!(storage.exist(&refused).await.unwrap(), "the stat passes");
+        assert!(
+            matches!(storage.touch(&refused).await,
+                Err(crate::storage::StorageError::Io(e)) if e.kind() == std::io::ErrorKind::PermissionDenied),
+            "setting the times is refused"
+        );
+        let shard = storage.root().join(hex_prefix(&hidden));
+        std::fs::set_permissions(&shard, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let renders = vec![
+            ("face.png".to_string(), held.clone()),
+            ("body.png".to_string(), refused),
+            ("face256.png".to_string(), hidden),
+            ("body256.png".to_string(), absent),
+        ];
+        let touched = touch_renders(&storage, "entity", renders).await;
+        std::fs::set_permissions(&shard, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(touched.unwrap(), vec![("face.png".to_string(), held)]);
+    }
+
+    /// A best-effort file a peer fails on (an error status, not a 404) is no error, and nor is
+    /// having no servers; a required file with no servers is.
+    #[tokio::test]
+    async fn a_best_effort_file_survives_a_failing_peer_and_no_peers() {
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let servers = vec![format!("http://{}", listener.local_addr().unwrap())];
+        let counted = hits.clone();
+        let app = axum::Router::new().route(
+            "/contents/{hash}",
+            axum::routing::get(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (storage, tmp) = temp_storage("render-500").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        let hash = hash_bytes_v1(b"a render a peer fails on");
+
+        let best_effort = |servers: Vec<String>| {
+            let (client, storage, hash) = (&client, &storage, &hash);
+            async move {
+                download_file(
+                    client,
+                    storage,
+                    hash,
+                    &DownloadPeers::fixed(&servers),
+                    None,
+                    DownloadPolicy::BestEffort,
+                )
+                .await
+            }
+        };
+        assert!(!best_effort(servers).await.unwrap());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(!best_effort(Vec::new()).await.unwrap());
+        let required = download_file(
+            &client,
+            &storage,
+            &hash,
+            &DownloadPeers::fixed(&[]),
+            None,
+            DownloadPolicy::Required,
+        )
+        .await;
+        assert!(
+            matches!(required, Err(SyncError::NoServers)),
+            "{required:?}"
+        );
+        server.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_download_tries_its_advertiser_first_and_follows_a_peer_change() {
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+        use axum::{Router, http::StatusCode, routing::get};
+
+        const PAYLOAD: &[u8] = b"served by the new peer";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (removed, advertiser, added) = (
+            format!("{base}/removed"),
+            format!("{base}/advertiser"),
+            format!("{base}/added"),
+        );
+        let peers = CurrentDownloadPeers::default();
+        *peers.write().await = vec![removed, advertiser.clone()];
+        let servers = DownloadPeers::current(std::slice::from_ref(&advertiser), peers.clone());
+        let hits = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let advertiser_hits = hits.clone();
+        let removed_hits = hits.clone();
+        let added_hits = hits.clone();
+        let app = Router::new()
+            .route(
+                "/removed/contents/{hash}",
+                get(move || {
+                    removed_hits.lock().push("removed");
+                    async { PAYLOAD }
+                }),
+            )
+            .route(
+                "/advertiser/contents/{hash}",
+                get(move || {
+                    let (peers, added) = (peers.clone(), added.clone());
+                    advertiser_hits.lock().push("advertiser");
+                    async move {
+                        *peers.write().await = vec![added];
+                        StatusCode::NOT_FOUND
+                    }
+                }),
+            )
+            .route(
+                "/added/contents/{hash}",
+                get(move || {
+                    added_hits.lock().push("added");
+                    async { PAYLOAD }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (storage, tmp) = temp_storage("advertising-peer").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(PAYLOAD);
+        assert!(
+            download_file(
+                &crate::sync::test_sync_client(reqwest::Client::new()),
+                &storage,
+                &hash,
+                &servers,
+                None,
+                DownloadPolicy::Required,
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(*hits.lock(), ["advertiser", "added"]);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn first_attempts_rotate_across_current_advertisers_before_using_fallback() {
+        let first = "https://first.example".to_owned();
+        let second = "https://second.example".to_owned();
+        let fallback = "https://fallback.example".to_owned();
+        let membership = vec![fallback, first.clone(), second.clone()];
+        let current = Arc::new(tokio::sync::RwLock::new(membership));
+        let peers = DownloadPeers::current(&[first.clone(), second.clone()], current);
+
+        for (rotation, expected) in [first, second].into_iter().enumerate() {
+            let selected = peers
+                .next(&mut HashSet::new(), &HashSet::new(), rotation, true)
+                .await
+                .unwrap();
+            assert_eq!(selected, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_removed_advertiser_is_ineligible_for_the_first_attempt() {
+        let removed = "https://removed.example".to_owned();
+        let fallback = "https://fallback.example".to_owned();
+        let current = Arc::new(tokio::sync::RwLock::new(vec![fallback.clone()]));
+        let peers = DownloadPeers::current(&[removed], current);
+
+        let selected = peers
+            .next(&mut HashSet::new(), &HashSet::new(), 0, true)
+            .await
+            .unwrap();
+        assert_eq!(selected, Some(fallback));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_required_download_skips_peers_that_returned_a_definitive_failure() {
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let missing = Arc::new(AtomicUsize::new(0));
+        let corrupt = Arc::new(AtomicUsize::new(0));
+        let missing_hits = missing.clone();
+        let corrupt_hits = corrupt.clone();
+        let app = Router::new()
+            .route(
+                "/missing/contents/{hash}",
+                get(move || {
+                    missing_hits.fetch_add(1, Ordering::Relaxed);
+                    async { StatusCode::NOT_FOUND }
+                }),
+            )
+            .route(
+                "/corrupt/contents/{hash}",
+                get(move || {
+                    corrupt_hits.fetch_add(1, Ordering::Relaxed);
+                    async { "bytes with a different hash" }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let current = Arc::new(tokio::sync::RwLock::new(vec![
+            format!("{base}/missing"),
+            format!("{base}/corrupt"),
+        ]));
+        let (storage, tmp) = temp_storage("definitive-download-errors").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(b"valid content");
+        let outcome = download_file(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &hash,
+            &DownloadPeers::current(&[], current),
+            None,
+            DownloadPolicy::Required,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                outcome,
+                Err(SyncError::NotFound(_) | SyncError::ContentHashMismatch { .. })
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(missing.load(Ordering::Relaxed), 1);
+        assert_eq!(corrupt.load(Ordering::Relaxed), 1);
+        server.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_required_download_tries_ten_times_in_sync_and_three_in_read_through() {
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        let app = Router::new().route(
+            "/contents/{hash}",
+            get(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                async { StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (storage, tmp) = temp_storage("download-attempts").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(b"a required file the peer never serves");
+        let current = Arc::new(tokio::sync::RwLock::new(vec![base.clone()]));
+        let modes = [
+            (DownloadPeers::current(&[], current), 10),
+            (DownloadPeers::fixed(&[base]), 3),
+        ];
+        for (peers, expected) in modes {
+            let outcome = download_file(
+                &crate::sync::test_sync_client(reqwest::Client::new()),
+                &storage,
+                &hash,
+                &peers,
+                None,
+                DownloadPolicy::Required,
+            )
+            .await;
+            assert!(matches!(outcome, Err(SyncError::Other(_))), "{outcome:?}");
+            assert_eq!(hits.swap(0, Ordering::Relaxed), expected);
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn read_through_reaches_the_next_source_after_three_definitive_misses() {
+        use axum::{Router, extract::Path, http::StatusCode, routing::get};
+
+        let hits = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let observed = hits.clone();
+        let app = Router::new().route(
+            "/{peer}/contents/{hash}",
+            get(move |Path((peer, _hash)): Path<(String, String)>| {
+                let mut hits = observed.lock();
+                hits.push(peer);
+                let response = match hits.len() {
+                    1 | 3 => (StatusCode::NOT_FOUND, ""),
+                    2 => (StatusCode::OK, "wrong content"),
+                    _ => (StatusCode::OK, "fresh content"),
+                };
+                async move { response }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let peers = (0..4)
+            .map(|peer| format!("{base}/{peer}"))
+            .collect::<Vec<_>>();
+        let (storage, tmp) = temp_storage("read-through-definitive-misses").await;
+        let _cleanup = RemoveOnDrop(tmp);
+        let hash = hash_bytes_v1(b"fresh content");
+
+        let copied = download_file(
+            &crate::sync::test_sync_client(reqwest::Client::new()),
+            &storage,
+            &hash,
+            &DownloadPeers::fixed(&peers),
+            None,
+            DownloadPolicy::Required,
+        )
+        .await
+        .unwrap();
+
+        assert!(copied);
+        assert!(storage.exist(&hash).await.unwrap());
+        let hits = hits.lock();
+        assert_eq!(hits.len(), 4);
+        assert_eq!(hits.iter().collect::<HashSet<_>>().len(), 4);
+        server.abort();
+    }
+
+    /// A render no peer serves costs one request to each peer, with no wait between them.
+    #[tokio::test]
+    async fn a_missing_render_is_asked_of_each_peer_once() {
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut servers = Vec::new();
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            servers.push(format!("http://{}", listener.local_addr().unwrap()));
+            let hits = hits.clone();
+            let app = axum::Router::new().route(
+                "/contents/{hash}",
+                axum::routing::get(move || {
+                    hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { axum::http::StatusCode::NOT_FOUND }
+                }),
+            );
+            handles.push(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap()
+            }));
+        }
+        let (storage, tmp) = temp_storage("render-404").await;
+        let _tmp = RemoveOnDrop(tmp.clone());
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        let hash = hash_bytes_v1(b"a render no peer has");
+        let stored = download_file(
+            &client,
+            &storage,
+            &hash,
+            &DownloadPeers::fixed(&servers),
+            None,
+            DownloadPolicy::BestEffort,
+        )
+        .await
+        .unwrap();
+        assert!(!stored);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        handles.iter().for_each(tokio::task::JoinHandle::abort);
     }
 
     #[tokio::test]
@@ -1175,6 +2086,30 @@ mod tests {
         assert!(!eviction_locks().lock().contains_key(&entity_id));
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[test]
+    fn an_eviction_that_unwinds_leaves_no_lock_entry() {
+        let entity_id = format!("bafy-eviction-unwinds-{}", std::process::id());
+        let unwound = std::panic::catch_unwind(|| {
+            let _entry = EvictionLock::of(&entity_id);
+            assert!(eviction_locks().lock().contains_key(&entity_id));
+            panic!("eviction panicked");
+        });
+        assert!(unwound.is_err());
+        assert!(!eviction_locks().lock().contains_key(&entity_id));
+    }
+
+    #[test]
+    fn an_eviction_lock_another_eviction_holds_stays_until_both_end() {
+        let entity_id = format!("bafy-eviction-shared-{}", std::process::id());
+        let first = EvictionLock::of(&entity_id);
+        let second = EvictionLock::of(&entity_id);
+        assert!(Arc::ptr_eq(&first.lock, &second.lock));
+        drop(first);
+        assert!(eviction_locks().lock().contains_key(&entity_id));
+        drop(second);
+        assert!(!eviction_locks().lock().contains_key(&entity_id));
     }
 
     #[cfg(unix)]
@@ -1269,12 +2204,13 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("gzip-wire").await;
 
-        download_file_with_retries(
+        download_file(
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
-            &[base],
+            &DownloadPeers::fixed(&[base]),
             None,
+            DownloadPolicy::Required,
         )
         .await
         .expect("a gzip-labeled body whose decoded bytes match the CID must be accepted");
@@ -1291,19 +2227,20 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn gzip_labeled_body_whose_raw_bytes_match_the_cid_is_rejected() {
         const PAYLOAD: &[u8] = br#"{"type":"scene","content":[],"t":"raw-labeled"}"#;
         let cid = hash_bytes_v1(PAYLOAD);
         let (base, server) = spawn_content_server(PAYLOAD.to_vec(), Some("gzip")).await;
         let (storage, tmp) = temp_storage("raw-labeled").await;
 
-        let err = download_file_with_retries(
+        let err = download_file(
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
-            &[base],
+            &DownloadPeers::fixed(&[base]),
             None,
+            DownloadPolicy::Required,
         )
         .await
         .expect_err("a non-gzip body labeled gzip must fail transfer decoding");
@@ -1317,7 +2254,7 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn corrupt_gzip_content_still_fails_hash_verification() {
         const PAYLOAD: &[u8] = br#"{"type":"scene","content":[],"t":"expected"}"#;
         const OTHER: &[u8] = br#"{"type":"scene","content":[],"t":"corrupted"}"#;
@@ -1326,12 +2263,13 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("gzip-corrupt").await;
 
-        let err = download_file_with_retries(
+        let err = download_file(
             &crate::sync::test_sync_client(reqwest::Client::new()),
             &storage,
             &cid,
-            &[base],
+            &DownloadPeers::fixed(&[base]),
             None,
+            DownloadPolicy::Required,
         )
         .await
         .expect_err("decoded bytes that mismatch the CID must still be rejected");
@@ -1418,6 +2356,48 @@ mod tests {
             .await
             .expect_err("a compression bomb must not outgrow the caller's cap");
         assert!(err.contains("exceeds 100 byte cap"), "{err}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_slow_gzip_stream_fails_even_when_no_decoded_bytes_reach_the_sink() {
+        use axum::{Router, body::Body, http::header, response::IntoResponse, routing::get};
+        use std::time::Duration;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        let rx = Arc::new(tokio::sync::Mutex::new(Some(rx)));
+        let app = Router::new().route(
+            "/",
+            get(move || async move {
+                let rx = rx.lock().await.take().unwrap();
+                let chunks = futures::stream::unfold(rx, |mut rx| async {
+                    rx.recv()
+                        .await
+                        .map(|chunk| (Ok::<_, std::convert::Infallible>(chunk), rx))
+                });
+                (
+                    [(header::CONTENT_ENCODING, "gzip")],
+                    Body::from_stream(chunks),
+                )
+                    .into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tx.send(gzip(b"")).await.unwrap();
+        let resp = reqwest::Client::new().get(url).send().await.unwrap();
+
+        tokio::time::pause();
+        let mut sink = LargestRun(0, 0);
+        let mut transfer = Box::pin(stream_body(resp, 1024, &mut sink));
+        assert!(futures::poll!(&mut transfer).is_pending());
+        tokio::time::advance(Duration::from_secs(61)).await;
+        tx.send(gzip(b"")).await.unwrap();
+        drop(tx);
+        let err = transfer.await.unwrap_err();
+        assert!(err.contains("fell below 4096 bytes/s"), "{err}");
+        assert_eq!(sink.1, 0);
         server.abort();
     }
 

@@ -79,6 +79,7 @@
   --shop-option-on: rgba(255, 255, 255, 0.2); /* a payment option picked or hovered (Transparencies/White 20) */
   --shop-option-ring: linear-gradient(180.67deg, #ff7439 2.82%, #ff2d55 97.47%); /* a picked option's 2px rim (Gradients/Button Primary) */
   --shop-face-rim: rgba(255, 255, 255, 0.6); /* Transparencies/White 60: a profile picture's ring */
+  --shop-chip-bg: rgba(0, 0, 0, 0.2); /* Transparencies/Black 20: a category chip (what an item hides) */
   --brand-purple: #691fa9; /* Brand/Purple: a card's thumbnail base, the skeleton's band */
   --brand-purple-dark: #4c147c; /* Brand/Purple Dark: the skeleton's base */
   --name-card-base: #604cb0; /* the Shop's NAME card art, under its glows */
@@ -193,6 +194,19 @@
   --dur-capture-pause: 100ms; /* photo mode: between the flash and the fly */
   --dur-photo-hud: 200ms; /* photo mode: its HUD fades in and out */
   --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+
+  /* ---- photo detail (the camera reel's viewer) ---- */
+  --dur-photo-panel: 500ms; /* the info panel slides in and out */
+  --photo-close: rgba(0, 0, 0, 0.031); /* the close and info buttons at rest */
+  --photo-close-hover: rgba(255, 255, 255, 0.051);
+  --photo-avatar-ring: rgba(255, 255, 255, 0.2); /* a person's picture */
+  --photo-tag: rgba(255, 255, 255, 0.298); /* an unclaimed name's #tag */
+  --photo-empty: rgba(255, 255, 255, 0.698); /* "No collectibles equipped…" */
+  --photo-buy-radius: 11px;
+  --photo-buy-pressed: #ee274d;
+  --photo-skeleton: rgba(255, 255, 255, 0.02); /* the info panel's loading shapes */
+  --photo-skeleton-band: #6a6a6a; /* ...and the band that sweeps them */
+  --photo-download-path: #40a0ff; /* the download toast's folder */
 
   /* ---- menu pages (1920×1080 reference canvas) ----
      Alphas here are sRGB equivalents of overlays designed for linear-space blending, which reads
@@ -574,6 +588,7 @@
   --place-access-open: #33cc33; /* the place detail's YOU ARE INVITED */
   --place-chip: rgba(255, 255, 255, 0.1); /* a category on the place detail */
   --explore-modal-scrim: rgba(0, 0, 0, 0.85); /* behind the lobby's Map, Places and Events modal */
+  --passport-scrim: rgba(0, 0, 0, 0.92); /* the passport's backdrop */
 }
 
 /* ---- item rarity ----

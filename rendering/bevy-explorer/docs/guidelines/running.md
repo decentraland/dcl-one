@@ -225,6 +225,11 @@ State, in every build:
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
+- `/teleport_state`: the landings on a named spawn point as JSON, the Teleport debug section's
+  readout: `pending`, the name the landing under way looks for (or the realm change that has yet
+  to start one), and `last`, the `name` the player's last such landing looked for with `found`,
+  whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
+  asks for such a landing.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
@@ -264,11 +269,15 @@ State, in every build:
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
-  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the
+  tags with a scene's `AvatarNametag` plate) and `hidden` (the tags that
   don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
-  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
+  avatar a scene made with `AvatarShape`), `nameShown` (false for a tag that is its plate alone:
+  the avatar has no name, or a scene's area hides it), `plate` (null, or the plate's `label` and
+  its `labelColor`, `backgroundColor` and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty
+  for an avatar with no name), `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
   `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
   an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
@@ -302,6 +311,13 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/scene_topics`: the **Scene messages** debug section's routing, topic-traffic and policy
+  readings. `sceneRooms`, `room`, `running`, `isolated` and `subscribedScenes` describe routing.
+  `published`, `publishDropped`, `received` and `receiveDropped` count topic packets, including
+  rejected banned senders in both received and dropped. `bannedSenderDrops`, `filteredInboundCrdt`,
+  `filteredOutboundCrdt` and `invalidMessages` cover the engine's message policy across channels;
+  `binaryPayloadLimit` is 13,269 bytes on egress. Counters are cumulative since startup, and
+  filtering counts packets whose CRDT records changed.
 - `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
   JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
   requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
@@ -311,12 +327,24 @@ State, in every build:
   `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
   balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
   `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
+- `/home_state`: the home as JSON, the Home debug section's source: `account` (the signed-in
+  wallet address, the key of its home; `null` before sign-in and for a guest with no account),
+  `pinned` (that account's home as
+  `<realm> x,y`; `null` when it has none), `startup` (the home the engine starts in: the stored
+  sign-in's account's, else the last account's), `lastAccount` (the account a home was last read
+  for) and `unadopted` (true while the config still holds a home kept for no account, which the
+  first account to sign in takes). Reading it writes nothing. `/home_clear` takes the signed-in
+  account's home back, and refuses when no account is signed in or the account has no home. The
+  HUD is not told: its home pin and Set as Home stay on until it reads the home again (the lobby
+  opening, a Set as Home press, a reload).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
   `checkedAgoSecs`, `error`), the local user's scene admission
-  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`,
+  `retainedRefusals`: scene id, scope and `retryDue` in elapsed engine seconds, from the active
+  room or its saved deadline while away),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
   `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
@@ -324,7 +352,9 @@ State, in every build:
   through the social service and answer once it has; `/ban_block_refresh` re-checks the
   platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
-  coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
+  coordinates `/click_at` takes, `null` behind the camera, with the same point `normalized` (0 to
+  1 of the window, as `/click_at --normalized` takes it) and the window's `screen` (`width`,
+  `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
@@ -362,6 +392,17 @@ On the web only:
   (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
   `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
   would otherwise wait the full 62 s schedule.
+- `/scene_loop_state`: the scene loop's scheduling as JSON, the Scene Loop debug section's
+  reading ([scheduling](scheduling.md)): `mode`; for the last loop, `deadline` (where its
+  deadline came from) and `budget` (ms from its start to its deadline); `handoffGap` (ms from
+  the last handoff to the render worker to the next frame's start); `tail` (the frame tail's
+  90th percentile and the reserve with its margin, ms) and `tailFrames` (frames measured, of
+  32); `lateness` (the 90th percentile of the last second's timed waits for replies, ms); and
+  `woken` (`count` and `scenes`, the titles of the scenes whose relays wake on the engine's send;
+  null in a mode that does not wake the relays). `unavailable` says why a reading is null.
+- `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
+  reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
+  each relay at its next step. The reply names the mode; an unknown name fails with the list.
 
 The HUD and input:
 
@@ -397,7 +438,9 @@ The HUD and input:
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
-  `/click_at <x> <y> [--button left|right|middle]`.
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]`: logical pixels from the top
+  left, or 0 to 1 of the window with `--normalized`. It replies JSON: `x` and `y` in pixels,
+  `normalized`, `button`, `screen` and, on the web, `input` (`trusted` or `synthetic`).
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
   and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
   click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
@@ -425,8 +468,12 @@ always `trusted`, and `/press_key` and `/click_at` feed the engine the window's 
 they get real input when a DevTools client has installed `window.__dclTrustedInput` (the web driver
 does, see below); elsewhere (the DevTools console, a page script) they fall back to DOM events,
 which prove the HUD's handlers but not the browser's input path, and give a page script nothing it
-lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
-are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
+lacks. `/hud_click`, `/hud_fill` and `/click_at` say which in `"input"`: `trusted` or `synthetic`.
+Arguments are split on whitespace, and a double-quoted run is one argument, with `\"` and `\\`
+escaping inside it (`/chat nearby "two  words"`); a command typed in the chat input splits the
+same way. A command that takes JSON (the HUD commands, `/set_component`) takes the rest of the
+line split on whitespace alone, so runs of spaces inside the JSON collapse to one. The [conventions ADR](../../../../docs/adr/2026-11-17-console-command-conventions.md)
+has the rules every automation command follows. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine
@@ -496,7 +543,8 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
   switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
-  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section,
+  and cuts collider queries to the space each scene is drawn in.
   A local scene server is always a preview run, so it keeps those colliders on while a client
   pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene

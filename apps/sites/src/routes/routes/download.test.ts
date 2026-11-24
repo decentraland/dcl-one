@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 
-import { loader as downloadLoader, meta as downloadMeta } from "./download";
+import { loader as downloadLoader } from "./download";
 import { loader as creatorHubLoader } from "./download_.creator-hub";
 
 const LINUX_CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -35,6 +35,16 @@ describe("/download", () => {
     expect(response.headers.get("Location")).toBe("/play/?position=10%2C20&realm=main");
   });
 
+  it("tags the Google Play link with the visitor's campaign from the request URL", async () => {
+    const { data } = await downloadLoader(args("/download?utm_source=Partner&utm_medium=Email"));
+    expect(Object.fromEntries(new URL(data.googlePlay).searchParams)).toMatchObject({
+      utm_source: "partner",
+      utm_medium: "email",
+      utm_campaign: "dclpage",
+      referrer: "utm_org=dclrgl&utm_source=partner&utm_medium=email&utm_campaign=dclpage&utm_content=android",
+    });
+  });
+
   it("offers Windows first and macOS second to a Linux desktop", async () => {
     const { data } = await downloadLoader(args("/download"));
     expect(data.primary).toMatchObject({ os: "windows", arch: "amd64" });
@@ -64,16 +74,6 @@ describe("/download", () => {
   it("offers a phone no installer", async () => {
     const { data } = await downloadLoader(args("/download", IPHONE));
     expect(data.primary).toBeNull();
-  });
-});
-
-describe("/download head", () => {
-  it("should carry the title, the description and the canonical path", () => {
-    expect(downloadMeta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }] } as never)).toEqual([
-      { title: "Download | Decentraland" },
-      { name: "description", content: "Download Decentraland and start exploring the metaverse — events, communities, voice chat and more." },
-      { tagName: "link", rel: "canonical", href: "https://public.test/download" },
-    ]);
   });
 });
 

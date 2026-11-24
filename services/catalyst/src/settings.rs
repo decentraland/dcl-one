@@ -71,6 +71,9 @@ pub(crate) fn market_settings(
             trade_events_enabled: config.marketplace.marketplace_trade_events_index_enabled,
             sales_enabled: config.marketplace.marketplace_sales_index_enabled,
             committee_enabled: config.marketplace.marketplace_committee_index_enabled,
+            third_party_registry_enabled: config
+                .marketplace
+                .marketplace_third_party_registry_index_enabled,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),
@@ -93,6 +96,16 @@ pub(crate) fn market_settings(
             chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
             chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
         })?)
+        .with_portal(shop::market::chain_jobs::PortalSettings::parse(
+            &config.marketplace.chain_logs_source,
+            config.marketplace.chain_logs_portal_url.as_deref(),
+            &config.marketplace.chain_logs_portal_dataset_ethereum,
+            &config.marketplace.chain_logs_portal_dataset_matic,
+            config.marketplace.chain_logs_portal_api_key.clone(),
+            config.marketplace.chain_logs_portal_max_rps,
+            config.marketplace.chain_logs_portal_assert_full_history,
+            config.marketplace.chain_logs_portal_deadline_secs,
+        )?)
         .with_tips(shop::market::tips::TipSettings::parse(
             &config.marketplace.marketplace_tip_min_amount_wei,
             config.marketplace.marketplace_tip_max_age_secs,
@@ -119,8 +132,16 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
                 )
             })?;
     land_settings.index_enabled = config.land_authz.land_authz_index_enabled;
-    land_settings.interval =
-        Duration::from_secs(config.land_authz.land_authz_index_interval_secs.max(30));
+    let configured_interval = config.land_authz.land_authz_index_interval_secs;
+    let interval = configured_interval.clamp(30, 240);
+    if land_settings.index_enabled && configured_interval > interval {
+        tracing::warn!(
+            configured_interval_secs = configured_interval,
+            effective_interval_secs = interval,
+            "clamping LAND_AUTHZ_INDEX_INTERVAL_SECS to leave retry time within the public LAND freshness window"
+        );
+    }
+    land_settings.interval = Duration::from_secs(interval);
     land_settings.requests_per_pass = config.land_authz.land_authz_index_requests_per_pass.max(1);
     land_settings.replay_from_block = config.land_authz.land_authz_replay_from_block;
     land_settings.stop_block = config.land_authz.land_authz_stop_block;
@@ -147,6 +168,21 @@ mod tests {
         assert_eq!(settings.replay_from_block, Some(42));
         assert_eq!(settings.stop_block, Some(99));
         assert_eq!(settings.confirmations, 3);
+    }
+
+    #[test]
+    fn land_interval_above_the_public_limit_is_clamped_without_failing_startup() {
+        for enabled in ["true", "false"] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("LAND_AUTHZ_INDEX_ENABLED", enabled),
+                ("LAND_AUTHZ_INDEX_INTERVAL_SECS", "300"),
+            ])
+            .unwrap();
+            let settings = land_settings(&config).unwrap();
+            assert_eq!(settings.index_enabled, enabled == "true");
+            assert_eq!(settings.interval, Duration::from_secs(240));
+        }
     }
 
     #[test]

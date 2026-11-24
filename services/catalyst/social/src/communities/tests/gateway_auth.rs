@@ -220,7 +220,7 @@ async fn gateway_reuses_the_same_request_contract_wallet_verification_once() {
             AuthLink {
                 link_type: AuthLinkType::SIGNER,
                 payload: member.address.to_string(),
-                signature: None,
+                signature: Some(String::new()),
             },
             AuthLink {
                 link_type: AuthLinkType::EcdsaEip1654SignedEntity,

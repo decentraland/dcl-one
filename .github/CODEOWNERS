@@ -80,6 +80,7 @@
 /.github/workflows/cast-presenter.yml @decentraland/apis
 /library/vendor/rusty_enet/ @decentraland/apis
 /library/dcl-livekit-token/ @decentraland/apis
+/services/catalyst/comms-e2e/ @decentraland/apis
 
 # pulse
 /services/catalyst/comms/src/pulse/ @decentraland/apis
@@ -88,6 +89,7 @@
 /apps/sites/ @decentraland/web-applications
 /apps/ui3/ @decentraland/web-applications
 /library/ui/ @decentraland/web-applications
+/library/web-core/ @decentraland/web-applications
 /tooling/creators-e2e/ @decentraland/web-applications
 
 # async
@@ -105,7 +107,6 @@
 /apps/ui3/src/explorer/ @decentraland/web-applications
 
 # creator-ui
-/apps/ui3/src/editor/ @decentraland/web-applications
 /apps/ui3/editor-scene/ @decentraland/web-applications
 /apps/creator-hub/ @decentraland/web-applications
 /.github/workflows/creator-hub-*.yml @decentraland/web-applications
