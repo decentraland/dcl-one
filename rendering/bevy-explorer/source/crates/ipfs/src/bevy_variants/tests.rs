@@ -1160,3 +1160,98 @@ async fn a_variant_is_read_from_its_manifests_base() {
     assert_eq!(requests_for(&log, &variant_route), 1);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A far LOD url named under the base before a switch still reports its answer.
+#[tokio::test]
+async fn a_far_lod_named_before_a_switch_still_reports() {
+    let (io, dir) = io_with_cache("far-lod-switch");
+    io.set_bevy_variants_base(Some("https://abgen.example"));
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let _ = io.bevy_variants.bc.set(true);
+    let FarLodSource::Url(url) = io.bevy_far_lod(SCENE) else {
+        panic!("no far LOD url");
+    };
+    io.set_bevy_variants_base(Some("https://abgen-cdn.decentraland.zone"));
+    assert!(io.is_named_far_lod(&url));
+    io.far_lod_fetched(&url, Err(Some(reqwest::StatusCode::NOT_FOUND)));
+    assert_eq!(io.far_lod_status().missing, 1);
+    assert!(matches!(
+        io.bevy_far_lod(SCENE),
+        FarLodSource::Unavailable(_)
+    ));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// What the breakers learnt about one base does not hold for the next.
+#[tokio::test]
+async fn a_switch_resets_the_breakers() {
+    let (io, dir) = io_with_cache("breaker-switch");
+    io.set_bevy_variants_base(Some("https://abgen.example"));
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let _ = io.bevy_variants.bc.set(true);
+    let FarLodSource::Url(url) = io.bevy_far_lod(SCENE) else {
+        panic!("no far LOD url");
+    };
+    io.far_lod_fetched(&url, Err(Some(reqwest::StatusCode::NOT_FOUND)));
+    for _ in 0..BREAKER_FAILURES {
+        io.bevy_variants.transport_failed("timeout");
+    }
+    assert!(io.bevy_variants.disabled().is_some());
+    assert!(io.far_lods_off());
+
+    // the same base again changes nothing
+    io.set_bevy_variants_base(Some("https://abgen.example/"));
+    assert!(io.bevy_variants.disabled().is_some());
+
+    io.set_bevy_variants_base(Some("https://abgen-cdn.decentraland.zone"));
+    assert!(io.bevy_variants.disabled().is_none());
+    assert_eq!(io.far_lod_status().missing, 0);
+    assert!(!io.far_lods_off());
+    assert_eq!(
+        io.bevy_far_lod(SCENE),
+        FarLodSource::Url(format!(
+            "https://abgen-cdn.decentraland.zone/LOD/lods-bevy/lods/{}_1.glb",
+            SCENE.to_lowercase()
+        ))
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The flag routes the variants once the flags settle, here from `ff` alone.
+#[test]
+fn the_flag_routes_the_variants_once_the_flags_settle() {
+    const DEFAULT: &str = "https://abgen-cdn.decentraland.org";
+    for (ff, expected) in [
+        ("-*,bevy-variants-endpoint:off", None),
+        ("-*", Some(DEFAULT)),
+    ] {
+        let (io, dir) = io_with_cache("flag-routing");
+        io.set_bevy_variants_base(Some(DEFAULT));
+        let mut app = App::new();
+        app.insert_resource(common::structs::AppConfig::default())
+            .insert_resource(IpfsResource { inner: io.clone() })
+            .insert_resource(FlagDefaultBase(DEFAULT.to_owned()))
+            .add_plugins(common::feature_flags::FeatureFlagsPlugin {
+                overrides: Some(ff.to_owned()),
+            });
+        add_flag_routing(&mut app);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(io.bevy_variants.base().as_deref(), expected, "{ff}");
+        assert!(!app.world().contains_resource::<FlagDefaultBase>(), "{ff}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

@@ -52,6 +52,7 @@ fn bevy_variants_state(mut input: ConsoleCommand<BevyVariantsCommand>, ipfs: Res
 
 pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     let mut counts = [0u64; 5];
+    let current = variants.base();
     let mut manifests: Vec<String> = variants
         .manifests
         .lock_ignore_poison()
@@ -61,7 +62,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                 ManifestState::Loaded(manifest) => (
                     0,
                     format!(
-                        "loaded, {} files{}",
+                        "loaded, {} files{}{}",
                         manifest.files.len(),
                         if manifest.lanes.is_empty() {
                             String::new()
@@ -69,6 +70,12 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                             let lanes: Vec<_> =
                                 manifest.lanes.values().map(String::as_str).collect();
                             format!(" ({})", lanes.join(", "))
+                        },
+                        // read from an earlier base of the session
+                        if current.as_deref() == Some(manifest.base.as_str()) {
+                            String::new()
+                        } else {
+                            format!(", from {}", manifest.base)
                         }
                     ),
                 ),

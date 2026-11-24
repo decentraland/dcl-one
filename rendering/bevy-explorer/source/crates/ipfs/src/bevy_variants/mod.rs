@@ -3,11 +3,12 @@
 //!
 //! The variants base is `--bevy-variants-url`, `?bevyVariants=` or the `bevy_variants_url` config
 //! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
-//! `off` in any of them turns the client off. Without the launch option or the config field, the
-//! feature flag [`ENDPOINT_FLAG`] routes the session once the flags are read ([`flagged_base`]);
-//! until then, and when they cannot be read, the CDN serves. A new base applies to the entities
-//! asked for after it: a manifest keeps the base it was fetched from. For each scene, wearable
-//! and emote entity it loads, the explorer fetches
+//! `off` in any of them turns the client off. Without the launch option, the config field or an
+//! `abgen_cdn` service override, the feature flag [`ENDPOINT_FLAG`] routes the session once the
+//! flags are read ([`flagged_base`]); until then, and when they cannot be read, the CDN serves. A
+//! new base applies to the entities asked for after it: a manifest keeps the base it was fetched
+//! from, and the breakers start over. For each scene, wearable and emote entity it loads, the
+//! explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
 //! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
@@ -71,7 +72,7 @@ use bevy::{
 };
 use common::{
     base_domain,
-    feature_flags::FlagVariant,
+    feature_flags::{FeatureFlags, FlagVariant, FlagsSource},
     util::{TaskCompat, UrlLoopbackExt},
 };
 use serde::Deserialize;
@@ -528,10 +529,18 @@ impl Session {
     }
 }
 
+/// The variants bases of the session.
+#[derive(Default)]
+struct Bases {
+    /// None while variants are off.
+    current: Option<String>,
+    /// Every base set this session, so a far LOD url named under an earlier one still counts.
+    used: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct BevyVariants {
-    /// None while variants are off.
-    base: Mutex<Option<String>>,
+    base: Mutex<Bases>,
     /// The GPU's BC support, once the renderer has reported it.
     bc: OnceLock<bool>,
     manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
@@ -544,15 +553,18 @@ pub struct BevyVariants {
 
 impl BevyVariants {
     fn base(&self) -> Option<String> {
-        self.base.lock_ignore_poison().clone()
+        self.base.lock_ignore_poison().current.clone()
     }
 
-    /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url), if it is one.
+    /// The scene whose far LOD `remote` is ([`IpfsIo::bevy_far_lod`]'s url, under any base of
+    /// the session), if it is one.
     fn far_lod_scene<'a>(&self, remote: &'a str) -> Option<&'a str> {
-        remote
-            .strip_prefix(self.base()?.as_str())?
-            .strip_prefix(FAR_LOD_DIR)?
-            .strip_suffix(FAR_LOD_SUFFIX)
+        self.base.lock_ignore_poison().used.iter().find_map(|base| {
+            remote
+                .strip_prefix(base.as_str())?
+                .strip_prefix(FAR_LOD_DIR)?
+                .strip_suffix(FAR_LOD_SUFFIX)
+        })
     }
 
     fn bc(&self) -> bool {
@@ -561,22 +573,39 @@ impl BevyVariants {
 
     fn set_base(&self, url: Option<&str>) {
         let Some(url) = url.map(str::trim) else {
-            if self.base.lock_ignore_poison().take().is_some() {
+            if self.base.lock_ignore_poison().current.take().is_some() {
                 info!("bevy variants: off");
             }
             return;
         };
-        match url::Url::parse(url) {
-            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
-                // the serialised form, so a prefix match agrees with a re-serialised remote url
-                let url = parsed.as_str().trim_end_matches('/');
-                let previous = self.base.lock_ignore_poison().replace(url.to_owned());
-                if previous.as_deref() != Some(url) {
-                    info!("bevy variants: on, from `{url}`");
-                }
-            }
-            _ => warn!("bevy variants: ignoring `{url}`, not an http(s) url"),
+        let Ok(parsed) = url::Url::parse(url) else {
+            warn!("bevy variants: ignoring `{url}`, not an http(s) url");
+            return;
+        };
+        if !matches!(parsed.scheme(), "http" | "https") {
+            warn!("bevy variants: ignoring `{url}`, not an http(s) url");
+            return;
         }
+        // the serialised form, so a prefix match agrees with a re-serialised remote url
+        let url = parsed.as_str().trim_end_matches('/');
+        {
+            let mut bases = self.base.lock_ignore_poison();
+            if bases.current.as_deref() == Some(url) {
+                return;
+            }
+            bases.current = Some(url.to_owned());
+            if !bases.used.iter().any(|used| used == url) {
+                bases.used.push(url.to_owned());
+            }
+        }
+        info!("bevy variants: on, from `{url}`");
+        // what the breakers learnt was about another service
+        {
+            let mut session = self.session.lock_ignore_poison();
+            session.disabled = None;
+            session.transport_failures = 0;
+        }
+        self.far_lods.lock_ignore_poison().new_base();
     }
 
     /// A new pending manifest for `entity`, or None when one was already requested.
@@ -1144,11 +1173,43 @@ impl IpfsIo {
     }
 }
 
+/// The base [`ENDPOINT_FLAG`] falls back to. Inserted when no launch option, config field or
+/// service override sets the base, and removed once the flag has routed the variants.
+#[derive(Resource)]
+pub struct FlagDefaultBase(pub String);
+
+/// Once the flags are read, points the variants where [`ENDPOINT_FLAG`] says.
+fn route_by_endpoint_flag(
+    mut commands: Commands,
+    flags: Res<FeatureFlags>,
+    default: Res<FlagDefaultBase>,
+    ipfs: Res<IpfsResource>,
+) {
+    if flags.source() == FlagsSource::Pending {
+        return;
+    }
+    commands.remove_resource::<FlagDefaultBase>();
+    let base = flagged_base(flags.variant(ENDPOINT_FLAG).as_ref(), &default.0);
+    ipfs.set_bevy_variants_base(base.as_deref());
+}
+
+fn add_flag_routing(app: &mut App) {
+    app.add_systems(
+        Update,
+        route_by_endpoint_flag.run_if(
+            resource_exists::<FlagDefaultBase>
+                .and(resource_exists::<IpfsResource>)
+                .and(resource_exists_and_changed::<FeatureFlags>),
+        ),
+    );
+}
+
 pub(crate) struct BevyVariantsPlugin;
 
 impl Plugin for BevyVariantsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, detect_gpu_formats);
+        add_flag_routing(app);
         app.add_plugins(debug_panel::BevyVariantsDebugPanelPlugin);
     }
 

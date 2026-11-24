@@ -85,6 +85,14 @@ impl FarLodHealth {
         self.answered_names.insert(scene.to_owned());
     }
 
+    /// The variants base changed: what the old service answered no longer holds. The names stay,
+    /// so a far LOD named under the old base still reports.
+    pub(crate) fn new_base(&mut self) {
+        self.missing.clear();
+        self.failures = 0;
+        self.paused_until = None;
+    }
+
     /// Whether the server said earlier this session that it has no mesh for `scene`.
     pub(crate) fn is_missing(&self, scene: &str) -> bool {
         self.missing.contains(scene)
