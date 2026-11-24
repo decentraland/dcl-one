@@ -2459,15 +2459,10 @@ Using spare log budget after publication, each pass reads one window of
 The `nft_estate_creations` row in `shop.worker_progress` records the last
 repaired block, its hash, and the original cursor height. Each archive window
 is checked against the published cursor and the hashes of its creation logs.
-The marker also records the forward NFT checkpoint in the cursor transaction.
-A pre-CreateEstate writer leaves that marker behind when it advances the cursor.
-On re-upgrade the walk detects the mismatch and automatically rechecks the
-registry prefix through the new cursor. Resetting the Ethereum NFT cursor for
-a full rebuild, or deleting it, invalidates the estate marker in the same
-database transaction. The schema migration object pass installs the reset and
-deletion triggers on an existing database. This also covers older writers that return to the
-same block and hash after rebuilding. Historical names keep their existing
-values until the final window rebuilds the estate rows by block and log index.
+The marker also records the forward NFT checkpoint and the cursor's rewind
+count. An upgraded writer moves both in its fenced cursor transactions.
+Historical names keep their existing values until the final window rebuilds
+the estate rows by block and log index.
 Estates with only rejected documents then have no row. Ownership and profiles
 remain available during the repair. A rewind removes orphaned events and
 shortens the repair range before the walk resumes. If the rewind removes
@@ -2681,6 +2676,14 @@ advance drops only the points past the checkpoint it extends, which does not
 cover a point below the cursor.) Such a binary also leaves `diverged_at` as
 it finds it; the newer binary's next pass that finds the cursor block on its
 stored hash clears it.
+
+The schema migration object pass adds the Ethereum NFT cursor's estate
+repair trigger. It clears the marker when a writer completes a requested
+rebuild by resetting the cursor to its start. During a reorg the upgraded
+writer shortens the archived prefix and records the new rewind count.
+An older writer can advance past missing creations, or rewind and replay
+to the very same height and hash. On upgrade, a checkpoint or rewind-count
+mismatch automatically reopens the historical prefix through that tip.
 
 ## Curation committee
 

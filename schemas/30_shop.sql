@@ -434,12 +434,8 @@ CREATE TRIGGER reset_estate_creation_repair
 AFTER UPDATE OF last_block ON shop.chain_cursor
 FOR EACH ROW WHEN (OLD.indexer = 'nft' AND OLD.network = 'ethereum'
     AND NEW.last_block < OLD.last_block AND NEW.last_block = NEW.start_block - 1
-    AND NEW.last_block_hash IS NULL)
-EXECUTE FUNCTION shop.reset_estate_creation_repair();
-
-CREATE TRIGGER drop_estate_creation_repair
-AFTER DELETE ON shop.chain_cursor
-FOR EACH ROW WHEN (OLD.indexer = 'nft' AND OLD.network = 'ethereum')
+    AND NEW.last_block_hash IS NULL AND NEW.reorg_rewinds = OLD.reorg_rewinds
+    AND OLD.rebuild_requested_at IS NOT NULL AND NEW.rebuild_requested_at IS NULL)
 EXECUTE FUNCTION shop.reset_estate_creation_repair();
 
 -- The collections the nft walk has taken in, and from which block. A

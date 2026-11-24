@@ -652,13 +652,16 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
-    let estate_triggers: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM pg_trigger WHERE tgrelid='shop.chain_cursor'::regclass
-         AND tgname IN ('reset_estate_creation_repair','drop_estate_creation_repair') AND tgenabled='O'",
-    ).fetch_one(pool).await.unwrap();
-    assert_eq!(
-        estate_triggers, 2,
-        "upgrading installs both estate recovery triggers"
+    let estate_trigger: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM pg_trigger WHERE tgrelid='shop.chain_cursor'::regclass
+         AND tgname='reset_estate_creation_repair' AND tgenabled='O')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        estate_trigger,
+        "upgrading installs the estate rebuild trigger"
     );
     let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
     assert_eq!(

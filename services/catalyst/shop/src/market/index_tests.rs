@@ -1610,8 +1610,18 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
     .unwrap();
     owner.check(&mut tx).await.unwrap();
     tx.commit().await.unwrap();
+    let shortened: (i64, i64) = sqlx::query_as(
+        "SELECT position,ceiling FROM shop.worker_progress WHERE worker='nft_estate_creations' AND scope=1"
+    ).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(shortened, (retained as i64, retained as i64));
+    let reads_before = chain.get_logs.load(Ordering::SeqCst);
     *chain.head.lock() = retained + net.confirmations();
     assert!(pass(&st, &url, &ix).await.published);
+    assert_eq!(
+        chain.get_logs.load(Ordering::SeqCst),
+        reads_before,
+        "an accounted rewind keeps the retained archive proof"
+    );
     let rows = || {
         sqlx::query_as::<_,(String,String,Option<String>,Option<String>,i64,i32)>(
         "SELECT token_address,token_id::text,name,description,updated_block,updated_log FROM shop.land_data ORDER BY token_id,token_address"
@@ -1695,9 +1705,17 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
     // same chain. Its cursor ends at exactly the marker's former height and hash.
     let before_rebuild = rows().await.unwrap();
     let mut tx = db.pool.begin().await.unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET rebuild_requested_at=timezone('UTC',now()) WHERE indexer='nft' AND network='ethereum'")
+        .execute(&mut *tx).await.unwrap();
     let start: i64 = sqlx::query_scalar("UPDATE shop.chain_cursor SET last_block=start_block-1,last_block_hash=NULL,
-        folded_block=NULL,folded_at=NULL,fold_through=NULL WHERE indexer='nft' AND network='ethereum' RETURNING last_block")
+        folded_block=NULL,folded_at=NULL,fold_through=NULL,rebuild_requested_at=NULL WHERE indexer='nft' AND network='ethereum' RETURNING last_block")
         .fetch_one(&mut *tx).await.unwrap();
+    let cleared: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT FROM shop.worker_progress WHERE worker='nft_estate_creations' AND scope=1)")
+        .fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        cleared,
+        "the rebuild reset invalidates the marker before the replay"
+    );
     sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer='nft' AND network='ethereum'")
         .execute(&mut *tx)
         .await
@@ -1726,6 +1744,150 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
     assert_ne!(rows().await.unwrap(), before_rebuild);
     assert!(pass(&st, &url, &NftIndex::new(net)).await.published);
     assert_eq!(rows().await.unwrap(), before_rebuild);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn estate_repair_recovers_after_a_legacy_bounded_rewind_to_the_same_tip() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let ix = NftIndex::new(net);
+    let k = 6_236_548;
+    let h = k + 3;
+    let rename = estate_document(h, 0, 2, false, "0,Renamed,");
+    let chain = FakeChain::new(
+        h + net.confirmations(),
+        vec![
+            estate_document(k, 0, 1, true, "0,Kept,"),
+            estate_document(k + 1, 0, 2, true, "0,Created,"),
+            estate_document(k + 2, 0, 3, true, "0,Recovered,"),
+            rename.clone(),
+        ],
+        2_000_000,
+        100,
+    );
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 2_000_000), false);
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    let rows = || {
+        sqlx::query_as::<_, (String, Option<String>, Option<String>, i64, i32)>(
+            "SELECT token_id::text, name, description, updated_block, updated_log
+             FROM shop.land_data ORDER BY token_id",
+        )
+        .fetch_all(&db.pool)
+    };
+    let clean = rows().await.unwrap();
+    assert_eq!(clean.len(), 3);
+    sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_estate_creations' AND scope=1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(pass(&st, &url, &ix).await.published);
+    let marker = || {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT to_jsonb(p) FROM shop.worker_progress p
+             WHERE worker='nft_estate_creations' AND scope=1",
+        )
+        .fetch_one(&db.pool)
+    };
+    let completed = marker().await.unwrap();
+    assert_eq!(completed["position"], h);
+    assert_eq!(completed["ceiling"], h);
+
+    // The old writer's projection cleanup and cursor rewind commit together.
+    // Neither the old cleanup nor its forward filter knows about creations.
+    let owner = chain_walk::test_owner(&db.pool, &ix, &IndexSettings::default()).await;
+    let mut tx = db.pool.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_checkpoint VALUES ('nft','ethereum',$1,$2,$3)
+        ON CONFLICT (indexer,network,block_number) DO NOTHING",
+    )
+    .bind(k as i64)
+    .bind(chain.hash_of(k))
+    .bind(time_of(k))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("WITH gone AS (DELETE FROM shop.nft_event WHERE network='ethereum' AND block_number>$1 RETURNING contract_address,token_id)
+        DELETE FROM shop.land_data d USING gone WHERE (d.token_address,d.token_id)=(gone.contract_address,gone.token_id)")
+        .bind(k as i64).execute(&mut *tx).await.unwrap();
+    chain_walk::rewind(
+        &mut tx,
+        ix.indexer(),
+        net,
+        (h as i64, Some(&chain.hash_of(h))),
+        k as i64,
+        Some((&chain.hash_of(k), time_of(k))),
+    )
+    .await
+    .unwrap();
+    owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        marker().await.unwrap(),
+        completed,
+        "a bounded rewind does not fire the rebuild trigger"
+    );
+
+    let mut tx = db.pool.begin().await.unwrap();
+    ix.write(&mut tx, &[rename], &HashMap::from([(h as i64, time_of(h))]))
+        .await
+        .unwrap();
+    chain_walk::advance(
+        &mut tx,
+        ix.indexer(),
+        net,
+        (k as i64, Some(&chain.hash_of(k))),
+        &crate::chain_index::rpc::BlockHeader {
+            number: h,
+            hash: chain.hash_of(h),
+            timestamp: time_of(h),
+        },
+    )
+    .await
+    .unwrap();
+    owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    nft_index::fold(&db.pool, net, None, &owner).await.unwrap();
+    assert_eq!(marker().await.unwrap(), completed);
+    assert_eq!(rows().await.unwrap().len(), 2);
+    let reads = chain.get_logs.load(Ordering::SeqCst);
+    assert!(pass(&st, &url, &NftIndex::new(net)).await.published);
+    assert_eq!(rows().await.unwrap(), clean);
+    assert!(
+        chain.get_logs.load(Ordering::SeqCst) > reads,
+        "the same-tip restart read historical creations"
+    );
+    // With no retained checkpoint a normal reorg can reach the same
+    // hashless start as a rebuild. Its rewind count distinguishes it.
+    let owner = chain_walk::test_owner(&db.pool, &ix, &IndexSettings::default()).await;
+    let mut tx = db.pool.begin().await.unwrap();
+    let start: i64 = sqlx::query_scalar(
+        "SELECT start_block-1 FROM shop.chain_cursor
+        WHERE indexer='nft' AND network='ethereum'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    ix.rewind(&mut tx, start).await.unwrap();
+    chain_walk::rewind(
+        &mut tx,
+        ix.indexer(),
+        net,
+        (h as i64, Some(&chain.hash_of(h))),
+        start,
+        None,
+    )
+    .await
+    .unwrap();
+    owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let shortened = marker().await.unwrap();
+    assert_eq!(shortened["position"], start.max(0));
+    assert_eq!(shortened["key_position"][1], "2");
     db.drop().await;
 }
 

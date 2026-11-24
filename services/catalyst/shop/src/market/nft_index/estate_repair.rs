@@ -11,8 +11,9 @@ const WORKER: &str = "nft_estate_creations";
 const DEPLOYMENT: i64 = 6_236_547;
 
 /// The forward window and its marker commit together. A pre-CreateEstate
-/// writer advances only the cursor. When its checkpoint differs, reopen
-/// the registry prefix through that cursor, even after a completed repair.
+/// writer advances only the cursor. The marker's key_ceiling contains its
+/// forward block and hash. key_position contains the archive hash and the
+/// rewind count that justified that prefix. A mismatch reopens the repair.
 pub(super) async fn record(
     conn: &mut PgConnection,
     previous: (i64, Option<&str>),
@@ -22,13 +23,16 @@ pub(super) async fn record(
         [block.to_string(), hash.unwrap_or_default().to_owned()]
     };
     sqlx::query(
-        "INSERT INTO shop.worker_progress AS p (worker, scope, position, ceiling, key_ceiling)
-        VALUES ($1, 1, least($2::bigint - 1, $3), $3, $5)
-        ON CONFLICT (worker, scope) DO UPDATE SET
-          position = CASE WHEN p.key_ceiling = $4 THEN p.position ELSE EXCLUDED.position END,
-          ceiling = CASE WHEN p.key_ceiling = $4 THEN p.ceiling ELSE EXCLUDED.ceiling END,
-          key_position = CASE WHEN p.key_ceiling = $4 THEN p.key_position ELSE '{}'::text[] END,
-          key_ceiling = EXCLUDED.key_ceiling",
+        "INSERT INTO shop.worker_progress AS p (worker, scope, position, ceiling, key_position, key_ceiling)
+         SELECT $1, 1, least($2::bigint - 1, $3), $3, ARRAY[NULL::text, c.reorg_rewinds::text], $5
+         FROM shop.chain_cursor c WHERE c.indexer='nft' AND c.network='ethereum'
+         ON CONFLICT (worker, scope) DO UPDATE SET (position, ceiling, key_position, key_ceiling) = (
+             SELECT CASE WHEN covered THEN p.position ELSE EXCLUDED.position END,
+                    CASE WHEN covered THEN p.ceiling ELSE EXCLUDED.ceiling END,
+                    CASE WHEN covered THEN p.key_position ELSE EXCLUDED.key_position END,
+                    EXCLUDED.key_ceiling
+             FROM (SELECT p.key_ceiling=$4 AND p.key_position[2]=EXCLUDED.key_position[2] AS covered) proof
+         )",
     )
     .bind(WORKER)
     .bind(DEPLOYMENT)
@@ -41,27 +45,30 @@ pub(super) async fn record(
 }
 
 pub(super) async fn rewind(conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
-    // If the rewind removes the last outstanding archive window, its retained
-    // prefix is complete but still needs the final replacement of legacy rows.
+    // Only a marker that explains this cursor can retain its prefix. The
+    // walker increments reorg_rewinds in this transaction after the cleanup.
     let reconcile: Option<bool> = sqlx::query_scalar(
-        "SELECT position < ceiling AND position >= $2 FROM shop.worker_progress
-         WHERE worker=$1 AND scope=1 FOR UPDATE",
+        "WITH retained AS (
+            SELECT p.position < p.ceiling AND p.position >= $2 AS reconcile,
+                   (c.reorg_rewinds + 1)::text AS next_rewind,
+                   (SELECT block_hash FROM shop.chain_checkpoint
+                    WHERE indexer=c.indexer AND network=c.network AND block_number=$2) AS kept_hash
+            FROM shop.worker_progress p JOIN shop.chain_cursor c
+              ON p.key_ceiling=ARRAY[c.last_block::text, coalesce(c.last_block_hash, '')]
+             AND p.key_position[2]=c.reorg_rewinds::text
+            WHERE p.worker=$1 AND p.scope=1 AND c.indexer='nft' AND c.network='ethereum'
+            FOR UPDATE OF p
+         )
+         UPDATE shop.worker_progress p SET
+           key_position=ARRAY[CASE WHEN p.position <= $2 THEN p.key_position[1] END, r.next_rewind],
+           position=least(p.position,greatest($2,0)), ceiling=least(p.ceiling,greatest($2,0)),
+           key_ceiling=ARRAY[$2::bigint::text, coalesce(r.kept_hash,'')]
+         FROM retained r WHERE p.worker=$1 AND p.scope=1 RETURNING r.reconcile",
     )
     .bind(WORKER)
     .bind(to)
     .fetch_optional(&mut *conn)
     .await?;
-    // Preserve proven coverage below the rewind. If the previous cursor
-    // was already unaccounted for, the next capture will reconcile it.
-    sqlx::query("UPDATE shop.worker_progress p SET
-        key_position = CASE WHEN position > $2 THEN '{}'::text[] ELSE key_position END,
-        position = least(position, greatest($2, 0)), ceiling = least(ceiling, greatest($2, 0)),
-        key_ceiling = CASE WHEN p.key_ceiling = ARRAY[c.last_block::text, coalesce(c.last_block_hash, '')]
-          THEN ARRAY[$2::bigint::text, coalesce((SELECT block_hash FROM shop.chain_checkpoint
-                    WHERE indexer=c.indexer AND network=c.network AND block_number=$2), '')]
-          ELSE p.key_ceiling END
-        FROM shop.chain_cursor c WHERE worker=$1 AND scope=1 AND c.indexer='nft' AND c.network='ethereum'")
-        .bind(WORKER).bind(to).execute(&mut *conn).await?;
     if reconcile == Some(true) {
         replace_registry(conn).await?;
     }
@@ -167,14 +174,15 @@ pub(super) async fn step(
     remaining: usize,
 ) -> anyhow::Result<usize> {
     let progress = || {
-        sqlx::query_as::<_, (i64, i64, Option<String>)>(
-            "SELECT position, ceiling, key_position[1] FROM shop.worker_progress p JOIN shop.chain_cursor c
+        sqlx::query_as::<_, (i64, i64, Option<String>, i32)>(
+            "SELECT position, ceiling, key_position[1], c.reorg_rewinds FROM shop.worker_progress p JOIN shop.chain_cursor c
              ON p.key_ceiling = ARRAY[c.last_block::text, coalesce(c.last_block_hash, '')]
+             AND p.key_position[2]=c.reorg_rewinds::text
              WHERE worker = $1 AND scope = 1 AND c.indexer='nft' AND c.network='ethereum' AND c.chain_id=1",
         )
         .bind(WORKER)
     };
-    let (position, ceiling, position_hash) = match progress().fetch_optional(pool).await? {
+    let (position, ceiling, position_hash, rewinds) = match progress().fetch_optional(pool).await? {
         Some(row) => row,
         None => {
             let mut tx = pool.begin().await?;
@@ -196,9 +204,9 @@ pub(super) async fn step(
     let mut tx = pool.begin().await?;
     let (block, hash): (i64, String) = sqlx::query_as(
         "SELECT last_block, last_block_hash FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'
-         AND folded_block=last_block AND last_block >= $1 AND owner_generation=$2 AND chain_id=1
+         AND folded_block=last_block AND last_block >= $1 AND owner_generation=$2 AND reorg_rewinds=$3 AND chain_id=1
          AND last_block_hash IS NOT NULL AND quarantined_at IS NULL")
-        .bind(ceiling).bind(owner.generation).fetch_one(&mut *tx).await?;
+        .bind(ceiling).bind(owner.generation).bind(rewinds).fetch_one(&mut *tx).await?;
     let to = (ceiling as u64).min((position as u64).saturating_add(window_blocks));
     // All reads run after publication, in a transaction that holds no row
     // locks during network I/O. Abandon a slow archive and retry its window.
@@ -232,14 +240,15 @@ pub(super) async fn step(
         "estate repair disagrees with a retained checkpoint"
     );
     let advanced = sqlx::query(
-        "UPDATE shop.worker_progress SET position=$4, key_position=ARRAY[$5::text]
-        WHERE worker=$1 AND scope=1 AND position=$2 AND ceiling=$3",
+        "UPDATE shop.worker_progress SET position=$4, key_position[1]=$5
+        WHERE worker=$1 AND scope=1 AND position=$2 AND ceiling=$3 AND key_position[2]=$6::integer::text",
     )
     .bind(WORKER)
     .bind(position)
     .bind(ceiling)
     .bind(end.number as i64)
     .bind(&end.hash)
+    .bind(rewinds)
     .execute(&mut *tx)
     .await?;
     anyhow::ensure!(advanced.rows_affected() == 1, "estate repair range changed");
@@ -253,10 +262,11 @@ pub(super) async fn step(
     // still holds the same owner generation.
     sqlx::query(
         "SELECT 1 FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'
-        AND last_block=$1 AND folded_block=last_block AND last_block_hash=$2 FOR UPDATE",
+        AND last_block=$1 AND folded_block=last_block AND last_block_hash=$2 AND reorg_rewinds=$3 FOR UPDATE",
     )
     .bind(block)
     .bind(hash)
+    .bind(rewinds)
     .fetch_one(&mut *tx)
     .await?;
     owner.check(&mut tx).await?;
