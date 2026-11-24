@@ -105,11 +105,12 @@ impl Publications {
         Ok(out)
     }
 
-    /// [`Publications::read`] for the key of a memo whose miss reads the
-    /// index in a later snapshot: an answer computed under a later
-    /// publication is filed under an earlier one, which no read finds once
-    /// the later one stands. A node that does not walk the index reads
-    /// nothing (its answers do not depend on it).
+    /// [`Publications::read`] for a memo's lookup key. A fill is filed under
+    /// what its own ownership read observed ([`Observed`]), never under this
+    /// key read before it: a withdrawn network's `None` recurs, so a later
+    /// publication's answer filed under it would come back at the next
+    /// withdrawal. A node that does not walk the index reads nothing (its
+    /// answers do not depend on it).
     pub async fn current(state: &MarketplaceState) -> Result<Self, sqlx::Error> {
         if !walks_here(state) {
             return Ok(Self::default());
@@ -117,6 +118,32 @@ impl Publications {
         let mut conn = state.pool.acquire().await?;
         Self::read(&mut conn).await
     }
+}
+
+impl Publications {
+    /// When the earliest of `nets` stops meeting [`Rule::Fresh`]
+    /// (`folded_at` + [`READY_WINDOW`]); `None` if one is not published.
+    pub fn fresh_until(&self, nets: &[ChainNet]) -> Option<NaiveDateTime> {
+        nets.iter()
+            .map(|net| match net {
+                ChainNet::Ethereum => self.ethereum,
+                ChainNet::Matic => self.matic,
+            })
+            .map(|published| published.map(|(_, at)| at + READY_WINDOW))
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .min()
+    }
+}
+
+/// What an ownership read observed in its own snapshot: the publications
+/// its answer was read under (a memo files the answer under them), and,
+/// under [`Rule::Fresh`], when the earliest network it needed stops being
+/// fresh (a memo hit past it reads again, and fails closed if it must).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Observed {
+    pub publications: Publications,
+    pub fresh_until: Option<NaiveDateTime>,
 }
 
 pub struct Caches {
@@ -616,14 +643,37 @@ pub async fn owned_tokens(
     requested: &HashSet<(String, String)>,
     rule: Rule,
 ) -> Result<OwnedTokens, ReadError> {
+    owned_tokens_observed(pool, requested, rule)
+        .await
+        .map(|(owned, _)| owned)
+}
+
+/// [`owned_tokens`] and what its snapshot observed (`None`: nothing
+/// parseable asked, no read).
+pub async fn owned_tokens_observed(
+    pool: &PgPool,
+    requested: &HashSet<(String, String)>,
+    rule: Rule,
+) -> Result<(OwnedTokens, Option<Observed>), ReadError> {
     let r = requests(requested);
     if r.v2.is_empty() && r.v1.is_empty() {
-        return Ok(HashMap::new());
+        return Ok((HashMap::new(), None));
     }
     let mut tx = snapshot(pool, &r.nets, rule, false).await?;
+    let publications = Publications::read(&mut tx).await?;
     let owned = read_tokens(&mut tx, &r).await?;
     tx.rollback().await.ok();
-    Ok(owned)
+    let fresh_until = match rule {
+        Rule::Fresh => publications.fresh_until(&r.nets),
+        Rule::Complete => None,
+    };
+    Ok((
+        owned,
+        Some(Observed {
+            publications,
+            fresh_until,
+        }),
+    ))
 }
 
 /// Seeds what the gates read: a published nft cursor per network and,

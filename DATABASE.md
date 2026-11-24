@@ -3443,10 +3443,13 @@ commits in between is never half-seen:
   also need the items mirror's complete pass (`shop.mirror_state`); otherwise
   they answer the `nft-index` envelope. The `/v1/orders` routes instead
   answer 200: until the index is fresh on the networks the read names, their
-  v3 listings leg keeps only the listings of contracts the index holds no
-  token of (LAND, estates), which the guard never filters, and the
+  v3 listings leg keeps only the Ethereum LAND and Estate registries'
+  listings, which the index never holds (it reads their `Update` logs, not
+  their transfers) and the guard never filters, and the
   `x-listings-owner-check` header says `partial` (`checked` when the guard
-  ran, `unchecked` on a node that does not walk the index).
+  ran, `unchecked` on a node that does not walk the index). Which contracts
+  the index holds is not read from `shop.nft`: a rewind deletes the rows of
+  the tokens it reaches, so a sold token's collection could look unindexed.
 
 Queries, all bounded by one owner or one batch:
 

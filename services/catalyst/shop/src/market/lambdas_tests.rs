@@ -2854,3 +2854,109 @@ async fn ownership_memos_follow_the_index_publication() {
     }
     db.drop().await;
 }
+
+/// A fill is filed under the publications its own ownership read observed,
+/// not under the key looked up before it: the lookup sees Polygon withdrawn,
+/// Polygon publishes before the profile and outfits fills read ownership,
+/// and once Polygon is withdrawn again (the same key as the lookup) neither
+/// answer comes back from its memo.
+#[tokio::test]
+async fn a_fill_is_filed_under_the_publication_its_read_observed() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    set_nft_cursor(&db.pool, "ethereum", Some(2)).await;
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let looked_up = super::owned_items::Publications::current(state)
+        .await
+        .unwrap();
+    assert_eq!(looked_up.matic, None);
+    set_nft_cursor(&db.pool, "matic", Some(2)).await;
+
+    let owner = OWNER.to_string();
+    let entities = super::profiles::active_entities(state, std::slice::from_ref(&owner))
+        .await
+        .unwrap();
+    let filled = super::profiles::process_and_cache_profiles(
+        state,
+        std::slice::from_ref(&owner),
+        &entities,
+        looked_up,
+    )
+    .await
+    .unwrap();
+    assert!(filled[0].1.to_string().contains(&hat), "{filled:?}");
+    let outfits = super::lambdas_catalog::fill_outfits(state, OWNER, looked_up)
+        .await
+        .unwrap_or_else(|_| panic!("the outfits fill reads"));
+    assert!(outfits.to_string().contains(&hat), "{outfits}");
+
+    set_nft_cursor(&db.pool, "matic", None).await;
+    assert_eq!(
+        super::owned_items::Publications::current(state)
+            .await
+            .unwrap(),
+        looked_up,
+        "the lookup key recurs"
+    );
+    let (status, body) = get(state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::NOT_FOUND, Some("Profile not found")),
+        "{body}"
+    );
+    let (status, body) = get(state, &format!("/lambdas/outfits/{OWNER}")).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    db.drop().await;
+}
+
+/// A warm outfits answer lasts only while the networks it needed are fresh:
+/// Polygon published 3 s short of the freshness window answers, then, with
+/// no publication in between, the same memo is not served past the window.
+/// Profiles keep the complete rule and still answer.
+#[tokio::test]
+async fn a_warm_outfit_expires_with_the_freshness_of_its_networks() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    set_nft_cursor(&db.pool, "ethereum", Some(2)).await;
+    let window = super::chain_walk::READY_WINDOW.num_seconds();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'matic', 1, 100, 100, timezone('UTC', now()) - make_interval(secs => $1), true, 137) \
+         ON CONFLICT (indexer, network) DO UPDATE SET folded_block = 100, folded_at = EXCLUDED.folded_at",
+    )
+    .bind((window - 3) as f64)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let outfits = format!("/lambdas/outfits/{OWNER}");
+    for _ in 0..2 {
+        let (status, body) = get(state, &outfits).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.to_string().contains(&hat), "{body}");
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    let (status, body) = get(state, &outfits).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "a warm answer past the freshness window: {body}"
+    );
+    let (status, body) = get(state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains(&hat), "{body}");
+    db.drop().await;
+}

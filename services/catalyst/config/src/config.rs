@@ -170,7 +170,7 @@ impl Config {
     pub fn derive_trade_rpc_urls(&mut self) {
         if self.node.node_posture.as_deref() != Some("mirror")
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || self.node.eth_network.trim() != "mainnet"
         {
             return;
         }

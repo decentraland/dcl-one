@@ -865,20 +865,17 @@ fn names_polygon(raw: &str) -> bool {
 }
 
 /// The chain 137 check of [`refuse_unfiltered_profiles`] on the list this
-/// node will use, once the secret files are read: a `TRADE_RPC_URLS_FILE`
-/// naming chain 1 alone would leave the Polygon walk without an endpoint,
-/// and Polygon ownership never published. Without an explicit list the
-/// derived one names `RPC_ENDPOINT_POLYGON`, which a mainnet mirror always
-/// has (its default when unset or empty).
+/// node will use, once the secret files are read and the list derived
+/// (`Config::resolve_secret_files` runs this last): a `TRADE_RPC_URLS_FILE`
+/// naming chain 1 alone, or no list at all, would leave the Polygon walk
+/// without an endpoint, and Polygon ownership never published.
 fn refuse_unwalkable_polygon(config: &Config) -> anyhow::Result<()> {
     if config.node.eth_network.trim() != "mainnet"
         || !config.marketplace.marketplace_nft_index_enabled
     {
         return Ok(());
     }
-    if let Some(raw) = config.marketplace.trade_rpc_urls.as_deref()
-        && !names_polygon(raw)
-    {
+    if !names_polygon(config.marketplace.trade_rpc_urls.as_deref().unwrap_or("")) {
         anyhow::bail!(
             "{ENV}=mirror walks the nft index on chains 1 and 137, but the TRADE_RPC_URLS it read \
              (TRADE_RPC_URLS_FILE included) names no 137= endpoint: add one, or unset both to use \

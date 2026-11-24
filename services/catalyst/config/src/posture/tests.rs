@@ -216,6 +216,24 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
             assert!(e.to_string().contains("names no 137= endpoint"), "{e}");
         }
     }
+    // ETH_NETWORK is read trimmed everywhere: "mainnet " still derives the
+    // node's own 1= and 137= list, which passes; a list that never derived
+    // is refused, as an empty one is.
+    let mut c = parsed(&[db, (ENV, "mirror"), ("ETH_NETWORK", "mainnet ")]);
+    c.default_rpc_urls();
+    c.derive_trade_rpc_urls();
+    assert!(
+        c.marketplace
+            .trade_rpc_urls
+            .as_deref()
+            .is_some_and(|l| l.contains("137=")),
+        "{:?}",
+        c.marketplace.trade_rpc_urls
+    );
+    refuse_remote_secrets(&mut c).unwrap();
+    c.marketplace.trade_rpc_urls = None;
+    let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
+    assert!(err.contains("names no 137= endpoint"), "{err}");
     // A testnet mirror serves the items as deployed until its chains are walked.
     check_of(&[
         db,
@@ -332,6 +350,9 @@ fn a_mirror_reads_the_third_party_registry() {
     let mut c = parsed_with_files(&pairs);
     assert_eq!(c.validator.third_party_registry_l2_subgraph_url, None);
     check(&c, &lookup(&env(&pairs))).unwrap();
+    // `resolve_secret_files`'s steps before its last one.
+    c.default_rpc_urls();
+    c.derive_trade_rpc_urls();
     let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
     assert!(err.contains(&format!("{KEY}_FILE holds no URL")), "{err}");
     c.validator.third_party_registry_l2_subgraph_url =
@@ -1099,6 +1120,8 @@ fn a_secret_file_naming_an_outside_host_is_refused_off_mirror() {
     refuse_remote_secrets(&mut c).unwrap();
     let mut c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
     c.economy.rpc_endpoint_polygon = Some("https://polygon.example.org/key".into());
+    c.default_rpc_urls();
+    c.derive_trade_rpc_urls();
     refuse_remote_secrets(&mut c).unwrap();
 }
 

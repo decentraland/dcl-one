@@ -46,11 +46,13 @@ transaction as its rows. Two rules:
   also the items mirror's first complete pass; otherwise they answer the
   `nft-index` unavailable envelope. `/v1/orders` and
   `/v1/orders/open-by-items` are the exception: while the index does not
-  meet the rule their v3 listings leg keeps only the listings of contracts
-  the index holds no token of (LAND and estates), which the owner guard
-  never filters, so no listing the guard could drop is served unguarded,
-  and the legacy orders still answer with status 200. The total counts what
-  is served. The `x-listings-owner-check` response header names the case:
+  meet the rule their v3 listings leg keeps only the Ethereum LAND and
+  Estate registries' listings, contracts the index never holds and the
+  owner guard never filters, so no listing the guard could drop is served
+  unguarded, and the legacy orders still answer with status 200. The total
+  counts what is served. That set is fixed, not read from `shop.nft`: a
+  rewind deletes the rows of the tokens it reaches, so a sold token's
+  collection could otherwise pass for one the index does not hold. The `x-listings-owner-check` response header names the case:
   `checked` (the guard ran), `partial` (this one) or `unchecked` (below).
 
 Neither rule compares `folded_block` with `last_block`: each pass advances
