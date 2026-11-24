@@ -88,15 +88,13 @@ npm install @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version> @dcl/sdk-commands@npm:
 Install the exact version; the tag moves to the last PR published. Those packages are previews
 only: any branch of this repository can publish to them. Fork pull requests publish nothing.
 
-**Snapshots and releases** (`.github/workflows/sdk-release.yml`) publish the `@dcl/*` names. Its
+**`next` and releases** (`.github/workflows/sdk-release.yml`) publish the `@dcl/*` names. Its
 publish job uses the `npm-release` environment, which only `main` may deploy to, and the `@dcl`
 trusted publishers require that environment, so a branch or a pull request cannot publish them
 whatever its workflow says.
 
 A push to `main` that changes `library/js-sdk-toolchain` or `library/protocol` publishes under
-the `dcl-one` dist-tag as `<latest patch+1>-<run>.commit-<sha>`. It moves to `next` once this SDK
-has what `decentraland/js-sdk-toolchain`'s `next` has (`SNAPSHOT_TAG` in the workflow); until then
-`next` and `latest` stay upstream's and the release run refuses to start. The SDK is generated from the protocol at build
+`next` as `<latest patch+1>-<run>.commit-<sha>`. The SDK is generated from the protocol at build
 time, so a protocol change ships in the SDK without a protocol release.
 
 A versioned release is a manual run from `main`:

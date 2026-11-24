@@ -23,7 +23,7 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   the previous tag with the same prefix, not over the repository.
 - One dispatcher can later release several scopes from a single run by starting each scope's
   release run.
-- The SDK releases from `.github/workflows/sdk-release.yml`, which also publishes `main`'s snapshots; it calls
+- The SDK releases from `.github/workflows/sdk-release.yml`, which also publishes `next`; it calls
   the build jobs of `.github/workflows/sdk.yml`, the SDK's CI, and keeps the publish job in its own
   file, since npm matches the workflow that was started. Its manual run takes the version as an
   input, as upstream takes it from the release tag, and stamps it into the manifests before packing

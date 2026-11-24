@@ -1,5 +1,5 @@
 name: SDK / Release
-# A snapshot on every push to main, and a versioned release from a manual run. Both publish the @dcl/*
+# next on every push to main, and a versioned release from a manual run. Both publish the @dcl/*
 # names, and only through the npm-release environment (main only, a repository setting) that the
 # npm trusted publishers require: no other branch's run can use it, whatever its workflow says.
 on:
@@ -29,10 +29,6 @@ permissions:
   contents: read
 env:
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
-  # main's snapshots stay off `next` until this SDK has what decentraland/js-sdk-toolchain's has:
-  # creators on `next` would otherwise lose AvatarEquippedData.wearables and the commits since the
-  # snapshot. Set it to next then.
-  SNAPSHOT_TAG: dcl-one
   PNPM: corepack pnpm@12.21.0
 jobs:
   check:
@@ -49,10 +45,6 @@ jobs:
         run: |
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "SDK releases are cut from main, not $GITHUB_REF" >&2
-            exit 1
-          fi
-          if [ "$SNAPSHOT_TAG" != next ]; then
-            echo "SDK releases wait until main's snapshots publish under next (SNAPSHOT_TAG)" >&2
             exit 1
           fi
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
@@ -127,8 +119,8 @@ jobs:
             case "$version" in *-*) tag=rc ;; *) tag=latest ;; esac
             [ "$version" = "$RELEASE" ] || { echo "packed $first, expected version $RELEASE" >&2; exit 1; }
           else
-            tag=$SNAPSHOT_TAG
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]] || { echo "a push needs a snapshot version, got $first" >&2; exit 1; }
+            tag=next
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]] || { echo "next needs a snapshot version, got $first" >&2; exit 1; }
           fi
           for name in $SDK_PACKAGES; do
             tgz=./dist/dcl-$name-$version.tgz

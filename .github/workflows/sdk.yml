@@ -1,5 +1,5 @@
 name: SDK / CI
-# The SDK's CI and its PR previews. sdk-release.yml calls the same jobs for main's snapshots and for releases.
+# The SDK's CI and its PR previews. sdk-release.yml calls the same jobs for next and for releases.
 # A same-repo PR publishes what it packed as @dcl-regenesislabs/* under the pr dist-tag. Those
 # packages are previews only: any branch can publish to them. The @dcl/* names publish only from
 # sdk-release.yml, through an environment a PR run cannot use.
