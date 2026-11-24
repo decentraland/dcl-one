@@ -160,6 +160,13 @@ bound counts and what a request past it gets.
   the node's bound. The node counts every wallet's unpublished uploads in
   the background, one count at a time, and keeps each count for the time
   the table names, so a publication frees a wallet's uploads within it.
+- **Bytes no record names.** An upload stores its bytes before its
+  transaction, so one refused or interrupted after that leaves a file no
+  upload record names. No bound here counts those files, and the node
+  never removes them on its own. Run `catalyst storage gc` (a dry run) to
+  see them and `catalyst storage gc --delete` to unlink them; it takes only
+  files untouched for at least an hour that no area names. Run it on a
+  schedule sized to the disk.
 - **Days of uploads.** A wallet has a day of uploaded files, an upload
   source a day of files and of bytes. Each is checked before the body and
   charged with what arrived, whatever came of the upload. Once every
