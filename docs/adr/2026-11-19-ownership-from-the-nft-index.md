@@ -100,5 +100,21 @@ under that sort still looks up the listing of each of its tokens, 7 to 8 s
 for a 32,000-token owner.
 Production data is unmeasured.
 
+Known gaps, accepted:
+
+- Until the walk covers the testnets (#1693), a node that does not walk the
+  index, every testnet node included, serves open v3 listings with no owner
+  guard: a listing whose signer has since transferred its token stays in
+  `/v1/orders?status=open` and `/v1/orders/open-by-items`, and buying it
+  fails on chain. `x-listings-owner-check: unchecked` names the case, but
+  the marketplace frontend does not read it, and the in-process callers
+  (credits pricing, the activity feed) take the variants without it.
+- The memos are keyed by each network's published block and time, and a
+  pass that reaches the head publishes a new time about every 5 seconds, so
+  a memo rarely hits beyond one pass and every request, hits included,
+  reads the cursors. The time stays in the key because a fold that
+  backfills a late collection can publish new rows at the same block.
+  Answers stay correct; only load is affected.
+
 Revisit when the walk covers the testnets, or when a reader needs ownership
 fresher than the confirmation depth.
