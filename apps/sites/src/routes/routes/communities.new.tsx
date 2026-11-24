@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-import LdCreateCommunityView from "@dcl/one-ui/apps/sites/social/LdCreateCommunityView";
+import { LdCreateCommunityView } from "@dcl/one-ui";
 
 import { loadCommunity, type Community } from "@/data/lib/catalyst/social/communities";
 import {
