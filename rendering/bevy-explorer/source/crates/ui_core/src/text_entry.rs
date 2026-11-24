@@ -34,6 +34,8 @@ pub struct TextEntry {
     /// Space between the entry's box and its text.
     pub padding: UiRect,
     /// Where a single-line entry's text sits vertically in its box. `None` keeps it at the top.
+    /// An entry spawned with a value gets a wrapper node that places it; one spawned with
+    /// `None` fills its owner directly.
     pub vertical_align: Option<JustifyContent>,
 }
 
@@ -78,12 +80,30 @@ impl Plugin for TextEntryPlugin {
 #[derive(Component)]
 struct TextEntryEntity(Entity);
 
+/// A node between a [`TextEntry`]'s owner and its entry, for an entry spawned with a
+/// `vertical_align`: it fills the owner and places the entry vertically, so the text input's
+/// own full-height container does not hold the typed text at the top.
+#[derive(Component)]
+struct TextEntryWrapper(Entity);
+
+/// The [`TextEntry`] owner an entry reports to.
+#[derive(Component)]
+struct TextEntryOwner(Entity);
+
 fn update_text_entry_components(
     mut commands: Commands,
-    text_entries: Query<(Entity, Ref<TextEntry>, Option<&TextEntryEntity>), Changed<TextEntry>>,
+    text_entries: Query<
+        (
+            Entity,
+            Ref<TextEntry>,
+            Option<&TextEntryEntity>,
+            Option<&TextEntryWrapper>,
+        ),
+        Changed<TextEntry>,
+    >,
     current_input_values: Query<&TextInputValue>,
 ) {
-    for (entity, textbox, maybe_existing) in text_entries.iter() {
+    for (entity, textbox, maybe_existing, maybe_wrapper) in text_entries.iter() {
         let text_lightness = Lcha::from(
             textbox
                 .text_style
@@ -98,20 +118,48 @@ fn update_text_entry_components(
             (Color::WHITE, Color::BLACK.with_alpha(0.85))
         };
 
+        // a single-line entry with a wrapper takes its text's height and the wrapper places it
+        // vertically, whatever the owner's flex direction; otherwise the entry fills the owner
+        // with the text at the top
+        let vertical_align = textbox.vertical_align.filter(|_| textbox.multiline <= 1);
+        let wrapper = match (maybe_wrapper, maybe_existing) {
+            (Some(w), _) => Some(w.0),
+            (None, None) if textbox.vertical_align.is_some() => {
+                let w = commands.spawn_empty().id();
+                commands
+                    .entity(entity)
+                    .try_push_children(&[w])
+                    .try_insert(TextEntryWrapper(w));
+                Some(w)
+            }
+            _ => None,
+        };
+        if let Some(wrapper) = wrapper {
+            commands.entity(wrapper).try_insert(Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: vertical_align.unwrap_or(JustifyContent::FlexStart),
+                ..Default::default()
+            });
+        }
+        let aligned = wrapper.is_some() && vertical_align.is_some();
+
         let mut cmds = match maybe_existing {
             Some(existing) => commands.entity(existing.0),
             None => {
                 let id = commands.spawn_empty().id();
                 commands
-                    .entity(entity)
-                    .try_push_children(&[id])
-                    .try_insert(TextEntryEntity(id));
+                    .entity(wrapper.unwrap_or(entity))
+                    .try_push_children(&[id]);
+                commands.entity(entity).try_insert(TextEntryEntity(id));
                 let mut cmds = commands.entity(id);
                 cmds.try_insert((
                     TextInputInactive(true),
                     TextInputCursorTimer::default(),
                     Interaction::default(),
                     Focusable(Some(entity)),
+                    TextEntryOwner(entity),
                 ));
                 if textbox.text_style.is_none() {
                     cmds.try_insert(FontSize(0.03 / 1.3));
@@ -126,20 +174,15 @@ fn update_text_entry_components(
             .map(|tev| &tev.0)
             .unwrap_or_else(|| &textbox.content);
 
-        // a single-line entry places its text vertically as asked; its box keeps the full
-        // height whatever the parent's flex direction
-        let vertical_align = textbox.vertical_align.filter(|_| textbox.multiline <= 1);
         cmds.try_insert((
             Node {
                 width: Val::Percent(100.0),
                 min_width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: if vertical_align.is_some() {
-                    FlexDirection::Column
+                height: if aligned {
+                    Val::Auto
                 } else {
-                    FlexDirection::default()
+                    Val::Percent(100.0)
                 },
-                justify_content: vertical_align.unwrap_or_default(),
                 padding: textbox.padding,
                 ..Default::default()
             },
@@ -229,31 +272,28 @@ pub fn update_fontsize(
 }
 
 pub fn propagate_focus(
-    q: Query<(&TextEntry, &Children), With<Focus>>,
+    q: Query<(&TextEntry, &TextEntryEntity), With<Focus>>,
     mut activate: Query<(Entity, &mut TextInputInactive)>,
     mut input_manager: InputManager,
     mut reserved: Local<bool>,
 ) {
     let active = q
         .iter()
-        .filter_map(|(textbox, children)| {
+        .filter_map(|(textbox, entry)| {
             if !textbox.enabled {
                 return None;
             }
-            for child in children.iter() {
-                let Ok((ent, mut inactive)) = activate.get_mut(child) else {
-                    continue;
-                };
+            let Ok((ent, mut inactive)) = activate.get_mut(entry.0) else {
+                return None;
+            };
 
-                inactive.bypass_change_detection();
-                if inactive.0 {
-                    inactive.0 = false;
-                    inactive.set_changed();
-                }
-
-                return Some(ent);
+            inactive.bypass_change_detection();
+            if inactive.0 {
+                inactive.0 = false;
+                inactive.set_changed();
             }
-            None
+
+            Some(ent)
         })
         .next();
 
@@ -281,24 +321,24 @@ pub fn propagate_focus(
 fn pipe_events(
     mut submit: EventReader<TextInputSubmitEvent>,
     changed: Query<(Entity, Ref<TextInputValue>), Changed<TextInputValue>>,
-    parents: Query<&ChildOf>,
+    owners: Query<&TextEntryOwner>,
     settings: Query<&TextEntry>,
     mut commands: Commands,
 ) {
     for ev in submit.read() {
         debug!("{:?} submit", ev.entity);
-        let Ok(parent) = parents.get(ev.entity) else {
+        let Ok(&TextEntryOwner(owner)) = owners.get(ev.entity) else {
             continue;
         };
 
-        if let Ok(mut commands) = commands.get_entity(parent.parent()) {
+        if let Ok(mut commands) = commands.get_entity(owner) {
             commands
                 .try_insert(Submit)
                 .try_insert(TextEntrySubmit(ev.value.trim().to_owned()));
             debug!("{:?} submit to {}", commands.id(), ev.value);
         }
 
-        if let Ok(settings) = settings.get(parent.parent()) {
+        if let Ok(settings) = settings.get(owner) {
             if !settings.retain_focus_on_submit {
                 debug!("{:?} defocus", ev.entity);
                 commands.entity(ev.entity).remove::<Focus>();
@@ -312,10 +352,10 @@ fn pipe_events(
             continue;
         }
         debug!("{:?} update", entity);
-        if let Some(mut commands) = parents
+        if let Some(mut commands) = owners
             .get(entity)
             .ok()
-            .and_then(|p| commands.get_entity(p.parent()).ok())
+            .and_then(|&TextEntryOwner(owner)| commands.get_entity(owner).ok())
         {
             commands
                 .try_insert(DataChanged)

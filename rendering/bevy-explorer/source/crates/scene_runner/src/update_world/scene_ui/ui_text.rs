@@ -186,7 +186,7 @@ pub fn set_ui_text(
         }
 
         // text lays out in one of three ways:
-        // a) an axis is auto (react-ecs sends a label's width as auto): the text sizes the entity
+        // a) an axis is auto (react-ecs sends every node's width as auto): the text sizes the entity
         //    and flows as an ordinary child, placed by the entity's own justify-content and
         //    align-items, so a label in a start-aligned column starts at the left edge; the text
         //    alignment acts only inside the text's box.
