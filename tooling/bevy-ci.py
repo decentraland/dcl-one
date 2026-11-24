@@ -120,10 +120,10 @@ HEADLESS_JOBS = {
 # revision), the workspace's manifests and Cargo configuration, the tools, the cache tools that
 # restore the build and its file times before Cargo runs, and the workflow. It is not a lane: on
 # main it follows the web lane's baseline.
-RELAY_WAKE_CRATES = (*(SOURCE + 'crates/' + crate + '/' for crate in (
+RELAY_WAKE_CRATE_DIRS = (*(SOURCE + 'crates/' + crate + '/' for crate in (
     'dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform', 'system_api_types',
     'system_bridge')), 'rendering/bevy-explorer/vendor/rpc-rust/rpc/')
-RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATES, 'library/protocol/proto/',
+RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATE_DIRS, 'library/protocol/proto/',
                      PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
                      '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
                      'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)

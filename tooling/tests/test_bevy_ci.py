@@ -1400,14 +1400,14 @@ class SelectionTest(unittest.TestCase):
         self.assertFalse(any(selected[lane] for lane in (*ci.LANES, 'native-matrix')))
 
 
-class RelayWakeCratesTest(unittest.TestCase):
-    """RELAY_WAKE_CRATES lists by hand the crates the relay wake browser test compiles. A path
-    dependency that dcl_wasm gains, directly or through another crate, must fail here until the list
-    names it."""
+class RelayWakeCrateDirsTest(unittest.TestCase):
+    """RELAY_WAKE_CRATE_DIRS lists by hand the directories of the crates the relay wake browser test
+    compiles. A path dependency that dcl_wasm gains, directly or through another crate, must fail here
+    until the list names it."""
 
     def test_the_list_names_dcl_wasm_and_every_path_dependency_it_reaches(self):
         self.assertEqual(sorted(locked_path_dependencies(ci.ROOT / ci.SOURCE, 'dcl_wasm', ci.ROOT.resolve())),
-                         sorted(ci.RELAY_WAKE_CRATES))
+                         sorted(ci.RELAY_WAKE_CRATE_DIRS))
 
     def test_a_transitive_vendored_or_patched_path_dependency_is_found(self):
         files = {

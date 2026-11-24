@@ -198,7 +198,7 @@ impl RendererSceneContext {
 
     /// Whether the engine wakes the scene's runtime when it sends it something, while the scene
     /// runs.
-    pub fn wake(&self) -> Option<&SceneWake> {
+    pub(crate) fn wake(&self) -> Option<&SceneWake> {
         match &self.state {
             SceneState::Live { handle, .. } => Some(&handle.wake),
             _ => None,
