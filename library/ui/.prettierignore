@@ -6,6 +6,7 @@ figma/figma-snapshot
 figma/test/fixtures
 figma/capture
 figma/review/review-dist
+gallery/dist
 figma/review/src/generated
 figma/review/src/review/catalog.json
 # Written by lock-digests --write and fetch-source --seal.

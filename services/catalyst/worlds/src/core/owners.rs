@@ -57,6 +57,7 @@ pub async fn reconcile_owners(state: &CoreState) -> Result<ReconcileReport, sqlx
             continue;
         }
         // Compare-and-set: a publish that changed the owner since the read wins.
+        let mut tx = state.pool.begin().await?;
         let changed = sqlx::query(
             "UPDATE worlds.worlds SET owner = $2 \
              WHERE name = $1 AND owner IS DISTINCT FROM $2 AND owner IS NOT DISTINCT FROM $3",
@@ -64,9 +65,13 @@ pub async fn reconcile_owners(state: &CoreState) -> Result<ReconcileReport, sqlx
         .bind(world.key())
         .bind(&holder)
         .bind(stored.as_ref())
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+        if changed > 0 {
+            crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
+        }
+        tx.commit().await?;
         if changed == 0 {
             continue;
         }

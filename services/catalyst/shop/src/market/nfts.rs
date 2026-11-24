@@ -1151,15 +1151,18 @@ mod tests {
     /// The rental filters no longer answer a deferred envelope: `isOnRent`
     /// over LAND with no listing in the statuses is the old empty page, and
     /// `tenant`/`rentalDays` pass through to the reader as the old builder
-    /// let them (here without the nft index: the index's own envelope).
+    /// let them (here without the nft index: the index's own envelope). A
+    /// database of its own, so no other test's published index reaches it.
     #[tokio::test]
     async fn the_rental_filters_are_served() {
-        let Some(state) =
-            crate::market::tests::support::state_with_db(crate::market::Settings::for_tests())
-                .await
-        else {
+        let Some(own) = crate::market::tests::support::OwnDb::create("rental_filters").await else {
             return;
         };
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            own.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        ));
         let get = |q: &[(&str, &str)]| {
             let f = parse_filters(&pairs(q)).unwrap();
             let state = state.clone();
@@ -1197,5 +1200,7 @@ mod tests {
             panic!("owner with tenant is refused")
         };
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        drop(state);
+        own.drop().await;
     }
 }

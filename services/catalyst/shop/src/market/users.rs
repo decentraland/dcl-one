@@ -323,7 +323,8 @@ async fn owned_or_unavailable(
     owner: &str,
     category: &str,
 ) -> Result<Vec<OwnedCopy>, Response> {
-    let gate = owned_items::require_inventory(state, category).await?;
+    let gate =
+        owned_items::require_inventory(state, category, super::internal_server_error).await?;
     owned_items::owned_copies(state, gate, owner, category)
         .await
         .map(|c| (*c).clone())

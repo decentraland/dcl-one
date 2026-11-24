@@ -29,7 +29,7 @@ class KeyTest(unittest.TestCase):
         self.git('init', '-q')
         self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'gc.auto', '0')
-        for name, text in {'rendering/bevy-explorer/vendor/boimp/src/lib.rs': 'pub fn import() {}\n',
+        for name, text in {'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs': 'pub fn layout() {}\n',
                            'library/vendor/rusty_enet/src/lib.rs': 'pub fn host() {}\n',
                            'rendering/bevy-explorer/source/vendor/basisu/src/lib.rs': 'pub fn transcode() {}\n',
                            'rendering/bevy-explorer/source/Cargo.lock': 'version = 4\n',
@@ -95,7 +95,7 @@ class KeyTest(unittest.TestCase):
                            ('rendering/bevy-explorer/source/crates/common/Cargo.toml', '[package]\nname = "common"\nversion = "0.2.0"\n'),
                            ('rendering/bevy-explorer/source/.cargo/config.toml', '[env]\nRUST_BACKTRACE = "full"\n'),
                            ('.cargo/config.toml', '[build]\nrustflags = ["-Cdebuginfo=0"]\n'),
-                           ('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'pub fn import() { }\n'),
+                           ('rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs', 'pub fn layout() { }\n'),
                            ('library/vendor/rusty_enet/src/lib.rs', 'pub fn host() { }\n'),
                            ('rendering/bevy-explorer/source/vendor/basisu/src/lib.rs', 'pub fn transcode() { }\n')):
             with self.subTest(name=name):
@@ -265,7 +265,9 @@ class WorkflowTest(unittest.TestCase):
     def test_native_jobs_restore_after_their_tool_steps_and_save_after_their_uploads(self):
         for name, lane, last_tool, build in (('test', 'test', 'Export CEF distribution', 'cargo test --manifest-path vendor/basisu'),
                                              ('headless-smoke', 'headless', 'Install clang for webrtc-sys', 'build-headless.py'),
-                                             ('clippy', 'clippy', 'Install clang for webrtc-sys', 'cargo clippy')):
+                                             ('clippy', 'clippy', 'Install clang for webrtc-sys', 'cargo clippy'),
+                                             ('relay-wake', 'relay-wake', 'Install the pinned WASM binding generator and its test runner',
+                                              'cargo test --locked -p dcl_wasm')):
             with self.subTest(job=name):
                 job = self.job(name)
                 self.assertIn("CARGO_INCREMENTAL: '0'", job)

@@ -88,17 +88,19 @@ describe('ownership of a generated tree', () => {
 })
 
 describe('ownership of the committed tree', () => {
-  it('should pass an automated run that changed nothing', async () => {
-    const result = await checkScope({
-      baseDir: repoRoot,
-      stagedDir: repoRoot,
-      capturedPageIds: [],
-      runKind: 'automated',
-      stage: 'complete',
-      retirements: emptyRetirements()
-    })
+  describe('when an automated run changed nothing', () => {
+    it('should pass the scope check', async () => {
+      const result = await checkScope({
+        baseDir: repoRoot,
+        stagedDir: repoRoot,
+        capturedPageIds: [],
+        runKind: 'automated',
+        stage: 'complete',
+        retirements: emptyRetirements()
+      })
 
-    expect(result).toEqual({ ok: true, violations: [] })
+      expect(result).toEqual({ ok: true, violations: [] })
+    })
   })
 })
 
@@ -117,94 +119,144 @@ describe('when display metadata disagrees with stable ownership', () => {
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
   })
-  it('should take a snapshot file owner from its embedded page ID instead of its filename', async () => {
-    await put(root, 'figma/figma.config.json', {
-      pages: { [BUTTONS]: { id: BUTTONS, name: 'Buttons', kind: 'components' } }
+
+  describe('and a snapshot file is renamed away from its embedded page ID', () => {
+    beforeEach(async () => {
+      await put(root, 'figma/figma.config.json', {
+        pages: { [BUTTONS]: { id: BUTTONS, name: 'Buttons', kind: 'components' } }
+      })
+      await put(root, `${SNAP}/components/Buttons.json`, {
+        page: { id: PLACES, name: 'Renamed' },
+        components: []
+      })
     })
-    await put(root, `${SNAP}/components/Buttons.json`, {
-      page: { id: PLACES, name: 'Renamed' },
-      components: []
-    })
-    expect(ownerOf(await buildOwnership(root), `${SNAP}/components/Buttons.json`)).toEqual({
-      pageId: PLACES
+
+    it('should take the snapshot file owner from its embedded page ID instead of its filename', async () => {
+      expect(ownerOf(await buildOwnership(root), `${SNAP}/components/Buttons.json`)).toEqual({
+        pageId: PLACES
+      })
     })
   })
-  it('should not infer generated ownership from a matching display name when its component ID is absent', async () => {
-    await put(root, `${SNAP}/components/Buttons.json`, {
-      page: { id: BUTTONS, name: 'Buttons' },
-      components: []
+
+  describe('and a generated file matches a display name whose component ID is absent', () => {
+    beforeEach(async () => {
+      await put(root, `${SNAP}/components/Buttons.json`, {
+        page: { id: BUTTONS, name: 'Buttons' },
+        components: []
+      })
     })
-    expect(ownerOf(await buildOwnership(root), `${GEN}/components/buttons/Button.tsx`)).toBeNull()
+
+    it('should not infer generated ownership from the display name', async () => {
+      expect(ownerOf(await buildOwnership(root), `${GEN}/components/buttons/Button.tsx`)).toBeNull()
+    })
   })
-  it('should accept configured pages sharing a name without an ownership conflict', async () => {
-    await put(root, 'figma/figma.config.json', {
-      pages: {
-        [BUTTONS]: { id: BUTTONS, name: 'Shared', kind: 'components' },
-        [PLACES]: { id: PLACES, name: 'Shared', kind: 'components' }
-      }
+
+  describe('and configured pages share a name', () => {
+    beforeEach(async () => {
+      await put(root, 'figma/figma.config.json', {
+        pages: {
+          [BUTTONS]: { id: BUTTONS, name: 'Shared', kind: 'components' },
+          [PLACES]: { id: PLACES, name: 'Shared', kind: 'components' }
+        }
+      })
     })
-    expect((await buildOwnership(root)).conflicts).toEqual([])
+
+    it('should accept them without an ownership conflict', async () => {
+      expect((await buildOwnership(root)).conflicts).toEqual([])
+    })
   })
-  it('should retain the native component owner when an external reference copies its ID', async () => {
-    await put(root, `${SNAP}/components/External.json`, {
-      page: { id: 'external', name: 'External' },
-      components: [{ id: 'b1', name: 'External copy', external: true }]
+
+  describe('and an external reference copies a native component ID', () => {
+    beforeEach(async () => {
+      await put(root, `${SNAP}/components/External.json`, {
+        page: { id: 'external', name: 'External' },
+        components: [{ id: 'b1', name: 'External copy', external: true }]
+      })
     })
-    const ownership = await buildOwnership(root)
-    expect(ownership.conflicts).toEqual([])
-    expect(ownerOf(ownership, `${GEN}/components/buttons/Button.tsx`)).toEqual({
-      pageId: BUTTONS,
-      componentId: 'b1'
+
+    it('should retain the native component owner', async () => {
+      const ownership = await buildOwnership(root)
+      expect(ownership.conflicts).toEqual([])
+      expect(ownerOf(ownership, `${GEN}/components/buttons/Button.tsx`)).toEqual({
+        pageId: BUTTONS,
+        componentId: 'b1'
+      })
+      expect(ownerOf(ownership, `${SNAP}/components/External.json`)).toEqual({ pageId: 'external' })
     })
-    expect(ownerOf(ownership, `${SNAP}/components/External.json`)).toEqual({ pageId: 'external' })
   })
-  it.each([false, true])(
-    'should freeze an unowned public PNG even with a new staged identity claim: %s',
-    async (claimed) => {
+
+  describe('and a staged tree changes an unowned public PNG', () => {
+    const file = 'figma/review/public/dcl-ui-review/renders/Orphan-0.png'
+    let staged: string
+
+    beforeEach(async () => {
       await put(root, `${SNAP}/components/Other.json`, {
         page: { id: '9:1', name: 'Other' },
         components: [{ id: '9:2', name: 'Orphan' }]
       })
-      const file = 'figma/review/public/dcl-ui-review/renders/Orphan-0.png'
       await put(root, file, 'retained')
-      const staged = await mkdtemp(path.join(os.tmpdir(), 'unowned-evidence-'))
-      try {
-        await cp(root, staged, { recursive: true })
-        await put(staged, file, 'changed')
-        if (claimed) {
-          await put(
-            staged,
-            `${GEN}/components/manifest.ts`,
-            manifest([
-              ...components,
-              { name: 'Orphan', page: 'Other', id: '9:2', file: 'other/Orphan', variants: [] }
-            ])
-          )
-        }
-        expect(ownerOf(await buildOwnership(root), file)).toBeNull()
-        const result = await checkScope({
-          baseDir: root,
-          stagedDir: staged,
-          capturedPageIds: [BUTTONS, PLACES, '9:1'],
-          runKind: 'automated',
-          stage: 'complete',
-          retirements: emptyRetirements()
+      staged = await mkdtemp(path.join(os.tmpdir(), 'unowned-evidence-'))
+      await cp(root, staged, { recursive: true })
+      await put(staged, file, 'changed')
+    })
+
+    afterEach(async () => {
+      await rm(staged, { recursive: true, force: true })
+    })
+
+    describe.each([false, true])(
+      'and the staged tree claims a new identity for it: %s',
+      (claimed) => {
+        beforeEach(async () => {
+          if (claimed) {
+            await put(
+              staged,
+              `${GEN}/components/manifest.ts`,
+              manifest([
+                ...components,
+                { name: 'Orphan', page: 'Other', id: '9:2', file: 'other/Orphan', variants: [] }
+              ])
+            )
+          }
         })
-        expect(result.ok).toBe(false)
-        expect(result.violations).toEqual(
-          expect.arrayContaining([expect.objectContaining({ path: file, owner: null })])
-        )
-      } finally {
-        await rm(staged, { recursive: true, force: true })
+
+        it('should leave the PNG unowned in the base tree', async () => {
+          expect(ownerOf(await buildOwnership(root), file)).toBeNull()
+        })
+
+        it('should freeze the PNG with an unowned violation', async () => {
+          const result = await checkScope({
+            baseDir: root,
+            stagedDir: staged,
+            capturedPageIds: [BUTTONS, PLACES, '9:1'],
+            runKind: 'automated',
+            stage: 'complete',
+            retirements: emptyRetirements()
+          })
+          expect(result.ok).toBe(false)
+          expect(result.violations).toEqual(
+            expect.arrayContaining([expect.objectContaining({ path: file, owner: null })])
+          )
+        })
       }
-    }
-  )
-  it('should reject a PNG a pull request plants under public/dcl-ui-review', async () => {
+    )
+  })
+
+  describe('and a pull request plants a PNG under public/dcl-ui-review', () => {
     const file = 'figma/review/public/dcl-ui-review/renders/Button-0.png'
-    const staged = await mkdtemp(path.join(os.tmpdir(), 'planted-png-'))
-    try {
+    let staged: string
+
+    beforeEach(async () => {
+      staged = await mkdtemp(path.join(os.tmpdir(), 'planted-png-'))
       await cp(root, staged, { recursive: true })
       await put(staged, file, 'planted')
+    })
+
+    afterEach(async () => {
+      await rm(staged, { recursive: true, force: true })
+    })
+
+    it('should reject the planted PNG', async () => {
       const result = await checkScope({
         baseDir: root,
         stagedDir: staged,
@@ -218,34 +270,57 @@ describe('when display metadata disagrees with stable ownership', () => {
       expect(result.violations).toEqual(
         expect.arrayContaining([expect.objectContaining({ path: file, owner: null })])
       )
-    } finally {
-      await rm(staged, { recursive: true, force: true })
-    }
-  })
-  it('should not claim foreign files merely sharing a generated module prefix', async () => {
-    const ownership = await buildOwnership(root)
-    expect(ownerOf(ownership, `${GEN}/components/buttons/Button.custom.tsx`)).toBeNull()
-    expect(ownerOf(ownership, `${GEN}/components/buttons/Button.figma.ts`)).toEqual({
-      pageId: BUTTONS,
-      componentId: 'b1'
     })
   })
-  it('should report conflicting native page claims for the same component ID', async () => {
-    await put(root, `${SNAP}/components/Other.json`, {
-      page: { id: PLACES, name: 'Other' },
-      components: [{ id: 'b1', name: 'Button' }]
+
+  describe('and a foreign file shares a generated module prefix', () => {
+    it('should not claim the foreign file', async () => {
+      expect(
+        ownerOf(await buildOwnership(root), `${GEN}/components/buttons/Button.custom.tsx`)
+      ).toBeNull()
     })
-    expect((await buildOwnership(root)).conflicts.join(' ')).toContain(
-      'componentPageById "b1" claimed as'
-    )
+
+    it('should still own the generated module companion', async () => {
+      expect(
+        ownerOf(await buildOwnership(root), `${GEN}/components/buttons/Button.figma.ts`)
+      ).toEqual({
+        pageId: BUTTONS,
+        componentId: 'b1'
+      })
+    })
   })
-  it('should reject an invalid embedded snapshot ID instead of assigning a filename owner', async () => {
-    await put(root, `${SNAP}/components/Buttons.json`, {
-      page: { id: 123, name: 'Buttons' },
-      components: []
+
+  describe('and native pages claim the same component ID', () => {
+    beforeEach(async () => {
+      await put(root, `${SNAP}/components/Other.json`, {
+        page: { id: PLACES, name: 'Other' },
+        components: [{ id: 'b1', name: 'Button' }]
+      })
     })
-    const ownership = await buildOwnership(root)
-    expect(ownerOf(ownership, `${SNAP}/components/Buttons.json`)).toBeNull()
-    expect(ownership.conflicts.join(' ')).toContain('Invalid snapshot page identity')
+
+    it('should report the conflicting page claims', async () => {
+      expect((await buildOwnership(root)).conflicts.join(' ')).toContain(
+        'componentPageById "b1" claimed as'
+      )
+    })
+  })
+
+  describe('and the embedded snapshot page ID is invalid', () => {
+    beforeEach(async () => {
+      await put(root, `${SNAP}/components/Buttons.json`, {
+        page: { id: 123, name: 'Buttons' },
+        components: []
+      })
+    })
+
+    it('should not assign a filename owner', async () => {
+      expect(ownerOf(await buildOwnership(root), `${SNAP}/components/Buttons.json`)).toBeNull()
+    })
+
+    it('should report the invalid snapshot page identity', async () => {
+      expect((await buildOwnership(root)).conflicts.join(' ')).toContain(
+        'Invalid snapshot page identity'
+      )
+    })
   })
 })

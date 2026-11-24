@@ -208,6 +208,15 @@
   cursor: pointer;
   text-align: left;
 }
+/* the community's thumbnail and name: a bare clear Button laid out as the title */
+.communityTitle {
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  padding: 0 6px 0 0;
+}
+.communityTitle[aria-expanded='true'] {
+  background: var(--tint-clear-hover);
+}
 .dmNames {
   display: flex;
   flex-direction: column;
@@ -531,12 +540,19 @@
 }
 .text {
   font-size: var(--type-14);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-regular);
   line-height: 17px;
   color: var(--white);
   overflow-wrap: anywhere;
   /* Preserve newlines so multi-line system messages (/help, /commands) read as a list. */
   white-space: pre-wrap;
+}
+/* <b> and <i> in a message; on a link too, as these outrank the links' own font: inherit. */
+.text .bold {
+  font-weight: var(--fw-bold);
+}
+.text .italic {
+  font-style: italic;
 }
 .time {
   margin-top: 6px;
@@ -1068,6 +1084,7 @@ button.avatarBtn {
 .url {
   color: var(--chat-link);
   text-decoration: none;
+  -webkit-touch-callout: none; /* no long-press link preview: a chat link opens through its prompt */
 }
 .location,
 .mention,

@@ -376,10 +376,9 @@ describe("HelpView chat banner", () => {
       expect(contactLink()).toBeNull();
       Object.assign(window, { Intercom: intercom });
       document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("load"));
-      await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.objectContaining({ hide_default_launcher: true })));
+      await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.not.objectContaining({ hide_default_launcher: expect.anything() })));
       await checkInlineContact();
       act(() => (intercom.mock.calls.find(([command]) => command === "ready")![1] as () => void)());
-      expect(intercom).toHaveBeenCalledWith("update", { hide_default_launcher: false });
       await user.click(screen.getByRole("button", { name: "CHAT NOW" }));
       expect(intercom).toHaveBeenCalledWith("show");
       expect(contactLink()).toBeNull();
@@ -416,7 +415,6 @@ describe("HelpView chat banner", () => {
       expect(intercom).toHaveBeenCalledWith("shutdown");
       expect(intercom.mock.lastCall![1]).not.toHaveProperty("Wallet");
       act(() => firstReady());
-      expect(intercom).not.toHaveBeenCalledWith("update", { hide_default_launcher: false });
       await checkInlineContact();
     });
   });

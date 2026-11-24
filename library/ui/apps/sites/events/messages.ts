@@ -132,6 +132,41 @@ const messages = {
     'すべてのイベント'
   ],
   'My Events': ['Mis eventos', 'Mes événements', '我的活动', '내 이벤트', 'マイイベント'],
+  'Hosted by me': [
+    'Organizados por mí',
+    'Organisés par moi',
+    '我主办的',
+    '내가 주최한 이벤트',
+    '主催したイベント'
+  ],
+  "You don't have any event created": [
+    'No creaste ningún evento',
+    'Vous n’avez créé aucun événement',
+    '你还没有创建任何活动',
+    '생성한 이벤트가 없습니다',
+    '作成したイベントはありません'
+  ],
+  'Create event': [
+    'Crear evento',
+    'Créer un événement',
+    '创建活动',
+    '이벤트 만들기',
+    'イベントを作成'
+  ],
+  "Couldn't load your events.": [
+    'No se pudieron cargar tus eventos.',
+    'Impossible de charger vos événements.',
+    '无法加载你的活动。',
+    '이벤트를 불러올 수 없습니다.',
+    'イベントを読み込めませんでした。'
+  ],
+  'Loading your events…': [
+    'Cargando tus eventos…',
+    'Chargement de vos événements…',
+    '正在加载你的活动…',
+    '이벤트를 불러오는 중…',
+    'イベントを読み込んでいます…'
+  ],
   Today: ['Hoy', 'Aujourd’hui', '今天', '오늘', '今日'],
   Tomorrow: ['Mañana', 'Demain', '明天', '내일', '明日'],
   'Navigate to previous dates': [
@@ -717,12 +752,12 @@ const messages = {
     '현재 커뮤니티',
     '現在のコミュニティ'
   ],
-  'Loading communities and schedules…': [
-    'Cargando comunidades y horarios…',
-    'Chargement des communautés et des horaires…',
-    '正在加载社区和日程…',
-    '커뮤니티와 일정을 불러오는 중…',
-    'コミュニティとスケジュールを読み込み中…'
+  'Loading communities…': [
+    'Cargando comunidades…',
+    'Chargement des communautés…',
+    '正在加载社区…',
+    '커뮤니티를 불러오는 중…',
+    'コミュニティを読み込み中…'
   ],
   'Could not load your communities: {error}': [
     'No se pudieron cargar tus comunidades: {error}',
@@ -738,42 +773,6 @@ const messages = {
     '커뮤니티 소유자와 관리자가 이 연결을 변경할 수 있습니다.',
     'コミュニティのオーナーとモデレーターがこの関連付けを変更できます。'
   ],
-  Schedules: ['Horarios', 'Horaires', '日程', '일정', 'スケジュール'],
-  'Could not load schedules: {error}': [
-    'No se pudieron cargar los horarios: {error}',
-    'Impossible de charger les horaires : {error}',
-    '无法加载日程：{error}',
-    '일정을 불러오지 못했습니다: {error}',
-    'スケジュールを読み込めませんでした：{error}'
-  ],
-  'No schedules are available.': [
-    'No hay horarios disponibles.',
-    'Aucun horaire disponible.',
-    '没有可用日程。',
-    '사용 가능한 일정이 없습니다.',
-    '利用できるスケジュールがありません。'
-  ],
-  'Unavailable schedule (remove association)': [
-    'Horario no disponible (quitar asociación)',
-    'Horaire indisponible (supprimer l’association)',
-    '日程不可用（移除关联）',
-    '사용할 수 없는 일정(연결 해제)',
-    '利用できないスケジュール（関連付けを削除）'
-  ],
-  'Custom join link': [
-    'Enlace de acceso personalizado',
-    'Lien d’accès personnalisé',
-    '自定义加入链接',
-    '맞춤 입장 링크',
-    'カスタム参加リンク'
-  ],
-  "Use the venue's default link": [
-    'Usar el enlace predeterminado del lugar',
-    'Utiliser le lien par défaut du lieu',
-    '使用地点的默认链接',
-    '장소의 기본 링크 사용',
-    '会場のデフォルトリンクを使用'
-  ],
   'Loading your hangout…': [
     'Cargando tu evento…',
     'Chargement de votre événement…',
@@ -781,6 +780,86 @@ const messages = {
     '이벤트를 불러오는 중…',
     'イベントを読み込み中…'
   ],
+  'Your event was created successfully. You\'ll be notified once it\'s approved. Track its status in "My Events"':
+    [
+      'Tu evento se creó correctamente. Te avisaremos cuando se apruebe. Seguí su estado en "Mis eventos"',
+      'Votre événement a bien été créé. Vous serez averti dès qu’il sera approuvé. Suivez son statut dans « Mes événements »',
+      '你的活动已成功创建。审核通过后我们会通知你。可在“我的活动”中查看状态',
+      '이벤트가 생성되었습니다. 승인되면 알려 드립니다. "내 이벤트"에서 상태를 확인하세요',
+      'イベントを作成しました。承認されたらお知らせします。「マイイベント」でステータスを確認できます'
+    ],
+  'Your event was created and is now live.': [
+    'Tu evento se creó y ya está publicado.',
+    'Votre événement a été créé et il est maintenant en ligne.',
+    '你的活动已创建，现已上线。',
+    '이벤트가 생성되어 지금 공개되었습니다.',
+    'イベントを作成し、公開しました。'
+  ],
+  'Your event was updated successfully.': [
+    'Tu evento se actualizó correctamente.',
+    'Votre événement a bien été mis à jour.',
+    '你的活动已成功更新。',
+    '이벤트가 업데이트되었습니다.',
+    'イベントを更新しました。'
+  ],
+  'Your changes were saved, but the event is still rejected, so it is not back in review.': [
+    'Tus cambios se guardaron, pero el evento sigue rechazado, así que no volvió a revisión.',
+    'Vos modifications ont été enregistrées, mais l’événement reste refusé : il n’est pas revenu en examen.',
+    '你的更改已保存，但活动仍处于被拒绝状态，因此没有重新进入审核。',
+    '변경 사항이 저장되었지만 이벤트가 여전히 거부된 상태여서 다시 검토 대기열로 돌아가지 않았습니다.',
+    '変更は保存されましたが、イベントは却下されたままのため、審査には戻っていません。'
+  ],
+  'Back to Explore': [
+    'Volver a explorar',
+    'Retour à l’exploration',
+    '返回探索',
+    '탐색으로 돌아가기',
+    '探索に戻る'
+  ],
+  Delete: ['Eliminar', 'Supprimer', '删除', '삭제', '削除'],
+  'Are you sure you want to delete your event?': [
+    '¿Seguro que querés eliminar tu evento?',
+    'Voulez-vous vraiment supprimer votre événement ?',
+    '确定要删除你的活动吗？',
+    '이벤트를 삭제하시겠습니까?',
+    'イベントを削除してもよろしいですか？'
+  ],
+  'This event will be permanently removed from your events. This action can’t be undone.': [
+    'Este evento se quitará de forma permanente de tus eventos. Esta acción no se puede deshacer.',
+    'Cet événement sera définitivement retiré de vos événements. Cette action est irréversible.',
+    '此活动将从你的活动中永久移除。此操作无法撤销。',
+    '이 이벤트는 내 이벤트에서 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.',
+    'このイベントはマイイベントから完全に削除されます。この操作は元に戻せません。'
+  ],
+  'Delete event': [
+    'Eliminar evento',
+    'Supprimer l’événement',
+    '删除活动',
+    '이벤트 삭제',
+    'イベントを削除'
+  ],
+  "We couldn't delete your event. Please try again.": [
+    'No pudimos eliminar tu evento. Intentá de nuevo.',
+    'Impossible de supprimer votre événement. Veuillez réessayer.',
+    '无法删除你的活动，请重试。',
+    '이벤트를 삭제하지 못했습니다. 다시 시도해 주세요.',
+    'イベントを削除できませんでした。もう一度お試しください。'
+  ],
+  'Your session changed. Sign in again to delete this event.': [
+    'Tu sesión cambió. Volvé a iniciar sesión para eliminar este evento.',
+    'Votre session a changé. Reconnectez-vous pour supprimer cet événement.',
+    '你的登录状态已更改。请重新登录以删除此活动。',
+    '세션이 변경되었습니다. 이 이벤트를 삭제하려면 다시 로그인해 주세요.',
+    'セッションが変更されました。このイベントを削除するには、もう一度ログインしてください。'
+  ],
+  "Your browser couldn't keep your draft for sign-in. Copy what you wrote, then choose Sign In again to continue without it.":
+    [
+      'Tu navegador no pudo guardar tu borrador para iniciar sesión. Copiá lo que escribiste y elegí Iniciar sesión otra vez para continuar sin él.',
+      'Votre navigateur n’a pas pu conserver votre brouillon pour la connexion. Copiez ce que vous avez écrit, puis choisissez à nouveau Se connecter pour continuer sans lui.',
+      '你的浏览器无法为登录保留草稿。请复制你写的内容，然后再次选择登录，不保留草稿继续。',
+      '브라우저가 로그인하는 동안 초안을 보관하지 못했습니다. 작성한 내용을 복사한 다음 다시 로그인을 선택하면 초안 없이 계속합니다.',
+      'ブラウザがログイン用に下書きを保持できませんでした。書いた内容をコピーしてから、もう一度ログインを選ぶと下書きなしで続行します。'
+    ],
   'Check access again': [
     'Volver a verificar el acceso',
     'Vérifier à nouveau l’accès',
@@ -1023,19 +1102,20 @@ const messages = {
     '변경 사항 저장',
     '変更を保存'
   ],
-  'This event was rejected: {reason}': [
-    'Este evento fue rechazado: {reason}',
-    'Cet événement a été refusé : {reason}',
-    '此活动未通过审核：{reason}',
-    '이벤트가 거부되었습니다: {reason}',
-    'イベントが却下されました：{reason}'
-  ],
-  'This event was rejected.': [
-    'Este evento fue rechazado.',
-    'Cet événement a été refusé.',
-    '此活动未通过审核。',
-    '이벤트가 거부되었습니다.',
-    'イベントが却下されました。'
+  'This event has been rejected because of {reasons}. Please update the information and submit again':
+    [
+      'Este evento fue rechazado por {reasons}. Actualiza la información y envíalo de nuevo',
+      'Cet événement a été refusé pour les raisons suivantes : {reasons}. Mettez à jour les informations et soumettez-le à nouveau',
+      '此活动因{reasons}未通过审核。请更新信息后重新提交',
+      '{reasons} 때문에 이벤트가 거부되었습니다. 정보를 수정한 뒤 다시 제출하세요',
+      '{reasons}のため、このイベントは却下されました。情報を更新して再度提出してください'
+    ],
+  'This event has been rejected. Please update the information and submit again': [
+    'Este evento fue rechazado. Actualiza la información y envíalo de nuevo',
+    'Cet événement a été refusé. Mettez à jour les informations et soumettez-le à nouveau',
+    '此活动未通过审核。请更新信息后重新提交',
+    '이벤트가 거부되었습니다. 정보를 수정한 뒤 다시 제출하세요',
+    'このイベントは却下されました。情報を更新して再度提出してください'
   ],
   'Changes to approved events may require another review.': [
     'Los cambios a eventos aprobados podrían requerir otra revisión.',

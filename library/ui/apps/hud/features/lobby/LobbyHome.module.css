@@ -31,9 +31,6 @@
 .standInHidden {
   opacity: 0;
 }
-.standInInstant {
-  transition: none;
-}
 .standInBackdrop {
   position: absolute;
   inset: 0;
@@ -92,10 +89,10 @@
 .avatarHit:disabled {
   cursor: default;
 }
+/* the avatar is the whole middle of the lobby: no ring is drawn over it */
+.avatarHit:focus,
 .avatarHit:focus-visible {
-  outline: 2px solid var(--lobby-snow);
-  outline-offset: -2px;
-  border-radius: var(--r-xl);
+  outline: none;
 }
 
 .header {

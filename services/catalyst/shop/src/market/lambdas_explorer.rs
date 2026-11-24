@@ -3,8 +3,8 @@
 //! sorted (UCA order, rarest or newest first) and paged in Rust exactly as
 //! the old handler did: the base wearables (content entities), the owner's
 //! on-chain copies (the `nft` index, `owned_items`, plus the active escrow
-//! grants of `shop.usage_grants` unless `EXPLORER_ESCROW_GRANTS_ENABLED` is
-//! off, as under the mirror posture; the item type from the `items`
+//! grants of `shop.usage_grants` where the operator turns
+//! `EXPLORER_ESCROW_GRANTS_ENABLED` on; the item type from the `items`
 //! mirror, the definitions from the content entities) and the third-party
 //! wearables (`third_party`). Until the index is published and recent and
 //! the items mirror has completed a pass, a read with the on-chain leg
@@ -33,8 +33,8 @@ use super::definitions::{
 };
 use super::graph;
 use super::lambdas_catalog::cached_base_wearables;
+use super::third_party::collection_provider;
 use super::third_party::{FetchFailure, OnFailure, TpwElement, fetch_all_third_party_wearables};
-use super::user_items::is_third_party_name_urn;
 use super::{MarketplaceState, SharedState, bad_request};
 
 const EXPLORER_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -210,7 +210,8 @@ async fn fetch_owned_items(
         })
         .collect();
     // lamb2 lists chain-owned tokens only (explorer-handler.ts:74-104):
-    // `EXPLORER_ESCROW_GRANTS_ENABLED`, off under the mirror posture.
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` adds escrow grants, off unless the
+    // operator opts in.
     let grants = if state.settings.explorer_escrow_grants {
         sqlx::query(
             "SELECT urn, COALESCE(token_id, '') AS token_id, extract(epoch FROM granted_at)::bigint AS granted_at \
@@ -639,24 +640,18 @@ fn third_party_item(e: TpwElement) -> OwnedItem {
 /// one provider list its wearables twice and the response grows with the
 /// number of values; here a provider is listed once, which keeps the
 /// uncapped value list from multiplying the answer.
-fn third_party_provider_names(collection_ids: &[String]) -> Vec<&str> {
-    let mut seen: HashSet<&str> = HashSet::new();
+fn third_party_providers(collection_ids: &[String]) -> Vec<&str> {
+    let mut seen = HashSet::new();
     collection_ids
         .iter()
-        .filter_map(|id| {
-            let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
-            if !is_third_party_name_urn(&cleaned) {
-                return None;
-            }
-            id.split(':').nth(4)
-        })
-        .filter(|name| seen.insert(name))
+        .filter_map(|id| collection_provider(id))
+        .filter(|provider| seen.insert(*provider))
         .collect()
 }
 
 /// The third-party leg: every provider's wearables, or with
 /// `thirdPartyCollectionId` only the providers it names
-/// ([`third_party_provider_names`]); a name no approved provider has is
+/// ([`third_party_providers`]); a name no approved provider has is
 /// `Third Party not found`.
 async fn fetch_third_party_items(
     state: &MarketplaceState,
@@ -669,8 +664,9 @@ async fn fetch_third_party_items(
         return Ok(found.into_iter().map(third_party_item).collect());
     }
     let mut items = Vec::new();
-    for name in third_party_provider_names(collection_ids) {
-        let found = fetch_all_third_party_wearables(state, owner, Some(name), on_failure).await?;
+    for provider in third_party_providers(collection_ids) {
+        let found =
+            fetch_all_third_party_wearables(state, owner, Some(provider), on_failure).await?;
         items.extend(found.into_iter().map(third_party_item));
     }
     Ok(items)
@@ -697,7 +693,13 @@ async fn explorer_items(
     // The on-chain leg's copies, read on the gate's own snapshot (memoized
     // per owner), before the page cache: the gate holds on every request.
     let copies = if owner_valid && on_chain_allowed {
-        let gate = match super::owned_items::require_inventory(state, category).await {
+        let gate = match super::owned_items::require_inventory(
+            state,
+            category,
+            super::lambdas_internal_error,
+        )
+        .await
+        {
             Ok(gate) => gate,
             Err(envelope) => return envelope,
         };
@@ -728,9 +730,9 @@ async fn explorer_items(
         if q.third_party_collection_ids.is_empty() {
             String::new()
         } else {
-            let mut names = third_party_provider_names(&q.third_party_collection_ids);
+            let mut names = third_party_providers(&q.third_party_collection_ids);
             names.sort_unstable();
-            format!("[{}]", names.join(","))
+            json!(names).to_string()
         },
     );
     let cache_key: ExplorerKey = (

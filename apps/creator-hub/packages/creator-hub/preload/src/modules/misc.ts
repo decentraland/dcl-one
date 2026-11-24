@@ -5,6 +5,10 @@ import { isUrl } from '/shared/utils';
 
 import { invoke } from '../services/ipc';
 
+export async function fetchAuthIdentity(url: string, id: string, verifier: string) {
+  return invoke('electron.fetchAuthIdentity', url, id, verifier);
+}
+
 export async function openExternal(url: string) {
   if (!isUrl(url)) throw new Error('Invalid URL provided');
   await invoke('electron.openExternal', url);
@@ -21,6 +25,11 @@ export async function showSaveDialog(opts: Partial<SaveDialogOptions>) {
 
 export async function copyToClipboard(text: string) {
   await invoke('electron.copyToClipboard', text);
+}
+
+// Bring this window to the front.
+export async function focusWindow() {
+  await invoke('electron.focusWindow');
 }
 
 export async function logDeployment(entry: DeploymentLogEntry) {

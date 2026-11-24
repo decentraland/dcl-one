@@ -26,8 +26,10 @@ trees, which git ignores.
   writes what is missing or stale, `verify` checks the tree ids, and `export NAME -m "subject"`
   turns edits in a rebuilt tree into the next patch
   ([commands](../../rendering/bevy-explorer/docs/guidelines/bevy-fork.md#changing-bevy)).
-- **In-tree crates:** `bevy_dui`, `boimp` and `rpc-rust` (package `dcl-rpc`) are exact upstream
-  bytes under `rendering/bevy-explorer/vendor/<directory>`. Each manifest records its licence.
+- **In-tree crates:** `bevy_dui` and `rpc-rust` (package `dcl-rpc`) are exact upstream bytes
+  under `rendering/bevy-explorer/vendor/<directory>`. Each manifest records its licence. `boimp`
+  is a patched source (`patches/boimp`); it is not on crates.io, so `[workspace.dependencies]`
+  names it by `git` + `rev`.
   They sit outside `source/` because `rust-cache` drops the artifacts of path crates inside the
   workspace root.
 - **Cargo:** every forked crate resolves to a path. The gltf pin is the only git source left in
@@ -93,4 +95,4 @@ this repository, and no build needs a fork repository.
 - The build script of `client-sdk-rust` still downloads a prebuilt libwebrtc from a release of the
   former fork, as before.
 - Cargo does not cap the warnings of a path dependency. The last patch of each forked source
-  allows them, and the three in-tree crates print theirs.
+  allows them, and the two in-tree crates print theirs.

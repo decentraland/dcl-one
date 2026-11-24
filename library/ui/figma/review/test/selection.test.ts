@@ -17,16 +17,29 @@ describe('when selecting properties from captured combinations', () => {
       ['State', ['Default', 'Hover']]
     ])
   })
-  it('should preserve the other property when the combination exists', () => {
-    assert.equal(selectVariant(variants, 0, 'State', 'Hover'), 1)
+  describe('and the requested combination exists', () => {
+    it('should preserve the other property', () => {
+      assert.equal(selectVariant(variants, 0, 'State', 'Hover'), 1)
+    })
   })
-  it('should select a real combination when the previous state is unavailable', () => {
-    assert.equal(selectVariant(variants, 1, 'Variant', 'Secondary'), 2)
+  describe('and the previous state is unavailable for the requested value', () => {
+    it('should select a real combination', () => {
+      assert.equal(selectVariant(variants, 1, 'Variant', 'Secondary'), 2)
+    })
   })
-  it('should retain the current selection for unknown values', () => {
-    assert.equal(selectVariant(variants, 1, 'State', 'Missing'), 1)
+  describe('and the requested value is unknown', () => {
+    it('should retain the current selection', () => {
+      assert.equal(selectVariant(variants, 1, 'State', 'Missing'), 1)
+    })
   })
-  it('should handle components without variant properties', () => {
-    assert.deepEqual(propertyOptions([{ properties: {} }]), [])
+})
+
+describe('when a component has no variant properties', () => {
+  let variants: { properties: Record<string, string> }[]
+  beforeEach(() => {
+    variants = [{ properties: {} }]
+  })
+  it('should expose no selectors', () => {
+    assert.deepEqual(propertyOptions(variants), [])
   })
 })

@@ -19,7 +19,6 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::http_util::fetcher_error;
 use crate::shared::query_params::{
     JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, QueryParams, js_slice_range,
@@ -32,6 +31,7 @@ use super::definitions::{
 use super::graph;
 use super::owned_items::{self, OwnedCopy};
 use super::readers;
+use super::third_party::collection_provider;
 use super::{MarketplaceState, SharedState, bad_request};
 
 fn pagination_object(
@@ -213,23 +213,16 @@ fn grouped_to_json(item: &GroupedItem) -> Value {
 async fn entities_by_pointer(
     state: &MarketplaceState,
     pointers: &[String],
-) -> HashMap<String, Value> {
-    let mut by_pointer: HashMap<String, Value> = HashMap::new();
-    if pointers.is_empty() {
-        return by_pointer;
-    }
-    let mut docs = active_entity_docs_by_pointers(&state.pool, pointers)
-        .await
-        .unwrap_or_default();
-    retain_non_denylisted(&mut docs, &state.denylist);
-    for ent in docs.iter().filter_map(|d| d.to_value()) {
+) -> Result<HashMap<String, Value>, ()> {
+    let mut by_pointer = HashMap::new();
+    for ent in super::profiles::active_entities(state, pointers).await? {
         if let Some(ptrs) = ent.get("pointers").and_then(|p| p.as_array()) {
             for p in ptrs.iter().filter_map(Value::as_str) {
                 by_pointer.insert(p.to_lowercase(), ent.clone());
             }
         }
     }
-    by_pointer
+    Ok(by_pointer)
 }
 
 async fn owned_items_response(
@@ -270,10 +263,13 @@ async fn owned_items_response(
         .into_response();
     }
 
-    let gate = match owned_items::require_inventory(state, item_category).await {
-        Ok(gate) => gate,
-        Err(envelope) => return envelope,
-    };
+    let gate =
+        match owned_items::require_inventory(state, item_category, super::lambdas_internal_error)
+            .await
+        {
+            Ok(gate) => gate,
+            Err(envelope) => return envelope,
+        };
     let copies = match owned_items::owned_copies(state, gate, address, item_category).await {
         Ok(c) => c,
         Err(e) => {
@@ -299,7 +295,10 @@ async fn owned_items_response(
 
     let by_pointer = if include_definitions || include_entities {
         let pointers: Vec<String> = page.iter().map(|i| i.urn.to_lowercase()).collect();
-        entities_by_pointer(state, &pointers).await
+        match entities_by_pointer(state, &pointers).await {
+            Ok(entities) => entities,
+            Err(()) => return super::lambdas_internal_error(),
+        }
     } else {
         HashMap::new()
     };
@@ -427,27 +426,6 @@ fn collection_id_param(req: &Request) -> Option<String> {
     qs_get_string(&params, "collectionId").filter(|s| !s.is_empty())
 }
 
-pub(crate) fn is_third_party_name_urn(urn: &str) -> bool {
-    let p: Vec<&str> = urn.split(':').collect();
-    p.len() == 5
-        && p[0] == "urn"
-        && p[1] == "decentraland"
-        && p[3] == "collections-thirdparty"
-        && !p[4].is_empty()
-}
-
-fn third_party_collection_name(collection_id: &str) -> Option<String> {
-    let cleaned: String = collection_id
-        .split(':')
-        .take(5)
-        .collect::<Vec<_>>()
-        .join(":");
-    if !is_third_party_name_urn(&cleaned) {
-        return None;
-    }
-    cleaned.split(':').nth(4).map(|s| s.to_string())
-}
-
 async fn items_by_owner(
     state: &MarketplaceState,
     owner: &str,
@@ -458,11 +436,11 @@ async fn items_by_owner(
 ) -> Response {
     if let Some(collection_id) = collection_id {
         // The provider's mapped wearables the owner holds on chain (`third_party`).
-        let Some(name) = third_party_collection_name(collection_id) else {
+        let Some(provider) = collection_provider(collection_id) else {
             return bad_request("'collectionId' must be a valid third-party collection URN");
         };
         let content_public_url = &state.settings.content_public_url;
-        let owned = match super::third_party::owned_third_party_urns(state, owner, &name).await {
+        let owned = match super::third_party::owned_third_party_urns(state, owner, provider).await {
             Ok(owned) => owned,
             Err(e) => return e.response(owner),
         };
@@ -478,7 +456,9 @@ async fn items_by_owner(
             .collect();
         return Json(json!(body)).into_response();
     }
-    let gate = match owned_items::require_inventory(state, category).await {
+    let gate = match owned_items::require_inventory(state, category, super::lambdas_internal_error)
+        .await
+    {
         Ok(gate) => gate,
         Err(envelope) => return envelope,
     };
@@ -501,7 +481,7 @@ async fn items_by_owner(
         .await;
     match body {
         Ok(body) => Json(body).into_response(),
-        Err(e) => super::third_party::fetch_error(owner, &e),
+        Err(response) => response,
     }
 }
 
@@ -510,7 +490,7 @@ async fn owned_items_body(
     copies: &[owned_items::OwnedCopy],
     include_definitions: bool,
     extract: fn(&Value, &str) -> Option<Value>,
-) -> Result<Value, String> {
+) -> Result<Value, Response> {
     let mut rows: Vec<(String, i64, String)> = group_copies(copies)
         .into_iter()
         .map(|g| {
@@ -535,7 +515,9 @@ async fn owned_items_body(
     }
 
     let pointers: Vec<String> = rows.iter().map(|(urn, ..)| urn.to_lowercase()).collect();
-    let by_pointer = entities_by_pointer(state, &pointers).await;
+    let by_pointer = entities_by_pointer(state, &pointers)
+        .await
+        .map_err(|()| super::lambdas_internal_error())?;
     let content_public_url = &state.settings.content_public_url;
     let body: Vec<Value> = rows
         .into_iter()
@@ -922,28 +904,32 @@ mod tests {
     #[test]
     fn third_party_collection_name_parsing() {
         assert_eq!(
-            third_party_collection_name(
-                "urn:decentraland:matic:collections-thirdparty:cryptomotors"
-            ),
-            Some("cryptomotors".to_string())
+            collection_provider("urn:decentraland:matic:collections-thirdparty:cryptomotors"),
+            Some("cryptomotors")
         );
         assert_eq!(
-            third_party_collection_name(
-                "urn:decentraland:matic:collections-thirdparty:cryptomotors:car:1"
-            ),
-            Some("cryptomotors".to_string())
+            collection_provider("urn:decentraland:matic:collections-thirdparty:cryptomotors:car:1"),
+            Some("cryptomotors")
         );
         assert_eq!(
-            third_party_collection_name("urn:decentraland:matic:collections-v2:0xabc:0"),
+            collection_provider("urn:decentraland:matic:collections-v2:0xabc:0"),
             None
         );
         assert_eq!(
-            third_party_collection_name("urn:decentraland:off-chain:base-avatars:eyebrows_00"),
+            collection_provider("urn:decentraland:off-chain:base-avatars:eyebrows_00"),
             None
         );
-        assert_eq!(third_party_collection_name("not-a-urn"), None);
+        assert_eq!(collection_provider("not-a-urn"), None);
         assert_eq!(
-            third_party_collection_name("urn:decentraland:matic:collections-thirdparty:"),
+            collection_provider("urn:decentraland:ethereum:collections-thirdparty:cryptomotors"),
+            None
+        );
+        assert_eq!(
+            collection_provider("urn:decentraland:amoy:collections-thirdparty:cryptomotors"),
+            Some("cryptomotors")
+        );
+        assert_eq!(
+            collection_provider("urn:decentraland:matic:collections-thirdparty:"),
             None
         );
     }

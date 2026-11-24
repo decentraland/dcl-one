@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import StCastWatcher from "@ui/web/pages/StCastWatcher";
+import { StCastWatcher } from "@dcl/one-ui";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import type { WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 const JOIN_CLASS = "stcastwatcher__join";
 const LEAVE_CLASS = "stcastwatcher__leave";
@@ -192,33 +193,35 @@ export default function CastWatch({
       data-location={watch.location}
       onClickCapture={onClickCapture}
     >
-      <Watcher
-        streamName={placeName}
-        state={state}
-        sidebarOpen={state === "live" && sidebarOpen}
-        isTabMuted={isTabMuted}
-        chatFooter={chatFooter}
-        participantCount={live ? live.participantCount : participantCount}
-        unreadCount={state === "live" && !sidebarOpen && !live ? unreadCount : 0}
-        stage={live && state === "live" ? live.stage(isTabMuted) : undefined}
-        messages={live ? [] : undefined}
-        watcherTitle={refusal?.kind === "waiting" ? refusal.title : undefined}
-        watcherMessage={refusal?.kind === "waiting" ? refusal.message : undefined}
-        toasts={[
-          ...(refusal?.kind === "error"
-            ? [{ title: refusal.title, message: refusal.message, action: { label: "Retry", onClick: join } }]
-            : []),
-          ...(live?.audioBlocked && state === "live"
-            ? [
-                {
-                  title: "Audio is paused",
-                  message: "Your browser needs a click before the Cast can play sound.",
-                  action: { label: "Enable audio", onClick: live.enableAudio },
-                },
-              ]
-            : []),
-        ]}
-      />
+      <SitesLayout active="legal">
+        <Watcher
+          streamName={placeName}
+          state={state}
+          sidebarOpen={state === "live" && sidebarOpen}
+          isTabMuted={isTabMuted}
+          chatFooter={chatFooter}
+          participantCount={live ? live.participantCount : participantCount}
+          unreadCount={state === "live" && !sidebarOpen && !live ? unreadCount : 0}
+          stage={live && state === "live" ? live.stage(isTabMuted) : undefined}
+          messages={live ? [] : undefined}
+          watcherTitle={refusal?.kind === "waiting" ? refusal.title : undefined}
+          watcherMessage={refusal?.kind === "waiting" ? refusal.message : undefined}
+          toasts={[
+            ...(refusal?.kind === "error"
+              ? [{ title: refusal.title, message: refusal.message, action: { label: "Retry", onClick: join } }]
+              : []),
+            ...(live?.audioBlocked && state === "live"
+              ? [
+                  {
+                    title: "Audio is paused",
+                    message: "Your browser needs a click before the Cast can play sound.",
+                    action: { label: "Enable audio", onClick: live.enableAudio },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </SitesLayout>
       {demoMessages && demoMessages.length === 0 && null}
     </div>
   );

@@ -112,6 +112,14 @@ describe("communityLoader", () => {
       expect(loaded(result).description).toBe("Official updates.");
     });
 
+    it("should name its owner for the link-preview card", () => {
+      expect(loaded(result).ownerName).toBe("DCLOfficial");
+    });
+
+    it("should leave the card's image out when the social API names none", () => {
+      expect(loaded(result).image).toBeNull();
+    });
+
     it("should dehydrate the community with its first members and events page", () => {
       expect(keys(loaded(result))).toEqual(
         expect.arrayContaining([
@@ -124,6 +132,22 @@ describe("communityLoader", () => {
 
     it("should read the community's events", () => {
       expect(calls.some((url) => url.includes(`community_id=${ID}`))).toBe(true);
+    });
+  });
+
+  describe("when the social API names the community's image", () => {
+    beforeEach(async () => {
+      const named = community("private");
+      reply(/\/v1\/communities\/[^/?]+$/, {
+        status: 200,
+        body: { data: { ...named.data, thumbnailUrl: `https://assets-cdn.decentraland.org/social/communities/${ID}/raw-thumbnail.png` } },
+      });
+
+      result = await run(ID);
+    });
+
+    it("should give the card that image, read through this site", () => {
+      expect(loaded(result).image).toMatch(new RegExp(`/assets-cdn/social/communities/${ID}/raw-thumbnail\\.png$`));
     });
   });
 

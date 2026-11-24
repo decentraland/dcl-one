@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import {
   GIT_HARDENING,
@@ -360,8 +360,10 @@ function keyReaderViolations(workflow: Workflow): string[] {
 }
 
 describe('the ui-library.yml url scan', () => {
-  const workflow = load('ui-library.yml')
-  const guardSteps = stepsOf(workflow.jobs['key-guard'])
+  let guardSteps: WorkflowStep[]
+  beforeEach(() => {
+    guardSteps = stepsOf(load('ui-library.yml').jobs['key-guard'])
+  })
 
   it('should prefetch every LFS object of the outgoing range, unfiltered, before scanning it', () => {
     const prefetch = guardSteps.findIndex((step) => step.run?.includes('lfs-prefetch.mjs'))
@@ -390,17 +392,19 @@ describe('the ui-library.yml url scan', () => {
 })
 
 describe('the Figma file key secret', () => {
-  it.each(workflowFiles)(
-    'should not be referenced by %s if a pull request can trigger it',
-    (file) => {
-      const pullRequestTriggered = triggers(load(file)).some((name) =>
-        ['pull_request', 'pull_request_target'].includes(name)
-      )
-      if (pullRequestTriggered) expect(isKeyReader(load(file))).toBe(false)
-    }
-  )
+  describe('when a pull request can trigger a workflow', () => {
+    it.each(workflowFiles)(
+      'should keep the key out of %s among pull-request-triggered workflows',
+      (file) => {
+        const pullRequestTriggered = triggers(load(file)).some((name) =>
+          ['pull_request', 'pull_request_target'].includes(name)
+        )
+        if (pullRequestTriggered) expect(isKeyReader(load(file))).toBe(false)
+      }
+    )
+  })
 
-  it('should be read only by the key scan and, once it lands, the web preview publisher', () => {
+  it('should be read only by the key scan and the web preview publisher it is reserved for', () => {
     const holders = workflowFiles.filter((file) => isKeyReader(load(file)))
     expect(holders).toContain('ui-library-key-scan.yml')
     for (const file of holders) expect(KEY_READERS, file).toContain(file)
@@ -440,12 +444,18 @@ describe('the Figma file key secret', () => {
     }
   )
 
-  it('should not flag a workflow that reads neither guarded secret', () => {
-    const other: Workflow = {
-      on: { push: { branches: ['main'] } },
-      jobs: { a: { steps: [{ env: { T: '${{ secrets.FIGMA_TOKEN_OLD }}' }, run: 'true' }] } }
-    }
-    expect(guardedSecretViolations('x.yml', other)).toEqual([])
+  describe('when a workflow reads neither guarded secret', () => {
+    let other: Workflow
+    beforeEach(() => {
+      other = {
+        on: { push: { branches: ['main'] } },
+        jobs: { a: { steps: [{ env: { T: '${{ secrets.FIGMA_TOKEN_OLD }}' }, run: 'true' }] } }
+      }
+    })
+
+    it('should not flag it', () => {
+      expect(guardedSecretViolations('x.yml', other)).toEqual([])
+    })
   })
 
   it.each(workflowFiles)(
@@ -456,8 +466,10 @@ describe('the Figma file key secret', () => {
     }
   )
 
-  it('should reject a pull request workflow that checks out the head and runs its scripts', () => {
-    const untrusted = parse(`
+  describe('when a pull request workflow checks out the head and runs its scripts', () => {
+    let untrusted: Workflow
+    beforeEach(() => {
+      untrusted = parse(`
 on: pull_request
 jobs:
   test:
@@ -471,18 +483,24 @@ jobs:
           FIGMA_FILE_KEY: \${{ secrets.FIGMA_FILE_KEY }}
         run: pnpm test && echo "$FIGMA_FILE_KEY"
 `) as Workflow
-    expect(keyReaderViolations(untrusted)).toEqual(
-      expect.arrayContaining([
-        'triggered by pull_request',
-        'test: uses actions/checkout@v7',
-        'test: declares environment web-preview',
-        'test: key step does not run a key step template'
-      ])
-    )
+    })
+
+    it('should reject the workflow', () => {
+      expect(keyReaderViolations(untrusted)).toEqual(
+        expect.arrayContaining([
+          'triggered by pull_request',
+          'test: uses actions/checkout@v7',
+          'test: declares environment web-preview',
+          'test: key step does not run a key step template'
+        ])
+      )
+    })
   })
 
-  it('should reject a reader that holds the key at job level', () => {
-    const loose = parse(`
+  describe('when a reader holds the key at job level', () => {
+    let loose: Workflow
+    beforeEach(() => {
+      loose = parse(`
 on:
   workflow_run:
     workflows: [x]
@@ -495,12 +513,16 @@ jobs:
     steps:
       - run: node library/ui/figma/key-guard.mjs
 `) as Workflow
-    expect(keyReaderViolations(loose)).toEqual(
-      expect.arrayContaining([
-        'scan: key outside a step env',
-        'scan: runs a command beside the key'
-      ])
-    )
+    })
+
+    it('should reject the reader', () => {
+      expect(keyReaderViolations(loose)).toEqual(
+        expect.arrayContaining([
+          'scan: key outside a step env',
+          'scan: runs a command beside the key'
+        ])
+      )
+    })
   })
 
   // Readers that pass every rule, one per key step template; each case below breaks exactly one rule.
@@ -753,18 +775,33 @@ jobs:
     expect(keyReaderViolations(rootCheckout(run))).toContain('scan: runs a command beside the key')
   })
 
-  it('should reject a run step with its own working directory or env beside the key', () => {
-    const moved = reader((job) =>
-      job.steps.splice(KEY, 0, {
-        run: 'cp "$RUNNER_TEMP/x" HEAD',
-        'working-directory': 'trusted/.git'
-      })
-    )
-    expect(keyReaderViolations(moved)).toContain('scan: runs a command beside the key')
-    const hardened = reader((job) =>
-      job.steps.splice(KEY, 0, { run: 'true', env: { ...GIT_HARDENING } })
-    )
-    expect(keyReaderViolations(hardened)).toContain('scan: runs a command beside the key')
+  describe('when a run step beside the key sets its own working directory', () => {
+    let moved: Workflow
+    beforeEach(() => {
+      moved = reader((job) =>
+        job.steps.splice(KEY, 0, {
+          run: 'cp "$RUNNER_TEMP/x" HEAD',
+          'working-directory': 'trusted/.git'
+        })
+      )
+    })
+
+    it('should reject the run step', () => {
+      expect(keyReaderViolations(moved)).toContain('scan: runs a command beside the key')
+    })
+  })
+
+  describe('when a run step beside the key sets its own env', () => {
+    let hardened: Workflow
+    beforeEach(() => {
+      hardened = reader((job) =>
+        job.steps.splice(KEY, 0, { run: 'true', env: { ...GIT_HARDENING } })
+      )
+    })
+
+    it('should reject the run step', () => {
+      expect(keyReaderViolations(hardened)).toContain('scan: runs a command beside the key')
+    })
   })
 
   // Every key step the shell parser had to judge: other programs, substitutions, redirects, rewrites of the guard
@@ -946,14 +983,30 @@ jobs:
     ).toContain('sets workflow env')
   })
 
-  it('should reject job or workflow env that no loader list names, even with the git hardening values', () => {
-    for (const env of [{ NODE_EXTRA_CA_CERTS: '/tmp/ca.pem' }, { ...GIT_HARDENING }]) {
-      expect(keyReaderViolations(reader((job) => (job.env = env)))).toContain('scan: sets job env')
-      expect(keyReaderViolations(reader((_, workflow) => (workflow.env = env)))).toContain(
-        'sets workflow env'
-      )
+  describe.each([
+    ['a variable no loader list names', { NODE_EXTRA_CA_CERTS: '/tmp/ca.pem' }],
+    ['the git hardening values', GIT_HARDENING]
+  ] as [string, Record<string, unknown>][])(
+    'when the job or workflow env holds %s',
+    (_, values) => {
+      let env: Record<string, unknown>
+      beforeEach(() => {
+        env = { ...values }
+      })
+
+      it('should reject the job env', () => {
+        expect(keyReaderViolations(reader((job) => (job.env = env)))).toContain(
+          'scan: sets job env'
+        )
+      })
+
+      it('should reject the workflow env', () => {
+        expect(keyReaderViolations(reader((_, workflow) => (workflow.env = env)))).toContain(
+          'sets workflow env'
+        )
+      })
     }
-  })
+  )
 
   it.each([
     ['a third-party action', { uses: 'someone/action@main' }, 'scan: uses someone/action@main'],
@@ -1239,23 +1292,38 @@ jobs:
     expect(isKeyReader(workflow)).toBe(true)
   })
 
-  it("should reject a reader that runs on deployment_status, which uses the deployed commit's workflow", () => {
-    const deployed = reader((_, workflow) => (workflow.on = { deployment_status: null }))
-    expect(keyReaderViolations(deployed)).toContain('triggered by deployment_status')
+  describe('when a reader runs on deployment_status', () => {
+    let deployed: Workflow
+    beforeEach(() => {
+      deployed = reader((_, workflow) => (workflow.on = { deployment_status: null }))
+    })
+
+    it("should reject it, since deployment_status uses the deployed commit's workflow", () => {
+      expect(keyReaderViolations(deployed)).toContain('triggered by deployment_status')
+    })
   })
 
-  it('should flag a pull request job that passes every secret to a reusable workflow', () => {
-    const inherited = parse(`
+  describe('when a pull request job passes every secret to a reusable workflow', () => {
+    let inherited: Workflow
+    beforeEach(() => {
+      inherited = parse(`
 on: pull_request
 jobs:
   call:
     uses: ./.github/workflows/reusable.yml
     secrets: inherit
 `) as Workflow
-    expect(isKeyReader(inherited)).toBe(true)
-    expect(keyReaderViolations(inherited)).toEqual(
-      expect.arrayContaining(['triggered by pull_request', 'call: calls a reusable workflow'])
-    )
+    })
+
+    it('should treat the workflow as a key reader', () => {
+      expect(isKeyReader(inherited)).toBe(true)
+    })
+
+    it('should flag the trigger and the reusable workflow call', () => {
+      expect(keyReaderViolations(inherited)).toEqual(
+        expect.arrayContaining(['triggered by pull_request', 'call: calls a reusable workflow'])
+      )
+    })
   })
 
   it.each([
@@ -1273,15 +1341,24 @@ jobs:
     }
   )
 
-  it('should not treat a reusable workflow call that passes no key as a reader, nor throw on it', () => {
-    const call: Workflow = {
-      on: { workflow_run: null },
-      jobs: {
-        call: { uses: './.github/workflows/x.yml', secrets: { OTHER: '${{ secrets.OTHER }}' } }
+  describe('when a reusable workflow call passes no key', () => {
+    let call: Workflow
+    beforeEach(() => {
+      call = {
+        on: { workflow_run: null },
+        jobs: {
+          call: { uses: './.github/workflows/x.yml', secrets: { OTHER: '${{ secrets.OTHER }}' } }
+        }
       }
-    }
-    expect(isKeyReader(call)).toBe(false)
-    expect(() => keyReaderViolations(call)).not.toThrow()
+    })
+
+    it('should not treat the call as a key reader', () => {
+      expect(isKeyReader(call)).toBe(false)
+    })
+
+    it('should check the call without throwing', () => {
+      expect(() => keyReaderViolations(call)).not.toThrow()
+    })
   })
 
   it('should not treat a job that never names the key as a reader', () => {
@@ -1322,25 +1399,42 @@ jobs:
     expect(triggerViolations({ on, jobs: {} } as Workflow)).toContain(problem)
   })
 
-  it('should reject a job that reaches the key through the whole secrets context', () => {
-    const all = reader((job) => {
-      job.steps = [{ env: { ALL: '${{ toJSON(secrets) }}' }, run: 'pnpm build' }]
+  describe('when a job reaches the key through the whole secrets context', () => {
+    describe('and it serializes the whole context', () => {
+      let all: Workflow
+      beforeEach(() => {
+        all = reader((job) => {
+          job.steps = [{ env: { ALL: '${{ toJSON(secrets) }}' }, run: 'pnpm build' }]
+        })
+      })
+
+      it('should reject the job', () => {
+        expect(keyReaderViolations(all)).toEqual(
+          expect.arrayContaining([
+            'reads the whole secrets context',
+            'scan: key step does not run a key step template'
+          ])
+        )
+      })
     })
-    expect(keyReaderViolations(all)).toEqual(
-      expect.arrayContaining([
-        'reads the whole secrets context',
-        'scan: key step does not run a key step template'
-      ])
-    )
-    const indexed = reader((job) => {
-      job.steps[KEY]!.env!.FIGMA_FILE_KEY = "${{ secrets['FIGMA_FILE_KEY'] }}"
+
+    describe('and it indexes the context', () => {
+      let indexed: Workflow
+      beforeEach(() => {
+        indexed = reader((job) => {
+          job.steps[KEY]!.env!.FIGMA_FILE_KEY = "${{ secrets['FIGMA_FILE_KEY'] }}"
+        })
+      })
+
+      it('should reject the job', () => {
+        expect(keyReaderViolations(indexed)).toEqual(
+          expect.arrayContaining([
+            'reads the whole secrets context',
+            `scan: key step env FIGMA_FILE_KEY is \${{ secrets['FIGMA_FILE_KEY'] }}`
+          ])
+        )
+      })
     })
-    expect(keyReaderViolations(indexed)).toEqual(
-      expect.arrayContaining([
-        'reads the whole secrets context',
-        `scan: key step env FIGMA_FILE_KEY is \${{ secrets['FIGMA_FILE_KEY'] }}`
-      ])
-    )
   })
 })
 
@@ -1360,13 +1454,22 @@ const externalLoads = (source: string) =>
   moduleLoads(source).filter((load) => !load.startsWith('node:'))
 
 describe('ui-library-key-scan.yml', () => {
-  const workflow = load('ui-library-key-scan.yml')
-  const prepare = stepsOf(workflow.jobs.prepare)
-  const scanJob = stepsOf(workflow.jobs['key-scan'])
-  const allSteps = [...prepare, ...scanJob]
-  const runs = allSteps.flatMap((step) => (step.run ? [step.run] : []))
-  const [first] = prepare
-  const keyStep = scanJob.find((step) => JSON.stringify(step).includes(SECRET))!
+  let workflow: Workflow
+  let prepare: WorkflowStep[]
+  let scanJob: WorkflowStep[]
+  let allSteps: WorkflowStep[]
+  let runs: string[]
+  let first: WorkflowStep | undefined
+  let keyStep: WorkflowStep
+  beforeEach(() => {
+    workflow = load('ui-library-key-scan.yml')
+    prepare = stepsOf(workflow.jobs.prepare)
+    scanJob = stepsOf(workflow.jobs['key-scan'])
+    allSteps = [...prepare, ...scanJob]
+    runs = allSteps.flatMap((step) => (step.run ? [step.run] : []))
+    first = prepare[0]
+    keyStep = scanJob.find((step) => JSON.stringify(step).includes(SECRET))!
+  })
 
   // ui-library.yml builds and uploads the Review artifact for these paths; the scan must then require it.
   it('should require the Review artifact for exactly the paths that make ui-library.yml build it', () => {
@@ -1589,12 +1692,13 @@ describe('ui-library-key-scan.yml', () => {
     )
   })
 
-  it('should report a failed check that says the key check could not run on a fork run, without the key', () => {
-    const report = prepare.at(-1)!
-    const root = mkdtempSync(path.join(os.tmpdir(), 'key-scan-fork-'))
+  describe('when the triggering run comes from a fork', () => {
     const sentinel = 'fake-figma-file-key-sentinel'
-    try {
-      const env = {
+    let root: string
+    let env: Record<string, string | undefined> & { GITHUB_OUTPUT: string }
+    beforeEach(() => {
+      root = mkdtempSync(path.join(os.tmpdir(), 'key-scan-fork-'))
+      env = {
         PATH: process.env.PATH,
         FIGMA_FILE_KEY: sentinel,
         REPOSITORY: 'example/repo',
@@ -1610,6 +1714,13 @@ describe('ui-library-key-scan.yml', () => {
         RUNNER_TEMP: root
       }
       writeFileSync(env.GITHUB_OUTPUT, '')
+    })
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true })
+    })
+
+    it('should report a failed check that says the key check could not run, without the key', () => {
+      const report = prepare.at(-1)!
       const validate = spawnSync(
         'bash',
         ['-e', '-o', 'pipefail', '-c', `gh() { echo 42; }\n${first!.run!}`],
@@ -1643,9 +1754,7 @@ describe('ui-library-key-scan.yml', () => {
       )
       for (const text of [request, validate.stdout, validate.stderr, posted.stdout, posted.stderr])
         expect(text).not.toContain(sentinel)
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
+    })
   })
 })
 

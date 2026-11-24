@@ -17,5 +17,7 @@ mod worlds_fed_admission;
 mod worlds_fed_mirror;
 #[path = "worlds_live.rs"]
 mod worlds_live;
+#[path = "worlds_notices.rs"]
+mod worlds_notices;
 #[path = "worlds_read_through.rs"]
 mod worlds_read_through;

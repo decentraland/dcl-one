@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react'
+import type { EventCardTime } from '../../../components/EventCard/EventCard'
 
 /**
  * The data the /events page hands its sections. `cards.tsx` maps it onto the public cards: PlaceCard
@@ -34,9 +35,6 @@ type RemindControl = {
   onToggle: () => void
 }
 
-/** A start time already formatted for the viewer, and its machine-readable instant. */
-type EventCardTime = { label: string; dateTime?: string }
-
 type JumpIn = {
   href: string
   onJumpIn?: (event: MouseEvent<HTMLAnchorElement>) => void
@@ -70,6 +68,12 @@ type ExperienceCardProps = EventCardData & {
   jumpIn?: JumpIn
 }
 
+/** My Events: one of the member's own events, opening its editor, with its review status over the cover. */
+type MyEventCardProps = Omit<EventCardData, 'onOpen' | 'users' | 'usersLabel'> & {
+  time: EventCardTime
+  status: 'pending' | 'approved' | 'rejected'
+}
+
 export type {
   EventCardCreator,
   EventCardData,
@@ -78,6 +82,7 @@ export type {
   DayListCardProps,
   JumpIn,
   LiveEventCardProps,
+  MyEventCardProps,
   RemindControl,
   UpcomingEventCardProps
 }

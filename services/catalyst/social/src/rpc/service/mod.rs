@@ -20,6 +20,7 @@ mod blocks;
 mod community_voice;
 mod domain;
 mod friends;
+pub(crate) use friends::announce_accepted_connectivity;
 mod helpers;
 mod metrics_json;
 mod private_voice;

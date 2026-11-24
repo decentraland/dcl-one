@@ -38,7 +38,8 @@ transaction as its rows. Two rules:
   under the previous marker. An index
   that is complete but was published more than 30 minutes ago, as during an
   RPC outage, keeps serving them. An incomplete index fails the read: a
-  direct read answers 503, and a Registry batch leaves the profile out and
+  direct read answers lamb2's 404 for a failed lookup (the singular alias
+  an empty profile), and a Registry batch leaves the profile out and
   counts the failure.
 - The other readers need the index complete and published within 30 minutes
   on the networks they read (wearables both, emotes Polygon), and the lists

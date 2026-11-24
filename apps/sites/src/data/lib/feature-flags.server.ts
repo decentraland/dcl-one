@@ -8,7 +8,7 @@
 // keeps the last good answer for that minute ("all off" only before any read has succeeded). The variants' payloads
 // (an address list, for one) come with the flags, kept as upstream keeps them (`parseRemoteFlags`).
 
-import { parseRemoteFlags, type RemoteFlagsAnswer } from "@ui/shop/discovery/lib/remoteFlags";
+import { parseRemoteFlags, type RemoteFlagsAnswer } from "@shop/discovery/lib/rolloutFlags";
 
 import { withDeadline } from "./request-deadline";
 import { ttlMemo } from "./ttl-memo";
@@ -78,6 +78,11 @@ export function flagsAnswer(application: FlagApplication): Promise<DappsFlagsAns
 /** decentraland.org's `dapps` flags and their variants' payloads, as last read. */
 export function dappsFlagsAnswer(): Promise<DappsFlagsAnswer> {
   return flagsAnswer("dapps");
+}
+
+/** Whether starting a dapps read can use a memoized snapshot without waiting for the upstream service. */
+export function hasCachedDappsFlags(): boolean {
+  return read.peek(site(), "dapps") !== undefined;
 }
 
 /** For routes that must distinguish an unread flag from an explicitly disabled one. */

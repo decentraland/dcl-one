@@ -11,7 +11,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -117,8 +117,27 @@ fn matic_collections(query: &str) -> Value {
     json!({ "nfts": [] })
 }
 
-fn eth_collections(_: &str) -> Value {
+fn eth_collections(query: &str) -> Value {
+    if query.contains("o0: nfts(") {
+        return empty_owner_aliases(query);
+    }
     json!({ "nfts": [] })
+}
+
+fn empty_owner_aliases(query: &str) -> Value {
+    let mut data = json!({});
+    for alias in query
+        .split_whitespace()
+        .filter_map(|word| word.strip_suffix(':'))
+    {
+        if alias
+            .strip_prefix('o')
+            .is_some_and(|n| n.parse::<usize>().is_ok())
+        {
+            data[alias] = json!([]);
+        }
+    }
+    data
 }
 
 fn marketplace_graph(query: &str) -> Value {
@@ -450,6 +469,12 @@ async fn seed(pool: &PgPool) {
     )
     .await;
 
+    seed_mirrors(pool).await;
+}
+
+/// The collections and items mirrors' rows and complete passes, without
+/// the content entities [`seed`] deploys.
+async fn seed_mirrors(pool: &PgPool) {
     sqlx::query(
         "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, \
              created_at, updated_at, reviewed_at, mirrored_at) \
@@ -510,8 +535,8 @@ async fn seed_indexes(pool: &PgPool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(pool)
@@ -906,6 +931,12 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         (format!("thirdPartyCollectionId={tp_collection}"), 1),
         (
             format!(
+                "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId=urn:decentraland:amoy:collections-thirdparty:tp"
+            ),
+            1,
+        ),
+        (
+            format!(
                 "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId={tp_collection}"
             ),
             1,
@@ -1053,7 +1084,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     for uri in [
         format!("/lambdas/users/{OWNER}/third-party-wearables?pageSize=5000"),
         format!(
-            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp?pageSize=5000"
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:amoy:collections-thirdparty:tp?pageSize=5000"
         ),
     ] {
         let (status, body) = get(&state, &uri).await;
@@ -1225,8 +1256,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "{uri}"
     );
     // An active escrow grant joins the explorer's on-chain copies only where
-    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
-    // as lamb2 lists chain-owned tokens only).
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off unless the operator opts
+    // in, as lamb2 lists chain-owned tokens only).
     sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
         .bind(OWNER)
         .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
@@ -1544,6 +1575,23 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         crate::land_authz::Settings::for_tests(),
         Some(state.index.clone()),
     )));
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
+        .bind(LAND_REGISTRY_MAINNET)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        get_via(land.clone(), "/lambdas/parcels/0/0/operators")
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "the fresh local fold has no parcel"
+    );
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_at = folded_at - interval '11 minutes'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let (status, body) = get_via(land.clone(), "/lambdas/parcels/0/0/operators").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
@@ -1671,6 +1719,202 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     db.drop().await;
 }
 
+#[tokio::test]
+async fn profile_routes_answer_as_lamb2_when_content_is_unavailable() {
+    let state = crate::market::tests::support::state_without_db();
+    state.pool.close().await;
+    assert_lambdas_profile_dependency_failure(&state, "entities").await;
+}
+
+#[tokio::test]
+async fn profile_routes_answer_as_lamb2_when_ownership_is_unavailable() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    deploy(
+        &db.pool,
+        "bafyownershipfailureprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "Test", "avatar": { "wearables": [] } }] }),
+        &[],
+    )
+    .await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(serve_failing_graph().await),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_lambdas_profile_dependency_failure(&state, "ownership").await;
+    db.drop().await;
+}
+
+async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &str) {
+    let recorder = crate::comms::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let app = router(state.clone());
+    for modified_since in [None, Some("Wed, 21 Oct 2015 07:28:00 GMT")] {
+        let mut request = Request::post("/lambdas/profiles");
+        if let Some(date) = modified_since {
+            request = request.header("if-modified-since", date);
+        }
+        let resp = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(json!({ "ids": [OWNER] }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+            "[]"
+        );
+    }
+    assert_eq!(
+        get(state, &format!("/lambdas/profiles/{OWNER}")).await,
+        (
+            StatusCode::NOT_FOUND,
+            json!({ "error": "Not Found", "message": "Profile not found" })
+        )
+    );
+    assert_eq!(
+        get(state, &format!("/lambdas/profile/{OWNER}")).await,
+        (StatusCode::OK, json!({ "avatars": [], "timestamp": 0 }))
+    );
+    let rendered = recorder.handle().render();
+    for (route, count) in [
+        ("lambdas_profiles", 2),
+        ("lambdas_profile_by_id", 1),
+        ("lambdas_profile_alias", 1),
+    ] {
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.starts_with("profiles_lookup_failures_total{")
+                    && line.contains(&format!("route=\"{route}\""))
+                    && line.contains(&format!("layer=\"{layer}\""))
+                    && line.ends_with(&format!(" {count}"))),
+            "{rendered}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn catalogue_and_user_pages_fail_when_the_content_read_fails() {
+    // A node that walks the nft index: the user pages read their owner's
+    // copies from the same closed pool first, and answer the same 500.
+    let state = crate::market::tests::support::state_without_db_settings(
+        super::owned_items::test_support::walking(Settings {
+            eth_collections_subgraph_url: Some(serve_graph(eth_collections).await),
+            matic_collections_subgraph_url: Some(serve_graph(matic_items).await),
+            ..Settings::for_tests()
+        }),
+    );
+    state.pool.close().await;
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for path in [
+        "/lambdas/collections/wearables?textSearch=hat".to_string(),
+        "/lambdas/collections/emotes?textSearch=dance".to_string(),
+        format!("/lambdas/users/{OWNER}/wearables?includeDefinitions"),
+        format!("/lambdas/users/{OWNER}/wearables?includeEntities"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}?includeDefinitions"),
+    ] {
+        assert_eq!(
+            get(&state, &path).await,
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Internal Server Error" })
+            ),
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn user_item_entities_and_definitions_look_up_missing_pointers_on_peers() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let (asked, requests) = tokio::sync::mpsc::unbounded_channel();
+    let peer = serve(Router::new().route(
+        "/content/entities/active",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            asked.send(body).unwrap();
+            async { axum::Json(json!([])) }
+        }),
+    ))
+    .await;
+    let root = std::env::temp_dir().join(format!("catalyst-catalog-peer-{}", uuid::Uuid::new_v4()));
+    let storage = Arc::new(crate::storage::Storage::from_config(&root).await.unwrap());
+    let eth = serve_graph(eth_collections).await;
+    let matic = serve_graph(matic_collections).await;
+    let mut requests = requests;
+    // The owner's copies come from the nft index (hat tokens 10 and 11, the
+    // orphan 12) and their items from the mirror; no entity is deployed here.
+    seed_mirrors(&pool).await;
+    seed_indexes(&pool).await;
+
+    for flag in ["includeDefinitions", "includeEntities"] {
+        // A separate read-through allows both flags to be tested before a
+        // negative result from the other request can enter the cache.
+        let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage.clone(),
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
+            vec![format!("{peer}content")],
+            None,
+            crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(5)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let state = Arc::new(
+            MarketplaceState::new(
+                pool.clone(),
+                crate::http::Outbound::for_tests(),
+                super::owned_items::test_support::walking(Settings {
+                    eth_collections_subgraph_url: Some(eth.clone()),
+                    matic_collections_subgraph_url: Some(matic.clone()),
+                    ..Settings::for_tests()
+                }),
+            )
+            .with_read_through(Some(read_through)),
+        );
+        state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/wearables?{flag}")).await;
+        assert_eq!(status, StatusCode::OK, "{flag}: {body}");
+        let mut pointers = requests.try_recv().unwrap()["pointers"]
+            .as_array()
+            .unwrap()
+            .clone();
+        pointers.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+        assert_eq!(
+            pointers,
+            vec![
+                json!(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1")),
+                json!(format!("urn:decentraland:matic:collections-v2:{COFFEE}:9")),
+            ]
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// A configured subgraph that fails: the element routes answer lamb2's 502
 /// `FetcherError` naming the key as requested, `/operators` and
 /// `/permissions` lamb2's bare 500 (`errorHandler.ts`). No database: the
@@ -1737,6 +1981,26 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
     )
     .await;
     assert_eq!((status, body), (StatusCode::BAD_GATEWAY, fetcher(mixed)));
+    for method in [Method::GET, Method::OPTIONS] {
+        let response = land
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/lambdas/parcels/0/0/operators")
+                    .header(header::ORIGIN, "https://example.org")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+        );
+    }
     for uri in [
         "/lambdas/parcels/0/0/operators".to_string(),
         format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
@@ -1894,8 +2158,8 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(&db.pool)
@@ -2192,9 +2456,10 @@ async fn each_ownership_route_follows_the_nft_index_state() {
         let pool = db.pool.clone();
         async move {
             sqlx::query(
-                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
                  VALUES ('nft', $1, 1, 100, CASE WHEN $2::bigint IS NULL THEN NULL ELSE 100 END, \
-                         timezone('UTC', now()) - make_interval(mins => $2::int), true) \
+                         timezone('UTC', now()) - make_interval(mins => $2::int), true, \
+                         CASE $1 WHEN 'ethereum' THEN 1 ELSE 137 END) \
                  ON CONFLICT (indexer, network) DO UPDATE SET folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at",
             )
             .bind(network)
@@ -2321,8 +2586,11 @@ async fn each_ownership_route_follows_the_nft_index_state() {
                 );
             }
             None => {
+                // A failed lookup answers lamb2's 404, never the profile
+                // stripped of the items the index cannot vouch for.
                 assert_eq!(
-                    status, unavailable,
+                    (status, body["message"].as_str()),
+                    (StatusCode::NOT_FOUND, Some("Profile not found")),
                     "{label}: a direct read fails closed: {body}"
                 );
                 assert!(

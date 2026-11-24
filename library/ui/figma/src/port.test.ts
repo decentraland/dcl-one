@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { execFile } from 'node:child_process'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { portInputHash, recordProblems, trackedFilesAt } from '../port-verification.mjs'
 import {
   PREPARE_ORDER,
@@ -108,6 +108,7 @@ describe('when a maintainer runs the port commands', () => {
     )
   })
   afterEach(() => {
+    vi.resetAllMocks()
     rmSync(root, { recursive: true, force: true })
   })
 
@@ -128,8 +129,10 @@ describe('when a maintainer runs the port commands', () => {
   })
 
   describe('and a check fails', () => {
-    it('should stop, write nothing and leave an existing record byte-identical', () => {
-      const file = path.join(root, 'library/ui/port-verification.json')
+    let file: string
+    let later: Mock<() => Stage>
+    beforeEach(() => {
+      file = path.join(root, 'library/ui/port-verification.json')
       writeFileSync(file, '{"previous":true}\n')
       git('add', '.')
       git(
@@ -143,8 +146,10 @@ describe('when a maintainer runs the port commands', () => {
         '-qm',
         'record'
       )
-      const later = vi.fn(() => ({ name: 'review-manifest', detail: 'never' }))
+      later = vi.fn(() => ({ name: 'review-manifest', detail: 'never' }))
+    })
 
+    it('should stop, write nothing and leave an existing record byte-identical', () => {
       const result = portVerify(figma, {
         run: realRun,
         stages: passing({
@@ -169,10 +174,13 @@ describe('when a maintainer runs the port commands', () => {
     ['an uncommitted change', () => writeFileSync(path.join(figma, 'synthetic.mjs'), 'changed\n')],
     ['an untracked file', () => writeFileSync(path.join(figma, 'extra.mjs'), 'new\n')]
   ])('and the tree has %s', (_label, dirty) => {
-    it('should refuse before running any check', () => {
+    let stage: Mock<() => Stage>
+    beforeEach(() => {
       dirty()
-      const stage = vi.fn(() => ({ name: 'fetch-source', detail: 'x' }))
+      stage = vi.fn(() => ({ name: 'fetch-source', detail: 'x' }))
+    })
 
+    it('should refuse before running any check', () => {
       const result = portVerify(figma, { run: realRun, stages: passing({ 'fetch-source': stage }) })
 
       expect(result).toMatchObject({ ok: false, failed: 'clean-tree' })
@@ -221,21 +229,26 @@ describe('when a maintainer runs the port commands', () => {
   })
 
   describe('and git cannot report the tree state', () => {
-    it('should fail instead of treating the tree as clean', () => {
-      const run = (command: string, args: string[], cwd: string) =>
+    let run: typeof realRun
+    beforeEach(() => {
+      run = (command, args, cwd) =>
         args.includes('status')
           ? { code: 128, stdout: '', stderr: 'fatal: broken' }
           : realRun(command, args, cwd)
+    })
 
+    it('should fail instead of treating the tree as clean', () => {
       expect(() => portVerify(figma, { run, stages: passing() })).toThrow('git status failed')
       expect(existsSync(path.join(root, 'library/ui/port-verification.json'))).toBe(false)
     })
   })
 
   describe('and prepare meets a failing stage', () => {
-    it('should stop there, name it and run no later stage', () => {
-      const ran: string[] = []
-      const stages = Object.fromEntries(
+    let ran: string[]
+    let stages: Record<string, () => Stage>
+    beforeEach(() => {
+      ran = []
+      stages = Object.fromEntries(
         PREPARE_ORDER.map((name) => [
           name,
           () => {
@@ -245,7 +258,9 @@ describe('when a maintainer runs the port commands', () => {
           }
         ])
       )
+    })
 
+    it('should stop there, name it and run no later stage', () => {
       const result = portPrepare(figma, { run: realRun, stages })
 
       expect(result).toMatchObject({ ok: false, failed: 'sync-again' })
@@ -254,11 +269,14 @@ describe('when a maintainer runs the port commands', () => {
   })
 
   describe('and prepare runs every stage', () => {
-    it('should report the stages in order and point at verify', () => {
-      const stages = Object.fromEntries(
+    let stages: Record<string, () => Stage>
+    beforeEach(() => {
+      stages = Object.fromEntries(
         PREPARE_ORDER.map((name) => [name, () => ({ name, detail: 'ok' })])
       )
+    })
 
+    it('should report the stages in order and point at verify', () => {
       const result = portPrepare(figma, { run: realRun, stages })
 
       expect(result.ok).toBe(true)
@@ -328,38 +346,59 @@ describe('when the second sync of a refresh is compared with the first', () => {
 
   afterEach(() => rmSync(repository, { recursive: true, force: true }))
 
-  it('should see an already modified file rewritten with different bytes', () => {
-    writeFileSync(at('review/X.tsx'), 'v2\n')
-    const first = snapshot()
-    writeFileSync(at('review/X.tsx'), 'v3\n')
+  describe('and the second sync rewrites an already modified file with different bytes', () => {
+    let first: string
+    beforeEach(() => {
+      writeFileSync(at('review/X.tsx'), 'v2\n')
+      first = snapshot()
+      writeFileSync(at('review/X.tsx'), 'v3\n')
+    })
 
-    expect(snapshot()).not.toBe(first)
+    it('should see the rewrite', () => {
+      expect(snapshot()).not.toBe(first)
+    })
   })
 
-  it('should stay equal when the second sync writes the same bytes', () => {
-    writeFileSync(at('review/X.tsx'), 'v2\n')
-    writeFileSync(at('review/New.tsx'), 'new\n')
-    const first = snapshot()
-    writeFileSync(at('review/X.tsx'), 'v2\n')
-    writeFileSync(at('review/New.tsx'), 'new\n')
+  describe('and the second sync writes the same bytes', () => {
+    let first: string
+    beforeEach(() => {
+      writeFileSync(at('review/X.tsx'), 'v2\n')
+      writeFileSync(at('review/New.tsx'), 'new\n')
+      first = snapshot()
+      writeFileSync(at('review/X.tsx'), 'v2\n')
+      writeFileSync(at('review/New.tsx'), 'new\n')
+    })
 
-    expect(snapshot()).toBe(first)
+    it('should stay equal', () => {
+      expect(snapshot()).toBe(first)
+    })
   })
 
-  it('should see a file the second sync deletes or adds', () => {
-    writeFileSync(at('review/X.tsx'), 'v2\n')
-    const first = snapshot()
-    rmSync(at('review/X.tsx'))
-    expect(snapshot()).not.toBe(first)
+  describe('and the second sync deletes or adds a file', () => {
+    let first: string
+    beforeEach(() => {
+      writeFileSync(at('review/X.tsx'), 'v2\n')
+      first = snapshot()
+    })
 
-    writeFileSync(at('review/X.tsx'), 'v2\n')
-    writeFileSync(at('review/Extra.tsx'), 'x\n')
-    expect(snapshot()).not.toBe(first)
+    it('should see a deleted file and an added one', () => {
+      rmSync(at('review/X.tsx'))
+      expect(snapshot()).not.toBe(first)
+
+      writeFileSync(at('review/X.tsx'), 'v2\n')
+      writeFileSync(at('review/Extra.tsx'), 'x\n')
+      expect(snapshot()).not.toBe(first)
+    })
   })
 
-  it('should fail closed when git status fails', () => {
-    rmSync(path.join(repository, '.git'), { recursive: true, force: true })
-    expect(() => snapshot()).toThrow('git status failed')
+  describe('and git status fails', () => {
+    beforeEach(() => {
+      rmSync(path.join(repository, '.git'), { recursive: true, force: true })
+    })
+
+    it('should fail closed', () => {
+      expect(() => snapshot()).toThrow('git status failed')
+    })
   })
 })
 
@@ -379,26 +418,40 @@ describe('when prepare reseals the lock digests', () => {
     return { calls, run }
   }
 
-  it('should stage library/ui before lock-digests reads the index', () => {
-    const { calls, run } = recorder(0)
-
-    expect(prepareStages(run, p)['lock-digests']!()).toEqual({
-      name: 'lock-digests',
-      detail: 'staged library/ui and rewrote the lock digests'
+  describe('and staging succeeds', () => {
+    let recorded: ReturnType<typeof recorder>
+    beforeEach(() => {
+      recorded = recorder(0)
     })
-    expect(calls).toEqual([
-      'git -C /repo add -A -- library/ui',
-      'node /repo/library/ui/figma/lock-digests.mjs --write'
-    ])
+
+    it('should stage library/ui before lock-digests reads the index', () => {
+      const { calls, run } = recorded
+
+      expect(prepareStages(run, p)['lock-digests']!()).toEqual({
+        name: 'lock-digests',
+        detail: 'staged library/ui and rewrote the lock digests'
+      })
+      expect(calls).toEqual([
+        'git -C /repo add -A -- library/ui',
+        'node /repo/library/ui/figma/lock-digests.mjs --write'
+      ])
+    })
   })
 
-  it('should stop before resealing when staging fails', () => {
-    const { calls, run } = recorder(128)
+  describe('and staging fails', () => {
+    let recorded: ReturnType<typeof recorder>
+    beforeEach(() => {
+      recorded = recorder(128)
+    })
 
-    expect(() => prepareStages(run, p)['lock-digests']!()).toThrow(
-      'git add failed: fatal: index.lock exists'
-    )
-    expect(calls).toEqual(['git -C /repo add -A -- library/ui'])
+    it('should stop before resealing', () => {
+      const { calls, run } = recorded
+
+      expect(() => prepareStages(run, p)['lock-digests']!()).toThrow(
+        'git add failed: fatal: index.lock exists'
+      )
+      expect(calls).toEqual(['git -C /repo add -A -- library/ui'])
+    })
   })
 })
 
@@ -492,29 +545,34 @@ describe('when the real port stages run against canned command output', () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }))
 
   describe('and verify reads every report', () => {
-    it('should record the counts each command reported and keep other private install stages', () => {
-      const kept = path.join(ui, '.agent-work/figma-install/rejected/keep.txt')
-      mkdirSync(path.dirname(kept), { recursive: true })
-      writeFileSync(kept, 'mine')
+    describe('and another private install stage holds a file', () => {
+      let kept: string
+      beforeEach(() => {
+        kept = path.join(ui, '.agent-work/figma-install/rejected/keep.txt')
+        mkdirSync(path.dirname(kept), { recursive: true })
+        writeFileSync(kept, 'mine')
+      })
 
-      const result = portVerify(figma, { run })
+      it('should record the counts each command reported and keep other private install stages', () => {
+        const result = portVerify(figma, { run })
 
-      expect(result).toMatchObject({ ok: true })
-      const record = JSON.parse(readFileSync(path.join(ui, 'port-verification.json'), 'utf8'))
-      expect(record.checks['fetch-source'].detail).toBe(
-        'Verified 12 cache files against the pinned revision and digest table'
-      )
-      expect(record.checks.diff.detail).toBe(
-        'Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues'
-      )
-      expect(record.checks['navbar-bounds'].detail).toBe(
-        'Fresh public NavBar build passes 19 bounds checks'
-      )
-      expect(record.checks.install.detail).toBe(
-        'Private and canonical installs reproduce 1 foundation and 1 component files with no-op repeats'
-      )
-      expect(readFileSync(kept, 'utf8')).toBe('mine')
-      expect(existsSync(path.join(ui, 'port-verification.json.tmp'))).toBe(false)
+        expect(result).toMatchObject({ ok: true })
+        const record = JSON.parse(readFileSync(path.join(ui, 'port-verification.json'), 'utf8'))
+        expect(record.checks['fetch-source'].detail).toBe(
+          'Verified 12 cache files against the pinned revision and digest table'
+        )
+        expect(record.checks.diff.detail).toBe(
+          'Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues'
+        )
+        expect(record.checks['navbar-bounds'].detail).toBe(
+          'Fresh public NavBar build passes 19 bounds checks'
+        )
+        expect(record.checks.install.detail).toBe(
+          'Private and canonical installs reproduce 1 foundation and 1 component files with no-op repeats'
+        )
+        expect(readFileSync(kept, 'utf8')).toBe('mine')
+        expect(existsSync(path.join(ui, 'port-verification.json.tmp'))).toBe(false)
+      })
     })
 
     it('should run vitest with this Node, not through the POSIX shell shim', () => {
@@ -540,16 +598,18 @@ describe('when the real port stages run against canned command output', () => {
       'review-manifest reported no count'
     ]
   ])('and a command reports %s', (_label, key, reply, reason) => {
-    it('should fail that check instead of recording NaN or undefined', () => {
+    beforeEach(() => {
       replies[key] = reply
+    })
 
+    it('should fail that check instead of recording NaN or undefined', () => {
       expect(portVerify(figma, { run })).toMatchObject({ ok: false, failed: key, reason })
       expect(existsSync(path.join(ui, 'port-verification.json'))).toBe(false)
     })
   })
 
   describe('and a reporting command exits 1 with its JSON report on stdout', () => {
-    it('should name the first error of the report', () => {
+    beforeEach(() => {
       replies['check-mappings'] = {
         code: 1,
         stdout: JSON.stringify({
@@ -564,7 +624,9 @@ describe('when the real port stages run against canned command output', () => {
           ]
         })
       }
+    })
 
+    it('should name the first error of the report', () => {
       expect(portVerify(figma, { run })).toMatchObject({
         failed: 'check-mappings',
         reason: 'check-mappings failed: figma-drift: Kind lost Tertiary'
@@ -573,9 +635,11 @@ describe('when the real port stages run against canned command output', () => {
   })
 
   describe('and lock-digests writes its error to stderr', () => {
-    it('should carry that error into the reason', () => {
+    beforeEach(() => {
       replies['lock-digests.mjs'] = { code: 1, stdout: '', stderr: 'CHANGED library/ui/x.ts\n' }
+    })
 
+    it('should carry that error into the reason', () => {
       expect(portVerify(figma, { run })).toMatchObject({
         failed: 'deviations',
         reason: 'lock-digests failed: CHANGED library/ui/x.ts'
@@ -584,60 +648,79 @@ describe('when the real port stages run against canned command output', () => {
   })
 
   describe('and the NavBar bounds run fails', () => {
-    it('should carry the first vitest failure line into the reason', () => {
-      replies['vitest.mjs'] = {
-        code: 1,
-        stdout:
-          "\n RUN  v3.2.4 /ui\n\n \u001b[31mFAIL\u001b[39m  |consumer| test/navbar-bounds.build.test.ts > in-composition keeps closed-header descendants inside their root at 1440px\nAssertionError: expected [ { name: 'A' } ] to deeply equal []\n Tests  1 failed | 75 passed (76)\n"
-      }
+    describe('and vitest prints a failure line', () => {
+      beforeEach(() => {
+        replies['vitest.mjs'] = {
+          code: 1,
+          stdout:
+            "\n RUN  v3.2.4 /ui\n\n \u001b[31mFAIL\u001b[39m  |consumer| test/navbar-bounds.build.test.ts > in-composition keeps closed-header descendants inside their root at 1440px\nAssertionError: expected [ { name: 'A' } ] to deeply equal []\n Tests  1 failed | 75 passed (76)\n"
+        }
+      })
 
-      expect(portVerify(figma, { run })).toMatchObject({
-        failed: 'navbar-bounds',
-        reason:
-          'the NavBar bounds build check failed: FAIL  |consumer| test/navbar-bounds.build.test.ts > in-composition keeps closed-header descendants inside their root at 1440px'
+      it('should carry the first vitest failure line into the reason', () => {
+        expect(portVerify(figma, { run })).toMatchObject({
+          failed: 'navbar-bounds',
+          reason:
+            'the NavBar bounds build check failed: FAIL  |consumer| test/navbar-bounds.build.test.ts > in-composition keeps closed-header descendants inside their root at 1440px'
+        })
       })
     })
 
-    it('should report a startup error vitest writes to stderr', () => {
-      replies['vitest.mjs'] = {
-        code: 1,
-        stdout: '\n RUN  v3.2.4 /ui\n',
-        stderr: 'Error: Chrome did not expose a DevTools port\n'
-      }
+    describe('and vitest writes a startup error to stderr', () => {
+      beforeEach(() => {
+        replies['vitest.mjs'] = {
+          code: 1,
+          stdout: '\n RUN  v3.2.4 /ui\n',
+          stderr: 'Error: Chrome did not expose a DevTools port\n'
+        }
+      })
 
-      expect(portVerify(figma, { run })).toMatchObject({
-        failed: 'navbar-bounds',
-        reason: 'the NavBar bounds build check failed: Error: Chrome did not expose a DevTools port'
+      it('should report the startup error', () => {
+        expect(portVerify(figma, { run })).toMatchObject({
+          failed: 'navbar-bounds',
+          reason:
+            'the NavBar bounds build check failed: Error: Chrome did not expose a DevTools port'
+        })
       })
     })
 
-    it('should fall back to the generic reason when the run printed nothing', () => {
-      replies['vitest.mjs'] = { code: 1, stdout: '', stderr: '' }
+    describe('and the run printed nothing', () => {
+      beforeEach(() => {
+        replies['vitest.mjs'] = { code: 1, stdout: '', stderr: '' }
+      })
 
-      expect(portVerify(figma, { run })).toMatchObject({
-        failed: 'navbar-bounds',
-        reason: 'the NavBar bounds build check failed: no output'
+      it('should fall back to the generic reason', () => {
+        expect(portVerify(figma, { run })).toMatchObject({
+          failed: 'navbar-bounds',
+          reason: 'the NavBar bounds build check failed: no output'
+        })
       })
     })
 
-    it('should fail a zero exit that reports no passed tests', () => {
-      replies['vitest.mjs'] = { code: 0, stdout: ' RUN  v3.2.4 /ui\n' }
+    describe('and a zero exit reports no passed tests', () => {
+      beforeEach(() => {
+        replies['vitest.mjs'] = { code: 0, stdout: ' RUN  v3.2.4 /ui\n' }
+      })
 
-      expect(portVerify(figma, { run })).toMatchObject({
-        failed: 'navbar-bounds',
-        reason: 'the NavBar bounds build check failed: RUN  v3.2.4 /ui'
+      it('should fail the check', () => {
+        expect(portVerify(figma, { run })).toMatchObject({
+          failed: 'navbar-bounds',
+          reason: 'the NavBar bounds build check failed: RUN  v3.2.4 /ui'
+        })
       })
     })
   })
 
   describe('and the NavBar bounds run prints coloured output', () => {
-    it('should still read the passed count', () => {
+    beforeEach(() => {
       replies['vitest.mjs'] = {
         code: 0,
         stdout:
           '\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m76 passed\u001b[39m\u001b[22m\u001b[90m (76)\u001b[39m\n'
       }
+    })
 
+    it('should still read the passed count', () => {
       expect(portVerify(figma, { run })).toMatchObject({ ok: true })
       const record = JSON.parse(readFileSync(path.join(ui, 'port-verification.json'), 'utf8'))
       expect(record.checks['navbar-bounds'].detail).toBe(
@@ -647,9 +730,11 @@ describe('when the real port stages run against canned command output', () => {
   })
 
   describe('and a stage fails with an error that is not a StageError', () => {
-    it('should name the stage and the error instead of crashing', () => {
+    beforeEach(() => {
       delete replies['vitest.mjs']
+    })
 
+    it('should name the stage and the error instead of crashing', () => {
       expect(portVerify(figma, { run })).toMatchObject({
         ok: false,
         failed: 'navbar-bounds',
@@ -659,87 +744,104 @@ describe('when the real port stages run against canned command output', () => {
   })
 
   describe('and a check fails after regenerating tracked files', () => {
-    it('should put the tree back, so the next verify does not refuse it', () => {
-      replies['review-manifest'] = {
-        code: 1,
-        stderr: 'boom\n',
-        effect: () => {
-          writeFileSync(path.join(figma, 'review/catalog.json'), '{"changed":true}\n')
-          writeFileSync(path.join(figma, 'review/new.json'), '{}\n')
-        }
-      }
-
-      const result = portVerify(figma, { run })
-
-      expect(result).toMatchObject({
-        failed: 'review-manifest',
-        reason: 'review-manifest failed: boom',
-        restore: {
-          restored: ['library/ui/figma/review/catalog.json', 'library/ui/figma/review/new.json'],
-          kept: []
+    describe('and only check outputs were regenerated', () => {
+      beforeEach(() => {
+        replies['review-manifest'] = {
+          code: 1,
+          stderr: 'boom\n',
+          effect: () => {
+            writeFileSync(path.join(figma, 'review/catalog.json'), '{"changed":true}\n')
+            writeFileSync(path.join(figma, 'review/new.json'), '{}\n')
+          }
         }
       })
-      expect(readFileSync(path.join(figma, 'review/catalog.json'), 'utf8')).toBe('{}\n')
-      expect(existsSync(path.join(figma, 'review/new.json'))).toBe(false)
-      // The replaced bytes are recoverable from the backup.
-      const backup = path.join(ui, (result as { restore: { backup: string } }).restore.backup)
-      expect(readFileSync(path.join(backup, 'library/ui/figma/review/catalog.json'), 'utf8')).toBe(
-        '{"changed":true}\n'
-      )
-      expect(existsSync(path.join(backup, 'library/ui/figma/review/new.json'))).toBe(true)
+
+      it('should put the tree back, so the next verify does not refuse it', () => {
+        const result = portVerify(figma, { run })
+
+        expect(result).toMatchObject({
+          failed: 'review-manifest',
+          reason: 'review-manifest failed: boom',
+          restore: {
+            restored: ['library/ui/figma/review/catalog.json', 'library/ui/figma/review/new.json'],
+            kept: []
+          }
+        })
+        expect(readFileSync(path.join(figma, 'review/catalog.json'), 'utf8')).toBe('{}\n')
+        expect(existsSync(path.join(figma, 'review/new.json'))).toBe(false)
+        // The replaced bytes are recoverable from the backup.
+        const backup = path.join(ui, (result as { restore: { backup: string } }).restore.backup)
+        expect(
+          readFileSync(path.join(backup, 'library/ui/figma/review/catalog.json'), 'utf8')
+        ).toBe('{"changed":true}\n')
+        expect(existsSync(path.join(backup, 'library/ui/figma/review/new.json'))).toBe(true)
+      })
     })
 
-    it('should keep an edit made outside the check outputs during the run', () => {
-      replies['review-manifest'] = {
-        code: 1,
-        stderr: 'boom\n',
-        effect: () => {
-          writeFileSync(path.join(figma, 'synthetic.mjs'), 'edited by the maintainer\n')
-          writeFileSync(path.join(ui, 'notes.txt'), 'draft\n')
-          writeFileSync(path.join(ui, 'components/a.css'), '/* regenerated */\n')
-        }
-      }
-
-      const result = portVerify(figma, { run })
-
-      expect(result).toMatchObject({
-        failed: 'review-manifest',
-        restore: {
-          restored: ['library/ui/components/a.css'],
-          kept: ['library/ui/figma/synthetic.mjs', 'library/ui/notes.txt']
+    describe('and an edit was made outside the check outputs during the run', () => {
+      beforeEach(() => {
+        replies['review-manifest'] = {
+          code: 1,
+          stderr: 'boom\n',
+          effect: () => {
+            writeFileSync(path.join(figma, 'synthetic.mjs'), 'edited by the maintainer\n')
+            writeFileSync(path.join(ui, 'notes.txt'), 'draft\n')
+            writeFileSync(path.join(ui, 'components/a.css'), '/* regenerated */\n')
+          }
         }
       })
-      expect(readFileSync(path.join(figma, 'synthetic.mjs'), 'utf8')).toBe(
-        'edited by the maintainer\n'
-      )
-      expect(readFileSync(path.join(ui, 'notes.txt'), 'utf8')).toBe('draft\n')
-      expect(readFileSync(path.join(ui, 'components/a.css'), 'utf8')).toBe('/* components */\n')
+
+      it('should keep that edit', () => {
+        const result = portVerify(figma, { run })
+
+        expect(result).toMatchObject({
+          failed: 'review-manifest',
+          restore: {
+            restored: ['library/ui/components/a.css'],
+            kept: ['library/ui/figma/synthetic.mjs', 'library/ui/notes.txt']
+          }
+        })
+        expect(readFileSync(path.join(figma, 'synthetic.mjs'), 'utf8')).toBe(
+          'edited by the maintainer\n'
+        )
+        expect(readFileSync(path.join(ui, 'notes.txt'), 'utf8')).toBe('draft\n')
+        expect(readFileSync(path.join(ui, 'components/a.css'), 'utf8')).toBe('/* components */\n')
+      })
     })
 
-    it('should still name the failed check when the restore itself fails', () => {
-      replies['review-manifest'] = {
-        code: 1,
-        stderr: 'boom\n',
-        effect: () => writeFileSync(path.join(figma, 'review/catalog.json'), '{"changed":true}\n')
-      }
-      const failingCheckout = (command: string, args: string[], cwd: string) =>
-        command === 'git' && args.includes('checkout')
-          ? { code: 128, stdout: '', stderr: 'fatal: Unable to create index.lock: File exists.\n' }
-          : run(command, args, cwd)
-
-      const result = portVerify(figma, { run: failingCheckout })
-
-      expect(result).toMatchObject({
-        failed: 'review-manifest',
-        reason: 'review-manifest failed: boom',
-        restore: {
-          restored: [],
-          error: 'git checkout failed: fatal: Unable to create index.lock: File exists.'
+    describe('and the restore itself fails', () => {
+      let failingCheckout: typeof run
+      beforeEach(() => {
+        replies['review-manifest'] = {
+          code: 1,
+          stderr: 'boom\n',
+          effect: () => writeFileSync(path.join(figma, 'review/catalog.json'), '{"changed":true}\n')
         }
+        failingCheckout = (command, args, cwd) =>
+          command === 'git' && args.includes('checkout')
+            ? {
+                code: 128,
+                stdout: '',
+                stderr: 'fatal: Unable to create index.lock: File exists.\n'
+              }
+            : run(command, args, cwd)
       })
-      expect(readFileSync(path.join(figma, 'review/catalog.json'), 'utf8')).toBe(
-        '{"changed":true}\n'
-      )
+
+      it('should still name the failed check', () => {
+        const result = portVerify(figma, { run: failingCheckout })
+
+        expect(result).toMatchObject({
+          failed: 'review-manifest',
+          reason: 'review-manifest failed: boom',
+          restore: {
+            restored: [],
+            error: 'git checkout failed: fatal: Unable to create index.lock: File exists.'
+          }
+        })
+        expect(readFileSync(path.join(figma, 'review/catalog.json'), 'utf8')).toBe(
+          '{"changed":true}\n'
+        )
+      })
     })
   })
 
@@ -754,22 +856,26 @@ describe('when the real port stages run against canned command output', () => {
       expect(portVerify(figma, { run })).toMatchObject({ ok: true })
     })
 
-    it('should still fail when the private install misses a directory the lock pins', () => {
-      const lockPath = path.join(ui, 'upstream.lock.json')
-      const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
-      lock.publicComponents.files['Badge/Badge.tsx'] = {}
-      writeFileSync(lockPath, JSON.stringify(lock))
-      commit('pinned')
+    describe('and the lock pins a directory the private install misses', () => {
+      beforeEach(() => {
+        const lockPath = path.join(ui, 'upstream.lock.json')
+        const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+        lock.publicComponents.files['Badge/Badge.tsx'] = {}
+        writeFileSync(lockPath, JSON.stringify(lock))
+        commit('pinned')
+      })
 
-      expect(portVerify(figma, { run })).toMatchObject({
-        failed: 'install',
-        reason: 'the private components install differs from the canonical one'
+      it('should still fail the install check', () => {
+        expect(portVerify(figma, { run })).toMatchObject({
+          failed: 'install',
+          reason: 'the private components install differs from the canonical one'
+        })
       })
     })
   })
 
   describe('and the private install differs from the canonical one', () => {
-    it('should fail the install check', () => {
+    beforeEach(() => {
       replies['install components --out'] = {
         ...ok({}),
         effect: () => {
@@ -778,7 +884,9 @@ describe('when the real port stages run against canned command output', () => {
           writeFileSync(path.join(proof, 'a.css'), '/* other bytes */\n')
         }
       }
+    })
 
+    it('should fail the install check', () => {
       expect(portVerify(figma, { run })).toMatchObject({
         failed: 'install',
         reason: 'the private components install differs from the canonical one'
@@ -787,7 +895,7 @@ describe('when the real port stages run against canned command output', () => {
   })
 
   describe('and HEAD moves while the checks run', () => {
-    it('should refuse to write a record for the commit it did not check', () => {
+    beforeEach(() => {
       replies['vitest.mjs'] = {
         code: 0,
         stdout: ' Tests  19 passed (19)\n',
@@ -796,95 +904,117 @@ describe('when the real port stages run against canned command output', () => {
           commit('moved')
         }
       }
+    })
 
+    it('should refuse to write a record for the commit it did not check', () => {
       expect(portVerify(figma, { run })).toMatchObject({ ok: false, failed: 'head' })
       expect(existsSync(path.join(ui, 'port-verification.json'))).toBe(false)
     })
   })
 
   describe('and a port input names an exempt file', () => {
-    it('should refuse the record, as CI would', () => {
+    beforeEach(() => {
       writeFileSync(path.join(figma, 'NOTES.md'), '# notes\n')
       writeFileSync(path.join(figma, 'bad.mjs'), "export const notes = './NOTES.md'\n")
       commit('exempt reference')
+    })
 
+    it('should refuse the record, as CI would', () => {
       expect(portVerify(figma, { run })).toMatchObject({ ok: false, failed: 'scan' })
       expect(existsSync(path.join(ui, 'port-verification.json'))).toBe(false)
     })
   })
 
   describe('and prepare starts', () => {
-    const prepareReplies = () => {
+    beforeEach(() => {
       replies.diff = {
         code: 1,
         stdout: JSON.stringify({ diff: { added: [1], changed: [], removed: [] } })
       }
       replies.sync = ok({})
       replies['lock-digests.mjs --write'] = { code: 0, stdout: 'lock-digests: pinned 3 files\n' }
-    }
+    })
 
-    it('should refuse a tree with changes other than the lock, before any stage', () => {
-      prepareReplies()
-      writeFileSync(path.join(figma, 'tmp-probe.ts'), 'probe\n')
-
-      expect(portPrepare(figma, { run })).toMatchObject({
-        ok: false,
-        failed: 'clean-tree',
-        stages: []
+    describe('and the tree has changes other than the lock', () => {
+      beforeEach(() => {
+        writeFileSync(path.join(figma, 'tmp-probe.ts'), 'probe\n')
       })
-      expect(spawned).toEqual([])
+
+      it('should refuse the tree before any stage', () => {
+        expect(portPrepare(figma, { run })).toMatchObject({
+          ok: false,
+          failed: 'clean-tree',
+          stages: []
+        })
+        expect(spawned).toEqual([])
+      })
     })
 
     // The nearest false positive: the pin bump that starts a refresh is the one change prepare accepts.
-    it('should accept a tree whose only change is the bumped lock', () => {
-      prepareReplies()
-      writeFileSync(
-        path.join(ui, 'upstream.lock.json'),
-        readFileSync(path.join(ui, 'upstream.lock.json'), 'utf8') + '\n'
-      )
+    describe('and the only change is the bumped lock', () => {
+      beforeEach(() => {
+        writeFileSync(
+          path.join(ui, 'upstream.lock.json'),
+          readFileSync(path.join(ui, 'upstream.lock.json'), 'utf8') + '\n'
+        )
+      })
 
-      const result = portPrepare(figma, { run })
+      it('should accept the tree', () => {
+        const result = portPrepare(figma, { run })
 
-      expect(result).toMatchObject({ ok: true })
-      expect(result.stages.find((stage) => stage.name === 'diff')?.detail).toBe(
-        '1 added, 0 changed, 0 removed'
-      )
-    })
-
-    it('should report a diff that crashed, with its stderr', () => {
-      prepareReplies()
-      replies.diff = { code: 2, stdout: '', stderr: 'Error: the capture cache is missing\n' }
-
-      expect(portPrepare(figma, { run })).toMatchObject({
-        failed: 'diff',
-        reason: 'diff failed: Error: the capture cache is missing'
+        expect(result).toMatchObject({ ok: true })
+        expect(result.stages.find((stage) => stage.name === 'diff')?.detail).toBe(
+          '1 added, 0 changed, 0 removed'
+        )
       })
     })
 
-    it('should stop when the second sync rewrites an already modified file', () => {
-      prepareReplies()
-      let syncs = 0
-      replies.sync = {
-        ...ok({}),
-        effect: () => {
-          syncs += 1
-          writeFileSync(path.join(figma, 'review/catalog.json'), `{"sync":${syncs}}\n`)
+    describe('and the diff crashes', () => {
+      beforeEach(() => {
+        replies.diff = { code: 2, stdout: '', stderr: 'Error: the capture cache is missing\n' }
+      })
+
+      it('should report the crash with its stderr', () => {
+        expect(portPrepare(figma, { run })).toMatchObject({
+          failed: 'diff',
+          reason: 'diff failed: Error: the capture cache is missing'
+        })
+      })
+    })
+
+    describe('and the second sync rewrites an already modified file', () => {
+      beforeEach(() => {
+        let syncs = 0
+        replies.sync = {
+          ...ok({}),
+          effect: () => {
+            syncs += 1
+            writeFileSync(path.join(figma, 'review/catalog.json'), `{"sync":${syncs}}\n`)
+          }
         }
-      }
+      })
 
-      expect(portPrepare(figma, { run })).toMatchObject({
-        failed: 'sync-again',
-        reason: 'a second sync changed files: generation is not stable'
+      it('should stop at sync-again', () => {
+        expect(portPrepare(figma, { run })).toMatchObject({
+          failed: 'sync-again',
+          reason: 'a second sync changed files: generation is not stable'
+        })
       })
     })
 
-    it('should carry the lock-digests stderr into the reason', () => {
-      prepareReplies()
-      replies['lock-digests.mjs --write'] = { code: 1, stderr: 'deviation codes are not sorted\n' }
+    describe('and lock-digests --write fails', () => {
+      beforeEach(() => {
+        replies['lock-digests.mjs --write'] = {
+          code: 1,
+          stderr: 'deviation codes are not sorted\n'
+        }
+      })
 
-      expect(portPrepare(figma, { run })).toMatchObject({
-        failed: 'lock-digests',
-        reason: 'lock-digests --write failed: deviation codes are not sorted'
+      it('should carry the lock-digests stderr into the reason', () => {
+        expect(portPrepare(figma, { run })).toMatchObject({
+          failed: 'lock-digests',
+          reason: 'lock-digests --write failed: deviation codes are not sorted'
+        })
       })
     })
   })

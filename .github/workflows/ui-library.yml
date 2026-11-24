@@ -53,7 +53,7 @@ jobs:
             changed=true
           else
             changed=false
-            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui library/explorer-core infra/packages/ui-gallery.nix flake.lock .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
             [ -z "$files" ] || changed=true
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
@@ -95,6 +95,25 @@ jobs:
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$HEAD_SHA^"; fi
           node library/ui/figma/port-verification.mjs --base "$base" --head "$HEAD_SHA"
 
+  # The Nix package Sites serves at /ui-gallery/ builds only the files its fileset names, and a pull request that
+  # changes no packaging builds no image: a gallery change that imports a file outside the fileset fails here,
+  # not in the next Sites image.
+  ui-gallery-nix:
+    needs: key-guard
+    if: needs.key-guard.outputs.ui_changed == 'true'
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          lfs: false
+          persist-credentials: false
+      # The shared fonts and the shared images are the package's LFS inputs.
+      - run: git lfs pull --include "library/ui/foundations/typography/fonts/**,library/ui/assets/**"
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - run: nix build 'git+file:.?lfs=1#ui-gallery' --no-link -L
+
   library:
     needs: key-guard
     if: needs.key-guard.outputs.ui_changed == 'true'
@@ -107,7 +126,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           lfs: false
-      # Hydrate only library/ui's LFS objects (the foundation fonts), never the whole monorepo's.
+      # Hydrate only library/ui's LFS objects (the foundation fonts and the shared images), never the whole monorepo's.
       - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -117,10 +136,13 @@ jobs:
       # The skill installed at the repository root matches its source in figma/agent-kit (dependency-free).
       - run: node figma/agent-kit/cli.mjs check --target ../..
       - run: corepack enable
-      - run: pnpm install --frozen-lockfile
+      - id: install
+        run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      # The runtime component gallery has its own config, outside the package's bound tsconfig.json.
+      - run: pnpm exec tsc -p gallery/tsconfig.json
       - run: pnpm test
       # Every hand-written mapping names a component of the tracked mapping manifest and reads its properties.
       # Offline: no capture and no Figma credentials.
@@ -128,6 +150,35 @@ jobs:
       - run: pnpm review:build
       # The built gallery works where it is served: catalog and variant navigation and a non-empty render.
       - run: node figma/review/scripts/check-build.mjs figma/review/review-dist
+      # The uploaded build uses a relative base, so the artifact works at the root of a server or under any prefix.
+      - run: pnpm review:build --base ./
+      # The runtime gallery builds into review-dist/gallery, so the one artifact below carries both routes.
+      - run: pnpm exec vite build --config gallery/vite.config.ts
+      # The same output, served at the root and under a nested prefix: the generated Review navigates and renders;
+      # every runtime example draws in its iframe canvas, media queries follow its width, and the generated route
+      # opens the generated Review. The two gallery checks run side by side, each with its own server and browser
+      # profile, and the step fails when either does.
+      - name: Check both routes at the root and under a nested prefix
+        run: |
+          for prefix in / /nested/prefix/; do
+            node figma/review/scripts/check-build.mjs figma/review/review-dist --prefix "$prefix"
+          done
+          node gallery/scripts/check-build.mjs figma/review/review-dist --prefix / &
+          root=$!
+          node gallery/scripts/check-build.mjs figma/review/review-dist --prefix /nested/prefix/ &
+          nested=$!
+          status=0
+          wait "$root" || status=1
+          wait "$nested" || status=1
+          exit "$status"
+      # The hosted gallery Sites serves at /ui-gallery/ (infra/packages/ui-gallery.nix), built as that package builds
+      # it, rides in the scanned artifact: an image is published only with a successful key scan of these exact bytes
+      # (tooling/ui-gallery-receipt.py). The digest fails on a hidden path, which the upload would drop unscanned.
+      - name: Add the hosted gallery Sites serves to the scanned artifact
+        run: |
+          pnpm exec vite build --config gallery/vite.config.ts --mode hosted
+          node gallery/scripts/hosted-digest.mjs gallery/dist
+          cp -R gallery/dist figma/review/review-dist/ui-gallery
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist
@@ -136,4 +187,12 @@ jobs:
         with:
           name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
           path: library/ui/figma/review/review-dist
-          retention-days: 14
+          # A main build stays the receipt for its gallery bytes until the gallery changes again
+          # (tooling/ui-gallery-receipt.py), so it is kept longer.
+          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
+      # The gallery's HUD canvas compiles the Explorer HUD, checked under the profile and the TypeScript 7 its hosts
+      # use. Last, and run whatever check failed before it, so a type error here hides no other one; not after a
+      # failed install, which leaves nothing to check with.
+      - name: Type-check the gallery's HUD canvas
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: node node_modules/typescript-7/bin/tsc -p gallery/tsconfig.hud.json

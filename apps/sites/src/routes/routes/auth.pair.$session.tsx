@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { data, useLoaderData } from "react-router";
 
 import { buildEphemeralMessage } from "@/data/lib/auth/identity";
-import { hasWalletConnect, startWalletConnect, type WalletConnectSession } from "@ui/data/auth/walletconnect";
+import { hasWalletConnect, startWalletConnect, type WalletConnectSession } from "@web-core/auth/walletconnect";
 import { pairStore } from "@/data/lib/auth/pair-store.server";
 import { connectWallet, hasWallet, personalSign } from "@/data/lib/auth/wallet";
 

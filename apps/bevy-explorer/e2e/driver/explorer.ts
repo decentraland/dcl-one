@@ -331,6 +331,8 @@ export interface BanBlockState {
     scope: 'platform' | 'world' | 'scene' | null
     message: string | null
     sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
   }
   sceneRoom: {
     state: 'not_connected' | 'connected'
@@ -359,6 +361,28 @@ export interface ScreenPosition {
   depth: number
   distance: number
   viewport: { x: number; y: number; width: number; height: number }
+  /** `x`/`y` as 0 to 1 of the window from the top left, as `clickAt(..., { normalized: true })` takes them */
+  normalized: { x: number; y: number } | null
+  screen: Screen
+}
+
+/** The window a coordinate is read against, in the logical pixels the commands use; `scale` is
+ *  the device pixel ratio, so a screenshot's pixels are `scale` times as many. */
+export interface Screen {
+  width: number
+  height: number
+  scale: number
+}
+
+/** Where `/click_at` clicked, in pixels and normalized, and on what window. The web page adds how
+ *  (`input`: `trusted` from the test runner, else `synthetic`). */
+export interface ClickAtReply {
+  x: number
+  y: number
+  normalized: { x: number; y: number }
+  button: MouseButton
+  screen: Screen
+  input?: 'trusted' | 'synthetic'
 }
 
 export interface Position {
@@ -804,7 +828,8 @@ export class Explorer {
     return this.json<ChatHistory>(`/chat_history ${count}`)
   }
 
-  /** A direct message; `/dm` takes several words, `/chat` does not. Not a delivery confirmation. */
+  /** A direct message; `/dm` takes the rest of the line, so runs of spaces collapse to one. Not a
+   *  delivery confirmation. */
   async dm(address: string, message: string): Promise<void> {
     await this.run(`/dm ${address} ${message}`)
   }
@@ -905,6 +930,13 @@ export class Explorer {
     return Buffer.from(await this.run('/screenshot'), 'base64')
   }
 
+  /** Lay the HUD out at `[width, height]` CSS px, or at the window's size again with `null`, and
+   *  resolve once it has drawn at that size. Throws on a transport without `resizeView`. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    if (!this.console.resizeView) throw new Error(`the ${this.console.kind} transport cannot resize the view`)
+    await this.console.resizeView(size)
+  }
+
   // --- input --------------------------------------------------------------------------------
 
   /** A key by its `KeyboardEvent.code`; `state` holds or releases it. */
@@ -940,9 +972,11 @@ export class Explorer {
     await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
   }
 
-  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
-  async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
-    await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
+  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them), or, with
+   *  `normalized`, at 0 to 1 of the window from the top left. */
+  async clickAt(x: number, y: number, button: MouseButton = 'left', options: { normalized?: boolean } = {}): Promise<ClickAtReply> {
+    const flags = `${button === 'left' ? '' : ` --button ${button}`}${options.normalized ? ' --normalized' : ''}`
+    return this.json<ClickAtReply>(`/click_at ${x} ${y}${flags}`)
   }
 
   // --- scenes -------------------------------------------------------------------------------

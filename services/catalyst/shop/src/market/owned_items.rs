@@ -96,9 +96,16 @@ impl Rule {
 }
 
 /// The whole history walked and the last fold published, with no rewind or
-/// unpublish since.
+/// unpublish since, read from the chain the network names and out of
+/// quarantine (as [`chain_walk::is_ready_on`] requires of every index).
 pub fn complete(c: &Cursor) -> bool {
-    c.indexer == INDEXER_NFT && c.full_history && c.folded_block.is_some() && c.folded_at.is_some()
+    c.indexer == INDEXER_NFT
+        && c.full_history
+        && c.folded_block.is_some()
+        && c.folded_at.is_some()
+        && c.quarantined_at.is_none()
+        && ChainNet::parse(&c.network)
+            .is_some_and(|net| c.chain_id == Some(chain_walk::mainnet_chain(net)))
 }
 
 /// [`complete`], published within [`READY_WINDOW`] at `now`.
@@ -229,8 +236,13 @@ pub struct Gate(Transaction<'static, Postgres>);
 
 /// The route gate: `Err(envelope)` unless an inventory of `category` may
 /// be read now (the node walks the index, [`Rule::Fresh`] and the items
-/// mirror's pass hold). A database error is a 500.
-pub async fn require_inventory(state: &MarketplaceState, category: &str) -> Result<Gate, Response> {
+/// mirror's pass hold). A database error is `internal`'s 500, in the
+/// route family's own shape (the lambdas answer lamb2's bare one).
+pub async fn require_inventory(
+    state: &MarketplaceState,
+    category: &str,
+    internal: fn() -> Response,
+) -> Result<Gate, Response> {
     if !walks_here(state) {
         return Err(not_ready(
             "this node does not walk the nft index (MARKETPLACE_NFT_INDEX_ENABLED off, or a network other than mainnet)",
@@ -242,7 +254,7 @@ pub async fn require_inventory(state: &MarketplaceState, category: &str) -> Resu
         .map_err(|e| {
             e.into_response(|m| {
                 tracing::error!(error = m, "nft index gate failed");
-                super::internal_server_error()
+                internal()
             })
         })
 }
@@ -573,13 +585,14 @@ pub(crate) mod test_support {
     pub async fn publish(pool: &PgPool, nets: &[ChainNet], items: bool, age: std::time::Duration) {
         for net in nets {
             sqlx::query(
-                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history) \
-                 VALUES ('nft', $1, 1, 100, '0x' || repeat('0', 64), 100, 100, timezone('UTC', now()) - make_interval(secs => $2), true) \
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+                 VALUES ('nft', $1, 1, 100, '0x' || repeat('0', 64), 100, 100, timezone('UTC', now()) - make_interval(secs => $2), true, $3) \
                  ON CONFLICT (indexer, network) DO UPDATE SET last_block = 100, fold_through = 100, folded_block = 100, \
-                     folded_at = EXCLUDED.folded_at, full_history = true",
+                     folded_at = EXCLUDED.folded_at, full_history = true, chain_id = EXCLUDED.chain_id",
             )
             .bind(net.db_name())
             .bind(age.as_secs_f64())
+            .bind(chain_walk::mainnet_chain(*net))
             .execute(pool)
             .await
             .unwrap();
@@ -623,6 +636,12 @@ mod tests {
             full_history: full,
             reorg_rewinds: 0,
             updated_at: now,
+            chain_id: Some(137),
+            owner_generation: 1,
+            quarantined_at: None,
+            quarantine_reason: None,
+            rebuild_requested_at: None,
+            diverged_at: None,
         }
     }
 

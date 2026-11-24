@@ -16,22 +16,32 @@ const look = (over: Partial<AvatarLook> = {}): AvatarLook => ({
 describe('look deploy', () => {
   // Audit backpack-emotes-2: every wearable/emote equip sent forceRender: [], erasing overrides.
   it('keeps force-render overrides with the equipped set', () => {
-    expect(lookDeploy(look({ wearables: ['urn:cap'] }), look(), 'Rob').equip).toEqual({
+    expect(lookDeploy(look({ wearables: ['urn:cap'] }), look()).equip).toEqual({
       wearableUrns: ['urn:cap'],
       emoteUrns: ['wave', '', '', '', '', '', '', '', '', ''],
       forceRender: ['hair']
     })
   })
 
-  it('leaves the body, colors and name alone unless they changed', () => {
-    expect(lookDeploy(look({ wearables: [] }), look(), 'Rob').base).toBeUndefined()
-    expect(lookDeploy(look({ hair: { r: 0, g: 1, b: 0 } }), look(), 'Rob').base).toEqual({
-      name: 'Rob',
-      bodyShapeUrn: 'urn:body:a',
-      eyesColor: { r: 0, g: 0, b: 1 },
+  it('updates body and colors without changing the name', () => {
+    expect(lookDeploy(look({ wearables: [] }), look()).base).toBeUndefined()
+    const patch = lookDeploy(look({ hair: { r: 0, g: 1, b: 0 } }), look())
+    expect(patch.equip).toBeUndefined()
+    expect(patch.base).toEqual({
+      name: '',
+      bodyShapeUrn: '',
+      eyesColor: null,
       hairColor: { r: 0, g: 1, b: 0 },
-      skinColor: { r: 1, g: 1, b: 1 },
+      skinColor: null,
       talking: null
+    })
+  })
+
+  it('submits the fitting equipped set together with a changed body', () => {
+    const changed = look({ bodyShape: 'urn:body:b' })
+    expect(lookDeploy(changed, look())).toMatchObject({
+      base: { bodyShapeUrn: 'urn:body:b', eyesColor: null, hairColor: null, skinColor: null },
+      equip: { wearableUrns: changed.wearables, emoteUrns: changed.emotes, forceRender: changed.forceRender }
     })
   })
 

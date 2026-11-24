@@ -55,13 +55,21 @@ pub struct ExploreConfig {
     #[arg(long, env = "EVENTS_MIRROR_ADOPT", default_value_t = false, action = clap::ArgAction::Set)]
     pub events_mirror_adopt: bool,
 
-    /// The events site `/events/sitemap*.xml` points at.
+    /// Legacy website origin for sitemap URLs, world-event default posters and Slack links.
     #[arg(
         long,
         env = "EVENTS_BASE_URL",
         default_value = "https://events.decentraland.org"
     )]
     pub events_base_url: String,
+
+    /// Public Sites origin for event notification page links.
+    #[arg(
+        long,
+        env = "EVENTS_SITE_URL",
+        default_value = "https://decentraland.org"
+    )]
+    pub events_site_url: String,
 
     /// The jump-in site the event notifications link to
     /// (`JUMP_IN_SITE_URL/events?id=&position=&realm=`, the old service's
@@ -368,6 +376,15 @@ pub struct AbCdnConfig {
     /// The marketplace the metadata's `external_url` links to; unset yields no link.
     #[arg(long, env = "MAP_EXTERNAL_BASE_URL")]
     pub map_external_base_url: Option<String>,
+
+    /// Where an estate's `map.png` redirects when the grid holds none of its
+    /// parcels (a dissolved or unknown estate), as the atlas does.
+    #[arg(
+        long,
+        env = "MAP_DISSOLVED_ESTATE_IMAGE_URL",
+        default_value = "https://ui.decentraland.org/dissolved_estate.png"
+    )]
+    pub map_dissolved_estate_image_url: String,
 }
 
 #[cfg(test)]

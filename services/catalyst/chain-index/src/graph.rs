@@ -126,7 +126,7 @@ pub struct OwnedLand {
 }
 
 pub struct Caches {
-    /// `owner` -> the ENS names the owner holds, cut off at [`MAX_PAGES`].
+    /// `owner` -> the complete ENS names read within [`MAX_PAGES`].
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
     all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
@@ -177,8 +177,30 @@ pub async fn graph_query(
     query: &str,
     variables: Value,
 ) -> Result<Value, String> {
+    graph_query_classified(state, url, query, variables)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GraphQueryError {
+    #[error("{0}")]
+    Transient(String),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Retains the transport/response distinction for durable retry queues.
+pub async fn graph_query_classified(
+    state: &ChainIndex,
+    url: &str,
+    query: &str,
+    variables: Value,
+) -> Result<Value, GraphQueryError> {
     if !state.upstream_allowed(url) {
-        return Err("subgraph URL is not a publicly routable http(s) endpoint".to_string());
+        return Err(GraphQueryError::Invalid(
+            "subgraph URL is not a publicly routable http(s) endpoint".into(),
+        ));
     }
     let client = &state.http;
     let body = json!({ "query": query, "variables": variables });
@@ -224,19 +246,30 @@ pub async fn graph_query(
         }
     })
     .await
-    .map_err(|e| e.to_string())?;
-    let body = outcome.ok_or_else(|| "subgraph unavailable after retries".to_string())?;
+    .map_err(|e| {
+        if e.downcast_ref::<reqwest::Error>().is_some() {
+            // Interrupted response bodies are retryable after headers were received.
+            GraphQueryError::Transient(e.to_string())
+        } else {
+            GraphQueryError::Invalid(e.to_string())
+        }
+    })?;
+    let body = outcome
+        .ok_or_else(|| GraphQueryError::Transient("subgraph unavailable after retries".into()))?;
     if let Some(errors) = body
         .get("errors")
         .and_then(Value::as_array)
         .filter(|e| !e.is_empty())
     {
-        return Err(format!("subgraph errors: {}", Value::Array(errors.clone())));
+        return Err(GraphQueryError::Invalid(format!(
+            "subgraph errors: {}",
+            Value::Array(errors.clone())
+        )));
     }
     body.get("data")
         .cloned()
         .filter(|d| !d.is_null())
-        .ok_or_else(|| format!("subgraph response without data: {body}"))
+        .ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
 }
 
 fn str_of(v: &Value, key: &str) -> String {
@@ -252,11 +285,20 @@ fn last_id(data: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-fn page_len(data: &Value) -> usize {
-    data.get("nfts")
+/// A short NFT page proves completion. A full page needs a usable continuation.
+fn next_nft_cursor(data: &Value, previous: &str) -> Result<Option<String>, String> {
+    let rows = data
+        .get("nfts")
         .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0)
+        .ok_or("subgraph response without nfts")?;
+    match rows.len().cmp(&(THE_GRAPH_PAGE_SIZE as usize)) {
+        std::cmp::Ordering::Less => Ok(None),
+        std::cmp::Ordering::Greater => Err("subgraph returned more NFTs than requested".into()),
+        std::cmp::Ordering::Equal => last_id(data)
+            .filter(|id| id.as_str() > previous)
+            .map(Some)
+            .ok_or_else(|| "NFT cursor is missing or does not advance".into()),
+    }
 }
 
 /// Whether a collections subgraph is configured: the builder's on-chain
@@ -298,8 +340,8 @@ pub(crate) fn parse_names(data: &Value) -> Vec<OwnedName> {
         .collect()
 }
 
-/// The ENS names the owner holds, in subgraph id order, cut off at
-/// [`MAX_PAGES`]. `Ok(empty)` when no marketplace subgraph is configured.
+/// The ENS names the owner holds, in subgraph id order. An incomplete walk at
+/// [`MAX_PAGES`] returns an error. `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedName>>, String> {
     walk_names(state, &state.graph.names, owner, MAX_PAGES).await
 }
@@ -338,17 +380,14 @@ async fn walk_names(
                     json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(parse_names(&data));
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
-                    break;
-                }
-                match last_id(&data) {
+                match next {
                     Some(id) => id_from = id,
-                    None => break,
+                    None => return Ok(Arc::new(out)),
                 }
             }
-            Ok::<_, String>(Arc::new(out))
+            Err(format!("no terminal NFT page after {max_pages} pages"))
         })
         .await
 }
@@ -452,21 +491,20 @@ pub async fn parcels_at(
                     json!({ "xs": xs, "ys": ys, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(
                     parse_parcels(&data)
                         .into_iter()
                         .filter(|p| key.binary_search(&(p.x, p.y)).is_ok()),
                 );
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
-                    break;
-                }
-                match last_id(&data) {
+                match next {
                     Some(id) => id_from = id,
-                    None => break,
+                    None => return Ok(Arc::new(out)),
                 }
             }
-            Ok::<_, String>(Arc::new(out))
+            Err(format!(
+                "no terminal parcel NFT page after {MAX_PAGES} pages"
+            ))
         })
         .await
 }
@@ -534,7 +572,7 @@ pub async fn name_owners(
     };
     for chunk in names.chunks(NAMES_PER_QUERY) {
         let mut id_from = String::new();
-        for _ in 0..MAX_PAGES {
+        for page in 1..=MAX_PAGES {
             let data = graph_query(
                 state,
                 url,
@@ -542,6 +580,7 @@ pub async fn name_owners(
                 json!({ "names": chunk, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
             )
             .await?;
+            let next = next_nft_cursor(&data, &id_from)?;
             for nft in data
                 .get("nfts")
                 .and_then(Value::as_array)
@@ -554,19 +593,21 @@ pub async fn name_owners(
                         .and_then(Value::as_str)
                         .filter(|s| !s.is_empty()),
                 ) else {
-                    continue;
+                    return Err("name owner row without name or holder".into());
                 };
                 if let Some(slot @ None) = out.get_mut(&name.to_lowercase()) {
                     *slot = Some(owner.to_lowercase());
                 }
             }
-            if (page_len(&data) as i64) < THE_GRAPH_PAGE_SIZE {
+            let Some(next) = next else {
                 break;
+            };
+            if page == MAX_PAGES {
+                return Err(format!(
+                    "no terminal NAME owner page after {MAX_PAGES} pages"
+                ));
             }
-            match last_id(&data) {
-                Some(id) => id_from = id,
-                None => break,
-            }
+            id_from = next;
         }
     }
     Ok(out)
@@ -658,7 +699,7 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             }
             let mut out = Vec::new();
             let mut id_from = String::new();
-            for _ in 0..FULL_WALK_PAGES {
+            for page in 1..=FULL_WALK_PAGES {
                 let data = graph_query(
                     state,
                     url,
@@ -666,15 +707,17 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
                     json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(parse_owned_lands(&data));
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
+                let Some(next) = next else {
                     break;
+                };
+                if page == FULL_WALK_PAGES {
+                    return Err(format!(
+                        "no terminal LAND NFT page after {FULL_WALK_PAGES} pages"
+                    ));
                 }
-                match last_id(&data) {
-                    Some(id) => id_from = id,
-                    None => break,
-                }
+                id_from = next;
             }
             out.sort_by(|a, b| {
                 b.transferred_at

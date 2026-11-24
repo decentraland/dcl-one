@@ -32,7 +32,7 @@ import { fetchMetrics, type LocationMetrics, type MetricLocation } from '/@/lib/
 import { Worlds } from '/@/lib/worlds';
 import type { AppState } from '/@/modules/store';
 import { accountChanged } from '/@/modules/store/account';
-import { getCreatorFundStart } from '/@/modules/store/featureFlags';
+import { FeatureFlag, getCreatorFundStart } from '/@/modules/store/featureFlags';
 import { createAsyncThunk as createAppAsyncThunk } from '/@/modules/store/thunk';
 
 import { formatCycleLabel } from './utils';
@@ -40,7 +40,15 @@ import { formatCycleLabel } from './utils';
 /** A failed response, kept whole so the UI can render its status and body. */
 export type CreatorFundFailure = Extract<CreatorFundResponse<unknown>, { ok: false }>;
 
-export type Resource<T> = Async<{ data: T | null; failure: CreatorFundFailure | null }>;
+/** `lastSettled` is how the latest answer ended, kept while a refetch runs, so a reader can keep showing it. */
+export type Resource<T> = Async<{
+  data: T | null;
+  failure: CreatorFundFailure | null;
+  lastSettled?: 'succeeded' | 'failed';
+}>;
+
+/** A Payouts setup step: verify the email, then add the payout wallet. */
+export type PayoutSetupStep = 'verify_email' | 'add_wallet';
 
 /** The analytics export for my places, keyed by place id. */
 export type PlaceMetrics = { exported_at: string; byPlaceId: Record<string, LocationMetrics> };
@@ -112,6 +120,19 @@ export const fetchPlaces = createAsyncThunk(
   'creatorFund/fetchPlaces',
   async (cycle: number | undefined, { rejectWithValue }) =>
     settle(await api.getPlaces(cycle), rejectWithValue),
+);
+
+/**
+ * Whether one of the user's places is in the program, in the view `GET /places` gives with no cycle.
+ * The service asks the same before it sends an email code, so it gates the Payouts tab's steps.
+ */
+export const fetchHasActivePlace = createAsyncThunk(
+  'creatorFund/fetchHasActivePlace',
+  async (_: void, { rejectWithValue }) => {
+    const response = await api.getPlaces();
+    if (!response.ok) return rejectWithValue(response);
+    return response.data.places.some(place => place.status === 'in_program');
+  },
 );
 
 const locationOf = (place: CreatorFundPlace): MetricLocation => {
@@ -200,13 +221,14 @@ type Resources = {
   cycles: Resource<CreatorFundCycles>;
   leaderboard: Resource<Leaderboard>;
   places: Resource<MyPlaces>;
+  hasActivePlace: Resource<boolean>;
   placeMetrics: Resource<PlaceMetrics>;
   news: Resource<CreatorFundNews>;
   banner: Resource<CreatorFundBanner>;
   payouts: Resource<CreatorFundPayouts>;
   payoutWallet: Resource<PayoutWallet>;
   payoutWalletSave: Resource<PayoutWallet>;
-  emailVerification: Resource<EmailVerification>;
+  emailVerification: Resource<EmailVerification & { email?: string }>;
   emailVerificationConfirm: Resource<Enrollment>;
 };
 
@@ -226,6 +248,7 @@ export const initialState: CreatorFundState = {
   cycles: resource(),
   leaderboard: resource(),
   places: resource(),
+  hasActivePlace: resource(),
   placeMetrics: resource(),
   news: resource(),
   banner: resource(),
@@ -267,10 +290,12 @@ function track<A extends AnyThunk>(
       if (state.latestRequestIds[key] !== action.meta.requestId) return;
       onFulfilled(state, action.payload, action.meta.arg);
       state[key].status = 'succeeded';
+      state[key].lastSettled = 'succeeded';
     })
     .addCase(thunk.rejected, (state, action) => {
       if (state.latestRequestIds[key] !== action.meta.requestId) return;
       state[key].status = 'failed';
+      state[key].lastSettled = 'failed';
       state[key].failure = (action.payload as CreatorFundFailure | undefined) ?? null;
       state[key].error =
         (action.payload as CreatorFundFailure | undefined)?.error ??
@@ -292,12 +317,14 @@ const slice = createSlice({
       state.enrollmentSave.data = payload;
       state.enrollment.data = payload;
       state.enrollment.status = 'succeeded';
+      state.enrollment.lastSettled = 'succeeded';
     });
     track(builder, 'terms', fetchTerms);
     track(builder, 'eligibility', fetchEligibility);
     track(builder, 'cycles', fetchCycles);
     track(builder, 'leaderboard', fetchLeaderboard);
     track(builder, 'places', fetchPlaces);
+    track(builder, 'hasActivePlace', fetchHasActivePlace);
     track(builder, 'placeMetrics', fetchPlaceMetrics);
     track(builder, 'news', fetchNews);
     track(builder, 'banner', fetchBanner);
@@ -307,8 +334,11 @@ const slice = createSlice({
       state.payoutWalletSave.data = payload;
       state.payoutWallet.data = payload;
       state.payoutWallet.status = 'succeeded';
+      state.payoutWallet.lastSettled = 'succeeded';
     });
-    track(builder, 'emailVerification', sendEmailVerification);
+    track(builder, 'emailVerification', sendEmailVerification, (state, payload) => {
+      state.emailVerification.data = { ...payload, email: state.enrollment.data?.email };
+    });
     track(builder, 'emailVerificationConfirm', confirmEmailVerification, (state, payload) => {
       state.emailVerificationConfirm.data = payload;
       state.enrollment.data = payload;
@@ -387,6 +417,31 @@ const getCycleLabel = createSelector(
   },
 );
 
+/** No place of the creator's is in the program, so both Payouts setup steps lock; a failed read is not a known no. */
+const isPayoutSetupLocked = (state: AppState) => state.creatorFund.hasActivePlace.data === false;
+
+const lastAnswer = (resource: Resource<unknown>) =>
+  resource.status === 'loading' ? resource.lastSettled : resource.status;
+
+/**
+ * The Payouts setup step the enrolled creator can take now, from the last settled answers, so a
+ * refetch never hides it; `null` when none is pending or both are locked.
+ */
+const getPayoutSetupStep = (state: AppState): PayoutSetupStep | null => {
+  const { enrollment, payoutWallet, hasActivePlace } = state.creatorFund;
+  if (state.featureFlags.flags[FeatureFlag.CREATOR_FUND_PAYOUT] !== true) return null;
+  if (lastAnswer(enrollment) !== 'succeeded' || enrollment.data?.status !== 'active') return null;
+  const places = lastAnswer(hasActivePlace);
+  if ((places !== 'succeeded' && places !== 'failed') || isPayoutSetupLocked(state)) return null;
+  if (!enrollment.data.email_verified_at) return 'verify_email';
+  return lastAnswer(payoutWallet) === 'succeeded' && payoutWallet.data === null
+    ? 'add_wallet'
+    : null;
+};
+
+/** A Payouts setup step the enrolled creator can take now: verify the email, then add the payout wallet. */
+const isPayoutSetupPending = (state: AppState) => getPayoutSetupStep(state) !== null;
+
 export const selectors = {
   getCreatorFund,
   needsReaccept,
@@ -397,6 +452,9 @@ export const selectors = {
   getDefaultPlacesCycle,
   getFirstPayoutCycle,
   getCycleLabel,
+  isPayoutSetupLocked,
+  getPayoutSetupStep,
+  isPayoutSetupPending,
 };
 export const actions = {
   ...slice.actions,
@@ -407,6 +465,7 @@ export const actions = {
   fetchCycles,
   fetchLeaderboard,
   fetchPlaces,
+  fetchHasActivePlace,
   fetchPlaceMetrics,
   fetchWorldSceneCount,
   fetchNews,

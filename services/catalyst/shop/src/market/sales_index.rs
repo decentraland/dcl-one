@@ -12,9 +12,6 @@
 //! difference.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
@@ -22,12 +19,10 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use super::MarketplaceState;
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
 use super::chain_walk::{topic_address, topic_u256};
 use super::nft_index::{self, DecodeError};
 use crate::chain_index::rpc::{Rpc, RpcLog};
-use crate::jobs::{Jobs, PeriodicCfg};
 
 /// `Issue(address indexed _beneficiary, uint256 indexed _tokenId, uint256 indexed _itemId, uint256 _issuedId, address _caller)` (v2 collections).
 pub const TOPIC_ISSUE: &str = "0x57e2fe3f4d57a597e655a893f43c395d7dc18cb9c9c1898eda75cc0ad7608525";
@@ -316,8 +311,12 @@ pub async fn insert_events(
 /// past `$2` touched, the open bids on a token with an acceptance after
 /// them (whatever fold saw the acceptance, so a database folded before the
 /// rule existed converges without a cursor reset), plus the rows still
-/// missing their seller that the nft walk (`$3`, its last indexed block) has
-/// passed since. The
+/// missing their seller that the nft walk (`nft`: its last indexed block,
+/// read in the same statement as its transfers, and only while its history
+/// is bound to Polygon, out of quarantine and not diverged) has passed
+/// since, plus every bid created past `$5`, the lowest point the nft walk
+/// rewound to since the last fold (`shop.bid_seller_recheck`): its inferred
+/// seller may name an owner the rewind took away. The
 /// latest `bid_created` of a key defines the bid; the latest event at or
 /// after it, its status, `invalidated` when another bid on the token was
 /// accepted after it (the contract drops the token's other bids without an
@@ -332,7 +331,10 @@ pub async fn insert_events(
 /// rescanned every key per key, which a full fold of Polygon's history
 /// (about 66k bids) did not finish within the hour.
 const FOLD_BIDS_SQL: &str = "
-WITH touched AS (
+WITH nft AS (
+    SELECT COALESCE(max(last_block), -1) AS indexed FROM shop.chain_cursor
+    WHERE indexer = $4 AND network = $1 AND chain_id = $3 AND quarantined_at IS NULL AND diverged_at IS NULL
+), touched AS (
     SELECT contract_address, token_id, buyer AS bidder FROM shop.sale_event
     WHERE network = $1 AND block_number > $2 AND kind <> 'mint'
     UNION
@@ -343,7 +345,10 @@ WITH touched AS (
           AND a.kind = 'bid_accepted' AND (a.block_number, a.log_index) > (b.created_block, b.created_log_index))
     UNION
     SELECT b.contract_address, b.token_id, b.bidder FROM shop.nft_bid b
-    WHERE b.network = $1 AND b.seller IS NULL AND b.created_block <= $3 AND EXISTS (
+    WHERE b.network = $1 AND $5::bigint IS NOT NULL AND b.created_block > $5
+    UNION
+    SELECT b.contract_address, b.token_id, b.bidder FROM shop.nft_bid b
+    WHERE b.network = $1 AND b.seller IS NULL AND b.created_block <= (SELECT indexed FROM nft) AND EXISTS (
         SELECT 1 FROM shop.nft_event n
         WHERE n.network = $1 AND n.contract_address = b.contract_address AND n.token_id = b.token_id
           AND n.kind = 'transfer' AND (n.block_number, n.log_index) < (b.created_block, b.created_log_index))
@@ -363,7 +368,7 @@ SELECT $1, c.contract_address, c.token_id, c.bidder, c.bid_id,
         SELECT n.to_address FROM shop.nft_event n
         WHERE n.network = $1 AND n.contract_address = c.contract_address AND n.token_id = c.token_id
           AND n.kind = 'transfer' AND (n.block_number, n.log_index) < (c.block_number, c.log_index)
-          AND c.block_number <= $3
+          AND c.block_number <= (SELECT indexed FROM nft)
           AND NOT EXISTS (
             SELECT 1 FROM shop.nft_contract k
             WHERE k.network = $1 AND k.contract_address = c.contract_address AND k.backfill_from_block IS NOT NULL
@@ -397,12 +402,22 @@ WHERE (nft_bid.bid_id, nft_bid.seller, nft_bid.status, nft_bid.updated_block, nf
 
 /// The fold in one transaction: the keys a bid event past `since` touched
 /// (`None`: every key), each over its whole history; the rows written.
-pub async fn fold(pool: &PgPool, since: Option<i64>) -> anyhow::Result<u64> {
+pub async fn fold(
+    pool: &PgPool,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<u64> {
     let since = since.unwrap_or(-1);
-    let nft_indexed = chain_walk::cursor(pool, chain_walk::INDEXER_NFT, ChainNet::Matic)
-        .await?
-        .map_or(-1, |cursor| cursor.last_block);
     let mut tx = pool.begin().await?;
+    // The nft walk's rewinds since the last fold, read before the fold's own
+    // statement (whose newer snapshot sees each one's rows); only these are
+    // deleted after it, so one recorded meanwhile waits for the next fold.
+    let (rechecks, recheck_from): (Option<Vec<i64>>, Option<i64>) = sqlx::query_as(
+        "SELECT array_agg(id), min(from_block) FROM shop.bid_seller_recheck WHERE network = $1",
+    )
+    .bind(ChainNet::Matic.db_name())
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query("SET LOCAL statement_timeout = '3600s'")
         .execute(&mut *tx)
         .await?;
@@ -410,10 +425,19 @@ pub async fn fold(pool: &PgPool, since: Option<i64>) -> anyhow::Result<u64> {
     let bids = sqlx::query(FOLD_BIDS_SQL)
         .bind(ChainNet::Matic.db_name())
         .bind(since)
-        .bind(nft_indexed)
+        .bind(chain_walk::mainnet_chain(ChainNet::Matic))
+        .bind(chain_walk::INDEXER_NFT)
+        .bind(recheck_from)
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    if let Some(ids) = rechecks {
+        sqlx::query("DELETE FROM shop.bid_seller_recheck WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+    }
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(bids)
 }
@@ -530,8 +554,14 @@ impl ChainIndex for SalesIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let bids = fold(pool, since).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let bids = fold(pool, since, owner).await?;
         tracing::info!(bids, "sales index: folded");
         Ok(true)
     }
@@ -616,75 +646,9 @@ pub async fn status(pool: &PgPool) -> Value {
     json!({
         "matic": c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
         })),
     })
-}
-
-/// Attaches `sales-index` when `MARKETPLACE_SALES_INDEX_ENABLED` and a
-/// Polygon JSON-RPC endpoint (`TRADE_RPC_URLS` 137=) are configured, on the
-/// market indexes' cadence and budget: the venue check on its first tick,
-/// then one pass per tick once the collections mirror has completed a pass
-/// (the address set is only as complete as it).
-pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
-    let settings = market.settings.market.indexes.clone();
-    if !settings.sales_enabled {
-        tracing::info!(
-            job = "sales-index",
-            "marketplace chain index off: its routes answer the unavailable envelope"
-        );
-        return;
-    }
-    let Some(url) = market.chain_rpc_url(ChainNet::Matic) else {
-        tracing::warn!(
-            job = "sales-index",
-            "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
-        );
-        return;
-    };
-    let market = market.clone();
-    let venues_checked = Arc::new(AtomicBool::new(false));
-    jobs.spawn_periodic_leased(
-        "sales-index",
-        PeriodicCfg::every(settings.interval)
-            .with_jitter(Duration::from_secs(1))
-            .with_error_backoff(Duration::from_secs(30)),
-        move |ctx| {
-            let (market, url, settings, venues_checked) = (
-                market.clone(),
-                url.clone(),
-                settings.clone(),
-                venues_checked.clone(),
-            );
-            async move {
-                let rpc = Rpc::at(&market.http, &url);
-                if !venues_checked.load(Ordering::SeqCst) {
-                    check_venues(&rpc, &market.pool).await?;
-                    venues_checked.store(true, Ordering::SeqCst);
-                }
-                if !nft_index::mirror_complete(&market.pool, ChainNet::Matic).await {
-                    ctx.progress(
-                        "sales matic: waiting for the collections mirror's first complete pass"
-                            .to_string(),
-                    );
-                    return Ok(());
-                }
-                let progress = |m: String| ctx.progress(m);
-                let outcome = chain_walk::run_pass(
-                    &market.pool,
-                    &rpc,
-                    &SalesIndex,
-                    &settings,
-                    Some(&ctx.cancel),
-                    &progress,
-                )
-                .await?;
-                tracing::info!(indexer = INDEXER_SALES, summary = %outcome.summary(), "marketplace chain index pass");
-                ctx.progress(outcome.summary());
-                Ok(())
-            }
-        },
-    );
 }
 
 #[cfg(test)]

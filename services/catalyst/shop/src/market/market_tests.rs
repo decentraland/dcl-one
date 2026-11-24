@@ -3339,7 +3339,8 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
         held.push(pool.acquire().await.unwrap());
     }
     for pass in ["read", "memoized"] {
-        let Ok(gate) = require_inventory(&state, "wearable").await else {
+        let Ok(gate) = require_inventory(&state, "wearable", super::internal_server_error).await
+        else {
             panic!("{pass}: the published index passes the gate")
         };
         let copies = tokio::time::timeout(
@@ -3358,7 +3359,8 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
     .execute(&pool)
     .await
     .unwrap();
-    let Err(resp) = require_inventory(&state, "wearable").await else {
+    let Err(resp) = require_inventory(&state, "wearable", super::internal_server_error).await
+    else {
         panic!("the memo does not answer for an unpublished index")
     };
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -3509,4 +3511,134 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         );
     }
     own.drop().await;
+}
+
+#[tokio::test]
+async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
+    use super::shop::*;
+    use sqlx::Row;
+    let Some(db) = crate::test_db::OwnDatabase::create("shop_page_totals").await else {
+        return;
+    };
+    // Prices, names, timestamps, relevance and discount each induce a different order.
+    let fixture = tag();
+    for (id, name, price, created) in [
+        (1, "Hat", 10, 2),
+        (2, "Hat Blue", 30, 3),
+        (3, "A Hat", 20, 1),
+    ] {
+        let contract = contract_of(&fixture, id);
+        seed_item_row(&db.pool, &contract, &id.to_string(), CREATOR).await;
+        sqlx::query("UPDATE shop.items SET name = $2, search_is_collection_approved = true WHERE network = 'matic' AND contract_address = $1")
+            .bind(&contract).bind(name).execute(&db.pool).await.unwrap();
+        if id == 3 {
+            sqlx::query("INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks,
+                discount_type, discount_ppm, root, collections, effective_since, expires_at)
+                VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794',
+                    '{\"uses\": 10}', 1, 100000, '0x00', ARRAY[$3], now() - interval '1 day', now() + interval '1 day')")
+                .bind(CREATOR).bind(format!("0x{}", tag())).bind(&contract).execute(&db.pool).await.unwrap();
+        }
+        for asset_type in [1, 2] {
+            let (trade, _) = insert_trade(
+                &db.pool,
+                "public_item_order",
+                CREATOR,
+                Asset {
+                    asset_type: 4,
+                    contract: contract.clone(),
+                    value: id.to_string(),
+                },
+                Asset {
+                    asset_type,
+                    contract: contract.clone(),
+                    value: format!("{price}000000000000000000"),
+                },
+            )
+            .await;
+            sqlx::query("UPDATE shop.trades SET created_at = timestamp '2026-01-01' + $2 * interval '1 day' WHERE id = $1::uuid")
+                .bind(trade).bind(f64::from(created)).execute(&db.pool).await.unwrap();
+        }
+    }
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("1").unwrap();
+    for feed in ["shop", "legacy", "unified listings", "unified items"] {
+        for (sort, expected) in [
+            (ShopSortBy::Newest, ["2", "1", "3"]),
+            (ShopSortBy::Cheapest, ["1", "3", "2"]),
+            (ShopSortBy::MostExpensive, ["2", "3", "1"]),
+            (ShopSortBy::Name, ["3", "1", "2"]),
+            (ShopSortBy::Discount, ["3", "2", "1"]),
+            (ShopSortBy::Relevance, ["1", "2", "3"]),
+        ] {
+            // The legacy catalog only supports date, price and name ordering.
+            let expected = if feed == "legacy"
+                && matches!(sort, ShopSortBy::Discount | ShopSortBy::Relevance)
+            {
+                ["2", "1", "3"]
+            } else {
+                expected
+            };
+            for skip in [0, 2, 3, 1000] {
+                let base = ShopCatalogFilters {
+                    first: Some(2),
+                    skip: Some(skip),
+                    search: Some("Hat".into()),
+                    sort_by: Some(sort),
+                    ..Default::default()
+                };
+                let unified = UnifiedCatalogFilters {
+                    base: base.clone(),
+                    source: Some(UnifiedSource::Native),
+                    ..Default::default()
+                };
+                let b = match feed {
+                    "shop" => build_shop_listings_sql(&base, None),
+                    "legacy" => build_legacy_listings_sql(
+                        &LegacyCatalogFilters {
+                            first: base.first,
+                            skip: base.skip,
+                            search: base.search,
+                            sort_by: base.sort_by,
+                            ..Default::default()
+                        },
+                        None,
+                    ),
+                    "unified listings" => build_unified_listings_sql(&unified, rate, None),
+                    "unified items" => build_unified_items_sql(&unified, rate, None),
+                    _ => unreachable!(),
+                };
+                let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
+                    .fetch_all(&db.pool)
+                    .await
+                    .unwrap();
+                let label = format!("{feed} {sort:?} skip={skip}");
+                assert!(!rows.is_empty(), "{label}: missing total");
+                for row in &rows {
+                    assert_eq!(row.get::<i64, _>("total"), 3, "{label}");
+                }
+                if skip >= 3 {
+                    assert_eq!(rows.len(), 1, "{label}");
+                    assert_eq!(
+                        rows[0].get::<Option<bool>, _>("page_present"),
+                        None,
+                        "{label}"
+                    );
+                } else {
+                    let ids: Vec<&str> = rows
+                        .iter()
+                        .map(|row| {
+                            assert_eq!(
+                                row.get::<Option<bool>, _>("page_present"),
+                                Some(true),
+                                "{label}"
+                            );
+                            row.get("item_id")
+                        })
+                        .collect();
+                    let start = skip as usize;
+                    assert_eq!(ids, expected[start..(start + 2).min(3)], "{label}");
+                }
+            }
+        }
+    }
+    db.drop().await;
 }
