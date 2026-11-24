@@ -1416,6 +1416,8 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     // The old parser accepted "0" and erased the preceding valid Update.
     sqlx::query("UPDATE shop.land_data SET name=NULL, description=NULL, updated_block=$1, updated_log=2 WHERE token_id=2")
         .bind(last as i64).execute(&db.pool).await.unwrap();
+    let mut undecodable = log_json(&estate_document(first + 1, 4, 9, true, "0,Ignored,"));
+    undecodable["data"] = serde_json::Value::String("0x01".into());
     chain.logs.lock().extend([
         log_json(&estate_document(
             first,
@@ -1424,6 +1426,7 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
             true,
             r#"0,"Original","Desc""#,
         )),
+        undecodable,
         log_json(&estate_document(
             first + 2,
             0,
@@ -1498,12 +1501,12 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     assert!(pass(&small, &url, &NftIndex::new(net)).await.published);
     assert_eq!(marker().await.unwrap(), (first as i64 - 1, last as i64));
 
-    // This first window spans both creations but has budget for only one
-    // event-block header. The next owner resumes at the second creation.
-    let dense = state_over(db.pool.clone(), &url, index_settings(1, 6), false);
+    // This first window spans the first two event blocks. Its request budget
+    // stops before the next creation block; the next owner resumes there.
+    let dense = state_over(db.pool.clone(), &url, index_settings(2, 6), false);
     for (position, state) in [(first + 1, &dense), (first + 3, &small), (last, &small)] {
         let out = pass(state, &url, &NftIndex::new(net)).await;
-        assert!(out.published);
+        assert!(out.published, "{out:?}");
         assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
         if position < last {
             assert_eq!(names().await.unwrap(), old);
@@ -1561,6 +1564,7 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
             estate_document(first, 2, 1, true, "bad"),
             estate_document(first + 1, 0, 1, false, r#"0 ,"Legacy","Desc""#),
             estate_document(first + 1, 1, 2, true, r#"0,"","""#),
+            estate_document(first + 2, 0, 3, true, "0,Orphaned,"),
         ],
         2_000_000,
         100,

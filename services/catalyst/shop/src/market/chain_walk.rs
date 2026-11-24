@@ -2202,6 +2202,12 @@ pub(crate) async fn close(
             .await
         {
             Ok(requests) => out.requests += requests,
+            Err(e)
+                if e.chain()
+                    .any(|cause| cause.downcast_ref::<Fenced>().is_some()) =>
+            {
+                return Err(e);
+            }
             Err(e) => {
                 tracing::warn!(indexer = ix.indexer(), error = %e, "post-publication repair will retry")
             }

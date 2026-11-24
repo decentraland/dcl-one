@@ -11,9 +11,9 @@ const WORKER: &str = "nft_estate_creations";
 const DEPLOYMENT: i64 = 6_236_547;
 
 /// The forward window and its marker commit together. A pre-CreateEstate
-/// writer advances only the cursor. The marker's key_ceiling contains its
-/// forward block and hash. key_position contains the archive hash and the
-/// rewind count that justified that prefix. A mismatch reopens the repair.
+/// writer advances only the cursor. key_ceiling[1..2] stores the forward
+/// block and hash; key_position[1..2] stores the archive predecessor hash
+/// and the rewind count that justified the prefix. A mismatch reopens repair.
 pub(super) async fn record(
     conn: &mut PgConnection,
     previous: (i64, Option<&str>),
@@ -131,8 +131,13 @@ async fn read_window(
                     .is_some_and(|h| h.eq_ignore_ascii_case(&header.value.hash)),
                 "estate creation is missing its canonical block hash"
             );
-            if let Some(row) = decode_log(log, header.value.timestamp)? {
-                rows.push(row);
+            match decode_log(log, header.value.timestamp) {
+                Ok(Some(row)) => rows.push(row),
+                Ok(None) => {}
+                Err(error) => {
+                    let (block, log_index) = chain_walk::log_position(log);
+                    tracing::warn!(block, log_index, error = %error, "skipping undecodable estate creation")
+                }
             }
         }
     }
@@ -201,15 +206,15 @@ pub(super) async fn step(
     if position >= ceiling {
         return Ok(0);
     }
-    let mut tx = pool.begin().await?;
+    // Avoid holding an idle transaction while the archive responds. Reserve
+    // requests for the chain/header/window bracket; the remainder limits
+    // per-event header checks in the archive window.
     let (block, hash): (i64, String) = sqlx::query_as(
         "SELECT last_block, last_block_hash FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'
          AND folded_block=last_block AND last_block >= $1 AND owner_generation=$2 AND reorg_rewinds=$3 AND chain_id=1
          AND last_block_hash IS NOT NULL AND quarantined_at IS NULL")
-        .bind(ceiling).bind(owner.generation).bind(rewinds).fetch_one(&mut *tx).await?;
+        .bind(ceiling).bind(owner.generation).bind(rewinds).fetch_one(pool).await?;
     let to = (ceiling as u64).min((position as u64).saturating_add(window_blocks));
-    // All reads run after publication, in a transaction that holds no row
-    // locks during network I/O. Abandon a slow archive and retry its window.
     let (lower, end, rows, requests) = tokio::time::timeout(
         Duration::from_secs(30),
         read_window(
@@ -222,6 +227,24 @@ pub(super) async fn step(
     )
     .await
     .context("estate repair archive timed out")??;
+    let mut tx = pool.begin().await?;
+    // Lock the cursor before worker_progress, matching the forward commit's
+    // cursor-then-coverage order, and reject a cursor that moved during I/O.
+    let current: (i64, String) = sqlx::query_as(
+        "SELECT last_block,last_block_hash FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'
+         AND folded_block=last_block AND last_block=$1 AND last_block_hash=$2 AND owner_generation=$3
+         AND reorg_rewinds=$4 AND chain_id=1 AND quarantined_at IS NULL FOR UPDATE",
+    )
+    .bind(block)
+    .bind(&hash)
+    .bind(owner.generation)
+    .bind(rewinds)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        current == (block, hash.clone()),
+        "published NFT cursor changed during estate repair"
+    );
     // Old endpoints may already have aged out of the walk's 64 retained
     // checkpoints. Verify any retained bounds as well as the published tip.
     let conflicts: bool = sqlx::query_scalar(
@@ -258,17 +281,6 @@ pub(super) async fn step(
         // previously overwritten it with a malformed document.
         replace_registry(&mut tx).await?;
     }
-    // A concurrent rewind can invalidate the prefix even when this worker
-    // still holds the same owner generation.
-    sqlx::query(
-        "SELECT 1 FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'
-        AND last_block=$1 AND folded_block=last_block AND last_block_hash=$2 AND reorg_rewinds=$3 FOR UPDATE",
-    )
-    .bind(block)
-    .bind(hash)
-    .bind(rewinds)
-    .fetch_one(&mut *tx)
-    .await?;
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(requests)

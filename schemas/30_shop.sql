@@ -426,7 +426,7 @@ CREATE TABLE shop.chain_checkpoint (
 
 -- A pre-CreateEstate writer can rebuild the NFT projection to the same
 -- block and hash. Invalidate its archive proof when any writer resets it.
-CREATE OR REPLACE FUNCTION shop.reset_estate_creation_repair() RETURNS trigger
+CREATE FUNCTION shop.reset_estate_creation_repair() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     DELETE FROM shop.worker_progress WHERE worker = 'nft_estate_creations' AND scope = 1;
