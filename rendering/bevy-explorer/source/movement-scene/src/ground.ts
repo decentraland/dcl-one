@@ -1,4 +1,4 @@
-import { ColliderLayer, engine, Entity, RaycastQueryType, RaycastShape, raycastSystem, Transform } from '@dcl/sdk/ecs'
+import { ColliderLayer, engine, Entity, RaycastHit, RaycastQueryType, RaycastShape, raycastSystem, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
 import { playerPosition, prevPlayerPosition, tick } from '.';
 import { GROUND_CAST_RANGE, GROUND_SNAP_STEP_DROP, GROUNDED_ANGLE, GROUNDED_HEIGHT, PLAYER_COLLIDER_RADIUS, VEC3_UP, VEC3_ZERO } from './constants';
@@ -14,6 +14,10 @@ export var grounded = false;
 export var prevGrounded = false;
 
 export const GROUNDED_ANGLE_Y_LEN = Math.cos(GROUNDED_ANGLE / 180 * Math.PI)
+
+// a walkable hit within grounded reach of the capsule's bottom
+const groundedHit = (hit: RaycastHit) =>
+    hit.length < PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT && (hit.normalHit?.y ?? 0) >= GROUNDED_ANGLE_Y_LEN
 
 var groundCaster: Entity;
 var groundRayCaster: Entity;
@@ -44,12 +48,8 @@ export function initGroundRaycast() {
 
             if (hit.hits.some((hit) => {
                 Vector3.copyFrom(hit.normalHit ?? VEC3_ZERO, groundNormal);
-
-                let groundTest = (hit.length < PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT) && (hit.normalHit?.y ?? 0) >= GROUNDED_ANGLE_Y_LEN;
                 groundDistance = Math.min(hit.length - PLAYER_COLLIDER_RADIUS, playerPosition.y);
-
-                return groundTest;
-
+                return groundedHit(hit);
             })) {
                 groundHitTick = tick;
             }
@@ -84,9 +84,7 @@ export function initGroundRaycast() {
                 groundRayDistance = h.length - PLAYER_COLLIDER_RADIUS;
                 Vector3.copyFrom(h.normalHit ?? VEC3_ZERO, groundRayNormal);
             }
-            if (hit.hits.some((hit) =>
-                (hit.length < PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT) && (hit.normalHit?.y ?? 0) >= GROUNDED_ANGLE_Y_LEN
-            )) {
+            if (hit.hits.some(groundedHit)) {
                 groundRayHitTick = tick;
             }
         }
