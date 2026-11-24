@@ -10,72 +10,18 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use super::graph;
-use crate::shared::cors::{self, HttpServerCors};
-
-pub const BUILD_INFO: &str = "dcl_lamb2_server_build_info";
-
-/// lamb2's `dcl_lamb2_server_build_info{commitHash}`, set to 1 at startup:
-/// `commit_hash` is `COMMIT_HASH`, or the build's revision, or empty.
-pub fn register_series(commit_hash: &str) {
-    metrics::describe_gauge!(BUILD_INFO, "Lamb2 server static build info.");
-    metrics::describe_counter!(
-        OWNER_MEMO_READS,
-        "Lambdas reads of an owner's items and names from the per-owner memo"
-    );
-    metrics::gauge!(BUILD_INFO, "commitHash" => commit_hash.to_owned()).set(1.0);
-}
-
-pub const OWNER_MEMO_READS: &str = "dcl_lambdas_owner_memo_reads_total";
-
-/// The lambdas' reads of an owner's items and names from the per-owner memo
-/// (`chain_index::graph`), by `result`: `hit` answered from the memo, `miss`
-/// fetched from (or joined a fetch of) the subgraphs. It replaces lamb2's
-/// `elements_cache_reads_total`, which also counted profile and LAND reads.
-fn owner_memo_read(hit: bool) {
-    let result = if hit { "hit" } else { "miss" };
-    metrics::counter!(OWNER_MEMO_READS, "result" => result).increment(1);
-}
-
-/// [`graph::owned_copies`] for a lambdas route, counted in [`OWNER_MEMO_READS`].
-pub async fn owned_copies(
-    index: &crate::chain_index::ChainIndex,
-    owner: &str,
-    category: &str,
-) -> Result<std::sync::Arc<Vec<graph::OwnedCopy>>, String> {
-    owner_memo_read(graph::owned_copies_memoized(index, owner, category));
-    graph::owned_copies(index, owner, category).await
-}
-
-/// [`graph::owned_names_or_stale`] for a lambdas route, counted in [`OWNER_MEMO_READS`].
-pub async fn owned_names_or_stale(
-    index: &crate::chain_index::ChainIndex,
-    owner: &str,
-) -> Result<std::sync::Arc<Vec<graph::OwnedName>>, String> {
-    owner_memo_read(graph::all_owned_names_memoized(index, owner));
-    graph::owned_names_or_stale(index, owner).await
-}
-
-/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
-/// no exposed headers; a preflight is 204 with no `Allow-Methods`, origin
-/// `*` for a request with `Origin`, and the requested headers reflected
-/// with their `Vary` when the request names them.
-const LAMBDAS_CORS: HttpServerCors = HttpServerCors {
-    methods: None,
-    max_age: "36000",
-    nosniff: true,
-    preflight_echoes_request: true,
-};
+use crate::shared::cors;
 
 /// The page the peer's nginx answers for a path it does not route to lamb2.
 const NGINX_NOT_FOUND: &str = "<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>\n";
 
-/// [`LAMBDAS_CORS`] under `/lambdas/`; every other path gets the shared CORS.
+/// [`cors::lambdas_cors`] for the Lambdas routes and the legacy status alias.
 pub async fn cors_middleware(req: Request, next: Next) -> Response {
-    if !req.uri().path().starts_with("/lambdas/") {
-        return cors::cors_middleware(req, next).await;
+    let path = req.uri().path();
+    if path.starts_with("/lambdas/") || path == "/lamb2/status" {
+        return cors::lambdas_cors(req, next).await;
     }
-    LAMBDAS_CORS.run(req, next).await
+    cors::cors_middleware(req, next).await
 }
 
 /// `/lambdas/{*rest}`: a path under `/lambdas/` that no route matches.
@@ -157,7 +103,36 @@ mod tests {
         );
     }
 
-    /// The router's paths outside `/lambdas/` keep the node's shared CORS.
+    #[tokio::test]
+    async fn the_legacy_status_path_answers_with_the_lambdas_status() {
+        let before = chrono::Utc::now().timestamp_millis();
+        let response = send(
+            Request::get("/lamb2/status")
+                .header(header::ORIGIN, "https://example.org")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["version"], "test");
+        assert_eq!(body["commitHash"], "unknown");
+        assert!(
+            (before..=chrono::Utc::now().timestamp_millis())
+                .contains(&body["currentTime"].as_i64().unwrap())
+        );
+    }
+
+    /// The root Shop paths use the node's shared CORS.
     #[tokio::test]
     async fn other_paths_keep_the_shared_cors() {
         let resp = send(
@@ -251,51 +226,6 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(body, expected.as_bytes());
-        }
-    }
-
-    /// The real lambdas router records the legacy HTTP series by lamb2's
-    /// route template, and leaves the trades reads out.
-    #[tokio::test(flavor = "current_thread")]
-    async fn lambdas_routes_record_lamb2_handlers() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
-        for path in ["/lambdas/status", "/lambdas/nope", "/v1/trades-mirror"] {
-            let request = Request::builder().uri(path).body(Body::empty()).unwrap();
-            send(request).await;
-        }
-        let rendered = handle.render();
-        for line in [
-            "http_requests_total{method=\"GET\",handler=\"/status\",code=\"200\"} 1",
-            "http_requests_total{method=\"GET\",handler=\"\",code=\"404\"} 1",
-        ] {
-            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
-        }
-        assert!(!rendered.contains("trades"), "{rendered}");
-        assert!(!rendered.contains("nope"), "{rendered}");
-    }
-
-    /// A lambdas names read counts a miss, then a hit while the memo is fresh.
-    #[tokio::test(flavor = "current_thread")]
-    async fn owner_memo_reads_count_misses_then_hits() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
-        let (index, _) = crate::chain_index::graph::test_support::index_with_names().await;
-        let owner = "0x00000000000000000000000000000000000000aa";
-        owned_names_or_stale(&index, owner).await.unwrap();
-        owned_names_or_stale(&index, owner).await.unwrap();
-        let rendered = handle.render();
-        for line in [
-            "dcl_lambdas_owner_memo_reads_total{result=\"miss\"} 1",
-            "dcl_lambdas_owner_memo_reads_total{result=\"hit\"} 1",
-        ] {
-            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
         }
     }
 }

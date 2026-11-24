@@ -106,8 +106,15 @@ of the compiled engine's cache key, so that build recompiles the WASM.
 manual Explorer dispatch select all engine checks. Image-only edits reuse a matching completed
 web producer and do not select native compilation. On main, non-Linux headless packages build
 alongside Headless Smoke; its stripped, tested Linux binaries also supply the Linux npm package.
+*Relay wake in the browser* runs the `dcl_wasm` crate's wasm tests in headless Chrome: a scene
+worker's `Atomics.waitAsync` ends on the engine's send. It runs when that crate, the workspace and
+vendored crates it reaches by path, the protocol, the Bevy fork's patch series, the workspace's
+Cargo files, the web tools, the build cache tools or this workflow change; on main it compares with
+the web build's latest successful main execution. Integration guards compare its list of crate
+directories with `Cargo.lock`, so a new path dependency fails there until the list names it. The
+Test Suite runs the same crate's host tests.
 
-The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, the web build) start beside *Integration guards* and the
+The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, *Relay wake in the browser*, the web build) start beside *Integration guards* and the
 format checks. When one of those checks fails on a pull request from this repository, the *Stop the build jobs*
 job cancels the run; a pull request from a fork runs to the end, because its token cannot cancel a run.
 
@@ -149,10 +156,10 @@ section, so it does not replace the results of that run. A cancelled run of a co
 pull request moved past writes nothing. `automation` and `inworld` sections are allowed for suites
 to come; they appear the first time one writes.
 
-Each writer replaces only its section, strips marker-shaped lines from a body, truncates a section
-over 12000 characters, re-reads to confirm the write and collapses duplicate comments
-(`upsert-ci-status.sh`). The scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's
-*Integration guards*.
+Each write replaces only its sections (the pending and completed-run writes set build and tests
+together), strips marker-shaped lines from a body, truncates a section over 12000 characters,
+re-reads to confirm the write and collapses duplicate comments (`upsert-ci-status.sh`). The
+scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's *Integration guards*.
 
 On main, a new push does not cancel a running CI run: it waits, replacing any run already waiting,
 so each completed run tests every earlier commit. A manual dispatch or re-run on main also waits

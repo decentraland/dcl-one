@@ -17,8 +17,6 @@ use crate::{
 mod adapters;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
-#[path = "serve_log_metrics.rs"]
-mod log_metrics;
 #[path = "serve_routes.rs"]
 mod routes;
 #[path = "serve_settings.rs"]
@@ -99,10 +97,11 @@ mod metrics_tests {
         let bind = reserved.local_addr().unwrap();
         drop(reserved);
         super::install_metrics(&bind.to_string()).unwrap();
-        let response = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
-            .unwrap()
+            .unwrap();
+        let response = client
             .get(format!("http://{bind}/metrics"))
             .send()
             .await
@@ -112,6 +111,23 @@ mod metrics_tests {
         for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
+        for path in ["/", "/metrics/", "/social-rpc/metrics", "/custom"] {
+            let response = client
+                .get(format!("http://{bind}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        }
+        assert_eq!(
+            client
+                .post(format!("http://{bind}/metrics"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::METHOD_NOT_ALLOWED
+        );
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let failed_bind = reserved.local_addr().unwrap();
         drop(reserved);
@@ -127,7 +143,7 @@ mod metrics_tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, super::register_metrics);
+        dcl_metrics::with_local_recorder(&recorder, super::register_metrics);
         let rendered = handle.render();
         for sample in [
             "comms_nats_connected 0",
@@ -135,193 +151,21 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
+            "worlds_allowance_read_failures_total 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
     }
-
-    /// The gateway's `/metrics` reaches the exporter through the API listener's
-    /// internal path, which answers only loopback and trusted-proxy peers.
-    #[tokio::test(flavor = "current_thread")]
-    async fn internal_metrics_answer_only_internal_peers() {
-        use tower::ServiceExt;
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, || {
-            metrics::counter!("http_requests_total", "handler" => "/status").increment(1)
-        });
-        let config = crate::config::Config::parse_for_tests(&[
-            "x",
-            "--database-url",
-            "postgres:///c",
-            "--http-trusted-proxy-cidrs",
-            "172.18.0.0/16",
-        ])
-        .unwrap();
-        let app = super::routes::internal_metrics_router(handle, &config);
-        for (peer, status) in [
-            (Some("127.0.0.1:4000"), 200),
-            (Some("172.18.0.7:4000"), 200),
-            (Some("10.1.0.7:4000"), 404),
-            (Some("203.0.113.9:4000"), 404),
-            (None, 404),
-        ] {
-            let mut request = axum::http::Request::builder()
-                .uri(super::routes::INTERNAL_METRICS_PATH)
-                .body(axum::body::Body::empty())
-                .unwrap();
-            if let Some(peer) = peer {
-                request.extensions_mut().insert(axum::extract::ConnectInfo(
-                    peer.parse::<std::net::SocketAddr>().unwrap(),
-                ));
-            }
-            let response = app.clone().oneshot(request).await.unwrap();
-            assert_eq!(response.status().as_u16(), status, "{peer:?}");
-            if status == 200 {
-                let body = axum::body::to_bytes(response.into_body(), 1 << 20)
-                    .await
-                    .unwrap();
-                assert!(
-                    String::from_utf8_lossy(&body)
-                        .contains("http_requests_total{handler=\"/status\"} 1"),
-                    "{peer:?}"
-                );
-            }
-        }
-    }
-
-    /// The content and lamb2 per-route series: legacy names, labels, help and
-    /// buckets, one handler for both content mounts and no raw path.
-    #[tokio::test(flavor = "current_thread")]
-    async fn content_and_lambdas_routes_render_the_legacy_http_series() {
-        use axum::routing::get;
-        use tower::ServiceExt;
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
-        super::register_metrics();
-        crate::shop::market::lambdas_http::register_series("abc123");
-        let content = || {
-            axum::Router::new()
-                .route("/contents/{hashId}", get(|| async { "body" }))
-                .route(
-                    "/queries/erc721/{chainId}/{contract}/{option}",
-                    get(|| async { "" }),
-                )
-                .route(
-                    "/queries/erc721/{chainId}/{contract}/{option}/{emission}",
-                    get(|| async { "" }),
-                )
-        };
-        let app = content()
-            .nest("/content", content())
-            .route("/lambdas/users/{address}/wearables", get(|| async { "[]" }))
-            .route("/v1/trades", get(|| async { "[]" }))
-            .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
-            .layer(axum::middleware::from_fn(
-                crate::shared::http_metrics::observe,
-            ));
-        for (method, path) in [
-            ("GET", "/contents/QmRawHash1"),
-            ("GET", "/content/contents/QmRawHash2"),
-            ("HEAD", "/content/contents/QmRawHash3"),
-            ("GET", "/content/queries/erc721/1/0xc/opt"),
-            ("GET", "/content/queries/erc721/1/0xc/opt/7"),
-            ("GET", "/lambdas/users/0xRawAddress/wearables"),
-            ("GET", "/content/no-such-route"),
-            ("GET", "/no-such-root-route"),
-            ("GET", "/v1/trades"),
-        ] {
-            let request = axum::http::Request::builder()
-                .method(method)
-                .uri(path)
-                .header("content-length", "0")
-                .body(axum::body::Body::empty())
-                .unwrap();
-            app.clone().oneshot(request).await.unwrap();
-        }
-        let rendered = handle.render();
-        for line in [
-            "# HELP http_requests_total Total number of HTTP requests",
-            "# TYPE http_requests_total counter",
-            "# HELP http_request_duration_seconds Request duration in seconds.",
-            "# TYPE http_request_duration_seconds histogram",
-            "# HELP http_request_size_bytes Duration of HTTP requests size in bytes",
-            "# TYPE http_request_size_bytes histogram",
-            "http_requests_total{method=\"GET\",handler=\"/contents/:hashId\",code=\"200\"} 2",
-            "http_requests_total{method=\"HEAD\",handler=\"/contents/:hashId\",code=\"200\"} 1",
-            "http_requests_total{method=\"GET\",handler=\"/queries/erc721/:chainId/:contract/:option/:emission?\",code=\"200\"} 2",
-            "http_requests_total{method=\"GET\",handler=\"/users/:address/wearables\",code=\"200\"} 1",
-            "http_requests_total{method=\"GET\",handler=\"\",code=\"404\"} 1",
-            "# HELP dcl_lamb2_server_build_info Lamb2 server static build info.",
-            "# TYPE dcl_lamb2_server_build_info gauge",
-            "dcl_lamb2_server_build_info{commitHash=\"abc123\"} 1",
-        ] {
-            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
-        }
-        for raw in [
-            "QmRawHash",
-            "0xRawAddress",
-            "no-such",
-            "/v1/trades",
-            "/content/",
-        ] {
-            assert!(!rendered.contains(raw), "{raw} leaked:\n{rendered}");
-        }
-        // @dcl/thegraph-component's buckets.
-        metrics::histogram!(crate::chain_index::graph::SUBGRAPH_DURATION, "url" => "u").record(0.2);
-        let rendered_subgraph = handle.render();
-        let bounds: Vec<&str> = rendered_subgraph
-            .lines()
-            .filter(|line| line.starts_with("subgraph_query_duration_seconds_bucket{"))
-            .filter_map(|line| line.split("le=\"").nth(1)?.split('"').next())
-            .collect();
-        assert_eq!(
-            bounds,
-            [
-                "0.1", "0.3", "0.5", "1", "2", "5", "10", "20", "30", "60", "+Inf"
-            ]
-        );
-        // prom-client's default buckets, as the legacy declarations set none.
-        for series in ["http_request_duration_seconds", "http_request_size_bytes"] {
-            let bounds: Vec<&str> = rendered
-                .lines()
-                .filter(|line| {
-                    line.starts_with(&format!("{series}_bucket{{"))
-                        && line.contains("handler=\"/users/:address/wearables\"")
-                })
-                .filter_map(|line| line.split("le=\"").nth(1)?.split('"').next())
-                .collect();
-            assert_eq!(
-                bounds,
-                [
-                    "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10",
-                    "+Inf"
-                ],
-                "{series}"
-            );
-        }
-    }
 }
 
-/// Run with Stats prepared before creating workers. The unsafe preparation
-/// contract applies through every route clone, canceled blocking operation and
-/// final isolate teardown; an arbitrary preexisting runtime is not supported.
-pub async fn serve(
-    mut config: Config,
-    mut prepared: crate::metrics_matcher::PreparedStats,
-) -> anyhow::Result<()> {
-    config.node.init_tracing_with(log_metrics::CountLogs);
-    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
-    let internal_metrics = routes::internal_metrics_router(metrics_handle.clone(), &config);
-    log_metrics::register_series();
-    shop::market::lambdas_http::register_series(&config.commit_hash().unwrap_or_default());
+pub async fn serve(mut config: Config) -> anyhow::Result<()> {
+    config.node.init_tracing();
+    install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
+        tracing::warn!("{warning}");
+    }
+    if let Some(warning) = catalyst_config::posture::unchecked_profile_items(&config) {
         tracing::warn!("{warning}");
     }
     config.resolve_secret_files()?;
@@ -340,6 +184,9 @@ pub async fn serve(
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
+    if config.writes.social_writes_enabled {
+        comms::gatekeeper::streaming::backfill_admin_place_keys(&pool).await?;
+    }
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -361,11 +208,13 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
-    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
-    prepared.settings.content_url = stats_content_url(
-        config.node.content_url.as_deref(),
-        &content.settings.content_public_url,
-    );
+    let statistics_settings = comms::stats::http::Settings {
+        commit_hash: Some(config.commit_hash().unwrap_or_default()),
+        content_url: stats_content_url(
+            config.node.content_url.as_deref(),
+            &content.settings.content_public_url,
+        ),
+    };
 
     // ONE outbound client: every mirror and upstream reader goes through the
     // guard; peer sync (`content::sync::sync_http_client`) and the RPC
@@ -1038,7 +887,6 @@ pub async fn serve(
             max_images_per_user: config.create.camera_reel_max_images_per_user,
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
-            metrics_bearer_token: config.create.camera_reel_metrics_bearer_token.clone(),
             places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
             places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },
@@ -1118,7 +966,8 @@ pub async fn serve(
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
-            .with_name_deny_list(worlds.names.clone()),
+            .with_name_deny_list(worlds.names.clone())
+            .with_name_authority(market.authorizing_names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1286,7 +1135,6 @@ pub async fn serve(
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
-        metrics_handle,
     )?;
     social
         .rpc
@@ -1318,7 +1166,11 @@ pub async fn serve(
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
-    social.communities.set_chain_index(market.index.clone());
+    // The shop selected the node's DCL NAME source once; without one that
+    // may authorize, a community creation or ownership transfer answers 503.
+    if let Some(names) = market.authorizing_names.clone() {
+        social.communities.set_name_authority(names);
+    }
     social
         .communities
         .set_explorer_flags(explorer_api.flags.clone());
@@ -1373,7 +1225,7 @@ pub async fn serve(
                 pool: pool.clone(),
                 denylist: content.denylist.clone(),
             }),
-            prepared.settings.content_url.clone(),
+            statistics_settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1599,7 +1451,7 @@ pub async fn serve(
     let connector_lifecycle = comms_stage.archipelago.clone();
     let app = build_routes(
         &config,
-        prepared,
+        statistics_settings,
         primary,
         Routes {
             content,
@@ -1630,21 +1482,26 @@ pub async fn serve(
             ops_admin,
             snapshot_gen,
         },
-    )
-    .merge(internal_metrics);
+    );
     run_http(addr, app, connector_lifecycle, &jobs).await
 }
 
 /// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
-/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
-/// written, since upstream concatenates `${url}/contents/` literally. This node's
-/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
-/// route the node serves (the nested `/content` route does not match `//`).
+/// upstream Stats uses one URL for both. Trailing slashes are stripped from
+/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does since
+/// archipelago-workers#141, so `{base}/contents/{hash}` never holds `//` (the nested
+/// `/content` route does not match it). Unlike upstream, whitespace is trimmed and
+/// an all-slash `CONTENT_URL` falls back to this node's `/content`.
 fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
-    match configured.map(str::trim).filter(|url| !url.is_empty()) {
-        Some(url) => url.to_string(),
-        None => content_public_url.trim_end_matches('/').to_string(),
-    }
+    let strip = |url: &str| {
+        url.trim()
+            .trim_end_matches(|c: char| c == '/' || c.is_whitespace())
+            .to_string()
+    };
+    configured
+        .map(strip)
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| strip(content_public_url))
 }
 
 #[cfg(test)]
@@ -1652,7 +1509,7 @@ mod stats_content_url_tests {
     use super::stats_content_url;
 
     #[test]
-    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+    fn trailing_slashes_are_stripped_from_the_node_default_and_the_operator_value() {
         assert_eq!(
             stats_content_url(None, "https://node.example/content/"),
             "https://node.example/content"
@@ -1662,11 +1519,36 @@ mod stats_content_url_tests {
             "https://node.example/content"
         );
         assert_eq!(
+            stats_content_url(Some("/"), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
             stats_content_url(
                 Some("https://cdn.example/content/"),
-                "https://cdn.example/content/"
+                "https://node.example/content/"
             ),
-            "https://cdn.example/content/"
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/// "),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/ /"),
+                "https://node.example/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content"),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
         );
     }
 }
@@ -2187,5 +2069,97 @@ mod referral_settings_tests {
             trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["10.0.0.0/8", "2001:db8::/32"]
         );
+    }
+}
+
+#[cfg(test)]
+mod name_source_wiring_tests {
+    use crate::config::Config;
+    use crate::worlds::policy::{PersonalWorldsPolicy, Policy};
+
+    /// A `serve` that neither walks the nft index nor reads the subgraph,
+    /// with chain checks skipped so it starts (personal worlds only), over a
+    /// database another process published a NAME into: the Admin Toolkit's
+    /// lookup reads that publication, and the worlds policy, built from the
+    /// source `serve` hands it, owns no DCL NAME world with it.
+    #[tokio::test]
+    async fn a_shared_database_reader_serves_lookups_and_authorizes_no_world() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("WORLDS_WRITES_ENABLED", "true"),
+            ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+            ("MARKETPLACE_SUBGRAPH_URL", ""),
+            ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true"),
+        ])
+        .unwrap();
+        assert!(
+            catalyst_config::posture::worlds_names_reader(&config)
+                .unwrap()
+                .is_some(),
+            "starts with the personal-worlds warning"
+        );
+        let label = format!("w{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let holder = crate::shared::identity::Address::parse(&format!(
+            "0x{}",
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2)[..40]
+        ))
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'ethereum', 1, 100, 100, timezone('UTC', now()), true, 1) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = 100, folded_block = 100, \
+                 folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 1, quarantined_at = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token =
+            i64::from_str_radix(&uuid::Uuid::new_v4().simple().to_string()[..12], 16).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2, $3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+        .bind(token)
+        .bind(holder.as_str())
+        .bind(&label)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let market = crate::shop::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::settings::market_settings(&config, &[]).unwrap(),
+        );
+        assert_eq!(
+            market.name_owner(&label).await.unwrap(),
+            Some(holder.clone())
+        );
+        assert!(market.authorizing_names.is_none());
+        // As `serve` builds it.
+        let policy = Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(market.index.clone()),
+        )
+        .with_name_authority(market.authorizing_names.clone());
+        let world =
+            crate::comms::world_identity::WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let refused = policy
+            .is_owner(&world, &holder)
+            .await
+            .into_result()
+            .unwrap_err();
+        assert_eq!(refused.http_status(), 403, "{refused}");
+        sqlx::query("DELETE FROM shop.nft WHERE contract_address = $1 AND token_id = $2")
+            .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

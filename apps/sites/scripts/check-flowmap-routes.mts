@@ -1,7 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { SECTIONS as EXPLORER_SECTIONS } from "@dcl/one-ui/apps/sites/flow-map/exflowmapdata";
-import type { FlowSection, Track } from "@web-core/flow-map";
+import { EXPLORER_SECTIONS, type FlowSection, type Track } from "@web-core/flow-map";
 
 const MANIFEST_FILE = ".react-router/types/+routes.ts";
 

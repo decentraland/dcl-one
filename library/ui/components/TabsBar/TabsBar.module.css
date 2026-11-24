@@ -115,6 +115,17 @@
   .routeText {
     composes: routeLabel from '../Tabs/Tabs.module.css';
   }
+  /* Create remounts the bar with each route. Start the incoming underline at its centre on mount. */
+  @media (prefers-reduced-motion: no-preference) {
+    @starting-style {
+      .routeRoot[data-page='create'] .routeLink[aria-current] {
+        --tab-scale: 0;
+        background-position:
+          center bottom var(--tab-underline-offset),
+          left 0 bottom var(--tab-underline-offset);
+      }
+    }
+  }
   .routeLink:focus-visible {
     outline-offset: -2px;
   }
@@ -207,6 +218,35 @@
     }
     .routeActions {
       gap: var(--dcl-space-8);
+    }
+  }
+
+  .routeRoot[data-page='blog'] {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--dcl-space-24);
+  }
+
+  .routeRoot[data-page='blog'] .routeNavigation {
+    flex: 1 1 0;
+    width: auto;
+  }
+
+  .routeRoot[data-page='blog'] .routeControls {
+    flex: none;
+    max-width: none;
+    width: auto;
+    padding-block: var(--dcl-space-12);
+  }
+
+  .routeRoot[data-page='blog'] .routeSearch {
+    flex: none;
+    width: auto;
+  }
+
+  @media (max-width: 767px) {
+    .routeRoot[data-page='blog'] .routeControls {
+      display: none;
     }
   }
 }

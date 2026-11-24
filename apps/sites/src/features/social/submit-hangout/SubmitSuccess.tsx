@@ -1,7 +1,5 @@
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
-import { GeneralCheck } from "@dcl/one-ui/foundations/icons";
+import { Notice, useEventsCopy, SitesButton as Button } from "@dcl/one-ui";
+import { GeneralCheck } from "@dcl/one-ui";
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 

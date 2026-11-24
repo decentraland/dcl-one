@@ -89,6 +89,26 @@ the data and its operations.
    regenerates those windows; the row keeps its real `generation_time`, which
    `/snapshots` publishes as upstream does.
 
+Content sync looks up peer snapshot receipts by primary key in batches during
+bootstrap and periodic refresh. A receipt records the entity types already
+processed. Unfiltered coverage uses a null array. Migration 0061 initializes
+older receipts to an empty set. On the first sync pass after upgrade, the
+leader can redownload and parse every advertised peer snapshot with a legacy
+receipt, including on unfiltered nodes. The existing snapshot concurrency
+bounds parallel work, and the deployer still skips entities already present.
+Writes extend coverage and a peer's cursor advances after its receipts are durable.
+Peer downloads use temporary staging. The blob collector can reclaim old
+peer snapshot files once their final owning reference is gone. A local
+published snapshot continues to retain its blob.
+
+New local deployments require an array when `content` is present. Peer replay
+reads an explicit null as an empty list for compatibility with legacy manifests.
+Both paths accept at most 25,000 declarations per entity, counted before hashes
+are deduplicated. An older manifest above that limit can remain stored on the
+node that accepted it. A new deployment or a replay of that manifest fails
+validation. The `content_sync_manifest_rejections_total` counter reports peer
+rejections with the reason `declaration_limit` or `invalid_cid`.
+
 ## Worlds, persistent storage and scene hosting
 
 One worlds subsystem owns deployment/permission lookup, world/player storage
@@ -155,6 +175,22 @@ thumbnails. A worlds mirror pass re-checks the blobs its rows name under
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. The collector uses
+the alias CID index to protect imported aliases and aliases that predate
+expiry tracking. Other aliases protect their blobs for 30 days after
+renewal. The mirror renews an alias at most once a day while the source
+still publishes it, including when local settings take precedence. A
+world's current thumbnail also has its own reference. Once an alias
+expires, the blob is collectable if no other reference keeps it. The
+hash-to-CID mapping remains, and the content denylist can withhold the bytes.
+
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
 next read.
@@ -298,8 +334,27 @@ See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-loo
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
-remain external IDs, never storage authority. The old
-`worlds.world_scene_identity` table is a frozen upgrade source only: creating
+remain external IDs, never storage authority.
+
+World publication, undeployment, settings (including spawn), access and block
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
+This relation holds at most one pending row per changed world. Coalescing takes
+the pending row's lock without losing its original queue position, so a worker
+cannot consume a mark before its source update commits. The leased
+`places-derive` job takes up to 64 oldest entries with `SKIP LOCKED`.
+Full batches are followed immediately by another check. Partial or empty
+batches resume the two-second interval. The update or removal of the
+aggregate and the consumption of its mark commit together. The worker reads
+world and scene rows without taking row locks. A failed refresh rolls back
+both effects. Consecutive refresh failures back off to at most 30 seconds.
+A full reconciliation runs at its configured interval and can
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
+
+The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
 creation. This is once per creation, not once for the lifetime of a database:
 never drop/recreate the authoritative relation to recover it, because that
@@ -1797,6 +1852,39 @@ so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
 
+## Wallet rental reads
+
+`GET /v1/rentals/{address}` reads `shop.chain_cursor` and
+`shop.rental_event` in one statement snapshot. A single lookup returns
+both wallet roles. The two partial participant indexes find the
+wallet's historical assets in the requested venue, and the existing asset
+index finds each candidate's latest rent or claim and the current period's
+rent events. Each result contains one row per asset and role. There is no new
+projection table or response cache. Production lookup rates and latency
+have not been measured.
+
+The missing-objects step of `schema migrate` builds
+`rental_event_lessor_idx` and `rental_event_tenant_idx` non-concurrently.
+It holds a SHARE lock on `shop.rental_event` until the migration commits,
+so chain index writes wait. To keep writes moving during an index build on
+a large history, prebuild both indexes with `CREATE INDEX CONCURRENTLY`
+using the definitions in `schemas/30_shop.sql`.
+
+The read stops at the published block. A stale or unpublished cursor
+returns 503. The latest rent or claim is evaluated before checking the
+current participants. A rent stays in the lessor's list until claim and
+in the tenant's list until expiry. Extensions add to the end of the original
+period, as the Rentals contract does. The route returns the operator on the
+latest rent event. Mainnet and Sepolia use separate
+`(network, block_number, log_index)` event keys and separate cursors under the
+Ethereum supervisor. Only the mainnet index updates listing statuses and
+supplies rental notifications.
+
+The index worker uses the `TRADE_RPC_URLS` entry for chain 11155111 or
+`ETH_RPC_URL` with `ETH_NETWORK=sepolia`. Check the selected chain's
+`ready` field at `GET /signatures-api/v1/rentals-index` before routing
+clients to the wallet rental endpoint.
+
 ## Rental listing status workload
 
 `signatures.rentals.status` (`schemas/32_signatures.sql`) has three writers.
@@ -2409,17 +2497,25 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
+Each index process reads these bounded cursor
+tables once per minute. It samples the height, stored history mode, fold
+publication and quarantine from `shop.chain_cursor` and the height, replay
+mode and fold from `land_authz.index_cursor` for its configured registries
+and network. A second read samples complete-pass times and page counts from
+`shop.mirror_state` and `shop.trades_mirror` for the configured sources.
+The sampler uses the index worker's existing pool and writes no rows.
+
 **Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
 `chain-walk-matic`, in the process that runs the indexes. It walks each
 projection that process enables under the projection's own lease,
 `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
-`rentals-index-ethereum`), so
+`rentals-index-ethereum`, `rentals-index-sepolia-ethereum`), so
 processes with different projections enabled share a network. Each
 projection keeps its own cadence and backoff, though one that reached the
 target may join a due companion's shared walk ahead of its own turn, so
@@ -2646,6 +2742,32 @@ published more than 30 minutes ago (`READY_WINDOW`) admits only the
 configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
 and the AGENTS.md "Ownership" entry in the same change.
 
+## Third-party registry
+
+The Polygon registry walk uses the `third_party_registry` cursor on `matic`
+and appends one version to
+`shop.third_party_registry_event` per registry event that changes a known
+provider. The state holds the event's provider metadata, linked contracts,
+approval, root, resolver, managers and slot counts. A consumption event also
+holds its message hash, quantity, signer and curator. Block time and position
+identify when the receipt was recorded. Exact decimal strings preserve the
+contract's 256-bit counts.
+
+The registry has a small provider catalogue and far more reads than writes.
+The primary key supports rewind by block and the provider version index
+supports the previous state lookup on write and the latest state lookup on
+read. Each version and its receipt commit with the cursor advance. A rewind
+deletes the affected suffix, so prior provider state is already available
+at the remaining event positions. No TypeScript import writes this table.
+
+Provider queries read the latest state per provider at or below the same
+statement's published block. Only then do they filter approval or manager
+membership. Rows from a partial, stale, diverged, quarantined or wrong-chain
+publication cannot be served. An empty result from a current publication
+means there are no matching providers. The index exposes on-chain slot
+availability as the maximum less consumed slots. Publish reservations and
+submission state still belong to the service that processes the submission.
+
 ## Auth API relay state workload
 
 `/auth-api` (`services/catalyst/explore/src/api/auth_api/`) is the sign-in
@@ -2655,6 +2777,13 @@ for one pickup by a device. The gateway spreads `/auth-api` across the API
 replicas round-robin without affinity, so the state lives in three
 `explore_api` tables (`schemas/11_explore_api.sql`) every replica reads and
 writes through the explore pool, as the upstream auth server keeps it in Redis.
+
+Socket.IO sessions hold the requests they create on the replica that owns
+the connection. The gateway consistently routes Engine.IO polling and
+upgrades by client address. While the replica has bound requests, it checks
+their live validation and outcome state through one primary-key batch query
+per 500 ms pass. The socket and HTTP poll share a row-locked outcome claim.
+If the socket cannot queue the event, the claim rolls back for HTTP pickup.
 
 Workload: a sign-in is one create, one or two recover reads, a validation mark
 at most, one outcome and a poll about once a second until the outcome lands;
@@ -2672,8 +2801,8 @@ identities (100 per network). No production rate is measured.
   WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
   clears `outcome`, `params` and `challenge`, so a concurrent poller on any
   replica waits on the row, finds it fulfilled and answers 410. A request
-  expires 5 minutes after its creation; the read that finds it expired
-  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+  expires 5 minutes after its creation. Reads answer 404 after expiry, and
+  the periodic sweep deletes expired rows.
 - `auth_identities`: one row per parked identity, keyed by its UUID, holding
   the identity document with its ephemeral private key for at most an hour.
   The key is stored in clear, as the upstream auth server keeps it in Redis:
@@ -2711,10 +2840,24 @@ per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
-requests past their grace, then the oldest delivered ones, just enough to admit
+expired requests, then the oldest delivered ones, just enough to admit
 one more. The count scans the table, bounded by the caps to about 10,000 rows;
 sign-in creates are rare enough that serializing them on the lock costs nothing
 measurable.
+
+Magic account deletion inserts one short-lived row per verified request into
+`explore_api.magic_deletion_attempts`. A digest of the wallet address and Magic
+token ID is the unique key. An advisory transaction lock serializes the
+one-use claim across replicas. The default hourly caps allow 3 attempts per
+wallet, 20 per network and 120 globally. A network is one IPv4 address or an
+IPv6 /48. Requests with no trusted source share a network bucket. A refused
+request writes nothing and counts in
+`explore_magic_deletion_rate_limited_total` by the cap it hit. Admission counts the preceding hour
+through the requested-at index, which also serves the one-day expiry sweep.
+The row stores the wallet and source digests and the outcome category. A row
+still marked requested can represent an interrupted operation. The table
+holds neither DID tokens nor Magic response payloads. The relay sweeper
+also prunes these rows when Magic deletion is configured.
 
 Contract-wallet budget: contract-wallet calls (`isValidSignature`, including
 those of the signed-fetch chain on `POST /identities`) are budgeted in process
@@ -2734,14 +2877,16 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
-replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
-second. The periodic `auth-api-identity-sweep` job runs on every replica
-every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
-grace, identities past their hour, tombstones past 14 days), so replicas
-sweeping at once delete each row once. The expiry indexes
+replicas need synchronized clocks (NTP). The periodic
+`auth-api-identity-sweep` job runs on every replica every 30 seconds. It
+deletes expired requests, expired identities, tombstones older than 14
+days and, when Magic deletion is configured, Magic deletion attempts older
+than a day. Each row is deleted once across replicas. The expiry indexes
 (`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
-`auth_identity_tombstones_created_idx`) serve those deletes; every other read
-and write is by primary key. Nothing references these rows and they
+`auth_identity_tombstones_created_idx`,
+`magic_deletion_attempts_requested_idx`) serve those deletes. The Magic
+admission's hourly count reads that last index too. Every other read and
+write is by primary key. Nothing references these rows and they
 reference nothing: no FK. The bootstrap defines the tables; an existing
 database gains them from the object pass, so no step exists. A restart of
 every replica keeps the relay's state.
@@ -2813,6 +2958,38 @@ neither catalogue holds the place and no pending row for it remains. Its context
 `content.deployments` for shared-scene rooms, by primary key or world name.
 Neither table has an FK: queue rows outlive catalogue deletion.
 
+Workload and invariants for removal notices: one immutable recipient set per
+live removal, with a durable `recipient_cursor` advanced after each Social
+acceptance. In the catalogue removal transaction Explore freezes, for a Genesis
+place, the valid active admin wallets of its base parcel into `recipients`. For a
+World it freezes the exact scene place keys into `admin_keys` and each active admin
+there with its original granter into `admin_grants` (a JSON array of
+`[admin, granter]` pairs); World admins are not saved as recipients because
+maintenance must first check that the granter still holds the world-wide
+authority. Its plain MVCC read of `social.scene_admins` (`place_id`,
+`admin_address`, `added_by`, `active`) takes no Social row locks and performs no
+Social writes. A re-grant before the first maintenance pass overwrites
+`added_by`, `added_at` and `removed_at` on the row; the frozen wallets and pairs
+keep the evidence. Safety cleanup also adds the pairs of the World grants it ends
+to `admin_grants`, in its own transaction, before notification enrichment runs.
+Enrichment then reads the owner, the permission surfaces and the grants (live,
+ended by this removal, and frozen), and saves the complete set in one write.
+Missing external authority leaves `recipients_resolved=false` with the frozen
+evidence unchanged; a saved owner alone is never a complete set.
+Retries reuse the complete set and original event time. Initial historical
+feed seeding sets `notify=false`, retaining cleanup without sending old notices.
+
+The catalogue legs keep `removal_admin_keys` as exact local evidence. Before
+final scene retirement, Explore snapshots currently active identity keys when
+no backing `worlds.world_scenes` remain. Removed identities from older
+lifetimes are excluded. The removal trigger freezes their union with current
+active keys into `place_removal_pending.admin_keys`. An actual scene insert
+clears only catalogue evidence, with ordered active-identity locks before
+catalogue writes; importing an identity alone cannot clear it. Queue rows
+survive re-adds. The existing world-row lock serializes publication; imports
+lock affected worlds and identities in order and retire only saved bindings
+whose backing scenes are gone. No grant history is inferred from parcel overlap.
+
 ## Scene admin grants
 
 `social.scene_admins` (`schemas/40_social.sql`) holds the explicit admins of a
@@ -2840,7 +3017,8 @@ Invariants:
 - An owner change writes no row. Ownership is read when a request arrives.
 - The cleanup of a removed place (above) revokes the grants made before the
   removal (`added_at`; a cleanup that runs late keeps the later ones): those
-  on the places of the active scenes of a world (`explore.world_scene_place`
+  on the places of the active scenes of a world and its queued exact retired
+  keys (`explore.world_scene_place`
   by `world_name` on `world_scene_place_deployment_idx`; the id of a world
   place is the world name or an imported id, never the key of a grant), or
   those on the base parcel of a Genesis place when no enabled `explore.place`
@@ -2979,6 +3157,66 @@ Not announced: a LAND owner or operator change, a NAME transfer until the
 owner reconcile writes `worlds.worlds.owner`, a ban. The key job and the check
 on each use cover them. A scene admin removal checks the key in its own
 request.
+
+Streaming notification fanout uses the same owner and permission authorities
+as access decisions: LAND owner/operator/update operator/update managers and
+approved-for-all wallets, or World owner and footprint-scoped grantees, plus
+scene admins. Wallets are normalized and deduplicated. Invalid historical
+admin strings are excluded from delivery without preventing safety cleanup.
+Each credential stores its bound `admin_place_key` at issuance/reset/Cast;
+the cleanup context preserves it for later resolution. Notification preparation
+is bounded to five seconds, retains partial evidence on failure and never takes
+publication row locks. Original place context is captured before binding recovery
+and checkpointed before further fallible deferred lookups; saved snapshots
+survive catalogue deletion and are never refreshed from a replacement lifetime.
+Binding SQL errors and timeouts leave recipient resolution pending, including
+retries after credential deactivation.
+
+Explore owns `world_scene_binding`: one recovery fact for each distinct
+`(world_name, entity_id, identity)` displaced by identity replacement,
+retirement or deletion. Its row trigger inserts the old exact binding in the
+identity transaction, with no Social writes or row locks. A rollback retains
+neither transition nor evidence. The primary key in that order supports the
+exact world/entity probe and makes replay idempotent. There is no FK because
+these facts survive deletion of the source identity. There is no expiry while
+legacy credentials or pending notices may need them; storage grows with
+distinct displaced bindings. Comms reads these columns together with the
+current binding, considering at most two historical identities and the one
+active identity. A saved credential/context key takes precedence. Without one,
+a successful lookup returning zero or multiple candidates records
+`admin_binding_pending=false, admin_binding_unresolvable=true` in
+`source_context`. Such canonical World notices complete for independently
+established owner and permission holders plus preserved recipients, skipping
+local-admin enrichment so parcel overlap cannot select another incarnation.
+SQL errors and timeouts remain retryable instead. Before the place-context
+or binding lookup, preparation freezes the `social.scene_admins` [admin,
+granter] pairs of each candidate key (the saved key, or else those same
+historical and active identities) in `source_context.admin_grant_candidates`;
+the retry keeps the pairs of the key it settles on, so a re-grant in between
+cannot replace the original granter. The
+schema object pass installs this new table, function and trigger; imports
+retain facts through the same trigger. Production insert and retention costs
+are unmeasured.
+
+`scene_stream_cleanup`
+keeps the complete `recipients`, `recipients_resolved` bit and guarded
+`recipient_cursor`. Each Social acceptance advances one cursor under the
+current claim token, so a bounded pass resumes after its accepted prefix.
+`notification_started` commits before the first acceptance; later key regeneration
+cannot suppress an unfinished expiry suffix, including an uncheckpointed acceptance.
+Social deduplicates by recipient, kind and event identity. Reset-to-revoke
+conversion retains the complete recipient set and starts the new kind at zero.
+
+Existing credentials without a saved admin key can recover a unique exact
+current or retained binding, including after credential deactivation and scene
+retirement. Scenes retired before binding capture existed and overwritten
+pre-cutover grant history may have no exact recovery evidence. Existing scalar
+cleanup recipients are preserved while remaining authority classes resolve;
+an existing scalar value alone never marks the snapshot complete.
+
+Credential issuance has no per-place limit, as upstream; historical imports
+preserve creation times. Whether to bound it is open next work in the
+[streaming notification ADR](docs/adr/2026-11-21-streaming-notification-recipients.md).
 
 ## Stream state reconciliation
 
@@ -3176,6 +3414,15 @@ API; that mode serves one process only, so a deployment with several Sites
 replicas sets the database URL. The bootstrap defines the table; an existing
 database gains it from the object pass, so no step exists.
 
+Before exposing writers, a Social-writing serve process scans active native
+credentials with missing admin keys in bounded UUID batches, decodes their
+canonical rooms with the existing codec, and saves exact live world identity
+bindings under world/identity locks. Read-only Social replicas skip this write.
+The upgrade requires stopping old writers and finishing offline imports before
+the coordinated startup, so identities cannot retire before this backfill.
+Noncanonical imported rooms and scenes already retired before the upgrade
+remain outside exact recovery; pending authority stays retryable where available.
+
 ## Shop reconciliation and availability sweeps
 
 The broker purchase, NAME transfer and escrow-action receipt workers read up
@@ -3239,3 +3486,232 @@ the same SQL statement. The count remains present even
 when the page is empty. Both sides therefore use one snapshot and one
 filter definition. Production query latencies and cardinalities for these
 repairs remain unmeasured.
+
+## Wearable and emote ownership workload
+
+The shop's ownership reader (`services/catalyst/shop/src/market/owned_items.rs`)
+answers who holds which collection item from the nft index's fold, `shop.nft`,
+which the shop writes itself; it reads no other area's table. Readers:
+profiles and the Registry's profile batches (`/lambdas/profiles`, `POST
+/profiles`), the wearable and emote lists (`/lambdas/users/{a}/wearables`,
+`/emotes`, `/lambdas/collections/*-by-owner`), the explorer backpack,
+`/v1/users/{a}/wearables` and `/emotes`, outfits, the `/v1/orders` owner
+guard and the wearable and emote pages of `/v1/nfts`. Content deployment
+validation does not read it: it checks ownership by RPC at the entity's block
+and `shop.usage_grants`.
+
+Readiness, read on the cursor (`shop.chain_cursor`, `indexer = 'nft'`) in the
+same `REPEATABLE READ, READ ONLY` transaction as the rows, so a rewind that
+commits in between is never half-seen:
+
+- complete: `full_history` and `folded_block` set. A reorg rewind and an
+  unpublishable fold clear `folded_block`; only a pass that reaches the head,
+  folds and publishes sets it, and a rewind deletes the fold's rows in the
+  transaction that clears it. `shop.nft` changes only in a fold's commit
+  (one transaction per network) and in a rewind, so a reader never sees half
+  a fold, and a complete cursor holds while the next pass has advanced
+  `last_block` past `folded_block`. A fold that still owes a late
+  collection's backfill is unpublishable: it holds that collection's tokens
+  transferred since the walk took it in and not its earlier ones. Its
+  transaction clears `folded_block` and `folded_at` with its rows (the
+  count of owed backfills is read in it, and the cursor's update is its last
+  statement), so those rows are never read as complete, whatever stops the
+  pass afterwards; the pass that finishes the backfill folds and publishes
+  again. A fold that owes nothing leaves the marker to the pass, which sets
+  it, or clears it when the pass is held short of the head or past the
+  publish lag, in a later statement after it reads the chain head again:
+  until then, and until the next pass folds when that read fails, the new
+  fold's rows are read under the previous marker and its `folded_at`. They
+  are later transfers of the same complete walk. Profiles need complete
+  on the networks their items name; an incomplete one fails the read (the
+  404 of a failed lookup, or a Registry batch left out and counted).
+- fresh: complete and `folded_at` within 30 minutes. Every other reader needs
+  it on the networks it reads (wearables both, emotes Polygon), and the lists
+  also need the items mirror's complete pass (`shop.mirror_state`); otherwise
+  they answer the `nft-index` envelope. The `/v1/orders` routes instead
+  answer 200: until the index is fresh on the networks the read names, their
+  v3 listings leg keeps only the Ethereum LAND and Estate registries'
+  listings, which the index never holds (it reads their `Update` logs, not
+  their transfers) and the guard never filters, and the
+  `x-listings-owner-check` header says `partial` (`checked` when the guard
+  ran, `unchecked` on a node that does not walk the index). Which contracts
+  the index holds is not read from `shop.nft`: a rewind deletes the rows of
+  the tokens it reaches, so a sold token's collection could look unindexed.
+
+Queries, all bounded by one owner or one batch:
+
+- an owner's copies: `shop.nft` by `owner` (`nft_owner_idx`), joined to
+  `shop.items` by `(network, contract_address, item_id)` on Polygon and to
+  `shop.collections` and `shop.items` by URN (the collection's URN and the
+  Issue log's `wearable_id`) on Ethereum; memoized 30 s per owner and
+  category. A request opens one snapshot: the gate is checked on it every
+  time, the rows are read on it, and a memoized answer runs no query after
+  the gate;
+- the profile batch: up to 128 profiles' `(owner, URN)` pairs unnested, v2
+  pairs joined to `shop.nft` on `(network, contract_address, item_id)` and
+  `owner`, v1 pairs through `shop.collections.urn` and `wearable_id`, newest
+  transfer first (`transferred_block`, `transferred_log` descending);
+- the orders guard: `NOT EXISTS` a `shop.nft` row of the listing's exact token
+  held by another address or burned, by primary key. A node that does not
+  walk the index runs the listings statement without it and without the
+  snapshot.
+
+Measured on a seeded database (3.0M Polygon tokens over 100,000 items with a
+skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
+200,000 Ethereum v1 tokens and 300,000 names; PostgreSQL 18, warm cache):
+
+- the profile batch: each `(owner, URN)` pair is a `BitmapAnd` of
+  `nft_owner_idx` and `nft_item_idx`; 128 owners by 10 URNs took 220 ms, one
+  profile of 10 items 17 ms, and a 30,000-token owner wearing the ten
+  most-held items 21 ms. An index on `(owner, network, contract_address,
+  item_id)` cut those to 22, 0.2 and 0.9 ms, but at 442 MB against
+  `nft_owner_idx`'s 55 MB, and it made the planner read a 30,000-token
+  owner's inventory in 1.35 s instead of 89 ms, so it was not added;
+- an inventory read: 89 to 99 ms for a 30,000-token owner, 0.2 ms for a
+  typical one;
+- `/v1/nfts`: an owner's `category=wearable` page 95 ms and its capped total
+  131 ms for the 30,000-token owner, under 1 ms for a typical owner (with the
+  names leg when no category is named).
+
+The `/v1/nfts` page without an owner reads each source's first `first +
+skip` rows under the filters and the sort, then sorts and pages their union,
+which always holds the window of the whole set. Each collections and names
+source walks `nft_mint_order_idx` (`(network, minted_at DESC) WHERE owner IS
+NOT NULL`; an incremental sort orders the ties by contract and token) with
+nested-loop lookups of the item, the collection and the legacy order. A read
+that keeps only listed rows (`isOnSale=true`, a price bound) draws its
+candidates from the tokens with an open legacy order or v3 listing
+(`on_sale`, materialized once) and still applies the order filter, so it
+answers the same rows; the LAND source names those tokens on the registry's
+own rows, so its per-token lookups run for the listed parcels only. The
+capped total reads the order legs only when a filter needs them: they are
+left joins of at most one row, so a sort on them changes no count.
+
+A sort by price or listing time (`cheapest`, `recently_listed`) puts the
+rows with no order last, by contract and token. Without an owner and
+without a filter that keeps only listed rows, the page reads each source as
+two parts: its rows with an order, drawn from `on_sale` under the sort, and
+its rows without one, read in the source's key order (`shop.nft`'s and
+`land_authz.token_right`'s primary keys), each part giving its first `first
++ skip` rows. The two parts hold every candidate of the source, so their
+union holds the window of the whole set, and no read prices every
+candidate. With `isOnSale=false` only the second part is read. An owner's
+page keeps one part unless the owner holds more than 1,000 tokens
+(`LARGE_OWNER_TOKENS`, counted in the read's snapshot): a typical owner's
+price-sorted page takes 10 ms that way and 240 ms split (the cost of
+reading every listed token first), a 32,000-token owner's 7 to 8 s and
+0.6 s.
+
+Each candidate row's v3 listing is a lateral lookup in `unified_trades`,
+which these statements declare `NOT MATERIALIZED`: the lookup reads the
+listings of that token through `trade_assets_erc721_token_idx` on
+`shop.trade_assets_erc721 (token_id)` and the trades its owner signed
+(`idx_trades_signer_created`), instead of scanning every open listing for
+every row. The index is 432 kB on 4,900 listing assets (the table 528 kB);
+each ERC-721 asset that the trades mirror or a local signed trade inserts
+adds one entry, and the migrate object pass builds it. Planning such a
+statement takes about 9 ms.
+
+Measured on a second seeded database (2,999,100 Polygon tokens over 100,000
+items of 5,000 collections, item popularity cubic-skewed so one collection
+holds 175,000 tokens and the smallest about 200; 200,000 Ethereum v1 tokens
+and 300,000 names; 20 owners of about 32,000 tokens among 300,000; 64 tokens
+share each mint time; 90,000 parcels and 2,000 estates; 4,450 open legacy
+orders and 4,600 served v3 token listings, some signed by an address that
+no longer holds the token; PostgreSQL 18, warm cache, `first=24`, each
+statement run through the route's query builder with bound parameters).
+Its rows were inserted in mint order, so the heap follows
+`nft_mint_order_idx` (43 MB here, 105 MB on the earlier seed) and the deep
+windows below are a lower bound for a table folded in another order.
+
+| Page without an owner | Page | Capped total | Where the time goes |
+|---|---|---|---|
+| newest, `category=wearable` | 30 ms | 92 ms | the Ethereum source passes the 238,000 names minted after the newest v1 token (22 ms) |
+| newest, no category | 291 ms | 88 ms | the LAND source reads every parcel's mint before sorting |
+| newest, `category=wearable&isOnSale=true` | 767 ms | 785 ms | 8,200 listed tokens, each with its token, item, order and listing lookups |
+| newest, `isOnSale=true`, no category | 838 ms | 822 ms | the same, with names and LAND |
+| cheapest or recently listed, `category=wearable&isOnSale=true` | 745 to 770 ms | 730 ms | the same |
+| newest, `category=wearable&isOnSale=false` | 1.0 s | 0.5 s | the listing lookup of each row walked |
+| newest, `category=wearable`, `skip=1,000` | 269 ms | 78 ms | 1,024 rows of each source |
+| the same, `skip=10,000` | 916 ms | 76 ms | 10,024 rows of each source |
+| the same, `skip=99,976` (the 100,000 window) | 2.6 s | 71 ms | 100,000 rows of the Polygon source with their lookups, the Ethereum source sorted on disk |
+| newest, no category, `skip=10,000` | 1.6 s | 91 ms | four sources of 10,024 rows |
+| the same, `skip=99,976` | 3.9 s | 95 ms | 392,000 rows sorted on disk (130 MB) |
+| newest, one creator of 3 items | 75 ms | 73 ms | drives from `items_creator_idx`; the Ethereum source reads its 200,000 tokens |
+| newest, `itemRarity=unique` (40 tokens) | 107 ms | 112 ms | drives from the items of that rarity through `nft_item_idx` |
+| newest, `itemRarity=mythic` (85,000 tokens) | 204 ms | 222 ms | walks `nft_mint_order_idx` |
+| name, `category=wearable` | 380 ms | 78 ms | the items sorted by name, then `nft_item_idx` |
+| name, no category | 0.7 to 1.2 s | 96 ms | the same, and 300,000 names sorted |
+| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` |
+| recently sold, no category | 2.1 to 2.9 s | 94 ms | the same |
+| cheapest or recently listed, `category=wearable` | 736 to 740 ms | 65 ms | the listed part (8,200 listed tokens with their lookups); the unlisted part reads 24 rows |
+| the same, no category | 791 ms | 82 ms | the same, with names and LAND |
+| the same, `category=wearable`, `skip=1,000` | 749 to 755 ms | 65 ms | 1,024 unlisted rows of each source added |
+| the same, no category, `skip=1,000` | 918 to 985 ms | 83 ms | the same over four sources |
+| the same, `category=wearable`, `skip=99,976` | 2.4 to 2.5 s | 67 to 75 ms | 100,000 unlisted rows of each source with their lookups |
+| the same, no category, `skip=99,976` | 8.1 s | 83 ms | the LAND source's 91,600 unlisted rows with their per-token lookups (4.4 s), 400,000 rows sorted on disk |
+| cheapest or recently listed, `category=wearable&isOnSale=false` | 19 to 21 ms | 458 to 509 ms | 24 rows in key order |
+
+A page sorted by price or listing time that read every candidate before
+the sort ran past the pool's statement timeout (`PoolSettings`, 60 s by
+default) on this seed. With `unified_trades` materialized, no token index
+and the LAND source unrestricted, the same seed took 2.9 s for the
+wearables on sale (page and total), 30 s for the on-sale page naming no
+category, 59 s for `isOnSale=false`, and 30 s for the capped total of a
+sort by price. Every statement of these reads (`/v1/nfts`, the nft leg of
+`/v1/prices`, the estate sizes) runs under a transaction-local
+`statement_timeout` of 10 s (`READ_STATEMENT_TIMEOUT`), above the slowest
+ones measured here (8.1 s), and a cancelled one answers 503 naming the
+bound. The bound is per statement: a page runs at most four heavy ones
+(the owner's count, the page, the capped total, the estates' parcels), so
+it holds its connection up to 40 s rather than the pool's 60 s for each.
+Planning a split page takes 15 to 23 ms.
+
+With an owner: a 32,000-token owner's `category=wearable` page 78 ms and
+total 167 ms, its `isOnSale=true` page 277 ms, and its page sorted by price
+7 to 8 s read in one part, the listing lookup of each of its tokens (0.6 s
+in two parts, as such an owner's page is now read), and its capped total
+with no category 7 to 8 s. A statement
+repeated on one connection is planned generically from its sixth run: that
+plan took 1.0 s for the 78 ms page and 1.3 to 1.6 s for the price-sorted one.
+
+The earlier seed (3.0M Polygon tokens, 3,500 legacy orders, no v3 listing)
+gave, before and after the per-source windows: newest wearables 1,605 ms to
+15 ms, newest with no category 5,138 ms to 282 ms. `sold_at` of the LAND
+source is a scalar subquery the plan evaluates for the page's rows only.
+`the_per_source_window_pages_like_the_whole_set` compares the page with the
+whole set sorted and paged over every sort, filters and pages inside and
+past a source's rows, with legacy orders, v3 listings and a listed parcel,
+and checks the totals. The index on `(network, minted_at DESC,
+contract_address, token_id)` answered within 6 ms of `nft_mint_order_idx` at
+396 MB against 105 MB. Unmeasured: production data, a cold cache, and
+concurrent reads.
+
+`catalyst schema migrate`'s object pass builds `nft_mint_order_idx` on
+`shop.nft` (no step under `schemas/migrations/`) in the migrate transaction,
+not concurrently, so writes to that table wait for the build: about 2 s on
+the 3.5M seeded rows, unmeasured on production. Writers are stopped for a
+release anyway. To build it outside that window, run beforehand, with the
+same definition as `schemas/30_shop.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_mint_order_idx
+    ON shop.nft (network, minted_at DESC) WHERE owner IS NOT NULL;
+```
+
+The object pass creates only objects the database lacks, so it then skips the
+index. A failed concurrent build leaves an invalid index of that name: drop it
+before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
+`nft_item_idx`.
+
+The DCL NAME owner read (`services/catalyst/shop/src/market/names.rs`) looks
+a label up lowercased, through `nft_ens_label_idx`, which only the
+DCLRegistrar's rows enter (`ens_subdomain` set). The object pass builds it the
+same way; to build it outside the release window:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_ens_label_idx
+    ON shop.nft (lower(ens_subdomain)) WHERE ens_subdomain IS NOT NULL;
+```
+
+Its size and the lookup time on production data are unmeasured.

@@ -401,10 +401,19 @@ async fn lake_at(lake: Lake) -> (Arc<Portal>, String) {
 }
 
 fn admission(origin: &str, rps: f64, cooldown: Duration) -> Admission {
+    admission_within(origin, rps, cooldown, DEADLINE)
+}
+
+/// The deadline of the tests that read two batches of 10 000 addresses:
+/// their pages take longer than [`DEADLINE`] on a loaded machine, and none of
+/// them is about the deadline.
+const BATCHES_DEADLINE: Duration = Duration::from_secs(30);
+
+fn admission_within(origin: &str, rps: f64, cooldown: Duration, deadline: Duration) -> Admission {
     Admission::with_cooldown(
         PortalReader::new(origin, "polygon-mainnet", None, rps).unwrap(),
         "matic",
-        DEADLINE,
+        deadline,
         cooldown,
     )
 }
@@ -560,7 +569,7 @@ async fn a_revision_change_on_the_second_batch_admits_the_window_again() {
     let after = after.log(110, 0, A, &[T0]);
     let (portal, origin) = lake_at(before).await;
     *portal.swap.lock().unwrap() = Some((1, after));
-    let adm = admission(&origin, 1_000.0, COOLDOWN);
+    let adm = admission_within(&origin, 1_000.0, COOLDOWN, BATCHES_DEADLINE);
     let rpc = FakeRpc {
         logs: vec![rpc_log(130, 0, X, &[T1])],
         ..Default::default()
@@ -975,7 +984,7 @@ async fn one_block_with_two_times_reads_the_window_from_the_rpc() {
     let lake = lake.log(110, 0, A, &[T0]).log(110, 1, X, &[T1]);
     let (portal, origin) = lake_at(lake).await;
     *portal.skew_page.lock().unwrap() = Some(2);
-    let adm = admission(&origin, 1_000.0, COOLDOWN);
+    let adm = admission_within(&origin, 1_000.0, COOLDOWN, BATCHES_DEADLINE);
     let rpc = FakeRpc {
         logs: vec![rpc_log(110, 0, A, &[T0]), rpc_log(110, 1, X, &[T1])],
         ..Default::default()
@@ -1418,7 +1427,7 @@ struct Counters(Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>>>);
 
 struct CounterCell(Arc<std::sync::atomic::AtomicU64>);
 
-impl metrics::CounterFn for CounterCell {
+impl dcl_metrics::CounterFn for CounterCell {
     fn increment(&self, value: u64) {
         self.0.fetch_add(value, Ordering::SeqCst);
     }
@@ -1427,29 +1436,33 @@ impl metrics::CounterFn for CounterCell {
     }
 }
 
-impl metrics::Recorder for Counters {
+impl dcl_metrics::Recorder for Counters {
     fn describe_counter(
         &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
+        _: dcl_metrics::KeyName,
+        _: Option<dcl_metrics::Unit>,
+        _: dcl_metrics::SharedString,
     ) {
     }
     fn describe_gauge(
         &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
+        _: dcl_metrics::KeyName,
+        _: Option<dcl_metrics::Unit>,
+        _: dcl_metrics::SharedString,
     ) {
     }
     fn describe_histogram(
         &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
+        _: dcl_metrics::KeyName,
+        _: Option<dcl_metrics::Unit>,
+        _: dcl_metrics::SharedString,
     ) {
     }
-    fn register_counter(&self, key: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Counter {
+    fn register_counter(
+        &self,
+        key: &dcl_metrics::Key,
+        _: &dcl_metrics::Metadata<'_>,
+    ) -> dcl_metrics::Counter {
         let mut labels: Vec<String> = key
             .labels()
             .map(|l| format!("{}={}", l.key(), l.value()))
@@ -1457,17 +1470,21 @@ impl metrics::Recorder for Counters {
         labels.sort();
         let name = format!("{}{{{}}}", key.name(), labels.join(","));
         let cell = self.0.lock().unwrap().entry(name).or_default().clone();
-        metrics::Counter::from_arc(Arc::new(CounterCell(cell)))
+        dcl_metrics::Counter::from_arc(Arc::new(CounterCell(cell)))
     }
-    fn register_gauge(&self, _: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
-        metrics::Gauge::noop()
+    fn register_gauge(
+        &self,
+        _: &dcl_metrics::Key,
+        _: &dcl_metrics::Metadata<'_>,
+    ) -> dcl_metrics::Gauge {
+        dcl_metrics::Gauge::noop()
     }
     fn register_histogram(
         &self,
-        _: &metrics::Key,
-        _: &metrics::Metadata<'_>,
-    ) -> metrics::Histogram {
-        metrics::Histogram::noop()
+        _: &dcl_metrics::Key,
+        _: &dcl_metrics::Metadata<'_>,
+    ) -> dcl_metrics::Histogram {
+        dcl_metrics::Histogram::noop()
     }
 }
 
@@ -1481,7 +1498,7 @@ fn a_failed_rpc_read_counts_the_requests_it_sent() {
         .enable_all()
         .build()
         .unwrap();
-    metrics::with_local_recorder(&recorder, || {
+    dcl_metrics::with_local_recorder(&recorder, || {
         runtime.block_on(async {
             let (portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)])).await;
             *portal.contracts_reply.lock().unwrap() = Some(http(404, "", ""));
@@ -1523,7 +1540,7 @@ fn a_dropped_rpc_read_counts_the_request_it_sent() {
         .build()
         .unwrap();
     let shared = AtomicUsize::new(0);
-    metrics::with_local_recorder(&recorder, || {
+    dcl_metrics::with_local_recorder(&recorder, || {
         runtime.block_on(async {
             let (_portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)])).await;
             let adm = admission(&origin, 1_000.0, COOLDOWN);

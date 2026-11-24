@@ -1,6 +1,10 @@
-import plazaThumbnail from "@dcl/one-ui/apps/sites/assets/genesis-plaza.webp";
-import { eventText, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
-import type { EventCardCreator, UpcomingEventCardProps } from "@dcl/one-ui/apps/sites/events/types";
+import {
+  genesisPlazaUrl as plazaThumbnail,
+  eventText,
+  type EventsLocale,
+  type SitesEventCardCreator as EventCardCreator,
+  type UpcomingEventCardProps,
+} from "@dcl/one-ui";
 
 import { eventOccurrence, type Event } from "@/data/lib/catalyst/places/events";
 import {

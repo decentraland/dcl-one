@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useRouteLoaderData } from "react-router";
 
-import { ChromeAuthContext } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import { ChromeAuthContext } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { installSitesShopClient } from "@/data/lib/auth/shop-client";

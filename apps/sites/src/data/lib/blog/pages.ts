@@ -13,7 +13,7 @@ import {
   type BlogImage,
   type BlogRelatedCard,
   type BlogSearchSuggestions,
-} from "@dcl/one-ui/apps/sites/blog/blogModel";
+} from "@dcl/one-ui";
 
 import { publicPageUrl, type BaseEnv } from "../catalyst/bases";
 import { withDeadline } from "../request-deadline";

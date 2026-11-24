@@ -17,6 +17,7 @@
 //! behind a proxy. Exits 0 once every file is written, 1 when the avatars never
 //! finish loading within `--max-frames`, 2 on bad arguments.
 
+use common::sync::MutexExt;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -189,13 +190,12 @@ fn main() -> AppExit {
         graphics: GraphicsSettings {
             vsync: false,
             log_fps: false,
-            fps_target: 999,
+            fps_target: common::structs::UNCAPPED_FPS,
             ..base_config.graphics
         },
         scene_imposter_bake: SceneImposterBake::Off,
         ..base_config
     };
-    let audio_settings = final_config.audio.clone();
 
     let mut app = offline_app(final_config, &realm, content_server.unwrap_or(root));
 
@@ -210,7 +210,6 @@ fn main() -> AppExit {
         avatar::AvatarPlugin,
     ));
     app.init_resource::<SceneDrivenAnimationFeedback>();
-    app.insert_resource(audio_settings);
     // the booth's layer reaches every wearable mesh under the avatar
     app.add_plugins(HierarchyPropagatePlugin::<RenderLayers>::default());
 
@@ -301,7 +300,7 @@ fn drive_capture(
 ) {
     let expected = jobs.jobs.len() * 2;
     if state.captured {
-        let written = state.written.lock().unwrap();
+        let written = state.written.lock_ignore_poison();
         if written.len() < expected {
             return;
         }
@@ -364,7 +363,7 @@ fn drive_capture(
                                 .map(|()| path.clone())
                                 .map_err(|e| format!("{}: {e}", path.display()))
                         });
-                    written.lock().unwrap().push(result);
+                    written.lock_ignore_poison().push(result);
                 });
         }
     }

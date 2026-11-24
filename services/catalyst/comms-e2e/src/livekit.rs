@@ -1049,17 +1049,17 @@ mod tests {
 
     const CONNECTED: &str = r#"{"event":"connected","room":"r","identity":"me","sid":"PA_1"}"#;
 
-    /// Prints `lines` then waits for a long time.
+    /// Prints `lines` and stays alive past the 10-second assertion deadlines.
     fn printing_then_idle(lines: &[&str]) -> Command {
         if cfg!(windows) {
             let echoes: Vec<String> = lines.iter().map(|line| format!("echo {line}")).collect();
             stand_in(&format!(
-                "{} & ping -n 6 127.0.0.1 > nul",
+                "{} & ping -n 16 127.0.0.1 > nul",
                 echoes.join(" & ")
             ))
         } else {
             let echoes: Vec<String> = lines.iter().map(|line| format!("echo '{line}'")).collect();
-            stand_in(&format!("{}; sleep 6", echoes.join("; ")))
+            stand_in(&format!("{}; exec sleep 15", echoes.join("; ")))
         }
     }
 
@@ -1210,7 +1210,12 @@ mod tests {
                 .unwrap();
             String::from_utf8_lossy(&output.stdout).contains(&format!(" {pid} "))
         } else {
-            std::path::Path::new(&format!("/proc/{pid}")).exists()
+            std::process::Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("kill should run")
+                .success()
         }
     }
 }

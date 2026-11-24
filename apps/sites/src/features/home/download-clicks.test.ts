@@ -1,7 +1,7 @@
 import type { MouseEvent } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { DownloadAlternative } from "@dcl/one-ui/apps/sites/download/DownloadActions";
+import type { DownloadAlternative } from "@dcl/one-ui";
 
 import { detectPlatform } from "../download/options";
 import type { DownloadClick } from "../download/download-click";

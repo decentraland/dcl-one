@@ -223,6 +223,8 @@ struct Rig {
     app: Router,
     state: Arc<State>,
     storage_dir: std::path::PathBuf,
+    /// The node's DCL NAME source.
+    names: Arc<super::test_names::Held>,
 }
 
 impl Rig {
@@ -262,10 +264,8 @@ impl Rig {
             &crate::http::Outbound::for_tests(),
             explore(&pool),
         ));
-        state.set_chain_index(Arc::new(crate::chain_index::ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::chain_index::IndexSettings::for_tests(),
-        )));
+        let names = Arc::new(super::test_names::Held::default());
+        state.set_name_authority(names.clone());
         let app = Router::new().merge(router(state.clone())).nest(
             "/social-api",
             crate::social_api_gateway(router(state.clone())),
@@ -275,6 +275,7 @@ impl Rig {
             app,
             state,
             storage_dir,
+            names,
         }
     }
 
@@ -384,15 +385,7 @@ impl Rig {
     }
 
     fn name_owner(&self, wallet: &Wallet, name: &str) {
-        self.state.chain_index.get().unwrap().graph.names.insert(
-            wallet.address.as_str().to_string(),
-            Arc::new(vec![crate::chain_index::graph::OwnedName {
-                name: name.to_string(),
-                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
-                token_id: "1".to_string(),
-                price: None,
-            }]),
-        );
+        self.names.grant(wallet.address.as_str(), name);
     }
 
     async fn voice(&self, id: CommunityId, w: &Wallet, status: &str, moderator: bool) {

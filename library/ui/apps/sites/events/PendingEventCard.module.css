@@ -3,11 +3,6 @@
   min-width: 0;
 }
 
-/* The source fades a card that still waits for review. */
-.root[data-status='pending'] {
-  opacity: 0.5;
-}
-
 /* Without a cover the chips take a row of their own above the title. */
 .root[data-cover='none'] {
   padding-top: var(--dcl-space-48);

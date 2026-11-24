@@ -5,7 +5,13 @@ import locked from '../assets/errors/locked.webp'
 import lost from '../assets/errors/lost.webp'
 import wave from '../assets/errors/wave.webp'
 import styles from './StatusPage.module.css'
-import { ART_FILES, isRetryable, LOGOMARK_VIEW_BOX, statusCopy, type ErrorArt } from './statusCopy'
+import {
+  ART_FILES,
+  isRetryable,
+  LOGOMARK_VIEW_BOX,
+  statusCopy,
+  type ErrorArt
+} from '../../../../web-core/status-copy'
 
 const ART_URLS: Record<ErrorArt, string> = { crew, locked, lost, wave }
 

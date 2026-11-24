@@ -8,16 +8,58 @@ const JOBS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) fn register_metrics() {
     comms::gatekeeper::admission::cluster::metrics::register_series();
-    crate::shared::http_metrics::register_series();
-    crate::chain_index::graph::register_series();
+    crate::worlds::core::metrics::register_series();
 }
 
-pub(super) fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
+fn warn_retired_metrics_settings() {
+    let mut configured = Vec::new();
+    for name in [
+        "WKC_METRICS_PUBLIC_PATH",
+        "WKC_METRICS_BEARER_TOKEN",
+        "WKC_METRICS_COLLECT_DEFAULT",
+        "WKC_METRICS_RESET_AT_NIGHT",
+        "CAMERA_REEL_METRICS_BEARER_TOKEN",
+    ] {
+        for key in [name.to_owned(), format!("{name}_FILE")] {
+            if std::env::var_os(&key).is_some() {
+                configured.push(key);
+            }
+        }
+    }
+    if !configured.is_empty() {
+        tracing::warn!(
+            settings = %configured.join(", "),
+            "remove these retired metrics settings and scrape /metrics at the address configured by SERVE_METRICS_BIND"
+        );
+    }
+}
+
+pub(super) fn install_metrics(raw: &str) -> anyhow::Result<()> {
+    warn_retired_metrics_settings();
     let bind = comms::metrics::serve_metrics_bind(raw)?;
-    let handle = comms::metrics::install_prometheus_exporter(bind)?;
+    let registry = registry()?;
+    registry.listen(dcl_metrics::PrometheusBuilder::new(), bind)?;
     register_metrics();
     tracing::info!(%bind, "serve /metrics listening");
-    Ok(handle)
+    Ok(())
+}
+
+fn registry() -> anyhow::Result<dcl_metrics::Registry> {
+    dcl_metrics::Registry::new(&[
+        crate::builder::handlers::collections::FAMILIES,
+        jobs::FAMILIES,
+        crate::storage::FAMILIES,
+        crate::worlds::core::metrics::FAMILIES,
+        crate::social::rpc::FAMILIES,
+        crate::social::SERVICE_FAMILIES,
+        crate::comms::metrics::FAMILIES,
+        crate::content::metrics::FAMILIES,
+        comms::archipelago::metrics::FAMILIES,
+        crate::chain_index::portal::FAMILIES,
+        crate::explore::api::auth_api::FAMILIES,
+        crate::explore::api::auth_api::SOCKET_FAMILIES,
+        crate::shop::market::profiles::FAMILIES,
+    ])
 }
 
 /// Installs the shutdown signal handlers now and returns the wait for one of
@@ -78,4 +120,12 @@ pub(super) async fn run_http(
     })
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn all_serve_metric_declarations_can_share_one_recorder() {
+        super::registry().unwrap();
+    }
 }

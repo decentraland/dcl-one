@@ -27,11 +27,15 @@
 //! fleet-wide job whose durable effects must not be applied twice fences them
 //! itself (a row lock, a claim, or a compare against a stamp it read).
 
+mod instrumentation;
+pub use instrumentation::FAMILIES;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::FutureExt;
 use parking_lot::Mutex;
 use sqlx::PgPool;
 use sqlx::postgres::PgConnection;
@@ -334,9 +338,7 @@ impl Jobs {
         let task_trace = trace.clone();
         let task_name = name.clone();
         let handle = tokio::spawn(async move {
-            let outcome = std::panic::AssertUnwindSafe(fut);
-            use futures::FutureExt;
-            let result = outcome.catch_unwind().await;
+            let result = catch_panic(fut).await;
             let mut t = task_trace.lock();
             match result {
                 Ok(Ok(())) => {
@@ -348,8 +350,7 @@ impl Jobs {
                     t.last_error = Some(e.to_string());
                     t.state = Some(JobState::Failed);
                 }
-                Err(panic) => {
-                    let msg = panic_message(panic.as_ref());
+                Err(msg) => {
                     tracing::error!(job = %task_name, panic = %msg, "job panicked");
                     t.last_error = Some(format!("panic: {msg}"));
                     t.state = Some(JobState::Failed);
@@ -418,14 +419,9 @@ impl Jobs {
                     name: ctx.name.clone(),
                     lease: Some(LeaseControl::of(&guard)),
                 };
-                use futures::FutureExt;
-                let fut = std::panic::AssertUnwindSafe(async { body(run_ctx).await })
-                    .catch_unwind()
-                    .map(|outcome| {
-                        outcome.unwrap_or_else(|panic| {
-                            Err(anyhow::anyhow!("panic: {}", panic_message(panic.as_ref())))
-                        })
-                    });
+                let fut = catch_panic(async { body(run_ctx).await }).map(|outcome| {
+                    outcome.unwrap_or_else(|panic| Err(anyhow::anyhow!("panic: {panic}")))
+                });
                 tokio::pin!(fut);
                 let lost = guard.lost.clone();
                 let outcome = tokio::select! {
@@ -637,6 +633,7 @@ async fn run_periodic(
     cfg: PeriodicCfg,
     task: Arc<tokio::sync::Mutex<JobBody>>,
 ) -> anyhow::Result<()> {
+    let metrics = instrumentation::PeriodicJob::new(&log_name);
     let first_delay = cfg.first_delay(&log_name);
     tracing::info!(
         job = %log_name,
@@ -656,10 +653,22 @@ async fn run_periodic(
     loop {
         pass += 1;
         let started = tokio::time::Instant::now();
-        use futures::FutureExt;
-        let fut = (task.lock().await)(ctx.clone());
-        let outcome = std::panic::AssertUnwindSafe(fut).catch_unwind().await;
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let observation = metrics.begin();
+        let outcome = catch_panic(async {
+            let fut = (task.lock().await)(ctx.clone());
+            fut.await
+        })
+        .await;
+        let elapsed = started.elapsed();
+        let elapsed_ms = elapsed.as_millis() as u64;
+        observation.finish(
+            match &outcome {
+                Ok(Ok(())) => "success",
+                Ok(Err(_)) => "error",
+                Err(_) => "panic",
+            },
+            elapsed,
+        );
         let wait = match outcome {
             Ok(Ok(())) => {
                 failures = 0;
@@ -675,10 +684,9 @@ async fn run_periodic(
                 ctx.progress(format!("pass {pass} failed; next in {} s", wait.as_secs()));
                 wait
             }
-            Err(panic) => {
+            Err(msg) => {
                 failures += 1;
                 let wait = cfg.wait_after_failure(failures);
-                let msg = panic_message(panic.as_ref());
                 tracing::error!(job = %log_name, pass, elapsed_ms, panic = %msg, "pass panicked");
                 ctx.error(format!("pass {pass}: panic: {msg}"));
                 ctx.progress(format!(
@@ -785,6 +793,7 @@ pub struct Leases {
 /// release and control operation names the acquisition, so one that ended
 /// never touches the same name taken again.
 struct Holding {
+    _metric: instrumentation::HeldLease,
     lost: CancellationToken,
     acquisition: u64,
 }
@@ -1011,6 +1020,7 @@ impl Leases {
                 self.held.lock().insert(
                     name.to_string(),
                     Holding {
+                        _metric: instrumentation::HeldLease::new(),
                         lost: lost.clone(),
                         acquisition,
                     },
@@ -1253,6 +1263,27 @@ async fn sleep_or_cancel(cancel: &CancellationToken, wait: Duration) -> bool {
     }
 }
 
+/// Longest panic text kept, in bytes: it reaches stored errors and HTTP responses.
+pub const PANIC_MESSAGE_MAX_BYTES: usize = 512;
+
+/// Runs `fut`, returning a panic as its text, cut to [`PANIC_MESSAGE_MAX_BYTES`]. The caller
+/// vouches that `fut` is unwind safe.
+pub async fn catch_panic<F: Future>(fut: F) -> Result<F::Output, String> {
+    std::panic::AssertUnwindSafe(fut)
+        .catch_unwind()
+        .await
+        .map_err(|panic| capped(panic_message(panic.as_ref())))
+}
+
+fn capped(text: &str) -> String {
+    if text.len() <= PANIC_MESSAGE_MAX_BYTES {
+        return text.to_string();
+    }
+    let end = text.floor_char_boundary(PANIC_MESSAGE_MAX_BYTES);
+    format!("{}…", &text[..end])
+}
+
+/// The text of a caught panic, or a placeholder for a non-string payload.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s
@@ -1355,6 +1386,27 @@ mod tests {
         assert_eq!(report[0].state, JobState::Failed);
         assert_eq!(report[0].last_error.as_deref(), Some("panic: kaboom"));
         assert!(jobs.shutdown(Duration::from_secs(1)).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_caught_panic_returns_its_text_and_a_value_passes_through() {
+        assert_eq!(catch_panic(async { 7 }).await, Ok(7));
+        let caught = catch_panic(async { panic!("kaboom {}", 1) }).await;
+        assert_eq!(caught, Err::<(), _>("kaboom 1".to_string()));
+        let caught = catch_panic(async { std::panic::panic_any(7u8) }).await;
+        assert_eq!(caught, Err::<(), _>("non-string panic payload".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_long_panic_text_is_cut_on_a_char_boundary() {
+        // 'é' is two bytes, so the limit falls inside one.
+        let text = format!("a{}", "é".repeat(PANIC_MESSAGE_MAX_BYTES));
+        let caught = catch_panic(async move { panic!("{text}") })
+            .await
+            .unwrap_err();
+        let kept = caught.strip_suffix('…').expect("marked as cut");
+        assert_eq!(kept.len(), PANIC_MESSAGE_MAX_BYTES - 1);
+        assert!(kept.starts_with("aé"));
     }
 
     type Stamps = UnboundedReceiver<tokio::time::Instant>;

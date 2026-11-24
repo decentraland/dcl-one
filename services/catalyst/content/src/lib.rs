@@ -35,6 +35,7 @@ pub use crate::shared::{cors, nul_guard, query_params};
 pub mod entity;
 pub mod errors;
 pub mod formatters;
+pub mod metrics;
 pub mod queries;
 pub mod sync_types;
 pub mod validation;
@@ -952,11 +953,7 @@ pub fn build_router(state: SharedState) -> Router {
             },
         ));
     }
-    // Outermost, so the timeout's 408 is counted too.
-    app.layer(axum::middleware::from_fn(
-        crate::shared::http_metrics::observe,
-    ))
-    .with_state(state)
+    app.with_state(state)
 }
 
 #[cfg(test)]
