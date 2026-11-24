@@ -15,7 +15,7 @@ export function CollectionMosaic({ collectionId, itemCount, showEmptyLabel, clas
   const address = useWallet(state => state.session?.address)
   const { data: previews, isLoading } = useCollectionPreview(address, collectionId, itemCount)
   const thumbnails = useMemo(
-    () => (previews ?? []).map(item => ({ url: item.thumbnailUrl, rarity: item.rarity })),
+    () => (previews ?? []).map(item => ({ item, hash: item.thumbnailHash, rarity: item.rarity })),
     [previews]
   )
   return (

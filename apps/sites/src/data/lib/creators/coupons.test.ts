@@ -317,7 +317,7 @@ describe('when storing a signed discount', () => {
     await expect(postCoupon('0xaa', payload)).resolves.toEqual({ id: 'coupon-1' })
     expect(signedFetch).toHaveBeenCalledWith(
       '0xaa',
-      'https://marketplace-api.decentraland.zone',
+      `${window.location.origin}/marketplace-api`,
       '/v1/coupons',
       expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }),
       { signer: 'dcl:builder', intent: 'dcl:create-coupon' }

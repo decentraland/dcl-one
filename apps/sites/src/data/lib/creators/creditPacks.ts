@@ -54,7 +54,6 @@ export async function fetchCreditPacks(): Promise<CreditPack[]> {
     .slice()
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     .map(pack => {
-      // An empty string is a missing url, so `||` rather than `??`.
       const artUrl = pack.imageUrlWebp || pack.imageUrl || undefined
       return { id: pack.id, usd: pack.usd, credits: pack.credits, ...(artUrl ? { artUrl } : {}) }
     })

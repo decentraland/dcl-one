@@ -3,7 +3,7 @@
 // party's Merkle tree; its root goes on chain (consuming the creator's slots cheque), then each item's entity is
 // deployed with its proof and its curation approved. Every step is idempotent, so a failed run can be resumed.
 import type { ContractCall, TransactionSender, TransactionSettlement } from './auth'
-import type { LinkedApprovalData } from './builder'
+import { BuilderServerError, type LinkedApprovalData } from './builder'
 import {
   ApprovalError,
   INDEXER_TIMEOUT_MS,
@@ -88,6 +88,16 @@ export function matchesReviewedContent(
 
 const sameRoot = (a: string | null, b: string) => a?.toLowerCase() === b.toLowerCase()
 
+/** The node's 409 for pending items whose content differs from what was submitted: only the creator can fix it. */
+function refuseUnsubmitted(error: unknown): never {
+  const itemIds =
+    error instanceof BuilderServerError && error.status === 409 && (error.data as { itemIds?: unknown })?.itemIds
+  if (Array.isArray(itemIds)) {
+    throw new ApprovalError('unsubmitted', `Items ${itemIds.join(', ')} have changes that were not submitted`)
+  }
+  throw error
+}
+
 /**
  * What the approval needs: the pending items, their proofs and whether the root transaction is due. The cheque
  * must cover the items the Catalyst doesn't hold yet, since items pushed again don't take a slot.
@@ -99,7 +109,9 @@ export async function prepareLinkedApproval(
 ): Promise<LinkedApprovalPlan> {
   const [pendingItems, approvalData, curations, registryRoot, deployedHashes] = await Promise.all([
     deps.fetchPendingItems(collection.id),
-    deps.fetchApprovalData(collection.id),
+    deps.fetchApprovalData(collection.id).catch(error => {
+      refuseUnsubmitted(error)
+    }),
     deps.fetchItemCurations(collection.id),
     deps.fetchRegistryRoot(),
     deps.fetchDeployedHashes(collection.id)
@@ -110,13 +122,8 @@ export async function prepareLinkedApproval(
   }
   const unhashed = pendingItems.find(item => !approvalData.contentHashes[item.id])
   if (unhashed) throw new ApprovalError('missing_hash', `Item ${unhashed.id} has no curated content hash`)
-  // The root goes on chain before anything is deployed, so every pending leaf must be the content the curator has on
-  // screen: the hash the curation recorded, the item's current hash and the hash of the item itself must all agree.
-  // An item saved after it was submitted can't be approved until the creator submits it again: reviewing won't help.
   const unsubmitted = pendingItems.find(item => approvalData.contentHashes[item.id] !== item.currentContentHash)
   if (unsubmitted) throw new ApprovalError('unsubmitted', `Item ${unsubmitted.id} has changes that were not submitted`)
-  // The Catalyst takes no preview video in a linked item, yet the curated hash includes it: approving would spend the
-  // cheque on a root whose items can never deploy. The creator has to upload them again without it.
   const withVideo = pendingItems.filter(item => VIDEO_PATH in item.contents)
   if (withVideo.length > 0) {
     throw new ApprovalError('has_video', `${withVideo.length} items have a preview video`, withVideo)
@@ -128,10 +135,6 @@ export async function prepareLinkedApproval(
 
   const newItems = pendingItems.filter(item => !item.isApproved).length
 
-  // Only approved content and the pending content verified above may be provable: a rejected or superseded hash in
-  // the root would let content nobody approved reach the Catalyst. An approved hash also has to be what the Catalyst
-  // holds: builder-server records the hash an item has when approved, which a save at that moment can swap for
-  // content nobody reviewed.
   const pendingIds = new Set(pendingItems.map(item => item.id))
   const leaves = Object.entries(approvalData.contentHashes)
     .filter(
@@ -233,8 +236,8 @@ export type LinkedDeployResult = { deployed: Item[]; failed: LinkedDeployFailure
 export type LinkedDeployDeps = Omit<DeployDeps, 'renderCatalystImage'> & {
   /** The item as the server holds it now, to catch an edit the creator saves while the approval runs. */
   fetchItem: (itemId: string) => Promise<Item>
-  /** Resolves with the curation as approved, whose hash tells which content got approved. */
-  approveItem: (itemId: string) => Promise<Pick<ItemCuration, 'contentHash'>>
+  /** Approves the item's `contentHash`; resolves with the curation as approved, whose hash tells which content got approved. */
+  approveItem: (itemId: string, contentHash: string) => Promise<Pick<ItemCuration, 'contentHash'>>
   /** Takes an approval back: content saved while it was being approved must not stay approved. */
   rejectItem: (itemId: string) => Promise<unknown>
   concurrency?: number
@@ -299,13 +302,10 @@ async function deployLinkedItem(
     await deps.deployEntity(buildDeploymentForm(entity, authChain, files))
   })
   await assertUnchanged()
-  const curation = await atStage('curation', () => deps.approveItem(item.id))
-  // builder-server approves the hash the item has at that moment: a save landing just before still gets through.
+  const curation = await deps.approveItem(item.id, proof.entityHash).catch((error: unknown) => {
+    throw new StageError(error instanceof BuilderServerError && error.status === 409 ? 'changed' : 'curation', error)
+  })
   if (curation.contentHash !== proof.entityHash) {
-    // The Catalyst got the reviewed content, but the approval recorded the new one: rejecting it takes that back, and
-    // the item goes back to the creator to submit again.
-    // If that fails it stays approved (the deployed-hash filter still keeps it out of any root): a curation failure,
-    // not an item sent back.
     await atStage('curation', () => deps.rejectItem(item.id))
     throw new StageError('changed', new Error(`Item ${item.id} was approved with content saved during the approval`))
   }

@@ -3,9 +3,20 @@
 // ported from the legacy builder's publish saga (the forum post lives in hooks/useForumPost).
 // Server and chain access is injected so the sequence is unit-testable end to end.
 import { ContractName, getContract } from './chain/contracts'
-import { encodeAbiParameters, getAbiItem, toFunctionSelector, toHex, type AbiFunction } from 'viem'
+import {
+  concat,
+  encodeAbiParameters,
+  getAbiItem,
+  getContractAddress,
+  keccak256,
+  toFunctionSelector,
+  toHex,
+  type AbiFunction,
+  type Hex
+} from 'viem'
 import { config } from './config'
 import { toBytes32 } from './bytes32'
+import { erc721BaseUri } from './catalyst'
 import type { ContractCall } from './auth'
 import { BuilderServerError, COLLECTION_LOCKED_STATUS, isRefusedRequest } from './builder'
 import { isCollectionLocked, type Collection } from './collections'
@@ -17,7 +28,12 @@ import { isMissingSmartWearableVideo, type Item } from './items'
 import { fetchManaAllowance } from './mana'
 import { weiToUsdCents, type PublicationFee } from './publishFee'
 import { isWalletRejection, isWalletStateError } from './walletErrors'
-import { getCollectionSymbol, toInitializeItems, type InitializeItem } from './saveCollection'
+import {
+  buildCollectionInitializeData,
+  getCollectionSymbol,
+  toInitializeItems,
+  type InitializeItem
+} from './saveCollection'
 
 /** 'card' (buying credits with Stripe) is the planned third method; only these two ship today. */
 export type PaymentMethod = 'credits' | 'mana'
@@ -110,10 +126,28 @@ export function buildCreateCollectionArgs(
     collection.salt,
     collection.name,
     getCollectionSymbol(collection.name),
-    config.get('ERC721_COLLECTION_BASE_URI'),
+    erc721BaseUri(),
     creator,
     toInitializeItems(items)
   ]
+}
+
+const COLLECTION_FACTORY_CODE_HASH: Record<number, Hex> = {
+  137: '0x5a1d707e8f0be7be88213a8216231468689b96dcd4abed0931276f4886a87beb',
+  80002: '0xe8aa6287567a0945907cc65108e8b18ba8cd8bff5675eb3b3d405125525ed1cf'
+}
+
+/**
+ * The address createCollection deploys a collection at, lowercase, as the node derives the one it stores: the
+ * factory's CREATE2 of keccak256(salt, forwarder, initialize data) over the factory's proxy code hash.
+ */
+export function getCollectionAddress(chainId: number, salt: string, data: string): string {
+  return getContractAddress({
+    opcode: 'CREATE2',
+    from: getContract(ContractName.CollectionFactoryV3, chainId).address as Hex,
+    salt: keccak256(concat([salt as Hex, getContract(ContractName.Forwarder, chainId).address as Hex, data as Hex])),
+    bytecodeHash: COLLECTION_FACTORY_CODE_HASH[chainId]
+  }).toLowerCase()
 }
 
 export function buildCreateCollectionCall(chainId: number, args: CreateCollectionArgs): ContractCall {
@@ -266,14 +300,18 @@ export type PublishResult = {
 /**
  * The publish sequence: re-save the collection (regenerates salt + contract address), verify the
  * items match the server, re-save items still carrying legacy hashes, record the ToS, pay and send
- * createCollection, then lock the collection. Errors are normalized to PublishCollectionError.
+ * createCollection, then lock the collection. A locked collection is not re-saved. A
+ * collection whose createCollection arguments derive another address than the one it stored is
+ * refused, as `locked` when it is locked.
+ * Errors are normalized to PublishCollectionError.
  */
 export async function publishCollection(params: PublishParams, deps: PublishDeps): Promise<PublishResult> {
   const { address, paymentMethod, fee, email, chainId } = params
   try {
     let collection = params.collection
     let items = params.items
-    if (!isCollectionLocked(collection)) {
+    const locked = isCollectionLocked(collection)
+    if (!locked) {
       collection = await deps.saveCollection(collection, items)
     }
     if (!collection.salt) throw new PublishCollectionError('missing_salt')
@@ -284,19 +322,24 @@ export async function publishCollection(params: PublishParams, deps: PublishDeps
       throw new PublishCollectionError('unsynced')
     }
 
-    // Legacy "Qm…" hashes can't be deployed to Catalyst: re-hash those files before they go on-chain.
     const rehashed: Item[] = []
     for (const item of items) rehashed.push(hasOldHashedContents(item) ? await deps.rehashItem(item) : item)
     items = rehashed
 
-    // Recorded before the transaction so a ToS failure never leaves the collection locked.
+    const args = buildCreateCollectionArgs(collection, items, address, chainId)
+    if (
+      collection.contractAddress?.toLowerCase() !==
+      getCollectionAddress(chainId, collection.salt, buildCollectionInitializeData(collection, items, address))
+    ) {
+      throw new PublishCollectionError(locked ? 'locked' : 'generic')
+    }
+
     try {
       await retry(3, 500, () => deps.saveTOS(collection, email), isTransientFailure)
     } catch (error) {
       throw new PublishCollectionError('tos_failed', error instanceof Error ? error.message : String(error), error)
     }
 
-    const args = buildCreateCollectionArgs(collection, items, address, chainId)
     let txHash: string
     if (paymentMethod === 'credits') {
       const externalCall = buildCollectionManagerExternalCall(
@@ -316,8 +359,6 @@ export async function publishCollection(params: PublishParams, deps: PublishDeps
       txHash = await deps.sendTransaction(buildCreateCollectionCall(chainId, args))
     }
 
-    // The fee is paid once the transaction is out: a lock failure must never surface as a retriable
-    // publish error, or "try again" would send (and charge) createCollection a second time.
     let lock = collection.lock
     try {
       lock = await retry(10, 500, () => deps.lockCollection(collection.id))

@@ -21,7 +21,8 @@ import type {
 export type CollectionItemPreview = {
   id: string
   name: string
-  thumbnailUrl: string
+  thumbnailHash: string
+  isPublished: boolean
   rarity?: string
 }
 

@@ -158,4 +158,4 @@ export type RemoteCollectionCurationBody = {
   }
 }
 
-export type RemoteItemCurationBody = { curation: { status: CurationRequestStatus } }
+export type RemoteItemCurationBody = { curation: { status: CurationRequestStatus; contentHash?: string } }

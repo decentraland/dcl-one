@@ -1,4 +1,3 @@
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import type { Item } from '@/data/lib/creators/items'
 import type { ValidationSubject } from './ItemValidationCard'
 
@@ -10,6 +9,6 @@ export function toValidationSubject(item: Item): ValidationSubject {
     type: item.type,
     category: item.data.category,
     rarity: item.rarity,
-    thumbnail: thumbnail ? getContentsStorageUrl(thumbnail) : null
+    thumbnail: thumbnail ? { item, hash: thumbnail } : null
   }
 }

@@ -2,22 +2,28 @@
 import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { render as rtlRender, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement, ReactNode } from 'react'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { ThumbnailMosaic } from './ThumbnailMosaic'
 
-const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <TranslationProvider>{children}</TranslationProvider>
+  </QueryClientProvider>
+)
+const published = (hash: string, rarity?: string) => ({ item: { isPublished: true }, hash, rarity })
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper })
 
 describe('ThumbnailMosaic', () => {
   it('renders one cell per thumbnail, capped at four, and exposes the count for the layout', () => {
-    render(<ThumbnailMosaic thumbnails={['a.png', 'b.png', 'c.png', 'd.png', 'e.png'].map(url => ({ url }))} />)
+    render(<ThumbnailMosaic thumbnails={['a', 'b', 'c', 'd', 'e'].map(hash => published(hash))} />)
     expect(screen.getAllByTestId('thumbnail-mosaic-cell')).toHaveLength(4)
     expect(screen.getByTestId('thumbnail-mosaic')).toHaveAttribute('data-count', '4')
   })
 
   it('tints each cell with its item rarity', () => {
-    render(<ThumbnailMosaic thumbnails={[{ url: 'a.png', rarity: 'mythic' }, { url: 'b.png' }]} />)
+    render(<ThumbnailMosaic thumbnails={[published('a', 'mythic'), published('b')]} />)
     const [mythic, plain] = screen.getAllByTestId('thumbnail-mosaic-thumbnail')
     expect(mythic.style.backgroundImage).toContain('radial-gradient')
     expect(plain.style.backgroundImage).toBe('')

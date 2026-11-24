@@ -33,7 +33,10 @@ export const MAX_THUMBNAIL_FILE_SIZE = 1024 * 1024 // 1MB
 export const MAX_WEARABLE_FILE_SIZE = 3 * 1024 * 1024 // 3MB
 export const MAX_SKIN_FILE_SIZE = 9 * 1024 * 1024 // 9MB
 export const MAX_EMOTE_FILE_SIZE = 3 * 1024 * 1024 // 3MB
-export const MAX_VIDEO_FILE_SIZE = 262144000 // 250MB
+/** A smart wearable's preview video: the node stores up to 250,000,000 bytes. */
+export const MAX_VIDEO_FILE_SIZE = 250_000_000
+/** {@link MAX_VIDEO_FILE_SIZE} in the decimal megabytes the copy names. */
+export const MAX_VIDEO_FILE_MB = MAX_VIDEO_FILE_SIZE / 1_000_000
 export const MAX_EMOTE_DURATION = 10 // seconds
 
 const WEARABLE_MANIFEST = 'wearable.json'
@@ -139,7 +142,7 @@ export function validateVideoFile(file: File): void {
     throw new ItemFileError('video_wrong_format', { extensions: VIDEO_EXTENSIONS.join(', ') })
   }
   if (file.size > MAX_VIDEO_FILE_SIZE) {
-    throw new ItemFileError('video_too_big', { size: toMB(MAX_VIDEO_FILE_SIZE) })
+    throw new ItemFileError('video_too_big', { size: MAX_VIDEO_FILE_MB })
   }
 }
 
@@ -576,7 +579,7 @@ async function loadZip(file: File): Promise<LoadedItemFile> {
   const video = videoPaths.length === 1 && sceneFile ? rawContent[videoPaths[0]] : null
   for (const path of videoPaths) delete rawContent[path]
   if (video && video.size > MAX_VIDEO_FILE_SIZE) {
-    throw new ItemFileError('video_too_big', { size: toMB(MAX_VIDEO_FILE_SIZE) })
+    throw new ItemFileError('video_too_big', { size: MAX_VIDEO_FILE_MB })
   }
   const withVideo = (contents: Record<string, Blob>) => (video ? { ...contents, [VIDEO_PATH]: video } : contents)
 

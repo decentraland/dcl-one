@@ -2,7 +2,7 @@
 // items are on sale and their wei price (on-chain store price, or the trade amount); the shop catalog
 // says which of those are credits listings, whose trade amount is USD wei rather than MANA wei.
 import { maxUint256 } from 'viem'
-import { config } from './config'
+import { marketplaceUrl } from './trades'
 
 /**
  * `tradeId` identifies the off-chain order behind the listing and `tradeContract` the marketplace it was signed for
@@ -28,7 +28,7 @@ const NO_PRICE = maxUint256.toString()
 const WEI = /^\d+$/
 
 async function getJson<T>(path: string, query: Record<string, string>): Promise<T> {
-  const response = await fetch(`${config.get('MARKETPLACE_SERVER_URL')}${path}?${new URLSearchParams(query)}`)
+  const response = await fetch(`${marketplaceUrl()}${path}?${new URLSearchParams(query)}`)
   if (!response.ok) throw new Error(`marketplace-server request failed: ${path} (${response.status})`)
   return (await response.json()) as T
 }

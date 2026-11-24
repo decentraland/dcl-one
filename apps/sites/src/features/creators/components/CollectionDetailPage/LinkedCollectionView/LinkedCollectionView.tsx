@@ -4,7 +4,7 @@ import type { ContractNetwork } from '@dcl/schemas'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { previewCollectionFromDetail } from '@/data/lib/creators/explorer'
-import { isRefusedRequest } from '@/data/lib/creators/builder'
+import { boundRefusal, isRefusedRequest } from '@/data/lib/creators/builder'
 import { captureError } from '@/data/lib/creators/monitoring'
 import { isSocialLogin, sendContractTransaction, settleTransaction, type Session } from '@/data/lib/creators/auth'
 import { shortenAddress } from '@/data/lib/creators/address'
@@ -61,6 +61,7 @@ import {
 import { useMediaQuery } from '../../../hooks/useMediaQuery'
 import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
 import { useSaveItem } from '../../../hooks/useSaveItem'
+import { useRefusalText } from '../../../hooks/useRefusalText'
 import { createItemSaveQueue } from '@/data/lib/creators/itemSaveQueue'
 import { media } from '@/data/lib/creators/theme'
 import { Button } from '../../Button'
@@ -118,6 +119,7 @@ type Props = {
  * actions to grow, publish and push it. */
 export function LinkedCollectionView({ collection, thirdParty, session, page, onBack, onPageChange }: Props) {
   const { t } = useTranslation()
+  const refusalText = useRefusalText()
   const navigate = useNavigate()
   const { address } = session
   const showToast = useNotifications(state => state.showToast)
@@ -625,7 +627,9 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
       {loadFailed ? (
         <section className={shared.panel} data-testid="linked-items-error">
           <h2 className={shared.panelTitle}>{t('linked_collection.load_error.title')}</h2>
-          <p className={shared.panelText}>{t('linked_collection.load_error.description')}</p>
+          <p className={shared.panelText}>
+            {refusalText(boundRefusal(itemsPage.error)) ?? t('linked_collection.load_error.description')}
+          </p>
           <Button
             type="button"
             variant="secondary"

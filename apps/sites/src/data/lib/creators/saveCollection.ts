@@ -3,6 +3,7 @@
 // calldata (builder-server derives the CREATE2 salt + contract address from it and rejects a save
 // without it), and the symbol/items encodings that feed it.
 import { encodeFunctionData, zeroAddress } from 'viem'
+import { erc721BaseUri } from './catalyst'
 import { config } from './config'
 import type { Collection } from './collections'
 import { getItemMetadata, type Item } from './items'
@@ -78,6 +79,9 @@ export function toInitializeItems(items: Item[]): InitializeItem[] {
     ])
 }
 
+const SHOULD_COMPLETE = true
+const IS_APPROVED = false
+
 /** The ABI-encoded initialize calldata for a standard collection save. `from` is the signer. */
 export function buildCollectionInitializeData(collection: Collection, items: Item[], from: string): string {
   return encodeFunctionData({
@@ -86,10 +90,10 @@ export function buildCollectionInitializeData(collection: Collection, items: Ite
     args: [
       collection.name,
       getCollectionSymbol(collection.name),
-      config.get('ERC721_COLLECTION_BASE_URI'),
+      erc721BaseUri(),
       from,
-      true, // should complete
-      false, // is approved
+      SHOULD_COMPLETE,
+      IS_APPROVED,
       config.get('RARITIES_WITH_ORACLE_ADDRESS'),
       toInitializeItems(items)
     ]

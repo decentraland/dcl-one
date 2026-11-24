@@ -20,10 +20,9 @@ import {
   toHex,
   type Hex
 } from 'viem'
-import { config } from './config'
 import { hashPair } from './contentHashTree'
 import { signedFetch, type ContractCall, type TypedDataDomain, type TypedDataTypes } from './auth'
-import { OFFCHAIN_MARKETPLACE_TYPES, getOffchainMarketplaceContract, toTypedChecks } from './trades'
+import { OFFCHAIN_MARKETPLACE_TYPES, getOffchainMarketplaceContract, marketplaceUrl, toTypedChecks } from './trades'
 import { isWalletRejection, isWalletStateError } from './walletErrors'
 
 /** Percentage discount, in parts per million on-chain: 30% is 300_000. The only type this app signs. */
@@ -355,7 +354,7 @@ export async function storeSignedDiscount(
 export async function postCoupon(address: string, payload: CouponCreation): Promise<CollectionDiscount> {
   const response = await signedFetch(
     address,
-    config.get('MARKETPLACE_SERVER_URL'),
+    marketplaceUrl(),
     '/v1/coupons',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
     COUPON_AUTH_METADATA
@@ -392,7 +391,7 @@ export async function fetchCreatorDiscounts(address: string): Promise<Collection
       limit: String(DISCOUNTS_PAGE),
       offset: String(page * DISCOUNTS_PAGE)
     })
-    const response = await fetch(`${config.get('MARKETPLACE_SERVER_URL')}/v1/coupons?${query}`)
+    const response = await fetch(`${marketplaceUrl()}/v1/coupons?${query}`)
     if (!response.ok) {
       await response.body?.cancel()
       throw new Error(`marketplace-server request failed: /v1/coupons (${response.status})`)

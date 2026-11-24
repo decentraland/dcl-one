@@ -37,7 +37,12 @@ vi.mock('@/data/lib/creators/linkedContract', async importOriginal => ({
   checkLinkedContract: vi.fn(async () => 'ok' as const)
 }))
 
-import { fetchAllLinkedCollectionItems, fetchItemCurations, fetchLinkedCollectionItems } from '@/data/lib/creators/builder'
+import {
+  BuilderServerError,
+  fetchAllLinkedCollectionItems,
+  fetchItemCurations,
+  fetchLinkedCollectionItems
+} from '@/data/lib/creators/builder'
 import { relinkCollection } from '@/data/lib/creators/relinkCollection'
 import { captureError } from '@/data/lib/creators/monitoring'
 
@@ -257,6 +262,19 @@ describe('LinkedCollectionView', () => {
     vi.mocked(fetchLinkedCollectionItems).mockImplementation(list)
     await userEvent.click(screen.getByTestId('linked-items-retry'))
     expect(await rows()).toHaveLength(1)
+  })
+
+  it("says the node's own reason when it refused the listing at one of its bounds", async () => {
+    setup({ page: [item('1')] })
+    const reason = 'Too many requests, try again in a minute'
+    vi.mocked(fetchLinkedCollectionItems).mockRejectedValue(
+      new BuilderServerError(reason, 429, {}, { reason, retryAfterSecs: 42 })
+    )
+    renderView()
+
+    expect(await screen.findByTestId('linked-items-error')).toHaveTextContent(
+      /Too many requests, try again in a minuteTry again$/
+    )
   })
 
   it('keeps Publish available when counting what is left to publish fails', async () => {

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import '../test/setup'
 import { rejection } from '../test/rejection'
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
-import { BuilderServerError, isRefusedRequest, request } from './transport'
+import { describe, it, expect, afterEach, beforeEach, vi, type Mock } from 'vitest'
+import { BuilderServerError, baseUrl, boundRefusal, isRefusedRequest, request } from './transport'
 
 vi.mock('../auth', () => ({
   signedFetch: vi.fn()
@@ -50,10 +50,100 @@ describe('request', () => {
   })
 })
 
+describe('boundRefusal', () => {
+  async function refused(
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = {},
+    path = '/items/i1/files'
+  ) {
+    signedFetchMock.mockResolvedValue({ ...jsonResponse(body, false, status), headers: new Headers(headers) })
+    return rejection(request(ADDRESS, 'POST', path, '', new FormData(), false))
+  }
+
+  it.each([408, 413, 429, 507])("should be the node's own reason for a %i at one of its bounds", async status => {
+    const error = await refused(status, { ok: false, data: {}, error: 'The upload is too large' })
+    expect(boundRefusal(error)).toEqual({ message: 'The upload is too large' })
+  })
+
+  it('should carry the seconds the node asked to wait', async () => {
+    const error = await refused(
+      429,
+      { ok: false, data: {}, error: 'Too many file uploads of this wallet in progress' },
+      { 'Retry-After': '30' }
+    )
+    expect(boundRefusal(error)).toEqual({
+      message: 'Too many file uploads of this wallet in progress',
+      retryAfterSecs: 30
+    })
+  })
+
+  it('should be nothing for an answer that is not the envelope, such as a gateway page', async () => {
+    signedFetchMock.mockResolvedValue({ ok: false, status: 503, json: () => Promise.reject(new Error('<html>')) })
+    expect(boundRefusal(await rejection(request(ADDRESS, 'GET', '/collections/a1b2')))).toBeNull()
+  })
+
+  it('should be nothing for an envelope without its reason', async () => {
+    expect(boundRefusal(await refused(503, { ok: false, data: {} }))).toBeNull()
+  })
+
+  describe('when the node is unavailable', () => {
+    it.each(['/items/i1/files', '/items/i1/videos'])(
+      "should be the node's own reason for an upload to %s, which only its store can refuse once the item saved",
+      async path => {
+        const reason = 'The content store is being collected; retry shortly'
+        const error = await refused(503, { ok: false, data: {}, error: reason }, {}, path)
+        expect(boundRefusal(error)).toEqual({ message: reason })
+      }
+    )
+
+    it.each(['/items/i1', '/collections/c1'])(
+      'should be nothing for any other request to %s, such as one whose creator writes are switched off',
+      async path => {
+        const error = await refused(
+          503,
+          { ok: false, data: {}, error: 'creator writes are disabled on this node (CREATE_WRITES_ENABLED=false)' },
+          { 'Retry-After': '3600' },
+          path
+        )
+        expect(boundRefusal(error)).toBeNull()
+      }
+    )
+  })
+
+  it('should be nothing for a failure that is no bound of the node', async () => {
+    expect(boundRefusal(await refused(500, { ok: false, data: {}, error: 'Internal server error' }))).toBeNull()
+  })
+})
+
 describe('isRefusedRequest', () => {
   it('tells a refused request (4xx) from a transient failure', () => {
     expect(isRefusedRequest(new BuilderServerError('gone', 404))).toBe(true)
     expect(isRefusedRequest(new BuilderServerError('down', 503))).toBe(false)
     expect(isRefusedRequest(new Error('offline'))).toBe(false)
+  })
+})
+
+describe('baseUrl', () => {
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    afterEach(() => {
+      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
+    })
+
+    it("should be the builder-api of the node behind the page's origin", () => {
+      expect(baseUrl()).toBe(`${window.location.origin}/builder-api/v1`)
+      expect(baseUrl('dcl.example')).toBe(`${window.location.origin}/builder-api/v1`)
+    })
+
+    it('should be the builder-api of the public node base when the page names one', () => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
+      expect(baseUrl()).toBe('https://node.example/builder-api/v1')
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's builder-api", () => {
+      expect(baseUrl('decentraland.zone')).toBe('https://builder-api.decentraland.zone/v1')
+    })
   })
 })

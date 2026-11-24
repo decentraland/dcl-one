@@ -14,6 +14,7 @@ listed here is a decision, not a bug. When a change makes or reverses one, rewri
 | Components, query hooks, client stores | `components/`, `hooks/`, `store/` |
 | builder-api client, chain, validation, encoding, flows | `src/data/lib/creators/` |
 | Environment values per host (`.zone`, `.today`, `.org`) | `src/data/lib/creators/config/env/` |
+| builder-api base: the page's node (`/builder-api/v1`), or the environment's on a Decentraland host | `src/data/lib/creators/builder/transport.ts` |
 | Copy (English) | `src/data/lib/creators/intl/en.json`, through `useTranslation().t` |
 | Browser suite | `tooling/creators-e2e` |
 
@@ -24,6 +25,11 @@ suite drives these pages with every service faked; see its README.
 
 - **builder-api is used as it is.** Paginated lists need both `page` and `limit`, or `/collections` and
   `/collections/:id/items` answer a bare array; numeric columns such as `item_count` arrive as strings.
+- **A draft's files are read signed.** Storage serves an unpublished item's files only to a signed reader, so every
+  byte read goes through the session's signed fetch, never into the HTTP cache, and a draft's thumbnails show as
+  object URLs of those reads (`hooks/useItemFileSrc.ts`, at most four at a time, revoked once off screen); the
+  editor's preview takes the selected draft's model files from memory (`hooks/useDraftPreviewFiles.ts`). A published
+  item's files keep their plain storage URLs.
 - **Subgraph lag is patched in the query cache.** builder-api reads minters, managers, `total_supply` and ownership
   from the collections subgraph, minutes behind a mined transaction. After an on-chain write the page patches the
   cached collection (and remembers roles and "sales enabled" for the session) instead of refetching.

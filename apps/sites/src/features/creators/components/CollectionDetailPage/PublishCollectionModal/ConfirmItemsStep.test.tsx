@@ -11,6 +11,8 @@ import type { ThumbnailPatch } from '../../ThumbnailModal'
 import type { Collection } from '@/data/lib/creators/collections'
 import { ItemType, type Item, BODY_SHAPE_MALE } from '@/data/lib/creators/items'
 import { ConfirmItemsStep } from './ConfirmItemsStep'
+import type { Session } from '@/data/lib/creators/auth'
+import { useWallet } from '../../../store/wallet'
 
 vi.mock('@/data/lib/creators/builder', async importOriginal => ({
   ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
@@ -262,6 +264,9 @@ describe('ConfirmItemsStep thumbnail editing', () => {
 
   it('drops a picked thumbnail when the row edit is cancelled', async () => {
     vi.mocked(fetchItemContents).mockResolvedValue({})
+    vi.mocked(fetchContent).mockResolvedValue(new Blob(['stored']))
+    const objectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stored-thumbnail')
+    useWallet.setState({ session: { address: ADDRESS } as unknown as Session, restored: true })
     renderStep()
     const row = screen.getAllByTestId('publish-item-row')[0]
     await userEvent.click(within(row).getByTestId('publish-item-edit'))
@@ -269,7 +274,10 @@ describe('ConfirmItemsStep thumbnail editing', () => {
     await userEvent.click(await screen.findByTestId('thumbnail-capture'))
     await userEvent.click(within(row).getByTestId('publish-item-cancel'))
 
-    expect(within(row).getByTestId('publish-item-img')).toHaveAttribute('src', expect.stringContaining('Qmthumb'))
+    expect(await within(row).findByTestId('publish-item-img')).toHaveAttribute('src', 'blob:stored-thumbnail')
+    expect(fetchContent).toHaveBeenCalledWith('Qmthumb', expect.any(AbortSignal))
     expect(saveItem).not.toHaveBeenCalled()
+    objectUrl.mockRestore()
+    useWallet.setState({ session: null, restored: false })
   })
 })
