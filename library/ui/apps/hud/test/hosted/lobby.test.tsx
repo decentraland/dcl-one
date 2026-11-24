@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PopupHost, ToastHost, resetPopups } from '../../design'
+import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../../design'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
@@ -502,9 +502,7 @@ describe('lobby VIEW ALL of Communities and Gallery', () => {
     await openFirstPhoto()
     const photo = screen.getByRole('dialog', { name: 'Photo' })
     expect(screen.getByRole('dialog', { name: 'Gallery' })).not.toContainElement(photo)
-    act(() => {
-      expect(dispatchCancelLayer()).toBe(true)
-    })
+    act(() => closeTopPopup())
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
     expect(screen.getByRole('dialog', { name: 'Gallery' })).toBeInTheDocument()
   })

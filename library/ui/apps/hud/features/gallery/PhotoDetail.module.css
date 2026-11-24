@@ -1,18 +1,22 @@
+/* The popup's scaled canvas without its scrim or its scale-in: the viewer fills it and fades in. */
+.photoLayer.photoLayer {
+  padding: 0;
+  background: none;
+  backdrop-filter: none;
+}
+.photoLayer.photoLayer > div {
+  animation: none;
+}
 /* Sized on the 1920×1080 reference canvas. The info panel hangs off the image panel's right edge, so
-   moving that edge to the host's edge slides the panel out with it. */
+   moving that edge to the screen's edge slides the panel out with it. */
 .viewer {
   position: absolute;
   inset: 0;
-  /* over the startup lobby the menu card has its close button in the corner of the viewer's own: the
-     viewer covers it */
-  z-index: var(--menu-cover-z, 2);
   overflow: hidden;
   background: var(--black);
   color: var(--text);
   font-family: var(--font-family);
   animation: viewerIn var(--dur-fast) ease;
-  /* In the Gallery it is beside the page in the menu's pass-through body, so it takes pointer input itself. */
-  pointer-events: auto;
 }
 @keyframes viewerIn {
   from {
@@ -162,7 +166,6 @@
   transform: scaleX(-1);
 }
 
-/* ---- the info panel ---- */
 .info {
   position: absolute;
   top: 0;
@@ -283,7 +286,6 @@
   --scroll-thumb-w: 12px;
 }
 
-/* ---- a person ---- */
 .person {
   display: flex;
   flex: none;
@@ -399,7 +401,6 @@
   text-align: center;
 }
 
-/* ---- a wearable ---- */
 .wearable {
   position: relative;
   flex: none;
@@ -508,7 +509,6 @@
   }
 }
 
-/* ---- the panel's loading shimmer ---- */
 .loading {
   position: absolute;
   inset: 0;

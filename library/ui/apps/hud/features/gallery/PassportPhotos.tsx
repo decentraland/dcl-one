@@ -1,12 +1,11 @@
 // The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
 import { useCallback, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { EmptyState, Spinner } from '../../design'
 import type { GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
-import { PhotoDetail } from './PhotoDetail'
+import { usePhotoViewer } from './usePhotoViewer'
 import type { PhotoPlace } from './reelActions'
 import { fetchPublicReelPage } from './publicReels'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
@@ -43,16 +42,13 @@ export function PassportPhotos({
   address,
   isSelf,
   actions,
-  empty,
-  viewerHost
+  empty
 }: {
   address: string
   isSelf: boolean
   actions?: PassportPhotoActions
   /** Shown for a reel with no public photos. */
   empty: React.ReactNode
-  /** The passport panel: the photo viewer covers it, not only the tab's own area. */
-  viewerHost: HTMLElement | null
 }): React.JSX.Element {
   const key = address.toLowerCase()
   const fetchPage = useCallback((offset: number, limit: number) => fetchPublicReelPage(key, offset, limit), [key])
@@ -65,6 +61,35 @@ export function PassportPhotos({
   // A photo made private leaves this public-only list: show the next one, wrapping, or close when none are left.
   if (index != null && list.loaded && index >= list.photos.length) setIndex(list.photos.length > 0 ? index % list.photos.length : null)
   const selected = index != null ? list.photos[index] : null
+  usePhotoViewer(
+    selected != null && index != null
+      ? {
+          photos: list.photos,
+          index,
+          meta: actions?.metas[selected.id],
+          canEdit: menu != null,
+          onIndex: (i) => {
+            setIndex(i)
+            list.loadMore(i)
+          },
+          onLoadMeta: actions?.loadPhoto ?? noop,
+          loadWearables: actions?.loadWearables ?? noWearables,
+          onClose: () => setIndex(null),
+          onSetPublic: menu != null ? writes.setPublic : undefined,
+          onJumpIn: (place) => {
+            if (actions?.onJumpIn(place)) setIndex(null)
+          },
+          onDelete:
+            menu != null
+              ? (photo) =>
+                  void writes.remove(photo).then((removed) => {
+                    if (removed) setIndex(null)
+                  })
+              : undefined,
+          onViewPerson: actions?.onViewPerson
+        }
+      : null
+  )
 
   return (
     <section className={styles.section}>
@@ -86,35 +111,6 @@ export function PassportPhotos({
           onRetry={list.error ? list.retry : undefined}
           aria-label="Photos"
         />
-      )}
-      {selected != null && index != null && viewerHost != null && createPortal(
-        <PhotoDetail
-          photos={list.photos}
-          index={index}
-          meta={actions?.metas[selected.id]}
-          canEdit={menu != null}
-          onIndex={(i) => {
-            setIndex(i)
-            list.loadMore(i)
-          }}
-          onLoadMeta={actions?.loadPhoto ?? noop}
-          loadWearables={actions?.loadWearables ?? noWearables}
-          onClose={() => setIndex(null)}
-          onSetPublic={menu != null ? writes.setPublic : undefined}
-          onJumpIn={(place) => {
-            if (actions?.onJumpIn(place)) setIndex(null)
-          }}
-          onDelete={
-            menu != null
-              ? (photo) =>
-                  void writes.remove(photo).then((removed) => {
-                    if (removed) setIndex(null)
-                  })
-              : undefined
-          }
-          onViewPerson={actions?.onViewPerson}
-        />,
-        viewerHost
       )}
     </section>
   )

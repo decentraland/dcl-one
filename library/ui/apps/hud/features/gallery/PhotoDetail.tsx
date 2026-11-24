@@ -1,15 +1,10 @@
 // Full-screen viewer of one camera-reel photo: the photo with its actions and an info panel (date,
-// owner, place, people in the shot) that the info button slides away.
-//
-// The Gallery renders it in MainMenuShell's scaled reference-canvas body, the lobby in a popup
-// and a passport in its panel, so it is DPI-correct without --ui-scale work. While mounted it
-// registers as a cancel layer, so the engine's Cancel action closes the viewer first (key
-// or gamepad), leaving the next press to close its host.
+// owner, place, people in the shot) that the info button slides away. Opened through usePhotoViewer,
+// as a popup of its own.
 
 import { useEffect, useRef, useState } from 'react'
 import { ControlButton, MaskIcon, ScrollThumb, Skeleton, Spinner, Toggle } from '../../design'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
-import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { track } from '@explorer-core/lib/analytics'
 import { photoTime } from '../session/useEngineSession'
 import { useOptionalSession } from '../session/SessionContext'
@@ -41,7 +36,8 @@ export function PhotoDetail({
   onJumpIn,
   onSetPublic,
   onDelete,
-  onViewPerson
+  onViewPerson,
+  covered = false
 }: {
   photos: GalleryPhoto[]
   index: number
@@ -61,6 +57,8 @@ export function PhotoDetail({
   onDelete?: (photo: GalleryPhoto) => void
   /** Open a person's passport: the one who took it, or one in it. */
   onViewPerson?: (user: ChatUser) => void
+  /** Another popup is over the viewer: the arrow keys are that popup's. */
+  covered?: boolean
 }): React.JSX.Element {
   const photo = photos[index]
   const openExternalUrl = useOptionalSession()?.openExternalUrl
@@ -76,26 +74,20 @@ export function PhotoDetail({
     track('open_photo')
   }, [])
 
-  // Lazily fetch this photo's metadata the first time it's viewed.
   useEffect(() => {
     if (meta === undefined) onLoadMeta(photo.id)
   }, [photo.id, meta, onLoadMeta])
 
-  // The engine's Cancel action closes the viewer before the session closes the gallery —
-  // registered as a cancel layer for the viewer's lifetime (ref: onClose is an inline
-  // prop, and re-registering per render would churn the layer stack).
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
-  useEffect(() => registerCancelLayer(() => onCloseRef.current()), [])
-
-  // Keyboard: arrows navigate.
-  useWindowKeyDown((e) => {
-    if (e.key === 'ArrowLeft' && hasPrev) {
-      onIndex(index - 1)
-    } else if (e.key === 'ArrowRight' && hasNext) {
-      onIndex(index + 1)
-    }
-  })
+  useWindowKeyDown(
+    (e) => {
+      if (e.key === 'ArrowLeft' && hasPrev) {
+        onIndex(index - 1)
+      } else if (e.key === 'ArrowRight' && hasNext) {
+        onIndex(index + 1)
+      }
+    },
+    { enabled: !covered }
+  )
 
   const setPublic = (next: boolean): void => {
     if (onSetPublic == null) return

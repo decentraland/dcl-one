@@ -87,9 +87,3 @@
   height: 68px;
   padding: 0 92px 0 30px;
 }
-/* The popup's scaled canvas without its scrim: the viewer fills it. */
-.photoLayer.photoLayer {
-  padding: 0;
-  background: none;
-  backdrop-filter: none;
-}

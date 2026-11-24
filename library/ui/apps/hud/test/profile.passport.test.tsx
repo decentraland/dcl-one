@@ -317,10 +317,10 @@ describe('passport photos', () => {
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
   })
 
-  it('the photo viewer covers the passport panel', async () => {
+  it('the photo viewer opens outside the passport panel', async () => {
     await openPhotos(false)
     await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[0])
-    expect(screen.getByRole('dialog', { name: 'Photo' }).parentElement).toHaveAttribute('data-tab', 'photos')
+    expect(screen.getByRole('dialog', { name: 'Photo' }).closest('[data-tab]')).toBeNull()
   })
 
   it.each([

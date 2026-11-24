@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
-import { EmptyState, Icon, Spinner, openPopup } from '../../design'
+import { useState } from 'react'
+import { EmptyState, Icon, Spinner } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
-import { PhotoDetail } from './PhotoDetail'
+import { usePhotoViewer, type PhotoViewerProps } from './usePhotoViewer'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
 import { useOwnReelActions } from './useOwnReelActions'
@@ -25,34 +25,6 @@ const GALLERY_LAYOUT: ReelGridLayout = {
 }
 const COMPACT_GALLERY_LAYOUT: ReelGridLayout = { ...GALLERY_LAYOUT, columns: 5, tileWidth: 292, tileHeight: 219 }
 
-type PhotoDetailProps = React.ComponentProps<typeof PhotoDetail>
-
-/** A popup renders once, so the photo over the section modal reads the page's props from here. */
-function photoSource(): {
-  get: () => PhotoDetailProps | null
-  set: (props: PhotoDetailProps | null) => void
-  subscribe: (listener: () => void) => () => void
-} {
-  let props: PhotoDetailProps | null = null
-  const listeners = new Set<() => void>()
-  return {
-    get: () => props,
-    set: (next) => {
-      props = next
-      listeners.forEach((l) => l())
-    },
-    subscribe: (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    }
-  }
-}
-
-function LivePhoto({ source }: { source: ReturnType<typeof photoSource> }): React.JSX.Element | null {
-  const props = useSyncExternalStore(source.subscribe, source.get)
-  return props != null ? <PhotoDetail {...props} /> : null
-}
-
 export function GalleryPage({
   gallery,
   profile,
@@ -68,7 +40,7 @@ export function GalleryPage({
   onJumpIn: (place: PhotoPlace) => TravelOutcome
   /** Open a captured person's passport. */
   onViewProfile?: (user: ChatUser) => void
-  /** Hosted in the lobby's section modal; a photo opens over the whole screen. */
+  /** Hosted in the lobby's section modal. */
   compact?: { onTravel: () => void }
 }): React.JSX.Element | null {
   const active = gallery.open || compact != null
@@ -89,7 +61,7 @@ export function GalleryPage({
   const menu: ReelGridMenu = { showDelete: true, onSetPublic: actions.setPublic, onDelete: (photo) => void actions.remove(photo) }
 
   const selected = active && index != null ? (list.photos[index] ?? null) : null
-  const detail: PhotoDetailProps | null =
+  const detail: PhotoViewerProps | null =
     selected != null && index != null
       ? {
           photos: list.photos,
@@ -120,17 +92,7 @@ export function GalleryPage({
         }
       : null
 
-  const [source] = useState(photoSource)
-  useLayoutEffect(() => source.set(detail))
-  const popupPhoto = compact != null && detail != null
-  useEffect(() => {
-    if (!popupPhoto) return
-    return openPopup(() => <LivePhoto source={source} />, {
-      className: styles.photoLayer,
-      backdropClickCloses: false,
-      onClose: () => setIndex(null)
-    })
-  }, [popupPhoto, source])
+  usePhotoViewer(detail)
 
   if (!active) return null
 
@@ -206,7 +168,6 @@ export function GalleryPage({
         <MenuBackdrop />
         {body}
       </div>
-      {detail != null && <PhotoDetail {...detail} />}
     </MainMenuShell>
   )
 }

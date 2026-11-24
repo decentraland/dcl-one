@@ -204,8 +204,7 @@
 
 /* Over the startup lobby: a card 190px in from the sides and 100px from top and bottom, the lobby
    dimmed around it, and of the menu bar only the close button. A page's title row ends short of
-   that button by --menu-title-end, which the page's own header reads. A layer of the page that
-   covers the whole card, the button too, takes --menu-cover-z. */
+   that button by --menu-title-end, which the page's own header reads. */
 .card {
   left: calc(190px * var(--ui-scale));
   top: calc(100px * var(--ui-scale));
@@ -214,7 +213,6 @@
   border-radius: 20px;
   box-shadow: 0 0 0 300vmax var(--scrim-card);
   --menu-title-end: 86px;
-  --menu-cover-z: 6;
 }
 .cardBar {
   position: absolute;

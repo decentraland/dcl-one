@@ -259,10 +259,6 @@
   position: absolute;
   min-width: 180px;
 }
-.photo {
-  position: absolute;
-  inset: 0;
-}
 .avatarTooltip,
 .friendTooltip {
   position: absolute;

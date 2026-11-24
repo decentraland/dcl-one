@@ -3,7 +3,6 @@
    Layout: the avatar (or the selected badge) down the whole left
    side, and on the right the name, the tab row and the scrolling sections. */
 .panel {
-  /* The Photos tab's viewer covers the panel. */
   position: relative;
   width: min(1650px, 100%);
   height: min(926px, 100%);

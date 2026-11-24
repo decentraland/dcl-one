@@ -83,10 +83,16 @@ describe('Jump In from a passport photo', () => {
     receiveProfile('0xabc', RICH)
     setPublicReelFetcher(async () => ({ ok: true, photos: [{ id: 'p0', url: 'https://img/0.jpg', thumbnailUrl: 'https://img/0_t.jpg', dateTime: '1707000000', isPublic: true }], total: 1, max: 500 }))
     const onClose = vi.fn()
-    const s = await renderWithSession(<Passport userId="0xabc" initialTab="photos" onClose={onClose} />, (session) => {
-      session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
-      session.map.teleportToPlace = vi.fn(() => outcome)
-    })
+    const s = await renderWithSession(
+      <>
+        <Passport userId="0xabc" initialTab="photos" onClose={onClose} />
+        <PopupHost />
+      </>,
+      (session) => {
+        session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
+        session.map.teleportToPlace = vi.fn(() => outcome)
+      }
+    )
     const tile = await screen.findByRole('button', { name: 'Open photo' })
     fireEvent.load(tile.querySelector('img') as HTMLImageElement)
     await userEvent.click(tile)

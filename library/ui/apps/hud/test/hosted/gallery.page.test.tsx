@@ -6,7 +6,7 @@ import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import type { GalleryState, ProfileState, ReelPage } from '../../features/session/useEngineSession'
 import { fakeProfileState } from '../harness'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
-import { PopupHost } from '../../design'
+import { PopupHost, closeTopPopup, hasOpenPopup, openPopup } from '../../design'
 
 const profile: ProfileState = fakeProfileState({
   data: { address: '0xme', name: 'Mojito', hasClaimedName: true, isGuest: false }
@@ -230,15 +230,29 @@ describe('GalleryPage', () => {
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
   })
 
-  it('the open lightbox is a cancel layer: one Cancel dispatch closes it, none registered after', async () => {
+  it('the open photo is a popup of its own: one Cancel closes it and leaves none', async () => {
     renderPage(gallery(photos))
     const [first] = await loadThumbnails()
     await userEvent.click(first)
-    act(() => {
-      expect(dispatchCancelLayer()).toBe(true)
-    })
+    expect(hasOpenPopup()).toBe(true)
+    act(() => closeTopPopup())
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
-    expect(dispatchCancelLayer()).toBe(false)
+    expect(hasOpenPopup()).toBe(false)
+  })
+
+  it('the arrow keys leave the photo alone while another popup is over it', async () => {
+    renderPage(gallery(photos))
+    const [first] = await loadThumbnails()
+    await userEvent.click(first)
+    let close = (): void => undefined
+    act(() => {
+      close = openPopup(() => <div />)
+    })
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.queryByRole('button', { name: 'Previous photo' })).toBeNull()
+    act(() => close())
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(screen.getByRole('button', { name: 'Previous photo' })).toBeInTheDocument()
   })
 
   it('Jump In travels to where the photo was taken, from its metadata', async () => {
