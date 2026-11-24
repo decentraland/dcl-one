@@ -211,11 +211,8 @@ fn configured_key(key: Option<&'static str>) -> &'static str {
         .unwrap_or(SHARED_WRITE_KEY)
 }
 
-// The browser build goes through the first-party proxy, which ad blockers leave alone.
-#[cfg(target_arch = "wasm32")]
+// Browser ad blockers and DNS filters can block the default Segment host.
 pub(crate) const SEGMENT_BATCH_URL: &str = "https://api.e.decentraland.org/v1/batch";
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const SEGMENT_BATCH_URL: &str = "https://api.segment.io/v1/batch";
 const SEGMENT_EVENT_SIZE_LIMIT_BYTES: usize = 32000;
 const SEGMENT_BATCH_SIZE_LIMIT_BYTES: usize = 500000;
 
@@ -283,13 +280,20 @@ impl SegmentMetricsEvents {
                 self.events.pop_front();
                 continue;
             }
-            let item = build_segment_event_batch_item(
+            let item = match build_segment_event_batch_item(
                 user_id.to_owned(),
                 &queued.common,
                 &queued.event,
                 queued.queued_at,
                 queued.message_id.clone(),
-            );
+            ) {
+                Ok(item) => item,
+                Err(e) => {
+                    error!("Event not serializable: {e}");
+                    self.events.pop_front();
+                    continue;
+                }
+            };
             let json = serde_json::to_string(&item).expect("Failed to serialize event body");
             if json.len() > SEGMENT_EVENT_SIZE_LIMIT_BYTES {
                 error!("Event too large: {}", json.len());

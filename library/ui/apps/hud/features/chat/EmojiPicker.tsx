@@ -15,6 +15,23 @@ import flagIcon from '../../assets/chat/emoji-categories/flag.png'
 import { isCancelKey } from '../../lib/bindingLabels'
 import styles from './EmojiPicker.module.css'
 
+/** Closes an open emoji panel on a press outside it; its own emoji button (`toggle`) toggles the
+ *  panel itself, and another composer's emoji button is outside like anything else. */
+export function useCloseEmojiPanelOnOutsidePress(open: boolean, panel: React.RefObject<HTMLElement | null>, toggle: React.RefObject<HTMLElement | null>, close: () => void): void {
+  const closeRef = useRef(close)
+  closeRef.current = close
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent): void => {
+      const t = e.target as Node
+      if (panel.current?.contains(t) || toggle.current?.contains(t)) return
+      closeRef.current()
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [open, panel, toggle])
+}
+
 // Toggle order differs from the scroll order: smileys + people share one, activities comes before places.
 const TOGGLES: { icon: string; label: string; section: string }[] = [
   { icon: smileysIcon, label: 'Smileys and people', section: 'Smileys & Emotion' },
@@ -31,7 +48,7 @@ function Grid({ emojis, onPick }: { emojis: Emoji[]; onPick: (e: Emoji) => void 
   return (
     <div className={styles.grid}>
       {emojis.map((e) => (
-        <button key={e.code} type="button" className={styles.emoji} title={e.expression} onClick={() => onPick(e)}>
+        <button key={e.code} type="button" className={styles.emoji} title={e.expression} data-ui-sound="press" onClick={() => onPick(e)}>
           {e.emoji}
         </button>
       ))}
@@ -168,6 +185,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (glyph: string) => vo
             className={`${styles.tab} ${t.section === section && !q ? styles.tabActive : ''}`.trim()}
             aria-label={t.label}
             aria-pressed={t.section === section && !q}
+            data-ui-sound="press"
             onClick={() => jump(t.section)}
           >
             <MaskIcon src={t.icon} size={25} />

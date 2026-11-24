@@ -303,6 +303,64 @@ async fn an_unreadable_store_never_reports_a_wearable_thumbnail_as_missing() {
     );
 }
 
+/// A spooled thumbnail is read from its file only when the rule inspects it;
+/// one the disk cannot give back is this node's 503 (the spool's text), not
+/// the depositor's fault.
+#[tokio::test]
+async fn a_spooled_thumbnail_is_read_from_disk_and_an_unreadable_one_is_unavailable() {
+    let external = StubExternalCalls::with_stored(CONTENT_HASH, false);
+    let v = validator(&external);
+    let dir = std::env::temp_dir().join(format!("catalyst-thumb-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let thumbnail = png(64, 64);
+    std::fs::write(dir.join("0"), &thumbnail).unwrap();
+    let mut d = deployment(
+        EntityType::Wearable,
+        vec![mapping("thumbnail.png", CONTENT_HASH)],
+        HashMap::new(),
+        Some(serde_json::json!({ "thumbnail": "thumbnail.png" })),
+    );
+    assert_eq!(inspected_hashes(&d.entity), [CONTENT_HASH]);
+    let spooled = |name: &str| UploadedFile::Spooled {
+        len: thumbnail.len() as u64,
+        path: dir.join(name),
+    };
+
+    d.files.insert(CONTENT_HASH.to_string(), spooled("0"));
+    let read = v.validate_item_thumbnail(&d.view()).await;
+    assert!(read.is_ok(), "{read}");
+
+    d.files.insert(CONTENT_HASH.to_string(), spooled("missing"));
+    let unreadable = v.validate_item_thumbnail(&d.view()).await;
+    assert!(unreadable.is_unavailable(), "{unreadable}");
+    assert_eq!(
+        unreadable.errors().unwrap(),
+        [crate::create_entity::SPOOL_UNAVAILABLE_MESSAGE]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a validation may read besides the entity file: an item's thumbnail
+/// and a profile's face256 snapshots; nothing for any other type.
+#[test]
+fn the_inspected_files_are_the_thumbnails() {
+    let face = "bafkreiface";
+    let profile = deployment(
+        EntityType::Profile,
+        vec![],
+        HashMap::new(),
+        Some(face_metadata(face)),
+    );
+    assert_eq!(inspected_hashes(&profile.entity), [face]);
+    let scene = deployment(
+        EntityType::Scene,
+        vec![mapping("thumbnail.png", CONTENT_HASH)],
+        HashMap::new(),
+        Some(serde_json::json!({ "thumbnail": "thumbnail.png" })),
+    );
+    assert!(inspected_hashes(&scene.entity).is_empty());
+}
+
 #[tokio::test]
 async fn an_unreadable_store_never_reports_a_face_thumbnail_as_missing() {
     let external = StubExternalCalls::faulting_exist();

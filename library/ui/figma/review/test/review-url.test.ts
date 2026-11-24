@@ -9,51 +9,70 @@ import { resolveReviewUrl } from '../src/review/review-url.ts'
 const MODULE = 'https://cdn.example.com/@dcl/one-ui/1.2.3/dcl-ui-review/assets/index-abc.js'
 
 describe('when mapping a logical Review path onto where the app is served', () => {
-  it('should leave the path unchanged at the root base used locally', () => {
-    assert.equal(
-      resolveReviewUrl('/dcl-ui-review/references/Backpack-0.png', '/', MODULE),
-      '/dcl-ui-review/references/Backpack-0.png'
-    )
+  describe('and the base is the root used locally', () => {
+    it('should leave the path unchanged', () => {
+      assert.equal(
+        resolveReviewUrl('/dcl-ui-review/references/Backpack-0.png', '/', MODULE),
+        '/dcl-ui-review/references/Backpack-0.png'
+      )
+    })
+
+    it('should keep the query of a gallery page', () => {
+      assert.equal(
+        resolveReviewUrl('/dcl-ui-review/?platform=web&component=A%20B', '/', MODULE),
+        '/dcl-ui-review/?platform=web&component=A%20B'
+      )
+    })
   })
 
-  it('should keep the query of a gallery page', () => {
-    assert.equal(
-      resolveReviewUrl('/dcl-ui-review/?platform=web&component=A%20B', '/', MODULE),
-      '/dcl-ui-review/?platform=web&component=A%20B'
-    )
-  })
+  describe('and the base is an absolute CDN base', () => {
+    it('should prefix the path with the base', () => {
+      assert.equal(
+        resolveReviewUrl('/dcl-ui-review/fidelity.json', '/@scope/pkg/1.2.3/', MODULE),
+        '/@scope/pkg/1.2.3/dcl-ui-review/fidelity.json'
+      )
+    })
 
-  it('should prefix an absolute CDN base', () => {
-    assert.equal(
-      resolveReviewUrl('/dcl-ui-review/fidelity.json', '/@scope/pkg/1.2.3/', MODULE),
-      '/@scope/pkg/1.2.3/dcl-ui-review/fidelity.json'
-    )
-  })
-
-  it('should add the missing trailing slash of an absolute base', () => {
-    assert.equal(
-      resolveReviewUrl('/dcl-ui-review/?a=1', '/@scope/pkg/1.2.3', MODULE),
-      '/@scope/pkg/1.2.3/dcl-ui-review/?a=1'
-    )
+    describe('and the base has no trailing slash', () => {
+      it('should add the missing trailing slash', () => {
+        assert.equal(
+          resolveReviewUrl('/dcl-ui-review/?a=1', '/@scope/pkg/1.2.3', MODULE),
+          '/@scope/pkg/1.2.3/dcl-ui-review/?a=1'
+        )
+      })
+    })
   })
 
   for (const base of ['./', '', '.']) {
-    it(`should resolve the root from the module's own URL for the relative base "${base}"`, () => {
-      assert.equal(
-        resolveReviewUrl('/dcl-ui-review/icons/a.svg', base, MODULE),
-        'https://cdn.example.com/@dcl/one-ui/1.2.3/dcl-ui-review/icons/a.svg'
-      )
+    describe(`and the base is the relative base "${base}"`, () => {
+      it("should resolve the root from the module's own URL", () => {
+        assert.equal(
+          resolveReviewUrl('/dcl-ui-review/icons/a.svg', base, MODULE),
+          'https://cdn.example.com/@dcl/one-ui/1.2.3/dcl-ui-review/icons/a.svg'
+        )
+      })
     })
   }
 
-  it('should refuse a path that is not a logical Review path', () => {
-    assert.throws(() => resolveReviewUrl('/other/x.png', '/', MODULE), /Not a Review path/)
-    assert.throws(() => resolveReviewUrl('./dcl-ui-review/x.png', '/', MODULE), /Not a Review path/)
+  describe('and the path is outside the Review', () => {
+    it('should refuse it as not a Review path', () => {
+      assert.throws(() => resolveReviewUrl('/other/x.png', '/', MODULE), /Not a Review path/)
+    })
+  })
+
+  describe('and the path is relative', () => {
+    it('should refuse it as not a Review path', () => {
+      assert.throws(
+        () => resolveReviewUrl('./dcl-ui-review/x.png', '/', MODULE),
+        /Not a Review path/
+      )
+    })
   })
 })
 
 // A hard-coded logical path in the Review source would silently break under a prefix or a relative base.
-describe('the Review source', () => {
+// The file list is read at collection time because it generates one case per file.
+describe('when scanning the Review source for logical paths', () => {
   const source = path.resolve(import.meta.dirname, '../src/review')
   const files = readdirSync(source).filter(
     (name) => /\.tsx?$/.test(name) && name !== 'review-url.ts'

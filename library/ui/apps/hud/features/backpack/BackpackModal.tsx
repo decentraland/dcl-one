@@ -9,15 +9,14 @@ import styles from './BackpackModal.module.css'
 
 export function BackpackModal({ onClose, children }: { onClose: () => void; children: React.ReactNode }): React.JSX.Element {
   const frameRef = useRef<HTMLDivElement>(null)
-  const preview = useSession().avatarPreviewRect
+  const { avatarPreviewRect: preview, avatarPreviewReady } = useSession()
   // the dim must not cover the engine's avatar, which shows through the frame's hole
-  const frame = frameRef.current?.getBoundingClientRect()
-  const hole = preview != null && frame != null ? clip(preview, frame) : null
+  const hole = avatarPreviewReady && preview != null && frameRef.current != null ? modalHole(preview, frameRef.current) : null
   return (
     <div className={styles.root}>
       <div
         className={styles.dim}
-        style={hole != null ? holeClip(hole) : undefined}
+        style={hole != null ? holeClip(hole.rect, hole.round) : undefined}
         onClick={(e) => {
           const frame = frameRef.current?.getBoundingClientRect()
           if (frame && e.clientX >= frame.left && e.clientX < frame.right && e.clientY >= frame.top && e.clientY < frame.bottom) return
@@ -48,4 +47,26 @@ export function clip(rect: Rect, frame: DOMRect): Rect | null {
   const width = Math.min(rect.x + rect.width + HOLE_BLEED, frame.right) - x
   const height = Math.min(rect.y + rect.height + HOLE_BLEED, frame.bottom) - y
   return width > 0 && height > 0 ? { x, y, width, height } : null
+}
+
+/** The hole a layer under the modal opens for `rect`: the part inside the frame, rounded where it
+ *  reaches one of the frame's own rounded corners. */
+export function modalHole(rect: Rect, frameEl: HTMLElement): { rect: Rect; round: { topLeft: number; topRight: number; bottomRight: number; bottomLeft: number } } | null {
+  const frame = frameEl.getBoundingClientRect()
+  const hole = clip(rect, frame)
+  if (hole == null) return null
+  const radius = (parseFloat(getComputedStyle(frameEl).borderTopLeftRadius) || 0) * (frame.width / (frameEl.offsetWidth || frame.width || 1))
+  const left = hole.x <= frame.left
+  const top = hole.y <= frame.top
+  const right = hole.x + hole.width >= frame.right
+  const bottom = hole.y + hole.height >= frame.bottom
+  return {
+    rect: hole,
+    round: {
+      topLeft: left && top ? radius : 0,
+      topRight: right && top ? radius : 0,
+      bottomRight: right && bottom ? radius : 0,
+      bottomLeft: left && bottom ? radius : 0
+    }
+  }
 }

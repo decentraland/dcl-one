@@ -9,6 +9,7 @@ use crate::{AVPlayer, AVSinks};
 use {
     crate::audio_sink::AudioSink,
     common::structs::AudioDecoderError,
+    common::sync::MutexExt,
     kira::sound::streaming::StreamingSoundData,
     media::{ffmpeg_worker, AudioHandle},
 };
@@ -134,9 +135,7 @@ pub fn spawn_av_thread(
     hash: String,
 ) {
     let thread = std::thread::spawn(move || av_thread(ipfs, senders_and_receivers, path, hash));
-    let mut threads = AV_THREADS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut threads = AV_THREADS.lock_ignore_poison();
     threads.retain(|thread| !thread.is_finished());
     threads.push(thread);
 }
@@ -146,11 +145,7 @@ pub fn spawn_av_thread(
 /// once the command sender is dropped.
 #[cfg(feature = "ffmpeg")]
 pub fn join_av_threads(timeout: std::time::Duration) -> bool {
-    let mut threads = std::mem::take(
-        &mut *AV_THREADS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    );
+    let mut threads = std::mem::take(&mut *AV_THREADS.lock_ignore_poison());
     let deadline = std::time::Instant::now() + timeout;
     loop {
         // `is_finished` only says the thread's body returned; join it so its teardown is over too
@@ -212,7 +207,6 @@ fn av_thread(
 pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> AVSinks<T> {
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    #[cfg_attr(not(feature = "html"), expect(unused))]
     let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     #[cfg(feature = "ffmpeg")]
@@ -232,6 +226,8 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
         T::HAS_VIDEO,
         image.as_ref(),
     );
+    #[cfg(not(feature = "html"))]
+    drop(state_sender);
 
     AVSinks {
         #[cfg(feature = "ffmpeg")]

@@ -3,6 +3,7 @@ mod draco;
 mod native_fs;
 #[cfg(target_arch = "wasm32")]
 mod wasm_fs;
+use common::sync::MutexExt;
 use std::{collections::VecDeque, io::Write};
 
 use base64::{engine::general_purpose, Engine};
@@ -20,10 +21,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 #[cfg(target_arch = "wasm32")]
 use wasm_fs::{read_file, write_file};
 
-use crate::{AssetForProcessing, ProcessingAssetType};
+use crate::{AssetForProcessing, ProcessingAssetType, ProcessorRequest};
 
 pub(crate) async fn process_events(
-    mut req_rx: UnboundedReceiver<AssetForProcessing>,
+    mut req_rx: UnboundedReceiver<ProcessorRequest>,
     resp_sx: UnboundedSender<Result<AssetForProcessing, ()>>,
 ) {
     // requests taken from the channel, not yet processed
@@ -33,10 +34,13 @@ pub(crate) async fn process_events(
             let Some(req) = req_rx.blocking_recv() else {
                 return;
             };
-            pending.push_back(req);
+            intake(req, &mut pending);
         }
         while let Ok(req) = req_rx.try_recv() {
-            pending.push_back(req);
+            intake(req, &mut pending);
+        }
+        if pending.is_empty() {
+            continue;
         }
         // a gltf that failed to load shows nothing until it is repaired, while a texture
         // compression only improves one that is already showing: repairs go first, so a
@@ -80,7 +84,7 @@ pub(crate) async fn process_events(
                 match process_gltf(&raw_bytes, expect_repair) {
                     Ok(gltf) => gltf,
                     Err(e) => {
-                        error!("failed to process gltf {:?}: {:?}", req.base_path, e);
+                        error!("failed to process gltf {:?}: {e}", req.base_path);
                         let _ = resp_sx.send(Err(()));
                         continue;
                     }
@@ -106,11 +110,22 @@ pub(crate) async fn process_events(
     }
 }
 
+/// Queues an asset request. A satellite tile is converted on the spot: it is a few tens of
+/// milliseconds, and a player is waiting on it.
+fn intake(req: ProcessorRequest, pending: &mut VecDeque<AssetForProcessing>) {
+    match req {
+        ProcessorRequest::Asset(req) => pending.push_back(req),
+        #[cfg(target_arch = "wasm32")]
+        ProcessorRequest::SatelliteTile(ktx2, reply) => {
+            let _ = reply.send(crate::satellite_tile_jpeg(&ktx2));
+        }
+    }
+}
+
 /// The dds `ktx2::transcode_ktx2_image` stashed for `req.base_path`, removed from the stash.
 fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
     crate::ktx2::KTX2_RESULTS
-        .lock()
-        .ok()?
+        .lock_ignore_poison()
         .remove(&req.base_path.to_string())
         .map(|(_, dds)| dds)
 }
@@ -288,13 +303,17 @@ fn bc7_dds(
     Ok(output)
 }
 
-#[derive(Debug)]
-#[allow(dead_code)] // we use the ignored debug impl
+#[derive(Debug, thiserror::Error)]
 enum GltfProcessError {
+    #[error("embedded image: {0:?}")]
     ImageError(ImageProcessError),
+    #[error("invalid header")]
     InvalidHeader,
+    #[error("parse failed")]
     ParseFailed,
+    #[error("draco: {0}")]
     Draco(draco::DracoError),
+    #[error("nothing to repair")]
     NothingToRepair,
 }
 

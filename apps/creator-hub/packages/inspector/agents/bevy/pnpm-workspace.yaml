@@ -7,6 +7,8 @@ overrides:
   '@dcl/quests-client>@dcl/sdk': 7.22.6-25007982108.commit-83012ab
   # @dcl/sdk-commands only starts `typescript/lib/tsc` as a process, so it can use the TypeScript of Creator Hub.
   '@dcl/sdk-commands>typescript': 7.0.2
+  # @dcl/sdk-commands takes only `fetch` from undici; its later releases ask for undici 7.
+  '@dcl/sdk-commands>undici': 7.30.2
   # One protobufjs for every package that asks for one.
   protobufjs: 7.6.6
   # extract-zip 2 has no fixed release. packages/zip-extract has the same call and makes no link.

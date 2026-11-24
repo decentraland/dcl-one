@@ -46,6 +46,7 @@ Normative standards for tests of UI code in every current and future app under `
 - Stub `fetch` with `vi.spyOn(globalThis, "fetch")` or `vi.stubGlobal("fetch", ...)` when a test needs one or two responses. Build a small domain harness when many tests share the same endpoints (current example: the Shop API fixtures in `apps/ui3/src/shop/api/fixtures.ts`).
 - MSW is allowed and not required. Current use is limited to `apps/ui3/src/shop/api/client.test.ts` and its fixtures. No decision yet on making it the default.
 - A unit or UI test never reaches the real network. Testnet journeys (`tooling/shop-trade-journey`) are local only: the journey itself does not run in CI (CI runs only its settings test), it uses test-only wallets that hold nothing on mainnet, whose keys come from the environment (the environment wins) or from a KEY=value file outside the repository, and it refuses to run unless the stack profile is the testnet.
+- The creators browser suite (`tooling/creators-e2e`) is local only too: it drives the Sites dev server in a headless Chromium with the wallet, chain and services faked, so it never reaches the network, and it is not part of CI.
 
 ## Stores
 

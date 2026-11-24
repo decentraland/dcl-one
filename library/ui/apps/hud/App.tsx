@@ -38,6 +38,7 @@ import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
+import type { PurchaseSceneItem } from './features/itemPurchase/answer'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
 import { DebugPanelHost } from './features/debug/DebugPanel'
@@ -146,6 +147,9 @@ export interface HudAppHost {
   createBridgeClient(): LoginDriver
   /** The host's Shop page. */
   ShopPage: ComponentType<HudShopProps>
+  /** Opens the host's purchase confirmation for one collection item a scene asked to sell, and
+   *  resolves with how it ended. Absent where the host cannot buy: such a request is unavailable. */
+  purchaseSceneItem?: PurchaseSceneItem
   /** After the Shop surface crashed, before it opens again. */
   onShopCrash?(): void
   /** Providers around the whole HUD (/play's query client). */
@@ -251,7 +255,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const session = useEngineSession(createDriver)
+  const session = useEngineSession(createDriver, { purchaseSceneItem: host.purchaseSceneItem })
   // The tip emote once the host says a tip was sent (Donate, where the host can sign one).
   useTipEmote(session.emotes.play)
   // The signed-in account the places discovery reads for its favourites, once the profile names it.
@@ -485,7 +489,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor="lobby" />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
-            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
+            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} previewReady={session.avatarPreviewReady} initialTab={backpackTab} modal />
           </SurfaceBoundary>
           {discoveryPages}
         </>
@@ -546,7 +550,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
-            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal={session.lobbyPage.open} />
+            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} previewReady={session.avatarPreviewReady} initialTab={backpackTab} modal={session.lobbyPage.open} />
           </SurfaceBoundary>
           {discoveryPages}
           <SurfaceBoundary

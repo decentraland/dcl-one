@@ -129,7 +129,9 @@ this engine's design using its requirements and tests.
 
 ## Before pushing
 
-- Merge main first. CI tests the merge, not the branch.
+- Include the latest `main` in the branch you push. Explorer CI jobs that use GitHub's
+  PR merge ref test the target revision available for that run. Before merging, follow
+  [PR merge verification](../../../../docs/pr-merge-verification.md).
 - `cargo fmt --all`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
   `cargo test --all`. Clippy warnings are errors in CI. `common`'s tests read the patched Bevy
   tree: write it first, from the repository root, with
@@ -159,6 +161,8 @@ this engine's design using its requirements and tests.
 - Every package in the workspace declares `[lints] workspace = true`, so
   `[workspace.lints]` reaches it; set a crate-specific level in the crate's source, not in
   its manifest.
+- A crate without `unsafe` code declares `#![forbid(unsafe_code)]` in its crate root. A change
+  that adds `unsafe` to such a crate removes the attribute, so the addition shows in review.
 - A change to bevy or to a forked crate is one more patch file under
   `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
   files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI

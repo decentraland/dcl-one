@@ -1,0 +1,85 @@
+.control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: auto;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 0;
+  background-color: var(--white-10);
+  color: var(--palette-neutral-softWhite);
+  font-family: var(--font-family);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.control[data-full="true"] {
+  width: 100%;
+  height: 36px;
+  border-radius: 8px;
+}
+
+/* The darker red: white text on --error falls short of 4.5:1. */
+.control[data-live="true"] {
+  background-color: var(--palette-error-dark2);
+  font-weight: 600;
+}
+
+.control:hover:not(:disabled) {
+  background-color: var(--palette-whiteTransparent-hover);
+}
+
+.control[data-live="true"]:hover:not(:disabled) {
+  background-color: var(--palette-error-dark2);
+  filter: brightness(1.1);
+}
+
+.control:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.control:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: var(--palette-neutral-softWhite);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.mic {
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.label {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

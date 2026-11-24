@@ -11,11 +11,11 @@
   background: var(--dcl-transparencies-shadow-75);
 }
 
-/* Source's dialog: up to 880px wide, dark surface; full height on phones. */
+/* Source's dialog: up to 880px wide (narrower confirmations set their own), dark surface; full height on phones. */
 .panel {
   position: relative;
   width: 100%;
-  max-width: 880px;
+  max-width: var(--dialog-max-width, 880px);
   max-height: calc(100vh - 114px);
   overflow-y: auto;
   border-radius: var(--dcl-radius-lg);

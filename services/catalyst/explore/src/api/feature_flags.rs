@@ -39,6 +39,7 @@ pub async fn reload(snapshot: &Snapshot, pool: &PgPool, app: &str) -> sqlx::Resu
             .bind(app)
             .fetch_optional(pool)
             .await?;
+    let sourced = row.is_some();
     let doc = row.map(|(d,)| d).unwrap_or_else(|| {
         if app == "explorer" {
             embedded_document()
@@ -47,7 +48,7 @@ pub async fn reload(snapshot: &Snapshot, pool: &PgPool, app: &str) -> sqlx::Resu
         }
     });
     let doc = with_local_overrides(pool, app, doc).await?;
-    snapshot.replace(doc);
+    snapshot.replace_sourced(doc, sourced);
     Ok(())
 }
 

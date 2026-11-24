@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-import ExFlowMapPage from "@ui/explorer/pages/ExFlowMapPage";
+import { ExFlowMapPage } from "@dcl/one-ui";
 
 export const meta = () => [{ title: "Flow map \u{2014} Explorer | Decentraland" }];
 

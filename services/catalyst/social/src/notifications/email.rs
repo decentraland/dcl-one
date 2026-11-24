@@ -792,6 +792,7 @@ mod tests {
     fn dapps(flags: Json, variants: Json) -> DappsFlags {
         DappsFlags(Arc::new(Snapshot::from_document(
             json!({"flags": flags, "variants": variants}),
+            true,
         )))
     }
 

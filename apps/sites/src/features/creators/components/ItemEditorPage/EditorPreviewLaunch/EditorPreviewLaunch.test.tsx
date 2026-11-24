@@ -1,0 +1,67 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { EditorPreviewLaunch } from './EditorPreviewLaunch'
+
+const state = vi.hoisted(() => ({ track: vi.fn(), previewCollection: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: state.track }))
+vi.mock('@/data/lib/creators/explorer', () => ({ previewCollection: state.previewCollection }))
+
+function renderLaunch(props: Partial<Parameters<typeof EditorPreviewLaunch>[0]> = {}) {
+  return render(
+    <TranslationProvider>
+      <EditorPreviewLaunch collectionId="c1" itemCount={3} reviewing={false} {...props} />
+    </TranslationProvider>
+  )
+}
+
+beforeEach(() => {
+  state.track.mockReset()
+  state.previewCollection.mockReset().mockResolvedValue(true)
+})
+
+describe('EditorPreviewLaunch', () => {
+  it('opens the collection in Decentraland for a curator and tracks it as a review launch', async () => {
+    renderLaunch({ reviewing: true })
+    fireEvent.click(screen.getByTestId('editor-preview'))
+    expect(state.previewCollection).toHaveBeenCalledWith('c1')
+    await waitFor(() =>
+      expect(state.track).toHaveBeenCalledWith('bd_review_preview_in_world_opened', {
+        collection_id: 'c1',
+        item_count: 3,
+        launched: true
+      })
+    )
+  })
+
+  it('tracks a creator launch from the editor', async () => {
+    state.previewCollection.mockResolvedValue(false)
+    renderLaunch()
+    fireEvent.click(screen.getByTestId('editor-preview'))
+    await waitFor(() =>
+      expect(state.track).toHaveBeenCalledWith('bd_preview_in_world_opened', {
+        collection_id: 'c1',
+        item_count: 3,
+        launched: false,
+        trigger: 'editor'
+      })
+    )
+  })
+
+  it('shows it is busy while the launch settles', async () => {
+    let settle!: (launched: boolean) => void
+    state.previewCollection.mockReturnValue(new Promise<boolean>(resolve => (settle = resolve)))
+    renderLaunch()
+    fireEvent.click(screen.getByTestId('editor-preview'))
+    expect(screen.getByTestId('editor-preview')).toHaveAttribute('aria-busy', 'true')
+    settle(true)
+    await waitFor(() => expect(screen.getByTestId('editor-preview')).not.toHaveAttribute('aria-busy'))
+  })
+
+  it('has nothing to preview in a collection without items', () => {
+    renderLaunch({ reviewing: true, itemCount: 0 })
+    expect(screen.getByTestId('editor-preview')).toBeDisabled()
+  })
+})

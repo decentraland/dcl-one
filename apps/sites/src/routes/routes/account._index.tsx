@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { breakpoints } from "@dcl/one-ui/foundations";
+import { breakpoints } from "@dcl/one-ui";
 
 /**
  * `/account`: on a phone the layout shows the section menu on its own. From 1024px the menu is a rail
- * beside a section, so the settings open on notifications, the first section listed.
+ * beside a section, so the settings open on notifications.
  */
 export default function AccountIndex() {
   const navigate = useNavigate();

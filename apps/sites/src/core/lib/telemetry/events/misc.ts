@@ -1,10 +1,36 @@
 export type MiscEvents = {
+  Click: {
+    card?: string;
+    click_id?: string;
+    clicked_at?: number;
+    download_target?: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
+    event?: "Download";
+    mac_arch?: "apple_silicon" | "intel" | "unknown";
+    os?: "Android" | "Windows" | "iOS" | "macOS";
+    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    section?: string;
+    tab?: string;
+    title?: string;
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+    utm_campaign?: string;
+    utm_content?: string;
+    utm_medium?: string;
+    utm_org?: string;
+    utm_source?: string;
+    utm_term?: string;
+  };
+  "Section Viewed": {
+    mobile: boolean;
+    section_viewed: "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Learn" | "Creators Live Scenes" | "Creators Why";
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+  };
   catalyst_schema_drift: {
-    issues?: string[];
-    issues_count?: number;
-    kind?: string;
-    module?: string;
-    path?: string;
+    issues_count: number;
+    kind: string;
   };
   client_error: {
     client_ts: string;
@@ -32,7 +58,7 @@ export type MiscEvents = {
     place_id: string;
   };
   place_list_viewed: {
-    category: null | string;
+    category: "art" | "business" | "education" | "fashion" | "featured" | "game" | "music" | "shop" | "social" | "sports" | null;
     count: number;
     search: null | string;
   };
@@ -47,14 +73,5 @@ export type MiscEvents = {
     has_claimed_name: boolean;
     own: boolean;
     source: "fallback" | "live";
-  };
-  scene_analytics_exported: {
-    scene_id: string;
-    scene_type: "genesis" | "world";
-  };
-  scene_analytics_viewed: {
-    scene_id?: string;
-    scene_type?: "genesis" | "world";
-    source: string;
   };
 };

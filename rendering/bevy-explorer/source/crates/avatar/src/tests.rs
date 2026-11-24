@@ -139,6 +139,230 @@ fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
     );
 }
 
+const EQUIPPED_DANCE: &str = "urn:decentraland:matic:collections-v2:0xabc:0";
+const EQUIPPED_CLAP: &str = "urn:decentraland:matic:collections-v2:0xabc:1";
+const TEST_BODY_SHAPE: &str = "urn:decentraland:off-chain:base-avatars:basemale";
+
+/// An avatar on its idle pose with `emotes` equipped and their pointers resolved; the player
+/// when `primary`.
+fn spawn_equipped_avatar(world: &mut World, emotes: &[&str], primary: bool) -> Entity {
+    use crate::animate::{ActiveEmote, AvatarAnimPlayer};
+
+    for (urn, hash) in [(EQUIPPED_DANCE, "bafydance"), (EQUIPPED_CLAP, "bafyclap")] {
+        world
+            .resource_mut::<Collectibles<Emote>>()
+            .insert_inline(EmoteUrn::new(urn).unwrap(), hash.to_owned());
+    }
+    let shape = AvatarShape(PbAvatarShape {
+        emotes: emotes.iter().map(|urn| urn.to_string()).collect(),
+        ..default()
+    });
+    let avatar = world.spawn((ActiveEmote::default(), shape)).id();
+    world.entity_mut(avatar).insert(AvatarAnimPlayer(avatar));
+    if primary {
+        world.entity_mut(avatar).insert(PrimaryUser::default());
+    }
+    avatar
+}
+
+#[test]
+fn the_players_equipped_emotes_are_filed_under_the_player() {
+    use crate::animate::file_emote_downloads;
+
+    let mut app = app_with_emote_downloads();
+    let world = app.world_mut();
+    // an empty slot and a value that resolves to no emote add nothing
+    let player = spawn_equipped_avatar(
+        world,
+        &[EQUIPPED_DANCE, "", "not a urn:", EQUIPPED_CLAP],
+        true,
+    );
+
+    world.run_system_once(file_emote_downloads).unwrap();
+
+    assert_eq!(
+        world.get::<PartitionedEmoteDownloads>(player),
+        Some(&PartitionedEmoteDownloads(vec![
+            "bafyclap".to_owned(),
+            "bafydance".to_owned()
+        ]))
+    );
+}
+
+#[test]
+fn another_avatars_equipped_emotes_are_not_filed() {
+    use crate::animate::file_emote_downloads;
+
+    let mut app = app_with_emote_downloads();
+    let world = app.world_mut();
+    let other = spawn_equipped_avatar(world, &[EQUIPPED_DANCE, EQUIPPED_CLAP], false);
+
+    world.run_system_once(file_emote_downloads).unwrap();
+
+    assert!(
+        world.get::<PartitionedEmoteDownloads>(other).is_none(),
+        "only the player's equipped emotes download before they are played"
+    );
+}
+
+/// Register `urn` as a built-in emote for the test body shape, its clip loaded when `loaded`.
+fn register_test_emote(world: &mut World, urn: &str, loaded: bool) {
+    let gltf = if loaded {
+        let mut gltf = gltf_with_scene(None);
+        gltf.named_animations
+            .insert("_Avatar".into(), Handle::<AnimationClip>::default());
+        world.resource_mut::<Assets<Gltf>>().add(gltf)
+    } else {
+        // a handle with no asset behind it: the clip is still loading
+        Handle::default()
+    };
+    register_test_emote_gltf(world, urn, gltf);
+}
+
+/// Register `urn` as a built-in emote for the test body shape, its clip in `gltf`.
+fn register_test_emote_gltf(world: &mut World, urn: &str, gltf: Handle<Gltf>) {
+    let urn = EmoteUrn::new(urn).unwrap();
+    world
+        .run_system_once(move |mut emotes: CollectibleManager<Emote>| {
+            emotes.add_builtin(
+                urn.clone(),
+                Collectible {
+                    representations: HashMap::from_iter([(
+                        TEST_BODY_SHAPE.to_owned(),
+                        Emote {
+                            gltf: gltf.clone(),
+                            default_repeat: false,
+                            sound: Vec::new(),
+                        },
+                    )]),
+                    data: CollectibleData {
+                        hash: String::new(),
+                        urn: urn.as_str().to_owned(),
+                        thumbnail: String::new(),
+                        available_representations: HashSet::from_iter([TEST_BODY_SHAPE.to_owned()]),
+                        name: String::new(),
+                        description: String::new(),
+                        extra_data: collectibles::EmoteExtraData::default(),
+                    },
+                },
+            );
+        })
+        .unwrap();
+}
+
+/// The player with `emotes` equipped and a built avatar of `body_shape`.
+fn spawn_preloading_player(world: &mut World, emotes: &[&str], body_shape: &str) -> Entity {
+    let shape = AvatarShape(PbAvatarShape {
+        emotes: emotes.iter().map(|urn| urn.to_string()).collect(),
+        ..default()
+    });
+    let player = world.spawn((PrimaryUser::default(), shape)).id();
+    let mut render = render_definition(false, false);
+    render.body_shape = body_shape.to_owned();
+    world.spawn((
+        AvatarDefinition {
+            render,
+            emote: None,
+        },
+        ChildOf(player),
+    ));
+    player
+}
+
+fn set_equipped(world: &mut World, player: Entity, emotes: &[&str]) {
+    world.get_mut::<AvatarShape>(player).unwrap().0.emotes =
+        emotes.iter().map(|urn| urn.to_string()).collect();
+}
+
+#[test]
+fn the_preload_stops_asking_once_the_equipped_clips_have_loaded() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let world = app.world_mut();
+    register_test_emote(world, EQUIPPED_DANCE, true);
+    register_test_emote(world, EQUIPPED_CLAP, false);
+    let player = spawn_preloading_player(world, &[EQUIPPED_DANCE], TEST_BODY_SHAPE);
+
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert_eq!(
+        world.get::<EquippedEmotesLoaded>(player),
+        Some(&EquippedEmotesLoaded {
+            body_shape: TEST_BODY_SHAPE.to_owned(),
+            urns: vec![EQUIPPED_DANCE.to_owned()],
+        })
+    );
+
+    // the marker matches, so a clip that is still loading is not looked at again
+    world.insert_resource(Assets::<Gltf>::default());
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
+
+    // a player still waiting on a clip carries no marker
+    let waiting = spawn_preloading_player(world, &[EQUIPPED_CLAP], TEST_BODY_SHAPE);
+    world.entity_mut(player).despawn();
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(waiting).is_none());
+}
+
+#[test]
+fn the_preload_stops_asking_for_a_clip_whose_glb_failed_to_load() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let failed = broken_body_gltf(&mut app, BodyGltfFailure::FailedLoad);
+    let world = app.world_mut();
+    register_test_emote_gltf(world, EQUIPPED_CLAP, failed);
+    let player = spawn_preloading_player(world, &[EQUIPPED_CLAP], TEST_BODY_SHAPE);
+
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
+}
+
+#[test]
+fn the_preload_asks_again_when_the_equipped_set_or_body_shape_changes() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let world = app.world_mut();
+    register_test_emote(world, EQUIPPED_DANCE, true);
+    register_test_emote(world, EQUIPPED_CLAP, false);
+    let player = spawn_preloading_player(world, &[EQUIPPED_DANCE], TEST_BODY_SHAPE);
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
+
+    // a newly equipped emote whose clip is still loading drops the stale marker
+    set_equipped(world, player, &[EQUIPPED_DANCE, EQUIPPED_CLAP]);
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_none());
+
+    // back to a loaded set, the marker records it
+    set_equipped(world, player, &[EQUIPPED_DANCE]);
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert_eq!(
+        world
+            .get::<EquippedEmotesLoaded>(player)
+            .map(|l| l.urns.clone()),
+        Some(vec![EQUIPPED_DANCE.to_owned()])
+    );
+
+    // another body shape has no representation of the emote: asked again and recorded for it
+    let other_shape = "urn:decentraland:off-chain:base-avatars:basefemale";
+    let build = avatar_build(world, player);
+    world
+        .get_mut::<AvatarDefinition>(build)
+        .unwrap()
+        .render
+        .body_shape = other_shape.to_owned();
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert_eq!(
+        world
+            .get::<EquippedEmotesLoaded>(player)
+            .map(|l| l.body_shape.clone()),
+        Some(other_shape.to_owned())
+    );
+}
+
 fn urn(urn: &str) -> WearableUrn {
     WearableUrn::new(urn).unwrap()
 }
@@ -333,6 +557,48 @@ fn a_body_that_exhausted_its_fallback_reports_failure_to_the_renderer_host() {
 }
 
 #[test]
+fn a_build_waits_for_the_face_textures_and_masks() {
+    use bevy::asset::{uuid::Uuid, LoadState};
+    let image = |id: u128| {
+        Handle::<Image>::Weak(AssetId::Uuid {
+            uuid: Uuid::from_u128(id),
+        })
+    };
+    let face = |texture: u128, mask: Option<u128>| Wearable {
+        category: WearableCategory::MOUTH,
+        hides: HashSet::default(),
+        model: None,
+        texture: Some(image(texture)),
+        mask: mask.map(image),
+    };
+    let loading = |ids: &'static [u128]| {
+        move |handle: &Handle<Image>| {
+            if ids.iter().any(|id| handle.id() == image(*id).id()) {
+                Some(LoadState::Loading)
+            } else {
+                Some(LoadState::Loaded)
+            }
+        }
+    };
+    let worn = [face(1, Some(2)), face(3, None)];
+    assert!(!face_images_loading(&worn, loading(&[])));
+    // a texture or a mask still on its way holds the build
+    assert!(face_images_loading(&worn, loading(&[3])));
+    assert!(face_images_loading(&worn, loading(&[2])));
+    // a failed image does not: the face is built without it
+    assert!(!face_images_loading(&worn, |_: &Handle<Image>| Some(
+        LoadState::Failed(Arc::new(
+            bevy::asset::AssetLoadError::RequestedHandleTypeMismatch {
+                path: "face.png".into(),
+                requested: std::any::TypeId::of::<Image>(),
+                actual_asset_name: "",
+                loader_name: "",
+            }
+        ))
+    )));
+}
+
+#[test]
 fn a_body_failure_waits_for_its_fallback_before_reporting_a_terminal_error() {
     let mut app = app_with_render_avatar();
     let world = app.world_mut();
@@ -430,7 +696,7 @@ fn gltf_with_scene(default_scene: Option<Handle<Scene>>) -> Gltf {
     }
 }
 
-fn app_with_avatar_scenes() -> App {
+pub(crate) fn app_with_avatar_scenes() -> App {
     let mut app = app_with_emote_downloads();
     app.add_plugins((TransformPlugin, ScenePlugin))
         .register_type::<Name>()
@@ -448,7 +714,8 @@ fn app_with_avatar_scenes() -> App {
         .init_asset::<SkinnedMeshInverseBindposes>()
         .init_asset::<AnimationGraph>()
         .init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>()
-        .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
+        .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>()
+        .init_resource::<crate::processing_timing::AvatarProcessingRun>();
     app.finish();
     app.cleanup();
     app
@@ -487,7 +754,7 @@ fn broken_body_gltf(app: &mut App, failure: BodyGltfFailure) -> Handle<Gltf> {
     }
 }
 
-fn usable_body_gltf(world: &mut World) -> Handle<Gltf> {
+pub(crate) fn usable_body_gltf(world: &mut World) -> Handle<Gltf> {
     let mut scene = World::new();
     let armature = scene
         .spawn((
@@ -508,7 +775,7 @@ fn usable_body_gltf(world: &mut World) -> Handle<Gltf> {
         .add(gltf_with_scene(Some(scene)))
 }
 
-fn register_test_body(world: &mut World, urn: WearableUrn, gltf: Handle<Gltf>) {
+pub(crate) fn register_test_body(world: &mut World, urn: WearableUrn, gltf: Handle<Gltf>) {
     world
         .run_system_once(move |mut wearables: CollectibleManager<Wearable>| {
             // The base body supplies all geometry; no default garment needs to resolve in this fixture.
@@ -561,13 +828,58 @@ fn test_wearable_data(urn: &WearableUrn) -> CollectibleData<Wearable> {
     }
 }
 
-fn avatar_build(world: &mut World, owner: Entity) -> Entity {
+pub(crate) fn avatar_build(world: &mut World, owner: Entity) -> Entity {
     world
         .query::<(Entity, &AvatarDefinition, &ChildOf)>()
         .iter(world)
         .find(|(_, _, parent)| parent.parent() == owner)
         .map(|(entity, _, _)| entity)
         .expect("the avatar must have a pending build")
+}
+
+#[cfg(feature = "explorer")]
+#[test]
+fn removing_a_scene_avatar_shape_despawns_the_render_child() {
+    use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+
+    let mut app = app_with_avatar_scenes();
+    app.add_observer(add_attach_points_to_avatar_shape)
+        .add_observer(remove_attach_points_from_avatar_shape)
+        .init_resource::<LiveScenes>()
+        .init_resource::<PortableScenes>()
+        .init_resource::<ScenePointers>();
+    let world = app.world_mut();
+    let body = usable_body_gltf(world);
+    register_test_body(world, base_wearables::default_bodyshape_urn(), body);
+
+    let scene = world.spawn_empty().id();
+    let owner = world
+        .spawn((
+            AvatarShape(PbAvatarShape::default()),
+            SceneEntity {
+                root: scene,
+                scene_id: dcl_types::SceneId(scene),
+                id: SceneEntityId {
+                    id: 42,
+                    generation: 0,
+                },
+            },
+        ))
+        .id();
+    let other_child = world.spawn(ChildOf(owner)).id();
+    world.run_system_once(select_avatar).unwrap();
+    world.run_system_once(update_render_avatar).unwrap();
+    let render = avatar_build(world, owner);
+
+    world.entity_mut(owner).remove::<AvatarShape>();
+    world.run_system_once(select_avatar).unwrap();
+    assert!(world.get::<AttachPoints>(owner).is_none());
+    assert!(world.get::<AvatarSelection>(owner).is_none());
+
+    world.run_system_once(update_render_avatar).unwrap();
+
+    assert!(world.get_entity(render).is_err());
+    assert!(world.get_entity(other_child).is_ok());
 }
 
 fn take_load_reports(
@@ -791,4 +1103,126 @@ fn an_exhausted_gltf_fallback_reports_terminal_error_to_the_scene_crdt() {
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].asset, other_body().as_str());
     assert!(errors[0].timestamp > 0);
+}
+
+#[test]
+fn a_hidden_players_avatar_takes_no_max_avatars_slot() {
+    let mut app = App::new();
+    app.init_resource::<AppConfig>();
+    app.world_mut().resource_mut::<AppConfig>().max_avatars = 1;
+    app.init_resource::<SessionGraphics>();
+    let world = app.world_mut();
+    world.spawn((PrimaryUser::default(), GlobalTransform::default()));
+    // a built avatar at `distance` from the player, under a player root shown or hidden
+    let mut avatar = |distance: f32, shown: InheritedVisibility| {
+        let root = world.spawn(shown).id();
+        world
+            .spawn((
+                AvatarProcessed,
+                GlobalTransform::from_translation(Vec3::X * distance),
+                Visibility::Inherited,
+                ChildOf(root),
+            ))
+            .id()
+    };
+    // the nearest is hidden for another reason, such as a block
+    let blocked = avatar(1.0, InheritedVisibility::HIDDEN);
+    let near = avatar(2.0, InheritedVisibility::VISIBLE);
+    let far = avatar(3.0, InheritedVisibility::VISIBLE);
+
+    world.run_system_once(set_avatar_visibility).unwrap();
+
+    let visibility = |entity| *world.get::<Visibility>(entity).unwrap();
+    assert_eq!(
+        visibility(near),
+        Visibility::Inherited,
+        "the one slot is its"
+    );
+    assert_eq!(visibility(far), Visibility::Hidden);
+    assert_eq!(
+        visibility(blocked),
+        Visibility::Inherited,
+        "the cap leaves it alone: its player hides it"
+    );
+}
+
+fn render_definition(avatar_outline: bool, disable_dither: bool) -> AvatarRenderDefinition {
+    AvatarRenderDefinition {
+        body: Wearable {
+            category: WearableCategory::BODY_SHAPE,
+            hides: default(),
+            model: Some(WearableModel {
+                gltf: default(),
+                outline_compatible: true,
+                spring_bones: None,
+            }),
+            texture: None,
+            mask: None,
+        },
+        body_shape: String::new(),
+        skin_color: Color::WHITE,
+        hair_color: Color::WHITE,
+        eyes_color: Color::WHITE,
+        wearables: Vec::new(),
+        hides: default(),
+        bounds: SceneBounds::unbounded(),
+        disable_dither,
+        avatar_outline,
+    }
+}
+
+/// the face masks carry the body's tag, so they are outlined and faded by the camera dither
+/// exactly when the body is, plus the face-feature tag that lights them by the ambient alone
+#[test]
+fn mask_tag_matches_the_body() {
+    let dither = SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG;
+    let face = SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG;
+    let outlined = render_definition(true, false);
+    assert_eq!(
+        outlined.mask_tag(),
+        SCENE_MATERIAL_TOON_MESH_TAG | SCENE_MATERIAL_OUTLINE_MESH_TAG | dither | face
+    );
+    assert_eq!(outlined.mask_tag(), outlined.body_tag() | face);
+
+    let plain = render_definition(false, false);
+    assert_eq!(
+        plain.mask_tag(),
+        SCENE_MATERIAL_TOON_MESH_TAG | dither | face
+    );
+    assert_eq!(plain.mask_tag(), plain.body_tag() | face);
+
+    let undithered = render_definition(true, true);
+    assert_eq!(
+        undithered.mask_tag(),
+        SCENE_MATERIAL_TOON_MESH_TAG
+            | SCENE_MATERIAL_OUTLINE_MESH_TAG
+            | SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+            | dither
+            | face
+    );
+    assert_eq!(undithered.mask_tag(), undithered.body_tag() | face);
+
+    // the body itself is not a face feature
+    assert_eq!(outlined.body_tag() & face, 0);
+}
+
+/// a wearable opts out of the hover glow with `outlineCompatible: false`, with the outline
+/// setting on or off, and takes no outline tag either
+#[test]
+fn a_wearable_opts_out_of_the_hover_glow() {
+    let model = |outline_compatible| WearableModel {
+        gltf: default(),
+        outline_compatible,
+        spring_bones: None,
+    };
+    for avatar_outline in [true, false] {
+        let def = render_definition(avatar_outline, false);
+        assert!(hover_glows(def.body.model.as_ref()));
+        assert!(hover_glows(Some(&model(true))));
+        assert!(!hover_glows(Some(&model(false))));
+        assert_eq!(
+            def.model_tag(Some(&model(false))) & SCENE_MATERIAL_OUTLINE_MESH_TAG,
+            0
+        );
+    }
 }

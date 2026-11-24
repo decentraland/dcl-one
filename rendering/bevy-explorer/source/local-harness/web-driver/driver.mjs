@@ -24,7 +24,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -296,6 +296,7 @@ class Pipe {
 class Driver {
   #proc;
   #profile;
+  #keepProfile;
   #origin;
   #pipe;
   #exit;
@@ -319,9 +320,10 @@ class Driver {
   /** Chrome's own name and version, once launched, e.g. `Chrome/156.0.8078.48`. */
   product = '';
 
-  constructor(proc, profile, url) {
+  constructor(proc, profile, keepProfile, url) {
     this.#proc = proc;
     this.#profile = profile;
+    this.#keepProfile = keepProfile;
     this.#origin = new URL(url).origin;
     this.url = url;
     this.#pipe = new Pipe(proc.stdio[3], proc.stdio[4], (event) => this.#onEvent(event));
@@ -844,7 +846,8 @@ class Driver {
 
   // --- closing ---
 
-  /** `Browser.close`, a kill after 5 s, and the temporary profile removed. */
+  /** `Browser.close`, a kill after 5 s, and the temporary profile removed; a profile the caller
+   *  named stays. */
   close() {
     this.#closing ??= (async () => {
       this.#pipe.send('Browser.close').catch(() => {});
@@ -856,6 +859,7 @@ class Driver {
       }
       this.#pipe.fail(new Error('the driver is closed'));
       for (const stream of this.#proc.stdio) stream?.destroy();
+      if (this.#keepProfile) return;
       try {
         await rm(this.#profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch (error) {
@@ -876,12 +880,16 @@ class Driver {
   }
 }
 
-/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own. */
-export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900] } = {}) {
+/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own.
+ *  `profile` names a directory for Chrome's profile that is kept when the driver closes, so the
+ *  page's storage and caches carry over to the next launch with it; without one, each launch
+ *  has a temporary profile of its own. One Chrome at a time uses a profile. */
+export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900], profile: kept } = {}) {
   if (typeof url !== 'string' || url === '') throw new TypeError('launch needs the url to open');
   const executable = chrome ?? findChrome();
   if (executable == null) throw new Error(noChromeMessage(process.env));
-  const profile = await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-'));
+  const profile = kept == null ? await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-')) : path.resolve(kept);
+  if (kept != null) await mkdir(profile, { recursive: true });
   const flags = [
     '--remote-debugging-pipe',
     `--user-data-dir=${profile}`,
@@ -898,7 +906,7 @@ export async function launch({ url, chrome, headless = true, args = [], windowSi
     ...args
   ];
   const proc = spawn(executable, flags, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
-  const driver = new Driver(proc, profile, url);
+  const driver = new Driver(proc, profile, kept != null, url);
   try {
     await driver.open();
   } catch (error) {

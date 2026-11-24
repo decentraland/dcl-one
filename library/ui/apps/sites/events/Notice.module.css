@@ -1,0 +1,47 @@
+/* The design's <Alert>, standard variant: a light tint of the tone with its dark ink and a leading icon. */
+.notice {
+  display: flex;
+  gap: var(--dcl-space-12);
+  align-items: flex-start;
+  margin: 0;
+  padding: 6px var(--dcl-space-16);
+  border-radius: var(--dcl-radius-xs);
+  background: var(--notice-surface);
+  color: var(--notice-ink);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.15px;
+}
+
+.icon {
+  flex: none;
+  margin-block: 7px;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  padding-block: var(--dcl-space-8);
+  white-space: pre-line;
+}
+
+.notice[data-tone='error'] {
+  --notice-surface: var(--dcl-system-red-light-2);
+  --notice-ink: var(--dcl-system-red-dark-1);
+}
+
+.notice[data-tone='warning'] {
+  --notice-surface: var(--dcl-system-orange-light-2);
+  --notice-ink: var(--dcl-system-orange-dark-1);
+}
+
+.notice[data-tone='info'] {
+  --notice-surface: var(--dcl-system-blue-light-2);
+  --notice-ink: var(--dcl-system-blue-dark-1);
+}
+
+.notice[data-tone='success'] {
+  --notice-surface: var(--dcl-system-green-light-2);
+  --notice-ink: var(--dcl-system-green-dark-1);
+}

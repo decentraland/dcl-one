@@ -45,7 +45,10 @@ await driver.close()
 ```
 
 `findChrome()` takes `CHROME_PATH`, else the places `local-harness/benchmark` looks. `launch`
-takes `headless` (default true), `args` (more Chrome flags) and `windowSize`. `ready()` waits for
+takes `headless` (default true), `args` (more Chrome flags), `windowSize` and `profile`: a
+directory for Chrome's profile that `close()` leaves in place, so the page's storage and caches
+carry over to the next launch with it (one Chrome at a time). Without it each launch has a
+temporary profile that `close()` removes. `ready()` waits for
 a frame of the page's origin with both `window.engine_console_command` and
 `window.__dclTrustedInput`, and for the page to draw it (see "Wire protocol"); it rejects when its
 `timeout` (default 120 s) passes first. A page that never draws, such as a minimised headed window,

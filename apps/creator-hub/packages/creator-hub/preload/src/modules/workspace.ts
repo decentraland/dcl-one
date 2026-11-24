@@ -219,7 +219,8 @@ export function initializeWorkspace(services: Services) {
     try {
       await fs.stat(appHome);
     } catch (error) {
-      await fs.mkdir(appHome);
+      // The default sits two levels deep in the home folder (Decentraland/Scenes).
+      await fs.mkdir(appHome, { recursive: true });
     }
     return appHome;
   }
@@ -415,6 +416,11 @@ export function initializeWorkspace(services: Services) {
     const available = await getAvailable(scene.display?.title || NEW_SCENE_NAME);
 
     await fs.cp(_path, available.path, { recursive: true });
+    // The copy took `.editor/project.json` along, id included; without its own id it is the
+    // same project to analytics and to everything keyed by project.
+    const copyInfo = await getProjectInfoFs(available.path);
+    const { id: _sourceId, ...info } = await copyInfo.getAll();
+    await copyInfo.setAll(info as ProjectInfo);
     scene.display = { ...scene.display, title: available.name };
     await fs.writeFile(path.join(available.path, 'scene.json'), JSON.stringify(scene, null, 2));
     const project = await getProject({ path: available.path });

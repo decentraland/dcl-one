@@ -1,8 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { SECTIONS as CREATORHUB_SECTIONS } from "@ui/creatorhub/pages/chflowmapdata";
-import { SECTIONS as EXPLORER_SECTIONS } from "@ui/explorer/pages/exflowmapdata";
-import type { FlowSection, Track } from "@ui/flowmap/flowmapdata";
+import { EXPLORER_SECTIONS, type FlowSection, type Track } from "@web-core/flow-map";
 
 const MANIFEST_FILE = ".react-router/types/+routes.ts";
 
@@ -36,7 +34,6 @@ function collectRoutes(datasets: [string, FlowSection[]][]): Map<string, string[
 
 const manifest = routeManifest();
 const routes = collectRoutes([
-  ["chflowmapdata", CREATORHUB_SECTIONS],
   ["exflowmapdata", EXPLORER_SECTIONS],
 ]);
 

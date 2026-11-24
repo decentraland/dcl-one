@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod audio_transmitter;
 pub mod plugin;
 pub mod states;

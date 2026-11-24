@@ -4,7 +4,7 @@ bevy-explorer builds bevy from upstream bevy 0.16.1 plus our changes. The reposi
 upstream commit and one patch file per change in `rendering/bevy-explorer/patches/bevy`, and
 Cargo takes the patched source as a commit of this repository (ADRs:
 [patches](../../../../docs/adr/2026-11-14-explorer-sources-as-patches.md),
-[commits](../../../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)). Seventeen
+[commits](../../../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)). Eighteen
 other sources are tracked the same way; this page is only about bevy, because that is where
 behaviour differs from stock and where a reader who knows bevy will otherwise be wrong.
 
@@ -183,6 +183,12 @@ across workers:
 - `HierarchyPropagatePlugin`, `Propagate<C>`, `PropagateStop<C>`, `PropagateOver<C>` (upstream
   #17575): propagate a component down the hierarchy.
 - `children!` accepts more than twelve children (upstream #18865, #21099).
+- The multi-threaded executor decides which systems conflict once, when a schedule is built,
+  from their component access, and only tests bits while it runs (upstream #16885,
+  **throwaway**). Stock 0.16 compares archetype-level access for every waiting system on every
+  pass; in Genesis Plaza on the web that took about 5.4 ms a frame over the main schedules, and
+  takes about 2.5 ms with this. Two systems that could conflict on some archetype no longer run
+  together even when no entity has that archetype: add a `Without` filter to let them.
 - Ignored command errors build no `BevyError` (upstream #19718: `HandleError::ignore_error`,
   `queue_silenced`): the `try_*` entity commands and the relationship hooks drop their error
   instead of handing it to `ignore`. Building a `BevyError` captures a backtrace whenever
@@ -314,7 +320,8 @@ repository root.
   `commit`, run `nix build .#bevy-explorer.sources`, which fails with the hash to record.
 - `.gitattributes` sets `-text -whitespace` on `patches/**`, so patch bytes stay exact on every
   platform. Never reformat a patch file.
-- The `git` + `rev` entries are in the patch tables of `source/Cargo.toml`. `[patch.crates-io]`
+- The `git` + `rev` entries are in the patch tables of `source/Cargo.toml`, except `boimp`: it is
+  not on crates.io, so `[workspace.dependencies]` names it by `git` + `rev`. `[patch.crates-io]`
   lists the crates that the workspace or an ecosystem crate names by crates.io version (five of
   bevy); the other crates of a source follow from the same checkout. Three
   `[patch."https://github.com/robtfm/..."]` tables catch the manifests that name a former fork by

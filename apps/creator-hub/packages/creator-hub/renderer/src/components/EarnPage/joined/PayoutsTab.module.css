@@ -28,10 +28,19 @@
   border-radius: var(--shape-borderRadiusXLarge);
 }
 
+.cardTop {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
 .cardHeader {
   display: flex;
+  flex: 1 0 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 8px 4px;
+  min-width: 0;
   min-height: 24px;
 }
 
@@ -45,6 +54,27 @@
   margin: 0;
   color: var(--palette-neutral-softWhite);
   border-radius: var(--shape-borderRadiusMedium);
+  white-space: nowrap;
+}
+
+.contactTop {
+  display: flow-root;
+  margin-bottom: -16px;
+}
+
+.contactTop > .cardHeader {
+  float: left;
+  margin-bottom: 16px;
+}
+
+.contactTop > .setupHint {
+  float: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 24px;
+  margin: 0 -8px 8px 10px;
+  text-align: right;
 }
 
 .cardTitle:focus:not(:focus-visible) {
@@ -57,9 +87,8 @@
 }
 
 .cornerButton.cornerButton.cornerButton.cornerButton {
-  position: absolute;
-  top: 19px;
-  right: 19px;
+  flex-shrink: 0;
+  margin: -1px -1px -9.5px 0;
   min-width: 0;
   height: 34.5px;
   box-sizing: border-box;
@@ -83,40 +112,41 @@
   outline-offset: 2px;
 }
 
-.cornerButton.cornerButton.cornerButton.cornerButton:hover {
+.cornerButton.cornerButton.cornerButton.cornerButton:hover:not(:disabled) {
   background-color: var(--palette-whiteTransparent-subtle);
   box-shadow: none;
 }
 
-.addWalletButton.addWalletButton.addWalletButton.addWalletButton {
-  position: static;
-  top: 19px;
-  right: 19px;
-  min-width: 0;
-  height: 34.5px;
-  box-sizing: border-box;
-  padding: 10px 20px;
-  border-radius: var(--ui-radius);
-  box-shadow: none;
+.verifyEmailButton.verifyEmailButton.verifyEmailButton.verifyEmailButton {
+  float: right;
+  margin: -8px -8px 8px 18px;
+}
+
+.cornerButton.cornerButton.cornerButton.cornerButton:disabled {
+  color: var(--palette-neutral-softWhite);
+  opacity: 0.4;
+  cursor: default;
+  background-color: transparent;
+  border-color: var(--palette-whiteTransparent-blurry);
+}
+
+.setupRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.setupHint {
   font-family: var(--font-family);
   font-optical-sizing: none;
-  font-size: var(--type-h8-semi-size);
-  font-weight: var(--type-h8-semi-weight);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
   line-height: normal;
-  letter-spacing: var(--type-h8-semi-letter-spacing);
-  align-self: flex-start;
-  text-transform: uppercase;
-  color: var(--palette-neutral-softWhite);
-  background-color: var(--primary);
-}
-
-.addWalletButton.addWalletButton.addWalletButton.addWalletButton:focus-visible {
-  outline: 2px solid var(--palette-info-light);
-  outline-offset: 2px;
-}
-
-.addWalletButton.addWalletButton.addWalletButton.addWalletButton:hover {
-  background-color: var(--primary-hover);
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  align-self: center;
+  margin: 0;
+  color: var(--dcl-silver);
 }
 
 .infoGroup {
@@ -198,8 +228,9 @@
   line-height: normal;
   letter-spacing: var(--type-h7-semi-letter-spacing);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   color: var(--dcl-silver);
   white-space: nowrap;
 }

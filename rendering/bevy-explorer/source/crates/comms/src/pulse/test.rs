@@ -346,6 +346,67 @@ fn parcel_decode_matches_server_scheme() {
 }
 
 #[test]
+fn encoding_covers_the_grid_edges_and_refuses_beyond_them() {
+    // Default grid: x in [-152, 165], z in [-152, 160] (bounds plus 2 padding), 16 m parcels.
+    let grid = PulseParcelGrid::default();
+    let at = |x: f32, z: f32| grid.encode_to_parcel(Vec3::new(x, 0.0, z));
+    let (width, height) = (165 - -152 + 1, 160 - -152 + 1);
+
+    assert_eq!(at(-152.0 * 16.0, -152.0 * 16.0).unwrap().0, 0);
+    let (last, local) = at(166.0 * 16.0 - 0.01, 161.0 * 16.0 - 0.01).unwrap();
+    assert_eq!(last, width * height - 1);
+    assert!(local.x < 16.0 && local.z < 16.0);
+    // A round trip through the decoder lands on the same spot.
+    let world = Vec3::new(161.0, 2.0, 323.0);
+    let (index, local) = grid.encode_to_parcel(world).unwrap();
+    assert_eq!(grid.decode_to_world(index, local), world);
+
+    // One past each edge: z would be an index the server refuses, x would wrap into another row.
+    assert_eq!(at(-152.0 * 16.0 - 0.01, 0.0), None);
+    assert_eq!(at(166.0 * 16.0, 0.0), None);
+    assert_eq!(at(0.0, -152.0 * 16.0 - 0.01), None);
+    assert_eq!(at(0.0, 161.0 * 16.0), None);
+    assert_eq!(at(f32::MAX, 0.0), None);
+    assert_eq!(at(0.0, f32::MIN), None);
+    assert_eq!(at(f32::NAN, 0.0), None);
+}
+
+#[test]
+fn clamping_moves_a_position_onto_the_nearest_edge() {
+    let grid = PulseParcelGrid::default();
+    let (index, local) = grid.encode_clamped(Vec3::new(1e9, 2.0, -1e9)).unwrap();
+    // Far x edge (165) in the near z row (-152).
+    assert_eq!(index, 165 - -152);
+    assert!(local.x < 16.0 && local.z >= 0.0 && local.y == 2.0);
+    let inside = Vec3::new(161.0, 2.0, 323.0);
+    assert_eq!(grid.encode_clamped(inside), grid.encode_to_parcel(inside));
+    assert_eq!(grid.encode_clamped(Vec3::NAN), None);
+}
+
+#[test]
+fn skipped_inputs_and_teleports_are_logged_apart() {
+    let mut log = OutOfGridLog::default();
+    let now = Instant::now();
+
+    assert!(log.should_log(OutOfGrid::Input, now));
+    assert!(!log.should_log(OutOfGrid::Input, now));
+    // A stream of skipped inputs does not hide a skipped teleport.
+    assert!(log.should_log(OutOfGrid::Teleport, now));
+    assert!(log.should_log(OutOfGrid::Input, now + OUT_OF_GRID_LOG_INTERVAL));
+}
+
+#[test]
+fn movement_outside_the_grid_has_no_pulse_state() {
+    let movement = rfc4::Movement {
+        position_x: 0.0,
+        position_z: 161.0 * 16.0,
+        ..Default::default()
+    };
+
+    assert_eq!(from_movement(&movement, &PulseParcelGrid::default()), None);
+}
+
+#[test]
 fn join_emits_alias_and_world_movement() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     let grounded = pulse::PlayerAnimationFlags::Grounded as u32;
@@ -412,7 +473,7 @@ fn head_angles_round_trip_signed() {
         head_pitch: -20.0,
         ..Default::default()
     };
-    let state = from_movement(&movement, &grid);
+    let state = from_movement(&movement, &grid).unwrap();
 
     let mut decoder = PulseDecoder::new(grid);
     let out = only_movement(decoder.handle(server_msg(
@@ -1417,7 +1478,7 @@ fn a_replaced_subject_leaves_no_resync_pending() {
 /// Once its last subject has left, a wallet is no longer held: it comes back as a first sighting,
 /// and a reset does not report it.
 #[test]
-fn a_wallet_that_left_is_no_longer_held() {
+fn reconnect_snapshot_for_a_wallet_that_left_is_discontinuous() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(joined_home(SUBJECT, WALLET));
     decoder.handle(joined_home(SUBJECT + 1, OTHER));
@@ -1429,10 +1490,7 @@ fn a_wallet_that_left_is_no_longer_held() {
             events.as_slice(),
             [
                 PulseEvent::Joined { .. },
-                PulseEvent::Movement {
-                    teleport: false,
-                    ..
-                }
+                PulseEvent::Movement { teleport: true, .. }
             ]
         ),
         "{events:?}"

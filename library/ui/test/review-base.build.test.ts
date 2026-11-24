@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { build } from 'vite'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { resolvePageUrl } from '../figma/review/src/review/review-url'
 
 // The Review is built once for the root, once with a relative base and once under a CDN prefix. Each build is
@@ -20,6 +20,12 @@ const cases = [
   { name: 'a relative base', base: './', mount: '/anywhere/deep/' },
   { name: 'the root', base: '/', mount: '/' }
 ]
+
+const galleryQueries = [
+  'platform=all&component=NavBar&variant=0',
+  'platform=web&component=Button&variant=3',
+  'platform=all&component=NavBar&variant=0&foundations=icons'
+] as const
 
 const types: Record<string, string> = {
   '.html': 'text/html',
@@ -85,9 +91,14 @@ afterAll(async () => {
   await rm(scratch, { recursive: true, force: true })
 })
 
-describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
+describe.each(cases)('when a Review is built for $name', ({ name, base, mount }) => {
+  let outDir: string
+
+  beforeEach(() => {
+    outDir = builds.get(name)!
+  })
+
   it('should hard-code no logical path in the built scripts or pages', async () => {
-    const outDir = builds.get(name)!
     // At the root base the pages legitimately name /dcl-ui-review/ themselves; under any other base they must not.
     const built = (await files(outDir)).filter((file) =>
       (base === '/' ? /\.js$/ : /\.(js|html)$/).test(file)
@@ -102,10 +113,21 @@ describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
     }
   })
 
-  it('should serve the index, the entry script and the stylesheet where the base puts them', async () => {
-    const outDir = builds.get(name)!
-    const { server, origin } = await serve(outDir, mount)
-    try {
+  describe('and the build is served under its mount', () => {
+    let server: Server
+    let origin: string
+
+    beforeEach(async () => {
+      const served = await serve(outDir, mount)
+      server = served.server
+      origin = served.origin
+    })
+
+    afterEach(() => {
+      server.close()
+    })
+
+    it('should serve the index, the entry script and the stylesheet where the base puts them', async () => {
       const page = new URL(`${mount}${FOLDER}/index.html`, origin)
       const html = await (await fetch(page)).text()
       expect((await fetch(page)).status).toBe(200)
@@ -118,41 +140,24 @@ describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
         expect((await fetch(address)).status, address).toBe(200)
       expect(entry.pathname.startsWith(mount)).toBe(true)
       expect(stylesheet.pathname.startsWith(mount)).toBe(true)
-    } finally {
-      server.close()
-    }
-  })
+    })
 
-  it('should serve the gallery links the app builds, and keep them under the mount', async () => {
-    const outDir = builds.get(name)!
-    const { server, origin } = await serve(outDir, mount)
-    try {
+    it('should serve the gallery links the app builds, and keep them under the mount', async () => {
       const page = new URL(`${mount}${FOLDER}/index.html`, origin)
       const html = await (await fetch(page)).text()
       const entry = new URL(/<script[^>]*src="([^"]+)"/.exec(html)![1]!, page)
-      const queries = [
-        'platform=all&component=NavBar&variant=0',
-        'platform=web&component=Button&variant=3',
-        'platform=all&component=NavBar&variant=0&foundations=icons'
-      ]
 
-      for (const query of queries) {
+      for (const query of galleryQueries) {
         const link = new URL(resolvePageUrl(query, base, entry.href), page)
         expect(link.pathname.startsWith(mount), link.href).toBe(true)
         expect(link.search).toBe(`?${query}`)
         expect((await fetch(link)).status, link.href).toBe(200)
       }
-    } finally {
-      server.close()
-    }
-  })
+    })
 
-  // The page at the output root is the same document one level up. Under a relative base, left as emitted its
-  // ../dcl-ui-review/ URLs would resolve outside the folder the app is mounted at.
-  it('should keep every URL of the root index.html under the mount, and each one served', async () => {
-    const outDir = builds.get(name)!
-    const { server, origin } = await serve(outDir, mount)
-    try {
+    // The page at the output root is the same document one level up. Under a relative base, left as emitted its
+    // ../dcl-ui-review/ URLs would resolve outside the folder the app is mounted at.
+    it('should keep every URL of the root index.html under the mount, and each one served', async () => {
       const rootPage = new URL(`${mount}index.html`, origin)
       const response = await fetch(rootPage)
       const html = await response.text()
@@ -169,23 +174,25 @@ describe.each(cases)('a Review build for $name', ({ name, base, mount }) => {
         expect(url.pathname.startsWith(mount), `${reference} -> ${url.pathname}`).toBe(true)
         expect((await fetch(url)).status, url.href).toBe(200)
       }
-    } finally {
-      server.close()
-    }
+    })
   })
 })
 
-describe('a Review build for the root', () => {
-  it('should leave the root index.html exactly as the build emitted it, as before the base was configurable', async () => {
-    const outDir = builds.get('the root')!
+describe('when the Review is built for the root', () => {
+  let outDir: string
 
+  beforeEach(() => {
+    outDir = builds.get('the root')!
+  })
+
+  it('should leave the root index.html exactly as the build emitted it, as before the base was configurable', async () => {
     expect(await readFile(path.join(outDir, 'index.html'), 'utf8')).toBe(
       await readFile(path.join(outDir, FOLDER, 'index.html'), 'utf8')
     )
   })
 })
 
-describe('a Review build, whatever its base', () => {
+describe('when a Review build is published, whatever its base', () => {
   // The gallery is published (CDN previews), so it must carry no Figma imagery: no reference screenshots, no
   // renders compared against them, no fidelity report and no exported image fill.
   it('should publish no Figma evidence or image export', async () => {

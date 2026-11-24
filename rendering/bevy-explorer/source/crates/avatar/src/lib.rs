@@ -1,3 +1,7 @@
+#![forbid(unsafe_code)]
+
+#[cfg(feature = "explorer")]
+use common::sync::MutexExt;
 #[cfg(feature = "explorer")]
 use std::path::PathBuf;
 use std::{collections::VecDeque, f32::consts::PI, time::Duration};
@@ -32,10 +36,11 @@ use collectibles::{
 };
 #[cfg(feature = "explorer")]
 use console::DoAddConsoleCommand;
+use hover_glow::{can_glow, set_hover_glows};
 use scene_material::{
     SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-    SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
-    SCENE_MATERIAL_TOON_MESH_TAG,
+    SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
+    SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
 };
 
 pub mod animate;
@@ -60,6 +65,7 @@ pub mod foreign_dynamics;
 #[cfg(feature = "explorer")]
 pub mod ghost;
 pub mod head_ik;
+mod hover_glow;
 #[cfg(feature = "explorer")]
 mod ik_debug;
 #[cfg(feature = "explorer")]
@@ -74,6 +80,7 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
+mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -86,7 +93,9 @@ use crate::{
 };
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
-    structs::{AppConfig, AttachPoints, Clips, EmoteCommand, EmoteMask, PrimaryUser},
+    structs::{
+        AppConfig, AttachPoints, Clips, EmoteCommand, EmoteMask, PrimaryUser, SessionGraphics,
+    },
     util::{SceneSpawnerPlus, TryPushChildrenEx},
 };
 #[cfg(feature = "explorer")]
@@ -170,8 +179,11 @@ impl Plugin for AvatarRenderPlugin {
         app.add_event::<AvatarLoadReport>();
         // the emote lifecycle feed; comms and the emote report add it too, idempotently
         app.add_event::<common::structs::EmoteLifecycleEvent>();
+        // the session's Max Avatars; the Explorer's settings initialise it too
+        app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -513,7 +525,6 @@ pub struct AvatarSelection {
 }
 
 // choose the avatar shape based on current scene of the player
-#[allow(clippy::type_complexity)]
 #[cfg(feature = "explorer")]
 fn select_avatar(
     mut commands: Commands,
@@ -670,8 +681,39 @@ pub struct AvatarRenderDefinition {
     hides: HashSet<WearableCategory>,
     bounds: SceneBounds,
     disable_dither: bool,
-    cel_shading: bool,
     avatar_outline: bool,
+}
+
+impl AvatarRenderDefinition {
+    /// The tag of a mesh of `model`. Avatars are always toon shaded; the outline follows the
+    /// setting in the definition, and toggling it re-renders avatars (see
+    /// retag_avatars_on_style_change). Wearables can opt out of the outline via
+    /// `outlineCompatible: false`.
+    fn model_tag(&self, model: Option<&WearableModel>) -> u32 {
+        let outline = self.avatar_outline && model.is_some_and(|model| model.outline_compatible);
+        (if outline {
+            SCENE_MATERIAL_OUTLINE_MESH_TAG
+        } else {
+            0
+        }) | (if self.disable_dither {
+            SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+        } else {
+            0
+        }) | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
+            | SCENE_MATERIAL_TOON_MESH_TAG
+    }
+
+    /// the body model is guaranteed by spawn_scenes
+    fn body_tag(&self) -> u32 {
+        self.model_tag(self.body.model.as_ref())
+    }
+
+    /// The eyes, eyebrows and mouth are drawn on the body's head, so they outline and fade as
+    /// the body does; they are lit by the ambient light alone (toon.wgsl's
+    /// `facial_feature_lighting`).
+    fn mask_tag(&self) -> u32 {
+        self.body_tag() | SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG
+    }
 }
 
 #[derive(Component)]
@@ -685,6 +727,12 @@ pub struct RetryRenderAvatar;
 pub struct AvatarLoadFailures {
     bodies: HashSet<WearableUrn>,
     wearables: HashSet<WearableUrn>,
+}
+
+/// Whether a mesh of `model` glows while its avatar is hovered: a wearable opts out with
+/// `outlineCompatible: false`, whatever the outline setting.
+fn hover_glows(model: Option<&WearableModel>) -> bool {
+    model.is_none_or(|model| model.outline_compatible)
 }
 
 impl AvatarLoadFailures {
@@ -745,16 +793,16 @@ fn record_avatar_failures(
         });
 }
 
-// when an avatar style setting (cel shading, outline) is toggled, re-render every
+// when the avatar outline setting is toggled, re-render every
 // avatar so their meshes are respawned with the right mesh tags. the tags are set
 // once at mesh creation in process_avatar, so an in-place flip isn't enough.
 fn retag_avatars_on_style_change(
     config: Res<AppConfig>,
-    mut prev: Local<Option<(bool, bool)>>,
+    mut prev: Local<Option<bool>>,
     avatars: Query<Entity, With<AvatarSelection>>,
     mut commands: Commands,
 ) {
-    let cur = (config.graphics.cel_shading, config.graphics.avatar_outline);
+    let cur = config.graphics.avatar_outline;
     if *prev != Some(cur) {
         if prev.is_some() {
             for entity in &avatars {
@@ -766,7 +814,6 @@ fn retag_avatars_on_style_change(
 }
 
 // load wearables and create renderable avatar entity once all loaded
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_render_avatar(
     mut commands: Commands,
     query: Query<
@@ -783,7 +830,7 @@ fn update_render_avatar(
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
     mut removed_selections: RemovedComponents<AvatarSelection>,
-    children: Query<(&Children, &AttachPoints)>,
+    children: Query<(&Children, Option<&AttachPoints>)>,
     mut avatar_render_entities: Query<(&mut AvatarDefinition, Has<AvatarProcessed>)>,
     mut wearable_loader: CollectibleManager<Wearable>,
     mut reports: EventWriter<AvatarLoadReport>,
@@ -795,10 +842,11 @@ fn update_render_avatar(
         // the outfit's hashes leave the request-slot queue with the component
         commands.entity(entity).try_remove::<PartitionedDownloads>();
         if let Ok((children, attach_points)) = children.get(entity) {
-            // reparent attach points
-            commands
-                .entity(entity)
-                .try_push_children(&attach_points.entities());
+            if let Some(attach_points) = attach_points {
+                commands
+                    .entity(entity)
+                    .try_push_children(&attach_points.entities());
+            }
             for render_child in children
                 .iter()
                 .filter(|child| avatar_render_entities.get(*child).is_ok())
@@ -1053,7 +1101,6 @@ fn update_render_avatar(
                     .map(|ctx| ctx.bounds.clone())
                     .unwrap_or_default(),
                 disable_dither: selection.disable_dither,
-                cel_shading: config.graphics.cel_shading,
                 avatar_outline: config.graphics.avatar_outline,
             },
             emote: selection
@@ -1190,6 +1237,18 @@ fn update_render_avatar(
     }
 }
 
+/// Whether a face wearable's texture or mask is still loading. A failed one does not hold the
+/// build: that face is drawn without it.
+fn face_images_loading<'a>(
+    wearables: impl IntoIterator<Item = &'a Wearable>,
+    load_state: impl Fn(&Handle<Image>) -> Option<bevy::asset::LoadState>,
+) -> bool {
+    wearables
+        .into_iter()
+        .flat_map(|wearable| wearable.texture.iter().chain(&wearable.mask))
+        .any(|image| matches!(load_state(image), Some(bevy::asset::LoadState::Loading)))
+}
+
 #[derive(Component)]
 pub struct AvatarLoaded {
     body_instance: InstanceId,
@@ -1204,7 +1263,6 @@ pub struct AvatarProcessed;
 /// state of that entity (a grow-only set the scene reads in order): Loading once the look's
 /// files are being fetched, Finished once it renders, FinishedWithError when it never will.
 // instantiate avatar gltfs
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn spawn_scenes(
     mut commands: Commands,
     query: Query<
@@ -1245,7 +1303,14 @@ fn spawn_scenes(
                 }
             });
 
-        if any_loading {
+        // the face's textures and masks too: the avatar on show stays until this one can draw its
+        // eyes, eyebrows and mouth, instead of showing a bare face while they load
+        let face_loading = face_images_loading(
+            def.wearables.iter().map(|(_, wearable)| wearable),
+            |image| asset_server.get_load_state(image),
+        );
+
+        if any_loading || face_loading {
             continue;
         }
 
@@ -1389,7 +1454,6 @@ const AVATAR_EMISSIVE_MULTIPLIER: f32 = 4.0;
 const AVATAR_DITHER_BASE_OPACITY: f32 = 0.5;
 
 // update materials and hide base parts
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn process_avatar(
     mut commands: Commands,
     query: Query<
@@ -1419,11 +1483,12 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, inverse_bindposes, mut mat_cache, mut mask_cache): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut run): (
         Res<AppConfig>,
         Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
+        ResMut<processing_timing::AvatarProcessingRun>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
@@ -1443,6 +1508,8 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
+    let started = bevy::platform::time::Instant::now();
+    let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
         let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)
@@ -1458,30 +1525,13 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
+        processed += 1;
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
             Vec3::new(-1.24, 0.0, -0.7) + root_gt.translation(),
             Vec3::new(1.24, 2.42, 0.7) + root_gt.translation(),
         );
-
-        // style avatar meshes per the settings in the definition; toggling either
-        // re-renders avatars (see retag_avatars_on_style_change)
-        let toon_tag = if def.cel_shading {
-            SCENE_MATERIAL_TOON_MESH_TAG
-        } else {
-            0
-        };
-        // wearables can opt out of the outline via `outlineCompatible: false`
-        let outline_tag = |model: &WearableModel| {
-            if def.avatar_outline && model.outline_compatible {
-                SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG
-            } else {
-                0
-            }
-        };
-        // body model is guaranteed by spawn_scenes
-        let body_outline_tag = def.body.model.as_ref().map(outline_tag).unwrap_or(0);
 
         let bounds_key = bounds_bits(&def.bounds);
         // how far the visible meshes reach above the head bone, along it and in its own units:
@@ -1576,19 +1626,15 @@ fn process_avatar(
                                 &mut scene_materials,
                             )
                         });
-                    commands.entity(scene_ent).try_insert((
+                    let mut mesh = commands.entity(scene_ent);
+                    mesh.try_insert((
                         MeshMaterial3d(instance_mat.clone()),
-                        MeshTag(
-                            body_outline_tag
-                                | (if def.disable_dither {
-                                    SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-                                } else {
-                                    0
-                                })
-                                | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-                                | toon_tag,
-                        ),
+                        MeshTag(def.body_tag()),
                     ));
+                    set_hover_glows(
+                        &mut mesh,
+                        hover_glows(def.body.model.as_ref()) && can_glow(mat.alpha_mode),
+                    );
                 }
             }
 
@@ -1642,7 +1688,10 @@ fn process_avatar(
                                 });
                             commands
                                 .entity(scene_ent)
-                                .try_insert(MeshMaterial3d(mask_material))
+                                .try_insert((
+                                    MeshMaterial3d(mask_material),
+                                    MeshTag(def.mask_tag()),
+                                ))
                                 .remove::<MeshMaterial3d<SceneMaterial>>();
                         } else {
                             debug!("no mask for {suffix}");
@@ -1672,20 +1721,12 @@ fn process_avatar(
                                         .with_base_opacity(AVATAR_DITHER_BASE_OPACITY)
                                         .with_capsule_dither(),
                                 });
-                            commands.entity(scene_ent).try_insert((
-                                MeshMaterial3d(material),
-                                MeshTag(
-                                    body_outline_tag
-                                        | (if def.disable_dither {
-                                            SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-                                        } else {
-                                            0
-                                        })
-                                        | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-                                        | toon_tag,
-                                ),
-                            ));
+                            commands
+                                .entity(scene_ent)
+                                .try_insert((MeshMaterial3d(material), MeshTag(def.mask_tag())));
                         };
+                        // blended either way
+                        set_hover_glows(&mut commands.entity(scene_ent), false);
                         *vis = Visibility::Inherited;
                     }
                 }
@@ -1949,19 +1990,15 @@ fn process_avatar(
                                     &mut scene_materials,
                                 )
                             });
-                        commands.entity(scene_ent).try_insert((
+                        let mut mesh = commands.entity(scene_ent);
+                        mesh.try_insert((
                             MeshMaterial3d(instance_mat.clone()),
-                            MeshTag(
-                                outline_tag(model)
-                                    | (if def.disable_dither {
-                                        SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-                                    } else {
-                                        0
-                                    })
-                                    | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-                                    | toon_tag,
-                            ),
+                            MeshTag(def.model_tag(Some(model))),
                         ));
+                        set_hover_glows(
+                            &mut mesh,
+                            hover_glows(Some(model)) && can_glow(mat.alpha_mode),
+                        );
                     }
                 }
             }
@@ -2092,11 +2129,14 @@ fn process_avatar(
             state: LoadingState::Finished,
         });
     }
+    *run = processing_timing::AvatarProcessingRun {
+        spent: started.elapsed(),
+        processed,
+    };
 }
 
 // derive the scene material for an avatar's gltf material, sharing the asset
 // with every other avatar that derives an identical material so they can batch
-#[allow(clippy::too_many_arguments)]
 fn derived_scene_material(
     mat: &StandardMaterial,
     h_mat: &MeshMaterial3d<StandardMaterial>,
@@ -2326,25 +2366,33 @@ fn set_avatar_visibility(
         With<AvatarProcessed>,
     >,
     beyond_max: Query<(), With<BeyondMaxAvatars>>,
+    shown: Query<&InheritedVisibility>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
+    session: Res<SessionGraphics>,
 ) {
     let Ok(player_pos) = player.single().map(|gt| gt.translation()) else {
         return;
     };
+    let max_avatars = session.max_avatars(&config);
 
+    // an avatar whose player is hidden for another reason (a block or ban, an avatar modifier
+    // area, its scene) draws nothing, so it takes no slot from one that would show. The cap
+    // itself hides the build, below its player, so it never feeds back into this
+    let counts = |player: Entity| shown.get(player).is_ok_and(|shown| shown.get());
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
         .iter()
-        .filter(|(_, _, maybe_layer, _)| {
+        .filter(|(_, _, maybe_layer, player)| {
             maybe_layer.is_none_or(|layer| layer.intersects(&default_layer))
+                && counts(player.parent())
         })
         .map(|(t, ..)| (t.translation() - player_pos).length_squared())
         .collect::<Vec<_>>();
     // only the (max_avatars)-th distance matters; partition instead of sorting
-    let cutoff = if distances.len() > config.max_avatars {
+    let cutoff = if distances.len() > max_avatars {
         *distances
-            .select_nth_unstable_by(config.max_avatars, |a, b| {
+            .select_nth_unstable_by(max_avatars, |a, b| {
                 a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less)
             })
             .1
@@ -2379,7 +2427,6 @@ fn set_avatar_visibility(
 #[command(name = "/debug_dump_avatar")]
 struct DebugDumpAvatar;
 
-#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "explorer")]
 fn debug_dump_avatar(
     mut input: ConsoleCommand<DebugDumpAvatar>,
@@ -2448,7 +2495,7 @@ fn debug_dump_avatar(
             let count = std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0)));
 
             for content_file in def.content.files() {
-                count.lock().unwrap().0 += 1;
+                count.lock_ignore_poison().0 += 1;
                 let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
                     scene_hash.to_owned(),
                     content_file.to_owned(),
@@ -2463,7 +2510,7 @@ fn debug_dump_avatar(
                 let send = console_relay.send.clone();
                 tasks.push(IoTaskPool::get().spawn(async move {
                     let report = |fail: Option<String>| {
-                        let mut count = count.lock().unwrap();
+                        let mut count = count.lock_ignore_poison();
                         if let Some(fail) = fail {
                             count.2 += 1;
                             let _ = send.send(fail);

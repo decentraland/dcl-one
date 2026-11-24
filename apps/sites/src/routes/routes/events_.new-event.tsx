@@ -1,28 +1,39 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
+import { useEventsCopy, SubmitHangoutView as LdSubmitHangoutView, type SitesLocaleHandle } from "@dcl/one-ui";
+import { rejectedNotice } from "@/features/social/submit-hangout/review-notice";
+import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
+import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-page";
 import { buildHangoutSubmit, deleteHangout, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { useAuth } from "@/data/lib/auth/context";
+import { CatalystError } from "@/data/lib/catalyst/client";
 import { getIdentity } from "@/data/lib/auth/session";
-import { SitesChromeMaybe } from "@ui/web/frames/SitesChrome";
+import { SitesLayoutMaybe } from "@/features/components/chrome/SitesLayout";
 import { openSignIn } from "@/features/components/auth/signin-store";
+import { useSignInRequired } from "@/features/components/auth/useSignInRequired";
+import { parseUuidParam } from "@/data/lib/creators/ids";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
 import SubmitHangout, {
+  SubmitHangoutLoading,
   type CategoryOption,
 } from "@/features/social/submit-hangout/SubmitHangout";
+import DeleteEventDialog from "@/features/social/submit-hangout/DeleteEventDialog";
 
 import type { Route } from "./+types/events_.new-event";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
+export const handle = { sitesLocalized: true } satisfies SitesLocaleHandle;
+
 const STORY: StoryId = "landings/submit-hangout";
 
 function toOption(c: EventCategory): CategoryOption {
-  return { name: c.name, label: c.i18n?.en ?? c.name };
+  return { name: c.name, label: c.i18n?.en ?? c.name, i18n: c.i18n };
 }
 
 const FALLBACK: PageDefaults = {
@@ -55,7 +66,8 @@ export async function loader({ request, context, params }: Route.LoaderArgs & { 
     mode,
     categories,
     categoriesError,
-    eventId: mode === "edit" ? params.id?.trim() || null : null,
+    // Event ids are UUIDs and the API refuses anything else, so a malformed id is no event at all.
+    eventId: mode === "edit" ? parseUuidParam(params.id?.trim()) ?? null : null,
     communityId: mode === "create" ? url.searchParams.get("community_id")?.trim() || "" : "",
     assignment,
   };
@@ -73,15 +85,39 @@ type LoaderData = {
   assignment: PageDefaults;
 };
 
-export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps) {
+export function headers() {
+  return { "Cache-Control": "private, no-cache" };
+}
+
+const noSubscription = () => () => {};
+// Statuses that answer "this account cannot edit this event" (400: the API refused the id itself);
+// anything else may succeed on a retry.
+const DENIED_STATUSES = new Set([400, 401, 403, 404]);
+// Layout effects warn during server rendering; the editor only scrolls in the browser.
+const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+export default function SubmitHangoutRoute(props: Route.ComponentProps) {
+  return <EventsLocaleProvider><SubmitHangoutForm {...props} /></EventsLocaleProvider>;
+}
+
+function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
+  const footerCopy = useEventsFooterCopy();
+  const { text, locale } = useEventsCopy();
+  const queryClient = useQueryClient();
   const d = loaderData as LoaderData;
   const auth = useAuth();
   const navigate = useNavigate();
-  const [loaded, setLoaded] = useState<{ account: string; id: string; event?: EditableHangout; error?: string } | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const location = useLocation();
+  const [params] = useSearchParams();
+  // The server and the hydrating render have no identity; only a browser render can tell signed out.
+  const hydrated = useSyncExternalStore(noSubscription, () => true, () => false);
+  const inline = !params.get("step")?.trim();
+  const [loaded, setLoaded] = useState<{ account: string; id: string; event?: EditableHangout; error?: string; status?: number } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteFailed, setDeleteFailed] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [optionsRead, setOptionsRead] = useState<{ account: string; options?: HangoutOptions; error?: string } | null>(null);
-  const [optionsAttempt, setOptionsAttempt] = useState(0);
   useEffect(() => {
     if (!auth.identity) return;
     const controller = new AbortController();
@@ -91,7 +127,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
       (error: unknown) => { if (!controller.signal.aborted) setOptionsRead({ account, error: error instanceof Error ? error.message : "Could not load authoring options." }); },
     );
     return () => controller.abort();
-  }, [auth.identity, optionsAttempt]);
+  }, [auth.identity, attempt]);
   const optionsResult = optionsRead?.account === auth.address ? optionsRead : null;
   const options = optionsResult?.options ?? null;
   const optionsRef = useRef(options);
@@ -103,68 +139,114 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
     const id = d.eventId;
     loadEditableHangout(auth.identity, id, controller.signal).then(
       (event) => { if (!controller.signal.aborted) setLoaded({ account, id, event }); },
-      (error: unknown) => { if (!controller.signal.aborted) setLoaded({ account, id, error: error instanceof Error ? error.message : "Could not load this hangout." }); },
+      (error: unknown) => { if (!controller.signal.aborted) setLoaded({ account, id, error: error instanceof Error ? error.message : "Could not load this hangout.", status: error instanceof CatalystError ? error.status : undefined }); },
     );
     return () => controller.abort();
-  }, [d.mode, d.eventId, auth.identity, optionsAttempt]);
+  }, [d.mode, d.eventId, auth.identity, attempt]);
   const current = loaded?.account === auth.address && loaded?.id === d.eventId ? loaded : null;
   const original = current?.event;
   const owner = Boolean(original && original.user?.toLowerCase() === auth.address?.toLowerCase());
   const canEditAny = options?.profile?.permissions.includes("edit_any_event") ?? false;
-  const accessPending = Boolean(original) && !owner && !optionsResult;
   const canEdit = d.mode === "create" || Boolean(original && (owner || canEditAny));
-  const waiting = (d.mode === "edit" && Boolean(d.eventId) && auth.isConnected && !current) || accessPending;
-  const accessError = original && !owner && optionsResult
-    ? optionsResult.error || options?.profileError || (!canEditAny ? "You don't have permission to edit this hangout." : null)
-    : null;
-  const error = d.mode === "edit" && !d.eventId ? "Choose a hangout to edit using its event link." : current?.error || accessError;
   const canChangeCommunity = d.mode === "create" || owner;
+  // Another creator's event needs the account's permissions; a failed read of them is not an answer.
+  const permissionsError = original && !owner && optionsResult ? optionsResult.error || options?.profileError || null : null;
+  // A signed-out visitor goes straight to sign-in and comes back to this same editor: creating needs an
+  // account, and an edit link (a rejection email, say) names an event only its owner or a moderator edits.
+  const signedOut = !auth.isConnected && (d.mode === "create" || Boolean(d.eventId));
+  useSignInRequired(signedOut && hydrated, auth.isConnected);
+  // As decentraland.org: an edit link that is missing its event, refused or not found, or definitely not
+  // this account's to edit goes back to the Events page instead of showing an error.
+  const editDenied = d.mode === "edit" && (
+    !d.eventId
+    || Boolean(current?.error && DENIED_STATUSES.has(current.status ?? 0))
+    || Boolean(original && !owner && optionsResult && !permissionsError && !canEditAny)
+  );
+  // A failure that says nothing about access (timeout, server error) stays on the page with a retry.
+  const editFailed = d.mode === "edit" && !editDenied ? (current?.error ?? permissionsError) : null;
+  const editReady = d.mode === "edit" && Boolean(original) && canEdit && !editDenied && !editFailed;
+  useEffect(() => {
+    if (editDenied) void navigate("/events", { replace: true });
+  }, [editDenied, navigate]);
+  // The editor replaces a short loading page. A scroll offset kept or restored for that short page
+  // (history restoration, a navigation that kept the previous page's offset) would otherwise land
+  // the tall form part-way down, so the editor always opens at its top unless the URL names a target.
+  useBrowserLayoutEffect(() => {
+    if (editReady && !location.hash) window.scrollTo(0, 0);
+  }, [editReady, d.eventId, location.hash]);
 
   async function removeHangout() {
     const identity = getIdentity();
-    if (!identity || !original || !canEdit || identity.signer.toLowerCase() !== auth.address?.toLowerCase() || !window.confirm(`Delete ${original.name}?`)) return;
+    if (!identity || !original || !canEdit || identity.signer.toLowerCase() !== auth.address?.toLowerCase()) return;
     setDeleting(true);
-    setDeleteError(null);
+    setDeleteFailed(false);
     try {
       await deleteHangout(identity, original.id);
-      navigate("/events");
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : "Could not delete this hangout.");
+      void invalidateEventsAfterWrite(queryClient);
+      setConfirmingDelete(false);
+      void navigate("/events?tab=my");
+    } catch {
+      setDeleteFailed(true);
     } finally {
       setDeleting(false);
     }
   }
 
+  const submit = buildHangoutSubmit(getIdentity, original, () => optionsRef.current?.profile?.permissions.includes("edit_any_event") ?? false);
+
   return (
-    <SitesChromeMaybe active="whatson">
+    <SitesLayoutMaybe active="whatson" headerSurface={inline ? "overlay" : "solid"} overlayNav={inline} footerCopy={footerCopy}>
     <LdSubmitHangoutView>
-      {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/events?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>Check access again</button></div> : <SubmitHangout
+      {/* Signed out (and on the server, which renders anonymously) the page only waits: sign-in opens on its own. */}
+      {signedOut || (d.mode === "edit" && !editReady) ? <SubmitHangoutLoading
+        mode={d.mode}
+        error={signedOut ? null : editFailed}
+        onRetry={() => { setLoaded(null); setOptionsRead(null); setAttempt((previous) => previous + 1); }}
+      /> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
         trackCtx={{
           sid: d.sid,
           story: STORY,
           variant: d.assignment.variant,
         }}
+        editor
+        reviewNotice={original?.rejected
+          ? rejectedNotice(original.rejection_reason, locale)
+          : original?.approved
+            ? text("Changes to approved events may require another review.")
+            : undefined}
+        reviewTone={original?.rejected ? "error" : "warning"}
         categories={d.categories}
         categoriesError={d.categoriesError}
         mode={d.mode}
         draft={original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId }}
-        submit={buildHangoutSubmit(getIdentity, original, () => optionsRef.current?.profile?.permissions.includes("edit_any_event") ?? false)}
+        originalSchedule={original}
+        submit={async (input) => {
+          const result = await submit(input);
+          void invalidateEventsAfterWrite(queryClient);
+          return result;
+        }}
         signedIn={auth.isConnected}
         onSignIn={openSignIn}
         options={options}
-        canEditAny={canEditAny}
         privateFieldsEditable={d.mode === "create" || owner}
         canChangeCommunity={canChangeCommunity}
+        onDelete={editReady ? () => { setDeleteFailed(false); setConfirmingDelete(true); } : undefined}
         upload={(file, vertical, signal) => {
           const identity = getIdentity();
-          if (!identity) return Promise.reject(new Error("Sign in to upload an image."));
+          if (!identity) return Promise.reject(new Error(text("Sign in to upload an image.")));
           return uploadHangoutPoster(identity, file, vertical, signal);
         }}
       />}
-      {original && canEdit && !waiting && !error && <button type="button" disabled={deleting} onClick={() => { void removeHangout(); }}>{deleting ? "Deleting…" : "Delete hangout"}</button>}
-      {deleteError && <p role="alert">{deleteError}</p>}
+      {confirmingDelete && editReady && (
+        <DeleteEventDialog
+          busy={deleting}
+          error={deleteFailed}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={() => { void removeHangout(); }}
+        />
+      )}
     </LdSubmitHangoutView>
-    </SitesChromeMaybe>
+    </SitesLayoutMaybe>
   );
 }

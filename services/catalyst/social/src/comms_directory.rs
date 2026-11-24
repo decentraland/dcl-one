@@ -1,6 +1,7 @@
 //! Social-owned implementation of the gatekeeper directory.
 use crate::comms::interfaces::{
     ModerationNotification, SocialDirectory, StreamingNotification, UserNotification,
+    UserNotificationPersistence,
 };
 use crate::{Address, CommunityId};
 use chrono::NaiveDateTime;
@@ -33,17 +34,33 @@ impl SocialDirectory for Directory {
         transaction: &mut sqlx::PgConnection,
         notifications: &[UserNotification],
     ) -> Result<(), sqlx::Error> {
-        let batch: Vec<_> = notifications
-            .iter()
-            .map(|n| crate::notifications::store::NewNotification {
-                id: n.id,
-                address: n.recipient.clone(),
-                kind: n.kind.to_string(),
-                metadata: n.metadata.clone(),
-                occurred_at: n.occurred_at,
-            })
-            .collect();
-        crate::notifications::store::insert_notifications(transaction, &batch).await?;
+        let (mut insert_once, refresh): (Vec<_>, Vec<_>) = notifications.iter().partition(|n| {
+            matches!(
+                n.persistence,
+                UserNotificationPersistence::InsertOnce { .. }
+            )
+        });
+        insert_once.sort_by(|a, b| a.recipient.cmp(&b.recipient));
+        let convert = |n: &UserNotification| crate::notifications::store::NewNotification {
+            id: n.id,
+            address: n.recipient.clone(),
+            kind: n.kind.to_string(),
+            metadata: n.metadata.clone(),
+            occurred_at: n.occurred_at,
+        };
+        for notice in insert_once {
+            let UserNotificationPersistence::InsertOnce { aliases } = &notice.persistence else {
+                unreachable!()
+            };
+            crate::shared::notifications::insert_keyed_notification_once(
+                &mut *transaction,
+                &convert(notice),
+                aliases,
+            )
+            .await?;
+        }
+        let refresh: Vec<_> = refresh.into_iter().map(convert).collect();
+        crate::notifications::store::insert_notifications(transaction, &refresh).await?;
         Ok(())
     }
     async fn community_members(&self, community: CommunityId) -> Result<Vec<Address>, sqlx::Error> {
@@ -167,6 +184,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streaming_fanout_replay_keeps_one_notice_and_email_per_recipient() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let directory = Directory::new(pool.clone());
+        let event_key = format!("fanout-{}", uuid::Uuid::new_v4());
+        let recipients: Vec<_> = (0..3)
+            .map(|_| {
+                Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap()
+            })
+            .collect();
+        for kind in [
+            StreamingNotificationKind::KeyReset,
+            StreamingNotificationKind::KeyRevoke,
+            StreamingNotificationKind::KeyExpired,
+            StreamingNotificationKind::TimeExceeded,
+            StreamingNotificationKind::PlaceUpdated,
+        ] {
+            let key = format!("{event_key}-{}", kind.as_str());
+            let at = chrono::Utc::now().naive_utc();
+            for recipient in recipients.iter().take(1).chain(recipients.iter()) {
+                directory.notify_streaming_notification(&StreamingNotification {
+                    event_key:key.clone(),recipient:recipient.clone(),kind,occurred_at:at,
+                    metadata:serde_json::json!({"address":recipient.as_str(),"title":"stream notice"}),
+                }).await.unwrap();
+            }
+            let rows:Vec<(String,i64)>=sqlx::query_as("SELECT n.address,count(d.notification_id) FROM social.notifications n LEFT JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.broadcast_key=$1 GROUP BY n.id,n.address ORDER BY n.address")
+                .bind(&key).fetch_all(&pool).await.unwrap();
+            assert_eq!(rows.len(), 3);
+            assert!(
+                rows.iter().all(|(_, deliveries)| *deliveries == 1),
+                "replaying an accepted prefix creates no duplicate email deliveries"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn community_voice_end_ranks_once_and_notifies_no_member() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -229,6 +283,7 @@ mod tests {
             kind: "worlds_permission_granted",
             metadata: serde_json::json!({"title": "World Permission Granted"}),
             occurred_at: chrono::Utc::now().naive_utc(),
+            persistence: UserNotificationPersistence::Refresh,
         };
         let count = || async {
             sqlx::query_scalar::<_, i64>(
@@ -257,5 +312,108 @@ mod tests {
             tx.commit().await.unwrap();
         }
         assert_eq!(count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn quota_repeats_preserve_the_first_notice_and_sent_email() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        eprintln!("quota persistence regression: PostgreSQL assertions enabled");
+        let address =
+            Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
+        sqlx::query("INSERT INTO social.subscriptions (address,email) VALUES ($1,'notice-recipient@example.org')")
+            .bind(&address).execute(&pool).await.unwrap();
+        let first_at = chrono::DateTime::from_timestamp(1_800_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let notices: Vec<_> = [
+            "worlds_missing_resources",
+            "worlds_access_restricted",
+            "worlds_access_restored",
+            "worlds_permission_granted",
+        ]
+        .into_iter()
+        .map(|kind| UserNotification {
+            id: uuid::Uuid::new_v4(),
+            recipient: address.clone(),
+            kind,
+            metadata: serde_json::json!({"title":"first", "when":1234}),
+            occurred_at: first_at,
+            persistence: if kind == "worlds_permission_granted" {
+                UserNotificationPersistence::Refresh
+            } else {
+                UserNotificationPersistence::InsertOnce {
+                    aliases: Vec::new(),
+                }
+            },
+        })
+        .collect();
+        let mut first_batch = notices.clone();
+        let mut repeated_in_batch = notices[0].clone();
+        repeated_in_batch.metadata = serde_json::json!({"title":"later in batch", "when":4567});
+        first_batch.push(repeated_in_batch);
+        let mut tx = pool.begin().await.unwrap();
+        Directory::new(pool.clone())
+            .notify_user_notifications(&mut tx, &first_batch)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("UPDATE social.notifications SET read=true,read_at=$2 WHERE address=$1")
+            .bind(&address)
+            .bind(first_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE social.notification_deliveries SET state='sent',attempts=1 WHERE notification_id IN (SELECT id FROM social.notifications WHERE address=$1)")
+            .bind(&address).execute(&pool).await.unwrap();
+        let repeats: Vec<_> = notices
+            .iter()
+            .cloned()
+            .map(|mut notice| {
+                notice.metadata = serde_json::json!({"title":"later", "when":9876});
+                notice.occurred_at += chrono::TimeDelta::hours(1);
+                notice
+            })
+            .collect();
+        for _ in 0..2 {
+            let mut tx = pool.begin().await.unwrap();
+            Directory::new(pool.clone())
+                .notify_user_notifications(&mut tx, &repeats)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        }
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address=$1")
+                .bind(&address)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 4);
+        for notice in &notices {
+            let row:(serde_json::Value,NaiveDateTime,bool,Option<NaiveDateTime>,String,i32,i64)=sqlx::query_as(
+                "SELECT n.metadata,n.occurred_at,n.read,n.read_at,d.state,d.attempts,count(*) OVER () FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.id=$1"
+            ).bind(notice.id).fetch_one(&pool).await.unwrap();
+            let expected = if notice.kind == "worlds_permission_granted" {
+                &repeats[3]
+            } else {
+                notice
+            };
+            assert_eq!(
+                row,
+                (
+                    expected.metadata.clone(),
+                    expected.occurred_at,
+                    true,
+                    Some(first_at),
+                    "sent".to_string(),
+                    1,
+                    1
+                ),
+                "{}",
+                notice.kind
+            );
+        }
     }
 }

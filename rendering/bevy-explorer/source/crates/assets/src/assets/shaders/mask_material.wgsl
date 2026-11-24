@@ -1,14 +1,16 @@
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_vertex_output,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::main_pass_post_lighting_processing,
     mesh_view_bindings::{globals, lights, view},
     mesh_functions,
     shadows,
+    view_transformations,
 }
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
-#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, reveal_discard}
-#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount}
+#import "embedded://shaders/bound_material_effect.wgsl"::{camera_dither, reveal_discard, toon_outline}
+#import "embedded://shaders/toon.wgsl"::facial_feature_lighting
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
 
 // same softened sun shadows as the avatar body (see bound_material.wgsl), so a face never stays
@@ -71,9 +73,18 @@ fn fragment(
     let sample_index = 0u;
 #endif
 
-    if reveal_discard(mesh_functions::get_tag(in.instance_index), in.world_position.y, in.instance_index) {
+    // a mask carries the tag of the body it is drawn on
+    let mesh_tag = mesh_functions::get_tag(in.instance_index);
+
+    if reveal_discard(mesh_tag, in.world_position.y, in.instance_index) {
         discard;
     }
+
+    // the camera-to-player dither, the same call bound_material.wgsl makes for the body: by the
+    // avatar's capsule, so a mask drops the pixels the head under it drops
+    let dither = camera_dither(mesh_tag, in.position.xy, in.world_position.xyz, in.instance_index, scene_bounds.base_opacity, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
+    let cap_brightness = dither.transparency;
+    let dither_opacity = dither.opacity;
 
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
 
@@ -102,21 +113,29 @@ fn fragment(
     pbr_input.material.base_color = color;
 
     var out: FragmentOutput;
-    // apply lighting
-    out.color = apply_pbr_lighting(pbr_input);
+    // apply lighting: the face features' own, by the ambient light (toon.wgsl)
+    out.color = facial_feature_lighting(pbr_input);
 
-    out.color = apply_outline(
-        in.position,
-        out.color, 
-        vec3(1., 0., 0.),
-        false,
-        sample_index,
-        1.0,
-    );
+    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u {
+        // the avatar outline, in the tone of the mask's own colour
+        out.color = toon_outline(
+            in.position,
+            out.color,
+            color.rgb,
+            in.instance_index,
+            -view_transformations::depth_ndc_to_view_z(in.position.z),
+            sample_index,
+            dither_opacity,
+        );
+    }
 
     // apply in-shader post processing (fog, alpha-premultiply, and also tonemapping, debanding if the camera is non-hdr)
     // note this does not include fullscreen postprocessing effects like bloom.
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+
+    // a fading mask is capped as the fading body is, so bloom doesn't fill the discarded pixels
+    let cap_factor = max(max(out.color.r, out.color.g), max(out.color.b, 1.0));
+    out.color = mix(out.color, vec4<f32>(out.color.rgb / cap_factor, out.color.a), saturate(cap_brightness * 2.0));
 
     return out;
 }

@@ -196,6 +196,21 @@ pub struct Links {
     pub land_images: String,
     /// Whether the items mirror runs: a sale waits for its item only then.
     pub items_mirror_enabled: bool,
+    /// The chains the trade-events walk reads, `(ethereum, matic)`
+    /// (`MARKETPLACE_INDEX_CHAIN_ID_*`): a trade source is published only on
+    /// its own. The other sources read mainnet only.
+    pub trade_chains: (i64, i64),
+}
+
+impl Links {
+    /// The chain `source` must be published on for `net`.
+    fn chain(&self, source: Source, net: ChainNet) -> i64 {
+        match (source, net) {
+            (Source::Traded, ChainNet::Ethereum) => self.trade_chains.0,
+            (Source::Traded, ChainNet::Matic) => self.trade_chains.1,
+            _ => chain_walk::mainnet_chain(net),
+        }
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -616,7 +631,8 @@ pub async fn run_once(pool: &PgPool, links: &Links, now: DateTime<Utc>) -> anyho
     let mut pass = Pass::default();
     for source in Source::ALL {
         for net in source.networks() {
-            match chain_walk::ready_cursor(pool, source.indexer(), *net, now).await {
+            let chain = links.chain(source, *net);
+            match chain_walk::ready_cursor_on(pool, source.indexer(), *net, chain, now).await {
                 Some(c) => {
                     let published = c.folded_block.unwrap_or(c.last_block);
                     pass.emitted +=
@@ -637,6 +653,10 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &crate::jobs::Jobs) {
         marketplace: state.settings.market.marketplace_base_url.clone(),
         land_images: state.settings.land_image_base_url.clone(),
         items_mirror_enabled: state.settings.market.mirrors_enabled,
+        trade_chains: (
+            state.settings.market.indexes.chain_id(ChainNet::Ethereum),
+            state.settings.market.indexes.chain_id(ChainNet::Matic),
+        ),
     };
     let ix = &state.settings.market.indexes;
     tracing::info!(
@@ -743,8 +763,8 @@ mod tests {
 
     async fn publish(pool: &PgPool, indexer: &str, block: i64) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
-             VALUES ($1, 'matic', 1, $2, $2, $2, timezone('UTC', now()), true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, 'matic', 1, $2, $2, $2, timezone('UTC', now()), true, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $2, fold_through = $2, folded_block = $2, folded_at = timezone('UTC', now())",
         )
         .bind(indexer)
@@ -812,10 +832,7 @@ mod tests {
             "catalyst_test_salenotif_{}",
             &Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base_url).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -827,12 +844,12 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         seed_assets(&pool).await;
         let links = Links {
             marketplace: "https://market.example".into(),
             land_images: "https://api.example".into(),
             items_mirror_enabled: true,
+            trade_chains: (1, 137),
         };
         let mana = "0x0000000000000000000000000000000000000ffa";
         let item = || json!([asset(ASSET_TYPE_COLLECTION_ITEM, COLLECTION, "0")]);
@@ -846,6 +863,19 @@ mod tests {
 
         publish(&pool, INDEXER_TRADE_EVENTS, 100).await;
         publish(&pool, INDEXER_NFT, 100).await;
+        // A node whose trade-events walk reads the testnets: the Polygon
+        // mainnet cursors lend nothing to its trade sources.
+        let testnet = Links {
+            trade_chains: (11_155_111, 80_002),
+            ..links.clone()
+        };
+        let pass = run_once(&pool, &testnet, Utc::now()).await.unwrap();
+        assert_eq!(pass.emitted, 0);
+        assert!(
+            pass.waiting.iter().any(|w| w == "trade_events matic"),
+            "{:?}",
+            pass.waiting
+        );
         assert_eq!(
             run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
             0,
@@ -1076,8 +1106,8 @@ mod tests {
 
     async fn publish_sales(pool: &PgPool, block: i64) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
-             VALUES ('sales', 'matic', 1, $1, $1, $1, timezone('UTC', now()), true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('sales', 'matic', 1, $1, $1, $1, timezone('UTC', now()), true, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, fold_through = $1, folded_block = $1, folded_at = timezone('UTC', now())",
         )
         .bind(block)
@@ -1152,6 +1182,7 @@ mod tests {
             marketplace: "https://market.example".into(),
             land_images: "https://api.example".into(),
             items_mirror_enabled: true,
+            trade_chains: (1, 137),
         };
         let token = |item: u32, issued: u32| {
             ((alloy_primitives::U256::from(item) << 216usize)
@@ -1358,6 +1389,7 @@ mod tests {
         // With the items mirror off nothing waits.
         let off_links = Links {
             items_mirror_enabled: false,
+            trade_chains: (1, 137),
             ..links.clone()
         };
         assert_eq!(

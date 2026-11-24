@@ -1,5 +1,6 @@
-import { createContext, useContext } from "react";
 import { catalystBase } from "./catalyst/client";
+
+export { useThumbnailPublicBase } from "@dcl/one-ui";
 
 export type ThumbnailWidth = 80 | 160 | 320 | 640 | 960;
 
@@ -29,13 +30,6 @@ function embeddedSiteBase(): string {
 
 function mediaBase(): string {
   return (import.meta.env.VITE_CATALYST_URL ?? "").replace(/\/$/, "") || embeddedSiteBase();
-}
-
-export const ThumbnailPublicBase = createContext<string | undefined>(undefined);
-
-export function useThumbnailPublicBase(): string | undefined {
-  const base = useContext(ThumbnailPublicBase);
-  return base ?? (typeof window !== "undefined" && !import.meta.env.SSR ? window.location.origin : undefined);
 }
 
 function parseBase(value: string | undefined): URL | undefined {

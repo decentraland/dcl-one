@@ -48,7 +48,7 @@ Files read:
     `test/unit/name-deny-list-checker.spec.ts`
 - dcl-one (`services/catalyst/`):
   - `worlds/src/core/mod.rs` (routes), `worlds/src/lib.rs` (`app_router`), `worlds/src/writes.rs`
-  - `worlds/src/core/{deploy,deploy_form,deploy_validate,partial,upload_limits,upload_spool,scenes,store,quota,auth,http}.rs`
+  - `worlds/src/core/{deploy,deploy_form,deploy_validate,partial,upload_limits,scenes,store,quota,auth,http}.rs`, `storage/src/upload_spool.rs`
   - `worlds/src/core/tests.rs`, `worlds/src/core/tests/partial_uploads.rs` (test names only)
   - `comms/src/worlds_envelope.rs`, `comms/src/signed_fetch.rs`, `shared/src/signed_fetch.rs`,
     `comms/src/world_identity.rs` (`WorldName`, `Parcel`)

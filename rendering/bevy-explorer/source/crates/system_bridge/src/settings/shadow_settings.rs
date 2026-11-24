@@ -7,7 +7,10 @@ use bevy::{
     platform::collections::HashSet,
     prelude::*,
 };
-use common::structs::{sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting, StageLight};
+use common::structs::{
+    sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting, ShadowlessLight, StageLight,
+    SUN_LOW_MAX_DISTANCE,
+};
 
 use super::{AppSetting, EnumAppSetting, IntAppSetting};
 
@@ -30,11 +33,14 @@ impl AppSetting for ShadowSetting {
     type Param = (
         SRes<AppConfig>,
         SRes<PrimaryCameraRes>,
-        SQuery<(
-            Write<DirectionalLight>,
-            Write<CascadeShadowConfig>,
-            Has<StageLight>,
-        )>,
+        SQuery<
+            (
+                Write<DirectionalLight>,
+                Write<CascadeShadowConfig>,
+                Has<StageLight>,
+            ),
+            Without<ShadowlessLight>,
+        >,
     );
 
     fn title() -> String {
@@ -45,7 +51,7 @@ impl AppSetting for ShadowSetting {
         format!("How shadows are rendered in the world.\n\n{}", 
         match self {
             ShadowSetting::Off => "Off: No shadows are rendered. Fastest",
-            ShadowSetting::Low => "Low: A single shadow map covering the shadow distance, with hardware 2x2 filtering. Fast, but outlines are blocky, particularly at high shadow distances.",
+            ShadowSetting::Low => "Low: A single shadow map covering the shadow distance up to 40 m, with hardware 2x2 filtering. Fast, but outlines are blocky, particularly at high shadow distances.",
             ShadowSetting::High => "High: Four cascaded soft shadow maps for sharper shadows near the player and better quality at higher shadow distances, but more GPU intensive.",
         })
     }
@@ -98,15 +104,18 @@ impl AppSetting for ShadowSetting {
 }
 
 // The sun's shadows for a quality and a distance (settings of their own, each applying this). A
-// stage light keeps its own cascades.
+// stage light keeps its own cascades; a shadowless light is not queried.
 fn apply_shadows(
     setting: ShadowSetting,
     distance: f32,
-    lights: &mut Query<(
-        &mut DirectionalLight,
-        &mut CascadeShadowConfig,
-        Has<StageLight>,
-    )>,
+    lights: &mut Query<
+        (
+            &mut DirectionalLight,
+            &mut CascadeShadowConfig,
+            Has<StageLight>,
+        ),
+        Without<ShadowlessLight>,
+    >,
 ) {
     let sun = sun_cascades(setting, distance);
     for (mut light, mut cascades, stage) in lights.iter_mut() {
@@ -141,11 +150,14 @@ impl IntAppSetting for ShadowDistanceSetting {
 impl AppSetting for ShadowDistanceSetting {
     type Param = (
         SRes<AppConfig>,
-        SQuery<(
-            Write<DirectionalLight>,
-            Write<CascadeShadowConfig>,
-            Has<StageLight>,
-        )>,
+        SQuery<
+            (
+                Write<DirectionalLight>,
+                Write<CascadeShadowConfig>,
+                Has<StageLight>,
+            ),
+            Without<ShadowlessLight>,
+        >,
     );
 
     fn apply(
@@ -162,7 +174,7 @@ impl AppSetting for ShadowDistanceSetting {
     }
 
     fn description(&self) -> String {
-        "Shadow Distance\n\nDistance up to which to render shadows. To ensure that shadows are rendered even for large scenes which are at the edge of the loaded area, this can be set to a higher value (e.g. 2x) than the scene load distance. Higher values increase GPU time slightly, and may result in lower quality shadows at closer distances (particularly with Low shadow quality).".to_owned()
+        format!("Shadow Distance\n\nDistance up to which to render shadows. With Low shadow quality, shadows stop at {SUN_LOW_MAX_DISTANCE} m however far this is set. To ensure that shadows are rendered even for large scenes which are at the edge of the loaded area, this can be set to a higher value (e.g. 2x) than the scene load distance. Higher values increase GPU time slightly, and may result in lower quality shadows at closer distances (particularly with Low shadow quality).")
     }
 
     fn load(config: &AppConfig) -> Self {
@@ -285,11 +297,14 @@ mod tests {
     fn apply(world: &mut World, setting: ShadowSetting, distance: f32) {
         world
             .run_system_once(
-                move |mut lights: Query<(
-                    &mut DirectionalLight,
-                    &mut CascadeShadowConfig,
-                    Has<StageLight>,
-                )>| apply_shadows(setting, distance, &mut lights),
+                move |mut lights: Query<
+                    (
+                        &mut DirectionalLight,
+                        &mut CascadeShadowConfig,
+                        Has<StageLight>,
+                    ),
+                    Without<ShadowlessLight>,
+                >| apply_shadows(setting, distance, &mut lights),
             )
             .unwrap();
     }
@@ -328,6 +343,27 @@ mod tests {
         assert_eq!(
             world.get::<CascadeShadowConfig>(stage).unwrap().bounds,
             vec![20.0]
+        );
+    }
+
+    #[test]
+    fn a_shadowless_light_stays_without_shadows() {
+        let mut world = World::new();
+        let booth = world
+            .spawn((
+                DirectionalLight::default(),
+                stage_cascades(),
+                StageLight,
+                ShadowlessLight,
+            ))
+            .id();
+
+        apply(&mut world, ShadowSetting::High, 100.0);
+        assert!(
+            !world
+                .get::<DirectionalLight>(booth)
+                .unwrap()
+                .shadows_enabled
         );
     }
 }

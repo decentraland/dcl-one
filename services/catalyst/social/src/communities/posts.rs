@@ -46,9 +46,10 @@ pub(crate) async fn require_membership_of_a_private_community(
     let Some(addr) = signer else {
         return Ok(());
     };
-    if !queries::is_private(&state.pool, id)
+    if queries::is_private(&state.pool, id)
         .await
         .map_err(super::http::database_error)?
+        != Some(true)
     {
         return Ok(());
     }
@@ -90,6 +91,7 @@ async fn posts_page(
         && queries::is_private(&state.pool, id)
             .await
             .map_err(super::http::database_error)?
+            == Some(true)
     {
         return Err(CommError::not_authorized(format!(
             "undefined is not a member of private community {id}. You need to be a member to get posts in this community."

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import {
@@ -21,6 +21,8 @@ function personalHash(message: string): Uint8Array {
 const hexToBytes = (hex: string): Uint8Array => Uint8Array.from(hex.match(/../g) ?? [], (b) => parseInt(b, 16))
 
 describe('guest identity', () => {
+  afterEach(() => localStorage.clear())
+
   it('derives the checksummed address of a public key', () => {
     const publicKey = secp256k1.getPublicKey(hexToBytes('00'.repeat(31) + '01'), false)
     expect(publicKeyAddress(publicKey)).toBe('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf')
@@ -80,11 +82,52 @@ describe('guest identity', () => {
 
   it('uses thirdweb on Decentraland domains and a browser-held key everywhere else', () => {
     for (const host of ['decentraland.org', 'decentraland.zone', 'decentraland.today', 'play.decentraland.org']) {
-      expect(webGuestBackendFor(host)).toBe(webGuestBackend)
+      expect(webGuestBackendFor({ hostname: host, search: '' })).toBe(webGuestBackend)
     }
     for (const host of ['127.0.0.1', 'localhost', 'example.com', 'decentraland.org.example.com', 'notdecentraland.org']) {
-      expect(webGuestBackendFor(host)).toBe(localGuestBackend)
+      expect(webGuestBackendFor({ hostname: host, search: '' })).toBe(localGuestBackend)
     }
+  })
+
+  it('uses thirdweb on any host that asks for it with ?guestWallet=thirdweb', () => {
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=thirdweb' })).toBe(webGuestBackend)
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '?realm=x&guestWallet=thirdweb' })).toBe(webGuestBackend)
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '?guestWallet=local' })).toBe(localGuestBackend)
+  })
+
+  // a returning guest reaches the same wallet only through the session kept here
+  it('keeps the session id of a thirdweb login that succeeded', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ token: 't', walletAddress: '0x1' }), { status: 200 })))
+    try {
+      await expect(webGuestBackend.login('session-1')).resolves.toMatchObject({ walletAddress: '0x1' })
+      expect(localStorage.getItem(GUEST_SESSION_KEY)).toBe('session-1')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // an origin thirdweb refuses: one visit with the parameter must not leave the next ones on thirdweb
+  it('keeps no session from a thirdweb login that failed, so the next PLAY AS GUEST uses a local key', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('Unauthorized domain', { status: 401 })))
+    try {
+      await expect(webGuestBackend.login('session-1')).rejects.toThrow()
+      expect(localStorage.getItem(GUEST_SESSION_KEY)).toBeNull()
+      expect(webGuestBackendFor({ hostname: 'example.com', search: '' })).toBe(localGuestBackend)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // the guard forgets a guest's sign-in a day before it expires; the kept thirdweb session brings the
+  // same wallet back even when the page was opened without the parameter
+  it('keeps using thirdweb once this browser holds a thirdweb guest session', () => {
+    localStorage.setItem(GUEST_SESSION_KEY, 'kept')
+    try {
+      expect(webGuestBackendFor({ hostname: 'example.com', search: '' })).toBe(webGuestBackend)
+    } finally {
+      localStorage.removeItem(GUEST_SESSION_KEY)
+    }
+    expect(webGuestBackendFor({ hostname: 'example.com', search: '' })).toBe(localGuestBackend)
   })
 
   it('a browser-held guest key signs its own identity', async () => {

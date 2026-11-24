@@ -1,6 +1,9 @@
+#![forbid(unsafe_code)]
+
 use anyhow::anyhow;
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;
+use common::sync::RwLockExt;
 use common::{
     rpc::{rmp_encode, IpcMessage, ResponseContext, ENGINE_IPC_CONTEXT},
     structs::GlobalCrdtStateUpdate,
@@ -72,7 +75,6 @@ pub struct NewSceneCommand {
     system_api_sender: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
 }
 
-#[allow(clippy::type_complexity)]
 pub static NEW_SCENE_SENDER: Lazy<
     RwLock<Option<tokio::sync::mpsc::UnboundedSender<NewSceneCommand>>>,
 > = Lazy::new(Default::default);
@@ -171,7 +173,7 @@ pub fn init_runtime() -> anyhow::Result<()> {
         let (new_scene_sx, new_scene_rx) = tokio::sync::mpsc::unbounded_channel();
         let (router_sx, router_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        *NEW_SCENE_SENDER.write().unwrap() = Some(new_scene_sx);
+        *NEW_SCENE_SENDER.write_ignore_poison() = Some(new_scene_sx);
         ENGINE_IPC_CONTEXT.set(Some(ResponseContext {
             ipc_channel_registry: Default::default(),
             ipc_router: router_sx,
@@ -202,7 +204,6 @@ pub fn init_runtime() -> anyhow::Result<()> {
     init_rx.blocking_recv()?
 }
 
-#[allow(clippy::type_complexity)]
 pub async fn renderer_ipc_out(
     mut stream: SendHalf,
     mut new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
@@ -330,8 +331,17 @@ async fn next_global_update(
 pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
-        let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
+        if let Err(e) = stream.read_exact(&mut buffer).await {
+            warn!("renderer_ipc_in exit on truncated message: {e}");
+            break;
+        }
+        let msg: SceneToEngine = match rmp_serde::from_slice(&buffer) {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("renderer_ipc_in exit on undecodable message: {e}");
+                break;
+            }
+        };
 
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => RENDERER_SENDER.with(|sender| {
@@ -378,7 +388,6 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,
@@ -400,7 +409,7 @@ pub fn spawn_scene(
 
     let (main_sx, thread_rx) = tokio::sync::mpsc::unbounded_channel::<RendererResponse>();
 
-    let ipc_out = NEW_SCENE_SENDER.read().unwrap();
+    let ipc_out = NEW_SCENE_SENDER.read_ignore_poison();
     let Some(ipc_out) = ipc_out.as_ref() else {
         error!("scene {id:?} not started: ipc runtime is not initialized");
         return (main_sx, None);

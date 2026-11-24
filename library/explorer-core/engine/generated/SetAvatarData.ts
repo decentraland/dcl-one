@@ -11,8 +11,8 @@ import type { JsonValue } from "./serde_json/JsonValue";
  */
 export type SetAvatarData = { 
 /**
- * Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
- * so a name-only edit needn't restate the avatar.
+ * An empty body shape or name and absent colors keep their current values.
+ * Only a nonempty name can change the claimed-name flag.
  */
 base?: PbAvatarBase, equip?: PbAvatarEquippedData, hasClaimedName?: boolean, 
 /**
