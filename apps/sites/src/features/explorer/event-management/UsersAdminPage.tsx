@@ -1,21 +1,25 @@
-import { adminCopy } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { AdminPage, adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { PermissionsModal } from "@dcl/one-ui/apps/sites/events/PermissionsModal";
-import { UsersTable, type AdminUserRow } from "@dcl/one-ui/apps/sites/events/UsersTable";
+import {
+  adminCopy,
+  AdminPage,
+  adminPageStyles,
+  Notice,
+  PermissionsModal,
+  UsersTable,
+  type AdminUserRow,
+} from "@dcl/one-ui";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { getIdentity } from "@/data/lib/auth/session";
 import { eventAdminKeys, eventGrantsQuery, loadEventProfileSettings, saveEventPermissions, type EventProfile } from "@/data/lib/catalyst/places/event-management";
 import { creatorProfilesQuery } from "@/data/lib/catalyst/social/creator-profiles";
-import { useEventsFooterCopy } from "@/features/events/locale";
-import { openSignIn } from "@/features/components/auth/signin-store";
-import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
-import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
-import { useEventAdmin, type EventAdminAccess } from "@/features/explorer/event-management/useEventAdmin";
-import { useToast } from "@/features/explorer/event-management/useToast";
+import { useEventsFooterCopy } from "../../events/locale";
+import { openSignIn } from "../../components/auth/signin-store";
+import SitesLayout from "../../components/chrome/SitesLayout";
+import { AdminAccessGate } from "./AdminAccessGate";
+import { EventAdminTabs } from "./EventAdminTabs";
+import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
+import { useToast } from "./useToast";
 
 const SELF_LOCKED = "edit_any_profile";
 

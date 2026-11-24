@@ -1,6 +1,6 @@
 import { useParams, useRouteError } from "react-router";
 
-import { CommunityError } from "@dcl/one-ui/apps/sites/social/CommunityError";
+import { CommunityError } from "@dcl/one-ui";
 
 import { communityKeys } from "@/data/lib/community/queries";
 import SitesLayout from "@/features/components/chrome/SitesLayout";

@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { CommunityEventsList } from "@dcl/one-ui/apps/sites/social/CommunityLists";
+import { CommunityEventsList } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { eventDetailQuery, readEventId } from "@/data/lib/catalyst/places/events-page";

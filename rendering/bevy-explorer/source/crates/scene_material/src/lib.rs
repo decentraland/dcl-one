@@ -890,6 +890,7 @@ mod test {
             bake::ImposterBakeMaterialPlugin, ImposterBakeBundle, ImposterBakeCamera,
             ImposterBakePlugin,
         };
+        use common::sync::MutexExt;
         use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app};
 
         use crate::{BoundRegion, SceneBound, SceneBounds, SceneMaterial, EMPTY_SCENE_CELLS};
@@ -987,7 +988,7 @@ mod test {
         };
         camera.set_callback({
             let baked = baked.clone();
-            move |image| *baked.lock().unwrap() = Some(image)
+            move |image| *baked.lock_ignore_poison() = Some(image)
         });
         world.spawn(ImposterBakeBundle {
             camera,
@@ -1003,7 +1004,7 @@ mod test {
         let started = Instant::now();
         let image = loop {
             app.update();
-            if let Some(image) = baked.lock().unwrap().take() {
+            if let Some(image) = baked.lock_ignore_poison().take() {
                 break image;
             }
             assert!(

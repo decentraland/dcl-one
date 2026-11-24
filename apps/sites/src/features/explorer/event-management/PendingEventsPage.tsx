@@ -1,11 +1,17 @@
-import { adminCopy, rejectionReason, relativeDateLabel, type RejectReasonId } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { AdminPage, adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
-import { Busy } from "@dcl/one-ui/apps/sites/events/Busy";
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { PendingEventCard } from "@dcl/one-ui/apps/sites/events/PendingEventCard";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { RejectEventModal } from "@dcl/one-ui/apps/sites/events/RejectEventModal";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import {
+  adminCopy,
+  rejectionReason,
+  relativeDateLabel,
+  type RejectReasonId,
+  AdminPage,
+  adminPageStyles,
+  Busy,
+  EventDetailModal,
+  PendingEventCard,
+  Notice,
+  RejectEventModal,
+  SitesButton as Button,
+} from "@dcl/one-ui";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -15,14 +21,14 @@ import { invalidateEventsAfterWrite } from "@/data/lib/catalyst/places/events-pa
 import {
   editEventHref, eventAdminKeys, eventOccurrence, eventReviewStatus, moderateEvent, moderationQueueQuery, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
-import { useEventsFooterCopy } from "@/features/events/locale";
-import { eventImage } from "@/features/events/view";
-import { openSignIn } from "@/features/components/auth/signin-store";
-import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
-import { EventAdminTabs } from "@/features/explorer/event-management/EventAdminTabs";
-import { useEventAdmin, type EventAdminAccess } from "@/features/explorer/event-management/useEventAdmin";
-import { useToast } from "@/features/explorer/event-management/useToast";
+import { useEventsFooterCopy } from "../../events/locale";
+import { eventImage } from "../../events/view";
+import { openSignIn } from "../../components/auth/signin-store";
+import SitesLayout from "../../components/chrome/SitesLayout";
+import { AdminAccessGate } from "./AdminAccessGate";
+import { EventAdminTabs } from "./EventAdminTabs";
+import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
+import { useToast } from "./useToast";
 import styles from "./PendingEventsPage.module.css";
 
 /** The Users and Pending pages render in English, as decentraland.org's (its admin copy has no translations). */

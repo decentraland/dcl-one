@@ -228,6 +228,16 @@ class GitHubReadTests(unittest.TestCase):
             self.assertEqual(play.api('actions/runs/42/jobs'), {'jobs': []})
         sleep.assert_called_once_with(2)
 
+    def test_a_body_cut_short_after_a_server_error_is_retried_again(self):
+        # Seen in CI: a 502, then a retry whose body ended early, then the answer.
+        failures = [subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: Server Error (HTTP 502)\n'),
+                    subprocess.CalledProcessError(1, ['gh', 'api'], stderr='unexpected end of JSON input\n')]
+        with patch.object(play.subprocess, 'check_output', side_effect=[*failures, '{"jobs": []}']) as get, \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.api('actions/runs/42/jobs?per_page=100'), {'jobs': []})
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [2, 4])
+
     def test_a_dropped_connection_retries_and_a_statusless_hard_error_does_not(self):
         dropped = ['stream error: stream ID 1; CANCEL; received from peer\n',
                    'error reading response body: unexpected EOF\n',
@@ -235,7 +245,8 @@ class GitHubReadTests(unittest.TestCase):
                    'http2: server sent GOAWAY and closed the connection\n',
                    'net/http: TLS handshake timeout\n',
                    'Get "https://api.github.com/repos/o/r/actions/runs/42/jobs": EOF\n',
-                   'http2: client connection lost\n']
+                   'http2: client connection lost\n',
+                   'unexpected end of JSON input\n']
         for text in dropped:
             failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=text)
             with self.subTest(stderr=text), \

@@ -1,5 +1,6 @@
 import type { Exclusion, GalleryEntry } from '../registry'
 import { actionEntries } from './actions'
+import { backgroundEntries } from './backgrounds'
 import { cardEntries } from './cards'
 import { feedbackEntries } from './feedback'
 import { formEntries } from './forms'
@@ -10,7 +11,8 @@ export const entries: readonly GalleryEntry[] = [
   ...formEntries,
   ...navigationEntries,
   ...cardEntries,
-  ...feedbackEntries
+  ...feedbackEntries,
+  ...backgroundEntries
 ]
 
 /**

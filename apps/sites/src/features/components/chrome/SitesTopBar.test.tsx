@@ -12,10 +12,16 @@ import {
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getAddress } from "viem";
-import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
+import {
+  dclLogoUrl as sitesLogo,
+  SitesLocaleContext,
+  type SitesLocale,
+  SiteLayout,
+  ChromeAuthContext,
+  type ChromeAuth,
+  ChromeNavContext,
+} from "@dcl/one-ui";
 import DclTopBar from "@ui/web/frames/DclTopBar";
-import { SiteLayout, ChromeAuthContext, type ChromeAuth, ChromeNavContext } from "@dcl/one-ui";
-import { SitesLocaleContext, type SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { forgetSignIn, recordSignIn } from "@/data/lib/auth/signin-kind";
 import { setIdentity } from "@/data/lib/auth/session";
 import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";

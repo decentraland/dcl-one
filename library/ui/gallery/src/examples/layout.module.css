@@ -44,6 +44,15 @@
   max-width: 420px;
 }
 
+.backdrop {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-lg);
+}
+
 /* The grids Sites puts BlogCards in (apps/sites/blog): the Blog index, whose content is 1312px at most (1440px less
    its 64px margins), and an article's related posts, 1180px at most. Three columns, two below 1024px, one below
    768px. */

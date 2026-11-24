@@ -19,7 +19,7 @@ use cef::{
 use cef_dll_sys::{_cef_resource_handler_t, cef_base_ref_counted_t};
 use serde::{Deserialize, Serialize};
 use std::os::raw::c_int;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// `cef://` scheme response asset.
 #[derive(Asset, Reflect, Debug, Clone, Serialize, Deserialize)]
@@ -214,10 +214,13 @@ impl ImplResourceHandler for LocalResourceHandlerBuilder {
                     })
                     .await;
                 let response = rx.recv().await.unwrap_or_default();
-                headers_responser.lock().unwrap().prepare(&response, &range);
+                headers_responser
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .prepare(&response, &range);
                 data_responser
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(PoisonError::into_inner)
                     .prepare(response.data, &range);
                 callback.cont();
             })

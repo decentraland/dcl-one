@@ -131,7 +131,7 @@ export const Minimap = memo(function Minimap({
     setOpen(loadOpen(inGenesis))
   }, [inGenesis])
 
-  const { pose, setConfig } = minimap
+  const { pose, setConfig, cameraReady } = minimap
 
   // Tell the scene what to render. Only the Camera style needs it; on the DOM styles this is
   // what makes the scene tear its TextureCamera down.
@@ -359,7 +359,8 @@ export const Minimap = memo(function Minimap({
     return null
   }, [effectiveStyle, chunks, parcelTile])
 
-  const cutout = open && effectiveStyle === 'imposters'
+  const cameraStyle = effectiveStyle === 'imposters'
+  const cutout = open && cameraStyle && cameraReady
 
   return (
     <div ref={hudInsetRef} className={cutout ? `${styles.root} ${styles.cutoutRoot}` : styles.root}>
@@ -438,10 +439,11 @@ export const Minimap = memo(function Minimap({
       {open && (
         <div className={styles.surface} ref={surfaceRef}>
           {/* In Camera style the map must be see-through: the engine paints the map behind
-              the page, and an opaque background here would hide it. */}
+              the page, and an opaque background here would hide it. Until the engine does, the
+              map is covered. */}
           <button
             type="button"
-            className={effectiveStyle === 'imposters' ? `${styles.map} ${styles.cutout}` : styles.map}
+            className={cameraStyle ? `${styles.map} ${cameraReady ? styles.cutout : styles.covered}` : styles.map}
             onClick={map.toggle}
             aria-label="Open map"
           >
