@@ -250,7 +250,7 @@ impl RetryFailedDeployments {
         let succeeded = AtomicU64::new(0);
         let still_failing = AtomicU64::new(0);
         let discarded = AtomicU64::new(0);
-        let mut skipped: u64 = 0;
+        let skipped = AtomicU64::new(0);
         let mut pages: u64 = 0;
 
         let mut cursor: Option<DueCursor> = None;
@@ -283,7 +283,7 @@ impl RetryFailedDeployments {
                             entity_type = %failure.entity_type,
                             "Can't retry failed deployment. Because it lacks of authChain"
                         );
-                        skipped += 1;
+                        skipped.fetch_add(1, Ordering::Relaxed);
                     }
                     RetryDisposition::Exhausted | RetryDisposition::Waiting { .. } => {
                         debug!(
@@ -292,7 +292,7 @@ impl RetryFailedDeployments {
                             next_retry_at = failure.next_retry_at,
                             "Due query returned a record the cycle no longer acts on"
                         );
-                        skipped += 1;
+                        skipped.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }
@@ -300,6 +300,7 @@ impl RetryFailedDeployments {
             let succeeded_ref = &succeeded;
             let still_failing_ref = &still_failing;
             let discarded_ref = &discarded;
+            let skipped_ref = &skipped;
             let content_semaphore = &content_semaphore;
 
             futures::stream::iter(due)
@@ -352,6 +353,10 @@ impl RetryFailedDeployments {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
                             }
+                            Err(SyncError::NoServers) => {
+                                debug!(entity_id = %failure.entity_id, "No peers available during retry");
+                                skipped_ref.fetch_add(1, Ordering::Relaxed);
+                            }
                             Err(e) => {
                                 debug!(entity_id = %failure.entity_id, error = %e, "Retry still failing");
                                 let deferred = retried_record(
@@ -391,7 +396,7 @@ impl RetryFailedDeployments {
             discarded: discarded.load(Ordering::Relaxed),
             waiting,
             evicted,
-            skipped,
+            skipped: skipped.load(Ordering::Relaxed),
             pages,
         };
 
@@ -457,7 +462,7 @@ pub struct RetryStats {
     /// Records whose deadline was still ahead when the cycle started.
     pub waiting: u64,
     pub evicted: u64,
-    /// Due records the cycle fetched but did not attempt (an auth chain that does not parse).
+    /// Due records skipped for missing auth chains or unavailable peers.
     pub skipped: u64,
     /// Due pages the cycle fetched, the page the peer guard turned back included.
     pub pages: u64,
@@ -518,6 +523,78 @@ mod tests {
     fn without_auth_chain(mut failure: FailedDeployment) -> FailedDeployment {
         failure.auth_chain = Vec::new();
         failure
+    }
+
+    #[tokio::test]
+    async fn losing_all_peers_during_a_retry_page_preserves_due_records_and_budgets() {
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+
+        let Some(pool) = catalyst_db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let store = Arc::new(LiveFailedDeploymentsStore::new(pool.clone()));
+        for entity in [b"first due entity".as_slice(), b"second due entity"] {
+            store
+                .report_failure(FailedDeployment {
+                    entity_id: dcl_auth::hash_bytes_v1(entity),
+                    ..failure(2, 0)
+                })
+                .await
+                .unwrap();
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let peers = Arc::new(tokio::sync::RwLock::new(vec![url]));
+        let hits = Arc::new(AtomicUsize::new(0));
+        let membership = peers.clone();
+        let counted = hits.clone();
+        let app = Router::new().route(
+            "/contents/{hash}",
+            get(move || {
+                let peers = membership.clone();
+                counted.fetch_add(1, Ordering::Relaxed);
+                async move {
+                    peers.write().await.clear();
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (storage, tmp) = temp_storage("retry-peer-loss").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let retry = RetryFailedDeployments::new(
+            RetryFailedConfig {
+                retry_concurrency: 1,
+                ..Default::default()
+            },
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            storage,
+            deployer,
+            store.clone(),
+            peers,
+        );
+
+        let stats = retry.execute_retry_cycle().await.unwrap();
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+        assert_eq!((stats.skipped, stats.still_failing), (2, 0));
+        let page = store.select_due(0, 10, None, 10).await.unwrap();
+        assert_eq!(page.failures.len(), 2);
+        assert!(
+            page.failures
+                .iter()
+                .all(|record| record.retry_count == 2 && record.next_retry_at == 0)
+        );
+        server.abort();
     }
 
     #[test]
