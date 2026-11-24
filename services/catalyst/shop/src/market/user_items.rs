@@ -464,6 +464,7 @@ async fn items_by_owner(
     };
     // The gate's own snapshot reads the copies (memoized), so the body
     // below reads the index no second time.
+    let publications = gate.publications();
     let copies = match owned_items::owned_copies(state, gate, owner, category).await {
         Ok(copies) => copies,
         Err(e) => return super::third_party::fetch_error(owner, &e.to_string()),
@@ -472,6 +473,7 @@ async fn items_by_owner(
         owner.to_lowercase(),
         category.to_string(),
         include_definitions,
+        publications,
     );
     let body = state
         .by_owner_cache

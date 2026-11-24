@@ -813,23 +813,77 @@ fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<(
              MARKETPLACE_NFT_INDEX_ENABLED is off: unset it to walk the index"
         );
     }
+    // The walk takes its contracts from the collections mirror and starts on
+    // a network once that mirror completed a pass there, so a node that fills
+    // its own catalogue reads both collections subgraphs. One whose catalogue
+    // another writer fills (MARKETPLACE_MIRRORS_ENABLED=false) reads its tables.
+    if config.marketplace.marketplace_mirrors_enabled {
+        let upstreams = &config.market_upstreams;
+        for (key, url) in [
+            (
+                "ETH_COLLECTIONS_SUBGRAPH_URL",
+                &upstreams.eth_collections_subgraph_url,
+            ),
+            (
+                "MATIC_COLLECTIONS_SUBGRAPH_URL",
+                &upstreams.matic_collections_subgraph_url,
+            ),
+        ] {
+            if Config::non_empty(url).is_none() {
+                anyhow::bail!(
+                    "{ENV}=mirror walks the nft index over the contracts its collections mirror finds, \
+                     but {key} is empty: that network's mirror has nothing to read and its ownership \
+                     never publishes. Unset it to read Decentraland's subgraph, or set \
+                     MARKETPLACE_MIRRORS_ENABLED=false on a node whose catalogue another node fills"
+                );
+            }
+        }
+    }
     // The list a mirror derives from its own endpoints, or the explicit
-    // one; a `_FILE` is read after this check, and the walk checks it.
+    // one; a `_FILE` is read after this check, and
+    // [`refuse_unwalkable_polygon`] checks what it held.
     let from_file = env("TRADE_RPC_URLS_FILE").is_some_and(|v| !v.trim().is_empty());
     if let Some(raw) = config.marketplace.trade_rpc_urls.as_deref()
         && !from_file
+        && !names_polygon(raw)
     {
-        let has_polygon = raw.split(',').any(|entry| {
-            entry
-                .split_once('=')
-                .is_some_and(|(chain, url)| chain.trim() == "137" && !url.trim().is_empty())
-        });
-        if !has_polygon {
-            anyhow::bail!(
-                "{ENV}=mirror walks the nft index on chains 1 and 137, but TRADE_RPC_URLS names no \
-                 137= endpoint: add one, or unset it to use RPC_ENDPOINT_POLYGON"
-            );
-        }
+        anyhow::bail!(
+            "{ENV}=mirror walks the nft index on chains 1 and 137, but TRADE_RPC_URLS names no \
+             137= endpoint: add one, or unset it to use RPC_ENDPOINT_POLYGON"
+        );
+    }
+    Ok(())
+}
+
+/// Whether a `TRADE_RPC_URLS` list names a chain 137 endpoint.
+fn names_polygon(raw: &str) -> bool {
+    raw.split(',').any(|entry| {
+        entry
+            .split_once('=')
+            .is_some_and(|(chain, url)| chain.trim() == "137" && !url.trim().is_empty())
+    })
+}
+
+/// The chain 137 check of [`refuse_unfiltered_profiles`] on the list this
+/// node will use, once the secret files are read: a `TRADE_RPC_URLS_FILE`
+/// naming chain 1 alone would leave the Polygon walk without an endpoint,
+/// and Polygon ownership never published. Without an explicit list the
+/// derived one names `RPC_ENDPOINT_POLYGON`, which a mainnet mirror always
+/// has (its default when unset or empty).
+fn refuse_unwalkable_polygon(config: &Config) -> anyhow::Result<()> {
+    if config.node.eth_network.trim() != "mainnet"
+        || !config.marketplace.marketplace_nft_index_enabled
+    {
+        return Ok(());
+    }
+    if let Some(raw) = config.marketplace.trade_rpc_urls.as_deref()
+        && !names_polygon(raw)
+    {
+        anyhow::bail!(
+            "{ENV}=mirror walks the nft index on chains 1 and 137, but the TRADE_RPC_URLS it read \
+             (TRADE_RPC_URLS_FILE included) names no 137= endpoint: add one, or unset both to use \
+             RPC_ENDPOINT_POLYGON"
+        );
     }
     Ok(())
 }
@@ -1144,7 +1198,8 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
         return Ok(());
     };
     if posture == Posture::Mirror {
-        return refuse_blank_registry_file(config);
+        refuse_blank_registry_file(config)?;
+        return refuse_unwalkable_polygon(config);
     }
     let own = own_hosts(config);
     let values: Vec<(&'static str, String)> = config

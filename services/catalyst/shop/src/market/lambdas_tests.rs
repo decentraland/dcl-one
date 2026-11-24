@@ -2365,6 +2365,65 @@ async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_aft
     db.drop().await;
 }
 
+/// The nft leg of `/v1/prices` keeps the 503s `/v1/nfts` answers through
+/// the prices memo: an nft index withdrawn between the gate and the read
+/// answers its envelope, and a statement the read bound cancelled the
+/// bound's 503, not a 500.
+#[tokio::test]
+async fn nft_prices_keep_the_index_envelope_and_the_read_bound() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_mirrors(&db.pool).await;
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let wearables = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Wearable),
+        ..Default::default()
+    };
+    let read = super::nft_reads::nft_prices(&state, &wearables).await;
+    assert!(read.is_ok(), "{read:?}");
+    let answer = |e: String| async move {
+        let response = super::prices::nft_prices_error(e);
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+
+    // A rewind withdraws the Polygon publication after the gate passed.
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let refused = super::nft_reads::nft_prices(&state, &wearables)
+        .await
+        .unwrap_err();
+    let (status, body) = answer(refused).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "nft-index", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("matic")),
+        "{body}"
+    );
+
+    let (status, body) = answer(super::nft_reads::NFT_PRICES_TIMED_OUT.to_string()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("statement bound")),
+        "{body}"
+    );
+    let (status, body) = answer("another failure".into()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
+}
+
 /// A collections subgraph that counts every request: the ownership routes
 /// must never call it.
 async fn serve_counting_graph() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
@@ -2384,19 +2443,20 @@ async fn serve_counting_graph() -> (String, Arc<std::sync::atomic::AtomicUsize>)
     (url, calls)
 }
 
-/// Every ownership route against each state of the nft index: switched off
-/// (profiles and outfits as deployed, the rest the envelope), walked but
-/// incomplete (everything fails closed: a direct profile read 503s and a
-/// Registry batch is an error the batch leaves out), complete but published
-/// an hour ago (profiles serve, the strict routes answer the envelope), only
-/// Polygon published (a Polygon item's profile and the emotes serve, the
-/// wearables need Ethereum too), and published. No route asks the
-/// collections subgraphs.
-#[tokio::test]
-async fn each_ownership_route_follows_the_nft_index_state() {
-    let Some(db) = ScratchDb::create().await else {
-        return;
-    };
+/// The profile, inventory and outfits fixture of the ownership tests: the
+/// owner's profile wears the hat (token 10) and the dance (token 20), both
+/// in the nft index, with a node that does not walk it (`off`) and one that
+/// does (`walking`), and a collections subgraph that counts its requests.
+struct OwnershipFixture {
+    db: ScratchDb,
+    off: Arc<MarketplaceState>,
+    walking: Arc<MarketplaceState>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    hat: String,
+}
+
+async fn ownership_fixture() -> Option<OwnershipFixture> {
+    let db = ScratchDb::create().await?;
     seed(&db.pool).await;
     let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
@@ -2452,22 +2512,56 @@ async fn each_ownership_route_follows_the_nft_index_state() {
     };
     let off = state_of(settings.clone());
     let walking = state_of(super::owned_items::test_support::walking(settings));
+    Some(OwnershipFixture {
+        db,
+        off,
+        walking,
+        calls,
+        hat,
+    })
+}
+
+/// Publishes the nft cursor of `network` `published` minutes ago, or
+/// withdraws it (`None`), as a pass and a rewind do.
+async fn set_nft_cursor(pool: &PgPool, network: &str, published: Option<i64>) {
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', $1, 1, 100, CASE WHEN $2::bigint IS NULL THEN NULL ELSE 100 END, \
+                 timezone('UTC', now()) - make_interval(mins => $2::int), true, \
+                 CASE $1 WHEN 'ethereum' THEN 1 ELSE 137 END) \
+         ON CONFLICT (indexer, network) DO UPDATE SET folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at",
+    )
+    .bind(network)
+    .bind(published)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Every ownership route against each state of the nft index: switched off
+/// (profiles and outfits as deployed, the rest the envelope), walked but
+/// incomplete (everything fails closed: a direct profile read 503s and a
+/// Registry batch is an error the batch leaves out), complete but published
+/// an hour ago (profiles serve, the strict routes answer the envelope), only
+/// Polygon published (a Polygon item's profile and the emotes serve, the
+/// wearables need Ethereum too), and published. No route asks the
+/// collections subgraphs.
+#[tokio::test]
+async fn each_ownership_route_follows_the_nft_index_state() {
+    let Some(OwnershipFixture {
+        db,
+        off,
+        walking,
+        calls,
+        hat,
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
     let set_cursor = |network: &'static str, published: Option<i64>| {
         let pool = db.pool.clone();
-        async move {
-            sqlx::query(
-                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-                 VALUES ('nft', $1, 1, 100, CASE WHEN $2::bigint IS NULL THEN NULL ELSE 100 END, \
-                         timezone('UTC', now()) - make_interval(mins => $2::int), true, \
-                         CASE $1 WHEN 'ethereum' THEN 1 ELSE 137 END) \
-                 ON CONFLICT (indexer, network) DO UPDATE SET folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at",
-            )
-            .bind(network)
-            .bind(published)
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
+        async move { set_nft_cursor(&pool, network, published).await }
     };
     let entity = || async {
         super::profiles::active_entities(&walking, &[OWNER.to_string()])
@@ -2666,5 +2760,97 @@ async fn each_ownership_route_follows_the_nft_index_state() {
         0,
         "an ownership route asked the collections subgraph"
     );
+    db.drop().await;
+}
+
+/// The memos of every ownership answer follow the nft index's publication,
+/// with no cache cleared in between: a warm profile, inventory list,
+/// backpack page and outfits entity stop serving when a rewind withdraws
+/// the publication (the reads fail closed), and once the refill publishes
+/// the hat's transfer to another address, none of the old answers comes
+/// back.
+#[tokio::test]
+async fn ownership_memos_follow_the_index_publication() {
+    let Some(OwnershipFixture {
+        db, walking, hat, ..
+    }) = ownership_fixture().await
+    else {
+        return;
+    };
+    let state = &walking;
+    let ok = StatusCode::OK;
+    for network in ["ethereum", "matic"] {
+        set_nft_cursor(&db.pool, network, Some(2)).await;
+    }
+    let profile = format!("/lambdas/profiles/{OWNER}");
+    let inventories = [
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+        format!("/lambdas/outfits/{OWNER}"),
+    ];
+    let holds_hat = |body: &Value| body.to_string().contains(&hat);
+
+    // Warm: every answer names the hat, and a second read is a memo hit.
+    for _ in 0..2 {
+        let (status, body) = get(state, &profile).await;
+        assert_eq!(status, ok, "{body}");
+        assert_eq!(
+            body["avatars"][0]["avatar"]["wearables"],
+            json!([
+                "urn:decentraland:off-chain:base-avatars:eyes_00",
+                format!("{hat}:10")
+            ])
+        );
+        for uri in &inventories {
+            let (status, body) = get(state, uri).await;
+            assert_eq!(status, ok, "{uri}: {body}");
+            assert!(holds_hat(&body), "{uri}: {body}");
+        }
+    }
+
+    // A rewind withdraws the Polygon publication: no warm answer is served.
+    set_nft_cursor(&db.pool, "matic", None).await;
+    let (status, body) = get(state, &profile).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::NOT_FOUND, Some("Profile not found")),
+        "the warm profile is not served once withdrawn: {body}"
+    );
+    for uri in &inventories {
+        let (status, body) = get(state, uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{uri}: the warm answer is not served once withdrawn: {body}"
+        );
+    }
+
+    // The refill folds the hat's transfer to another address and publishes
+    // again, right away: the old branch's answers stay out of every memo.
+    sqlx::query(
+        "UPDATE shop.nft SET owner = '0xbbbb000000000000000000000000000000000002' \
+         WHERE network = 'matic' AND contract_address = $1 AND token_id = 10",
+    )
+    .bind(COFFEE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    set_nft_cursor(&db.pool, "matic", Some(0)).await;
+    let (status, body) = get(state, &profile).await;
+    assert_eq!(status, ok, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!(["urn:decentraland:off-chain:base-avatars:eyes_00"]),
+        "the hat left with its token"
+    );
+    for uri in &inventories {
+        let (status, body) = get(state, uri).await;
+        assert_eq!(status, ok, "{uri}: {body}");
+        assert!(
+            !holds_hat(&body),
+            "{uri}: an old-branch answer came back: {body}"
+        );
+    }
     db.drop().await;
 }

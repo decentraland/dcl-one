@@ -596,6 +596,7 @@ async fn process_and_cache_profiles(
     state: &MarketplaceState,
     pointers: &[String],
     entities: &[Value],
+    publications: owned_items::Publications,
 ) -> Result<Vec<(String, Value)>, String> {
     let processed = process_profiles_positional(state, entities).await?;
     let mut out = Vec::with_capacity(entities.len());
@@ -604,7 +605,9 @@ async fn process_and_cache_profiles(
         let key = entity_eth_address(entity).unwrap_or_default();
         let profile = profile.unwrap_or(Value::Null);
         if !key.is_empty() && filled.insert(key.clone()) {
-            state.profile_cache.insert(key.clone(), profile.clone());
+            state
+                .profile_cache
+                .insert((key.clone(), publications), profile.clone());
         }
         if !profile.is_null() {
             out.push((key, profile));
@@ -612,7 +615,9 @@ async fn process_and_cache_profiles(
     }
     for pointer in pointers {
         if filled.insert(pointer.clone()) {
-            state.profile_cache.insert(pointer.clone(), Value::Null);
+            state
+                .profile_cache
+                .insert((pointer.clone(), publications), Value::Null);
         }
     }
     Ok(out)
@@ -646,10 +651,18 @@ async fn profiles_via_cache(
     pointers: &[String],
 ) -> Result<Vec<(String, Value)>, Failure> {
     let wanted = unique_pointers(pointers);
+    // The key of every hit and fill: a profile read under another
+    // publication of the nft index is never served.
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
-        match state.profile_cache.get_fresh(pointer) {
+        match state
+            .profile_cache
+            .get_fresh(&(pointer.clone(), publications))
+        {
             Some(v) => {
                 found.insert(pointer.clone(), v);
             }
@@ -660,7 +673,7 @@ async fn profiles_via_cache(
         let entities = active_entities(state, &missing)
             .await
             .map_err(|()| Failure::Db)?;
-        for (key, profile) in process_and_cache_profiles(state, &missing, &entities)
+        for (key, profile) in process_and_cache_profiles(state, &missing, &entities, publications)
             .await
             .map_err(Failure::Reader)?
         {
@@ -686,11 +699,14 @@ async fn processed_profiles(
     if pointers.len() <= PROFILE_BATCH_MAX {
         return profiles_via_cache(state, pointers).await;
     }
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let entities = active_entities(state, pointers)
         .await
         .map_err(|()| Failure::Db)?;
     let mut by_pointer: HashMap<String, Value> = HashMap::new();
-    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities)
+    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities, publications)
         .await
         .map_err(Failure::Reader)?
     {
@@ -710,9 +726,12 @@ async fn fetch_profile_for_id(
     id: &str,
 ) -> Result<Option<Value>, Failure> {
     let key = id.to_lowercase();
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let cached = state
         .profile_cache
-        .get_or_fetch(key.clone(), || async {
+        .get_or_fetch((key.clone(), publications), || async {
             let entities = active_entities(state, std::slice::from_ref(&key))
                 .await
                 .map_err(|()| Failure::Db)?;
@@ -839,6 +858,13 @@ pub async fn profiles(
             }
         };
     }
+    let publications = match owned_items::Publications::current(&state).await {
+        Ok(publications) => publications,
+        Err(_) => {
+            count_lookup_failure("lambdas_profiles", Failure::Db.layer());
+            return Json(json!([])).into_response();
+        }
+    };
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
         Err(()) => {
@@ -853,7 +879,7 @@ pub async fn profiles(
         return StatusCode::NOT_MODIFIED.into_response();
     }
 
-    match process_and_cache_profiles(&state, &pointers, &entities).await {
+    match process_and_cache_profiles(&state, &pointers, &entities, publications).await {
         Ok(profiles) => {
             let profiles: Vec<Value> = profiles.into_iter().map(|(_, profile)| profile).collect();
             Json(Value::Array(profiles)).into_response()

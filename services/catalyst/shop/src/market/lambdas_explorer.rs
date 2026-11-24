@@ -41,7 +41,19 @@ const EXPLORER_CACHE_TTL: Duration = Duration::from_secs(30);
 const EXPLORER_CACHE_MAX_ENTRIES: usize = 50_000;
 
 /// `(address, sort, direction, collection types, category, filters)`.
-pub type ExplorerKey = (String, String, String, String, &'static str, String);
+/// `(address, sort, direction, collection types, category, filters,
+/// publications)`: the publications of the nft index the on-chain leg was
+/// read under (none without that leg), so a page of another publication is
+/// never served.
+pub type ExplorerKey = (
+    String,
+    String,
+    String,
+    String,
+    &'static str,
+    String,
+    super::owned_items::Publications,
+);
 
 pub fn explorer_cache() -> TtlMap<ExplorerKey, Value> {
     TtlMap::bounded(EXPLORER_CACHE_TTL, EXPLORER_CACHE_MAX_ENTRIES)
@@ -692,6 +704,7 @@ async fn explorer_items(
     let addr_lc = addr.to_lowercase();
     // The on-chain leg's copies, read on the gate's own snapshot (memoized
     // per owner), before the page cache: the gate holds on every request.
+    let mut publications = super::owned_items::Publications::default();
     let copies = if owner_valid && on_chain_allowed {
         let gate = match super::owned_items::require_inventory(
             state,
@@ -703,6 +716,7 @@ async fn explorer_items(
             Ok(gate) => gate,
             Err(envelope) => return envelope,
         };
+        publications = gate.publications();
         match super::owned_items::owned_copies(state, gate, &addr_lc, category).await {
             Ok(copies) => Some(copies),
             Err(e) => {
@@ -742,6 +756,7 @@ async fn explorer_items(
         ct_sorted.join(","),
         category,
         filter_key,
+        publications,
     );
     let pagination = q.pagination;
     let valid: Vec<&'static str> = valid_collection_types.to_vec();

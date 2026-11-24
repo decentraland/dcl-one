@@ -54,7 +54,9 @@ pub struct Caches {
     /// The on-chain URN leg from the subgraphs, per query, while the mirror has no pass.
     catalog_urns: TtlMap<String, Arc<Vec<String>>>,
     base_wearables: TtlMap<(), Arc<Vec<BaseWearable>>>,
-    outfits: TtlMap<String, Value>,
+    /// `(address, publications)` -> the sanitized outfits entity, read
+    /// under that publication of the nft index.
+    outfits: TtlMap<(String, super::owned_items::Publications), Value>,
 }
 
 impl Default for Caches {
@@ -1138,11 +1140,18 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
 /// bare 500, a failed ownership or names read its 502 `FetcherError`.
 pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     let address = id.to_lowercase();
+    let publications = match super::owned_items::Publications::current(&state).await {
+        Ok(publications) => publications,
+        Err(e) => {
+            tracing::error!(error = %e, "outfits: the nft index's publications could not be read");
+            return super::lambdas_internal_error();
+        }
+    };
     let st = state.clone();
     let cached = state
         .lambdas
         .outfits
-        .get_or_fetch(address.clone(), || async move {
+        .get_or_fetch((address.clone(), publications), || async move {
             let pointer = format!("{address}:outfits");
             let entities = super::profiles::active_entities(&st, std::slice::from_ref(&pointer))
                 .await

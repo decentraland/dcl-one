@@ -65,8 +65,12 @@ mainnet) serves profiles and outfits as deployed, serves the v3 listings of
 `/v1/orders` without the owner guard (`x-listings-owner-check: unchecked`,
 so a client knows a listing may name a token its signer sold), and answers
 the envelope on the inventory routes. A mainnet mirror refuses to start
-with the index off or with a `TRADE_RPC_URLS` that names no chain 137
-endpoint.
+with the index off, with a `TRADE_RPC_URLS` (inline, or read from
+`TRADE_RPC_URLS_FILE` once the secrets are resolved) that names no chain 137
+endpoint, or, when it fills its own catalogue (`MARKETPLACE_MIRRORS_ENABLED`),
+with a blank collections subgraph URL: the walk takes its contracts from the
+collections mirror and starts on a network once that mirror completed a
+pass there, so without it that network's ownership would never publish.
 
 ## Consequences
 

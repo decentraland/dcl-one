@@ -529,8 +529,12 @@ pub struct MarketplaceState {
     pub settings: Settings,
     /// The subgraph readers (`chain_index`), shared with the other domains.
     pub index: Arc<ChainIndex>,
-    pub(crate) profile_cache: TtlMap<String, Value>,
-    pub(crate) by_owner_cache: TtlMap<(String, String, bool), Value>,
+    /// `(pointer, publications)` -> the processed profile (`Null`: none),
+    /// read under that publication of the nft index.
+    pub(crate) profile_cache: TtlMap<(String, owned_items::Publications), Value>,
+    /// `(owner, category, includeDefinitions, publications)`: an answer
+    /// read under another publication of the nft index is never served.
+    pub(crate) by_owner_cache: TtlMap<(String, String, bool, owned_items::Publications), Value>,
     pub(crate) contracts: contracts::Caches,
     /// The readers' memo, one map per freshness budget (`readers::Ttl`).
     pub readers: readers::Caches,

@@ -27,13 +27,20 @@
 //! URN (`shop.collections`) and the wearable id of its Issue log. The
 //! inventory lists also join the item (`shop.items`) for its name, rarity,
 //! category and price, and need the items mirror's first complete pass.
+//!
+//! Every memo of an answer derived from the index (an owner's copies here,
+//! the lists, the backpack, profiles and outfits) is keyed by the
+//! [`Publications`] it was read under, so a hit serves only while the same
+//! publication stands: a rewind withdraws it (and the read fails closed),
+//! and the refill publishes another, under which the old branch's answer is
+//! never found.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::response::Response;
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use sqlx::{PgConnection, PgPool, Postgres, Row, Transaction};
 
 use crate::shared::cache::TtlMap;
@@ -66,9 +73,56 @@ pub struct OwnedCopy {
 /// `owner` -> URN -> the token ids held, newest transfer first.
 pub type OwnedTokens = HashMap<String, HashMap<String, Vec<String>>>;
 
+/// What the nft index has published on each network: the block and the
+/// time of the fold a reader trusts, or nothing (never published, rewound,
+/// unpublished). Two reads under equal publications read the same fold;
+/// a refill publishes a later `folded_at`, so it never equals the
+/// publication it replaced.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Publications {
+    pub ethereum: Option<(i64, NaiveDateTime)>,
+    pub matic: Option<(i64, NaiveDateTime)>,
+}
+
+impl Publications {
+    /// What `conn` sees of the nft cursors.
+    pub async fn read(conn: &mut PgConnection) -> Result<Self, sqlx::Error> {
+        let rows: Vec<(String, Option<i64>, Option<NaiveDateTime>)> = sqlx::query_as(
+            "SELECT network, folded_block, folded_at FROM shop.chain_cursor WHERE indexer = $1",
+        )
+        .bind(INDEXER_NFT)
+        .fetch_all(conn)
+        .await?;
+        let mut out = Self::default();
+        for (network, block, at) in rows {
+            let published = block.zip(at);
+            match ChainNet::parse(&network) {
+                Some(ChainNet::Ethereum) => out.ethereum = published,
+                Some(ChainNet::Matic) => out.matic = published,
+                None => {}
+            }
+        }
+        Ok(out)
+    }
+
+    /// [`Publications::read`] for the key of a memo whose miss reads the
+    /// index in a later snapshot: an answer computed under a later
+    /// publication is filed under an earlier one, which no read finds once
+    /// the later one stands. A node that does not walk the index reads
+    /// nothing (its answers do not depend on it).
+    pub async fn current(state: &MarketplaceState) -> Result<Self, sqlx::Error> {
+        if !walks_here(state) {
+            return Ok(Self::default());
+        }
+        let mut conn = state.pool.acquire().await?;
+        Self::read(&mut conn).await
+    }
+}
+
 pub struct Caches {
-    /// `(owner, category)` -> the owner's copies, newest transfer first.
-    owned: TtlMap<(String, String), Arc<Vec<OwnedCopy>>>,
+    /// `(owner, category, publications)` -> the owner's copies, newest
+    /// transfer first.
+    owned: TtlMap<(String, String, Publications), Arc<Vec<OwnedCopy>>>,
 }
 
 impl Default for Caches {
@@ -232,7 +286,15 @@ pub async fn snapshot(
 
 /// A passed inventory gate: the snapshot the gate was checked on, which
 /// [`owned_copies`] reads the rows from. One request opens one.
-pub struct Gate(Transaction<'static, Postgres>);
+pub struct Gate(Transaction<'static, Postgres>, Publications);
+
+impl Gate {
+    /// The publications the gate's snapshot sees: the key of every memo of
+    /// an answer read on it.
+    pub fn publications(&self) -> Publications {
+        self.1
+    }
+}
 
 /// The route gate: `Err(envelope)` unless an inventory of `category` may
 /// be read now (the node walks the index, [`Rule::Fresh`] and the items
@@ -248,15 +310,17 @@ pub async fn require_inventory(
             "this node does not walk the nft index (MARKETPLACE_NFT_INDEX_ENABLED off, or a network other than mainnet)",
         ));
     }
-    snapshot(&state.pool, category_networks(category), Rule::Fresh, true)
-        .await
-        .map(Gate)
-        .map_err(|e| {
-            e.into_response(|m| {
-                tracing::error!(error = m, "nft index gate failed");
-                internal()
-            })
+    let gate = async {
+        let mut tx = snapshot(&state.pool, category_networks(category), Rule::Fresh, true).await?;
+        let publications = Publications::read(&mut tx).await?;
+        Ok::<_, ReadError>(Gate(tx, publications))
+    };
+    gate.await.map_err(|e| {
+        e.into_response(|m| {
+            tracing::error!(error = m, "nft index gate failed");
+            internal()
         })
+    })
 }
 
 const COPIES_SQL: &str = "\
@@ -338,7 +402,7 @@ pub async fn owned_copies(
     category: &str,
 ) -> Result<Arc<Vec<OwnedCopy>>, ReadError> {
     let owner = owner.to_lowercase();
-    let key = (owner.clone(), category.to_string());
+    let key = (owner.clone(), category.to_string(), gate.publications());
     if let Some(copies) = state.owned_items.owned.get_fresh(&key) {
         return Ok(copies);
     }

@@ -180,10 +180,12 @@ impl std::ops::DerefMut for ReadConn {
 }
 
 /// How long one statement of a `/v1/nfts`, prices or estate-size read may
-/// run before Postgres cancels it (the pool's own bound is 60 s): a page
-/// anyone can ask for holds one pool connection no longer than this, and
-/// answers [`read_error`]'s 503 past it. Above the slowest statements
-/// measured on the seeded index (DATABASE.md): 7 to 8 s for a
+/// run before Postgres cancels it (the pool's own bound is 60 s per
+/// statement), answering [`read_error`]'s 503 past it. It bounds each
+/// statement, not the read: a `/v1/nfts` page runs at most four heavy ones
+/// (the owner's count, the page, the capped total, the estates' parcels),
+/// so it holds its connection up to four times this. Above the slowest
+/// statements measured on the seeded index (DATABASE.md): 7 to 8 s for a
 /// 32,000-token owner's capped total naming no category, 8.1 s for the
 /// deepest page sorted by price naming no category.
 pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -195,17 +197,25 @@ pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::fro
 /// ms for any owner), so the two meet at about a thousand tokens.
 pub const LARGE_OWNER_TOKENS: i64 = 1_000;
 
-/// A statement of a read failed: a cancelled one ([`READ_STATEMENT_TIMEOUT`])
-/// is a 503 naming the bound, anything else a 500.
+/// Whether Postgres cancelled the statement ([`READ_STATEMENT_TIMEOUT`]).
+fn cancelled(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .is_some_and(|d| d.code().as_deref() == Some("57014"))
+}
+
+/// The 503 of a read whose statement ran past [`READ_STATEMENT_TIMEOUT`].
+pub(crate) fn timed_out() -> Response {
+    super::service_unavailable(&format!(
+        "the read ran past its {} s statement bound: narrow the filters or the page window",
+        READ_STATEMENT_TIMEOUT.as_secs()
+    ))
+}
+
+/// A statement of a read failed: a cancelled one is [`timed_out`]'s 503,
+/// anything else a 500.
 fn read_error(e: sqlx::Error) -> Response {
-    let cancelled = e
-        .as_database_error()
-        .is_some_and(|d| d.code().as_deref() == Some("57014"));
-    if cancelled {
-        return super::service_unavailable(&format!(
-            "the read ran past its {} s statement bound: narrow the filters or the page window",
-            READ_STATEMENT_TIMEOUT.as_secs()
-        ));
+    if cancelled(&e) {
+        return timed_out();
     }
     ApiError::internal(e.to_string()).into_response()
 }
@@ -324,6 +334,34 @@ async fn check_nft(
 /// the envelope `/v1/nfts` answers in the same state.
 pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
     "the nft prices read LAND, and the land-authz index is not published";
+
+/// [`nft_prices`]'s error for a statement [`READ_STATEMENT_TIMEOUT`]
+/// cancelled; the route answers [`timed_out`]'s 503 for it.
+pub(crate) const NFT_PRICES_TIMED_OUT: &str = "the nft prices read ran past its statement bound";
+
+/// The prefix of [`nft_prices`]'s error for the nft index or the items
+/// mirror that stopped meeting its rule after [`require_prices_sources`]:
+/// then the source's name, `": "` and the envelope's message, which the
+/// route reads back ([`nft_prices_not_ready`]) into the envelope `/v1/nfts`
+/// answers in the same state.
+const NFT_PRICES_NOT_READY: &str = "the nft prices source stopped being ready: ";
+
+fn nft_prices_not_ready_error(source: Source, message: &str) -> String {
+    format!("{NFT_PRICES_NOT_READY}{}: {message}", source.name())
+}
+
+/// The source and message an [`nft_prices`] error names when a source
+/// stopped being ready after the gate.
+pub(crate) fn nft_prices_not_ready(e: &str) -> Option<(Source, &str)> {
+    let rest = e.strip_prefix(NFT_PRICES_NOT_READY)?;
+    [Source::NftIndex, Source::ItemsMirror]
+        .into_iter()
+        .find_map(|source| {
+            rest.strip_prefix(source.name())
+                .and_then(|m| m.strip_prefix(": "))
+                .map(|m| (source, m))
+        })
+}
 
 /// `Err(envelope)` unless every index `sources` needs for `f` is published;
 /// LAND reads the index of `land`'s registries (`ETH_NETWORK`'s).
@@ -1334,7 +1372,8 @@ pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Hist
         .await
         .map_err(|e| match e {
             ReadConnError::LandUnavailable => NFT_PRICES_LAND_UNAVAILABLE.to_string(),
-            ReadConnError::NftUnavailable(_, m) => m,
+            ReadConnError::NftUnavailable(source, m) => nft_prices_not_ready_error(source, &m),
+            ReadConnError::Pool(e) if cancelled(&e) => NFT_PRICES_TIMED_OUT.to_string(),
             ReadConnError::Pool(e) => format!("acquiring a connection for the nft prices: {e}"),
         })?;
     let mut b = Builder::new();
@@ -1355,7 +1394,13 @@ pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Hist
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
         .fetch_all(&mut *conn)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if cancelled(&e) {
+                NFT_PRICES_TIMED_OUT.to_string()
+            } else {
+                e.to_string()
+            }
+        })?;
     Ok(consolidate(
         rows.iter()
             .filter_map(|r| r.get::<Option<String>, _>("price")),

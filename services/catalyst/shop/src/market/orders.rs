@@ -4,9 +4,9 @@
 //! nft" guard reads the `nft` index in the same statement, so a listing
 //! whose signer no longer holds that exact token drops out, while a token
 //! the index does not hold (LAND, an estate) passes; while the index is not
-//! published and recent the leg keeps only the listings of contracts it
-//! holds no token of, and on a node that does not walk the index it is
-//! unguarded, the `x-listings-owner-check` header naming which) merged with the
+//! published and recent the leg keeps only the LAND and Estate registries'
+//! listings, and on a node that does not walk the index it is unguarded,
+//! the `x-listings-owner-check` header naming which) merged with the
 //! legacy on-chain `orders` of the collections subgraph reader (first ≤ 100,
 //! 30 s). The two legs are sorted together in memory over the `first + skip`
 //! window, read past the graph's 5,000 skip by keyset up to
@@ -215,11 +215,6 @@ const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marke
 const OWNER_GUARD: &str = " AND NOT EXISTS (SELECT 1 FROM shop.nft n WHERE n.network = lower(u.network) AND n.contract_address = u.contract_address_sent \
                    AND n.token_id = u.token_id::numeric AND n.owner IS DISTINCT FROM u.signer)";
 
-/// Keeps only the listings of contracts the `nft` index holds no token of:
-/// the listings [`OWNER_GUARD`] never filters (LAND, estates), served while
-/// the index is not fresh enough to guard the others.
-const UNINDEXED_CONTRACT: &str = " AND NOT EXISTS (SELECT 1 FROM shop.nft n WHERE n.network = lower(u.network) AND n.contract_address = u.contract_address_sent)";
-
 /// The response header naming how the v3 listings were checked.
 pub const OWNER_CHECK_HEADER: &str = "x-listings-owner-check";
 
@@ -231,9 +226,11 @@ pub enum OwnerCheck {
     /// Every listing served passed [`OWNER_GUARD`] on a published and recent
     /// index, or the request reads no listing.
     Checked,
-    /// The index is not published and recent: only the listings of
-    /// contracts it holds no token of are served; the others are left out,
-    /// and the total does not count them.
+    /// The index is not published and recent: only the listings of the
+    /// LAND and Estate registries are served, the contracts the index never
+    /// holds (it reads their `Update` logs, not their transfers), which the
+    /// guard would pass anyway; the others are left out, and the total does
+    /// not count them.
     Partial,
     /// The node does not walk the index: every open listing is served
     /// without the guard, one whose signer no longer holds the token
@@ -259,11 +256,12 @@ impl OwnerCheck {
         response
     }
 
+    /// The ownership predicate of the statement; [`OwnerCheck::Partial`]'s
+    /// registry filter is bound by [`trades_leg`] instead.
     fn predicate(self) -> &'static str {
         match self {
             Self::Checked => OWNER_GUARD,
-            Self::Partial => UNINDEXED_CONTRACT,
-            Self::Unchecked => "",
+            Self::Partial | Self::Unchecked => "",
         }
     }
 }
@@ -374,11 +372,14 @@ fn keyed(order: Order, sort_token_id: String) -> Keyed {
 ///
 /// A node that walks the nft index applies the signer-still-owns guard on
 /// a snapshot where the index is published and recent. While it is not,
-/// the leg keeps only the listings of contracts the index holds no token
-/// of, which the guard would pass anyway (LAND, estates): a listing the
-/// guard could drop is never served unguarded there, and the legacy leg
-/// still answers. A node that does not walk the index has no ownership
-/// source and serves the listings unguarded.
+/// the leg keeps only the listings of the configured network's LAND and
+/// Estate registries, which the index never holds and the guard would pass
+/// anyway: a listing the guard could drop is never served unguarded there,
+/// and the legacy leg still answers. Which contracts the index holds is not
+/// read from `shop.nft`: a rewind deletes the rows of the tokens it reaches,
+/// so a sold token's collection could look unindexed. A node that does not
+/// walk the index has no ownership source and serves the listings
+/// unguarded.
 pub async fn trades_leg(
     state: &MarketplaceState,
     f: &OrderFilters,
@@ -433,6 +434,17 @@ pub async fn trades_leg(
     if let Some(n) = f.network {
         let p = next(&mut binds, n.db_name().to_string());
         extra.push_str(&format!(" AND lower(u.network) = {p}"));
+    }
+    if check == OwnerCheck::Partial {
+        let Some(land) = state.land_network() else {
+            return Ok((Vec::new(), check));
+        };
+        let network = next(&mut binds, ChainNet::Ethereum.db_name().to_string());
+        let land_registry = next(&mut binds, land.land_registry.to_lowercase());
+        let estate_registry = next(&mut binds, land.estate_registry.to_lowercase());
+        extra.push_str(&format!(
+            " AND lower(u.network) = {network} AND u.contract_address_sent IN ({land_registry}, {estate_registry})"
+        ));
     }
     let now = Utc::now().naive_utc();
     let sql = trades_leg_sql(&extra, check);
@@ -917,8 +929,7 @@ mod tests {
         let partial = trades_leg_sql("", OwnerCheck::Partial);
         assert!(
             !trades_leg_sql("", OwnerCheck::Unchecked).contains("shop.nft")
-                && partial.contains(UNINDEXED_CONTRACT)
-                && !partial.contains(OWNER_GUARD)
+                && !partial.contains("shop.nft")
                 && sql.contains("FROM shop.nft n")
                 && sql.contains("u.type = 'public_nft_order'")
                 && sql.contains("trade_cancellations")

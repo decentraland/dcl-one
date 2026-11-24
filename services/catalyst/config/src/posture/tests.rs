@@ -138,12 +138,28 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
         "{err}"
     );
-    // Blank collections subgraphs are no longer a profile ownership source.
+    // The collections subgraphs are no profile ownership source, but they
+    // are the catalogue the nft walk takes its contracts from: a node that
+    // fills its own catalogue may blank neither, one whose catalogue another
+    // node fills may.
+    for (key, blank) in [
+        ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ] {
+        let err = check_of(&[db, (ENV, "mirror"), (key, blank)])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("{key} is empty")) && err.contains("never publishes"),
+            "{err}"
+        );
+    }
     check_of(&[
         db,
         (ENV, "mirror"),
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+        ("MARKETPLACE_MIRRORS_ENABLED", "false"),
     ])
     .unwrap();
     let err = check_of(&[
@@ -175,13 +191,31 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         ("TRADE_RPC_URLS", "137=https://polygon.example"),
     ])
     .unwrap();
-    // A file is read after the check; the walk refuses a wrong chain.
+    // A file is read after the check, and the list it held is checked
+    // once the secrets are resolved (`refuse_remote_secrets`, the last step
+    // of `Config::resolve_secret_files`).
     let with_file = [
         db,
         (ENV, "mirror"),
         ("TRADE_RPC_URLS_FILE", "/run/credentials/trade"),
     ];
     check(&parsed_with_files(&with_file), &lookup(&env(&with_file))).unwrap();
+    for (held, refused) in [
+        ("1=https://eth.example", true),
+        ("1=https://eth.example,137=", true),
+        ("1=https://eth.example,137=https://polygon.example", false),
+    ] {
+        let mut c = parsed_with_files(&with_file);
+        // What `resolve_secret_files` reads from the file, then the defaults.
+        c.marketplace.trade_rpc_urls = Some(held.into());
+        c.default_rpc_urls();
+        c.derive_trade_rpc_urls();
+        let result = refuse_remote_secrets(&mut c);
+        assert_eq!(result.is_err(), refused, "{held}: {result:?}");
+        if let Err(e) = result {
+            assert!(e.to_string().contains("names no 137= endpoint"), "{e}");
+        }
+    }
     // A testnet mirror serves the items as deployed until its chains are walked.
     check_of(&[
         db,

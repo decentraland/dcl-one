@@ -3568,11 +3568,14 @@ default) on this seed. With `unified_trades` materialized, no token index
 and the LAND source unrestricted, the same seed took 2.9 s for the
 wearables on sale (page and total), 30 s for the on-sale page naming no
 category, 59 s for `isOnSale=false`, and 30 s for the capped total of a
-sort by price. Every statement of these reads runs under a transaction-local
+sort by price. Every statement of these reads (`/v1/nfts`, the nft leg of
+`/v1/prices`, the estate sizes) runs under a transaction-local
 `statement_timeout` of 10 s (`READ_STATEMENT_TIMEOUT`), above the slowest
 ones measured here (8.1 s), and a cancelled one answers 503 naming the
-bound instead of holding a pool connection up to the pool's 60 s. Planning
-a split page takes 15 to 23 ms.
+bound. The bound is per statement: a page runs at most four heavy ones
+(the owner's count, the page, the capped total, the estates' parcels), so
+it holds its connection up to 40 s rather than the pool's 60 s for each.
+Planning a split page takes 15 to 23 ms.
 
 With an owner: a 32,000-token owner's `category=wearable` page 78 ms and
 total 167 ms, its `isOnSale=true` page 277 ms, and its page sorted by price
