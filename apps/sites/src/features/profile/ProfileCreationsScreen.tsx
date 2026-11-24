@@ -1,7 +1,6 @@
 import { useState } from "react";
 
-import type { ShopCardCreator } from "@dcl/one-ui";
-import { BackpackUpperBody, GeneralSecondaryBarEmotes } from "@dcl/one-ui/foundations/icons";
+import { BackpackUpperBody, GeneralSecondaryBarEmotes, type ShopCardCreator } from "@dcl/one-ui";
 
 import {
   CollectiblesItem,

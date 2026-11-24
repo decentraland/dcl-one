@@ -29,7 +29,7 @@ import { sessionChangePending, useSessionChangeRevalidation } from "@/data/lib/a
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import { StatusPage } from "@dcl/one-ui/apps/sites/status/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
-import { ThumbnailPublicBase } from "@dcl/one-ui/components/AppChrome/thumbnail-public-base";
+import { ThumbnailPublicBase } from "@dcl/one-ui";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { isPublicResponsePath, pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { useNotFoundPageView, useRoutePageView } from "@/core/lib/telemetry/page-view";

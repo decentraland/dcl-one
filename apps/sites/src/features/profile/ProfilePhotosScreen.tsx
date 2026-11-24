@@ -2,8 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useRouteLoaderData, useSearchParams } from "react-router";
 
-import { Button, JumpInCTA } from "@dcl/one-ui";
-import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
+import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic, Button, JumpInCTA } from "@dcl/one-ui";
 
 import {
   CollectiblesItem,
