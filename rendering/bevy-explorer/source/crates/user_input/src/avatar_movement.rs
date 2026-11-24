@@ -118,7 +118,6 @@ impl Plugin for AvatarMovementPlugin {
                 apply_impulses,
                 apply_movement,
                 record_own_movement,
-                record_ground_collider,
                 accumulate_movement_periods,
             )
                 .chain()
@@ -759,13 +758,16 @@ fn stage_redispatch_rotation(
 pub(crate) fn apply_movement(
     mut player: Query<
         (
+            Entity,
             &mut Transform,
             &mut AvatarDynamicState,
             &ActivePlayerComponent<AvatarMovement>,
+            &mut GroundCollider,
         ),
         With<PrimaryUser>,
     >,
     mut scenes: Query<(Entity, &mut SceneColliderData)>,
+    containing_scenes: ContainingScene,
     time_res: Res<Time>,
     mut info: ResMut<AvatarMovementInfo>,
     mut last_step: ResMut<LastMovementStep>,
@@ -773,9 +775,13 @@ pub(crate) fn apply_movement(
     central: Res<CentralCollisions>,
     mut last_clip: Local<Option<String>>,
 ) {
-    let Ok((mut transform, mut dynamic_state, movement)) = player.single_mut() else {
+    let Ok((player, mut transform, mut dynamic_state, movement, mut ground)) = player.single_mut()
+    else {
         return;
     };
+    let around = (movement.component.ground_direction != Vec3::ZERO)
+        .then(|| containing_scenes.get_area(player, PLAYER_COLLIDER_RADIUS));
+    let moves_with_ground = |scene: Entity| around.as_ref().is_some_and(|a| a.contains(&scene));
     let jump_cue = JumpCue::of_step(
         movement.component.animation.as_ref(),
         &mut last_clip,
@@ -793,7 +799,8 @@ pub(crate) fn apply_movement(
 
     if suppress || requested == Vec3::ZERO {
         dynamic_state.velocity = Vec3::ZERO;
-        dynamic_state.ground_height = ground_height(&mut scenes, transform.translation);
+        (dynamic_state.ground_height, *ground) =
+            find_ground(&mut scenes, transform.translation, moves_with_ground);
         start_jump_on_take_off(&mut dynamic_state, jump_cue, time_res.elapsed_secs_f64());
         end_jump_on_landing(&mut dynamic_state, jump_cue);
         *last_step = LastMovementStep {
@@ -882,7 +889,8 @@ pub(crate) fn apply_movement(
 
     // for now we hack in the old dynamic state values for animations
     dynamic_state.velocity = velocity;
-    dynamic_state.ground_height = ground_height(&mut scenes, transform.translation);
+    (dynamic_state.ground_height, *ground) =
+        find_ground(&mut scenes, transform.translation, moves_with_ground);
     start_jump_on_take_off(&mut dynamic_state, jump_cue, time_res.elapsed_secs_f64());
     end_jump_on_landing(&mut dynamic_state, jump_cue);
 }
@@ -896,21 +904,33 @@ fn actual_velocity(from: DVec3, to: DVec3, delta: f64) -> DVec3 {
     }
 }
 
-/// The height of the feet above the ground the player stands on, in every scene that can ground it.
-fn ground_height(scenes: &mut Query<(Entity, &mut SceneColliderData)>, feet: Vec3) -> f32 {
-    scenes
-        .iter_mut()
-        .fold(feet.y, |ground, (_, mut collider_data)| {
-            if !collider_data.grounds_avatar(feet.as_dvec3()) {
-                return ground;
+/// The ground under the player's `feet`, asked of each scene once: the height of the feet above
+/// the ground in every scene that can ground the player, and the collider it stands on, the lowest
+/// within [`PLAYER_GROUND_THRESHOLD`] in a scene for which `moves_with_ground` holds.
+fn find_ground(
+    scenes: &mut Query<(Entity, &mut SceneColliderData)>,
+    feet: Vec3,
+    moves_with_ground: impl Fn(Entity) -> bool,
+) -> (f32, GroundCollider) {
+    let mut height = feet.y;
+    let mut collider = GroundCollider::default();
+    let mut collider_height = PLAYER_GROUND_THRESHOLD;
+    for (scene, mut collider_data) in scenes.iter_mut() {
+        if !collider_data.grounds_avatar(feet.as_dvec3()) {
+            continue;
+        }
+        let Some((above, id)) = collider_data.get_standing_ground(feet) else {
+            continue;
+        };
+        height = height.min(above);
+        if above < collider_height && moves_with_ground(scene) {
+            if let Some(entity) = collider_data.get_collider_entity(&id) {
+                collider_height = above;
+                collider = GroundCollider(Some((entity, id, default())));
             }
-            ground.min(
-                collider_data
-                    .get_standing_ground(feet)
-                    .map(|(height, _)| height)
-                    .unwrap_or(f32::INFINITY),
-            )
-        })
+        }
+    }
+    (height, collider)
 }
 
 /// What marks the player's jumps on a movement step.
@@ -1032,49 +1052,6 @@ fn record_own_movement(
 // (scene entity, collider id) of collider player is standing on
 #[derive(Component, Default)]
 pub struct GroundCollider(pub Option<(Entity, ColliderId, GlobalTransform)>);
-
-fn record_ground_collider(
-    mut player: Query<(
-        Entity,
-        &Transform,
-        &ActivePlayerComponent<AvatarMovement>,
-        &mut GroundCollider,
-    )>,
-    containing_scenes: ContainingScene,
-    mut scenes: Query<&mut SceneColliderData>,
-) {
-    let Ok((player_ent, transform, movement, mut ground)) = player.single_mut() else {
-        return;
-    };
-
-    ground.0 = None;
-
-    if movement.component.ground_direction == Vec3::ZERO {
-        return;
-    }
-
-    let mut best_height = PLAYER_GROUND_THRESHOLD;
-
-    for scene in containing_scenes.get_area(player_ent, PLAYER_COLLIDER_RADIUS) {
-        let Ok(mut collider_data) = scenes.get_mut(scene) else {
-            continue;
-        };
-        if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
-            continue;
-        }
-
-        if let Some((height, collider_id)) =
-            collider_data.get_standing_ground(transform.translation)
-        {
-            if height < best_height {
-                if let Some(entity) = collider_data.get_collider_entity(&collider_id) {
-                    best_height = height;
-                    ground.0 = Some((entity, collider_id.clone(), Default::default()));
-                }
-            }
-        }
-    }
-}
 
 fn apply_ground_collider_movement(
     ground_transforms: Query<(&GlobalTransform, &PreviousColliderTransform)>,
@@ -1412,6 +1389,7 @@ mod tests {
                 ..default()
             })
             .add_systems(PostUpdate, apply_movement);
+        add_scene_resources(&mut app);
         let mut colliders = SceneColliderData::default();
         let id = ColliderId::new(SceneEntityId::ROOT, None, 0);
         colliders.set_wall(
@@ -1428,6 +1406,7 @@ mod tests {
                 PrimaryUser::default(),
                 movement,
                 AvatarDynamicState::default(),
+                GroundCollider::default(),
                 Transform::from_translation(start),
             ))
             .id();

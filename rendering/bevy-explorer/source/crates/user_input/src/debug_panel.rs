@@ -227,9 +227,10 @@ mod tests {
 
     #[test]
     fn a_moving_step_reports_its_actual_velocity_after_the_next_broadcast() {
-        use crate::avatar_movement::{apply_movement, CentralCollisions};
+        use crate::avatar_movement::{apply_movement, CentralCollisions, GroundCollider};
         use bevy::time::{TimePlugin, TimeUpdateStrategy};
         use common::structs::EngineMovementControl;
+        use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
 
         let mut app = App::new();
         app.add_plugins(TimePlugin)
@@ -241,6 +242,9 @@ mod tests {
             .init_resource::<AvatarMovementInfo>()
             .init_resource::<LastMovementStep>()
             .init_resource::<CentralCollisions>()
+            .init_resource::<ScenePointers>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
             .insert_resource(EngineMovementControl {
                 // accept the test's movement, initiated at time zero
                 accept_movement_after: -1.0,
@@ -263,6 +267,7 @@ mod tests {
             PrimaryUser::default(),
             movement,
             AvatarDynamicState::default(),
+            GroundCollider::default(),
             Transform::from_xyz(0.0, 1.0, 0.0),
         ));
         app.update();
