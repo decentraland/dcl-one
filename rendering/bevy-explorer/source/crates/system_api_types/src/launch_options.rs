@@ -72,10 +72,8 @@ pub struct LaunchOptions {
 
     /// Route first-party HTTP APIs through this gateway base url (a `gateway.` host: service
     /// aliases and forwarded signing paths; any other host: direct paths); explicit service urls
-    /// win. Pulse, the WebSocket RPCs, storage, abgen's CDN and the auth/reels pages keep the
-    /// base domain's hosts: set them with `--pulse-server host[:port]` (or `PULSE_SERVER`),
-    /// `--social-rpc wss://...`, `--ethereum-rpc wss://...`, `--storage https://...`,
-    /// `--abgen-cdn`, `--auth-page` and `--reels`
+    /// win. Pulse, the social and Ethereum RPC sockets, storage, abgen's CDN and the auth and
+    /// reels pages keep the base domain's hosts unless their own service option names them
     #[arg(long, value_name = "url", help_heading = SERVICES)]
     pub gateway: Option<String>,
 

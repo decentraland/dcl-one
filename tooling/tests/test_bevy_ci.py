@@ -758,6 +758,9 @@ class SelectionTest(unittest.TestCase):
 
     def test_shared_hud_sources_validate_web_only(self):
         for name in SHARED:
+            if name in ci.GATEWAY_HUD_INPUTS:
+                # the route contract also reads it (test_the_web_hud_gateway_resolvers_select_...)
+                continue
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

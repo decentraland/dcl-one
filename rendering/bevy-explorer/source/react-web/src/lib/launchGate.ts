@@ -8,6 +8,7 @@ import { BASE_DOMAIN, GATEWAY, hostBaseDomain, isTrustedBaseDomain, normaliseSer
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
+import { isTrustedGatewayPrefix } from '@explorer-core/lib/gateway'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 
 export type { UntrustedParam }
@@ -42,16 +43,13 @@ const GATES: Record<string, Gate> = {
   },
   // Routes every first-party API, signed requests included, through one server. Read normalised,
   // like the base domain; native is exempt the same way (its link may name only a Decentraland
-  // gateway). Trusted: an https origin under Decentraland's own deployments; a path never is, since
-  // a node proxies other hosts under one (`/_scene/<host>`).
+  // gateway). Trusted: an https origin of the session's Decentraland deployment
+  // (isTrustedGatewayPrefix).
   gateway: {
     warning:
       'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.',
     read: (native) => (native ? null : (GATEWAY?.prefix ?? null)),
-    isTrusted: (prefix) => {
-      const url = new URL(prefix)
-      return url.protocol === 'https:' && url.pathname === '/' && hostBaseDomain(url.hostname) != null
-    }
+    isTrusted: (prefix) => isTrustedGatewayPrefix(prefix, BASE_DOMAIN)
   },
   // Repoints every scene and asset fetch at one server while everything else looks normal.
   contentServer: {

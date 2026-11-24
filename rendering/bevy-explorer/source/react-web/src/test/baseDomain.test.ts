@@ -48,6 +48,10 @@ describe('?gateway=', () => {
     expect(m.serviceUrl('storage')).toBe('https://storage.decentraland.org')
     const { untrustedLaunchParams } = await import('../lib/launchGate')
     expect(untrustedLaunchParams({ native: false }).map((p) => p.name)).toEqual(['gateway'])
+    expect(m.nativeProfileImage('https://profile-images.decentraland.org/a%2Fb?q=1')).toBe(
+      'https://gateway.example.test/profile-images/a%2Fb?q=1'
+    )
+    expect(m.nativeProfileImage('https://cdn.decentraland.org/a')).toBe('https://cdn.decentraland.org/a')
     const { engineLaunch } = await import('../lib/engineLaunch')
     expect(engineLaunch(new URLSearchParams(window.location.search)).options.gateway).toBe('https://gateway.example.test')
   })
@@ -56,7 +60,8 @@ describe('?gateway=', () => {
     for (const [gateway, untrusted] of [
       ['https://gateway.decentraland.org', []],
       ['https://gateway.decentraland.org/_scene/x', ['gateway']],
-      ['http://gateway.decentraland.org', ['gateway']]
+      ['http://gateway.decentraland.org', ['gateway']],
+      ['https://gateway.decentraland.zone', ['gateway']]
     ] as const) {
       window.history.replaceState(null, '', `/?gateway=${encodeURIComponent(gateway)}`)
       vi.resetModules()

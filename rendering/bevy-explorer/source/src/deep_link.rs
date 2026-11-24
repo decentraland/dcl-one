@@ -76,7 +76,8 @@ mod place {
     ) -> Result<Destination, String> {
         let place = platform::deeplink::parse_place_link(link).map_err(|e| e.to_string())?;
         if let Some(raw) = &place.gateway {
-            let link_gateway = common::gateway::Gateway::parse_link(raw)?;
+            // the latched gateway passed the launch's own checks; the link only has to name it
+            let link_gateway = common::gateway::Gateway::parse(raw)?;
             if Some(link_gateway.prefix()) != gateway {
                 return Err(format!(
                     "the link is for gateway {}, but this client runs {} (fixed when the client \
@@ -240,14 +241,13 @@ mod place {
             let other =
                 destination_on(link, ORG, Some("https://gateway.decentraland.zone")).unwrap_err();
             assert!(other.contains("gateway.decentraland.zone"), "{other}");
-            // the launch's trust rule applies here too
-            let untrusted = destination_on(
+            // a client launched with --gateway accepts a link naming that same gateway
+            assert!(destination_on(
                 "decentraland://open?position=1,2&gateway=https://gateway.example.test",
                 ORG,
                 Some("https://gateway.example.test"),
             )
-            .unwrap_err();
-            assert!(untrusted.contains("--gateway"), "{untrusted}");
+            .is_ok());
         }
 
         #[test]

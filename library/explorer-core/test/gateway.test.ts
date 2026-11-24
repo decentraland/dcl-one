@@ -3,7 +3,7 @@
 // (infra/gateway/tests/explorer_routes.py); these cases pin the parse and profile-image edges.
 import { describe, expect, it } from 'vitest'
 import { SERVICES } from '../engine/generated/serviceTable'
-import { gatewayProfileImage, gatewayServiceUrl, parseGateway } from '../lib/gateway'
+import { gatewayProfileImage, gatewayServiceUrl, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
 
 const service = (name: string) => SERVICES.find((s) => s.name === name)!
 
@@ -62,5 +62,24 @@ describe('gatewayProfileImage', () => {
     ]) {
       expect(gatewayProfileImage(gateway, raw, 'example.test'), raw).toBe(null)
     }
+  })
+})
+
+describe('isTrustedGatewayPrefix', () => {
+  it("trusts the page's origin and an https origin of the session's Decentraland deployment", () => {
+    expect(isTrustedGatewayPrefix('https://gateway.decentraland.org', 'decentraland.org')).toBe(true)
+    expect(isTrustedGatewayPrefix('https://decentraland.zone', 'decentraland.zone')).toBe(true)
+    expect(isTrustedGatewayPrefix('http://node.example.test', 'node.example.test', 'http://node.example.test')).toBe(true)
+    for (const [prefix, domain] of [
+      ['https://gateway.decentraland.org/_scene/x', 'decentraland.org'],
+      ['https://gateway.decentraland.org:8443', 'decentraland.org'],
+      ['http://gateway.decentraland.org', 'decentraland.org'],
+      ['https://gateway.decentraland.zone', 'decentraland.org'],
+      ['https://evil-decentraland.org', 'decentraland.org'],
+      ['https://gateway.example.test', 'example.test']
+    ]) {
+      expect(isTrustedGatewayPrefix(prefix, domain), prefix).toBe(false)
+    }
+    expect(isTrustedGatewayPrefix('http://node.example.test/_scene/x', 'node.example.test', 'http://node.example.test')).toBe(false)
   })
 })

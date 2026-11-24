@@ -27,8 +27,10 @@ Trust follows the base domain:
 
 - Only an origin is trusted, never a path under one: a node proxies other hosts under
   `/_scene/<host>` with the request's signature headers.
-- On web, any gateway other than an HTTPS origin under `decentraland.org` or `decentraland.zone`
-  stops the boot on the untrusted-launch prompt. `/play` also trusts its own origin.
-- The native client takes from a link only such an HTTPS origin, because a link starts it
-  without a prompt. Any other gateway needs `--gateway`, which wins over the link.
-- A running native client refuses a link whose gateway differs from the one it started with.
+- On web, any gateway other than an HTTPS origin, with no port, under the session's base domain
+  when that is `decentraland.org` or `decentraland.zone` stops the boot on the untrusted-launch
+  prompt. `/play` also trusts its own origin.
+- The native client takes from a link only such an origin, because a link starts it without a
+  prompt. Any other gateway needs `--gateway`, which wins over the link.
+- The `/open_deep_link` test command refuses a link whose gateway differs from the one the client
+  started with.

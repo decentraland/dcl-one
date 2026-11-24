@@ -279,7 +279,8 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
 }
 
 /// A place link's launch options, under the explicit flags, which win. The link's gateway must be
-/// one a link may select ([`common::gateway::Gateway::parse_link`]) only when it applies.
+/// one a link may select for the session's base domain ([`common::gateway::Gateway::parse_link`])
+/// only when it applies.
 fn apply_place_link(
     launch: &mut system_api_types::launch_options::LaunchOptions,
     place: platform::deeplink::PlaceLink,
@@ -289,7 +290,13 @@ fn apply_place_link(
     launch.base_domain = launch.base_domain.take().or(place.base_domain);
     if launch.gateway.is_none() {
         if let Some(gateway) = place.gateway {
-            common::gateway::Gateway::parse_link(&gateway)?;
+            let base_domain = launch
+                .base_domain
+                .as_deref()
+                .unwrap_or(common::base_domain::DEFAULT)
+                .trim()
+                .to_ascii_lowercase();
+            common::gateway::Gateway::parse_link(&gateway, &base_domain)?;
             launch.gateway = Some(gateway);
         }
     }
@@ -506,9 +513,24 @@ mod tests {
         );
         assert_eq!(launch.position.as_deref(), Some("1,2"));
 
-        let foreign = link("decentraland://open?gateway=https://gateway.example.test");
-        let refused = apply_place_link(&mut LaunchOptions::default(), foreign).unwrap_err();
-        assert!(refused.contains("--gateway"), "{refused}");
+        for raw in [
+            "decentraland://open?gateway=https://gateway.example.test",
+            // an org session never moves onto zone's gateway by link
+            "decentraland://open?gateway=https://gateway.decentraland.zone",
+        ] {
+            let refused = apply_place_link(&mut LaunchOptions::default(), link(raw)).unwrap_err();
+            assert!(refused.contains("--gateway"), "{raw}: {refused}");
+        }
+        let mut zone = LaunchOptions::default();
+        apply_place_link(
+            &mut zone,
+            link("decentraland://open?dclenv=zone&gateway=https://gateway.decentraland.zone"),
+        )
+        .unwrap();
+        assert_eq!(
+            zone.gateway.as_deref(),
+            Some("https://gateway.decentraland.zone")
+        );
 
         // the flag wins, so the link's gateway is never applied nor refused
         let mut flagged = LaunchOptions {

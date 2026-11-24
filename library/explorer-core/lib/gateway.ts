@@ -32,6 +32,27 @@ export function parseGateway(raw: string | null): Gateway | null {
 }
 
 /**
+ * Whether a link may select this gateway with no prompt, for a session on `baseDomain`: the page's
+ * own origin, or an https origin with no port or path under that domain when it is one of
+ * Decentraland's own deployments (`Gateway::parse_link`). A path is never trusted: a node proxies
+ * other hosts under one (`/_scene/<host>`) with the request's signature headers.
+ */
+export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOrigin: string | null = null): boolean {
+  if (prefix === ownOrigin) return true
+  const url = new URL(prefix)
+  const underBase = url.hostname === baseDomain || url.hostname.endsWith(`.${baseDomain}`)
+  return (
+    url.protocol === 'https:' &&
+    url.port === '' &&
+    url.pathname === '/' &&
+    DECENTRALAND_DOMAINS.includes(baseDomain) &&
+    underBase
+  )
+}
+
+const DECENTRALAND_DOMAINS = ['decentraland.org', 'decentraland.zone']
+
+/**
  * The service's base url through the gateway (`Gateway::service`), or null when it keeps its own
  * destination. The segments come from the engine's service table (`Service::gateway_segment`).
  */

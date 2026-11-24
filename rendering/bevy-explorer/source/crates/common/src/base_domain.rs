@@ -24,10 +24,10 @@ pub fn set_gateway(raw: &str) -> Result<(), String> {
     let gateway = crate::gateway::Gateway::parse(raw)?;
     match GATEWAY.get() {
         Some(latched) if *latched == gateway => Ok(()),
-        Some(_) => Err("--gateway already configured".to_owned()),
+        Some(_) => Err("a different gateway is already configured".to_owned()),
         None => GATEWAY
             .set(gateway)
-            .map_err(|_| "--gateway already configured".to_owned()),
+            .map_err(|_| "a different gateway is already configured".to_owned()),
     }
 }
 

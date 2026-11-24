@@ -74,6 +74,9 @@ describe('the gateway option', () => {
     for (const gateway of [
       'http://gateway.decentraland.org',
       'https://gateway.decentraland.org/_scene/x',
+      'https://gateway.decentraland.org:8443',
+      // a decentraland.org session never moves onto zone's gateway unprompted
+      'https://gateway.decentraland.zone',
       `${window.location.origin}/_scene/game.example`
     ]) {
       const m = await load(false, `/?gateway=${encodeURIComponent(gateway)}`)

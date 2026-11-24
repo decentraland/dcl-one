@@ -198,7 +198,7 @@ for (const s of SERVICES) {
 
 /**
  * A service's base url (an authority service: its host) by its table name: the entry url's
- * override, else composed from the base domain, e.g. serviceUrl('places') →
+ * override, else its ?gateway= route, else composed from the base domain, e.g. serviceUrl('places') →
  * "https://places.decentraland.org".
  */
 export function serviceUrl(name: string): string {
