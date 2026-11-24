@@ -66,12 +66,15 @@ function useResendAt() {
 /** Whether a resend is held by the last send's answer; wakes when the hold ends, with no countdown. */
 export function useResendHeld() {
   const resendAt = useResendAt();
-  const [, wake] = useState(0);
+  const [wakeCount, wake] = useState(0);
   const held = resendAt !== null && resendAt > Date.now();
+  // A timer can fire before the clock reaches the deadline; each wake rearms it if needed.
   useEffect(() => {
     if (!held || resendAt === null || !Number.isFinite(resendAt)) return;
-    const timer = setTimeout(() => wake(count => count + 1), resendAt - Date.now());
+    // Longer delays overflow the browser's signed 32-bit timer and wake immediately.
+    const delay = Math.min(resendAt - Date.now(), 2_147_483_647);
+    const timer = setTimeout(() => wake(count => count + 1), delay);
     return () => clearTimeout(timer);
-  }, [held, resendAt]);
+  }, [held, resendAt, wakeCount]);
   return held;
 }

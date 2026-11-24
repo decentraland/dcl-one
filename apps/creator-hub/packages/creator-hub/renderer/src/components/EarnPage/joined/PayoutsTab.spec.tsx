@@ -176,6 +176,7 @@ describe('PayoutsTab', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   describe('when the tab first loads', () => {
@@ -1095,13 +1096,15 @@ describe('PayoutsTab', () => {
       };
 
       it('should keep a changed email on this step until the cooldown the service answers ends, then send on CONTINUE', async () => {
-        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(tooSoon(600) as never);
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(tooSoon(60_000) as never);
         const { dialog } = await openVerify();
 
         editEmail(dialog, NEW_EMAIL);
         fireEvent.click(continueButton(dialog));
 
         await expectWaiting(dialog);
+        await act(() => vi.advanceTimersByTimeAsync(60_000));
         await waitOut(dialog);
         expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
         await toCodeStep(dialog);
@@ -1111,12 +1114,13 @@ describe('PayoutsTab', () => {
       });
 
       it('should keep a changed email on this step while the code just sent cools down, sending nothing until CONTINUE', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
         vi.mocked(api.postEmailVerification).mockResolvedValueOnce(
           ok(
             {
               sent_at: new Date().toISOString(),
               expires_at: new Date(Date.now() + 600e3).toISOString(),
-              resend_available_at: new Date(Date.now() + 600).toISOString(),
+              resend_available_at: new Date(Date.now() + 60_000).toISOString(),
             },
             202,
           ),
@@ -1130,6 +1134,7 @@ describe('PayoutsTab', () => {
 
         await expectWaiting(dialog);
         expect(api.postEmailVerification).toHaveBeenCalledTimes(1);
+        await act(() => vi.advanceTimersByTimeAsync(60_000));
         await waitOut(dialog);
         await toCodeStep(dialog);
         expect(api.postEmailVerification).toHaveBeenCalledTimes(2);
