@@ -232,7 +232,7 @@ jobs:
           # The renderer bundle also holds apps/ui3/src/atoms (the `@ui` alias in apps/creator-hub/packages/creator-hub/renderer/vite.config.js)
           # and the LAND map with its helpers (the include list of apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json),
           # built with the ui3 package (sideEffects) and compiler settings (jsx, paths).
-          change_path: "apps/creator-hub apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/shop library/web-core/shop-chain-env.ts library/web-core/site.ts"
+          change_path: "apps/creator-hub apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/ui/components/Tooltip library/ui/package.json library/shop library/web-core/shop-chain-env.ts library/web-core/site.ts"
 
       # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).

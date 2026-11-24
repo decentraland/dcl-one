@@ -18,6 +18,7 @@ async-trait.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+sqlx.workspace = true
 url.workspace = true
 
 [features]

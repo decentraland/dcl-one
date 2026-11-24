@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PopupHost, ToastHost, resetPopups } from '../../design'
+import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../../design'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
 import lobbyStyles from '../../features/lobby/LobbyHome.module.css'
@@ -526,9 +526,7 @@ describe('lobby VIEW ALL of Communities and Gallery', () => {
     await openFirstPhoto()
     const photo = screen.getByRole('dialog', { name: 'Photo' })
     expect(screen.getByRole('dialog', { name: 'Gallery' })).not.toContainElement(photo)
-    act(() => {
-      expect(dispatchCancelLayer()).toBe(true)
-    })
+    act(() => closeTopPopup())
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
     expect(screen.getByRole('dialog', { name: 'Gallery' })).toBeInTheDocument()
   })
@@ -539,14 +537,14 @@ describe('lobby VIEW ALL of Communities and Gallery', () => {
     viewAll('Gallery')
     await openFirstPhoto()
     fireEvent.click(screen.getByRole('button', { name: /Jump In/i }))
-    expect(session.map.teleport).toHaveBeenCalledWith(-9, 14)
+    expect(session.map.teleportToPlace).toHaveBeenCalledWith(-9, 14)
     expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'Gallery' })).toBeNull()
   })
 
   it('keeps the photo and the modal when the jump is refused', async () => {
     const session = withWidgets()
-    vi.mocked(session.map.teleport).mockReturnValue('refused')
+    vi.mocked(session.map.teleportToPlace).mockReturnValue('refused')
     render(lobbyWithPopups(session))
     viewAll('Gallery')
     await openFirstPhoto()

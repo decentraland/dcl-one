@@ -34,6 +34,8 @@ pub enum Source {
     TradeEventsIndex,
     /// `shop.rental_event` after a published fold (`rentals::index`).
     RentalsIndex,
+    /// The Polygon third-party registry after a published fold.
+    ThirdPartyRegistryIndex,
     /// The CouponManager state reader (`coupons`).
     CouponManager,
     /// A source v2 does not have yet; the label names the missing indexer.
@@ -55,6 +57,7 @@ impl Source {
             Self::NftIndex => "nft-index",
             Self::TradeEventsIndex => "trade-events-index",
             Self::RentalsIndex => "rentals-index",
+            Self::ThirdPartyRegistryIndex => "third-party-registry-index",
             Self::CouponManager => "coupon-manager",
             Self::Deferred(label) => label,
         }
@@ -79,6 +82,7 @@ impl Source {
             Self::NftIndex => Some("MARKETPLACE_NFT_INDEX_ENABLED"),
             Self::TradeEventsIndex => Some("MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
             Self::RentalsIndex => Some("SHOP_RENTALS_INDEX_ENABLED"),
+            Self::ThirdPartyRegistryIndex => Some("MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
             Self::CouponManager => Some("TRADE_RPC_URLS"),
             Self::Deferred(_) => None,
         }

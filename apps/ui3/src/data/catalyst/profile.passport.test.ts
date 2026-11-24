@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { AvatarSchema, fetchUserPhotos, mapProfile, normalizeAvatar } from "./profile";
-import { baseItemUrn } from "./backpack";
+import { baseItemUrn } from "@web-core/catalyst/backpack";
 
 const ADDR = "0xe2b6024873d218b2e83b462d3658d8d7c3f55a18";
 

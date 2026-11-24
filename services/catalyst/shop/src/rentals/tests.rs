@@ -1380,3 +1380,157 @@ async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
     assert!(empty.results.is_empty());
     own.drop().await;
 }
+
+#[tokio::test]
+async fn wallet_rentals_rejects_invalid_wallets_and_chains() {
+    let app = router(state_over(lazy_pool(), None, false));
+    for path in [
+        "/v1/rentals/bad-address",
+        &format!("/v1/rentals/{LESSOR}?chainId=137"),
+        &format!("/v1/rentals/{LESSOR}?chainId=invalid"),
+    ] {
+        let (status, _, _) = send(app.clone(), "GET", path, vec![], None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn wallet_rentals_uses_the_published_chain_and_current_custody() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    const DAY: i64 = 86_400;
+    const OTHER: &str = "0x0000000000000000000000000000000000000001";
+    let app = router(state_over(pool.clone(), None, false));
+    let path = format!("/v1/rentals/{}", LESSOR.to_ascii_uppercase());
+    let request = |path: String| {
+        let app = app.clone();
+        async move {
+            send(
+                app,
+                "GET",
+                &path,
+                vec![("origin".into(), "null".into())],
+                None,
+            )
+            .await
+        }
+    };
+
+    let (status, headers, body) = request(path.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["source"], "rentals-index");
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "null");
+    assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('rentals', 'ethereum', 0, 10, 10, timezone('UTC', now()), true, 1), \
+                ('rentals_sepolia', 'ethereum', 0, 10, 10, timezone('UTC', now()), true, 11155111)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The extension starts before its predecessor expires. The contract adds
+    // its days to the existing end. An expired, unclaimed estate stays with
+    // the lessor, while an expired tenant and a prior tenant are both absent.
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+    let sepolia = crate::land_authz::LAND_REGISTRY_SEPOLIA;
+    let sepolia_venue = super::signature::rentals_contract(11_155_111).unwrap();
+    for (block, log, contract, token, lessor, tenant, start, days, extension) in [
+        (
+            1_i64,
+            0_i32,
+            LAND,
+            1_i64,
+            OTHER,
+            LESSOR,
+            now - 3 * DAY,
+            2_i32,
+            false,
+        ),
+        (2, 0, LAND, 1, OTHER, LESSOR, now - 2 * DAY, 3, true),
+        (3, 0, estate, 1, LESSOR, OTHER, now - 4 * DAY, 1, false),
+        (4, 0, LAND, 2, OTHER, LESSOR, now - 4 * DAY, 1, false),
+        (5, 0, LAND, 3, OTHER, LESSOR, now - 3 * DAY, 1, false),
+        (6, 0, LAND, 3, OTHER, OTHER, now - DAY, 3, false),
+        (7, 0, LAND, 4, LESSOR, OTHER, now - 4 * DAY, 1, false),
+        (8, 0, LAND, 5, OTHER, LESSOR, now - DAY, 3, false),
+        (8, 1, LAND, 5, OTHER, OTHER, now - DAY, 3, false),
+        (1, 0, sepolia, 9, OTHER, LESSOR, now - DAY, 3, false),
+    ] {
+        let (network, venue) = if contract == sepolia {
+            ("sepolia", sepolia_venue)
+        } else {
+            ("ethereum", RENTALS)
+        };
+        sqlx::query(
+            "INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, signer, tenant, operator, rental_days, price_per_day, is_extension, signature, tx_hash) \
+             VALUES ($1, $2, $3, $4, $5, 'rented', $6, $7::bigint, $8, $9, $9, $10, 1, $11, '0xsig', '0xtx')",
+        )
+        .bind(network)
+        .bind(block)
+        .bind(log)
+        .bind(start)
+        .bind(venue)
+        .bind(contract)
+        .bind(token)
+        .bind(lessor)
+        .bind(tenant)
+        .bind(days)
+        .bind(extension)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for (block, token) in [(9_i64, 4_i64), (11, 1)] {
+        sqlx::query(
+            "INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, tx_hash) \
+             VALUES ('ethereum', $1, 0, $2, $3, 'claimed', $4, $5::bigint, '0xclaim')",
+        )
+        .bind(block)
+        .bind(now)
+        .bind(RENTALS)
+        .bind(LAND)
+        .bind(token)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let (status, _, body) = request(path.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tenants = body["data"]["tenantRentals"].as_array().unwrap();
+    let lessors = body["data"]["lessorRentals"].as_array().unwrap();
+    assert_eq!(tenants.len(), 1, "{tenants:?}");
+    assert_eq!(tenants[0]["tokenId"], "1");
+    assert_eq!(tenants[0]["contractAddress"], LAND);
+    assert_eq!(tenants[0]["startedAt"], now - 3 * DAY);
+    assert_eq!(tenants[0]["endsAt"], now + 2 * DAY);
+    assert_eq!(lessors.len(), 1, "{lessors:?}");
+    assert_eq!(lessors[0]["tokenId"], "1");
+    assert_eq!(lessors[0]["contractAddress"], estate);
+    assert!(lessors[0]["endsAt"].as_i64().unwrap() < now);
+
+    let (status, _, body) = request(format!("{path}?chainId=11155111")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["lessorRentals"], json!([]));
+    let tenants = body["data"]["tenantRentals"].as_array().unwrap();
+    assert_eq!(tenants.len(), 1, "{tenants:?}");
+    assert_eq!(tenants[0]["contractAddress"], sepolia);
+    assert_eq!(tenants[0]["tokenId"], "9");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' \
+         WHERE indexer = 'rentals_sepolia'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, _, _) = request(format!("{path}?chainId=11155111")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _, _) = request(path).await;
+    assert_eq!(status, StatusCode::OK);
+}

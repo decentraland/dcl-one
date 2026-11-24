@@ -157,10 +157,10 @@ section, so it does not replace the results of that run. A cancelled run of a co
 pull request moved past writes nothing. `automation` and `inworld` sections are allowed for suites
 to come; they appear the first time one writes.
 
-Each writer replaces only its section, strips marker-shaped lines from a body, truncates a section
-over 12000 characters, re-reads to confirm the write and collapses duplicate comments
-(`upsert-ci-status.sh`). The scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's
-*Integration guards*.
+Each write replaces only its sections (the pending and completed-run writes set build and tests
+together), strips marker-shaped lines from a body, truncates a section over 12000 characters,
+re-reads to confirm the write and collapses duplicate comments (`upsert-ci-status.sh`). The
+scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's *Integration guards*.
 
 On main, a new push does not cancel a running CI run: it waits, replacing any run already waiting,
 so each completed run tests every earlier commit. A manual dispatch or re-run on main also waits
