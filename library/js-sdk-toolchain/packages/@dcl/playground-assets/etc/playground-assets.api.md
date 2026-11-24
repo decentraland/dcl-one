@@ -2782,7 +2782,6 @@ export interface PBAvatarBase {
     name: string;
     // (undocumented)
     skinColor: PBColor3 | undefined;
-    // (undocumented)
     talking?: boolean | undefined;
 }
 
