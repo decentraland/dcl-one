@@ -36,9 +36,11 @@ SHARED_RELATIVE_TOOLING keep their paths.
 `--kit-ceiling` is a check: for every component kit under KIT_PATHS (app-owned
 kits whose consumers can already import library/ui/components) it fails when the
 number of tracked component files differs from what tooling/ui-kit-ceiling.json
-records. A kit may only shrink, and a smaller kit lowers its ceiling in the same
-change: `--write-kit-ceiling` records the current counts and refuses to raise a
-recorded one (docs/adr/2026-11-24-library-ui-single-source.md).
+records, and when that file records a higher ceiling than the base revision's
+(`--base`, default: the merge base with origin/main). A kit may only shrink, and
+a smaller kit lowers its ceiling in the same change: `--write-kit-ceiling`
+records the current counts and refuses one above the recorded or the base
+ceiling (docs/adr/2026-11-24-library-ui-single-source.md).
 """
 import argparse
 import json
@@ -596,11 +598,11 @@ def floor_issues(floor, current):
     return issues
 
 
-KIT_FILE = ROOT / 'tooling' / 'ui-kit-ceiling.json'
-# App-owned component kits that library/ui/components replaces. Each one's consumers can already import
-# @dcl/one-ui; the Explorer HUD's and the inspector's kits join when their builds can
-# (docs/adr/2026-11-24-library-ui-single-source.md).
-KIT_PATHS = ('apps/ui3/src/atoms', 'apps/ui3/src/components', 'library/ui/apps/sites/shared')
+KIT_FILE = 'tooling/ui-kit-ceiling.json'
+# App-owned component kits that library/ui/components replaces, and whose consumers can already import
+# @dcl/one-ui. The apps/ui3 atoms, the Explorer HUD's kit and the inspector's join when the surfaces that
+# build from them can (docs/adr/2026-11-24-library-ui-single-source.md).
+KIT_PATHS = ('apps/ui3/src/components', 'library/ui/apps/sites/shared')
 KIT_TEST = re.compile(r'\.(?:test|spec|stories)\.[jt]sx$')
 
 
@@ -624,6 +626,15 @@ def read_kit_ceiling(text):
     return ceiling
 
 
+def base_kit_ceiling(base):
+    """The ceiling the base revision records, or None when it records none."""
+    try:
+        text = git('show', f'{base}:{KIT_FILE}')
+    except subprocess.CalledProcessError:
+        return None
+    return read_kit_ceiling(text)
+
+
 def kit_issues(ceiling, current):
     """Each kit that grew above its ceiling, each kit that shrank without lowering it, and each ceiling
     entry that names no kit."""
@@ -640,10 +651,30 @@ def kit_issues(ceiling, current):
     return issues
 
 
-def raised_ceilings(ceiling, current):
-    """Each recorded kit whose current count is above its ceiling: the writer never records those."""
-    return [f'{name}: {count} component files, the ceiling is {ceiling[name]}; a ceiling is never raised'
-            for name, count in sorted(current.items()) if name in ceiling and count > ceiling[name]]
+def raised_ceilings(limits, values):
+    """Each kit whose value is above the limit recorded for it. A kit without a limit is new and passes."""
+    return [f'{name}: {value} is above the recorded ceiling of {limits[name]}; a ceiling is never raised'
+            for name, value in sorted(values.items()) if name in limits and value > limits[name]]
+
+
+def kit_ceiling(base, write=False):
+    """The issues of the kit ceiling check against the working tree and the base revision. With `write`,
+    record the current counts instead when none of them is above the recorded or the base ceiling."""
+    file = ROOT / KIT_FILE
+    recorded = read_kit_ceiling(file.read_text(encoding='utf-8')) if file.exists() else None
+    earlier = base_kit_ceiling(base) or {}
+    current = kit_counts(tracked_kit_files())
+    if write:
+        limits = dict(earlier)
+        for name, count in (recorded or {}).items():
+            limits[name] = min(count, limits.get(name, count))
+        issues = raised_ceilings(limits, current)
+        if not issues:
+            file.write_text(json.dumps(current, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        return issues
+    if recorded is None:
+        raise ValueError(f'{KIT_FILE} is missing')
+    return kit_issues(recorded, current) + raised_ceilings(earlier, recorded)
 
 
 def main():
@@ -665,25 +696,16 @@ def main():
     args = parser.parse_args()
     if args.write_kit_ceiling or args.kit_ceiling:
         try:
-            ceiling = read_kit_ceiling(KIT_FILE.read_text(encoding='utf-8')) if KIT_FILE.exists() else None
-            current = kit_counts(tracked_kit_files())
+            base = resolve_base(args.base) if args.base else default_base()
+            issues = kit_ceiling(base, write=args.write_kit_ceiling)
         except (OSError, ValueError, subprocess.CalledProcessError) as error:
             print(f'UI standards kit ceiling could not run: {error}', file=sys.stderr)
             return 2
-        if args.write_kit_ceiling:
-            issues = raised_ceilings(ceiling or {}, current)
-            if not issues:
-                KIT_FILE.write_text(json.dumps(current, indent=2, sort_keys=True) + '\n', encoding='utf-8')
-                return 0
-        elif ceiling is None:
-            print(f'UI standards kit ceiling could not run: {relative(KIT_FILE)} is missing', file=sys.stderr)
-            return 2
-        else:
-            issues = kit_issues(ceiling, current)
         if issues:
             print('\n'.join(issues), file=sys.stderr)
             return 1
-        print(f'UI standards: kit ceiling holds for {len(KIT_PATHS)} component kits')
+        if args.kit_ceiling:
+            print(f'UI standards: kit ceiling holds for {len(KIT_PATHS)} component kits')
         return 0
     if args.shared_imports:
         def read(name):

@@ -46,7 +46,7 @@ jobs:
           python3 tooling/ui_standards.py --base "$UI_STANDARDS_BASE"
           python3 tooling/ui_standards.py --token-floor
           python3 tooling/ui_standards.py --shared-imports
-          python3 tooling/ui_standards.py --kit-ceiling
+          python3 tooling/ui_standards.py --kit-ceiling --base "$UI_STANDARDS_BASE"
       # ui-gallery-publish.yml runs from main only, so its script and workflow shape are tested on every pull request.
       - name: Test the UI gallery publisher
         if: success() || failure()
