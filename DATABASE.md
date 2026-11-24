@@ -3642,3 +3642,15 @@ The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying. Each nft fold maintains the index beside `nft_owner_idx` and
 `nft_item_idx`.
+
+The DCL NAME owner read (`services/catalyst/shop/src/market/names.rs`) looks
+a label up lowercased, through `nft_ens_label_idx`, which only the
+DCLRegistrar's rows enter (`ens_subdomain` set). The object pass builds it the
+same way; to build it outside the release window:
+
+```sql
+CREATE INDEX CONCURRENTLY nft_ens_label_idx
+    ON shop.nft (lower(ens_subdomain)) WHERE ens_subdomain IS NOT NULL;
+```
+
+Its size and the lookup time on production data are unmeasured.

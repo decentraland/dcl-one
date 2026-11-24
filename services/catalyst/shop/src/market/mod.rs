@@ -82,6 +82,7 @@ pub mod listings;
 pub mod lists;
 pub mod mana_transfers;
 pub mod mirrors;
+pub mod names;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
@@ -524,12 +525,60 @@ pub trait ProfileFaces: Send + Sync {
     fn warm(&self, entities: Vec<String>);
 }
 
+/// The DCL NAME source of a node, selected once and used by every reader
+/// and route gate:
+///
+/// 1. a node that walks the nft index (mainnet with
+///    `MARKETPLACE_NFT_INDEX_ENABLED`, the rule its item routes follow)
+///    reads it (`names::IndexNames`), the authority while unready too (its
+///    reads fail closed); `serve` reads what the `indexer` process publishes
+///    into the same database;
+/// 2. else the marketplace subgraph, when one is configured;
+/// 3. else, on mainnet, the index all the same: a process reading a
+///    database another one publishes (an unpublished index refuses);
+/// 4. else none.
+///
+/// Profiles and outfits read the index's NAMEs only in case 1, beside the
+/// items it vouches for; elsewhere they claim none without the subgraph.
+/// Case 3 serves the name owner route and the Admin Toolkit's lookup only:
+/// the authorizations of worlds and communities take
+/// [`MarketplaceState::authorizing_names`], cases 1 and 2, the sources their
+/// startup posture (`worlds_names_reader`) accepts.
+pub fn select_name_authority(
+    settings: &Settings,
+    pool: &PgPool,
+    index: &Arc<ChainIndex>,
+) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
+    let mainnet = settings.eth_network.trim() == "mainnet";
+    if mainnet && settings.market.indexes.nft_enabled {
+        return Some(Arc::new(names::IndexNames::new(pool.clone())));
+    }
+    if settings.marketplace_subgraph_url.is_some() {
+        return Some(Arc::new(crate::chain_index::names::SubgraphNames(
+            index.clone(),
+        )));
+    }
+    mainnet.then(|| {
+        Arc::new(names::IndexNames::new(pool.clone()))
+            as Arc<dyn crate::chain_index::names::NameAuthority>
+    })
+}
+
 pub struct MarketplaceState {
     pub pool: PgPool,
     pub http: crate::http::Outbound,
     pub settings: Settings,
     /// The subgraph readers (`chain_index`), shared with the other domains.
     pub index: Arc<ChainIndex>,
+    /// The node's DCL NAME source ([`select_name_authority`]), shared with
+    /// worlds, comms and communities; `None`: no source, every NAME
+    /// question is unanswered.
+    pub name_authority: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
+    /// The NAME source worlds and communities authorize with: the one above
+    /// where this node walks the index or reads the subgraph (cases 1 and 2
+    /// of [`select_name_authority`]), `None` for a process that only reads
+    /// a database another one publishes.
+    pub authorizing_names: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
     /// `(pointer, publications)` -> the processed profile (`Null`: none),
     /// read under that publication of the nft index.
     pub(crate) profile_cache: TtlMap<(String, owned_items::Publications), Value>,
@@ -581,6 +630,30 @@ pub struct MarketplaceState {
 pub type SharedState = Arc<MarketplaceState>;
 
 impl MarketplaceState {
+    /// The source the unavailable envelope of a NAME read names.
+    pub fn name_source(&self) -> Source {
+        if self.name_authority.as_ref().is_some_and(|a| a.observes()) {
+            Source::NftIndex
+        } else {
+            Source::MarketplaceSubgraph
+        }
+    }
+
+    /// The node's DCL NAME source, or the "no source" refusal every NAME
+    /// question answers without one.
+    pub fn names(
+        &self,
+    ) -> Result<
+        &Arc<dyn crate::chain_index::names::NameAuthority>,
+        crate::chain_index::names::NamesError,
+    > {
+        self.name_authority.as_ref().ok_or_else(|| {
+            crate::chain_index::names::NamesError::NotEstablished(
+                "no DCL NAME source on this node: it does not walk the nft index (MARKETPLACE_NFT_INDEX_ENABLED off, or a network other than mainnet) and has no MARKETPLACE_SUBGRAPH_URL".into(),
+            )
+        })
+    }
+
     /// The LAND and estate registries of `ETH_NETWORK`; `None` for a
     /// network without them.
     pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
@@ -589,7 +662,14 @@ impl MarketplaceState {
 
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
+        let name_authority = select_name_authority(&settings, &pool, &index);
+        let walks = settings.market.indexes.nft_enabled && settings.eth_network.trim() == "mainnet";
+        let authorizing_names = name_authority
+            .clone()
+            .filter(|_| walks || settings.marketplace_subgraph_url.is_some());
         Self {
+            name_authority,
+            authorizing_names,
             pool,
             http,
             #[cfg(test)]

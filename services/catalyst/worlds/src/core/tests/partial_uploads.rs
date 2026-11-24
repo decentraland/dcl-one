@@ -1624,6 +1624,209 @@ async fn partial_batches_complete_and_replay_with_one_pool_connection() {
     .expect("a partial batch must not check out a second connection");
 }
 
+/// A NAME source that reads the database as the nft index does: every read
+/// runs a statement, on the session the caller hands it or on a pooled
+/// connection. Under a one-connection pool a read that took a pooled
+/// connection while the upload holds the only one would wait forever.
+struct SessionNames {
+    pool: PgPool,
+    /// label -> holder.
+    holders: std::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+
+impl SessionNames {
+    async fn statement(
+        conn: &mut sqlx::PgConnection,
+    ) -> Result<(), crate::chain_index::names::NamesError> {
+        sqlx::query("SELECT 1")
+            .execute(conn)
+            .await
+            .map(|_| ())
+            .map_err(|e| crate::chain_index::names::NamesError::Failed(e.to_string()))
+    }
+
+    async fn pooled(
+        &self,
+    ) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>, crate::chain_index::names::NamesError>
+    {
+        self.pool
+            .acquire()
+            .await
+            .map_err(|e| crate::chain_index::names::NamesError::Failed(e.to_string()))
+    }
+
+    fn observation() -> Option<crate::chain_index::names::Observation> {
+        Some(crate::chain_index::names::Observation {
+            folded_block: 1,
+            folded_at_us: 1,
+            fresh_until_ms: i64::MAX,
+        })
+    }
+
+    fn owned(
+        &self,
+        owner: &str,
+    ) -> crate::chain_index::names::Answer<Arc<Vec<crate::chain_index::names::OwnedName>>> {
+        let names = self
+            .holders
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, h)| h.as_str() == owner)
+            .map(|(label, _)| crate::chain_index::names::OwnedName {
+                name: label.clone(),
+                contract_address: "0x2a187453064356c898cae034eaed119e1663acb8".into(),
+                token_id: "1".into(),
+                price: None,
+            })
+            .collect();
+        crate::chain_index::names::Answer {
+            value: Arc::new(names),
+            observation: Self::observation(),
+        }
+    }
+
+    fn holder(&self, label: &str) -> crate::chain_index::names::Answer<Option<String>> {
+        crate::chain_index::names::Answer {
+            value: self.holders.lock().unwrap().get(label).cloned(),
+            observation: Self::observation(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::chain_index::names::NameAuthority for SessionNames {
+    async fn owned_names(
+        &self,
+        owner: &str,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<Arc<Vec<crate::chain_index::names::OwnedName>>>,
+        crate::chain_index::names::NamesError,
+    > {
+        Self::statement(&mut *self.pooled().await?).await?;
+        Ok(self.owned(owner))
+    }
+
+    async fn owned_names_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        owner: &str,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<Arc<Vec<crate::chain_index::names::OwnedName>>>,
+        crate::chain_index::names::NamesError,
+    > {
+        Self::statement(conn).await?;
+        Ok(self.owned(owner))
+    }
+
+    async fn name_owner(
+        &self,
+        label: &str,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<Option<String>>,
+        crate::chain_index::names::NamesError,
+    > {
+        Self::statement(&mut *self.pooled().await?).await?;
+        Ok(self.holder(label))
+    }
+
+    async fn name_owner_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        label: &str,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<Option<String>>,
+        crate::chain_index::names::NamesError,
+    > {
+        Self::statement(conn).await?;
+        Ok(self.holder(label))
+    }
+
+    async fn name_owners(
+        &self,
+        labels: &[String],
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<
+        crate::chain_index::names::Answer<std::collections::HashMap<String, Option<String>>>,
+        crate::chain_index::names::NamesError,
+    > {
+        Self::statement(&mut *self.pooled().await?).await?;
+        Ok(crate::chain_index::names::Answer {
+            value: labels
+                .iter()
+                .map(|l| (l.clone(), self.holder(l).value))
+                .collect(),
+            observation: Self::observation(),
+        })
+    }
+
+    async fn still_current(
+        &self,
+        _: &crate::chain_index::names::Observation,
+        _: crate::chain_index::names::Purpose,
+    ) -> Result<bool, crate::chain_index::names::NamesError> {
+        Ok(true)
+    }
+
+    fn observes(&self) -> bool {
+        true
+    }
+}
+
+/// The index-backed NAME reads a partial publish makes (the owner's
+/// authority, the held list its storage allowance counts, a scoped
+/// deployer's owner) run on the upload's own session: with one pooled
+/// connection, which the upload holds, every batch still completes.
+#[tokio::test]
+async fn partial_batches_read_indexed_names_on_the_upload_session() {
+    let Some(pool) = crate::db::scratch::pool(1).await else {
+        return;
+    };
+    let names = Arc::new(SessionNames {
+        pool: pool.clone(),
+        holders: Default::default(),
+    });
+    let f = fixture_with_names(
+        pool,
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        "",
+        Some(names.clone()),
+    )
+    .await;
+    let (world, owner) = (world_name(), Wallet::random());
+    names.holders.lock().unwrap().insert(
+        world.label().to_string(),
+        owner.address.as_str().to_string(),
+    );
+    // A limited allowance makes the publish count the owner's held NAMEs.
+    f.allowance.set(&owner.address, Some(1024 * 1024));
+    let u = upload(&world, 2);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+        expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 200).await;
+        assert_one_completion(&f, &u, &world).await;
+        // A scoped grantee's publish reads the world's owner on the session.
+        let grantee = Wallet::random();
+        grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
+        let mut replacement = upload(&world, 1);
+        let previous: Value = serde_json::from_slice(&u.entity_bytes).unwrap();
+        let mut entity: Value = serde_json::from_slice(&replacement.entity_bytes).unwrap();
+        entity["timestamp"] = json!(previous["timestamp"].as_i64().unwrap() + 1);
+        replacement.entity_bytes = serde_json::to_vec(&entity).unwrap();
+        replacement.entity_id = hash_bytes_v1(&replacement.entity_bytes);
+        expect_batch(&f.app, &replacement, Batch::of(&grantee, true, &[0]), 200).await;
+    })
+    .await
+    .expect("an indexed NAME read must not check out a second connection");
+}
+
 #[tokio::test]
 async fn a_reservation_disappearance_without_a_receipt_is_refused() {
     reservation_disappearance(DisappearedUpload::NoReceipt).await;
