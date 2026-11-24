@@ -8,6 +8,7 @@ import { flatten } from '/@/modules/store/translation/flatten';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { SharingConsentCard, SharingStatusChip, TurnRating } from './SharingConsent';
+import styles from './SharingConsent.module.css';
 
 const copy = en.editor.ai.sharing;
 
@@ -121,6 +122,17 @@ describe('when sharing is on', () => {
     expect(
       screen.getByRole('switch', { name: copy.menu_share_all }).getAttribute('aria-checked'),
     ).toBe('true');
+  });
+
+  // The bare Popover clears its own surface with a rule that outranks a class passed to it, so
+  // a menu styled through the Popover's className rendered with no background over the chat.
+  it('should draw the menu surface inside the bare popover, not on it', () => {
+    renderBoth({ status: 'on', conversationExcluded: false });
+    openMenu();
+
+    const group = screen.getByRole('group', { name: copy.chip_menu });
+    expect(group.classList.contains(styles.menu)).toBe(true);
+    expect(group.closest('[data-bare]')?.classList.contains(styles.menu)).toBe(false);
   });
 
   it('should stop sharing this chat with its switch', () => {

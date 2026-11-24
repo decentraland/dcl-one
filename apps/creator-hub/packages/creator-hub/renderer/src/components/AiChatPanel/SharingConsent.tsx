@@ -156,10 +156,10 @@ export function SharingStatusChip({
         placement="bottom-end"
         offset={6}
         bare
-        className={styles.menu}
       >
         <div
           role="group"
+          className={styles.menu}
           aria-label={t('editor.ai.sharing.chip_menu')}
         >
           <div className={styles.menuRow}>
