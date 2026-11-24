@@ -23,6 +23,7 @@ Review artifact) ends with a notice and publishes nothing. Evidence that does no
 """
 import datetime
 import hashlib
+import html
 import importlib.util
 import json
 import os
@@ -747,14 +748,14 @@ def probe(env, request=answer, sleep=time.sleep):
 # --- comment --------------------------------------------------------------------------------------------------------
 
 # No response header keeps a page from a wallet extension, so the comment itself warns the reviewer.
-WALLET_WARNING = ("This preview runs this pull request's code outside Decentraland's sites: never connect a wallet "
-                  'or sign anything there.')
+WALLET_WARNING = "Preview only: this pull request's code runs here, so never connect a wallet or sign anything."
+BUTTON = 'https://img.shields.io/badge/UI_gallery-Open_preview-ff2d55?style=for-the-badge'
 
 
 def render(url, head, expires):
-    return (f'### [Open the UI gallery]({url})\n\n'
-            f'| Built from | Available until |\n| --- | --- |\n| `{head[:7]}` | {expires} (UTC) |\n\n'
-            f'> [!WARNING]\n> {WALLET_WARNING}\n\n{MARKER}\n')
+    return (f'<p align="center">\n<a href="{html.escape(url)}"><img alt="Open the UI gallery" src="{BUTTON}"></a>\n'
+            f'<br><sub>Built from <code>{head[:7]}</code> · available until {expires} (UTC)</sub>\n'
+            f'<br><sub>⚠️ {WALLET_WARNING}</sub>\n</p>\n\n{MARKER}\n')
 
 
 def comment(env, github=None):
