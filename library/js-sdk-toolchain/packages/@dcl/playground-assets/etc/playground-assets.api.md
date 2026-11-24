@@ -2251,7 +2251,6 @@ export const MeshCollider: MeshColliderComponentDefinitionExtended;
 export interface MeshColliderComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshCollider> {
     setBox(entity: Entity, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
     setCylinder(entity: Entity, radiusBottom?: number, radiusTop?: number, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
-    setGltfMesh(entity: Entity, source: string, meshName: string, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
     setPlane(entity: Entity, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
     setSphere(entity: Entity, colliderLayers?: ColliderLayer | ColliderLayer[]): void;
 }
@@ -2265,7 +2264,6 @@ export const MeshRenderer: MeshRendererComponentDefinitionExtended;
 export interface MeshRendererComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshRenderer> {
     setBox(entity: Entity, uvs?: number[]): void;
     setCylinder(entity: Entity, radiusBottom?: number, radiusTop?: number): void;
-    setGltfMesh(entity: Entity, source: string, meshName: string): void;
     setPlane(entity: Entity, uvs?: number[]): void;
     setSphere(entity: Entity): void;
 }
@@ -5365,17 +5363,13 @@ export type RaycastSystemOptions = {
     queryType: RaycastQueryType;
     continuous?: boolean | undefined;
     collisionMask?: number | undefined;
-    shape?: RaycastShape | undefined;
-    includeWorld?: boolean | undefined;
 };
 
 // @public (undocumented)
 export interface ReactBasedUiSystem {
     addUiRenderer(entity: Entity, ui: UiComponent, options?: UiRendererOptions): void;
     destroy(): void;
-    removeTextureRenderer(entity: Entity): void;
     removeUiRenderer(entity: Entity): void;
-    setTextureRenderer(entity: Entity, ui: UiComponent): void;
     setUiRenderer(ui: UiComponent, options?: UiRendererOptions): void;
 }
 
@@ -5702,9 +5696,6 @@ export namespace ScrollPositionValue {
     // (undocumented)
     export function encode(message: ScrollPositionValue, writer?: _m0.Writer): _m0.Writer;
 }
-
-// @public
-export type ScrollVisibleType = 'horizontal' | 'vertical' | 'both' | 'hidden';
 
 // @public
 export function setCompositeProvider(engine: IEngine, provider: CompositeProvider): void;
@@ -6388,7 +6379,6 @@ export interface UiTransformProps {
     // (undocumented)
     borderWidth?: Partial<Position> | PositionUnit;
     display?: DisplayType;
-    elementId?: string;
     flex?: number;
     flexBasis?: number;
     flexDirection?: FlexDirectionType;
@@ -6408,8 +6398,6 @@ export interface UiTransformProps {
     pointerFilter?: PointerFilterType;
     position?: Partial<Position> | PositionShorthand;
     positionType?: PositionType;
-    scrollPosition?: PBVector2 | string;
-    scrollVisible?: ScrollVisibleType;
     width?: PositionUnit | 'auto';
     zIndex?: number;
 }

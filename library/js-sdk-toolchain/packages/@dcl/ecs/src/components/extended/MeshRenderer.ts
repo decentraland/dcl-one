@@ -4,7 +4,8 @@ import { MeshRenderer, PBMeshRenderer } from '../generated/index.gen'
 /**
  * @public
  */
-export interface MeshRendererComponentDefinitionExtended extends LastWriteWinElementSetComponentDefinition<PBMeshRenderer> {
+export interface MeshRendererComponentDefinitionExtended
+  extends LastWriteWinElementSetComponentDefinition<PBMeshRenderer> {
   /**
    * @public
    * Set a box in the MeshRenderer component
@@ -36,16 +37,6 @@ export interface MeshRendererComponentDefinitionExtended extends LastWriteWinEle
    * @param entity - entity to create or replace the MeshRenderer component
    */
   setSphere(entity: Entity): void
-
-  /**
-   * @public
-   * Set a mesh from inside a gltf in the MeshRenderer component.
-   * Supported only by the Bevy Explorer; other clients ignore it.
-   * @param entity - entity to create or replace the MeshRenderer component
-   * @param source - the path to the gltf
-   * @param meshName - the name of the mesh in the gltf (see GltfContainerLoadingState.meshNames)
-   */
-  setGltfMesh(entity: Entity, source: string, meshName: string): void
 }
 
 export function defineMeshRendererComponent(
@@ -73,11 +64,6 @@ export function defineMeshRendererComponent(
     setSphere(entity: Entity): void {
       theComponent.createOrReplace(entity, {
         mesh: { $case: 'sphere', sphere: {} }
-      })
-    },
-    setGltfMesh(entity: Entity, source: string, meshName: string): void {
-      theComponent.createOrReplace(entity, {
-        mesh: { $case: 'gltf', gltf: { gltfSrc: source, name: meshName } }
       })
     }
   }

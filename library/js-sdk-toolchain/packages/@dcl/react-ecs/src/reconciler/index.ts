@@ -57,10 +57,7 @@ export function createReconciler(
     IEngine,
     'getComponent' | 'addEntity' | 'removeEntity' | 'defineComponentFromSchema' | 'getEntitiesWith'
   >,
-  pointerEvents: PointerEventsSystem,
-  // When set, every entity this reconciler creates is parented to it -- a UiCanvas on the root
-  // entity then renders the tree to a texture instead of the screen.
-  rootEntity?: Entity
+  pointerEvents: PointerEventsSystem
 ) {
   // Store all the entities so when we destroy the UI we can also destroy them
   const entities = new Set<Entity>()
@@ -78,7 +75,6 @@ export function createReconciler(
   const UiInputResult = components.UiInputResult(engine)
   const UiDropdown = components.UiDropdown(engine)
   const UiDropdownResult = components.UiDropdownResult(engine)
-  const Transform = components.Transform(engine)
   const UiInputBinding = components.UiInputBinding(engine)
 
   // Component ID Helper
@@ -380,9 +376,6 @@ export function createReconciler(
 
     createInstance(type: Type, props: Props): Instance {
       const entity = engine.addEntity()
-      if (rootEntity !== undefined) {
-        Transform.createOrReplace(entity, { parent: rootEntity })
-      }
       entities.add(entity)
       const instance: Instance = {
         entity,

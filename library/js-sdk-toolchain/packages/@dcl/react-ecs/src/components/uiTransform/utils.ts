@@ -7,9 +7,7 @@ import {
   YGPositionType,
   YGUnit,
   YGWrap,
-  PointerFilterMode,
-  PBUiTransform,
-  ShowScrollBar
+  PointerFilterMode
 } from '@dcl/ecs'
 import {
   AlignType,
@@ -23,11 +21,9 @@ import {
   PositionUnit,
   PositionShorthand,
   PointerFilterType,
-  ScrollVisibleType,
   BorderRadius,
   UiTransformProps
 } from './types'
-import { Vector2 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/vectors.gen'
 import { calcOnViewport, getUiScaleFactor } from '../utils'
 import { ScaleUnit } from '../types'
 import { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
@@ -354,28 +350,4 @@ export function getPointerFilter(
 const parsePointerFilter: Readonly<Record<PointerFilterType, PointerFilterMode>> = {
   none: PointerFilterMode.PFM_NONE,
   block: PointerFilterMode.PFM_BLOCK
-}
-
-/**
- * @internal
- */
-export function getScrollPosition(scrollPosition: Vector2 | string): Pick<PBUiTransform, 'scrollPosition'> {
-  if (typeof scrollPosition === 'string') {
-    return { scrollPosition: { value: { $case: 'reference', reference: scrollPosition } } }
-  }
-  return { scrollPosition: { value: { $case: 'position', position: scrollPosition } } }
-}
-
-const parseScrollVisible: Readonly<Record<ScrollVisibleType, ShowScrollBar>> = {
-  both: ShowScrollBar.SSB_BOTH,
-  hidden: ShowScrollBar.SSB_HIDDEN,
-  horizontal: ShowScrollBar.SSB_ONLY_HORIZONTAL,
-  vertical: ShowScrollBar.SSB_ONLY_VERTICAL
-}
-
-/**
- * @internal
- */
-export function getScrollVisible(scrollVisible: ScrollVisibleType): Pick<PBUiTransform, 'scrollVisible'> {
-  return { scrollVisible: parseScrollVisible[scrollVisible] }
 }

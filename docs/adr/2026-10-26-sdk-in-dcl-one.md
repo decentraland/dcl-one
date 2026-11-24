@@ -45,10 +45,11 @@ It installs with pnpm as one workspace with a single lockfile
   on `PBGltfContainerLoadingState` are new required fields, and `PBMaterial`, `PBMeshCollider` and
   `PBMeshRenderer` gain a `$case: 'gltf'` variant (an exhaustive `switch` stops compiling). The
   first release from here lists these.
-- The SDK here carries both upstream lines: `decentraland/js-sdk-toolchain` `main` and the layer
-  its `experimental-bevy` branch adds for the Explorer (react-ecs scroll, drag listeners and
-  render-to-texture, pointer drag events, `setGltfMesh`, shaped raycasts, `getPlayer().forceRender`).
-  A scene that uses that layer runs on the Explorer dcl-one ships.
+- The SDK here is `decentraland/js-sdk-toolchain` `main` plus the part of its `experimental-bevy`
+  layer the bridge scene uses: pointer drag events and the react-ecs drag listeners, `videoTexture`
+  on a UI background and `getPlayer().forceRender`, each documented as supported only by the Bevy
+  Explorer. The rest of that layer (react-ecs scroll and render-to-texture, `setGltfMesh`, shaped
+  raycasts) has no helper here; its fields stay in `library/protocol` and the generated components.
 - `protoc` comes from `SDK_PROTOC` when set: a name on `PATH` (`SDK_PROTOC=protoc` in the Nix
   shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
