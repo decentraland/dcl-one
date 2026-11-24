@@ -175,6 +175,30 @@ fn an_arrival_whose_scene_despawns_is_not_reported() {
     let timing = world.resource::<FirstRingTiming>();
     assert!(timing.arrival.is_none());
     assert!(!timing.reported);
+
+    // the new realm's spawn scene is the next arrival, timed and reported on its own
+    let mut pointers = ScenePointers::default();
+    pointers.insert(
+        IVec2::ZERO,
+        PointerResult::Exists {
+            hash: "new".to_owned(),
+            urn: None,
+        },
+    );
+    world.insert_resource(pointers);
+    let new = scene(&mut world, "new", &[IVec2::ZERO], 2);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .arrival
+            .map(|(scene, _)| scene),
+        Some(new)
+    );
+
+    set_tick(&mut world, new, 5);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().reported);
 }
 
 #[test]
