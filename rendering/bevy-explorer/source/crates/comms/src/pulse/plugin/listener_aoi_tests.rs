@@ -238,3 +238,81 @@ fn removing_a_scene_drops_its_routing_and_its_transport() {
     assert_eq!(aoi.routed(), routes(&[((5, 5), other)]));
     assert_eq!(aoi.transported(), [other]);
 }
+
+/// The server's receive buffer: a larger message is dropped and counted as corrupt.
+const SERVER_BUFFER_BYTES: usize = 4096;
+
+/// A handshake at the AoI budget, auth chain included, leaves room in the server's buffer.
+#[test]
+fn a_handshake_at_the_aoi_budget_fits_the_server_buffer() {
+    let scenes = [listener_aoi::HostedScene {
+        realm: "track.dcl.eth".to_owned(),
+        scene: SCENE.to_owned(),
+        parcels: (0..2000).map(|i| IVec2::new(i, i)).collect(),
+    }];
+    let (aoi, compaction) = listener_aoi::listener_aoi(&scenes, usize::MAX);
+    assert!(compaction.is_empty());
+    let mut fill = aoi[0].clone();
+    while listener_aoi::encoded_len(std::slice::from_ref(&fill)) > listener_aoi::MAX_AOI_BYTES {
+        fill.parcel_rects.pop();
+    }
+
+    let guest = {
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        wallet
+    };
+    let delegated = {
+        let root = wallet::local_guest::new_root_key();
+        let (ephemeral, delegates) =
+            wallet::local_guest::sign_identity(&root, 1_800_000_000_000).unwrap();
+        let mut wallet = Wallet::default();
+        wallet.finalize(root.address(), ephemeral, delegates, false);
+        wallet
+    };
+    for (name, wallet) in [("guest", guest), ("delegated", delegated)] {
+        let request = futures_lite::future::block_on(build_listener_handshake_request(
+            &wallet,
+            "",
+            vec![fill.clone()],
+        ))
+        .unwrap();
+        let bytes = pulse::ClientMessage {
+            message: Some(pulse::client_message::Message::SceneListenerHandshake(
+                request.clone(),
+            )),
+        }
+        .encoded_len();
+        println!(
+            "{name}: auth chain {} bytes, handshake {bytes} bytes at an AoI of {} bytes",
+            request.auth_chain.len(),
+            listener_aoi::encoded_len(std::slice::from_ref(&fill))
+        );
+        assert!(bytes + 256 <= SERVER_BUFFER_BYTES, "{name}: {bytes}");
+    }
+}
+
+/// Compaction changes what is announced, never what is routed.
+#[test]
+fn a_compacted_scene_is_still_routed_by_its_exact_parcels() {
+    let mut aoi = Aoi::listening();
+    let scene = aoi.context(SCENE, true);
+    let other = aoi.context(OTHER, true);
+    let track = listener_aoi::tests::track();
+    let pointers: Vec<String> = track.iter().map(|p| format!("{},{}", p.x, p.y)).collect();
+    let pointers: Vec<&str> = pointers.iter().map(String::as_str).collect();
+    aoi.definition(SCENE, &pointers);
+    aoi.definition(OTHER, &["1000,1000"]);
+    aoi.update();
+
+    let expected: HashMap<IVec2, Entity> = track
+        .iter()
+        .map(|p| (*p, scene))
+        .chain([(IVec2::new(1000, 1000), other)])
+        .collect();
+    assert_eq!(aoi.routed(), expected);
+    let listener = aoi.listener();
+    assert!(listener_aoi::encoded_len(&listener.aoi) <= listener_aoi::MAX_AOI_BYTES);
+    assert_eq!(listener.compaction.collapsed.len(), 1);
+    assert_eq!(listener.aoi[0].parcel_rects.len(), 2);
+}

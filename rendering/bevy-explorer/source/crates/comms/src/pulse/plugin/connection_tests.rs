@@ -23,6 +23,10 @@ fn address(wallet: &str) -> Address {
 pub(super) fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
     let (link, driver) = transport::pulse_channels(16);
     let grid = PulseParcelGrid::default();
+    let policy = match role {
+        PulseRole::Listener(_) => ReconnectPolicy::exact().for_listener(),
+        PulseRole::Player(_) => ReconnectPolicy::exact(),
+    };
     let session = PulseSession {
         link: Some(link),
         _driver: None,
@@ -43,7 +47,7 @@ pub(super) fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverCh
         pacer: DiscreteEventPacer::default(),
         // Exact waits, so a test can name the time a reconnect is due; the policy's own tests pin
         // the jitter.
-        policy: ReconnectPolicy::exact(),
+        policy,
         accepted: false,
         initial_realm: None,
         teleport_owed: false,
@@ -1646,4 +1650,123 @@ fn retry_polling_waits_for_an_established_connection_and_a_link() {
     retry_resyncs(&mut session, due, 0.0);
     assert!(driver.outbound.try_recv().is_ok());
     assert_eq!(session.resyncs[0], (0, 1));
+}
+
+/// What a listener asks in the handshake it signs at `now`, pumping until it is sent.
+fn signed_listener_handshake(
+    harness: &mut Harness,
+    now: f64,
+) -> pulse::SceneListenerHandshakeRequest {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    harness.pump_at(now);
+    while !matches!(harness.session().state, Connection::AwaitingResponse { .. }) {
+        assert!(
+            matches!(harness.session().state, Connection::Signing(_)),
+            "the handshake was not sent: the connection is {:?}",
+            harness.session().state
+        );
+        assert!(Instant::now() < deadline, "the handshake was never sent");
+        std::thread::sleep(Duration::from_millis(1));
+        harness.pump_at(now);
+    }
+    let sent = harness.sent();
+    let [(FrameKind::Control, pulse::client_message::Message::SceneListenerHandshake(handshake))] =
+        sent.as_slice()
+    else {
+        panic!("{sent:?}")
+    };
+    handshake.clone()
+}
+
+/// The AoI of one rect over `parcels` in `HOME`.
+fn home_aoi(min: IVec2, max: IVec2) -> Vec<pulse::SceneListenerAoi> {
+    vec![pulse::SceneListenerAoi {
+        realm: HOME.to_owned(),
+        parcel_rects: vec![pulse::ParcelRect {
+            min_x: min.x,
+            min_z: min.y,
+            max_x: max.x,
+            max_z: max.y,
+        }],
+    }]
+}
+
+/// A listener retries a rejected announcement, and the next handshake carries the current AoI.
+#[test]
+fn a_listener_rejected_for_its_announcement_retries_with_the_current_aoi() {
+    for reason in [
+        PulseDisconnect::InvalidHandshakeField,
+        PulseDisconnect::PacketCorrupted,
+    ] {
+        let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+        harness.session_mut().state = Connection::AwaitingResponse { timeout_at: 100.0 };
+        harness.session_mut().accepted = false;
+
+        harness.report(PulseStatus::Disconnected(reason));
+        harness.pump_at(5.0);
+        assert_eq!(respawn_at(harness.session()), Some(15.0), "{reason:?}");
+
+        let smaller = home_aoi(IVec2::ZERO, IVec2::new(1, 0));
+        set_listener_aoi(&mut harness.session_mut(), smaller.clone());
+        IoTaskPool::get_or_init(TaskPool::default);
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        harness.world.insert_resource(wallet);
+        harness.redial(Connection::Idle);
+
+        assert_eq!(signed_listener_handshake(&mut harness, 15.0).aoi, smaller);
+    }
+}
+
+/// An update the server rejects on an accepted connection is retried too.
+#[test]
+fn a_listener_rejected_for_an_update_retries() {
+    let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+
+    harness.report(PulseStatus::Disconnected(
+        PulseDisconnect::InvalidSceneListenerField,
+    ));
+    harness.pump_at(5.0);
+
+    assert_eq!(respawn_at(harness.session()), Some(15.0));
+}
+
+/// A player's malformed message would only repeat: it stops.
+#[test]
+fn a_player_rejected_for_a_malformed_handshake_stops() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 100.0 });
+
+    harness.report(PulseStatus::Disconnected(
+        PulseDisconnect::InvalidHandshakeField,
+    ));
+    harness.pump_at(5.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+}
+
+/// A peer on a parcel inside a compacted box that no scene hosts reaches no scene.
+#[test]
+fn a_peer_on_a_parcel_no_scene_hosts_reaches_no_scene() {
+    let (mut harness, [(first, mut first_updates), (_, mut second_updates)]) =
+        Harness::listener([IVec2::new(0, 0), IVec2::new(5, 0)]);
+    harness.session_mut().role.listener_mut().unwrap().announced =
+        home_aoi(IVec2::ZERO, IVec2::new(5, 0));
+
+    harness.receive(joined_at(1, W1, parcel_index(2)));
+    harness.receive(joined_at(2, W2, parcel_index(0)));
+    harness.pump_at(5.0);
+
+    let reached = |updates: &mut mpsc::Receiver<NetworkUpdate>| {
+        std::iter::from_fn(|| updates.try_recv().ok())
+            .filter_map(|update| match update {
+                NetworkUpdate::Player(update) => Some((update.transport_id, update.address)),
+                _ => None,
+            })
+            .collect::<HashSet<_>>()
+    };
+    assert_eq!(
+        reached(&mut first_updates),
+        HashSet::from_iter([(first, address(W2))])
+    );
+    assert!(reached(&mut second_updates).is_empty());
 }

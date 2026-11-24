@@ -179,6 +179,63 @@ fn terminal_reasons_park_the_session() {
     }
 }
 
+/// The announcement a listener is rejected for is rebuilt from its scenes on each attempt.
+const LISTENER_REJECTIONS: [PulseDisconnect; 3] = [
+    PulseDisconnect::InvalidHandshakeField,
+    PulseDisconnect::PacketCorrupted,
+    PulseDisconnect::InvalidSceneListenerField,
+];
+
+#[test]
+fn a_listener_retries_a_rejected_announcement_backing_off_from_ten_seconds_to_sixty() {
+    for reason in LISTENER_REJECTIONS {
+        for accepted in [false, true] {
+            let mut policy = ReconnectPolicy::exact().for_listener();
+
+            let waits: Vec<Next> = (0..8)
+                .map(|_| policy.next(disconnected(reason, accepted), 0.0))
+                .collect();
+
+            let expected = [10.0, 10.0, 10.0, 10.0, 16.0, 32.0, 60.0, 60.0].map(Next::RetryAt);
+            assert_eq!(waits, expected, "{reason:?}, accepted: {accepted}");
+        }
+    }
+}
+
+/// An acceptance between two rejections cannot bring the wait under its floor.
+#[test]
+fn a_listener_rejected_after_each_acceptance_still_waits_ten_seconds() {
+    let mut policy = ReconnectPolicy::exact().for_listener();
+    for _ in 0..3 {
+        policy.on_accepted();
+        assert_eq!(
+            policy.next(
+                disconnected(PulseDisconnect::InvalidSceneListenerField, true),
+                0.0
+            ),
+            Next::RetryAt(10.0)
+        );
+    }
+}
+
+#[test]
+fn a_listener_still_parks_for_the_other_terminal_reasons() {
+    for reason in [
+        PulseDisconnect::DuplicateSession,
+        PulseDisconnect::Banned,
+        PulseDisconnect::HandshakeReplayRejected,
+        PulseDisconnect::Unknown(42),
+    ] {
+        let mut policy = ReconnectPolicy::exact().for_listener();
+
+        assert_eq!(
+            policy.next(disconnected(reason, true), 0.0),
+            Next::Dead,
+            "{reason:?}"
+        );
+    }
+}
+
 #[test]
 fn codes_17_and_18_are_named() {
     assert_eq!(
