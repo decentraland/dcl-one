@@ -2879,7 +2879,7 @@ mod tests {
         let cached = |mesh: &Handle<Mesh>| CachedMeshData {
             mesh_id: mesh.id(),
             is_skinned: false,
-            shape: SharedShape::ball(1.0),
+            shape: Some(SharedShape::ball(1.0)),
             maybe_collider: None,
         };
         let mut lookup = SceneResourceLookup::default();
