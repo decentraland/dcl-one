@@ -1,10 +1,12 @@
-// Builds the mapping manifest from the live file: one REST read of the nodes the mappings name. It runs only
-// where FIGMA_TOKEN and FIGMA_FILE_KEY are set; everything else reads the tracked manifest.
+// Builds the mapping manifest from the live file: one REST read of the nodes the mappings name, and one read of
+// the pages that hold them. It runs only where FIGMA_TOKEN and FIGMA_FILE_KEY are set; everything else reads the
+// tracked manifest.
+import path from 'node:path'
 import type { FigmaClient } from '../figma/client.js'
 import type { FigmaSet } from './figma-index.js'
 import { findMappingFiles } from './library.js'
 import { readMappingFile } from './mapping-file.js'
-import { parseMappingManifest, serializeMappingManifest } from './mapping-manifest.js'
+import { orphanedSets, parseMappingManifest, serializeMappingManifest } from './mapping-manifest.js'
 
 type RestProperty = { type?: unknown; defaultValue?: unknown; variantOptions?: unknown }
 type RestNode = {
@@ -17,6 +19,9 @@ type RestNode = {
 
 /** Ids asked for in one request; the API takes them in the query string. */
 const NODE_BATCH = 50
+// The page read returns every listed node with its whole subtree (about 12 MB for the library's mappings), so it
+// gets the client's long-read budget.
+const PAGE_READ_TIMEOUT_MS = 240000
 
 // Errors name a node only by the id a mapping gave, and a variant or property only by its position: names read
 // from the file are checked only once the set is complete (checkedLiveSets), so they never reach a message.
@@ -98,32 +103,145 @@ function figmaSetFromNode(nodeId: string, node: RestNode | null | undefined): Fi
   )
 }
 
-/** The Figma node of every mapping under the root, each once, in mapping order. */
-async function mappedNodeIds(mappingRoot: string): Promise<string[]> {
-  const ids: string[] = []
+type Mapping = { name: string; nodeId: string }
+
+/** Every mapping under the root that names a node, by its file name without `.figma.ts`, in path order. */
+async function mappingsUnder(mappingRoot: string): Promise<Mapping[]> {
+  const mappings: Mapping[] = []
   for (const file of await findMappingFiles(mappingRoot)) {
     const nodeId = (await readMappingFile(file)).figma?.nodeId
-    if (nodeId && !ids.includes(nodeId)) ids.push(nodeId)
+    if (nodeId) mappings.push({ name: path.basename(file, '.figma.ts'), nodeId })
+  }
+  return mappings
+}
+
+/**
+ * The nodes a partial refresh reads: each selector is a mapping's file name or a node id some mapping names. A
+ * selector that matches nothing is refused, so a typo never turns into a refresh of nothing.
+ */
+function selectNodeIds(mappings: Mapping[], selectors: string[]): string[] {
+  if (selectors.length === 0) throw new Error('--only takes at least one mapping name or node id')
+  const ids: string[] = []
+  for (const selector of selectors) {
+    const matched = mappings.filter(
+      (mapping) => mapping.name === selector || mapping.nodeId === selector
+    )
+    if (matched.length === 0)
+      throw new Error(`--only: no mapping is named or names the node "${selector}"`)
+    for (const { nodeId } of matched) if (!ids.includes(nodeId)) ids.push(nodeId)
   }
   return ids
 }
 
-/** Reads every node from the live file. Any node that cannot be read fails the whole read. */
-async function readMappedSets(
+/**
+ * Why a mapped node gives no set. `missing`: the file answers null for it. `deleted-from-library`: the file still
+ * resolves it by id (Figma keeps deleted components that instances reference) but it is on no page. `invalid`:
+ * it is on a page but is not a component or a component set with variants and typed properties.
+ */
+type NodeProblemKind = 'missing' | 'deleted-from-library' | 'invalid'
+type NodeProblem = { nodeId: string; kind: NodeProblemKind; reason: string }
+type LiveRead = { sets: FigmaSet[]; problems: NodeProblem[] }
+
+type FileTree = { id?: unknown; children?: FileTree[] }
+
+/** The listed ids the tree holds: the file read with `ids` returns only the pages and frames leading to them. */
+function idsOnPages(tree: FileTree | undefined, wanted: ReadonlySet<string>): Set<string> {
+  const found = new Set<string>()
+  const pending: FileTree[] = tree ? [tree] : []
+  while (pending.length > 0) {
+    const node = pending.pop()!
+    if (typeof node.id === 'string' && wanted.has(node.id)) found.add(node.id)
+    if (Array.isArray(node.children)) pending.push(...node.children)
+  }
+  return found
+}
+
+const query = (ids: string[]) => ids.map(encodeURIComponent).join(',')
+
+/**
+ * Reads the nodes from the live file and sorts each into a set or a problem, in the order asked. An HTTP failure
+ * (a rate limit, an expired token) fails the whole read: it says nothing about any one node.
+ */
+async function readLiveNodes(
   client: FigmaClient,
   fileKey: string,
   nodeIds: string[]
-): Promise<FigmaSet[]> {
+): Promise<LiveRead> {
   const sets: FigmaSet[] = []
+  const problems: NodeProblem[] = []
   for (let start = 0; start < nodeIds.length; start += NODE_BATCH) {
     const batch = nodeIds.slice(start, start + NODE_BATCH)
     const response = await client.get<{
       nodes?: Record<string, { document?: RestNode } | null>
-    }>(`/v1/files/${fileKey}/nodes?ids=${batch.map(encodeURIComponent).join(',')}&depth=1`)
-    for (const nodeId of batch)
-      sets.push(figmaSetFromNode(nodeId, response.nodes?.[nodeId]?.document))
+    }>(`/v1/files/${fileKey}/nodes?ids=${query(batch)}&depth=1`)
+    const resolved = batch.filter((nodeId) => response.nodes?.[nodeId]?.document)
+    const onPages =
+      resolved.length === 0
+        ? new Set<string>()
+        : idsOnPages(
+            (
+              await client.get<{ document?: FileTree }>(
+                `/v1/files/${fileKey}?ids=${query(resolved)}`,
+                { timeoutMs: PAGE_READ_TIMEOUT_MS }
+              )
+            ).document,
+            new Set(resolved)
+          )
+    for (const nodeId of batch) {
+      const node = response.nodes?.[nodeId]?.document
+      if (!node) {
+        problems.push({
+          nodeId,
+          kind: 'missing',
+          reason: `Figma node ${nodeId} is not in the file`
+        })
+        continue
+      }
+      if (!onPages.has(nodeId)) {
+        problems.push({
+          nodeId,
+          kind: 'deleted-from-library',
+          reason: `Figma node ${nodeId} is deleted from the library: the file resolves it but no page holds it`
+        })
+        continue
+      }
+      try {
+        sets.push(figmaSetFromNode(nodeId, node))
+      } catch (error) {
+        // figmaSetFromNode names the node by id and its parts by position only.
+        problems.push({ nodeId, kind: 'invalid', reason: (error as Error).message })
+      }
+    }
   }
-  return sets
+  return { sets, problems }
+}
+
+/** Fails on any node that gives no set, naming every one of them; otherwise the sets in the order asked. */
+function requireLiveSets(read: LiveRead): FigmaSet[] {
+  if (read.problems.length > 0)
+    throw new Error(
+      `${read.problems.length} mapped Figma node(s) cannot be read:\n${read.problems
+        .map((problem) => `- [${problem.kind}] ${problem.reason}`)
+        .join('\n')}`
+    )
+  return read.sets
+}
+
+/**
+ * The tracked sets with the refreshed ones in place: a refreshed id replaces its entry or is added, every other
+ * entry is kept as it was, and an entry no mapping names any more (left behind by a re-pointed mapping) is dropped.
+ */
+function mergeRefreshed(
+  tracked: FigmaSet[],
+  refreshed: FigmaSet[],
+  mappedIds: Iterable<string>
+): { sets: FigmaSet[]; dropped: string[] } {
+  const fresh = new Map(refreshed.map((set) => [set.setId, set]))
+  const orphans = new Set(orphanedSets(tracked, mappedIds))
+  const dropped = [...orphans].map((set) => set.setId)
+  const kept = tracked.filter((set) => !orphans.has(set)).map((set) => fresh.get(set.setId) ?? set)
+  const added = refreshed.filter((set) => !tracked.some((entry) => entry.setId === set.setId))
+  return { sets: [...kept, ...added], dropped }
 }
 
 type Difference = { setId: string; name: string; changes: string[] }
@@ -180,12 +298,64 @@ function manifestDifferences(trackedSets: FigmaSet[], liveSets: FigmaSet[]): Dif
   return differences
 }
 
+type NamedNode = { setId: string; name: string }
+type VerifyReport = {
+  ok: boolean
+  sets: number
+  clean: string[]
+  changed: Difference[]
+  deletedFromLibrary: NamedNode[]
+  missing: NamedNode[]
+  invalid: (NamedNode & { reason: string })[]
+}
+
+/**
+ * The live file against the tracked manifest, one class per mapped node: clean, changed, deleted from the
+ * library, missing or invalid. A node that gives no set is named as the tracked manifest or its mapping names it,
+ * never by a name read from the file.
+ */
+function verifyReport(tracked: FigmaSet[], read: LiveRead, mappings: Mapping[]): VerifyReport {
+  const failed = new Set(read.problems.map((problem) => problem.nodeId))
+  const changed = manifestDifferences(
+    tracked.filter((set) => !failed.has(set.setId)),
+    read.sets
+  )
+  const differing = new Set(changed.map((difference) => difference.setId))
+  const nameOf = (nodeId: string) =>
+    tracked.find((set) => set.setId === nodeId)?.name ??
+    mappings.find((mapping) => mapping.nodeId === nodeId)?.name ??
+    nodeId
+  const named = (kind: NodeProblemKind) =>
+    read.problems
+      .filter((problem) => problem.kind === kind)
+      .map((problem) => ({ setId: problem.nodeId, name: nameOf(problem.nodeId) }))
+  return {
+    ok: read.problems.length === 0 && changed.length === 0,
+    sets: read.sets.length + read.problems.length,
+    clean: read.sets.map((set) => set.setId).filter((setId) => !differing.has(setId)),
+    changed,
+    deletedFromLibrary: named('deleted-from-library'),
+    missing: named('missing'),
+    invalid: read.problems
+      .filter((problem) => problem.kind === 'invalid')
+      .map((problem) => ({
+        setId: problem.nodeId,
+        name: nameOf(problem.nodeId),
+        reason: problem.reason
+      }))
+  }
+}
+
 export {
   checkedLiveSets,
   figmaSetFromNode,
   manifestDifferences,
-  mappedNodeIds,
-  readMappedSets,
-  variantProps
+  mappingsUnder,
+  mergeRefreshed,
+  readLiveNodes,
+  requireLiveSets,
+  selectNodeIds,
+  variantProps,
+  verifyReport
 }
-export type { Difference, RestNode }
+export type { Difference, LiveRead, Mapping, NodeProblem, RestNode, VerifyReport }
