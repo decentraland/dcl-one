@@ -69,6 +69,14 @@ describe('when a captured page composition owns route and control placement', ()
     expect(screen.getByRole('link', { name: 'Campaign' }).closest('li')).toHaveAttribute('data-accent', 'campaign')
   })
 
+  it('keeps the current mobile-only route visible on desktop', () => {
+    const [overview, campaign] = items
+    render(<TabsBar mode="navigation" page="shop" layout="links" items={[
+      { ...overview!, mobileOnly: true }, campaign!
+    ]} activeId="overview" />)
+    expect(screen.getByRole('link', { current: 'page' }).closest('li')).not.toHaveAttribute('data-mobile-only')
+  })
+
   describe('and the page is blog', () => {
     beforeEach(() => {
       render(

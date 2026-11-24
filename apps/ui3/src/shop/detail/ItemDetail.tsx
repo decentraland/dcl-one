@@ -861,7 +861,7 @@ export default function ItemDetail() {
                         <div className="shop-pay__price" data-variant="none" data-testid="item-price">
                           <span>{outOfStock ? t("itemDetail.soldOut") : t("itemDetail.notForSale")}</span>
                           <Tooltip anchor={availabilityAnchor} label={NOT_FOR_SALE_HINT} side="top" keepInViewport maxWidth={240} arrow tipClassName="shop-pdp__tip">
-                            <span ref={setAvailabilityAnchor} className="shop-pay__info" tabIndex={0} role="img" aria-label={outOfStock ? t("itemDetail.soldOut") : t("itemDetail.notForSale")}>
+                            <span ref={setAvailabilityAnchor} className="shop-pay__info" tabIndex={0} role="img" aria-label="Availability information" aria-description={NOT_FOR_SALE_HINT}>
                               <Icon name="info" size={14} />
                             </span>
                           </Tooltip>
