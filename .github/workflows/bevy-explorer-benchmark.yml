@@ -427,8 +427,12 @@ jobs:
             exit 1
           fi
           if ! grep -q '^\*\*Overall: 🔴' report/report.md; then
-            echo "No regression against the release."
-            exit 0
+            if grep -Eq '^\*\*Overall: (✅|🟢)' report/report.md; then
+              echo "No regression against the release."
+              exit 0
+            fi
+            echo "::error::The report has no Overall line this job knows; its format may have changed"
+            exit 1
           fi
           {
             printf 'The benchmark measured a regression of %s against %s ([run](%s)). Each run that regresses again comments here and replaces the report below; close the issue once main is back within the threshold.\n\n' \

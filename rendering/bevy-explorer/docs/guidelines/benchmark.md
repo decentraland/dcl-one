@@ -62,8 +62,10 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   empty; a `pr` of spaces is refused.
 - **A run of main that cannot measure fails** with setup's notes as the error (no release rollout,
   an expired release build, no runner, no laptop, an unoptimized build), so a nightly never stays
-  green without measuring. Main unchanged since the release skips and passes. A report in which
-  nothing was compared (no base leg produced data) fails the regression job too. The one quiet
+  green without measuring. Main unchanged since the release skips and passes, as does main whose
+  newest passed web build predates the release's CI run (a release whose run failed a guard). A report in which
+  nothing was compared (no base leg produced data), or one without a known **Overall** line, fails
+  the regression job too. The one quiet
   case is the [queue watchdog](#the-fleet): a laptop that never starts its leg leaves the run
   *cancelled*, which GitHub does not notify; the watchdog's job summary names the laptop.
 - **One run per pull request.** The next run for the same pull request cancels one in progress:
@@ -604,7 +606,8 @@ its merge commit.
   build and the base the latest release's.
 - **The latest release:** <a id="the-latest-release"></a>the newest GitHub deployment to the
   `org` environment whose payload names `@dcl-regenesislabs/bevy-explorer-web` (`prefix`) at 100%
-  and whose latest status is `success`: the record
+  and whose newest `success` status no `failure` or `error` follows (a newer deployment may mark it
+  `inactive`; it stays the release): the record
   [`bevy-explorer-rollout-manual.yml`](../../../../.github/workflows/bevy-explorer-rollout-manual.yml)
   writes when it rolls a version out to decentraland.org. The deployment's own commit is where the
   rollout was dispatched from, not the build: the build is the CI run its `version` names

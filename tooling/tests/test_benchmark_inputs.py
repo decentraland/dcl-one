@@ -74,8 +74,8 @@ class GitHub:
         self.calls.append(path)
         if path == f'repos/{REPO}/deployments?environment={inputs.RELEASE_ENVIRONMENT}&per_page=100':
             return self.deployments
-        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=1', path):
-            return [{'state': self.statuses.get(int(match.group(1)), 'success')}]
+        if match := re.fullmatch(rf'repos/{REPO}/deployments/([0-9]+)/statuses\?per_page=100', path):
+            return [{'state': state} for state in self.statuses.get(int(match.group(1)), ['success'])]
         if match := re.fullmatch(rf'repos/{REPO}/actions/runs/([0-9]+)', path):
             return next(run for run in self.main_runs + self.change_runs if run['id'] == int(match.group(1)))
         if path == f'repos/{REPO}/pulls/7':
@@ -321,8 +321,30 @@ class MainTest(Fixture):
     def test_a_partial_or_unsuccessful_rollout_is_not_the_release(self):
         self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
         self.github.deployments.insert(1, rollout(5, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc'))
-        self.github.statuses[5] = 'failure'
+        self.github.statuses[5] = ['failure', 'success']
         self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
+
+    def test_a_release_a_newer_deployment_marked_inactive_is_still_the_release(self):
+        self.github.deployments.insert(1, rollout(4, inputs.RELEASE_PACKAGE, '0.1.0-90.commit-ccccccc', percentage=10))
+        self.github.statuses[2] = ['inactive', 'success', 'in_progress']
+        self.assertEqual(self.resolve('schedule', {})['base_sha'], RELEASE)
+        # Never successful: the next older complete rollout is the release.
+        self.github.statuses[2] = ['inactive', 'in_progress']
+        self.assertEqual(self.resolve('schedule', {})['base_sha'], MAIN[1])
+
+    def test_main_older_than_a_release_whose_guard_failed_is_not_measured_backwards(self):
+        # The release is CI run 89, which failed a guard; main's newest passed web build is run 88.
+        self.github.deployments = [rollout(2, inputs.RELEASE_PACKAGE, '0.1.0-89.commit-ddddddd')]
+        self.github.main_runs[1]['conclusion'] = 'failure'
+        self.github.artifacts[90] = artifacts(MAIN[0], web=False)
+        result = self.resolve('schedule', {})
+        self.assert_skipped(result)
+        self.assertIn('predates the release', result['reason'])
+
+    def test_a_pr_run_reads_each_list_and_artifact_once(self):
+        self.github.artifacts[100] = artifacts(MERGE, runners=('linux-amd64',))
+        self.assertTrue(self.resolve()['run'])
+        self.assertEqual(len(self.github.calls), len(set(self.github.calls)))
 
     def test_no_release_rollout_or_an_expired_release_build_is_the_note(self):
         self.github.deployments = self.github.deployments[:1]
@@ -356,7 +378,6 @@ class MainTest(Fixture):
         result = self.resolve('schedule', {})
         self.assertEqual({leg['runner_run_id'] for leg in result['legs']}, {'89'})
         self.assertEqual(result['report_runner_run_id'], '90')
-
 
 class OutputTest(unittest.TestCase):
     def test_the_step_writes_every_output_the_workflow_reads_on_one_line_each(self):
@@ -516,6 +537,12 @@ class RegressionIssueTest(unittest.TestCase):
                 result, calls, _ = self.step(f'## Report\n\n{line}\n')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(calls, [])
+
+    def test_a_report_without_a_known_overall_line_fails(self):
+        result, calls, _ = self.step('## Report\n\nNo headline here.\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('no Overall line', result.stdout)
+        self.assertEqual(calls, [])
 
     def test_a_report_that_compared_nothing_fails(self):
         result, calls, _ = self.step('**Overall: ⚠️ nothing was compared — no Baseline run produced data**\n')

@@ -78,12 +78,19 @@ def ci_run(run, repo, events):
             and SHA.fullmatch(run['head_sha']))
 
 
+# One resolve reads each list once: the web app and the runners are searched in the same runs.
+CACHE = {}
+
+
 def artifacts(repo, run_id):
     """A run's artifacts that have not expired: {name: artifact ID}."""
-    data = api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
-    if data['total_count'] != len(data['artifacts']):
-        raise ValueError(f'run {run_id} has more artifacts than one page lists')
-    return {row['name']: row['id'] for row in data['artifacts'] if not row['expired']}
+    key = ('artifacts', repo, run_id)
+    if key not in CACHE:
+        data = api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
+        if data['total_count'] != len(data['artifacts']):
+            raise ValueError(f'run {run_id} has more artifacts than one page lists')
+        CACHE[key] = {row['name']: row['id'] for row in data['artifacts'] if not row['expired']}
+    return CACHE[key]
 
 
 def optimized(repo, artifact_id):
@@ -119,6 +126,13 @@ def search(repo, runs, prefixes):
 
 def base_runs(repo, base_sha):
     """Successful main runs, newest first: base_sha's when given, else every push."""
+    key = ('runs', repo, base_sha)
+    if key not in CACHE:
+        CACHE[key] = list_base_runs(repo, base_sha)
+    return CACHE[key]
+
+
+def list_base_runs(repo, base_sha):
     if base_sha:
         runs = api(f'repos/{repo}/{RUNS_PATH}?head_sha={base_sha}&status=success&per_page=100')['workflow_runs']
         return [run for run in runs if ci_run(run, repo, ('push', 'workflow_dispatch'))
@@ -140,10 +154,21 @@ def release(repo):
         match = RELEASE_VERSION.fullmatch(version)
         if package != RELEASE_PACKAGE or not match or str(payload.get('percentage', 100)) != '100':
             continue
-        statuses = api(f"repos/{repo}/deployments/{row['id']}/statuses?per_page=1")
-        if statuses and statuses[0].get('state') == 'success':
+        if released(api(f"repos/{repo}/deployments/{row['id']}/statuses?per_page=100")):
             return version, int(match.group(1)), match.group(2)
     return None
+
+
+def released(statuses):
+    """Whether a deployment's statuses, newest first, end in success: a later `inactive`, which a
+    newer deployment can set, leaves it released; a later failure or error does not."""
+    for status in statuses:
+        state = status.get('state')
+        if state in ('failure', 'error'):
+            return False
+        if state == 'success':
+            return True
+    return False
 
 
 def released_by(run, repo, short):
@@ -171,6 +196,7 @@ def commits(inputs):
 
 
 def resolve(event_name, event, repo, enabled='', runs=''):
+    CACHE.clear()
     inputs = {}
     if event_name == 'schedule':
         return resolve_main({}, repo, enabled, runs)
@@ -297,6 +323,11 @@ def resolve_main(inputs, repo, enabled, runs):
         base_description = f"release {version} at {base['head_sha']}"
     if base['head_sha'] == result['change_sha']:
         return skip(f"{base['head_sha']} is both the change and the base: main has no newer web build")
+    # Run IDs grow with time: main's newest passed web build may predate a release whose CI run
+    # failed a guard, and measuring it against the release would read backwards.
+    if not change_sha and not base_sha and change['id'] < base['id']:
+        return skip(f"main's newest passed web build (CI run {change['id']}) predates the release's "
+                    f"(CI run {base['id']}): main has no newer web build")
     result['base_sha'] = base['head_sha']
     result['base_description'] = base_description
     # The issue a regression opens or updates: main's one issue, or one per overridden comparison.
