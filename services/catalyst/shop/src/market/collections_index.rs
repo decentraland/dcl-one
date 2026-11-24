@@ -133,6 +133,7 @@ pub const COLLECTION_TOPICS: [B256; 13] = [
 /// - `account`: the factory of a `proxy_created`; the minter or manager of
 ///   the four `set_*_minter`/`set_*_manager`; the new creator or owner of a
 ///   transfer; the caller of an `issue`.
+/// - `previous_account`: the previous creator or owner of a transfer.
 /// - `flag`: the value of `set_global_minter`, `set_global_manager` and
 ///   `set_item_manager`; the new value of `set_approved` and `set_editable`.
 /// - `amount`: the price of `add_item` and `update_item_data`, the allowance
@@ -149,6 +150,7 @@ pub struct CollectionEvent {
     pub contract_address: String,
     pub item_id: Option<String>,
     pub account: Option<String>,
+    pub previous_account: Option<String>,
     pub flag: Option<bool>,
     pub amount: Option<String>,
     pub max_supply: Option<String>,
@@ -324,6 +326,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<Collec
                 .map_err(decoded("CreatorshipTransferred"))?;
             CollectionEvent {
                 account: Some(address(e._newCreator)),
+                previous_account: Some(address(e._previousCreator)),
                 ..base(KIND_CREATORSHIP_TRANSFERRED)
             }
         }
@@ -332,6 +335,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<Collec
                 .map_err(decoded("OwnershipTransferred"))?;
             CollectionEvent {
                 account: Some(address(e.newOwner)),
+                previous_account: Some(address(e.previousOwner)),
                 ..base(KIND_OWNERSHIP_TRANSFERRED)
             }
         }
@@ -353,12 +357,13 @@ pub async fn insert_events(
         };
         written += sqlx::query(
             "INSERT INTO shop.collection_event \
-                 (network, block_number, log_index, block_time, kind, contract_address, item_id, account, flag, \
-                  amount, max_supply, rarity, beneficiary, metadata, content_hash) \
-             SELECT $1, b, l, t, k, c, i::numeric, a, f, am::numeric, ms::numeric, r, bn, m, h \
+                 (network, block_number, log_index, block_time, kind, contract_address, item_id, account, \
+                  previous_account, flag, amount, max_supply, rarity, beneficiary, metadata, content_hash) \
+             SELECT $1, b, l, t, k, c, i::numeric, a, pa, f, am::numeric, ms::numeric, r, bn, m, h \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], \
-                         $9::bool[], $10::text[], $11::text[], $12::text[], $13::text[], $14::text[], $15::text[]) \
-                  AS u(b, l, t, k, c, i, a, f, am, ms, r, bn, m, h) \
+                         $9::text[], $10::bool[], $11::text[], $12::text[], $13::text[], $14::text[], $15::text[], \
+                         $16::text[]) \
+                  AS u(b, l, t, k, c, i, a, pa, f, am, ms, r, bn, m, h) \
              ON CONFLICT (network, block_number, log_index) DO NOTHING",
         )
         .bind(net.db_name())
@@ -369,6 +374,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.contract_address.as_str()).collect::<Vec<_>>())
         .bind(col(|r| r.item_id.clone()))
         .bind(col(|r| r.account.clone()))
+        .bind(col(|r| r.previous_account.clone()))
         .bind(chunk.iter().map(|r| r.flag).collect::<Vec<_>>())
         .bind(col(|r| r.amount.clone()))
         .bind(col(|r| r.max_supply.clone()))
@@ -1005,12 +1011,24 @@ mod tests {
         );
         let init_owner = row(97_707_994, 31);
         assert_eq!(
-            (init_owner.kind, init_owner.account.as_deref()),
-            (KIND_OWNERSHIP_TRANSFERRED, Some(V3))
+            (
+                init_owner.kind,
+                init_owner.previous_account.as_deref(),
+                init_owner.account.as_deref()
+            ),
+            (
+                KIND_OWNERSHIP_TRANSFERRED,
+                Some("0x0000000000000000000000000000000000000000"),
+                Some(V3)
+            )
         );
+        let handed = row(97_707_994, 36);
         assert_eq!(
-            row(97_707_994, 36).account.as_deref(),
-            Some("0xbf6755a83c0dcdbb2933a96ea778e00b717d7004")
+            (
+                handed.previous_account.as_deref(),
+                handed.account.as_deref()
+            ),
+            (Some(V3), Some("0xbf6755a83c0dcdbb2933a96ea778e00b717d7004"))
         );
         let helmet = row(97_707_994, 33);
         assert_eq!(helmet.kind, KIND_ADD_ITEM);
@@ -1172,14 +1190,22 @@ mod tests {
         );
         let creator = decode(
             Collection::CreatorshipTransferred {
-                _previousCreator: Address::ZERO,
+                _previousCreator: Address::repeat_byte(0xcc),
                 _newCreator: who,
             }
             .encode_log_data(),
         );
         assert_eq!(
-            (creator.kind, creator.account.as_deref()),
-            (KIND_CREATORSHIP_TRANSFERRED, Some(address(who).as_str()))
+            (
+                creator.kind,
+                creator.previous_account.as_deref(),
+                creator.account.as_deref()
+            ),
+            (
+                KIND_CREATORSHIP_TRANSFERRED,
+                Some(address(Address::repeat_byte(0xcc)).as_str()),
+                Some(address(who).as_str())
+            )
         );
         assert_eq!(creator.contract_address, address(c));
     }

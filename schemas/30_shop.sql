@@ -17033,6 +17033,7 @@ CREATE INDEX third_party_registry_provider_version_idx ON shop.third_party_regis
 -- - `account`: the factory of a `proxy_created`; the minter or manager of a
 --   `set_*_minter`/`set_*_manager`; the new creator or owner of a transfer;
 --   the caller of an `issue`;
+-- - `previous_account`: the previous creator or owner of a transfer;
 -- - `flag`: the value of `set_global_minter`, `set_global_manager` and
 --   `set_item_manager`, the new value of `set_approved` and `set_editable`;
 -- - `amount`: the price of `add_item` and `update_item_data`, the allowance
@@ -17049,6 +17050,7 @@ CREATE TABLE shop.collection_event (
     contract_address varchar(42) NOT NULL,
     item_id numeric(78,0),
     account varchar(42),
+    previous_account varchar(42),
     flag boolean,
     amount numeric(78,0),
     max_supply numeric(78,0),
@@ -17063,7 +17065,8 @@ CREATE TABLE shop.collection_event (
         'set_global_manager', 'set_item_minter', 'set_item_manager', 'set_approved', 'set_editable', 'complete',
         'creatorship_transferred', 'ownership_transferred')),
     CONSTRAINT collection_event_lowercase CHECK (
-        contract_address = lower(contract_address) AND account = lower(account) AND beneficiary = lower(beneficiary))
+        contract_address = lower(contract_address) AND account = lower(account)
+        AND previous_account = lower(previous_account) AND beneficiary = lower(beneficiary))
 );
 
 -- The walked collections: the walk's address filter and the creation reads
