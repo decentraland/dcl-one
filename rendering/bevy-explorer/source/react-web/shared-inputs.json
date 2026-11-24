@@ -6330,7 +6330,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "f355e8d4ddd481f106f3400491d63b1c9b37f65607fc25b1010914058e8e2614"
+      "sha256": "a5ba55ef959087233ca55845de2042ae3810961cf6e4c91f83d8c73309c04fe6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",

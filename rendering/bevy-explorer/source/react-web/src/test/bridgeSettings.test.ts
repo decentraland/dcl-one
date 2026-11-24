@@ -68,7 +68,7 @@ describe('graphics presets', () => {
     expect(target(nativeDefaults(), 2, 'Anti-aliasing')).toBe(2)
   })
 
-  it('Medium and High use the High bloom, the one that matches Unity', () => {
+  it('Medium and High use the High bloom', () => {
     expect(target(nativeDefaults(), 1, 'Bloom')).toBe(2)
     expect(target(nativeDefaults(), 2, 'Bloom')).toBe(2)
   })

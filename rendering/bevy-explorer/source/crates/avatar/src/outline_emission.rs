@@ -1,6 +1,6 @@
-//! The avatar outline darkens a mesh's lit surface but never its emission, as Unity's outline
-//! (a hull drawn outside the mesh) does: a glowing particle a few pixels across, the Epic Arrival
-//! Shield's, all of whose pixels are edge pixels, keeps its glow.
+//! The avatar outline darkens a mesh's lit surface but never its emission: a glowing particle a
+//! few pixels across, the Epic Arrival Shield's, all of whose pixels are edge pixels, keeps its
+//! glow.
 use std::sync::{Arc, Mutex};
 
 use bevy::{

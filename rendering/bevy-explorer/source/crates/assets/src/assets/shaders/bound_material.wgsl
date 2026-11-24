@@ -268,9 +268,9 @@ fn fragment(
         );
     }
 
-    // the emission goes on after the line, which only darkens the lit surface: Unity draws its
-    // outline as a hull outside the mesh, so a glowing mesh glows to its edge, and a mesh a pixel
-    // or two across (a particle) is not all line
+    // the emission goes on after the line, which only darkens the lit surface: a glowing mesh
+    // glows to its edge, and a mesh a pixel or two across (a particle), all of whose pixels are
+    // edge pixels, keeps its glow instead of turning into line
     out.color = vec4<f32>(out.color.rgb + toon_emitted, out.color.a);
 
     if should_discard {

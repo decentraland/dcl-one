@@ -871,8 +871,8 @@ impl AppConfig {
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
-    /// gen 6: default bloom went back to High, the setting that matches Unity's bloom; move
-    /// configs still on Low, the old default.
+    /// gen 6: default bloom went back to High, whose threshold keeps the glow to emissive and
+    /// bright surfaces; move configs still on Low, the old default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
