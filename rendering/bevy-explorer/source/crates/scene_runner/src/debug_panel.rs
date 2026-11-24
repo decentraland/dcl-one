@@ -135,7 +135,10 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Material textures", "textures"),
                     ("Colliders", "colliders"),
                     ("Colliders off outside scene bounds", "collidersOutOfBounds"),
-                    ("Models shared across scenes (all scenes)", "sharedModels"),
+                    (
+                        "Self-contained models scenes can share (all scenes)",
+                        "sharedModels",
+                    ),
                     ("Converted meshes (all scenes)", "sharedMeshes"),
                 ],
                 actions: &[],

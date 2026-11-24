@@ -688,3 +688,57 @@ fn two_scenes_with_the_same_mesh_draw_one_copy() {
         assert_eq!(lookup.meshes_by_hash.len(), 1);
     }
 }
+
+const FIRST: Handle<Gltf> = bevy::asset::weak_handle!("00000000-0000-0000-0000-000000000001");
+const SECOND: Handle<Gltf> = bevy::asset::weak_handle!("00000000-0000-0000-0000-000000000002");
+const URL: &str = "https://content.example/contents/bafkreimodel";
+
+#[test]
+fn scenes_that_load_a_model_at_the_same_time_take_the_first_copy() {
+    let mut shared = SharedGltfs::default();
+    let live = |_| true;
+    assert_eq!(
+        shared.share(URL.to_owned(), FIRST.id(), true, live),
+        FIRST.id()
+    );
+    // the second copy finished loading too: it takes the first, and its own goes
+    assert_eq!(
+        shared.share(URL.to_owned(), SECOND.id(), true, live),
+        FIRST.id()
+    );
+    // the first copy, back for its next container, keeps itself
+    assert_eq!(
+        shared.share(URL.to_owned(), FIRST.id(), true, live),
+        FIRST.id()
+    );
+    assert_eq!(shared.models(), 1);
+}
+
+#[test]
+fn a_copy_replaces_a_shared_model_that_is_gone() {
+    let mut shared = SharedGltfs::default();
+    shared.share(URL.to_owned(), FIRST.id(), true, |_| true);
+    let first_gone = |id| id != FIRST.id();
+    assert_eq!(
+        shared.share(URL.to_owned(), SECOND.id(), true, first_gone),
+        SECOND.id()
+    );
+    assert_eq!(
+        shared.share(URL.to_owned(), FIRST.id(), true, |_| true),
+        SECOND.id()
+    );
+}
+
+#[test]
+fn a_model_that_references_other_files_is_not_shared() {
+    let mut shared = SharedGltfs::default();
+    assert_eq!(
+        shared.share(URL.to_owned(), FIRST.id(), false, |_| true),
+        FIRST.id()
+    );
+    assert_eq!(
+        shared.share(URL.to_owned(), SECOND.id(), false, |_| true),
+        SECOND.id()
+    );
+    assert_eq!(shared.models(), 0);
+}

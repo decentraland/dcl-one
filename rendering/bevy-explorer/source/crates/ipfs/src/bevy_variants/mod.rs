@@ -599,6 +599,15 @@ impl BevyVariants {
         self.session.lock_ignore_poison().served.contains_key(path)
     }
 
+    /// The url of the variant the asset at `path` was last read from.
+    fn served_url(&self, path: &Path) -> Option<String> {
+        self.session
+            .lock_ignore_poison()
+            .served
+            .get(path)
+            .map(|served| served.url.clone())
+    }
+
     /// Whether the model at `path`, which failed to load, will still come back from its
     /// original: it was read from a `glb` variant, whose failure reloads it, or that reload is
     /// under way. A reload stops counting after [`MODEL_RELOAD_WAIT`].
@@ -675,6 +684,28 @@ impl IpfsIo {
     /// reprocessed as if it were the original).
     pub fn served_bevy_variant(&self, path: &Path) -> bool {
         self.bevy_variants.is_served(path)
+    }
+
+    /// The url the bytes of the content file at asset `path` are read from, when every read of
+    /// that url gives the same bytes: the variant that answered it, else the original's url when
+    /// a content hash names the file and the server is not loopback (a preview server's files
+    /// change). Two loads with the same url hold the same file.
+    ///
+    /// Blocking: reads the context.
+    pub fn immutable_source_url(&self, path: &Path) -> Option<String> {
+        if let Some(url) = self.bevy_variants.served_url(path) {
+            return Some(url);
+        }
+        let ipfs_path = IpfsPath::new_from_path(path).ok()??;
+        let context = self.context.blocking_read();
+        if !ipfs_path
+            .hash(&context)
+            .is_some_and(|hash| crate::content_hash::is_content_hash(&hash))
+        {
+            return None;
+        }
+        let url = ipfs_path.to_url(&context).ok()?;
+        (!common::util::is_loopback_url(&url)).then_some(url)
     }
 
     /// Whether the model at `path`, which failed to load, is about to load again from its

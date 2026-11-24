@@ -408,6 +408,16 @@ impl IpfsAssetServer<'_, '_> {
             .load_with_settings(PathBuf::from(&ipfs_path), settings))
     }
 
+    /// [`IpfsIo::immutable_source_url`] of the content file `file_path` of the entity
+    /// `content_hash`, as [`Self::load_content_file_with_settings`] would load it.
+    pub fn content_file_source_url(&self, file_path: &str, content_hash: &str) -> Option<String> {
+        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+            content_hash.to_owned(),
+            file_path.to_owned(),
+        ));
+        self.ipfs().immutable_source_url(&PathBuf::from(&ipfs_path))
+    }
+
     /// A content file loaded for its colliders only ([`ipfs_path::COLLIDERS_PART`]): the same
     /// file, downloaded and cached once with the whole file's loads, under an asset path of its
     /// own, so these settings never reach the whole file's asset.
