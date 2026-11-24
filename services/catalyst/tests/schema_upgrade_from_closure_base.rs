@@ -77,7 +77,8 @@ fn expected_pending_steps() -> Vec<&'static str> {
         .chain([
             "0060_shop_third_party_registry_index",
             "0061_content_processed_snapshot_types",
-            "0062_shop_sale_accounting",
+            "0062_shop_estate_repair_reset",
+            "0063_shop_sale_accounting",
         ])
         .collect()
 }
@@ -672,6 +673,17 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let estate_trigger: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM pg_trigger WHERE tgrelid='shop.chain_cursor'::regclass
+         AND tgname='reset_estate_creation_repair' AND tgenabled='O')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        estate_trigger,
+        "upgrading installs the estate rebuild trigger"
+    );
     let snapshots = catalyst::content::sync::LiveProcessedSnapshotStore::new(pool.clone());
     let hashes = [legacy_snapshot];
     let recorded_coverage: Vec<String> =

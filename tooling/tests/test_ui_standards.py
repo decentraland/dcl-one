@@ -1,3 +1,4 @@
+import json
 import importlib.util
 import subprocess
 import sys
@@ -286,6 +287,38 @@ class TokensReportTest(unittest.TestCase):
         self.assertEqual(sorted(recorded), ['a.css', 'b.css'])
         self.assertEqual(ui_standards.floor_issues(recorded, current), [])
 
+    def test_kit_ceiling_counts_components_and_skips_tests_stories_and_other_files(self):
+        files = ['kit/Button.tsx', 'kit/menu/Menu.jsx', 'kit/Button.test.tsx', 'kit/Button.spec.tsx',
+                 'kit/Button.stories.tsx', 'kit/Button.browser.test.tsx', 'kit/index.ts', 'kit/Button.module.css',
+                 'kitchen/Sink.tsx', 'other/Other.tsx']
+        self.assertEqual(ui_standards.kit_counts(files, ('kit', 'gone')), {'kit': 2, 'gone': 0})
+
+    def test_kit_ceiling_file_must_map_kits_to_whole_numbers(self):
+        self.assertEqual(ui_standards.read_kit_ceiling('{"kit": 2}'), {'kit': 2})
+        for text in ('[1]', '"kit"', '{"kit": "2"}', '{"kit": 1.5}', '{"kit": true}', '{"kit": -1}', '{"kit": null}',
+                     '{'):
+            with self.assertRaises(ValueError, msg=text):
+                ui_standards.read_kit_ceiling(text)
+
+    def test_raised_ceilings_names_each_value_above_its_limit_and_lets_a_new_kit_pass(self):
+        self.assertEqual(ui_standards.raised_ceilings({'kit': 3, 'other': 2}, {'kit': 3, 'other': 1, 'new': 5}), [])
+        self.assertEqual(ui_standards.raised_ceilings({'kit': 3}, {'kit': 4}),
+                         ['kit: 4 is above the recorded ceiling of 3; a ceiling is never raised'])
+
+    def test_kit_ceiling_fails_when_a_kit_grows_or_shrinks_without_lowering_it(self):
+        ceiling = {'kit': 3, 'other': 1}
+        self.assertEqual(ui_standards.kit_issues(ceiling, {'kit': 3, 'other': 1}), [])
+        self.assertEqual(ui_standards.kit_issues(ceiling, {'kit': 4, 'other': 0}), [
+            'kit: 4 component files, the ceiling is 3; add shared components to library/ui/components instead',
+            'other: 0 component files, the ceiling is 1; lower it with --write-kit-ceiling'])
+
+    def test_kit_ceiling_fails_on_an_unrecorded_kit_and_on_an_entry_that_names_no_kit(self):
+        self.assertEqual(ui_standards.kit_issues({}, {'new': 1}), [
+            'new: 1 component files, the ceiling is 0; add shared components to library/ui/components instead'])
+        self.assertEqual(ui_standards.kit_issues({}, {'empty': 0}), [])
+        self.assertEqual(ui_standards.kit_issues({'removed': 2}, {}), [
+            'removed: the ceiling records a kit that is not in KIT_PATHS; run --write-kit-ceiling'])
+
 
 class UiStandardsIntegrationTest(unittest.TestCase):
     def setUp(self):
@@ -306,6 +339,63 @@ class UiStandardsIntegrationTest(unittest.TestCase):
     def commit(self, message):
         self.git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false',
                  'commit', '--allow-empty', '-qm', message)
+
+    def kit(self, *components, ceiling=None):
+        """Commit a kit with these component files and, when given, its recorded ceiling."""
+        kit = self.root / ui_standards.KIT_PATHS[0]
+        kit.mkdir(parents=True, exist_ok=True)
+        for name in components:
+            (kit / name).write_text('')
+        if ceiling is not None:
+            self.write_ceiling({ui_standards.KIT_PATHS[0]: ceiling, ui_standards.KIT_PATHS[1]: 0})
+        self.git('add', '-A')
+        self.commit('kit')
+        return kit
+
+    def write_ceiling(self, ceiling):
+        file = self.root / ui_standards.KIT_FILE
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(json.dumps(ceiling))
+
+    def test_kit_ceiling_counts_tracked_files_only(self):
+        kit = self.kit('Button.tsx', ceiling=1)
+        (kit / 'Scratch.tsx').write_text('')
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [])
+        self.git('add', '-N', str(kit / 'Scratch.tsx'))
+        self.assertEqual(len(ui_standards.kit_ceiling('HEAD')), 1)
+
+    def test_kit_ceiling_fails_on_a_ceiling_raised_by_hand_above_the_base(self):
+        kit = self.kit('Button.tsx', ceiling=1)
+        (kit / 'Added.tsx').write_text('')
+        self.git('add', '-A')
+        self.write_ceiling({ui_standards.KIT_PATHS[0]: 2, ui_standards.KIT_PATHS[1]: 0})
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [
+            f'{ui_standards.KIT_PATHS[0]}: 2 is above the recorded ceiling of 1; a ceiling is never raised'])
+
+    def test_kit_ceiling_writer_refuses_a_raise_even_after_the_file_is_deleted(self):
+        kit = self.kit('Button.tsx', ceiling=1)
+        (kit / 'Added.tsx').write_text('')
+        self.git('add', '-A')
+        file = self.root / ui_standards.KIT_FILE
+        self.assertEqual(len(ui_standards.kit_ceiling('HEAD', write=True)), 1)
+        file.unlink()
+        self.assertEqual(len(ui_standards.kit_ceiling('HEAD', write=True)), 1)
+        self.assertFalse(file.exists())
+
+    def test_kit_ceiling_writer_lowers_the_ceiling_and_records_a_kit_the_base_lacks(self):
+        kit = self.kit('Button.tsx', 'Modal.tsx', ceiling=2)
+        (kit / 'Modal.tsx').unlink()
+        self.assertEqual(len(ui_standards.kit_ceiling('HEAD')), 1)
+        self.assertEqual(ui_standards.kit_ceiling('HEAD', write=True), [])
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [])
+        self.assertEqual(json.loads((self.root / ui_standards.KIT_FILE).read_text())[ui_standards.KIT_PATHS[0]], 1)
+
+    def test_kit_ceiling_passes_when_the_base_records_none_and_fails_when_the_file_is_missing(self):
+        self.kit('Button.tsx')
+        with self.assertRaises(ValueError):
+            ui_standards.kit_ceiling('HEAD')
+        self.write_ceiling({ui_standards.KIT_PATHS[0]: 1, ui_standards.KIT_PATHS[1]: 0})
+        self.assertEqual(ui_standards.kit_ceiling('HEAD'), [])
 
     def test_untracked_unicode_styles_fail_then_module_passes(self):
         (self.path / 'Botón.tsx').write_text('export const Button = () => null\n')

@@ -429,6 +429,24 @@ CREATE TABLE shop.chain_checkpoint (
     CONSTRAINT chain_checkpoint_hash_shape CHECK (block_hash ~ '^0x[0-9a-f]{64}$')
 );
 
+-- A pre-CreateEstate writer can rebuild the NFT projection to the same
+-- block and hash. Invalidate its archive proof when any writer resets it.
+CREATE FUNCTION shop.reset_estate_creation_repair() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM shop.worker_progress WHERE worker = 'nft_estate_creations' AND scope = 1;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER reset_estate_creation_repair
+AFTER UPDATE OF last_block ON shop.chain_cursor
+FOR EACH ROW WHEN (OLD.indexer = 'nft' AND OLD.network = 'ethereum'
+    AND NEW.last_block < OLD.last_block AND NEW.last_block = NEW.start_block - 1
+    AND NEW.last_block_hash IS NULL AND NEW.reorg_rewinds = OLD.reorg_rewinds
+    AND OLD.rebuild_requested_at IS NOT NULL AND NEW.rebuild_requested_at IS NULL)
+EXECUTE FUNCTION shop.reset_estate_creation_repair();
+
 -- The collections the nft walk has taken in, and from which block. A
 -- collection the mirror reports after the walk passed its creation gets a
 -- backfill range [backfill_from_block, walked_from_block - 1], walked by its
@@ -452,11 +470,11 @@ CREATE TABLE shop.nft_contract (
 );
 
 -- The nft log. `contract_address`/`token_id` name the asset (the emitter for
--- a transfer, a v1 issue, a name and a LAND/Estate Update; the order's
+-- a transfer, a v1 issue, a name and a LAND/Estate data event; the order's
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- Update's data string; `tx_hash` the transaction of an `order_successful`
+-- registry's data string; `tx_hash` the transaction of an `order_successful`
 -- (NULL on other kinds and on rows indexed before it was recorded).
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
@@ -553,10 +571,8 @@ CREATE TABLE shop.nft_order (
 -- the estate stats): WHERE status = 'open' AND expires_at > $now.
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
 
--- LAND and estate names and descriptions, folded from the registries'
--- Update(assetId, holder, operator, data) logs: the latest one decides; the
--- data string is the registries' CSV (`0,"name","description"`), anything
--- else leaves both NULL.
+-- LAND and estate names and descriptions from Update and CreateEstate.
+-- The latest parcel Update or the latest valid estate document supplies both fields.
 CREATE TABLE shop.land_data (
     token_address varchar(42) NOT NULL,
     token_id numeric(78,0) NOT NULL,
