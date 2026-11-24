@@ -291,7 +291,7 @@ impl SceneColliderData {
     /// Changes whenever a collider on any layer in `mask` is added, removed, moved, reshaped or
     /// switched on or off, so a query filtered to `mask` returns what it returned while this
     /// value holds.
-    pub fn layers_version(&self, mask: u32) -> u64 {
+    pub(crate) fn layers_version(&self, mask: u32) -> u64 {
         self.layer_stamps
             .iter()
             .enumerate()
