@@ -957,6 +957,10 @@
           "kind": "directory"
         },
         {
+          "name": "assets",
+          "kind": "directory"
+        },
+        {
           "name": "components",
           "kind": "directory"
         },

@@ -2424,12 +2424,12 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/capture/image-metadata-scan.test.ts": {
-          "sha256": "ab65fb32a37fbfbb9de0a5e07f6d9dbdb99611878c4e2d61a4a2b178e32a573a",
+          "sha256": "09380e47671e8d716957423ffbdc3c115dfe60b324b187915e4f01e6034997ab",
           "fds": null,
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/capture/image-metadata-scan.ts": {
-          "sha256": "21873cb14a0beff38c0d2a0a35850bc3cb19e704dacec24c2228ca130afd111a",
+          "sha256": "33b13956337001b28068a8b303ccb8b0c94d72e2cdffa7c8efa042b40c2cc86c",
           "fds": null,
           "deviation": "dcl-one-only"
         },
@@ -4428,7 +4428,7 @@
           }
         },
         "library/ui/figma/test/image-metadata.test.ts": {
-          "sha256": "e2aaa470f7076f2801b6ac39c4074730ce4db9ce0e5d2cd3d51aea9892fab2f8",
+          "sha256": "baa6aa60122ce1ab7525ed58fb8c54d16e52c6339fd74586d6ef724822ec5d06",
           "fds": null,
           "deviation": [
             "dcl-one-only",

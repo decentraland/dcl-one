@@ -29,7 +29,7 @@ const status = join(oneUi, "apps/sites/status");
 const artDir = join(oneUi, "apps/sites/assets/errors");
 const notFoundEntry = join(sites, "src/features/not-found/NotFoundPage.tsx");
 const foundations = join(oneUi, "foundations");
-const animatedBackground = join(oneUi, "apps/sites/shared/AnimatedBackground");
+const animatedBackground = join(oneUi, "components/AnimatedBackground");
 // The shared Inter faces (variable Inter, one face per script spanning every weight) and their files.
 const interCss = join(foundations, "typography/inter.css");
 const outDir = process.env.ERROR_PAGES_OUT || join(sites, "public/errors");
@@ -166,7 +166,7 @@ const webpUri = (path: string) => {
     const bytes = readFileSync(path);
     if (bytes.subarray(0, LFS_POINTER.length).toString("latin1") === LFS_POINTER) {
       throw new Error(
-        `gen-error-pages: ${file} is a Git LFS pointer, not the image. From the repository root run: git lfs pull --include="library/ui/apps/sites/assets/**"`,
+        `gen-error-pages: ${file} is a Git LFS pointer, not the image. From the repository root run: git lfs pull --include="${file.startsWith("library/ui/assets/") ? "library/ui/assets" : "library/ui/apps/sites/assets"}/**"`,
       );
     }
     if (bytes.subarray(0, 4).toString("latin1") !== "RIFF" || bytes.subarray(8, 12).toString("latin1") !== "WEBP") {

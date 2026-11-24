@@ -369,19 +369,12 @@ def check(base='HEAD', staged=False):
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
 SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
-# Files PR #2028 rewrites. Every name they import is exported from @dcl/one-ui, so #2028 can switch them and empty
-# this list; until then they keep their paths.
-SHARED_IMPORT_PENDING = frozenset({
-    'apps/sites/scripts/gen-error-pages.test.mts',
-    'apps/sites/src/features/not-found/NotFoundPage.test.tsx',
-    'apps/sites/src/features/not-found/NotFoundPage.tsx',
-    'apps/sites/src/features/social/report/ReportForm.test.tsx',
-    'apps/sites/src/features/social/report/ReportForm.tsx',
-    'apps/sites/src/features/social/report/ReportSuccess.test.tsx',
-    'apps/sites/src/features/social/report/ReportSuccess.tsx',
-    'apps/sites/src/routes/routes/_index.tsx',
-    'apps/ui3/src/web/pages/StInvite.tsx',
-})
+# Preserve the isolated lazy chunk and mock the exact module that LivePromo loads.
+LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
+SHARED_IMPORT_KEPT = frozenset(
+    (f'apps/ui3/src/shop/discovery/components/{name}', LAZY_ANIMATED_BACKGROUND)
+    for name in ('LivePromo.tsx', 'LivePromo.test.tsx')
+)
 
 
 # library/ui files apps/ may import by relative path: Node-only Figma review tooling, not UI, which the entry does
@@ -439,9 +432,11 @@ def shared_import_issues(paths, read):
         if name.startswith('apps/') and 'library/ui' in text:
             for specifier in relative_shared_imports(name, text):
                 issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
-        if name in SHARED_IMPORT_PENDING or '@dcl/one-ui/' not in text:
+        if '@dcl/one-ui/' not in text:
             continue
         for specifier in deep_shared_imports(text):
+            if (name, specifier) in SHARED_IMPORT_KEPT:
+                continue
             issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
     return issues
 
