@@ -164,9 +164,9 @@ async fn native_poster_serves_the_first_gif_frame_as_jpeg() {
         assert_jpeg(&body, (32, 16));
 
         let (status, headers, body) = get(&app, &format!("{browser}?url={url}")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(headers[header::CONTENT_TYPE], "image/gif");
-        assert_eq!(body, original);
+        assert_eq!(status, StatusCode::OK, "{browser}");
+        assert_eq!(headers[header::CONTENT_TYPE], "image/gif", "{browser}");
+        assert_eq!(body, original, "{browser}");
     }
 }
 
