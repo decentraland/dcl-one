@@ -1791,7 +1791,6 @@ dependencies = [
  "catalyst-shared",
  "dcl-http",
  "dcl-metrics",
- "metrics-exporter-prometheus",
  "reqwest 0.13.5",
  "serde",
  "serde_json",

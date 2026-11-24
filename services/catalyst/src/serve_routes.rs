@@ -53,49 +53,6 @@ pub(crate) fn live_presence_routes(
         )
 }
 
-/// Where the API listener serves the process exporter's series, for the
-/// gateway's authenticated `/metrics` (`infra/gateway`); the gateway never
-/// forwards this path itself.
-pub(super) const INTERNAL_METRICS_PATH: &str = "/internal/metrics";
-
-/// [`INTERNAL_METRICS_PATH`]: the exporter's rendering, answered only to a
-/// loopback peer or one in `HTTP_TRUSTED_PROXY_CIDRS` (the gateway's
-/// network). Any other caller, or one without a known peer, gets a 404.
-pub(super) fn internal_metrics_router(
-    handle: comms::metrics::PrometheusHandle,
-    config: &Config,
-) -> axum::Router {
-    use axum::response::IntoResponse;
-    let trusted_proxies = Arc::new(config.node.http_trusted_proxy_cidrs.clone());
-    axum::Router::new().route(
-        INTERNAL_METRICS_PATH,
-        axum::routing::get(move |request: axum::extract::Request| {
-            let (handle, trusted_proxies) = (handle.clone(), trusted_proxies.clone());
-            async move {
-                let internal = request
-                    .extensions()
-                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                    .is_some_and(|axum::extract::ConnectInfo(peer)| {
-                        let peer = peer.ip().to_canonical();
-                        peer.is_loopback()
-                            || shared::client_ip::is_trusted_proxy(peer, &trusted_proxies)
-                    });
-                if !internal {
-                    return axum::http::StatusCode::NOT_FOUND.into_response();
-                }
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        "text/plain; version=0.0.4; charset=utf-8",
-                    )],
-                    handle.render(),
-                )
-                    .into_response()
-            }
-        }),
-    )
-}
-
 /// Catalyst's own half of `/asset-bundle-registry` (profiles); the Registry
 /// gateway's reads join it under the same prefix through `explore::api::router`.
 pub(super) fn registry_profiles(market: shop::market::SharedState) -> axum::Router {

@@ -25,7 +25,6 @@ class ConfigurationTest(unittest.TestCase):
             "GATEWAY_TRUSTED_SYNC_PEER_IPS": ["203.0.113.1;", "peer.example", "fe80::1%eth0"],
             "GATEWAY_RESOLVERS": ["127.0.0.1;include", "resolver.example", "fe80::1%eth0"],
             "GATEWAY_STORAGE_ROOT": ["relative", "/data;include", "/data\nroot"],
-            "GATEWAY_METRICS_HTPASSWD": ["relative/.htpasswd", "/auth;include /tmp/x", "/a b"],
         }
         for key, values in bad.items():
             for value in values:
@@ -150,38 +149,6 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(page=page):
                 self.assertIn(f"location ^~ {page} {{\nproxy_pass http://sites;", text)
         self.assertEqual(text.count("location ^~ /cast/ {"), 1)
-
-    METRICS_TABLE = {"sites": [], "internal": ["/internal/metrics", "/internal/pulse", "/metrics"],
-                     "node": [], "aliases": [], "deploy": []}
-
-    def test_metrics_is_closed_without_credentials(self):
-        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
-        self.assertEqual(cfg["metrics_htpasswd"], "")
-        text = gateway.render(self.METRICS_TABLE, cfg, "/mime.types")
-        self.assertNotIn("location = /metrics", text)
-        self.assertNotIn("auth_basic", text)
-        maps = nginx_map.parse(text)
-        for uri in ["/metrics", "/metrics/", "/METRICS", "/internal/metrics"]:
-            with self.subTest(uri=uri):
-                self.assertEqual(nginx_map.Request(maps, uri=uri)["internal_path"], "1")
-
-    def test_metrics_is_one_basic_auth_location_with_credentials(self):
-        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1",
-                                "GATEWAY_METRICS_HTPASSWD": "/etc/gateway/metrics.htpasswd"})
-        text = gateway.render(self.METRICS_TABLE, cfg, "/mime.types")
-        self.assertIn('location = /metrics {\nauth_basic "Prometheus metrics";\n'
-                      'auth_basic_user_file /etc/gateway/metrics.htpasswd;\n'
-                      'proxy_pass http://apis/internal/metrics;', text)
-        self.assertEqual(text.count("auth_basic_user_file"), 1)
-        for alias in ["content_metrics", "lamb2_metrics", "location /metrics", "location ^~ /metrics"]:
-            with self.subTest(alias=alias):
-                self.assertNotIn(alias, text)
-        maps = nginx_map.parse(text)
-        # Only the exact path opens; every other spelling and the API's internal path stay closed.
-        self.assertEqual(nginx_map.Request(maps, uri="/metrics")["internal_path"], "0")
-        for uri in ["/metrics/", "/METRICS", "/metrics.data", "/metrics/x", "/internal/metrics"]:
-            with self.subTest(uri=uri):
-                self.assertEqual(nginx_map.Request(maps, uri=uri)["internal_path"], "1")
 
     def test_worlds_host_deploys_get_the_deploy_body_cap(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
