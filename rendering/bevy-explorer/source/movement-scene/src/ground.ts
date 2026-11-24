@@ -7,7 +7,7 @@ import { GROUND_CAST_RANGE, GROUND_SNAP_STEP_DROP, GROUNDED_ANGLE, GROUNDED_HEIG
 export var groundNormal = Vector3.Zero();
 export var groundDistance = 0;
 // ground straight below the centre (point ray): feet height above it (Infinity: none in range) and its normal
-var groundRayDistance = Infinity;
+export var groundRayDistance = Infinity;
 export var groundRayNormal = Vector3.Zero();
 // updated in recordGroundPosition @ 100000 - 2
 export var grounded = false;
@@ -108,29 +108,37 @@ export function setGrounded(g: boolean) {
     grounded = g;
 }
 
-// ground height under the avatar at the end of the previous tick, if it was grounded
+// height of the ground the avatar stood on at the end of the previous tick, if it was grounded: the ground under the
+// centre, or on an edge the edge's top, where the capsule touches it
 var prevGroundY = NaN;
 // slope (tangent of the angle) of the ground under the centre at the end of the previous tick
 var prevGroundSlope = 0;
 const slopeOf = (n: Vector3) => (n.y > 0 ? Math.sqrt(Math.max(0, 1 - n.y * n.y)) / n.y : Infinity);
 
 export function recordGroundForNextTick() {
-    prevGroundY = grounded ? playerPosition.y - groundDistance : NaN;
+    prevGroundY = !grounded ? NaN
+        : centreOnGround() ? playerPosition.y - groundRayDistance
+        : playerPosition.y - Math.max(0, groundDistance)
+            + (groundNormal.y >= GROUNDED_ANGLE_Y_LEN ? PLAYER_COLLIDER_RADIUS * (1 - groundNormal.y) : 0);
     prevGroundSlope = slopeOf(groundRayNormal);
 }
 
-// Walkable ground under the centre, no further below the capsule's contact than the ground snap follows (a step of
+// Walkable ground under the centre, no further below the capsule's contact than a walkable slope puts it.
+export function centreOnGround(): boolean {
+    return groundRayDistance !== Infinity && groundRayNormal.y >= GROUNDED_ANGLE_Y_LEN
+        && groundRayDistance - Math.max(0, groundDistance) <= GROUND_SNAP_STEP_DROP;
+}
+
+// centreOnGround, and no further below the ground stood on last tick than the ground snap follows (a step of
 // GROUND_SNAP_STEP_DROP, see stepDropAllowsSnap). False on an edge: only the rim of the capsule rests on the corner of a
 // ledge, a riser or a steep crest.
 export function centreSupported(): boolean {
-    if (groundRayDistance === Infinity || groundRayNormal.y < GROUNDED_ANGLE_Y_LEN) return false;
-    const drop = groundRayDistance - Math.max(0, groundDistance);
-    return drop <= GROUND_SNAP_STEP_DROP && stepDropAllowsSnap();
+    return centreOnGround() && stepDropAllowsSnap();
 }
 
-// Snap follows the ground under the centre down from where the feet stood last tick by at most
-// GROUND_SNAP_STEP_DROP beyond what the slope of the ground (then or now) accounts for over the distance moved since;
-// past a larger drop (a step edge) the avatar falls.
+// Snap follows the ground under the centre down from the ground stood on last tick (on an edge, from the edge) by at
+// most GROUND_SNAP_STEP_DROP beyond what the slope of the ground (then or now) accounts for over the distance moved
+// since; past a larger drop (a step edge) the avatar falls.
 function stepDropAllowsSnap(): boolean {
     if (Number.isNaN(prevGroundY)) return true;
     if (groundRayDistance === Infinity) return false;

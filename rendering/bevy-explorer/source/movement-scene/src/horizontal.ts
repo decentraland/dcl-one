@@ -9,7 +9,7 @@ import {
 import { horizontalResync, playerRotation, prevActualVelocity, prevExternalVelocity, tickTime, velocity } from '.';
 import { grounded, GROUNDED_ANGLE_Y_LEN, groundNormal, groundRayNormal } from './ground';
 import { disableOrientation, glidingSpeed, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
-import { airLaunchTime, isGliding, landingStuns, launchAhead, leftEdge, predictedLandFrame, stunEndTime, stunned, wallContact } from './vertical';
+import { airLaunchTime, isGliding, landingStuns, launchAhead, leftEdge, predictedLandFrame, steepAhead, stunEndTime, stunned, wallContact } from './vertical';
 import { getWalkAxis } from './walk';
 import { frameTime, oneStep, replyDelay, stepsFor, tickAdvance } from './clock';
 import { settings } from './settings';
@@ -328,6 +328,18 @@ export function updateHorizontalVelocity() {
         const f = Math.min(last, input.limit) / out;
         ox *= f; oz *= f;
       }
+    }
+  }
+  // Slope limit: a slope ahead too steep to walk (steeper than GROUNDED_ANGLE) stops the move into it at the contact,
+  // where the engine would slide the avatar up it: on the ground the speed toward it is cut to reach it no sooner than
+  // the next reply lands.
+  const steep = input.grounded ? steepAhead() : null;
+  if (steep !== null) {
+    const into = -(ox * steep.x + oz * steep.z);
+    const allowed = steep.distance / ((2 * replyDelay + 1) * oneStep());
+    if (into > allowed) {
+      ox += (into - allowed) * steep.x;
+      oz += (into - allowed) * steep.z;
     }
   }
   // Against a wall on the ground the move slows with how squarely it meets the wall: by 1 - |cos| of the angle between

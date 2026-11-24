@@ -52,31 +52,11 @@ message MovementAnimation {
 //   while position !~= previous position
 // 6: apply velocity (collide and slide)
 //   disable anything we are initially colliding with
-//   grounded = the feet were within 0.05m of walkable ground (normal within 46.5 degrees of up) after the last step
 //   shapecast avatar from position to position + velocity * timestep
 //   on impact:
-//       if grounded, the requested velocity.y <= 0 (not a jump taking off), the surface is not walkable and
-//       velocity.y <= horizontal speed * tan(46.5 degrees) (step offset):
-//           if the horizontal speed is below 5.5m/s (0.092m in a 60fps frame), a fixed speed at any frame rate,
-//           first push against it for 0.15m of movement, kept from frame to frame while the move continues
-//           shapecast up by at most 0.45m, then along the horizontal velocity for the residual time (at least
-//           0.092m), then down as far as it went up; if that lands higher, on a walkable surface whose
-//           contact is no more than 0.45m above the start, move there and continue with the same velocity
-//           and the time left
-//       if grounded and the surface is not walkable (slope limit):
-//           velocity = velocity - (horizontal normal * min(0, dot(velocity, horizontal normal)))
-//       else if grounded and dot(velocity, normal) < 0 (ground following, keeps the horizontal speed):
-//           velocity.y = velocity.y - dot(velocity, normal) / normal.y
-//           continue with the residual time
 //       project velocity onto slide plane (standard "Collide & Slide")
 //       velocity = old velocity - (normal * dot(velocity, normal))
 //       repeat continue with residual velocity and residual time
-//   if grounded and the requested velocity.y <= 0 (ground snap):
-//       shapecast avatar down by 0.15m + horizontal distance moved * tan(46.5 degrees)
-//       on a walkable surface no further down than 0.15m + horizontal distance moved * a slope, where the
-//       slope is the surface's own, the steepest slope the move followed if steeper, or the slope of the
-//       walkable ground within 0.05m below the start (the foot of a slope the step ran down):
-//           move down onto it
 // 7: provide AvatarMovementInfo values
 //      actual velocity = (final - P3+N) / timestep
 //      external_velocity = sum of scene impulses + scene forces * timestep + push out of moving colliders / timestep

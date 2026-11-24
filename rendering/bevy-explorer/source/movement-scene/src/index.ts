@@ -2,7 +2,7 @@ import { AssetLoad, AvatarAnimationState, AvatarMovement, AvatarMovementInfo, en
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { grounded, initGroundRaycast, recordGroundForNextTick } from './ground';
 import { movementAxis, orientation, relativeDegrees, updateHorizontalVelocity } from './horizontal';
-import { GlideProp, glideProp, initStepCasts, isDoubleJump, isGliding, jumpStartHeight, landingStuns, stunned, updateVerticalVelocity } from './vertical';
+import { GlideProp, glideProp, groundSpeed, initStepCasts, isDoubleJump, isGliding, jumpStartHeight, landingStuns, stunned, updateVerticalVelocity } from './vertical';
 import { initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 import { MAX_SPEED, MAX_TICK_TIME, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE, VEC3_DOWN, VEC3_ZERO } from './constants';
@@ -803,6 +803,8 @@ function writeMovement() {
 function applyMovement() {
   updateVerticalVelocity();
   updateHorizontalVelocity();
+  const ground = groundSpeed(velocity.x, velocity.z);
+  velocity.y += ground.follow;
 
   // Track smoothed turn rate (deg/s) from the change in facing, for glide lean.
   const turnDelta = relativeDegrees(0, orientation - glidePrevOrientation);
@@ -825,10 +827,12 @@ function applyMovement() {
 
   // External velocity is integrated by the horizontal and vertical models.
 
+  // The speed cap applies to movement, not to the ground snap's speed down.
   const speed = Vector3.length(velocity);
   if (speed > MAX_SPEED) {
     Vector3.scaleToRef(velocity, MAX_SPEED / speed, velocity);
   }
+  velocity.y -= ground.snap;
 
   if (Vector3.length(velocity) < 0.01 || Number.isNaN(Vector3.length(velocity))) {
     Vector3.copyFrom(VEC3_ZERO, velocity);

@@ -9,8 +9,7 @@ use dcl_component::proto_components::common::Vector3;
 use serde_json::json;
 
 use crate::avatar_movement::{
-    ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, GroundAssist,
-    LastMovementStep, RiserPush,
+    ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, LastMovementStep,
 };
 
 pub(super) struct InputDebugPanelPlugin;
@@ -57,11 +56,6 @@ impl Plugin for InputDebugPanelPlugin {
                     ("External velocity (X / Y / Z)", "external"),
                     ("On the ground", "grounded"),
                     ("Height over the ground (m)", "groundHeight"),
-                    ("Push against a riser (m)", "riserPush"),
-                    ("Step offsets since startup", "steps"),
-                    ("Last step offset rise (m)", "lastStepRise"),
-                    ("Ground snaps since startup", "snaps"),
-                    ("Last ground snap drop (m)", "lastSnapDrop"),
                 ],
                 inputs: &[],
                 actions: &[],
@@ -114,8 +108,8 @@ fn camera_state(
     cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some()}).to_string());
 }
 
-/// Read the active SDK movement settings, the last frame of controller feedback and the engine's
-/// ground assist.
+/// Read the active SDK movement settings, the last frame of controller feedback and the player's
+/// height over the ground.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/movement_state")]
 struct MovementState;
@@ -124,7 +118,6 @@ fn movement_state(
     mut cmd: ConsoleCommand<MovementState>,
     active: Query<&ActivePlayerComponent<AvatarLocomotionSettings>, With<PrimaryUser>>,
     player: Query<(&ActivePlayerComponent<AvatarMovement>, &AvatarDynamicState), With<PrimaryUser>>,
-    assist: Query<(&GroundAssist, &RiserPush), With<PrimaryUser>>,
     step: Res<LastMovementStep>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
@@ -132,7 +125,6 @@ fn movement_state(
         .single()
         .ok()
         .map(|(_, dynamics)| dynamics.ground_height);
-    let assist = assist.single().ok();
     let loc = active.single().ok().map(|active| &active.component.0);
     let player = player.single().ok();
     let vector = |v: Vector3| [v.x, v.y, v.z];
@@ -159,19 +151,9 @@ fn movement_state(
         "external":step.external_velocity.map(vector),
         "grounded":ground_height.map(grounded),
         "groundHeight":ground_height,
-        "riserPush":assist.map(|(_, push)| push.0),
-        "steps":assist.map(|(assist, _)| assist.steps),
-        "lastStepRise":assist.and_then(|(assist, _)| assist.last_step_rise),
-        "snaps":assist.map(|(assist, _)| assist.snaps),
-        "lastSnapDrop":assist.and_then(|(assist, _)| assist.last_snap_drop),
         "unavailable":{
             "grounded":"No player movement state.",
             "groundHeight":"No player movement state.",
-            "riserPush":"No player ground assist.",
-            "steps":"No player ground assist.",
-            "snaps":"No player ground assist.",
-            "lastStepRise":"No step offset since startup.",
-            "lastSnapDrop":"No ground snap since startup.",
             "walk":setting_reason, "jog":setting_reason, "run":setting_reason, "jump":setting_reason,
             "runJump":setting_reason, "doubleJump":setting_reason, "landing":setting_reason,
             "requested":"No active player movement controller.",
@@ -219,12 +201,9 @@ mod tests {
     // command runs: the reply still carries the step that moved the player.
     #[test]
     fn a_moving_step_reports_its_actual_velocity_after_the_next_broadcast() {
-        use crate::avatar_movement::{
-            apply_movement, broadcast_movement_info, CentralCollisions, RiserPush,
-        };
+        use crate::avatar_movement::{apply_movement, broadcast_movement_info, CentralCollisions};
         use bevy::time::{TimePlugin, TimeUpdateStrategy};
         use common::structs::{EngineMovementControl, SceneDrivenAnimationFeedback};
-        use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
 
         let mut app = App::new();
         app.add_plugins(TimePlugin)
@@ -237,11 +216,6 @@ mod tests {
             .init_resource::<LastMovementStep>()
             .init_resource::<CentralCollisions>()
             .init_resource::<SceneDrivenAnimationFeedback>()
-            .init_resource::<LiveScenes>()
-            .init_resource::<PortableScenes>()
-            .init_resource::<ScenePointers>()
-            .register_required_components::<PrimaryUser, RiserPush>()
-            .register_required_components::<PrimaryUser, GroundAssist>()
             .insert_resource(EngineMovementControl {
                 // accept the test's movement, initiated at time zero
                 accept_movement_after: -1.0,
@@ -275,11 +249,7 @@ mod tests {
         assert!(actual[1].abs() < 1e-3, "{report}");
         assert!((actual[2] - 1.0).abs() < 1e-3, "{report}");
         assert_eq!(report["requested"], json!([2.0, 0.0, 1.0]));
-        // over no collider: in the air, with no ground assist yet
+        // over no collider: in the air
         assert_eq!(report["grounded"], false);
-        assert_eq!(report["riserPush"], 0.0);
-        assert_eq!(report["steps"], 0);
-        assert!(report["lastStepRise"].is_null());
-        assert!(report["unavailable"]["lastStepRise"].is_string());
     }
 }

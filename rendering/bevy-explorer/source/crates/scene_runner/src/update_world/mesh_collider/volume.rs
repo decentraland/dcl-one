@@ -5,7 +5,7 @@ use scene_material::BoundRegion;
 /// How far past its parcels and above its height limit a scene counts as drawn, in metres: the
 /// hard edge of the scene materials (`bound_material.wgsl`). With the out-of-bounds effect on
 /// they dissolve what lies past it over a wider band; colliders keep to this edge.
-pub const DRAWN_PAST_BOUNDS: f64 = 0.05;
+pub(super) const DRAWN_PAST_BOUNDS: f64 = 0.05;
 
 /// The space a scene is drawn in: over its parcels, up to the height limit of each connected
 /// group of them. Without regions the scene is drawn everywhere.

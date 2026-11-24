@@ -11,10 +11,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    dynamics::{
-        grounded, walkable, GROUND_SNAP_DROP, MAX_GROUND_INCLINE, MAX_STEP_HEIGHT,
-        PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD,
-    },
+    dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
     sets::{PostUpdateSets, SceneLoopSets, SceneSets},
     structs::{
         avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
@@ -45,12 +42,11 @@ use scene_runner::{
     update_world::{
         avatar_modifier_area::InputModifier,
         mesh_collider::{
-            ColliderId, PreviousColliderTransform, SceneColliderData, DRAWN_PAST_BOUNDS,
-            GROUND_COLLISION_MASK,
+            ColliderId, PreviousColliderTransform, SceneColliderData, GROUND_COLLISION_MASK,
         },
         AddCrdtInterfaceExt,
     },
-    ContainingScene, OutOfWorld, SceneEntity, SceneLoopSchedule, SceneUpdates, MOVEMENT_CONTROLLER,
+    ContainingScene, SceneEntity, SceneLoopSchedule, SceneUpdates, MOVEMENT_CONTROLLER,
 };
 
 pub struct AvatarMovementPlugin;
@@ -77,8 +73,6 @@ impl Plugin for AvatarMovementPlugin {
         app.init_resource::<AvatarMovementInfo>();
         app.init_resource::<LastMovementStep>();
         app.register_required_components::<PrimaryUser, LocomotionSpeeds>();
-        app.register_required_components::<PrimaryUser, RiserPush>();
-        app.register_required_components::<PrimaryUser, GroundAssist>();
         app.register_required_components::<RendererSceneContext, MovementPeriod>();
         app.init_resource::<CollisionPush>();
         app.init_resource::<CentralCollisions>();
@@ -767,93 +761,38 @@ fn stage_redispatch_rotation(
     }
 }
 
-/// How far the player's slow move has pushed against a riser it has not stepped onto yet, up to
-/// [`STEP_PUSH`]. Kept from frame to frame by [`apply_movement`].
-#[derive(Component, Default)]
-pub(crate) struct RiserPush(pub(crate) f64);
-
-/// The player's step offsets and ground snaps since startup, each with the height of the last
-/// one, for the debug panel. Kept by [`apply_movement`].
-#[derive(Component, Default, Clone, Copy, Debug)]
-pub(crate) struct GroundAssist {
-    pub(crate) steps: u64,
-    /// How far the last step offset rose (m).
-    pub(crate) last_step_rise: Option<f32>,
-    pub(crate) snaps: u64,
-    /// How far the last ground snap dropped (m).
-    pub(crate) last_snap_drop: Option<f32>,
-}
-
 pub(crate) fn apply_movement(
     mut player: Query<
         (
             &mut Transform,
             &mut AvatarDynamicState,
             &ActivePlayerComponent<AvatarMovement>,
-            &mut RiserPush,
-            &mut GroundAssist,
         ),
         With<PrimaryUser>,
     >,
-    mut colliders: ColliderHolders,
-    containing_scenes: ContainingScene,
+    mut scenes: Query<(Entity, &mut SceneColliderData)>,
     time_res: Res<Time>,
     mut info: ResMut<AvatarMovementInfo>,
     mut last_step: ResMut<LastMovementStep>,
     mut jumping: Local<bool>,
     movement_control: Res<EngineMovementControl>,
     central: Res<CentralCollisions>,
-    // kept from frame to frame so that choosing the colliders allocates nothing
-    (mut area, mut holders): (Local<HashSet<Entity>>, Local<Vec<Entity>>),
 ) {
-    let Ok((mut transform, mut dynamic_state, movement, mut riser_push, mut assist)) =
-        player.single_mut()
-    else {
+    let Ok((mut transform, mut dynamic_state, movement)) = player.single_mut() else {
         return;
     };
     // the scene's velocity; one that is not finite moves nothing
     let requested = Some(movement.component.velocity)
         .filter(|velocity| velocity.is_finite())
         .unwrap_or(Vec3::ZERO);
-    // the casts below test the colliders of the scenes around the capsule, those it can reach
-    // this frame, and every collider no scene holds (the ground of empty parcels, the stand-in of
-    // a scene still loading). A move of more than a parcel in a frame tests every collider.
-    let reach = frame_reach(requested, time_res.delta_secs());
-    let everywhere = reach > PARCEL_SIZE;
-    area.clear();
-    if !everywhere {
-        containing_scenes.extend_area_position(
-            transform.translation,
-            PLAYER_COLLIDER_RADIUS + reach + DRAWN_PAST_BOUNDS as f32,
-            &mut area,
-        );
-    }
-    holders.clear();
-    holders.extend(
-        colliders
-            .iter()
-            .filter(|&(holder, _, is_scene)| everywhere || !is_scene || area.contains(&holder))
-            .map(|(holder, ..)| holder),
-    );
-    let mut scenes = Nearby {
-        colliders: &mut colliders,
-        holders: &holders,
-    };
-    let step_push = &mut riser_push.0;
 
     info.0.step_time = time_res.delta_secs();
 
     // Orientation was already set this frame by `apply_rotation` (pipeline step 1);
     // here we only apply velocity. The same suppression gate still governs velocity.
     let suppress = movement_suppressed(&movement_control, movement.initiated_at);
-    // standing still: nothing moves, unless the avatar hovers over the ground it stands on and
-    // the ground snap below settles it
-    let settle =
-        dynamic_state.ground_height > SETTLE_HEIGHT && grounded(dynamic_state.ground_height);
 
-    if suppress || (requested == Vec3::ZERO && !settle) {
-        // the move has stopped, so its push against a riser ends: the next riser takes its own
-        *step_push = 0.0;
+    if suppress || requested == Vec3::ZERO {
         dynamic_state.velocity = Vec3::ZERO;
         dynamic_state.ground_height = ground_height(&mut scenes, transform.translation);
         end_jump_on_landing(&mut dynamic_state);
@@ -871,19 +810,10 @@ pub(crate) fn apply_movement(
         warn!("move disabling {} colliders", disabled.len());
     }
 
-    let start = transform.translation.as_dvec3();
-    let mut position = start;
+    let mut position = transform.translation.as_dvec3();
     let mut time = time_res.delta_secs_f64();
     let mut velocity = requested.as_dvec3();
     let mut steps = 0;
-    // the steepest walkable slope the move was turned along (ground following), for the snap
-    let mut followed = 0.0_f64;
-    // a slow move held at a riser this step (step offset)
-    let mut held_at_riser = false;
-    // on the ground at the end of the last step: the assists below hold for a walking avatar
-    let on_ground = grounded(dynamic_state.ground_height);
-    // on the ground and asking for no rise: not the step a jump takes off in
-    let walking = on_ground && requested.y <= 0.0;
 
     // deliberately penetrating (placed here by movePlayerTo): don't move deeper into
     // whatever we're inside, but otherwise let the scene walk us out
@@ -895,83 +825,34 @@ pub(crate) fn apply_movement(
         velocity = DVec3::select(cap, velocity.min(DVec3::ZERO), velocity);
     }
 
-    // a scene standing still sweeps nothing, but the ground snap below still settles it
-    while velocity != DVec3::ZERO && steps < 60 && time > 1e-10 {
+    while steps < 60 && time > 1e-10 {
         steps += 1;
         let mut step_time = time;
         let mut contact_normal = DVec3::ZERO;
         if movement_control.suppress_clipping.is_empty() {
-            if let Some(hit) = cast_avatar(
-                &mut scenes,
-                disabled,
-                position,
-                velocity,
-                step_time,
-                movement_control.deliberate_penetration,
-            ) {
-                (step_time, contact_normal) = hit;
+            for (e, mut collider_data) in scenes.iter_mut() {
+                if let Some(hit) = collider_data.cast_avatar_nearest_in_scene(
+                    position,
+                    velocity,
+                    step_time,
+                    ColliderLayer::ClPhysics as u32 | GROUND_COLLISION_MASK,
+                    movement_control.deliberate_penetration,
+                    false,
+                    disabled
+                        .get(&e)
+                        .map(|d| d.iter().collect())
+                        .unwrap_or_default(),
+                    -PLAYER_COLLIDER_OVERLAP,
+                ) {
+                    step_time = hit.toi as f64;
+                    contact_normal = hit.normal.as_dvec3();
+                }
             }
         }
 
         position += velocity * step_time + contact_normal * PLAYER_COLLIDER_OVERLAP as f64;
-        time -= step_time;
-        let horizontal = velocity.with_y(0.0);
-        if walking
-            && contact_normal != DVec3::ZERO
-            && !walkable(contact_normal)
-            && horizontal != DVec3::ZERO
-            && velocity.y <= horizontal.length() * f64::from(MAX_GROUND_INCLINE.tan())
-            && movement_control.suppress_clipping.is_empty()
-        {
-            // step offset: a riser up to MAX_STEP_HEIGHT is stepped onto, keeping the move. A move
-            // slower than step_push_speed() first pushes against it for STEP_PUSH. Not as a jump
-            // takes off: that step rises, and stepping would trade its rise for the riser's.
-            let speed = horizontal.length();
-            if speed < step_push_speed() && speed * time + *step_push < STEP_PUSH {
-                *step_push += speed * time;
-                held_at_riser = true;
-            } else if let Some((stepped, used)) =
-                step_up(&mut scenes, disabled, position, horizontal, time)
-            {
-                assist.steps += 1;
-                assist.last_step_rise = Some((stepped.y - position.y) as f32);
-                position = stepped;
-                time -= used;
-                *step_push = 0.0;
-                continue;
-            }
-        }
-        if on_ground && contact_normal != DVec3::ZERO && !walkable(contact_normal) {
-            // slope limit: on the ground, a surface too steep to stand on stops the move into it
-            // as a wall does, so the avatar does not walk up it
-            let across = contact_normal.with_y(0.0).normalize_or_zero();
-            velocity -= velocity.dot(across).min(0.0) * across;
-        } else if on_ground && contact_normal != DVec3::ZERO && velocity.dot(contact_normal) < 0.0 {
-            // ground following: on ground it can stand on, the move keeps its horizontal speed,
-            // turned along the ground, instead of losing the part into it
-            velocity.y -= velocity.dot(contact_normal) / contact_normal.y;
-            followed = followed.max(slope(contact_normal));
-            continue;
-        }
         velocity = velocity - (velocity.dot(contact_normal).min(0.0) * contact_normal);
-    }
-
-    // a frame with no elapsed time (the first, or time paused) sweeps nothing, so it keeps the push
-    if !held_at_riser && time_res.delta_secs_f64() > 1e-10 {
-        *step_push = 0.0;
-    }
-
-    // a walking step follows the ground down
-    if walking
-        && !movement_control.deliberate_penetration
-        && movement_control.suppress_clipping.is_empty()
-    {
-        let snapped = snap_to_ground(&mut scenes, disabled, start, position, followed);
-        if position.y - snapped.y > SNAP_REPORTED {
-            assist.snaps += 1;
-            assist.last_snap_drop = Some((position.y - snapped.y) as f32);
-        }
-        position = snapped;
+        time -= step_time;
     }
 
     debug!(
@@ -1013,35 +894,8 @@ pub(crate) fn apply_movement(
     end_jump_on_landing(&mut dynamic_state);
 }
 
-/// Every holder of colliders, and whether it is a scene.
-type ColliderHolders<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Entity,
-        &'static mut SceneColliderData,
-        Has<RendererSceneContext>,
-    ),
->;
-
-/// The colliders [`apply_movement`] casts the avatar against this frame: those of the `holders`.
-struct Nearby<'a, 'w, 's> {
-    colliders: &'a mut ColliderHolders<'w, 's>,
-    holders: &'a [Entity],
-}
-
-impl Nearby<'_, '_, '_> {
-    fn for_each(&mut self, mut f: impl FnMut(Entity, &mut SceneColliderData)) {
-        let mut holders = self.colliders.iter_many_mut(self.holders);
-        while let Some((holder, mut colliders, _)) = holders.fetch_next() {
-            f(holder, &mut colliders);
-        }
-    }
-}
-
 /// The velocity of a step that moved the avatar from `from` to `to` in `delta` seconds. A frame
-/// with no elapsed time (the first) reports none, though the ground snap can still move the
-/// avatar in it.
+/// with no elapsed time (the first) reports none.
 fn actual_velocity(from: DVec3, to: DVec3, delta: f64) -> DVec3 {
     if delta > 0.0 {
         (to - from) / delta
@@ -1050,210 +904,22 @@ fn actual_velocity(from: DVec3, to: DVec3, delta: f64) -> DVec3 {
     }
 }
 
-/// The avatar capsule's nearest hit moving from `position` by up to `max_toi` times `motion` (a
-/// velocity for a time, or a unit direction for a distance), over the colliders of the `scenes`
-/// around it, each cut to the space its scene is drawn in: the hit's time of impact, in the same
-/// multiples of `motion`, and the collider's normal there.
-fn cast_avatar(
-    scenes: &mut Nearby,
-    disabled: &HashMap<Entity, HashSet<ColliderId>>,
-    position: DVec3,
-    motion: DVec3,
-    max_toi: f64,
-    skip_inside: bool,
-) -> Option<(f64, DVec3)> {
-    let mut nearest = None;
-    let mut max_toi = max_toi;
-    scenes.for_each(|e, collider_data| {
-        if let Some(hit) = collider_data.cast_avatar_nearest_in_scene(
-            position,
-            motion,
-            max_toi,
-            ColliderLayer::ClPhysics as u32 | GROUND_COLLISION_MASK,
-            skip_inside,
-            false,
-            disabled
-                .get(&e)
-                .map(|d| d.iter().collect())
-                .unwrap_or_default(),
-            -PLAYER_COLLIDER_OVERLAP,
-        ) {
-            max_toi = hit.toi as f64;
-            nearest = Some((max_toi, hit.normal.as_dvec3()));
-        }
-    });
-    nearest
-}
-
-/// [`cast_avatar`] straight down from `position` for `reach`, from just off any wall the capsule
-/// touches. The position is stored as f32, so an avatar resting against a wall can sit inside it
-/// by a rounding error larger than the sweep's overlap (micrometres a few hundred metres from the
-/// origin), and the cast would stop on the wall at once.
-fn cast_down(
-    scenes: &mut Nearby,
-    disabled: &HashMap<Entity, HashSet<ColliderId>>,
-    position: DVec3,
-    reach: f64,
-) -> Option<(f64, DVec3)> {
-    let overlap = f64::from(PLAYER_COLLIDER_OVERLAP);
-    // the f32 rounding of the largest coordinate, and the overlap beyond it
-    let off = position.abs().max_element() * f64::from(f32::EPSILON) + overlap;
-    let mut from = position;
-    let mut hit = None;
-    // off a wall, or the two walls of a corner
-    for _ in 0..3 {
-        hit = cast_avatar(scenes, disabled, from, DVec3::NEG_Y, reach, false);
-        match hit {
-            Some((drop, normal)) if drop <= overlap && !walkable(normal) => {
-                from += normal.with_y(0.0).normalize_or_zero() * off;
+/// The feet's height above ground the player stands on, over the colliders of every scene that
+/// can ground it; at most the height above the world floor.
+fn ground_height(scenes: &mut Query<(Entity, &mut SceneColliderData)>, feet: Vec3) -> f32 {
+    scenes
+        .iter_mut()
+        .fold(feet.y, |ground, (_, mut collider_data)| {
+            if !collider_data.grounds_avatar(feet.as_dvec3()) {
+                return ground;
             }
-            _ => break,
-        }
-    }
-    hit
-}
-
-/// Ground snap: the end `position` of a walking step from `start`, moved down onto the ground
-/// when the ground falls away by at most [`GROUND_SNAP_DROP`] beyond the slope of that ground, of
-/// the steepest ground the step `followed`, or of the ground it started on (the foot of a slope
-/// the step ran down), over the distance moved. Down onto an edge too steep to stand on, the
-/// capsule slides off it along its surface onto the ground below.
-fn snap_to_ground(
-    scenes: &mut Nearby,
-    disabled: &HashMap<Entity, HashSet<ColliderId>>,
-    start: DVec3,
-    position: DVec3,
-    followed: f64,
-) -> DVec3 {
-    let overlap = f64::from(PLAYER_COLLIDER_OVERLAP);
-    let moved = (position - start).with_y(0.0).length();
-    let reach = f64::from(GROUND_SNAP_DROP) + moved * f64::from(MAX_GROUND_INCLINE.tan());
-    let within = |drop: f64, slope: f64| drop <= f64::from(GROUND_SNAP_DROP) + moved * slope;
-    let Some((drop, mut normal)) = cast_down(scenes, disabled, position, reach) else {
-        return position;
-    };
-    let mut landed = position - DVec3::Y * (drop - overlap);
-    if !walkable(normal) && drop > overlap {
-        // the lower sphere meets an edge where it is too steep to stand on, as a step down's
-        // edge is from just past it, the ground beyond hidden a few millimetres lower: slide off
-        // it, down along its surface, for the rest of the reach
-        let along = (DVec3::NEG_Y + normal * normal.y).normalize_or_zero();
-        let left = (reach - drop) / -along.y;
-        let Some((slid, ground)) = cast_avatar(scenes, disabled, landed, along, left, false) else {
-            return position;
-        };
-        landed += along * (slid - overlap);
-        normal = ground;
-    }
-    let drop = position.y - landed.y + overlap;
-    if walkable(normal)
-        && drop > overlap
-        && (within(drop, slope(normal).max(followed))
-            || within(drop, start_slope(scenes, disabled, start)))
-    {
-        landed
-    } else {
-        position
-    }
-}
-
-/// Rise over run of ground with this `normal`.
-fn slope(normal: DVec3) -> f64 {
-    normal.with_y(0.0).length() / normal.y
-}
-
-/// The slope of the walkable ground a walking step starts on, within [`PLAYER_GROUND_THRESHOLD`]
-/// below `start` (0 for none).
-fn start_slope(
-    scenes: &mut Nearby,
-    disabled: &HashMap<Entity, HashSet<ColliderId>>,
-    start: DVec3,
-) -> f64 {
-    match cast_down(scenes, disabled, start, f64::from(PLAYER_GROUND_THRESHOLD)) {
-        Some((_, normal)) if walkable(normal) => slope(normal),
-        _ => 0.0,
-    }
-}
-
-/// Height over the ground below which an avatar standing still is not settled onto it.
-const SETTLE_HEIGHT: f32 = 1e-3;
-
-/// A ground snap shorter than this is the sweep's rounding on flat ground, not a drop:
-/// [`GroundAssist`] does not count it.
-const SNAP_REPORTED: f64 = 1e-4;
-
-/// Forward distance a step offset covers at least: from touching a riser's face to resting on its
-/// corner within [`MAX_GROUND_INCLINE`], plus a margin. The step takes the avatar that far at once.
-fn step_reach() -> f64 {
-    f64::from(PLAYER_COLLIDER_RADIUS) * (1.0 - f64::from(MAX_GROUND_INCLINE.sin())) + 0.01
-}
-/// How far a move slower than [`step_push_speed`] pushes against a riser before it steps onto it:
-/// the default walk (1.5 m/s) pauses about 0.1 s at each riser, so climbing reads as stepping.
-const STEP_PUSH: f64 = 0.15;
-/// Horizontal speed below which a move pushes against a riser for [`STEP_PUSH`] before it steps
-/// onto it, about 5.5 m/s: a walk pushes, a jog or a run steps at once. It is a fixed speed, the
-/// same at every frame rate: the one that covers [`step_reach`] in a 60 fps frame.
-fn step_push_speed() -> f64 {
-    step_reach() * 60.0
-}
-
-/// How far across the ground [`apply_movement`] can carry the capsule in a frame of `delta`
-/// seconds at the scene's `velocity`: the sweep, which ground following lengthens by up to
-/// 1 / cos [`MAX_GROUND_INCLINE`] and a slide can turn sideways, and one step offset's
-/// [`step_reach`]. A run (10 m/s) at 60 fps reaches about 0.33 m.
-fn frame_reach(velocity: Vec3, delta: f32) -> f32 {
-    velocity.length() * delta / MAX_GROUND_INCLINE.cos() + step_reach() as f32
-}
-
-/// Step offset from a riser too steep to stand on: up by at most [`MAX_STEP_HEIGHT`] (less under a
-/// ceiling), on along the horizontal move for the rest of the step's `time` and at least
-/// [`step_reach`], down onto the ground. The new position and the time it used; None unless it
-/// lands higher, on ground it can stand on, with the riser's top no higher than the step.
-fn step_up(
-    scenes: &mut Nearby,
-    disabled: &HashMap<Entity, HashSet<ColliderId>>,
-    position: DVec3,
-    horizontal: DVec3,
-    time: f64,
-) -> Option<(DVec3, f64)> {
-    const MIN_RISE: f64 = 1e-3;
-    let overlap = f64::from(PLAYER_COLLIDER_OVERLAP);
-    let height = f64::from(MAX_STEP_HEIGHT);
-    let radius = f64::from(PLAYER_COLLIDER_RADIUS);
-    let lift = cast_avatar(scenes, disabled, position, DVec3::Y, height, false)
-        .map_or(height, |(toi, _)| (toi - overlap).max(0.0));
-    if lift <= MIN_RISE {
-        return None;
-    }
-    let raised = position + DVec3::Y * lift;
-    let reach = time.max(step_reach() / horizontal.length());
-    let (ahead, wall) = cast_avatar(scenes, disabled, raised, horizontal, reach, false)
-        .unwrap_or((reach, DVec3::ZERO));
-    if horizontal.length() * ahead < 1e-4 {
-        return None;
-    }
-    let moved = raised + horizontal * ahead + wall * overlap;
-    let (drop, ground) = cast_avatar(scenes, disabled, moved, DVec3::NEG_Y, lift, false)?;
-    let landed = moved - DVec3::Y * (drop - overlap);
-    // where the capsule's bottom sphere touches the riser's top
-    let top = landed.y + radius * (1.0 - ground.y);
-    (walkable(ground) && landed.y - position.y > MIN_RISE && top - position.y <= height + MIN_RISE)
-        .then_some((landed, ahead.min(time)))
-}
-
-/// The feet's height above ground the player stands on, over the colliders of the `scenes` around
-/// it that can ground it; at most the height above the world floor.
-fn ground_height(scenes: &mut Nearby, feet: Vec3) -> f32 {
-    let mut ground = feet.y;
-    scenes.for_each(|_, collider_data| {
-        if !collider_data.grounds_avatar(feet.as_dvec3()) {
-            return;
-        }
-        if let Some((height, _)) = collider_data.get_standing_ground(feet) {
-            ground = ground.min(height);
-        }
-    });
-    ground
+            ground.min(
+                collider_data
+                    .get_standing_ground(feet)
+                    .map(|(height, _)| height)
+                    .unwrap_or(f32::INFINITY),
+            )
+        })
 }
 
 /// Forget the take-off time once the player is back on the ground and no longer rising, so that
@@ -1271,15 +937,15 @@ pub struct GroundCollider(pub Option<(Entity, ColliderId, GlobalTransform)>);
 
 fn record_ground_collider(
     mut player: Query<(
+        Entity,
         &Transform,
         &ActivePlayerComponent<AvatarMovement>,
         &mut GroundCollider,
-        Has<OutOfWorld>,
     )>,
     containing_scenes: ContainingScene,
     mut scenes: Query<&mut SceneColliderData>,
 ) {
-    let Ok((transform, movement, mut ground, out_of_world)) = player.single_mut() else {
+    let Ok((player_ent, transform, movement, mut ground)) = player.single_mut() else {
         return;
     };
 
@@ -1291,14 +957,7 @@ fn record_ground_collider(
 
     let mut best_height = PLAYER_GROUND_THRESHOLD;
 
-    // around where the move left the player this frame; out of world (arriving, its destination
-    // still loading), the portables only
-    let area = if out_of_world {
-        containing_scenes.get_portables(false)
-    } else {
-        containing_scenes.get_area_position(transform.translation, PLAYER_COLLIDER_RADIUS)
-    };
-    for scene in area {
+    for scene in containing_scenes.get_area(player_ent, PLAYER_COLLIDER_RADIUS) {
         let Ok(mut collider_data) = scenes.get_mut(scene) else {
             continue;
         };
@@ -1631,24 +1290,6 @@ mod tests {
     use common::structs::EngineMovementControl;
     use scene_runner::update_world::mesh_collider::ColliderId;
 
-    /// `apply_movement` over the floor (top at y 0) and the given boxes (centre, half extents,
-    /// rotation), 50 steps of 20 ms at a constant scene velocity from `start`.
-    fn walk(boxes: &[(Vec3, Vec3, Quat)], start: Vec3, velocity: Vec3) -> Vec3 {
-        walk_phases(boxes, start, &[(velocity, 50)])
-    }
-
-    /// [`walk`] with the scene velocity changing: each phase's velocity for its number of steps.
-    fn walk_phases(boxes: &[(Vec3, Vec3, Quat)], start: Vec3, phases: &[(Vec3, usize)]) -> Vec3 {
-        let (mut app, player) = movement_app(boxes, start);
-        for &(velocity, steps) in phases {
-            set_velocity(&mut app, player, velocity);
-            for _ in 0..steps {
-                app.update();
-            }
-        }
-        app.world().get::<Transform>(player).unwrap().translation
-    }
-
     fn set_velocity(app: &mut App, player: Entity, velocity: Vec3) {
         app.world_mut()
             .get_mut::<ActivePlayerComponent<AvatarMovement>>(player)
@@ -1657,59 +1298,38 @@ mod tests {
             .velocity = velocity;
     }
 
-    /// An app running `apply_movement` over the floor (top at y 0) and the given boxes (centre,
-    /// half extents, rotation) in steps of 20 ms after the first, which has no elapsed time, and
-    /// its player, standing still at `start`.
-    fn movement_app(boxes: &[(Vec3, Vec3, Quat)], start: Vec3) -> (App, Entity) {
-        movement_app_at(boxes, start, std::time::Duration::from_millis(20))
-    }
-
-    /// [`movement_app`] in steps of `frame`.
-    fn movement_app_at(
-        boxes: &[(Vec3, Vec3, Quat)],
-        start: Vec3,
-        frame: std::time::Duration,
-    ) -> (App, Entity) {
+    /// An app running `apply_movement` over the floor (top at y 0) in steps of 20 ms after the
+    /// first, which has no elapsed time, and its player, standing still at `start`.
+    fn movement_app(start: Vec3) -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(TimePlugin)
-            .insert_resource(TimeUpdateStrategy::ManualDuration(frame))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(20),
+            ))
             .init_resource::<AvatarMovementInfo>()
             .init_resource::<LastMovementStep>()
             .init_resource::<CentralCollisions>()
-            .register_required_components::<PrimaryUser, RiserPush>()
-            .register_required_components::<PrimaryUser, GroundAssist>()
             .insert_resource(EngineMovementControl {
                 accept_movement_after: -1.0,
                 ..default()
             })
             .add_systems(PostUpdate, apply_movement);
-        add_scene_resources(&mut app);
         let mut colliders = SceneColliderData::default();
-        let floor = (
+        let id = ColliderId::new(SceneEntityId::ROOT, None, 0);
+        colliders.set_wall(
+            &id,
             Vec3::new(start.x, -0.5, start.z),
             Vec3::new(50.0, 0.5, 50.0),
             Quat::IDENTITY,
         );
-        for (index, (centre, half, rotation)) in [floor].iter().chain(boxes).enumerate() {
-            let id = ColliderId::new(SceneEntityId::ROOT, None, index as u32);
-            colliders.set_wall(&id, *centre, *half, *rotation);
-        }
-        let scene = app.world_mut().spawn(colliders).id();
-        // the start's parcel and those around it
-        let centre = scene_runner::vec3_to_parcel(start);
-        let around = (-1..=1).flat_map(|x| (-1..=1).map(move |y| centre + IVec2::new(x, y)));
-        place_scene(&mut app, scene, "floor", around);
+        app.world_mut().spawn(colliders);
         let movement = ActivePlayerComponent::<AvatarMovement>::from_config(&default());
         let player = app
             .world_mut()
             .spawn((
                 PrimaryUser::default(),
                 movement,
-                // over the floor, as the last step left it
-                AvatarDynamicState {
-                    ground_height: start.y,
-                    ..default()
-                },
+                AvatarDynamicState::default(),
                 Transform::from_translation(start),
             ))
             .id();
@@ -1780,122 +1400,6 @@ mod tests {
         }
     }
 
-    /// Places a scene `hash` on `parcel` holding a wall: a box at `centre`, `half` its extents.
-    fn add_wall_scene(app: &mut App, hash: &str, parcel: IVec2, centre: Vec3, half: Vec3) {
-        let scene = add_holder(app, centre, half);
-        place_scene(app, scene, hash, [parcel]);
-    }
-
-    /// A holder of colliders that is no scene, as the ground of empty parcels and the stand-in of
-    /// a scene still loading are, holding a box at `centre`, `half` its extents.
-    fn add_holder(app: &mut App, centre: Vec3, half: Vec3) -> Entity {
-        let mut colliders = SceneColliderData::default();
-        let id = ColliderId::new(SceneEntityId::ROOT, None, 0);
-        colliders.set_wall(&id, centre, half, Quat::IDENTITY);
-        app.world_mut().spawn(colliders).id()
-    }
-
-    #[test]
-    fn a_wall_of_the_next_parcels_scene_stops_the_avatar_crossing_into_it() {
-        // the middle of parcel 0,0's east edge (x 16), and a wall 0.5 m into parcel 1,0
-        let start = Vec3::new(15.5, 0.0, -8.0);
-        let (mut app, player) = movement_app(&[], start);
-        let wall = (Vec3::new(17.0, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        add_wall_scene(&mut app, "next", IVec2::new(1, 0), wall.0, wall.1);
-        set_velocity(&mut app, player, Vec3::new(5.0, 0.0, 0.0));
-        for _ in 0..50 {
-            app.update();
-        }
-        let end = app.world().get::<Transform>(player).unwrap().translation;
-        // against the wall's face
-        let face = 16.5 - PLAYER_COLLIDER_RADIUS;
-        assert!((end.x - face).abs() < 0.01, "stopped at {end}");
-    }
-
-    #[test]
-    fn the_colliders_of_a_scene_away_from_the_avatar_are_not_cast_against() {
-        // a wall across the walk, held by a scene whose parcel is far away
-        let start = Vec3::new(8.0, 0.0, -8.0);
-        let (mut app, player) = movement_app(&[], start);
-        let wall = (Vec3::new(10.5, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        add_wall_scene(&mut app, "far", IVec2::new(5, 5), wall.0, wall.1);
-        set_velocity(&mut app, player, Vec3::new(5.0, 0.0, 0.0));
-        for _ in 0..50 {
-            app.update();
-        }
-        let end = app.world().get::<Transform>(player).unwrap().translation;
-        assert!(end.x > 11.0, "stopped at {end}");
-    }
-
-    #[test]
-    fn the_ground_no_scene_holds_is_stood_on_stepped_onto_and_followed_down() {
-        // the ground of empty parcels, raised 0.5 m over the floor scene's, with a block 0.1 m
-        // higher from x 10 to 12
-        let start = Vec3::new(8.0, 0.5, -8.0);
-        let (mut app, player) = movement_app(&[], start);
-        add_holder(
-            &mut app,
-            Vec3::new(8.0, 0.25, -8.0),
-            Vec3::new(8.0, 0.25, 8.0),
-        );
-        add_holder(
-            &mut app,
-            Vec3::new(11.0, 0.3, -8.0),
-            Vec3::new(1.0, 0.3, 8.0),
-        );
-        // landing from a jump
-        app.world_mut()
-            .get_mut::<AvatarDynamicState>(player)
-            .unwrap()
-            .jump_time = 5.0;
-        app.update();
-        let state = app.world().get::<AvatarDynamicState>(player).unwrap();
-        assert!(grounded(state.ground_height), "{}", state.ground_height);
-        assert!(state.jump_time <= 0.0, "the jump goes on");
-
-        let assist = |app: &App| *app.world().get::<GroundAssist>(player).unwrap();
-        let on = run_for(&mut app, player, Vec3::new(1.5, 0.0, 0.0), 100);
-        assert!(on.x > 10.5 && (on.y - 0.6).abs() < 0.01, "{on}");
-        assert_eq!(assist(&app).steps, 1, "{:?}", assist(&app));
-        let off = run_for(&mut app, player, Vec3::new(1.5, 0.0, 0.0), 100);
-        assert!(off.x > 12.5 && (off.y - 0.5).abs() < 0.01, "{off}");
-        assert!(assist(&app).snaps > 0, "{:?}", assist(&app));
-        let state = app.world().get::<AvatarDynamicState>(player).unwrap();
-        assert!(grounded(state.ground_height), "{}", state.ground_height);
-    }
-
-    #[test]
-    fn a_wall_of_a_scene_still_loading_stops_a_run() {
-        // the stand-in of the scene loading on parcel 1,0 holds a wall 0.5 m into it
-        let wall = (Vec3::new(17.0, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        let face = 16.5 - PLAYER_COLLIDER_RADIUS;
-        for fps in [30.0, 60.0] {
-            let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-            let (mut app, player) = movement_app_at(&[], Vec3::new(15.0, 0.0, -8.0), frame);
-            add_holder(&mut app, wall.0, wall.1);
-            app.update();
-            let end = run_for(&mut app, player, Vec3::new(10.0, 0.0, 0.0), 30);
-            assert!((end.x - face).abs() < 0.01, "{fps} fps: stopped at {end}");
-        }
-    }
-
-    #[test]
-    fn a_wall_drawn_past_its_scenes_edge_stops_a_walk_from_the_next_parcel() {
-        // the scene of parcel 1,0 holds a wall reaching as far over the parcels' edge (x 16) as
-        // the scene is drawn
-        let over = DRAWN_PAST_BOUNDS as f32;
-        let wall = (Vec3::new(16.5 - over, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        let face = 16.0 - over - PLAYER_COLLIDER_RADIUS;
-        for fps in [30.0, 60.0, 144.0] {
-            let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-            let (mut app, player) = movement_app_at(&[], Vec3::new(14.5, 0.0, -8.0), frame);
-            add_wall_scene(&mut app, "next", IVec2::new(1, 0), wall.0, wall.1);
-            app.update();
-            let end = run_for(&mut app, player, Vec3::new(1.5, 0.0, 0.0), 2 * fps as usize);
-            assert!((end.x - face).abs() < 0.01, "{fps} fps: stopped at {end}");
-        }
-    }
-
     /// Runs `frames` frames of the scene moving the player at `velocity`; its position after.
     fn run_for(app: &mut App, player: Entity, velocity: Vec3, frames: usize) -> Vec3 {
         set_velocity(app, player, velocity);
@@ -1906,178 +1410,6 @@ mod tests {
     }
 
     #[test]
-    fn a_wall_of_the_scene_on_the_diagonal_parcel_stops_the_avatar_at_the_corner() {
-        // 0.5 m from parcel 0,0's corner with parcels 1,0, 0,1 and 1,1, and a block held only by
-        // the scene of parcel 1,1, 0.5 m into it from both of its edges
-        let start = Vec3::new(15.5, 0.0, -15.5);
-        let (mut app, player) = movement_app(&[], start);
-        let block = (Vec3::new(20.25, 1.0, -20.25), Vec3::new(3.75, 1.0, 3.75));
-        add_wall_scene(&mut app, "corner", IVec2::new(1, 1), block.0, block.1);
-        // across the corner into the block: it stops against the block's corner or slides along a
-        // face, the capsule's radius from the block's nearest point either way
-        let end = run_for(&mut app, player, Vec3::new(3.0, 0.0, -3.0), 50);
-        let nearest = Vec2::new(end.x.clamp(16.5, 24.0), end.z.clamp(-24.0, -16.5));
-        let gap = Vec2::new(end.x, end.z).distance(nearest);
-        assert!(
-            (gap - PLAYER_COLLIDER_RADIUS).abs() < 0.01,
-            "{gap} m from the block at {end}"
-        );
-    }
-
-    #[test]
-    fn walls_of_the_scenes_across_the_origins_edges_stop_the_avatar() {
-        // parcel 0,0's west edge (x 0) borders parcel -1,0; its north edge (z 0), parcel 0,-1:
-        // parcel y grows to -z. Each wall 0.5 m beyond the edge.
-        let cases = [
-            (
-                Vec3::new(0.5, 0.0, -8.0),
-                Vec3::new(-5.0, 0.0, 0.0),
-                IVec2::new(-1, 0),
-                (Vec3::new(-1.0, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0)),
-            ),
-            (
-                Vec3::new(8.0, 0.0, -0.5),
-                Vec3::new(0.0, 0.0, 5.0),
-                IVec2::new(0, -1),
-                (Vec3::new(8.0, 1.0, 1.0), Vec3::new(8.0, 1.0, 0.5)),
-            ),
-        ];
-        for (start, velocity, parcel, wall) in cases {
-            let (mut app, player) = movement_app(&[], start);
-            add_wall_scene(&mut app, "beyond", parcel, wall.0, wall.1);
-            let end = run_for(&mut app, player, velocity, 50);
-            // against the wall's face, 0.5 m past the edge
-            let along = velocity.normalize();
-            let reached = end.dot(along);
-            let face = 0.5 - PLAYER_COLLIDER_RADIUS;
-            assert!((reached - face).abs() < 0.01, "{parcel}: stopped at {end}");
-        }
-    }
-
-    #[test]
-    fn a_run_stops_at_the_wall_of_the_next_parcels_scene_from_any_point_a_frame_away() {
-        // a run at 10 m/s; the wall 0.05 m into parcel 1,0, the avatar's front from 0.05 m short
-        // of it to a frame's move further
-        let wall = (Vec3::new(16.55, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        let face = 16.05 - PLAYER_COLLIDER_RADIUS;
-        for fps in [30.0, 60.0, 144.0] {
-            let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-            let step = 10.0 / fps as f32;
-            for k in 0..11 {
-                let start = Vec3::new(face - 0.05 - step * k as f32 / 10.0, 0.0, -8.0);
-                let (mut app, player) = movement_app_at(&[], start, frame);
-                add_wall_scene(&mut app, "next", IVec2::new(1, 0), wall.0, wall.1);
-                app.update();
-                let end = run_for(&mut app, player, Vec3::new(10.0, 0.0, 0.0), 30);
-                assert!(
-                    (end.x - face).abs() < 0.01,
-                    "{fps} fps from {start}: stopped at {end}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_walk_and_a_jog_step_onto_a_riser_of_the_next_parcels_scene() {
-        // a 0.2 m riser held by the scene of parcel 1,0, its face on the parcels' edge (x 16)
-        let riser = (Vec3::new(20.0, 0.1, -8.0), Vec3::new(4.0, 0.1, 8.0));
-        let frame = std::time::Duration::from_secs_f64(1.0 / 30.0);
-        for (speed, frames) in [(1.5, 60), (8.0, 15)] {
-            let (mut app, player) = movement_app_at(&[], Vec3::new(15.0, 0.0, -8.0), frame);
-            add_wall_scene(&mut app, "riser", IVec2::new(1, 0), riser.0, riser.1);
-            app.update();
-            let end = run_for(&mut app, player, Vec3::new(speed, 0.0, 0.0), frames);
-            assert!(
-                end.x > 16.5 && (end.y - 0.2).abs() < 0.01,
-                "{speed} m/s: {end}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_walk_and_a_jog_off_a_low_step_follow_it_down_onto_the_next_parcels_scene() {
-        // a platform 0.2 m high ending on parcel 0,0's east edge (x 16), and beyond it, held by
-        // the scene of parcel 1,0, one 0.1 m high: a 0.1 m step down onto the next scene's ground
-        let upper = (
-            Vec3::new(12.0, 0.1, -8.0),
-            Vec3::new(4.0, 0.1, 8.0),
-            Quat::IDENTITY,
-        );
-        let lower = (Vec3::new(24.0, 0.05, -8.0), Vec3::new(8.0, 0.05, 8.0));
-        let frame = std::time::Duration::from_secs_f64(1.0 / 30.0);
-        for (speed, frames) in [(1.5, 60), (8.0, 15)] {
-            let start = Vec3::new(14.0, 0.2, -8.0);
-            let (mut app, player) = movement_app_at(&[upper], start, frame);
-            add_wall_scene(&mut app, "lower", IVec2::new(1, 0), lower.0, lower.1);
-            app.update();
-            let end = run_for(&mut app, player, Vec3::new(speed, 0.0, 0.0), frames);
-            assert!(
-                end.x > 16.5 && (end.y - 0.1).abs() < 0.01,
-                "{speed} m/s: {end}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_jog_and_a_run_off_a_low_platform_keep_to_the_ground_of_the_next_parcels_scene() {
-        // a platform 0.1 m high held by the scene of parcel 0,0, its edge 0.2 m short of the
-        // parcels' edge (x 16); beyond it the floor of the scene of parcel 1,0. Started anywhere
-        // over one frame, so that some frame ends with the capsule's lower sphere on the edge
-        // where it is too steep to stand on, just above the ground beyond.
-        let platform = (Vec3::new(12.0, 0.05, -8.0), Vec3::new(3.8, 0.05, 8.0));
-        const STARTS: usize = 64;
-        let mut flew = Vec::new();
-        for fps in [30.0, 60.0, 144.0] {
-            let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-            for speed in [8.0_f32, 10.0] {
-                for k in 0..STARTS {
-                    let x = 14.0 - speed / fps as f32 * k as f32 / STARTS as f32;
-                    let (mut app, player) = movement_app_at(&[], Vec3::new(x, 0.1, -8.0), frame);
-                    add_wall_scene(&mut app, "platform", IVec2::ZERO, platform.0, platform.1);
-                    app.update();
-                    set_velocity(&mut app, player, Vec3::new(speed, 0.0, 0.0));
-                    let mut air = 0;
-                    while app.world().get::<Transform>(player).unwrap().translation.x < 17.0 {
-                        app.update();
-                        let state = app.world().get::<AvatarDynamicState>(player).unwrap();
-                        air += usize::from(!grounded(state.ground_height));
-                    }
-                    if air > 0 {
-                        flew.push((fps, speed, x, air));
-                    }
-                }
-            }
-        }
-        assert!(
-            flew.is_empty(),
-            "(fps, m/s, from x, frames in the air): {flew:?}"
-        );
-    }
-
-    #[test]
-    fn a_move_of_more_than_a_parcel_in_a_frame_is_cast_against_every_collider() {
-        // 40 m in a 20 ms frame from the middle of parcel 0,0: a wall of the next parcel's scene
-        // stops it, and so does one two parcels away
-        let start = Vec3::new(8.0, 0.0, -8.0);
-        let velocity = Vec3::new(2000.0, 0.0, 0.0);
-        let (mut app, player) = movement_app(&[], start);
-        let near = (Vec3::new(20.5, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        add_wall_scene(&mut app, "near", IVec2::new(1, 0), near.0, near.1);
-        app.update();
-        let end = run_for(&mut app, player, velocity, 1);
-        let face = 20.0 - PLAYER_COLLIDER_RADIUS;
-        assert!((end.x - face).abs() < 0.01, "stopped at {end}");
-
-        let (mut app, player) = movement_app(&[], start);
-        let far = (Vec3::new(36.5, 1.0, -8.0), Vec3::new(0.5, 1.0, 8.0));
-        add_wall_scene(&mut app, "far", IVec2::new(2, 0), far.0, far.1);
-        app.update();
-        let end = run_for(&mut app, player, velocity, 1);
-        let face = 36.0 - PLAYER_COLLIDER_RADIUS;
-        assert!((end.x - face).abs() < 0.01, "stopped at {end}");
-    }
-
-    #[test]
     fn a_scene_velocity_that_is_not_finite_moves_nothing() {
         for velocity in [
             Vec3::NAN,
@@ -2085,411 +1417,11 @@ mod tests {
             Vec3::new(0.0, 0.0, f32::NEG_INFINITY),
         ] {
             let start = Vec3::new(8.0, 0.0, -8.0);
-            let (mut app, player) = movement_app(&[], start);
+            let (mut app, player) = movement_app(start);
             app.update();
             let end = run_for(&mut app, player, velocity, 3);
             assert_eq!(end, start, "{velocity}");
         }
-    }
-
-    /// A ramp rising along +x at `degrees`, its surface from x 1 at y 0.
-    fn ramp(degrees: f32) -> (Vec3, Vec3, Quat) {
-        let a = degrees.to_radians();
-        let (half_length, half_thickness) = (5.0, 0.5);
-        let centre = Vec3::new(
-            1.0 + half_length * a.cos() + half_thickness * a.sin(),
-            half_length * a.sin() - half_thickness * a.cos(),
-            0.0,
-        );
-        (
-            centre,
-            Vec3::new(half_length, half_thickness, 5.0),
-            Quat::from_rotation_z(a),
-        )
-    }
-
-    #[test]
-    fn walking_into_a_slope_too_steep_to_stand_on_stops_at_it() {
-        let end = walk(&[ramp(60.0)], Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0));
-        assert!(end.y < 0.05, "climbed to {end}");
-        assert!(end.x < 1.0, "went through to {end}");
-    }
-
-    #[test]
-    fn walking_into_a_walkable_slope_climbs_it() {
-        let end = walk(&[ramp(30.0)], Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0));
-        assert!(end.y > 0.5, "stayed at {end}");
-    }
-
-    /// A platform with its top at `height`, its east edge at x 1.
-    fn platform(height: f32) -> (Vec3, Vec3, Quat) {
-        (
-            Vec3::new(-4.0, height * 0.5, 0.0),
-            Vec3::new(5.0, height * 0.5, 5.0),
-            Quat::IDENTITY,
-        )
-    }
-
-    #[test]
-    fn walking_up_a_walkable_slope_keeps_the_horizontal_speed() {
-        let end = walk(&[ramp(30.0)], Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0));
-        assert!(end.x > 4.85, "slowed to {end}");
-        let on_ramp = (end.x - 1.0) * 30f32.to_radians().tan();
-        assert!((end.y - on_ramp).abs() < 0.05, "left the ramp at {end}");
-    }
-
-    /// A walk at `speed` m/s down a ramp of `degrees` from `x` onto the floor at its foot (x 1),
-    /// in frames of `fps`, until 1.5 m past the foot: each frame's x and the feet's height over
-    /// the ground after it. With `fall`, the scene's fall: while the avatar is off the ground, its
-    /// vertical speed gains 10 m/s downward a second; on the ground it is 0.
-    fn down_a_ramp(degrees: f32, fps: f64, x: f32, speed: f32, fall: bool) -> Vec<(f32, f32)> {
-        let slope = degrees.to_radians();
-        // standing on the ramp: its surface under the centre, plus the lower sphere's lift there
-        let lift = PLAYER_COLLIDER_RADIUS * (1.0 / slope.cos() - 1.0);
-        let start = Vec3::new(x, (x - 1.0) * slope.tan() + lift, 0.0);
-        let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-        let (mut app, player) = movement_app_at(&[ramp(degrees)], start, frame);
-        app.update();
-        let mut vertical = 0.0_f32;
-        let mut trace = Vec::new();
-        while app.world().get::<Transform>(player).unwrap().translation.x > -1.5 {
-            assert!(trace.len() < 10_000, "held on the ramp from {x}");
-            let height = app
-                .world()
-                .get::<AvatarDynamicState>(player)
-                .unwrap()
-                .ground_height;
-            vertical = if fall && !grounded(height) {
-                vertical - 10.0 / fps as f32
-            } else {
-                0.0
-            };
-            set_velocity(&mut app, player, Vec3::new(-speed, vertical, 0.0));
-            app.update();
-            let x = app.world().get::<Transform>(player).unwrap().translation.x;
-            let height = app
-                .world()
-                .get::<AvatarDynamicState>(player)
-                .unwrap()
-                .ground_height;
-            trace.push((x, height));
-        }
-        trace
-    }
-
-    /// Start points of [`down_a_ramp`] spread over one frame at `speed` m/s, so that the last
-    /// frame on the ramp ends anywhere before its foot.
-    fn a_frame_of_starts(fps: f64, speed: f32) -> impl Iterator<Item = f32> {
-        const STARTS: usize = 16;
-        (0..STARTS).map(move |k| 2.0 + speed / fps as f32 * k as f32 / STARTS as f32)
-    }
-
-    /// The scene's walk, jog and run (1.5, 8 and 10 m/s) down a ramp, 1.29 times faster downhill.
-    const DOWNHILL_SPEEDS: [f32; 3] = [1.93, 10.29, 12.86];
-
-    #[test]
-    fn walking_down_a_slope_onto_flat_ground_keeps_to_the_ground_at_the_foot() {
-        // down 45 degrees and 46, just under the steepest walkable slope; a jog and a run take
-        // more than GROUND_SNAP_DROP of descent in a frame
-        let mut hovered = Vec::new();
-        for fps in [30.0, 60.0, 144.0] {
-            for degrees in [45.0, 46.0] {
-                for speed in DOWNHILL_SPEEDS {
-                    for x in a_frame_of_starts(fps, speed) {
-                        let trace = down_a_ramp(degrees, fps, x, speed, false);
-                        let hover = trace.iter().fold(0.0_f32, |hover, &(_, h)| hover.max(h));
-                        if !grounded(hover) {
-                            hovered.push((fps, degrees, speed, x, hover));
-                        }
-                    }
-                }
-            }
-        }
-        assert!(
-            hovered.is_empty(),
-            "(fps, degrees, m/s, from x, hovered m): {hovered:?}"
-        );
-    }
-
-    #[test]
-    fn falling_off_the_foot_of_a_slope_lands_just_past_it() {
-        // with the scene falling whenever the avatar is off the ground, the first frame on the
-        // ground past the foot is within 0.33 m of it, give or take the frame and a 20 ms reply
-        let mut far = Vec::new();
-        for fps in [30.0, 60.0, 144.0] {
-            let frame = 1.0 / fps as f32;
-            for degrees in [45.0, 46.0] {
-                for speed in DOWNHILL_SPEEDS {
-                    let within = 0.33 + (speed * (0.02 + frame)).max(0.1);
-                    for x in a_frame_of_starts(fps, speed) {
-                        let trace = down_a_ramp(degrees, fps, x, speed, true);
-                        let landed = trace
-                            .iter()
-                            .find(|&&(x, height)| x < 1.0 && grounded(height))
-                            .map(|&(x, _)| 1.0 - x);
-                        if !landed.is_some_and(|past| past <= within) {
-                            far.push((fps, degrees, speed, x, landed));
-                        }
-                    }
-                }
-            }
-        }
-        assert!(
-            far.is_empty(),
-            "(fps, degrees, m/s, from x, landed m past the foot): {far:?}"
-        );
-    }
-
-    #[test]
-    fn walking_off_a_low_step_follows_it_down_and_off_a_high_one_does_not() {
-        let start = Vec3::new(0.0, 0.1, 0.0);
-        let end = walk(&[platform(0.1)], start, Vec3::new(1.5, 0.0, 0.0));
-        assert!(end.y < 0.01, "stayed up at {end}");
-        let start = Vec3::new(0.0, 0.3, 0.0);
-        let end = walk(&[platform(0.3)], start, Vec3::new(1.5, 0.0, 0.0));
-        // it rounds the corner as far as the corner can be stood on, then is left to fall
-        assert!(end.y > 0.2, "followed a 0.3 m drop to {end}");
-    }
-
-    #[test]
-    fn an_avatar_standing_just_over_the_ground_settles_onto_it() {
-        let end = walk(&[], Vec3::new(0.0, 0.03, 0.0), Vec3::ZERO);
-        assert!(end.y < 1e-3, "hovers at {end}");
-    }
-
-    #[test]
-    fn settling_in_the_first_frame_reports_no_velocity() {
-        let (mut app, player) = movement_app(&[], Vec3::new(0.0, 0.03, 0.0));
-        app.update();
-        let end = app.world().get::<Transform>(player).unwrap().translation;
-        assert!(end.y < 1e-3, "hovers at {end}");
-        let step = *app.world().resource::<LastMovementStep>();
-        assert_eq!(
-            step.actual_velocity,
-            Some(Vector3::world_vec_from_vec3(&Vec3::ZERO))
-        );
-    }
-
-    #[test]
-    fn an_avatar_landing_against_a_wall_settles_onto_the_ground() {
-        // a wall facing -x at x 470: that far from the origin the stored f32 position of an
-        // avatar against it rounds to within micrometres of the wall, either side
-        let wall = (
-            Vec3::new(470.25, 1.5, 0.0),
-            Vec3::new(0.25, 1.5, 5.0),
-            Quat::IDENTITY,
-        );
-        // a fall into the wall that ends 0.01-0.05 m over the floor, then the scene stands still
-        // (the first update has no elapsed time)
-        let fall = Vec3::new(7.74, -6.16, 0.0);
-        for height in [0.0106, 0.0289, 0.0497] {
-            let start = Vec3::new(469.6, height - fall.y * 0.02, 0.0);
-            let phases = [(Vec3::ZERO, 1), (fall, 1), (Vec3::ZERO, 10)];
-            let end = walk_phases(&[wall], start, &phases);
-            assert!(end.x > 469.69, "{height} m: short of the wall at {end}");
-            assert!(end.y < 1e-3, "{height} m: hovers at {end}");
-        }
-    }
-
-    /// A riser of `height` whose face is at x 1.
-    fn riser(height: f32) -> (Vec3, Vec3, Quat) {
-        (
-            Vec3::new(6.0, height * 0.5, 0.0),
-            Vec3::new(5.0, height * 0.5, 5.0),
-            Quat::IDENTITY,
-        )
-    }
-
-    #[test]
-    fn walking_into_a_riser_up_to_the_step_height_steps_onto_it() {
-        for (height, speed) in [(0.2, 1.5), (0.45, 1.5), (0.3, 8.0)] {
-            let end = walk(&[riser(height)], Vec3::ZERO, Vec3::new(speed, 0.0, 0.0));
-            assert!(
-                (end.y - height).abs() < 0.01,
-                "{height} m at {speed} m/s: {end}"
-            );
-        }
-    }
-
-    #[test]
-    fn standing_still_ends_the_push_against_a_riser() {
-        let (mut app, player) = movement_app(&[riser(0.2)], Vec3::new(0.695, 0.0, 0.0));
-        app.update();
-        // a slow move held at the riser
-        set_velocity(&mut app, player, Vec3::new(0.5, 0.0, 0.0));
-        for _ in 0..5 {
-            app.update();
-        }
-        let pushed = app.world().get::<RiserPush>(player).unwrap().0;
-        assert!(pushed > 0.0, "not held at the riser");
-        set_velocity(&mut app, player, Vec3::ZERO);
-        app.update();
-        assert_eq!(app.world().get::<RiserPush>(player).unwrap().0, 0.0);
-    }
-
-    #[test]
-    fn a_frame_with_no_elapsed_time_keeps_the_push_against_a_riser() {
-        let (mut app, player) = movement_app(&[riser(0.2)], Vec3::new(0.695, 0.0, 0.0));
-        app.update();
-        set_velocity(&mut app, player, Vec3::new(0.5, 0.0, 0.0));
-        for _ in 0..5 {
-            app.update();
-        }
-        let pushed = app.world().get::<RiserPush>(player).unwrap().0;
-        assert!(pushed > 0.0, "not held at the riser");
-        // time paused: the move is still asked for, but no time passes
-        app.insert_resource(TimeUpdateStrategy::ManualDuration(
-            std::time::Duration::ZERO,
-        ));
-        app.update();
-        assert_eq!(app.world().get::<RiserPush>(player).unwrap().0, pushed);
-    }
-
-    /// The time a move at `speed` m/s from 0.15 m short of a 0.2 m riser takes to step onto it, at
-    /// `fps` frames a second, and the furthest it pushed against the riser before.
-    fn time_to_step_up(fps: f64, speed: f32) -> (f64, f64) {
-        let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-        let (mut app, player) = movement_app_at(&[riser(0.2)], Vec3::new(0.55, 0.0, 0.0), frame);
-        app.update();
-        set_velocity(&mut app, player, Vec3::new(speed, 0.0, 0.0));
-        let mut time = 0.0;
-        let mut pushed = 0.0_f64;
-        while app.world().get::<Transform>(player).unwrap().translation.y < 0.1 {
-            assert!(time < 2.0, "never stepped up at {speed} m/s, {fps} fps");
-            app.update();
-            time += frame.as_secs_f64();
-            pushed = pushed.max(app.world().get::<RiserPush>(player).unwrap().0);
-        }
-        (time, pushed)
-    }
-
-    /// How far the move of [`time_to_step_up`] goes before it touches the riser: the 0.15 m to its
-    /// face, and more, as the riser is lower than the centre of the capsule's bottom sphere, which
-    /// touches the riser's top edge first (about 0.167 m).
-    fn distance_to_riser() -> f64 {
-        let radius = f64::from(PLAYER_COLLIDER_RADIUS);
-        0.15 + radius - (radius * radius - (radius - 0.2).powi(2)).sqrt()
-    }
-
-    #[test]
-    fn a_walk_pushes_against_a_riser_for_the_same_time_at_any_frame_rate() {
-        // 0.1 s to reach the riser, then the push
-        let (at_60, _) = time_to_step_up(60.0, 1.5);
-        for fps in [15.0, 30.0, 60.0, 144.0] {
-            let (time, _) = time_to_step_up(fps, 1.5);
-            assert!(time > 0.18, "no push at {fps} fps: {time} s");
-            assert!(
-                (time - at_60).abs() <= 1.0 / fps.min(60.0) + 1e-6,
-                "{time} s at {fps} fps, {at_60} s at 60"
-            );
-        }
-    }
-
-    #[test]
-    fn only_a_move_slower_than_the_push_speed_pushes_against_a_riser_at_any_frame_rate() {
-        // the push speed is about 5.5 m/s: a walk and a move just under it push for STEP_PUSH
-        // once at the riser; a move just over it, a jog and a run step onto it in the frame they
-        // reach it
-        let push_speed = step_push_speed() as f32;
-        for fps in [30.0, 60.0, 144.0] {
-            for speed in [1.5, push_speed * 0.9] {
-                let (time, _) = time_to_step_up(fps, speed);
-                let pushed = (distance_to_riser() + STEP_PUSH) / f64::from(speed);
-                assert!(
-                    time > pushed - 1e-3,
-                    "{speed} m/s at {fps} fps: stepped up after {time} s"
-                );
-            }
-            for speed in [push_speed * 1.1, 8.0, 10.0] {
-                let (time, pushed) = time_to_step_up(fps, speed);
-                assert_eq!(pushed, 0.0, "{speed} m/s at {fps} fps pushed");
-                let reached = distance_to_riser() / f64::from(speed);
-                assert!(
-                    time < reached + 1.0 / fps + 1e-6,
-                    "{speed} m/s at {fps} fps: stepped up after {time} s"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_ground_assist_counts_its_step_offsets_and_snaps() {
-        // onto a 0.1 m step, then down its far side
-        let step = (
-            Vec3::new(2.0, 0.05, 0.0),
-            Vec3::new(1.0, 0.05, 5.0),
-            Quat::IDENTITY,
-        );
-        let (mut app, player) = movement_app(&[step], Vec3::ZERO);
-        app.update();
-        set_velocity(&mut app, player, Vec3::new(1.5, 0.0, 0.0));
-        let assist = |app: &App| *app.world().get::<GroundAssist>(player).unwrap();
-        for _ in 0..100 {
-            if app.world().get::<Transform>(player).unwrap().translation.y > 0.05 {
-                break;
-            }
-            app.update();
-        }
-        let up = assist(&app);
-        assert_eq!(up.steps, 1, "{up:?}");
-        // onto the step's corner, which the walk then rounds
-        let rise = up.last_step_rise.unwrap();
-        assert!(rise > 0.05 && rise < 0.11, "{up:?}");
-        // on the flat floor before it, nothing to snap down to
-        assert_eq!(up.snaps, 0, "{up:?}");
-        for _ in 0..150 {
-            app.update();
-        }
-        let down = assist(&app);
-        assert!(down.snaps > up.snaps, "{down:?}");
-        assert!(down.last_snap_drop.unwrap() > 0.0, "{down:?}");
-    }
-
-    #[test]
-    fn a_running_jump_into_a_riser_does_not_step_onto_it_as_it_takes_off() {
-        // on the ground, 0.05 m short of a 0.4 m riser's face, or 0.02 m short of a 0.2 m riser's
-        // edge (the lower sphere meets it above its top); the avatar stops at the riser at x 0.7
-        // and 0.72 respectively
-        for fps in [30.0, 50.0, 144.0] {
-            let frame = std::time::Duration::from_secs_f64(1.0 / fps);
-            let dt = 1.0 / fps as f32;
-            for (height, start, at_riser) in [(0.4, 0.65, 0.71), (0.2, 0.7, 0.74)] {
-                // a run at 10 m/s takes off for a 1 m jump, or a hop that is still within the
-                // ground's reach after the take-off at 144 fps
-                for rise in [8.94, 3.0] {
-                    let case = format!("{height} m riser, rising at {rise} m/s, {fps} fps");
-                    let (mut app, player) =
-                        movement_app_at(&[riser(height)], Vec3::new(start, 0.0, 0.0), frame);
-                    app.update();
-                    let off = run_for(&mut app, player, Vec3::new(10.0, rise, 0.0), 1);
-                    // the take-off step rises at its speed for the frame, against the riser
-                    assert!((off.y - rise * dt).abs() < 0.01, "{case}: rose to {off}");
-                    assert!(off.x < at_riser, "{case}: went onto the riser to {off}");
-                    // the next frame of the flight still rises, slowed by the fall
-                    let next = run_for(&mut app, player, Vec3::new(10.0, rise - 10.0 * dt, 0.0), 1);
-                    assert!(next.y > off.y, "{case}: from {off} to {next}");
-                    let steps = app.world().get::<GroundAssist>(player).unwrap().steps;
-                    assert_eq!(steps, 0, "{case}: stepped up");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_riser_higher_than_the_step_height_stops_the_avatar() {
-        let end = walk(&[riser(0.5)], Vec3::ZERO, Vec3::new(8.0, 0.0, 0.0));
-        assert!(end.y < 0.01 && end.x < 1.0, "climbed to {end}");
-    }
-
-    #[test]
-    fn a_steep_slope_still_deflects_an_avatar_in_the_air() {
-        // a jump into it: not on the ground, the slope turns the move up it
-        let end = walk(
-            &[ramp(60.0)],
-            Vec3::new(0.0, 0.5, 0.0),
-            Vec3::new(5.0, 0.0, 0.0),
-        );
-        assert!(end.y > 1.0, "stopped at {end}");
     }
 
     #[test]

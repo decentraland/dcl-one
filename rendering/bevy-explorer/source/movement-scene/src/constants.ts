@@ -134,15 +134,22 @@ export const GROUNDED_HEIGHT = 0.05; // distance from surface at which player is
 export const GROUNDED_ANGLE = 46.5;
 // Speed on a slope: on the ground the gait speed is scaled by 1 - SLOPE_SPEED_FACTOR * angle / SLOPE_SPEED_MAX_ANGLE,
 // with the angle of the ground along the move (positive uphill, clamped to +-SLOPE_SPEED_MAX_ANGLE): uphill slower,
-// downhill faster, across unchanged. It scales the horizontal speed; on the ground the engine keeps the avatar on the
-// slope. In the air the factor of the last ground holds.
+// downhill faster, across unchanged. It scales the horizontal speed; on the ground the reply adds the vertical speed
+// that keeps the avatar on the slope (ground following, vertical.ts). In the air the factor of the last ground holds.
 export const SLOPE_SPEED_FACTOR = 0.35;
 export const SLOPE_SPEED_MAX_ANGLE = 55; // degrees
 export const MAX_STEP_HEIGHT = 0.45; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
 export const MIN_STEP_HEIGHT = 0.05; // rises up to this need no step (the capsule slides over them)
+// Step up (vertical.ts): a move at STEP_UP_PLAN_SPEED (m/s) or faster climbs a riser once the capsule would reach it
+// within STEP_UP_REACH_TIME (s, plus twice the reply delay), so it reaches the tread with the face; a slower one climbs
+// once it touches the face, over STEP_UP_TIME (s), so a walk pauses at each riser.
+export const STEP_UP_PLAN_SPEED = 5.5;
+export const STEP_UP_REACH_TIME = 0.1;
+export const STEP_UP_TIME = 0.1;
 export const GROUND_SNAP_HEIGHT = 0.40 // drop ahead at which the engine walk stops (walk.ts)
-// The ground follows a walking avatar down at most GROUND_SNAP_STEP_DROP beyond its slope; past a larger drop the centre
-// is over an edge.
+// Ground snap (vertical.ts): the avatar follows the ground down at most GROUND_SNAP_STEP_DROP beyond its slope, from the
+// ground it stood on or the edge it rested on; past a larger drop the centre is over an edge. A 0.1 m riser keeps a walk
+// on the stairs; from 0.2 m a walk falls tread by tread and a jog or a run flies over the stairs.
 export const GROUND_SNAP_STEP_DROP = 0.15; // m
 // How far below the capsule's lower sphere the ground casts reach. Within it the scene knows the ground under an
 // avatar in the air: the landing prediction, the glide's minimum height and the landing stun measure from it. Below it

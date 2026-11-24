@@ -71,10 +71,6 @@ fn world_with_player(position: Vec3, velocity: Vec3) -> (World, Entity) {
     world.init_resource::<EngineMovementControl>();
     world.init_resource::<CentralCollisions>();
     world.init_resource::<CollisionPush>();
-    // no scene placed: the movement casts against the colliders no scene holds
-    world.init_resource::<ScenePointers>();
-    world.init_resource::<LiveScenes>();
-    world.init_resource::<PortableScenes>();
 
     let player = world
         .spawn((
@@ -83,8 +79,6 @@ fn world_with_player(position: Vec3, velocity: Vec3) -> (World, Entity) {
             AvatarDynamicState::default(),
             PrimaryUser::default(),
             GroundCollider::default(),
-            RiserPush::default(),
-            GroundAssist::default(),
             ActivePlayerComponent {
                 scene: Entity::PLACEHOLDER,
                 entity: Entity::PLACEHOLDER,
