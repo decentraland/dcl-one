@@ -418,6 +418,47 @@ fn the_log_markers_are_the_explorers() {
 }
 
 #[test]
+fn load_time_lines_add_rows_with_verdicts() {
+    let report = report_of("load-times");
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    for row in [
+        "| Time to world | 12.1 s (12.0–12.3) | 10.2 s (10.0–10.4) | -1.9 s | 🟢 16% faster |",
+        "| First ring ready | 4.2 s (4.0–4.3) | 4.1 s (4.0–4.2) | -0.1 s | ⚪ within noise |",
+    ] {
+        assert!(intel.contains(&row), "{row}\n{intel:#?}");
+    }
+    has_line(
+        &report,
+        "**Overall: 🟢 Time to world improved on Intel Core i5 (Chrome)**",
+    );
+
+    // a section whose logs hold no load times keeps its table as it was
+    let ok = report_of("ok");
+    assert!(
+        !ok.markdown.contains("| Time to world |"),
+        "{}",
+        ok.markdown
+    );
+}
+
+/// The load-time entries the log parser reads are the ones the explorer writes: the autopilot's
+/// phase line (`AutopilotPhase::Measuring` prints as `Measuring`) and the scene load timing's
+/// arrival line.
+#[test]
+fn the_load_time_lines_are_the_explorers() {
+    let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
+    let read = |file: &str| std::fs::read_to_string(source.join(file)).unwrap();
+    assert_eq!(report::ARRIVED_IN_WORLD_PREFIX, "phase Measuring at ");
+    assert!(read("src/autopilot.rs").contains(r#""phase {:?} at {:.1} s""#));
+    assert!(
+        read("crates/scene_runner/src/load_timing.rs").contains(&format!(
+            "\"{}{{}} ms after the scene spawned\"",
+            report::FIRST_RING_READY_PREFIX
+        ))
+    );
+}
+
+#[test]
 fn summary_lines_add_hiccup_memory_and_scope_rows_only_where_a_run_wrote_them() {
     let report = report_of("summary");
     let apple = section(&report, "Apple M1 (Chrome)");

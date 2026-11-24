@@ -9,9 +9,11 @@ use super::exceptions::ExceptionKindCounts;
 use super::stats::{
     self, FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,
     SessionsNotComparable, CPU_HICCUPS_METRIC, EXCEPTIONS_METRIC, FRAME_TIME_METRICS,
-    PEAK_MEMORY_METRIC,
+    LOAD_TIME_METRICS, PEAK_MEMORY_METRIC,
 };
-use super::{BuildBenchmarkRunsStatistics, ReportOptions, RunnerCaveat, RunnerSection};
+use super::{
+    BuildBenchmarkRunsStatistics, MeasuredRuns, ReportOptions, RunnerCaveat, RunnerSection,
+};
 
 /// The fleet's runner labels and the machines they name (`ProduceSummary.cs`'s
 /// `labelDisplayNames`).
@@ -98,6 +100,7 @@ pub fn legend(expected_runs: u64) -> String {
          - **⚠️ no verdict** — the two builds' sessions were not comparable (very different sample counts, or too few usable runs), so no conclusion is drawn from them.\n\
          - **Exceptions per run** — the average number of exceptions in a run's log, not counting teardown ones logged while the app quits. Flagged only on a difference of at least {delta_min} per run and {ratio_min}× the other build; exception kinds the baseline never threw are called out under the table. The *Exception breakdown* groups all of them by the explorer's report category and exception type (as totals across the runs).\n\
          - **Hiccups per run / Peak memory** — from the `perf_summary` lines an explorer writes when its measured phase ends: frames over its hiccup threshold (the larger of 50 ms and two target frame times) and the peak engine memory. Hiccups follow the exceptions rule, given fully separated run ranges and the same hiccup threshold in both builds (⚠️ no verdict when the thresholds differ); memory the frame-time rule with a floor of {min_mib} MiB. The *Top scopes* list is the self time per run of the scopes the explorer's profiler recorded. Shown only when a run wrote them.\n\
+         - **Time to world / First ring ready** — from the run's log: the seconds from launch to arriving in world, and from the spawn scene's spawn to it and every scene within one parcel of the player being ready. They follow the frame-time rule with a floor of {min_load_s} s, and need 2 runs of each build that logged the value. Shown only when a run logged them.\n\
          - A run that logged **unusually many exceptions** (at least {outlier_min} and {outlier_factor}× the median of its build's runs — e.g. a service was down during it) is excluded from all numbers and called out under the table.\n\
          - The **Overall** line at the top only reacts to a metric that moved on **two or more machines**, or by **10% or more** on one — a single modest 🟢/🔴 cell can still be a statistical fluke.\n\
          </details>\n\
@@ -109,6 +112,7 @@ pub fn legend(expected_runs: u64) -> String {
         outlier_min = stats::OUTLIER_MIN_EXCEPTIONS,
         outlier_factor = stats::OUTLIER_FACTOR,
         min_mib = stats::MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB,
+        min_load_s = stats::MIN_ABSOLUTE_LOAD_TIME_DELTA_MS / 1000.0,
     )
 }
 
@@ -179,6 +183,27 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     peak_memory_verdict_text(comparison.peak_memory_verdict)
                 );
             }
+            for (m, name) in LOAD_TIME_METRICS.iter().enumerate() {
+                let (change, base) = (&change.load_time_ms[m], &base.load_time_ms[m]);
+                if change.run_count == 0 && base.run_count == 0 {
+                    continue;
+                }
+                let delta = if change.run_count > 0 && base.run_count > 0 {
+                    format!(
+                        "{:.1} s",
+                        (change.value.median - base.value.median) / 1000.0
+                    )
+                } else {
+                    "-".to_owned()
+                };
+                let _ = writeln!(
+                    out,
+                    "| {name} | {} | {} | {delta} | {} |",
+                    load_time_cell(base),
+                    load_time_cell(change),
+                    frame_time_verdict_text(comparison.load_time_verdicts[m])
+                );
+            }
         }
         None => {
             out += "| Metric | |\n";
@@ -209,6 +234,15 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     "| {PEAK_MEMORY_METRIC} | {} |",
                     peak_memory_cell(change)
                 );
+            }
+            for (m, name) in LOAD_TIME_METRICS.iter().enumerate() {
+                if change.load_time_ms[m].run_count > 0 {
+                    let _ = writeln!(
+                        out,
+                        "| {name} | {} |",
+                        load_time_cell(&change.load_time_ms[m])
+                    );
+                }
             }
         }
     }
@@ -429,6 +463,20 @@ fn peak_memory_cell(build: &BuildBenchmarkRunsStatistics) -> String {
         format!("{median:.0} MiB")
     } else {
         format!("{median:.0} MiB ({min:.0}–{max:.0})")
+    }
+}
+
+/// A load time in seconds, with the range when the runs differ.
+fn load_time_cell(runs: &MeasuredRuns) -> String {
+    if runs.run_count == 0 {
+        return "-".to_owned();
+    }
+    let MedianAndRange { median, min, max } = runs.value;
+    let (median, min, max) = (median / 1000.0, min / 1000.0, max / 1000.0);
+    if max - min < 0.05 {
+        format!("{median:.1} s")
+    } else {
+        format!("{median:.1} s ({min:.1}–{max:.1})")
     }
 }
 
