@@ -127,14 +127,6 @@ The app will use the specified environment APIs. If no `--env` argument is provi
 
 `--env=dcl-one` behaves like production (Ethereum mainnet, production contracts and subgraphs) but points the Decentraland services at the `dcl.dev` gateway (`https://dcl.dev/<service>`). Its config lives in `renderer/src/config/env/dcl-one.json`.
 
-The LAND rental list uses the Catalyst rentals endpoint at `dcl.dev` in all
-profiles. It selects Ethereum mainnet for `prod` and `dcl-one`, and Sepolia
-for `dev`. Before distributing a build, check the corresponding
-`data.ethereum.ready` or `data.sepolia.ready` in
-`GET /signatures-api/v1/rentals-index` on that gateway. Enable the Sepolia
-index with a `11155111=` entry in `TRADE_RPC_URLS`, or `ETH_RPC_URL` on a node
-configured with `ETH_NETWORK=sepolia`.
-
 On development watch mode, you can also pass the `--env` argument when starting the app. In this case, the default environment is `dev`, but you can override it to `prod` if needed:
 
 ```bash

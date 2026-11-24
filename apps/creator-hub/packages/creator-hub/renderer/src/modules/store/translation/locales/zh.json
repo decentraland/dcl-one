@@ -941,7 +941,6 @@
       "update_world_settings_failed": "更新世界设置失败。请重试。",
       "fetch_ens_list_failed": "获取ENS列表失败",
       "fetch_land_list_failed": "获取土地列表失败",
-      "fetch_rentals_list_failed": "暂时无法加载土地租赁信息。",
       "fetch_world_permissions_failed": "获取世界权限失败。请重试。",
       "fetch_world_scenes_failed": "获取世界场景失败。请重试。",
       "unpublish_world_scene_failed": "从世界取消发布场景失败。请重试。",

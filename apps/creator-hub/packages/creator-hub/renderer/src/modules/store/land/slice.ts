@@ -33,36 +33,25 @@ export const fetchRentalsList = async (address: string) => {
   return RentalsAPI.fetchRentalTokenIds(address);
 };
 
-type LandList = {
-  land: Land[];
-  authorizations: Authorization[];
-  rentals: Rental[];
-  rentalsUnavailable?: boolean;
-};
-
-export const fetchLandList = createAsyncThunk<LandList, { address: string }>(
+export const fetchLandList = createAsyncThunk(
   'land/fetchLandList',
-  async ({ address }) => {
+  async ({ address }: { address: string }) => {
     const LandsAPI = new Lands();
 
-    let rentalsUnavailable = false;
-    const rentals = await fetchRentalsList(address).catch(error => {
-      captureException(error, { tags: { source: 'land', event: 'fetch-rentals-list' } });
-      rentalsUnavailable = true;
-      return { tenantRentals: [], lessorRentals: [] };
-    });
+    const rentals = await fetchRentalsList(address);
+    const tenantTokenIds = rentals.tenantRentals.map(rental => rental.tokenId);
+    const lessorTokenIds = rentals.lessorRentals.map(rental => rental.tokenId);
 
     const [land, authorizations]: [Land[], Authorization[]] = await LandsAPI.fetchLand(
       address,
-      rentals.tenantRentals,
-      rentals.lessorRentals,
+      tenantTokenIds,
+      lessorTokenIds,
     );
 
     return {
       land,
       authorizations,
-      rentals: [...rentals.tenantRentals, ...rentals.lessorRentals],
-      rentalsUnavailable,
+      rentals: rentals.tenantRentals.concat(rentals.lessorRentals),
     };
   },
   { condition: isSignedInAccount },

@@ -612,7 +612,7 @@ pub async fn fold_listing(
 }
 
 /// The walk of one Ethereum Rentals deployment. Mainnet also folds listing
-/// statuses. Sepolia serves Creator Hub's development profile.
+/// statuses. Sepolia publishes the wallet rental history for that chain.
 pub struct RentalsIndex {
     pub venue: String,
     pub start: u64,

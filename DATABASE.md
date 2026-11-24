@@ -1832,11 +1832,11 @@ so changes to scene eligibility may remain cached until expiry. GET and batch
 POST use the same resolver; photo privacy, review and deletion filters apply
 after resolution. Production lookup rates and latency have not been measured.
 
-## Creator Hub rental reads
+## Wallet rental reads
 
 `GET /v1/rentals/{address}` reads `shop.chain_cursor` and
-`shop.rental_event` in one statement snapshot. One LAND load makes one
-lookup for both wallet roles. The two partial participant indexes find the
+`shop.rental_event` in one statement snapshot. A single lookup returns
+both wallet roles. The two partial participant indexes find the
 wallet's historical assets in the requested venue, and the existing asset
 index finds each candidate's latest rent or claim and the current period's
 rent events. Each result contains one row per asset and role. There is no new
@@ -1851,16 +1851,19 @@ a large history, prebuild both indexes with `CREATE INDEX CONCURRENTLY`
 using the definitions in `schemas/30_shop.sql`.
 
 The read stops at the published block. A stale or unpublished cursor
-returns 503. If the rentals request fails, Creator Hub loads owned and
-operated LAND and shows a rentals warning. The latest rent or claim is
-evaluated before checking the current participants. A rent stays in the lessor's list until claim, and in
-the tenant's list until expiry. Extensions add to the end of the original
+returns 503. The latest rent or claim is evaluated before checking the
+current participants. A rent stays in the lessor's list until claim and
+in the tenant's list until expiry. Extensions add to the end of the original
 period, as the Rentals contract does. The route returns the operator on the
-latest rent event. Creator Hub resolves deployment access from the current
-registry state. Mainnet and Sepolia use separate
+latest rent event. Mainnet and Sepolia use separate
 `(network, block_number, log_index)` event keys and separate cursors under the
 Ethereum supervisor. Only the mainnet index updates listing statuses and
 supplies rental notifications.
+
+The index worker uses the `TRADE_RPC_URLS` entry for chain 11155111 or
+`ETH_RPC_URL` with `ETH_NETWORK=sepolia`. Check the selected chain's
+`ready` field at `GET /signatures-api/v1/rentals-index` before routing
+clients to the wallet rental endpoint.
 
 ## Rental listing status workload
 
