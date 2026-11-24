@@ -20,6 +20,7 @@ export default defineConfig({
       { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
       { find: "@explorer-core", replacement: fileURLToPath(new URL("../../library/explorer-core", import.meta.url)) },
       { find: /^@dcl\/one-ui$/, replacement: ui("index.ts") },
+      { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: ui("foundations/typography/text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: ui("") },
     ],
     // library/ has no node_modules of its own: viem, zod, the WalletConnect client, React and the testing packages

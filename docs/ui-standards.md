@@ -211,10 +211,9 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 - `make check` and CI also run `tooling/ui_standards.py --shared-imports`. It
   fails when a script under `apps/`, `library/` (outside `library/ui`) or
   `tooling/` names a `@dcl/one-ui/<path>` module other than a stylesheet. It
-  still accepts the app-scoped `@dcl/one-ui/apps/` paths until
-  `library/ui/index.ts` exports those modules, and the file and specifier
-  pairs its `SHARED_IMPORT_KEPT` lists with a reason (a lazy `import()` that
-  must name the module so the bundler keeps its chunk).
+  still accepts the in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`,
+  `@dcl/one-ui/apps/hud/`), which resolve their host's aliases and are not in
+  the entry yet.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -281,7 +280,6 @@ library/ui/
     layout/             responsive layout values
     spacing/            spacing and corner-radius scales
     icons/              shared icon assets and exports
-  assets/               images shared components draw, with their license
   components/
     Button/
       Button.tsx

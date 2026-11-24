@@ -1,8 +1,12 @@
-import { adminCopy } from "@dcl/one-ui/apps/sites/events/admin-copy";
-import { AdminPage, adminPageStyles } from "@dcl/one-ui/apps/sites/events/AdminPage";
-import { Notice } from "@dcl/one-ui/apps/sites/events/Notice";
-import { PermissionsModal } from "@dcl/one-ui/apps/sites/events/PermissionsModal";
-import { UsersTable, type AdminUserRow } from "@dcl/one-ui/apps/sites/events/UsersTable";
+import {
+  adminCopy,
+  AdminPage,
+  adminPageStyles,
+  Notice,
+  PermissionsModal,
+  UsersTable,
+  type AdminUserRow,
+} from "@dcl/one-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 

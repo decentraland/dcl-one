@@ -2,9 +2,7 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
-import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
-import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
+import { CatchTheVibe, WeeklyRituals, WhatsOn } from "@dcl/one-ui";
 
 import { track } from "@/core/lib/telemetry/track";
 import { createLegacyTrackScope, trackLegacyClick } from "@/core/lib/telemetry/legacy-click";

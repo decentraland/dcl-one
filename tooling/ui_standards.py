@@ -24,14 +24,18 @@ either kind, which is the floor of an unlisted one.
 
 `--shared-imports` is a check over the whole tree: a script under apps/, library/
 (outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
-fails, because shared foundations and components come from the `@dcl/one-ui`
-entry (docs/ui-standards.md, "Shared foundations and components"). Stylesheets
-(`.css`) and the app-scoped UI under `@dcl/one-ui/apps/` are not shared components
-and stay importable by path. SHARED_IMPORT_KEPT names the few file and specifier
-pairs kept by path on purpose, each with its reason.
+fails, because shared UI comes only from the `@dcl/one-ui` entry
+(docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
+paths. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`, `apps/hud/`) are
+not exported yet: they resolve their host's aliases, which the entry cannot.
+A script under apps/ that imports a library/ui module by a relative path
+(`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
+way; stylesheets and the Node-only Figma review tooling listed in
+SHARED_RELATIVE_TOOLING keep their paths.
 """
 import argparse
 import json
+import posixpath
 import re
 import subprocess
 import sys
@@ -364,15 +368,52 @@ def check(base='HEAD', staged=False):
 
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
-SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
+SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
+# Preserve the isolated lazy chunk and mock the exact module that LivePromo loads.
 LAZY_ANIMATED_BACKGROUND = '@dcl/one-ui/components/AnimatedBackground/AnimatedBackground'
-# Deep imports kept on purpose, each one file and one specifier with its reason.
-SHARED_IMPORT_KEPT = {
-    ('apps/ui3/src/shop/discovery/components/LivePromo.tsx', LAZY_ANIMATED_BACKGROUND):
-        'import() of the @dcl/one-ui entry keeps its whole namespace, which loses the lazy chunk',
-    ('apps/ui3/src/shop/discovery/components/LivePromo.test.tsx', LAZY_ANIMATED_BACKGROUND):
-        'vi.mock has to name the module LivePromo lazy-loads',
-}
+SHARED_IMPORT_KEPT = frozenset(
+    (f'apps/ui3/src/shop/discovery/components/{name}', LAZY_ANIMATED_BACKGROUND)
+    for name in ('LivePromo.tsx', 'LivePromo.test.tsx')
+)
+
+
+# library/ui files apps/ may import by relative path: Node-only Figma review tooling, not UI, which the entry does
+# not export (library/ui/package.json, "Node-only Figma tooling in figma/").
+SHARED_RELATIVE_TOOLING = frozenset({
+    'library/ui/figma/review/scripts/capture-browser.mjs',  # the headless browser launcher of the capture tests
+})
+STYLESHEET_SPECIFIER = re.compile(r'\.css(?:\?\S*)?$')
+
+
+def module_specifiers(text):
+    """The string literals in source text that name a module: import/export ... from, side-effect import, import(),
+    require() and vi.mock()/vi.doMock(). Comments are dropped and other strings (a path for fs, a test fixture) are
+    not specifiers."""
+    items = tokens(text)
+    found = []
+    for index, (kind, value) in enumerate(items):
+        if kind != 'string':
+            continue
+        before = [item[1] for item in items[max(0, index - 4):index]]
+        if before[-1:] in (['from'], ['import']):
+            found.append(value)
+        elif before[-1:] == ['('] and (before[-2:-1] in (['import'], ['require'])
+                                       or before[-4:-1] in (['vi', '.', 'mock'], ['vi', '.', 'doMock'])):
+            found.append(value)
+    return found
+
+
+def relative_shared_imports(name, text):
+    """The relative specifiers in a file's source that reach into library/ui for a module other than a stylesheet or
+    the listed tooling."""
+    found = []
+    for specifier in module_specifiers(text):
+        if not specifier.startswith(('./', '../')) or STYLESHEET_SPECIFIER.search(specifier):
+            continue
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(name), specifier.split('?')[0]))
+        if (target == 'library/ui' or target.startswith('library/ui/')) and target not in SHARED_RELATIVE_TOOLING:
+            found.append(specifier)
+    return found
 
 
 def deep_shared_imports(text):
@@ -388,6 +429,9 @@ def shared_import_issues(paths, read):
                 or not name.endswith(SHARED_IMPORT_EXTENSIONS)):
             continue
         text = read(name)
+        if name.startswith('apps/') and 'library/ui' in text:
+            for specifier in relative_shared_imports(name, text):
+                issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
         if '@dcl/one-ui/' not in text:
             continue
         for specifier in deep_shared_imports(text):

@@ -1,16 +1,9 @@
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle, sitesFooterCopy, AnimatedBackground, Hero, WhatsOn, CatchTheVibe, WeeklyRituals, ComeHangOut } from "@dcl/one-ui";
 import { useContext, useEffect, useRef } from "react";
 
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { homeCopy } from "@/features/home/locale";
-import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import { AnimatedBackground } from "@dcl/one-ui";
-import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
-import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
-import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
-import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
-import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
 import { homeDownloadActions } from "@/features/home/actions";
 import { googlePlayHref } from "@/features/download/google-play";
