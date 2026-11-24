@@ -3169,7 +3169,14 @@ async fn registry_native_failures_are_preserved_without_following_redirects() {
     // must explicitly suppress them for this request only.
     Arc::get_mut(&mut node.state).unwrap().http =
         crate::http::Outbound::new(crate::http::HttpClientCfg::serve(4)).unwrap();
-    let app = router(node.state);
+    let recorder = dcl_metrics::Registry::new(&[registry::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+    use dcl_metrics::http::{component, instrument};
+    let app = instrument(component(router(node.state), "explore"), "serve");
     for status in [307, 400, 401, 403, 404, 429, 500, 503] {
         let (actual, headers, body) = call(
             &app,
@@ -3182,6 +3189,33 @@ async fn registry_native_failures_are_preserved_without_following_redirects() {
         assert_eq!(headers["content-type"], "application/problem+json");
         assert_eq!(body, br#"{"error":"native failure"}"#);
     }
+
+    let scrape = recorder.handle().render();
+    for (outcome, count) in [
+        ("other_response", 1),
+        ("client_error", 5),
+        ("server_error", 2),
+    ] {
+        assert!(
+            scrape.lines().any(|line| {
+                line.starts_with("dcl_registry_backend_requests_total{")
+                    && line.contains("backend=\"native\"")
+                    && line.contains(&format!("outcome=\"{outcome}\""))
+                    && line.ends_with(&format!(" {count}"))
+            }),
+            "{scrape}"
+        );
+    }
+    assert!(
+        scrape.lines().any(|line| {
+            line.starts_with("dcl_http_requests_total{")
+                && line.contains("component=\"explore\"")
+                && line.contains("route=\"/asset-bundle-registry/entities/active\"")
+                && line.contains("status_code=\"500\"")
+                && line.ends_with(" 1")
+        }),
+        "{scrape}"
+    );
     server.abort();
 }
 

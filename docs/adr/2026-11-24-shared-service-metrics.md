@@ -56,6 +56,28 @@ Stage the private scrape targets in service discovery before the rollout. As eac
 
 For Stats, connector and Camera Reel, migrate request counts from `http_requests_total{handler,code,method}` to `dcl_http_requests_total{component,route,status_code,method}`. Select `component="stats"`, `"connector"` or `"camera-reel"`. Use `dcl_http_request_duration_seconds` for latency and `dcl_http_request_declared_size_bytes` for requests carrying a valid Content-Length. Review bucket-based latency alerts, especially Camera Reel's former 60-second bucket. The new histogram's largest finite bound is 30 seconds. Social and Worlds continue to publish their existing HTTP families on the process scrape. For Social WebSocket admission alerts, `dcl_ws_admission_rejections_total{reason="authentication"}` counts invalid credentials. Query `reason="unavailable"` for verifier outages.
 
+### Explore dashboards
+
+Scrape the serve target at `SERVE_METRICS_BIND` (default `127.0.0.1:5006/metrics`). Move Places,
+Events, Atlas and Registry HTTP request and latency queries to the shared `dcl_http_requests_total`
+and `dcl_http_request_duration_seconds` families. Use the matched `route` template and
+`status_code` in place of the legacy `handler` and `code` labels. Select
+`component="explore"` for Places, Events, Atlas (`/api/…`) and Registry gateway routes
+(`/asset-bundle-registry/…`). The Shop-owned Registry profile routes use `component="shop"`.
+Review histogram thresholds when migrating latency alerts.
+
+- Replace Atlas's map and minimap render-time queries with
+  `dcl_map_render_duration_seconds{kind}`. Filter by `map`, `parcel`, `estate`, `minimap` or
+  `estatemap`. The timer covers rendering and encoding on the blocking pool. The
+  `dcl_map_render_errors_total{kind,reason}` counter distinguishes worker failures, render
+  errors and waits that timed out. Use `dcl_map_image_cache_total{kind,result}` for hits, misses,
+  shared renders and conditional responses.
+- Use `dcl_registry_backend_requests_total{backend,outcome}` for Registry reads forwarded to a
+  local native service or public upstream. The outcome distinguishes successful responses,
+  upstream client and server errors, other HTTP responses, a full queue and request failures.
+  Use shared HTTP metrics for local answers and route-level error rates.
+  The Registry worker's own processing metrics belong on that worker's scrape.
+
 ## Recording and querying
 
 Declare a service counter, gauge or histogram in its owning crate and export its descriptor to the binary's registry. Supply fixed label keys and bounded values. For example, a Builder failure can identify a lookup layer. A collection ID belongs in a log. The registry validates conflicting declarations at startup and applies declared histogram buckets before observations begin.

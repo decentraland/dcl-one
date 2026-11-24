@@ -57,6 +57,8 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         comms::archipelago::metrics::FAMILIES,
         crate::chain_index::portal::FAMILIES,
         crate::explore::api::auth_api::FAMILIES,
+        crate::explore::api::map::FAMILIES,
+        crate::explore::api::registry::FAMILIES,
         crate::explore::api::auth_api::SOCKET_FAMILIES,
         crate::shop::market::profiles::FAMILIES,
     ])

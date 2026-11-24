@@ -4,19 +4,45 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use dcl_metrics::{CounterFamily, Descriptor, HistogramFamily, Unit};
 use serde_json::json;
 
 use super::super::Shared;
 use super::Grid;
 use super::http_cache;
 use super::render::{Coord, MapView, render_estate_minimap, render_minimap, render_png};
+
+const RENDER_DURATION: HistogramFamily<1> = HistogramFamily::new(
+    "dcl_map_render_duration_seconds",
+    "Time spent rendering a map PNG on the blocking pool.",
+    Some(Unit::Seconds),
+    &["kind"],
+    &[0.05, 0.1, 0.25, 0.5, 1., 2.5, 5., 10.],
+);
+const RENDER_ERRORS: CounterFamily<2> = CounterFamily::new(
+    "dcl_map_render_errors_total",
+    "Map PNG operations that failed or timed out waiting for a render.",
+    None,
+    &["kind", "reason"],
+);
+const IMAGE_CACHE: CounterFamily<2> = CounterFamily::new(
+    "dcl_map_image_cache_total",
+    "Map PNG requests by cache lookup result.",
+    None,
+    &["kind", "result"],
+);
+pub const FAMILIES: &[Descriptor] = &[
+    RENDER_DURATION.descriptor,
+    RENDER_ERRORS.descriptor,
+    IMAGE_CACHE.descriptor,
+];
 
 /// Renders run on the blocking pool, at most this many at once.
 const MAX_CONCURRENT_RENDERS: usize = 2;
@@ -160,15 +186,20 @@ fn render_error(e: String) -> Box<Response> {
 
 /// Runs `render` on the blocking pool behind the render limit; a request that
 /// waits too long for a slot answers 503.
-async fn render_blocking<F>(grid: Arc<Grid>, render: F) -> Result<Vec<u8>, Box<Response>>
+async fn render_blocking<F>(
+    kind: &'static str,
+    grid: Arc<Grid>,
+    render: F,
+) -> Result<Vec<u8>, Box<Response>>
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
-    render_limited(RENDERS.clone(), grid, render).await
+    render_limited(RENDERS.clone(), kind, grid, render).await
 }
 
 async fn render_limited<F>(
     renders: Arc<tokio::sync::Semaphore>,
+    kind: &'static str,
     grid: Arc<Grid>,
     render: F,
 ) -> Result<Vec<u8>, Box<Response>>
@@ -177,15 +208,30 @@ where
 {
     let Ok(Ok(permit)) = tokio::time::timeout(RENDER_QUEUE_WAIT, renders.acquire_owned()).await
     else {
+        RENDER_ERRORS.handle([kind, "busy"]).increment(1);
         return Err(renderer_busy());
     };
     // The slot is held by the render itself, even if the request goes away.
+    let duration = RENDER_DURATION.handle([kind]);
+    let failed = RENDER_ERRORS.handle([kind, "render_error"]);
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        render(&grid)
+        let start = Instant::now();
+        let result = render(&grid);
+        duration.record(start.elapsed().as_secs_f64());
+        if result
+            .as_ref()
+            .is_err_and(|response| response.status().is_server_error())
+        {
+            failed.increment(1);
+        }
+        result
     })
     .await
-    .unwrap_or_else(|e| Err(render_error(e.to_string())))
+    .unwrap_or_else(|e| {
+        RENDER_ERRORS.handle([kind, "worker_error"]).increment(1);
+        Err(render_error(e.to_string()))
+    })
 }
 
 fn renderer_busy() -> Box<Response> {
@@ -214,9 +260,9 @@ async fn cached_png_render<F>(
     state: &Shared,
     headers: &HeaderMap,
     grid: Arc<Grid>,
+    kind: &'static str,
     key: String,
-    max_age: u32,
-    swr: u32,
+    (max_age, swr): (u32, u32),
     render: F,
 ) -> Response
 where
@@ -225,31 +271,45 @@ where
     let last = grid.last_updated_at;
     let etag = http_cache::etag_for(last, &key);
     if let Some(r) = http_cache::not_modified_etag(headers, last, &etag, max_age, swr) {
+        IMAGE_CACHE.handle([kind, "not_modified"]).increment(1);
         return r;
     }
     let key = png_cache_key(&grid, &key);
     let flight;
-    let mut _rendering = None;
+    let mut render_guard = None;
     if state.map.cached_png(&key).is_none() {
         flight = render_flight(&key);
         // Waiting behind another render of this key has its own deadline,
         // before the render queue's.
         match tokio::time::timeout(RENDER_QUEUE_WAIT, flight.lock()).await {
-            Ok(guard) => _rendering = Some(guard),
+            Ok(guard) => render_guard = Some(guard),
             Err(_) => match state.map.cached_png(&key) {
                 Some(bytes) => {
+                    IMAGE_CACHE.handle([kind, "shared"]).increment(1);
                     let mut resp = png_response(bytes);
                     http_cache::apply_etag(&mut resp, last, &etag, max_age, swr);
                     return resp;
                 }
-                None => return *renderer_busy(),
+                None => {
+                    RENDER_ERRORS.handle([kind, "busy"]).increment(1);
+                    return *renderer_busy();
+                }
             },
         }
     }
     let bytes = match state.map.cached_png(&key) {
-        Some(b) => b,
+        Some(b) => {
+            let result = if render_guard.is_some() {
+                "shared"
+            } else {
+                "hit"
+            };
+            IMAGE_CACHE.handle([kind, result]).increment(1);
+            b
+        }
         None => {
-            match render_blocking(grid, render).await {
+            IMAGE_CACHE.handle([kind, "miss"]).increment(1);
+            match render_blocking(kind, grid, render).await {
                 Ok(b) => {
                     let b = Arc::new(b);
                     state.map.store_png(key, b.clone());
@@ -294,9 +354,9 @@ pub async fn map_png(
         &state,
         &headers,
         grid,
+        "map",
         key,
-        http_cache::DEFAULT_MAX_AGE,
-        http_cache::DEFAULT_SWR,
+        (http_cache::DEFAULT_MAX_AGE, http_cache::DEFAULT_SWR),
         move |grid| render_png(grid, &p.view(p.center, &p.selected)).map_err(render_error),
     )
     .await
@@ -322,9 +382,9 @@ pub async fn parcel_map_png(
         &state,
         &headers,
         grid,
+        "parcel",
         key,
-        http_cache::DEFAULT_MAX_AGE,
-        http_cache::DEFAULT_SWR,
+        (http_cache::DEFAULT_MAX_AGE, http_cache::DEFAULT_SWR),
         move |grid| render_png(grid, &p.view(center, &selected)).map_err(render_error),
     )
     .await
@@ -356,9 +416,9 @@ pub async fn estate_map_png(
         &state,
         &headers,
         grid,
+        "estate",
         key,
-        http_cache::DEFAULT_MAX_AGE,
-        http_cache::DEFAULT_SWR,
+        (http_cache::DEFAULT_MAX_AGE, http_cache::DEFAULT_SWR),
         move |grid| render_estate(grid, &estate_id, &p, &dissolved),
     )
     .await
@@ -409,9 +469,9 @@ pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Res
         &state,
         &headers,
         grid,
+        "minimap",
         "minimap".to_string(),
-        http_cache::MINIMAP_MAX_AGE,
-        http_cache::MINIMAP_SWR,
+        (http_cache::MINIMAP_MAX_AGE, http_cache::MINIMAP_SWR),
         |grid| render_minimap(grid).map_err(render_error),
     )
     .await
@@ -425,10 +485,10 @@ pub async fn estate_minimap_png(State(state): State<Shared>, headers: HeaderMap)
         &state,
         &headers,
         grid,
+        "estatemap",
         // Versioned with the renderer so cached ETags of the old numbering lapse.
         "estatemap-v2".to_string(),
-        http_cache::MINIMAP_MAX_AGE,
-        http_cache::MINIMAP_SWR,
+        (http_cache::MINIMAP_MAX_AGE, http_cache::MINIMAP_SWR),
         |grid| render_estate_minimap(grid).map_err(render_error),
     )
     .await
@@ -556,7 +616,7 @@ mod tests {
             chrono::Utc::now().naive_utc(),
         ));
         let worker = std::thread::current().id();
-        let out = render_blocking(grid, move |_| {
+        let out = render_blocking("map", grid, move |_| {
             assert_ne!(std::thread::current().id(), worker);
             Ok(vec![1])
         })
@@ -574,7 +634,7 @@ mod tests {
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
         let renders = Arc::new(tokio::sync::Semaphore::new(1));
-        let request = tokio::spawn(render_limited(renders.clone(), grid, move |_| {
+        let request = tokio::spawn(render_limited(renders.clone(), "map", grid, move |_| {
             started_tx.send(()).unwrap();
             finish_rx.recv().unwrap();
             Ok(vec![])
@@ -618,9 +678,15 @@ mod tests {
         let flight = render_flight(&png_cache_key(&state.map.snapshot().unwrap(), &key));
         let _held = flight.lock().await;
         let grid = state.map.snapshot().unwrap();
-        let resp = cached_png_render(&state, &HeaderMap::new(), grid, key, 60, 60, |_| {
-            Ok(vec![1])
-        })
+        let resp = cached_png_render(
+            &state,
+            &HeaderMap::new(),
+            grid,
+            "map",
+            key,
+            (60, 60),
+            |_| Ok(vec![1]),
+        )
         .await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
@@ -640,9 +706,15 @@ mod tests {
             let key = key.clone();
             tokio::spawn(async move {
                 let grid = state.map.snapshot().unwrap();
-                cached_png_render(&state, &HeaderMap::new(), grid, key, 60, 60, |_| {
-                    Ok(vec![9])
-                })
+                cached_png_render(
+                    &state,
+                    &HeaderMap::new(),
+                    grid,
+                    "map",
+                    key,
+                    (60, 60),
+                    |_| Ok(vec![9]),
+                )
                 .await
             })
         };
@@ -651,6 +723,48 @@ mod tests {
         let resp = waiter.await.unwrap();
         drop(held);
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_png_miss_records_one_render_and_cached_requests_record_only_lookups() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(small_grid());
+        let recorder = dcl_metrics::Registry::new(&[FAMILIES])
+            .unwrap()
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+
+        let first = minimap_png(State(state.clone()), HeaderMap::new()).await;
+        assert_eq!(first.status(), StatusCode::OK);
+        let mut conditional = HeaderMap::new();
+        conditional.insert(header::IF_NONE_MATCH, first.headers()[header::ETAG].clone());
+        let hit = minimap_png(State(state.clone()), HeaderMap::new()).await;
+        assert_eq!(hit.status(), StatusCode::OK);
+        let validated = minimap_png(State(state), conditional).await;
+        assert_eq!(validated.status(), StatusCode::NOT_MODIFIED);
+
+        let scrape = recorder.handle().render();
+        assert!(
+            scrape.lines().any(|line| {
+                line.starts_with("dcl_map_render_duration_seconds_count{")
+                    && line.contains("kind=\"minimap\"")
+                    && line.ends_with(" 1")
+            }),
+            "{scrape}"
+        );
+        for result in ["miss", "hit", "not_modified"] {
+            assert!(
+                scrape.lines().any(|line| {
+                    line.starts_with("dcl_map_image_cache_total{")
+                        && line.contains("kind=\"minimap\"")
+                        && line.contains(&format!("result=\"{result}\""))
+                        && line.ends_with(" 1")
+                }),
+                "{scrape}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -676,9 +790,9 @@ mod tests {
             &state,
             &HeaderMap::new(),
             grid.clone(),
+            "estate",
             "fail".into(),
-            60,
-            60,
+            (60, 60),
             |_| Err(render_error("boom".into())),
         )
         .await;
@@ -688,9 +802,9 @@ mod tests {
             &state,
             &HeaderMap::new(),
             grid,
+            "estate",
             "missing".into(),
-            60,
-            60,
+            (60, 60),
             |_| Err(Box::new(StatusCode::NOT_FOUND.into_response())),
         )
         .await;
@@ -769,9 +883,9 @@ mod tests {
             &state,
             &HeaderMap::new(),
             state.map.snapshot().unwrap(),
+            "estate",
             "estate:501:raced".into(),
-            http_cache::DEFAULT_MAX_AGE,
-            http_cache::DEFAULT_SWR,
+            (http_cache::DEFAULT_MAX_AGE, http_cache::DEFAULT_SWR),
             move |grid| render_estate(grid, "501", &extract_params(&HashMap::new()), &location),
         )
         .await;
