@@ -186,8 +186,7 @@ fn utc_now() -> String {
         .unwrap_or_default()
 }
 
-/// The benchmark report reads the `Measuring` line as the time to world
-/// (`local-harness/benchmark/src/report/load_times.rs`).
+/// Logs each phase change with the app's real time in seconds.
 fn log_phase(phase: Res<AutopilotPhase>, time: Res<Time<Real>>) {
     if phase.is_changed() {
         info!(target: LOG_TARGET, "phase {:?} at {:.1} s", *phase, time.elapsed_secs_f64());

@@ -1,8 +1,7 @@
 //! How long scenes take to become ready after they spawn, for load-time comparisons between
 //! builds. Logged under the `scene_timing` target: one line per scene when it reaches its
 //! fifth tick, and one per arrival when the player's scene and every scene in its first ring
-//! are ready. Filter the log with `scene_timing=info`. The benchmark report parses the first
-//! arrival line (`local-harness/benchmark/src/report/load_times.rs`).
+//! are ready. Filter the log with `scene_timing=info`.
 
 use bevy::prelude::*;
 use common::structs::PrimaryUser;
@@ -16,7 +15,7 @@ use crate::{
 
 /// The target every line here is logged under.
 pub const LOG_TARGET: &str = "scene_timing";
-/// How the arrival line starts; the benchmark report reads the milliseconds after it.
+/// How the arrival line starts, before its milliseconds.
 pub const FIRST_RING_READY: &str = "player's scene and first ring ready";
 
 /// When the lifecycle spawned the scene.
