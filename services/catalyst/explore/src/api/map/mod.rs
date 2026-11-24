@@ -445,14 +445,19 @@ pub fn gzip(body: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(enc.finish()?)
 }
 
+/// A stored revision: its stamp and its `etag`.
+pub(super) type Revision = (i64, Option<String>);
+
 /// The stored revision: its stamp and its `etag`, the hex SHA-256 of the
 /// body a build stored ([`build::canonical_body`]); a row the old mirror
-/// left carries the upstream's ETag, which no build matches.
-pub(super) async fn stored_revision(
-    pool: &PgPool,
-) -> anyhow::Result<Option<(i64, Option<String>)>> {
+/// left carries the upstream's ETag, which no build matches. Read on
+/// `executor`: the pool, or a build's input snapshot.
+pub(super) async fn stored_revision<'e, E>(executor: E) -> anyhow::Result<Option<Revision>>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_as("SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1")
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await
         .context("reading explore_api.map_grid's revision")
 }
@@ -462,7 +467,7 @@ pub(super) async fn stored_revision(
 /// when another publisher stored a revision meanwhile.
 pub(super) async fn store_guarded(
     pool: &PgPool,
-    prev: Option<&(i64, Option<String>)>,
+    prev: Option<&Revision>,
     stamp: i64,
     digest_hex: &str,
     tile_count: i64,
@@ -556,14 +561,16 @@ fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
 /// One pass ([`build`]). Every input is read in one REPEATABLE READ, READ
 /// ONLY snapshot that the land-authz index opens once it is published, Shop's
 /// readiness and rows included, so no rewind committed meanwhile mixes into
-/// it. The grid is composed and its body compared with the stored revision,
-/// not this process's: an unchanged body writes nothing (and a process
-/// holding an older grid reloads the stored one); a changed one is stored
-/// with a write guarded on the revision it compared against, and served only
-/// if newer than what this process holds. A build another publisher
-/// overtook is discarded. A source that is not published fails the pass
-/// naming it (`/mirrors`' `lastError`) and keeps the held grid; no partial
-/// grid is built.
+/// it; the stored revision (or its absence) is read in that snapshot too,
+/// as the one these inputs follow. The grid is composed and its body
+/// compared with that revision, not this process's grid: an equal body
+/// writes nothing (and a process holding an older grid reloads the stored
+/// one); a different one is stored with a write guarded on that revision,
+/// and served only if newer than what this process holds. A build whose
+/// revision another publisher replaced after its snapshot began, from inputs
+/// at least as new, is discarded: it never overwrites a newer publication.
+/// A source that is not published fails the pass naming it (`/mirrors`'
+/// `lastError`) and keeps the held grid; no partial grid is built.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
         let now = chrono::Utc::now();
@@ -596,6 +603,7 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
                     .into(),
             );
         };
+        let expected = stored_revision(&mut *snapshot.tx).await?;
         let folded_block = snapshot.cursor.folded_block.unwrap_or(snapshot.cursor.last_block);
         let land_rows = build::read_land(&mut snapshot.tx, &land_registry, &estate_registry, folded_block).await?;
         let listings = match market
@@ -621,40 +629,42 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
         })
         .await
         .context("grid build task")?;
-        publish(state, tiles, body, digest, now).await
+        publish(state, expected, tiles, body, digest, now).await
     })
     .await
 }
 
-/// Stores and serves a built grid against the stored revision ([`run_pass`]).
+/// Stores and serves a built grid against `expected`, the revision its input
+/// snapshot saw ([`run_pass`]).
 async fn publish(
     state: &Shared,
+    expected: Option<Revision>,
     tiles: HashMap<String, Tile>,
     body: Vec<u8>,
     digest: [u8; 32],
     now: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<mirror::PassOutcome> {
     let digest_hex = hex::encode(digest);
-    let stored = stored_revision(&state.pool).await?;
     let outcome = |stamp: i64| mirror::PassOutcome {
         items: tiles.len() as i64,
         cursor: Some(stamp.to_string()),
     };
-    if let Some((stamp, Some(etag))) = &stored
+    if let Some((_, Some(etag))) = &expected
         && *etag == digest_hex
     {
-        // The stored revision is this body: nothing to write.
+        // The revision these inputs follow is this body: nothing to write;
+        // serve the newest stored one.
         reload_if_newer(state).await?;
-        return Ok(outcome(*stamp));
+        return Ok(outcome(state.map.last_updated_at()));
     }
-    let stamp = next_stamp(stored.as_ref().map(|(s, _)| *s), now.timestamp_millis());
+    let stamp = next_stamp(expected.as_ref().map(|(s, _)| *s), now.timestamp_millis());
     let gz = tokio::task::spawn_blocking(move || gzip(&body))
         .await
         .context("grid gzip task")??;
     let built_at = now.naive_utc();
     let stored_it = store_guarded(
         &state.pool,
-        stored.as_ref(),
+        expected.as_ref(),
         stamp,
         &digest_hex,
         tiles.len() as i64,
@@ -664,9 +674,9 @@ async fn publish(
     .await
     .context("storing explore_api.map_grid")?;
     if !stored_it {
-        // Another publisher stored a revision after this build compared: its
-        // grid is served and this build discarded; the next pass compares
-        // against it.
+        // Another publisher stored a revision after this build's snapshot
+        // began, from inputs at least as new: its grid is served and this
+        // build discarded; the next pass reads its inputs after it.
         tracing::warn!("another process stored a tile grid during this build; serving it instead");
         reload_if_newer(state).await?;
         let current = stored_revision(&state.pool).await?.map_or(0, |(s, _)| s);

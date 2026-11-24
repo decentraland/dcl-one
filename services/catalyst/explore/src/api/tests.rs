@@ -1895,6 +1895,34 @@ impl map::LandMarket for RewindingLandMarket {
     }
 }
 
+/// A Shop side whose next call, once armed, signals `pinned` on the build's
+/// snapshot and holds the build there until `release`.
+struct GatedLandMarket {
+    answer: Mutex<map::LandMarketSnapshot>,
+    gate: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+}
+
+impl map::LandMarket for GatedLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        let answer = self.answer.lock().clone();
+        let gate = self.gate.lock().take();
+        Box::pin(async move {
+            if let Some((pinned, release)) = gate {
+                pinned.notify_one();
+                release.notified().await;
+            }
+            Ok(answer)
+        })
+    }
+}
+
 fn land_authz_on(pool: &PgPool) -> Arc<crate::land_authz::LandAuthzState> {
     Arc::new(crate::land_authz::LandAuthzState::new(
         pool.clone(),
@@ -2423,6 +2451,98 @@ async fn map_grid_revisions_follow_the_stored_row_not_the_process() {
         "a first write loses to a row stored meanwhile"
     );
     *c_market.0.lock() = Ok(map::LandMarketSnapshot::default());
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A build that read its inputs before another publisher stored a newer
+/// grid never replaces it: A pins its snapshot (the stored revision R0, an
+/// estate priced 1500) and pauses; B sees the sale and publishes Y; A,
+/// released, finds R0 replaced and discards its build. A fresh build whose
+/// inputs really return to the old price publishes it again.
+#[tokio::test]
+async fn an_older_build_never_replaces_a_newer_publication() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let a = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    a.state.attach_land_authz(land_authz_on(&db.pool));
+    let a_market = Arc::new(GatedLandMarket {
+        answer: Mutex::new(priced(1000)),
+        gate: Mutex::new(None),
+    });
+    a.state.attach_land_market(a_market.clone());
+    let b = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    b.state.attach_land_authz(land_authz_on(&db.pool));
+    b.state
+        .attach_land_market(Arc::new(FixedLandMarket(Mutex::new(
+            Ok(Default::default()),
+        ))));
+    let row = || async {
+        sqlx::query_as::<_, (i64, Option<String>)>(
+            "SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+
+    // R0: the estate at 1000.
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let r0 = row().await;
+
+    // A reads R0 and the estate at 1500 in its snapshot, then pauses.
+    *a_market.answer.lock() = priced(1500);
+    let (pinned, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *a_market.gate.lock() = Some((pinned.clone(), release.clone()));
+    let paused = {
+        let (state, ctx) = (a.state.clone(), ctx.clone());
+        tokio::spawn(async move { map::run_pass(&state, &ctx).await })
+    };
+    pinned.notified().await;
+
+    // B sees the sale (no order) and publishes Y.
+    map::run_pass(&b.state, &ctx).await.unwrap();
+    let y = row().await;
+    assert!(y.0 > r0.0 && y.1 != r0.1);
+    let y_grid = b.state.map.snapshot().unwrap();
+    assert_eq!(y_grid.tiles["11,13"].price, None);
+
+    // A resumes: its build from the older snapshot is discarded.
+    release.notify_one();
+    paused.await.unwrap().unwrap();
+    assert_eq!(row().await, y, "Y's stamp and digest survive");
+    let stored = map::fetch_stored(&db.pool).await.unwrap().unwrap();
+    assert_eq!(stored.digest, y_grid.digest, "Y's body survives");
+    assert_eq!(stored.tiles["11,13"].price, None);
+    let served = a.state.map.snapshot().unwrap();
+    assert_eq!(
+        (served.last_updated_at, served.digest),
+        (y.0, y_grid.digest),
+        "A serves Y"
+    );
+
+    // A fresh build whose inputs really are 1500 publishes them past Y.
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let x = row().await;
+    assert!(x.0 >= y.0 + 1000, "{} after {}", x.0, y.0);
+    assert_ne!(x.1, y.1);
+    assert_eq!(
+        a.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1500.0)
+    );
 
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;

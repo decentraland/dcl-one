@@ -208,9 +208,12 @@ fn png_cache_key(grid: &Grid, key: &str) -> String {
     format!("{key}@{:016x}", grid.content_tag)
 }
 
+/// The PNG of `key` rendered from `grid`, the one grid the caller took for
+/// this answer: its validators, cache key and body all come from it.
 async fn cached_png_render<F>(
     state: &Shared,
     headers: &HeaderMap,
+    grid: Arc<Grid>,
     key: String,
     max_age: u32,
     swr: u32,
@@ -219,12 +222,6 @@ async fn cached_png_render<F>(
 where
     F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>> + Send + 'static,
 {
-    // One grid for the validators, the cache key and the body, so a swap
-    // cannot pair one grid's body with another's validators. Without a grid,
-    // the envelope as it is: never a 304 for a stamp no grid carries.
-    let Some(grid) = state.map.snapshot() else {
-        return state.map.unavailable();
-    };
     let last = grid.last_updated_at;
     let etag = http_cache::etag_for(last, &key);
     if let Some(r) = http_cache::not_modified_etag(headers, last, &etag, max_age, swr) {
@@ -285,11 +282,18 @@ pub async fn map_png(
     headers: HeaderMap,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    // One grid for the validators, the cache key and the body, so a swap
+    // cannot pair one grid's body with another's validators. Without a grid,
+    // the envelope as it is: never a 304 for a stamp no grid carries.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     let p = extract_params(&q);
     let key = format!("map:{}", p.key_suffix());
     cached_png_render(
         &state,
         &headers,
+        grid,
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
@@ -304,6 +308,9 @@ pub async fn parcel_map_png(
     Path((x, y)): Path<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     let p = extract_params(&q);
     let center = clamp_center(Coord {
         x: x.parse().unwrap_or(0),
@@ -314,6 +321,7 @@ pub async fn parcel_map_png(
     cached_png_render(
         &state,
         &headers,
+        grid,
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
@@ -331,12 +339,14 @@ pub async fn estate_map_png(
     // The estate's number as the grid spells it, as the metadata routes
     // read it; what is not a number matches no estate.
     let estate_id = super::meta::canonical_estate_id(&estate_id).unwrap_or(estate_id);
+    // One grid decides the redirect, the conditional answer and the render.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     // An estate the grid holds no parcel of (dissolved, or never minted)
     // redirects to the dissolved-estate image before any conditional check,
-    // as the atlas does; no grid falls through to the render path's 503.
-    if let Some(grid) = state.map.snapshot()
-        && select_estate_coords(&grid, &estate_id).is_empty()
-    {
+    // as the atlas does.
+    if select_estate_coords(&grid, &estate_id).is_empty() {
         return dissolved_estate_redirect(&state.settings.map_dissolved_estate_image_url);
     }
     let dissolved = state.settings.map_dissolved_estate_image_url.clone();
@@ -345,6 +355,7 @@ pub async fn estate_map_png(
     cached_png_render(
         &state,
         &headers,
+        grid,
         key,
         http_cache::DEFAULT_MAX_AGE,
         http_cache::DEFAULT_SWR,
@@ -391,9 +402,13 @@ fn dissolved_estate_redirect(location: &str) -> Response {
 }
 
 pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     cached_png_render(
         &state,
         &headers,
+        grid,
         "minimap".to_string(),
         http_cache::MINIMAP_MAX_AGE,
         http_cache::MINIMAP_SWR,
@@ -403,9 +418,13 @@ pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Res
 }
 
 pub async fn estate_minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
     cached_png_render(
         &state,
         &headers,
+        grid,
         // Versioned with the renderer so cached ETags of the old numbering lapse.
         "estatemap-v2".to_string(),
         http_cache::MINIMAP_MAX_AGE,
@@ -598,7 +617,11 @@ mod tests {
         let key = "busy-test".to_string();
         let flight = render_flight(&png_cache_key(&state.map.snapshot().unwrap(), &key));
         let _held = flight.lock().await;
-        let resp = cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![1])).await;
+        let grid = state.map.snapshot().unwrap();
+        let resp = cached_png_render(&state, &HeaderMap::new(), grid, key, 60, 60, |_| {
+            Ok(vec![1])
+        })
+        .await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(resp.headers()[header::RETRY_AFTER], "5");
@@ -616,7 +639,11 @@ mod tests {
             let state = state.clone();
             let key = key.clone();
             tokio::spawn(async move {
-                cached_png_render(&state, &HeaderMap::new(), key, 60, 60, |_| Ok(vec![9])).await
+                let grid = state.map.snapshot().unwrap();
+                cached_png_render(&state, &HeaderMap::new(), grid, key, 60, 60, |_| {
+                    Ok(vec![9])
+                })
+                .await
             })
         };
         tokio::task::yield_now().await;
@@ -629,10 +656,7 @@ mod tests {
     #[tokio::test]
     async fn a_node_without_a_grid_answers_an_uncached_503() {
         let state = crate::api::tests_support::state_without_db().await;
-        let resp = cached_png_render(&state, &HeaderMap::new(), "no-grid".into(), 60, 60, |_| {
-            Ok(vec![1])
-        })
-        .await;
+        let resp = minimap_png(State(state.clone()), HeaderMap::new()).await;
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
@@ -647,17 +671,29 @@ mod tests {
     async fn a_failed_render_is_not_cached_but_a_missing_estate_is() {
         let state = crate::api::tests_support::state_without_db().await;
         state.map.set(small_grid());
-        let failed = cached_png_render(&state, &HeaderMap::new(), "fail".into(), 60, 60, |_| {
-            Err(render_error("boom".into()))
-        })
+        let grid = state.map.snapshot().unwrap();
+        let failed = cached_png_render(
+            &state,
+            &HeaderMap::new(),
+            grid.clone(),
+            "fail".into(),
+            60,
+            60,
+            |_| Err(render_error("boom".into())),
+        )
         .await;
         assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(failed.headers()[header::CACHE_CONTROL], "no-store");
-        let missing =
-            cached_png_render(&state, &HeaderMap::new(), "missing".into(), 60, 60, |_| {
-                Err(Box::new(StatusCode::NOT_FOUND.into_response()))
-            })
-            .await;
+        let missing = cached_png_render(
+            &state,
+            &HeaderMap::new(),
+            grid,
+            "missing".into(),
+            60,
+            60,
+            |_| Err(Box::new(StatusCode::NOT_FOUND.into_response())),
+        )
+        .await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_ne!(missing.headers()[header::CACHE_CONTROL], "no-store");
     }
@@ -732,6 +768,7 @@ mod tests {
         let raced = cached_png_render(
             &state,
             &HeaderMap::new(),
+            state.map.snapshot().unwrap(),
             "estate:501:raced".into(),
             http_cache::DEFAULT_MAX_AGE,
             http_cache::DEFAULT_SWR,

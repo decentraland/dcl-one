@@ -2911,18 +2911,22 @@ gone.
   build has.
 - **Write:** the stored row is the grid's revision. `etag` holds the hex
   SHA-256 of the body a build stored (the canonical JSON, tiles in key
-  order), and `last_updated_at` its stamp, which only grows. A pass
-  compares its body with the row, not with what its process holds. An equal
-  body writes nothing, and a process holding an older grid reloads the row.
-  A different body is gzipped and written with an `UPDATE` guarded on the
-  stamp and `etag` it compared against (an `INSERT ... ON CONFLICT DO
-  NOTHING` before the first), stamped with the current time in
-  milliseconds and at least one second past the row's. A write another
-  publisher overtook stores nothing, and that build is discarded. A
-  process serves a grid only if its stamp is newer than the one it holds,
-  decided under its grid lock, so a slow reload never brings back an older
-  revision. An order or rental that expires changes the body on the next
-  pass. A PNG answer takes one grid for its validators, cache key and body.
+  order), and `last_updated_at` its stamp, which only grows. A pass reads
+  the row (or its absence) in its input snapshot, as the revision its
+  inputs follow, and compares its body with that revision, not with what
+  its process holds. An equal body writes nothing, and a process holding an
+  older grid reloads the row. A different body is gzipped and written with
+  an `UPDATE` guarded on that revision's stamp and `etag` (an `INSERT ...
+  ON CONFLICT DO NOTHING` when it saw none), stamped with the current time
+  in milliseconds and at least one second past it. If another publisher
+  stored a revision after the snapshot began, from inputs at least as new,
+  the write stores nothing and the build is discarded: an older build never
+  replaces a newer publication. A process serves a grid only if its stamp
+  is newer than the one it holds, decided under its grid lock, so a slow
+  reload never brings back an older revision. An order or rental that
+  expires changes the body on the next pass. A PNG answer takes one grid
+  for its validators, cache key and body, and for an estate's
+  dissolved-estate redirect.
 - **Rules:** atlas-server's `buildTile`, `addSpecialTiles`,
   `getEstateFlags` and `applyTrades`, with its roads and plazas vendored
   (`special_tiles.json`). The rules and the known differences are in the
