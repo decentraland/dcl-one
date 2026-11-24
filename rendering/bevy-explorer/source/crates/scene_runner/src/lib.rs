@@ -1109,7 +1109,7 @@ mod player_scenes_tests {
 
         // a teleport's arrival: out of the world at the destination, whose scene wakes already;
         // the player is in no scene but the super-user portables until it is ready
-        world.entity_mut(player).insert(OutOfWorld);
+        world.entity_mut(player).insert(OutOfWorld::default());
         *world.get_mut::<GlobalTransform>(player).unwrap() =
             GlobalTransform::from_translation(HERE);
         assert_eq!(
