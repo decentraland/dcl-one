@@ -36,6 +36,7 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   `Icon`, not a bespoke `<button>` + CSS for something a primitive already
   covers (close/back/menu/toggle buttons, nav controls, cards, popovers).
 
+- **Use the shared component when one exists.** Import it from `@dcl/one-ui` (`library/ui/components`); do not add a HUD copy of a component the library already has. A look the HUD needs is a variant on the shared component (`docs/ui-standards.md`).
 - **If a primitive doesn't exist, CREATE it** in `library/ui/apps/hud/design/` — don't inline custom CSS
   for a pattern that will recur. A new primitive must:
   1. Live in `library/ui/apps/hud/design/<Name>.tsx` (+ `.module.css`), token-driven only.
