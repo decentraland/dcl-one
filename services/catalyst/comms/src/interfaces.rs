@@ -274,6 +274,9 @@ pub mod test_support {
     pub struct StubDirectory {
         pub privacy: std::sync::Mutex<std::collections::BTreeMap<Address, String>>,
         pub streaming_notifications: std::sync::Mutex<Vec<StreamingNotification>>,
+        pub fail_streaming_recipient: std::sync::Mutex<Option<Address>>,
+        pub streaming_attempts: std::sync::Mutex<Vec<Address>>,
+        pub streaming_delay_ms: std::sync::atomic::AtomicU64,
         pub community_events: std::sync::Mutex<Vec<serde_json::Value>>,
         pub fail_community_notifications: std::sync::atomic::AtomicUsize,
         pub fail_moderation_notifications: std::sync::atomic::AtomicBool,
@@ -355,6 +358,24 @@ pub mod test_support {
             &self,
             notification: &StreamingNotification,
         ) -> Result<(), sqlx::Error> {
+            self.streaming_attempts
+                .lock()
+                .unwrap()
+                .push(notification.recipient.clone());
+            let delay = self
+                .streaming_delay_ms
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+            let mut failure = self.fail_streaming_recipient.lock().unwrap();
+            if failure.as_ref() == Some(&notification.recipient) {
+                failure.take();
+                return Err(sqlx::Error::Protocol(
+                    "injected streaming recipient failure".into(),
+                ));
+            }
+            drop(failure);
             let mut notifications = self.streaming_notifications.lock().unwrap();
             if !notifications.iter().any(|n| {
                 n.event_key == notification.event_key && n.recipient == notification.recipient

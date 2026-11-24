@@ -65,11 +65,10 @@ mod tests {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                market,
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), market)
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -199,11 +198,10 @@ mod tests {
             Settings::for_tests(),
             Some(market.clone()),
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -1058,6 +1056,7 @@ mod stream_access {
         STREAM_ACCESS_NOT_FOUND_MSG,
     };
     use catalyst::comms::gatekeeper::{CommsState, LiveKit, Settings, SharedState, router};
+    use catalyst::comms::interfaces::StreamingNotificationKind;
     use catalyst::http::Outbound;
     use catalyst::shared::test_keys::{address_of, random_key, signed};
     use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
@@ -1075,7 +1074,7 @@ mod stream_access {
              WHERE old.entity_id IN (SELECT entity_id FROM content.active_pointers WHERE pointer = ANY($3))",
         )
         .bind(entity_id)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel, "parcels": [parcel] } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel, "parcels": [parcel] } } })))
         .bind(vec![parcel.to_string()])
         .execute(pool)
         .await
@@ -1348,7 +1347,7 @@ mod stream_access {
         ));
         let app = axum::Router::new().nest("/comms-gatekeeper", router(state.clone()));
         let place_id = Uuid::new_v4().to_string();
-        // The signer administers the scene, but LAND determines reset/revoke recipients.
+        // LAND determines ownership; local admins also receive reset/revoke notices.
         // Self-declared catalogue ownership must not redirect those notifications.
         sqlx::query(
             "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3::jsonb)",
@@ -1765,11 +1764,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -2393,11 +2391,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -3500,7 +3497,7 @@ mod relay_authority_policy {
              timezone('UTC', now()), '[]'::json)",
         )
         .bind(&scene)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel } } })))
         .bind(vec![parcel.clone()])
         .execute(&pool)
         .await

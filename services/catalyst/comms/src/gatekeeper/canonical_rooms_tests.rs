@@ -1457,7 +1457,7 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
 /// is refused, everyone else admitted.
 struct PerWalletPolicy {
     inner: StubPolicy,
-    denied: Address,
+    denied: Vec<Address>,
     undetermined: Address,
     undetermined_failures: std::sync::Mutex<usize>,
 }
@@ -1522,8 +1522,17 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
             }
             fails
         };
-        if *actor == self.denied || (*actor == self.undetermined && !undetermined) {
-            Ok(crate::access::Access::InvalidSecret)
+        if self.denied.contains(actor) || (*actor == self.undetermined && !undetermined) {
+            if matches!(
+                self.inner.admission,
+                Some(crate::access::WorldAdmission::Open(
+                    crate::access::AccessType::AllowList
+                ))
+            ) {
+                Ok(crate::access::Access::NotAllowed)
+            } else {
+                Ok(crate::access::Access::InvalidSecret)
+            }
         } else if undetermined {
             Err(
                 crate::AuthorityNotEstablished::UndeterminedStoreUnavailable {
@@ -1567,8 +1576,14 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
 async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() {
     use crate::access::{AccessType, WorldAdmission};
     let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
-    let (owner, deployer, denied, undetermined, admitted) =
-        (wallet(1), wallet(2), wallet(3), wallet(4), wallet(5));
+    let (owner, deployer, streamer, denied, undetermined, admitted) = (
+        wallet(1),
+        wallet(2),
+        wallet(6),
+        wallet(3),
+        wallet(4),
+        wallet(5),
+    );
     for (admission, expected) in [
         (AccessType::Unrestricted, vec![]),
         (AccessType::SharedSecret, vec![denied.clone()]),
@@ -1578,11 +1593,17 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
             Vec::<(String, serde_json::Value)>::new(),
         ));
         let capture = requests.clone();
-        let everyone: Vec<serde_json::Value> =
-            [&owner, &deployer, &denied, &undetermined, &admitted]
-                .iter()
-                .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
-                .collect();
+        let everyone: Vec<serde_json::Value> = [
+            &owner,
+            &deployer,
+            &streamer,
+            &denied,
+            &undetermined,
+            &admitted,
+        ]
+        .iter()
+        .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
+        .collect();
         let fixture = axum::Router::new().route(
             "/twirp/livekit.RoomService/{method}",
             axum::routing::post(
@@ -1610,10 +1631,12 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
         state.policy = Arc::new(PerWalletPolicy {
             inner: StubPolicy {
                 admission: Some(WorldAdmission::Open(admission)),
-                protected: Ok([owner.clone(), deployer.clone()].into_iter().collect()),
+                protected: Ok([owner.clone(), deployer.clone(), streamer.clone()]
+                    .into_iter()
+                    .collect()),
                 ..Default::default()
             },
-            denied: denied.clone(),
+            denied: vec![deployer.clone(), streamer.clone(), denied.clone()],
             undetermined: undetermined.clone(),
             undetermined_failures: usize::MAX.into(),
         });
@@ -1725,7 +1748,7 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
             protected: Ok([owner.clone()].into_iter().collect()),
             ..Default::default()
         },
-        denied: denied.clone(),
+        denied: vec![denied.clone()],
         undetermined: wallet(4),
         undetermined_failures: usize::MAX.into(),
     });
@@ -1809,7 +1832,7 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
             protected: Ok([owner.clone()].into_iter().collect()),
             ..Default::default()
         },
-        denied: wallet(3),
+        denied: vec![wallet(3)],
         undetermined: flaky.clone(),
         undetermined_failures: 2.into(),
     });
@@ -1929,7 +1952,7 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
                 protected: Ok(Default::default()),
                 ..Default::default()
             },
-            denied: rejoined.clone(),
+            denied: vec![rejoined.clone()],
             undetermined: stale.clone(),
             undetermined_failures: 0.into(),
         });
@@ -1976,7 +1999,7 @@ async fn independent_access_bypasses_exhausted_ip_budget_but_secret_retry_does_n
             admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
             ..Default::default()
         },
-        denied: ordinary.clone(),
+        denied: vec![ordinary.clone()],
         undetermined: uncertain.clone(),
         undetermined_failures: usize::MAX.into(),
     });

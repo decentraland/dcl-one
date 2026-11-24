@@ -129,3 +129,31 @@ export async function logRendererError(entry: RendererErrorLogEntry): Promise<vo
   const componentStack = entry.componentStack && cap(String(entry.componentStack));
   log.error(`[ErrorBoundary:${boundary}] ${error}${componentStack ? `\n${componentStack}` : ''}`);
 }
+
+/** Picks up an identity through the desktop process, which has no browser Origin. */
+export async function fetchAuthIdentity(baseUrl: string, id: string, verifier: string) {
+  const url = new URL(baseUrl);
+  const path = url.pathname.replace(/\/+$/, '');
+  const relayHost = /^auth-api\.decentraland\.(org|zone|today)$/.test(url.hostname) && !path;
+  const oneGateway = url.hostname === 'dcl.dev' && path === '/auth-api';
+  if (
+    url.protocol !== 'https:' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !(relayHost || oneGateway) ||
+    !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) ||
+    !/^[a-zA-Z0-9_-]{43}$/.test(verifier)
+  ) {
+    throw new Error('Invalid identity pickup');
+  }
+  url.pathname = `${path}/identities/${id}`;
+  const response = await fetch(url, {
+    headers: { 'x-identity-verifier': verifier },
+    redirect: 'error',
+    signal: AbortSignal.timeout(15_000),
+  });
+  return { status: response.status, body: response.ok ? await response.text() : '' };
+}

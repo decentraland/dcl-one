@@ -502,7 +502,9 @@ async fn read_form(
 /// is logged, the client told to retry.
 fn spool_unavailable(e: &std::io::Error) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
-    metrics::counter!("upload_spool_failures_total", "route" => SPOOL_ROUTE).increment(1);
+    crate::metrics::SPOOL_FAILURES
+        .handle([SPOOL_ROUTE])
+        .increment(1);
     with_retry_after(
         super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, SPOOL_UNAVAILABLE_MESSAGE),
         header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
@@ -513,7 +515,7 @@ fn spool_unavailable(e: &std::io::Error) -> Response {
 /// the bytes it sent, which a retrying client sends again, are recorded in
 /// `upload_budget_refused_received_bytes`.
 fn budget_exhausted_after(received: u64) -> Response {
-    metrics::histogram!("upload_budget_refused_received_bytes", "route" => SPOOL_ROUTE)
+    dcl_metrics::histogram!(crate::metrics::REFUSED_BYTES, "route" => SPOOL_ROUTE)
         .record(received as f64);
     budget_exhausted()
 }
@@ -1297,9 +1299,10 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("catalyst-uploads-of-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        let thumbnail_hash = crate::auth::hash_bytes_v1(&[7; 3000]);
         let entity = serde_json::to_vec(&json!({
             "version": "v3", "type": "wearable", "pointers": ["urn:x"], "timestamp": 1,
-            "content": [{"file": "thumbnail.png", "hash": "bafythumb"}],
+            "content": [{"file": "thumbnail.png", "hash": thumbnail_hash}],
             "metadata": {"thumbnail": "thumbnail.png"}
         }))
         .unwrap();
@@ -1315,7 +1318,7 @@ mod tests {
         };
         let parts = vec![
             part("bafyentity", "bafyentity", &entity),
-            part("bafythumb", "bafythumb", &[7; 3000]),
+            part("thumbnail", &thumbnail_hash, &[7; 3000]),
             part("bafymodel", "bafymodel", &[9; 50_000]),
         ];
         let fields = fields(&[("entityId", "bafyentity")]);
@@ -1339,8 +1342,8 @@ mod tests {
 
         let small = super::super::upload_admission::UploadBudget::new(most - 1);
         let mut memory = small.try_reserve(0).unwrap();
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let guard = metrics::set_default_local_recorder(&recorder);
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let guard = dcl_metrics::set_default_local_recorder(&recorder);
         let refused = uploads_of(&fields, parts.clone(), &mut memory)
             .await
             .unwrap_err();

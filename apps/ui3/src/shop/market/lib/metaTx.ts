@@ -7,7 +7,7 @@
 // differing only in the message field's name. A relay refusal is an answer with its code; a declined
 // signature is the owner's answer and is never retried as a gas-paying transaction.
 
-import { encodeFunctionData, parseAbi } from "viem";
+import { encodeFunctionData, parseAbi, recoverTypedDataAddress } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { catalystBase } from "../../../data/catalyst/client";
@@ -15,7 +15,7 @@ import { relayRefusal, type RelayRefusal } from "../../checkout/chain/metatx";
 import { pageOverride } from "../../pageOverride";
 import type { ContractData } from "@shop/market/lib/contracts";
 import { rpc } from "./rpc";
-import { chainSalt, signTypedData, walletAccount } from "./tx";
+import { bounded, chainSalt, signTypedData, walletAccount, WalletAccountChangedError } from "./tx";
 
 const NONCE_ABI = parseAbi(["function getNonce(address user) view returns (uint256 nonce)"]);
 const EXECUTE_ABI = parseAbi([
@@ -107,10 +107,25 @@ export async function sendMetaTransaction(opts: {
   fetchImpl?: typeof fetch;
   /** The nonce to sign instead of the contract's current one (a retry that must replace, never add to, a signed one). */
   nonce?: bigint;
+  /**
+   * The account this write was decided for. Another one on the wallet throws WalletAccountChangedError before any
+   * prompt, and a signature by another account is never posted.
+   */
+  account?: string;
+  /** Bound on the account and nonce reads before the prompt: a late answer ends the write unprompted and unposted. */
+  readTimeoutMs?: number;
 }): Promise<string> {
-  const from = await walletAccount(opts.provider);
-  const nonce = opts.nonce ?? (await readNonce(opts.contract, from));
-  const signature = await signTypedData(opts.provider, from, metaTransactionTypedData(opts.contract, opts.kind, from, nonce, opts.functionData));
+  const read = <T>(r: Promise<T>) => (opts.readTimeoutMs !== undefined ? bounded(r, opts.readTimeoutMs) : r);
+  const from = await read(walletAccount(opts.provider));
+  const expected = opts.account?.toLowerCase();
+  if (expected && from !== expected) throw new WalletAccountChangedError();
+  const nonce = opts.nonce ?? (await read(readNonce(opts.contract, from)));
+  const typed = metaTransactionTypedData(opts.contract, opts.kind, from, nonce, opts.functionData);
+  const signature = await signTypedData(opts.provider, from, typed);
+  if (expected) {
+    const signer = await recoverTypedDataAddress({ ...typed, signature } as Parameters<typeof recoverTypedDataAddress>[0]);
+    if (signer.toLowerCase() !== expected) throw new WalletAccountChangedError();
+  }
   const txData = executeMetaTransactionData(opts.kind, from, signature, opts.functionData);
   const res = await (opts.fetchImpl ?? fetch)(`${relayBase()}/transactions`, {
     method: "POST",

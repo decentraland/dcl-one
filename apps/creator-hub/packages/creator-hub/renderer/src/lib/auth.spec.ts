@@ -28,6 +28,7 @@ function fakeSocket(outcome: object | undefined) {
     },
     off: vi.fn(),
     disconnect: vi.fn(),
+    timeout: vi.fn().mockReturnThis(),
     emitWithAck: vi.fn(async () => ({
       requestId: 'req-1',
       expiration: new Date(Date.now() + 50).toISOString(),
@@ -44,6 +45,7 @@ const sendTransaction = () =>
 describe('AuthServerProvider.request', () => {
   beforeEach(() => {
     AuthServerProvider.setOpenBrowser(vi.fn());
+    AuthServerProvider.setAuthServerUrl('https://auth-api.decentraland.org');
     localStorage.setItem('auth-server-provider-address', ACCOUNT);
   });
 
@@ -51,6 +53,22 @@ describe('AuthServerProvider.request', () => {
     localStorage.clear();
     getIdentityMock.mockReset();
     ioMock.mockReset();
+  });
+
+  describe('when the relay is mounted under a gateway prefix', () => {
+    beforeEach(() => {
+      AuthServerProvider.setAuthServerUrl('https://dcl.dev/auth-api');
+      getIdentityMock.mockReturnValue({ authChain: AUTH_CHAIN });
+      ioMock.mockReturnValue(fakeSocket({ result: '0xhash' }));
+    });
+
+    it('should deliver the outcome via the prefixed Socket.IO transport', async () => {
+      await expect(sendTransaction()).resolves.toBe('0xhash');
+      expect(ioMock).toHaveBeenCalledWith('https://dcl.dev', {
+        path: '/auth-api/socket.io',
+        transports: ['websocket'],
+      });
+    });
   });
 
   describe('when there is no live identity', () => {
@@ -72,6 +90,65 @@ describe('AuthServerProvider.request', () => {
       getIdentityMock.mockReturnValue({ authChain: AUTH_CHAIN });
     });
 
+    describe('and the socket never connects', () => {
+      let socket: ReturnType<typeof fakeSocket>;
+
+      beforeEach(() => {
+        vi.useFakeTimers();
+        socket = fakeSocket(undefined);
+        socket.on = vi.fn();
+        ioMock.mockReturnValue(socket);
+      });
+
+      afterEach(() => vi.useRealTimers());
+
+      it('should stop waiting and disconnect', async () => {
+        const rejected = expect(sendTransaction()).rejects.toMatchObject({ reason: 'unavailable' });
+        await vi.advanceTimersByTimeAsync(15_000);
+        await rejected;
+        expect(socket.disconnect).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('and the socket reports a connection error', () => {
+      let socket: ReturnType<typeof fakeSocket>;
+
+      beforeEach(() => {
+        vi.useFakeTimers();
+        socket = fakeSocket(undefined);
+        socket.on = (event, listener) => {
+          if (event === 'connect_error')
+            queueMicrotask(() => listener(new Error('connection failed')));
+        };
+        ioMock.mockReturnValue(socket);
+      });
+
+      afterEach(() => vi.useRealTimers());
+
+      it('should immediately disconnect, clear the deadline and report the relay as unavailable', async () => {
+        await expect(sendTransaction()).rejects.toMatchObject({ reason: 'unavailable' });
+        expect(socket.disconnect).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(socket.emitWithAck).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('and the acknowledgement times out', () => {
+      let socket: ReturnType<typeof fakeSocket>;
+
+      beforeEach(() => {
+        socket = fakeSocket(undefined);
+        socket.emitWithAck.mockRejectedValueOnce(new Error('operation has timed out'));
+        ioMock.mockReturnValue(socket);
+      });
+
+      it('should disconnect and report the relay as unavailable', async () => {
+        await expect(sendTransaction()).rejects.toMatchObject({ reason: 'unavailable' });
+        expect(socket.timeout).toHaveBeenCalledWith(15_000);
+        expect(socket.disconnect).toHaveBeenCalledOnce();
+      });
+    });
+
     describe('and the wallet returns a hash', () => {
       let socket: ReturnType<typeof fakeSocket>;
 
@@ -87,6 +164,13 @@ describe('AuthServerProvider.request', () => {
           method: 'eth_sendTransaction',
           params: [{ to: ACCOUNT, data: '0x' }],
           authChain: AUTH_CHAIN,
+        });
+      });
+
+      it('should use WebSocket on the relay host', async () => {
+        await sendTransaction();
+        expect(ioMock).toHaveBeenCalledWith('https://auth-api.decentraland.org', {
+          transports: ['websocket'],
         });
       });
 

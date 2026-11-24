@@ -14,6 +14,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // The crates this one builds on, under their module names (AGENTS.md).
+pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]

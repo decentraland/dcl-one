@@ -212,6 +212,50 @@ describe("track (fetch mocked)", () => {
     }
   });
 
+  describe("when server events carry the incoming request's user agent", () => {
+    const botContext = { ...CTX, requestUserAgent: "curl/8.6.0" };
+    const visitorContext = { ...CTX, requestUserAgent: BROWSER_UA };
+    const notFound = { path: "/visitor", referrer: "", ua: BROWSER_UA };
+    const landing = { item_id: "item", nid: "notification", on_sale: false };
+    let minute = 0;
+
+    beforeEach(() => {
+      vi.stubEnv("SEGMENT_WRITE_KEY", "sites-key");
+      vi.stubEnv("SHOP_SEGMENT_WRITE_KEY", "shop-key");
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.UTC(2031, 0, 1, 0, minute++));
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    });
+
+    it("should suppress recognized bots for Sites and Shop", () => {
+      track("ffw_shop_landing", landing, botContext);
+      track("ffw_shop_landing", landing, { ...botContext, source: "shop" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("should send human events even after enough bot requests to exhaust the budget", () => {
+      for (let i = 0; i < 60; i += 1) track("page_not_found", { ...notFound, path: "/bot", ua: botContext.requestUserAgent }, botContext);
+      track("page_not_found", notFound, visitorContext);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(trackedProperties()).toMatchObject({ path: "/visitor" });
+    });
+
+    it("should keep requests without a user agent and independent operational reports", () => {
+      track("page_not_found", { ...notFound, ua: "" }, { ...CTX, requestUserAgent: null });
+      track("catalyst_schema_drift", { kind: "test", issues_count: 1 }, CTX);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    function trackedProperties(): unknown {
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      return JSON.parse(init.body as string).properties;
+    }
+  });
+
   it("opens a new window when the clock is behind the window's start", async () => {
     process.env.SEGMENT_WRITE_KEY = "key-1";
     vi.useFakeTimers();
@@ -253,6 +297,30 @@ describe("track (fetch mocked)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe("text/plain");
+  });
+
+  it("adds the low-entropy userAgentData to every browser message's context, and leaves it out where there is none", async () => {
+    vi.stubGlobal("window", {
+      location: { href: "https://sites.example/", pathname: "/" },
+      __DCL_PUBLIC__: { SEGMENT_WRITE_KEY: "key-1" },
+    });
+    vi.stubGlobal("document", { referrer: "", title: "" });
+    const sendBeacon = vi.fn((_url: string, _body: Blob) => true);
+    const userAgentData = { brands: [{ brand: "Chromium", version: "131" }], mobile: true, platform: "Android", model: "Pixel" };
+    vi.stubGlobal("navigator", { userAgent: BROWSER_UA, language: "en", sendBeacon, userAgentData });
+    trackAny("evt", {}, CTX);
+    page("/", {}, CTX);
+    identify("0xabc", {}, CTX);
+    const contexts = await Promise.all(sendBeacon.mock.calls.map(async ([, blob]) => JSON.parse(await blob.text()).context));
+    expect(contexts).toHaveLength(3);
+    for (const context of contexts) {
+      expect(context.userAgentData).toEqual({ brands: [{ brand: "Chromium", version: "131" }], mobile: true, platform: "Android" });
+    }
+
+    sendBeacon.mockClear();
+    vi.stubGlobal("navigator", { userAgent: BROWSER_UA, language: "en", sendBeacon });
+    trackAny("evt", {}, CTX);
+    expect(JSON.parse(await sendBeacon.mock.calls[0]![1].text()).context).not.toHaveProperty("userAgentData");
   });
 
   it("posts to the first-party proxy when SEGMENT_API_HOST is set, with or without a protocol or trailing slash", async () => {
@@ -531,6 +599,57 @@ describe("page, identify, gates and the telemetry client (fetch mocked)", () => 
     const fresh = await loadDocument();
     (fresh.track as unknown as typeof trackAny)("Shop Viewed Page", {}, { sid: "s", source: "shop" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not ready for legacy analytics until the document's first Sites page view is sent, then runs what waited, in order", async () => {
+    stubBrowser({ path: "/" });
+    const fresh = await loadDocument();
+    const ran: string[] = [];
+    expect(fresh.legacyAnalyticsReady()).toBe(false);
+    fresh.whenLegacyAnalyticsReady(() => ran.push("first"));
+    fresh.whenLegacyAnalyticsReady(() => {
+      throw new Error("boom");
+    });
+    fresh.whenLegacyAnalyticsReady(() => ran.push("third"));
+    expect(ran).toEqual([]);
+    fresh.page("Home", {}, { sid: "s" });
+    expect(fresh.legacyAnalyticsReady()).toBe(true);
+    expect(ran).toEqual(["first", "third"]);
+    fresh.whenLegacyAnalyticsReady(() => ran.push("later"));
+    expect(ran).toEqual(["first", "third", "later"]);
+  });
+
+  it("drops a waiting registration that was cancelled, and keeps the others", async () => {
+    stubBrowser({ path: "/" });
+    const fresh = await loadDocument();
+    const ran: string[] = [];
+    const cancel = fresh.whenLegacyAnalyticsReady(() => ran.push("cancelled"));
+    fresh.whenLegacyAnalyticsReady(() => ran.push("kept"));
+    cancel();
+    fresh.page("Home", {}, { sid: "s" });
+    expect(ran).toEqual(["kept"]);
+  });
+
+  it.each([
+    ["a bot", { userAgent: GOOGLEBOT_UA }],
+    ["an exempt session", { path: "/download" }],
+    ["no write key", { publicEnv: {} }],
+  ])("is never ready for legacy analytics for %s, whose page view is held back", async (_case, browser) => {
+    stubBrowser(browser);
+    const fresh = await loadDocument();
+    const ran = vi.fn();
+    fresh.whenLegacyAnalyticsReady(ran);
+    fresh.page("Home", {}, { sid: "s" });
+    expect(fresh.legacyAnalyticsReady()).toBe(false);
+    expect(ran).not.toHaveBeenCalled();
+  });
+
+  it("is not made ready for Sites by a Shop page view", async () => {
+    stubBrowser({ publicEnv: { SEGMENT_WRITE_KEY: "key-1", SHOP_SEGMENT_WRITE_KEY: "shop-key" } });
+    const fresh = await loadDocument();
+    fresh.page("Shop", {}, { sid: "s", source: "shop" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fresh.legacyAnalyticsReady()).toBe(false);
   });
 
   it("redacts credential paths in any case and with a trailing slash, and the wallet in a confirmation link's query", () => {

@@ -45,7 +45,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         spa: true,
         ua: request.headers.get("user-agent") ?? "",
       },
-      { sid, story: STORY },
+      { sid, story: STORY, requestUserAgent: request.headers.get("user-agent") },
     );
   } catch {
   }

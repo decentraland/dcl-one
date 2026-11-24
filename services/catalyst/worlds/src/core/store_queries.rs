@@ -375,7 +375,12 @@ pub async fn admin_set_world_blocked(
     } else {
         "UPDATE worlds.worlds SET blocked_since = NULL, updated_at = timezone('UTC', now()) WHERE name = $1"
     };
-    let res = sqlx::query(sql).bind(world.key()).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    let res = sqlx::query(sql).bind(world.key()).execute(&mut *tx).await?;
+    if res.rows_affected() > 0 {
+        crate::explore::places::derive::mark_world_dirty(&mut tx, world.key()).await?;
+    }
+    tx.commit().await?;
     Ok(res.rows_affected() > 0)
 }
 

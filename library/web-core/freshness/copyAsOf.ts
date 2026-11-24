@@ -24,3 +24,40 @@ export function staleCopyAge(copy: CopyStamp | null | undefined, now = Date.now(
   if (!copy || now - copy.asOf <= copy.staleAfterMs) return null;
   return coarseDuration(now - copy.asOf);
 }
+
+export type CopyDomain = "places" | "worlds" | "events" | "communities";
+
+// The page's newest stamp per domain, noted by the readers that fetch it; one store per page.
+const stamps = new Map<CopyDomain, CopyStamp | null>();
+const listeners = new Set<() => void>();
+let version = 0;
+
+export function noteCopy(domain: CopyDomain, body: unknown): void {
+  const copy = readCopy(body);
+  const seen = stamps.get(domain) ?? null;
+  if (seen?.asOf === copy?.asOf && seen?.staleAfterMs === copy?.staleAfterMs) return;
+  stamps.set(domain, copy);
+  version += 1;
+  for (const listener of listeners) listener();
+}
+
+export function copyAsOf(domains: readonly CopyDomain[]): CopyStamp | null {
+  return domains.reduce<CopyStamp | null>((copy, domain) => olderCopy(copy, stamps.get(domain)), null);
+}
+
+/** Calls `listener` whenever a noted stamp changes; returns the unsubscribe. */
+export function subscribeCopies(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** Increments on every change, for an external-store snapshot. */
+export function copiesVersion(): number {
+  return version;
+}
+
+export function resetCopies(): void {
+  stamps.clear();
+  version += 1;
+  for (const listener of listeners) listener();
+}

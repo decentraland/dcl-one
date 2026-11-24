@@ -1,8 +1,8 @@
-// url=<DCL_FIGMA_FILE>?node-id=15599-31621
+// url=<DCL_FIGMA_FILE>?node-id=17520-2556
 // source=components/NavCreditsBalance/NavCreditsBalance.tsx
 // component=NavCreditsBalance
 // contract=1
-// states=Hover
+// states=state
 import figma from 'figma'
 
 export default {

@@ -20,6 +20,7 @@ import { useSnackbar } from '/@/hooks/useSnackbar';
 import { t } from '/@/modules/store/translation/utils';
 
 AuthServerProvider.setAuthServerUrl(config.get('AUTH_SERVER_URL'));
+AuthServerProvider.setIdentityFetcher(misc.fetchAuthIdentity);
 AuthServerProvider.setAuthDappUrl(config.get('AUTH_DAPP_URL'));
 
 const DEFAULT_CHAIN_ID: ChainId = (Number(config.get('CHAIN_ID')) ||

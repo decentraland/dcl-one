@@ -1,8 +1,6 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 
-import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import type { JumpIn, RemindControl } from "@dcl/one-ui/apps/sites/events/types";
+import { EventDetailModal, useEventsCopy, type JumpIn, type RemindControl } from "@dcl/one-ui";
 
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
@@ -13,7 +11,16 @@ import { heroWhen, scheduleLine, type Zone } from "../components/event-schedule"
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
 import type { Reminder } from "./useEventReminders";
-import { calendarHref, eventCreator, eventPageShareUrl, eventTarget, locationLabel, playHref, type Target } from "./view";
+import {
+  calendarHref,
+  eventCreator,
+  eventImage,
+  eventPageShareUrl,
+  eventTarget,
+  locationLabel,
+  playHref,
+  type Target,
+} from "./view";
 
 const DETAIL_STORY: StoryId = "admin/whats-on-detail";
 
@@ -40,24 +47,27 @@ export function remindControl(reminder: Reminder): RemindControl {
 }
 
 /**
- * An event's detail dialog, as the events page and a community page open it in place. Without a
- * session id (`sid`) it records no telemetry.
+ * An event's detail dialog, as the events page and a community page open it in place. Both record
+ * its views and Jump Ins under the events page's story; without a session id (`sid`, which a client
+ * navigation has none of) it records none.
  */
 export function EventDetail({
   sid,
   event,
   zone,
   origin,
+  pageOrigin,
   jumpIn,
   reminder,
   profiles,
   onClose,
 }: {
   profiles: CreatorProfiles;
-  sid: string;
+  sid?: string;
   event: Event;
   zone: Zone;
   origin: string;
+  pageOrigin: string;
   jumpIn: (target: Target) => JumpIn;
   reminder?: Reminder;
   onClose: () => void;
@@ -88,7 +98,7 @@ export function EventDetail({
   return (
     <EventDetailModal
       title={event.name ?? text("Untitled event")}
-      image={event.image}
+      image={eventImage(event.image, pageOrigin)}
       live={event.live}
       when={event.live ? undefined : heroWhen(event, zone, locale)}
       creator={eventCreator(event, profiles, locale)}

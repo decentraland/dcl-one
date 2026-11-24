@@ -591,7 +591,7 @@ tokio::task_local! {
 
 /// A copy goes stale (`as_of::stale_after`) after twice its mirror's
 /// interval (the collections walk's three items intervals).
-fn stale_after(settings: &super::Settings, mirror: Mirror) -> Duration {
+pub fn stale_after(settings: &super::Settings, mirror: Mirror) -> Duration {
     as_of::stale_after(
         settings
             .market

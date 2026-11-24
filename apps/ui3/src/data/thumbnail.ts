@@ -1,6 +1,6 @@
 import { catalystBase } from "./catalyst/client";
 
-export { useThumbnailPublicBase } from "@dcl/one-ui/components/AppChrome/thumbnail-public-base";
+export { useThumbnailPublicBase } from "@dcl/one-ui";
 
 export type ThumbnailWidth = 80 | 160 | 320 | 640 | 960;
 

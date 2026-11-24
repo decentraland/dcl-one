@@ -2508,8 +2508,8 @@ async fn an_entity_named_by_its_cid_v0_is_found_through_the_spool() {
 /// the bytes it had sent recorded (a declared body refused unread is not).
 #[tokio::test]
 async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let refused_after = || {
         recorder.handle().render().lines().find_map(|line| {
             line.strip_prefix(

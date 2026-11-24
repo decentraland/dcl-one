@@ -49,6 +49,9 @@ mod jobs;
 
 #[path = "streaming_cast.rs"]
 pub(super) mod cast;
+/// For the Cast presenter, which replaces a room's presentation only for a
+/// bot of the room's active credential.
+pub(crate) use cast::publisher_credential_current;
 pub(super) use jobs::spawn_jobs;
 
 /// The durable cleanup of one intent, for tests that retry it after a failure.
@@ -72,6 +75,75 @@ pub(crate) async fn ttl_pass_for_test(state: &CommsState, id: Uuid) -> bool {
 #[cfg(test)]
 pub(crate) async fn key_expiry_pass_for_test(state: &CommsState) {
     jobs::expire_keys(state).await.unwrap();
+}
+
+/// Preserve exact native room bindings before startup exposes any scene writers.
+/// Batches bound memory; unresolved or noncanonical imported rooms remain NULL.
+pub async fn backfill_admin_place_keys(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let mut after: Option<Uuid> = None;
+    loop {
+        let rows: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+            "SELECT id,room_id FROM social.scene_stream_access WHERE active AND admin_place_key IS NULL AND ($1::uuid IS NULL OR id>$1) ORDER BY id LIMIT 200"
+        ).bind(after).fetch_all(pool).await?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        for (id, room) in rows {
+            after = Some(id);
+            if let Some(room) = room {
+                recover_admin_place_key(pool, id, &room).await?;
+            }
+        }
+    }
+}
+
+/// Decode with the canonical room codec and recover only an exact live binding
+/// that is unique across current and retained bindings.
+/// The world/identity locks match publication; recheck the stored room on write.
+pub(super) async fn recover_admin_place_key(
+    pool: &PgPool,
+    id: Uuid,
+    room: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some((world, scene)) = crate::rooms::decode_world_scene_room(room) else {
+        return Ok(None);
+    };
+    let mut tx = pool.begin().await?;
+    let world_present: Option<String> =
+        sqlx::query_scalar("SELECT name FROM worlds.worlds WHERE name=$1 FOR UPDATE")
+            .bind(world.key())
+            .fetch_optional(&mut *tx)
+            .await?;
+    if world_present.is_none() {
+        return Ok(None);
+    }
+    let identities:Vec<(Uuid,Option<String>)>=sqlx::query_as("SELECT identity,entity_id FROM explore.world_scene_place WHERE world_name=$1 AND active ORDER BY identity FOR UPDATE")
+        .bind(world.key()).fetch_all(&mut *tx).await?;
+    let key = identities
+        .into_iter()
+        .find(|(_, entity)| entity.as_deref() == Some(scene.as_str()))
+        .map(|(identity, _)| identity.to_string());
+    // As deferred recovery does: a retained binding of another identity for
+    // the same scene makes the live one ambiguous, so nothing is saved.
+    let unique: Option<String> = sqlx::query_scalar(
+        "WITH b AS (SELECT identity FROM explore.world_scene_binding WHERE world_name=$1 AND entity_id=$2 \
+         UNION SELECT identity FROM explore.world_scene_place WHERE world_name=$1 AND entity_id=$2 AND active) \
+         SELECT min(identity::text) FROM b HAVING count(*)=1",
+    )
+    .bind(world.key())
+    .bind(scene.as_str())
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    let key = key.filter(|key| unique.as_deref() == Some(key.as_str()));
+    let saved = if let Some(key) = &key {
+        sqlx::query_scalar("UPDATE social.scene_stream_access SET admin_place_key=$3 WHERE id=$1 AND room_id=$2 AND active AND admin_place_key IS NULL RETURNING admin_place_key")
+            .bind(id).bind(room).bind(key).fetch_optional(&mut *tx).await?.flatten()
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok(saved)
 }
 
 pub const PATH: &str = "/scene-stream-access";
@@ -196,12 +268,26 @@ pub async fn scene_stream_access(
             }
             None => Err(ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG)),
         },
-        Method::POST => issue_access(&state, &ingress, (place_id, world_room), room, &sf.signer)
-            .await
-            .map(|resp| Json(resp).into_response()),
-        Method::PUT => reset_access(&state, &ingress, (place_id, world_room), room, &sf.signer)
-            .await
-            .map(|resp| Json(resp).into_response()),
+        Method::POST => issue_access(
+            &state,
+            &ingress,
+            (place_id, world_room),
+            room,
+            &sf.signer,
+            &target.admin_place_key,
+        )
+        .await
+        .map(|resp| Json(resp).into_response()),
+        Method::PUT => reset_access(
+            &state,
+            &ingress,
+            (place_id, world_room),
+            room,
+            &sf.signer,
+            &target.admin_place_key,
+        )
+        .await
+        .map(|resp| Json(resp).into_response()),
         Method::DELETE => remove_access(&state, place_id, world_room, &revoked).await,
         _ => Ok(StatusCode::METHOD_NOT_ALLOWED.into_response()),
     }
@@ -264,6 +350,9 @@ pub(super) struct KeyTarget<'a> {
     /// scene, until a reset or renewal replaces it or it expires
     /// ([`active_access`]).
     pub world_room: Option<String>,
+    /// The bound scene's admin place, saved on a minted credential so its
+    /// notices reach that scene's admins after its identity retires.
+    pub admin_place_key: String,
     authority: PlaceLookup<'a>,
     /// A world scene: the world-wide lookup and the scene's admin key
     /// ([`world_scene_admin`]).
@@ -286,6 +375,7 @@ impl<'a> KeyTarget<'a> {
             place_id,
             room: bound.room,
             world_room: None,
+            admin_place_key: bound.place.admin_key().to_owned(),
             authority: bound.place,
             world: None,
         })
@@ -336,6 +426,7 @@ impl<'a> KeyTarget<'a> {
             authority: PlaceLookup::resolved(state, &key, footprint, scene::NO_ADMINS),
             world: Some((Self::world_wide(state, &key, world), key.clone())),
             world_room: Some(room.clone()),
+            admin_place_key: key.clone(),
             place_id: key,
             room,
         }
@@ -408,6 +499,7 @@ async fn revocation_target<'a>(
             place_id,
             room: String::new(),
             world_room: None,
+            admin_place_key: String::new(),
             authority,
             world: None,
         });
@@ -501,6 +593,7 @@ async fn issue_access(
     (place_id, world_room): (&str, Option<&str>),
     room: &str,
     signer: &Address,
+    admin_place_key: &str,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     // The caller has rechecked the place's keys ([`recheck_target`]).
     free_scene_place(state, (place_id, world_room), room).await?;
@@ -525,12 +618,20 @@ async fn issue_access(
             ingress,
             existing.id,
             jobs::CleanupCommand::IdleReplacement,
-            (place_id, room, signer),
+            (place_id, room, signer, admin_place_key),
             info,
         )
         .await;
     }
-    create_access(&state.pool, ingress, place_id, room, signer).await
+    create_access(
+        &state.pool,
+        ingress,
+        place_id,
+        room,
+        signer,
+        admin_place_key,
+    )
+    .await
 }
 
 /// Clears `row`'s `streaming` flag when LiveKit says its ingress is gone or
@@ -723,7 +824,8 @@ async fn free_scene_place(
         // The move bumps the version, so a revocation prepared before it fails.
         let moved = sqlx::query(
             "UPDATE social.scene_stream_access \
-             SET place_id = $3, streaming_state_version = streaming_state_version + 1 \
+             SET place_id = $3, admin_place_key = COALESCE(admin_place_key, $3), \
+                 streaming_state_version = streaming_state_version + 1 \
              WHERE id = $1 AND active AND place_id = $2 \
              AND NOT EXISTS (SELECT 1 FROM social.scene_stream_access WHERE active AND place_id = $3)",
         )
@@ -814,9 +916,10 @@ async fn create_access(
     place_id: &str,
     room: &str,
     signer: &Address,
+    admin_place_key: &str,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let info = mint_ingress(ingress, room).await?;
-    store_access(pool, ingress, place_id, room, signer, info).await
+    store_access(pool, ingress, place_id, room, signer, admin_place_key, info).await
 }
 
 /// The new credential's RTMP ingress. Minted before an old credential is
@@ -849,7 +952,7 @@ async fn replace_access(
     ingress: &IngressClient<'_>,
     old: Uuid,
     command: jobs::CleanupCommand,
-    (place_id, room, signer): (&str, &str, &Address),
+    (place_id, room, signer, admin_place_key): (&str, &str, &Address, &str),
     info: crate::shared::livekit::IngressInfo,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let stored = async {
@@ -860,7 +963,9 @@ async fn replace_access(
         if !prepared.record(&mut *tx).await? {
             return Ok(None);
         }
-        let Some(row) = insert_access(&mut *tx, place_id, room, signer, &info).await? else {
+        let Some(row) =
+            insert_access(&mut *tx, place_id, room, signer, admin_place_key, &info).await?
+        else {
             return Ok(None);
         };
         tx.commit().await?;
@@ -893,8 +998,8 @@ const REMOVED_PLACE_KEYS: &str = "active AND CASE WHEN $2::text IS NULL \
      ELSE place_id = $1 OR starts_with(room_id, $2) END";
 
 /// Whether a removed place has a key with a live ingress ([`REMOVED_PLACE_KEYS`]).
-pub(crate) async fn removed_place_has_ingress(
-    pool: &PgPool,
+pub(crate) async fn removed_place_has_ingress<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     place_id: &str,
     world: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
@@ -905,7 +1010,7 @@ pub(crate) async fn removed_place_has_ingress(
     .bind(place_id)
     .bind(world.map(crate::rooms::world_scene_room_prefix))
     .bind(crate::rooms::SCENE_ROOM_PREFIX)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
 }
 
@@ -932,7 +1037,7 @@ pub(crate) async fn end_removed_place(
     .await?;
     let command = jobs::CleanupCommand::PlaceRemoval;
     for (id, version) in &rows {
-        jobs::enqueue_prepared(&mut *tx, *id, command, *version, None, None).await?;
+        jobs::enqueue_prepared(&mut *tx, *id, command, *version, None, None, None).await?;
     }
     Ok(rows.into_iter().map(|(id, _)| id).collect())
 }
@@ -969,6 +1074,7 @@ async fn insert_access<'e, E: sqlx::PgExecutor<'e>>(
     place_id: &str,
     room: &str,
     signer: &Address,
+    admin_place_key: &str,
     info: &crate::shared::livekit::IngressInfo,
 ) -> Result<Option<AccessRow>, ApiError> {
     let (Some(url), Some(stream_key)) = (info.url.as_deref(), info.stream_key.as_deref()) else {
@@ -978,8 +1084,8 @@ async fn insert_access<'e, E: sqlx::PgExecutor<'e>>(
     };
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO social.scene_stream_access \
-             (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $7 + make_interval(secs => $8::double precision / 1000), true) \
+             (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active, admin_place_key) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7 + make_interval(secs => $8::double precision / 1000), true, $9) \
          ON CONFLICT (place_id) WHERE active DO NOTHING \
          RETURNING {ACCESS_COLUMNS}"
     )))
@@ -991,6 +1097,7 @@ async fn insert_access<'e, E: sqlx::PgExecutor<'e>>(
     .bind(signer)
     .bind(now_utc())
     .bind(FOUR_DAYS_MS)
+    .bind(admin_place_key)
     .fetch_optional(executor)
     .await?)
 }
@@ -1001,9 +1108,17 @@ async fn store_access(
     place_id: &str,
     room: &str,
     signer: &Address,
+    admin_place_key: &str,
     info: crate::shared::livekit::IngressInfo,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
-    let inserted = insert_access(pool, place_id, room, signer, &info).await?;
+    // A failed insertion discards the ingress minted for it.
+    let inserted = match insert_access(pool, place_id, room, signer, admin_place_key, &info).await {
+        Ok(inserted) => inserted,
+        Err(error) => {
+            discard_ingress(ingress, &info, place_id).await;
+            return Err(error);
+        }
+    };
     if let Some(row) = inserted {
         return Ok(row.response());
     }
@@ -1065,6 +1180,7 @@ async fn reset_access(
     (place_id, world_room): (&str, Option<&str>),
     room: &str,
     signer: &Address,
+    admin_place_key: &str,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let result = async {
         free_scene_place(state, (place_id, world_room), room).await?;
@@ -1080,16 +1196,15 @@ async fn reset_access(
             ingress,
             row.id,
             jobs::CleanupCommand::Reset,
-            (place_id, room, signer),
+            (place_id, room, signer, admin_place_key),
             info,
         )
         .await
     }
     .await;
     result.map_err(|error: ApiError| {
-        // Upstream's reset answers its `StreamingAccessNotFoundError` as 404
-        // and any other failure of the swap as this 500. A change to retry
-        // (409) and a source that cannot be read (503) keep their answers.
+        // Preserve not-found, retry (409) and unreadable-source (503)
+        // responses; other swap failures use the reset error.
         if matches!(error.code, 404 | 409 | 503) {
             return error;
         }
