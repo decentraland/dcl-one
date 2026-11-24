@@ -15,10 +15,6 @@ inputs:
     description: 'Create the release if it does not exist (true/false)'
     required: false
     default: 'false'
-  prerelease:
-    description: 'Mark as prerelease if creating a new release (true/false)'
-    required: false
-    default: 'true'
   draft:
     description: 'Mark as draft if creating a new release (true/false)'
     required: false
@@ -86,15 +82,7 @@ runs:
           fi
           echo "📝 Using release title: $TITLE"
 
-          # Build create command with options
-          PRERELEASE_FLAG=""
           DRAFT_FLAG=""
-
-          # Add optional flags
-          if [[ "$IN_PRERELEASE" == "true" ]]; then
-            PRERELEASE_FLAG="--prerelease"
-            echo "🚧 Marking as prerelease"
-          fi
 
           if [[ "$IN_DRAFT" == "true" ]]; then
             DRAFT_FLAG="--draft"
@@ -102,11 +90,11 @@ runs:
           fi
 
           # Execute create command
-          echo "🚀 Creating release with command: gh release create \"$IN_TAG_NAME\" --title \"$TITLE\" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG"
+          echo "🚀 Creating release with command: gh release create \"$IN_TAG_NAME\" --latest=false --title \"$TITLE\" --notes-file temp_release_notes.md $DRAFT_FLAG"
           # --target: without it the new tag lands on main's tip when this job runs, which in a busy
           # monorepo can be a later commit. Package changes merged in between would then count as
           # released, and semantic-version would never publish them.
-          gh release create "$IN_TAG_NAME" --target "$GITHUB_SHA" --title "$TITLE" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG
+          gh release create "$IN_TAG_NAME" --target "$GITHUB_SHA" --latest=false --title "$TITLE" --notes-file temp_release_notes.md $DRAFT_FLAG
 
           # Get the created release info
           RELEASE_INFO=$(gh release view "$IN_TAG_NAME" --json id,url)
@@ -132,7 +120,6 @@ runs:
       env:
         IN_CREATE_IF_NOT_EXISTS: ${{ inputs.create_if_not_exists }}
         IN_DRAFT: ${{ inputs.draft }}
-        IN_PRERELEASE: ${{ inputs.prerelease }}
         IN_RELEASE_TITLE: ${{ inputs.release_title }}
         IN_TAG_NAME: ${{ inputs.tag_name }}
         GH_TOKEN: ${{ inputs.github_token }}

@@ -194,7 +194,7 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
 
 - **Pre-releases**: All GitHub releases are created as pre-releases initially
 - **Creator Hub Updates**: Only "latest" releases are picked up by electron-updater
-- **Package Releases**: asset-packs and inspector remain pre-releases to prevent auto-update confusion
+- **Package Releases**: asset-packs and inspector releases in dcl-one are neither pre-releases nor Latest
 - **Manual Promotion**: Edit pre-release and mark as "latest" to trigger auto-update for desktop app
 
 ### Protocol Buffers Workflow

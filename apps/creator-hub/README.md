@@ -537,7 +537,7 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 The project uses a specific release strategy to ensure electron-updater works correctly:
 
 - **Creator Hub releases** are created as pre-release and when ready, they should be marked as "latest" on GitHub, allowing the Electron app to automatically detect and download updates
-- **Other packages (Asset Packs, Inspector)** are ALWAYS marked as pre-releases to prevent electron-updater from accidentally downloading the wrong package type
+- **Other packages (Asset Packs, Inspector)** get a GitHub release in dcl-one that is neither a pre-release nor Latest: dcl-one releases several projects, and electron-updater reads only `decentraland/creator-hub`
 - This separation ensures that users only get Creator Hub app updates through the auto-update mechanism
 
 ### Asset Distribution
