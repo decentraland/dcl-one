@@ -40,7 +40,7 @@ import { eventCalendarUrl, eventCopyLink, eventShareUrl } from '../events/eventF
 import { lobbyEvents } from '../events/eventsStore'
 import { usePhotoViewer } from '../gallery/usePhotoViewer'
 import { useOwnReelActions } from '../gallery/useOwnReelActions'
-import { isWorldRealm } from '../gallery/reelActions'
+import { photoWorldRealm } from '../gallery/reelActions'
 import { useReelList } from '../gallery/useReelList'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { openPlaceDetail } from '../places/PlaceDetail'
@@ -552,7 +552,8 @@ export function LobbyHome({
           onClose: () => setPhotoIndex(null),
           onSetPublic: reelActions.setPublic,
           onJumpIn: (place) => {
-            const dest: Destination = isWorldRealm(place.realm) ? { kind: 'world', realm: place.realm } : { kind: 'parcel', x: place.x, y: place.y }
+            const world = photoWorldRealm(place)
+            const dest: Destination = world != null ? { kind: 'world', realm: world } : { kind: 'parcel', x: place.x, y: place.y }
             if (pick(dest)) setPhotoIndex(null)
           },
           onDelete: (photo) =>

@@ -5,6 +5,7 @@ import checkIcon from '../../assets/lobby/checkmark-icn-thin.png'
 import warningIcon from '../../assets/startup/warning.png'
 import { isNativeHud, serviceUrl } from '@hud-host'
 import { cefDownloadOutcome } from '@explorer-core/lib/cefNativeBridge'
+import { worldOfRealm } from '@explorer-core/features/lobby/goto'
 import type { MapState, TravelOutcome } from '../session/useEngineSession'
 
 export const REEL_MESSAGES = {
@@ -122,11 +123,6 @@ export function photoDate(ms: number): string {
   return `${MONTHS[d.getMonth()]} ${String(d.getDate()).padStart(2, '0')}, ${d.getFullYear()}`
 }
 
-/** A realm that names a world (`name.dcl.eth`). */
-export function isWorldRealm(realm?: string | null): realm is string {
-  return realm != null && /^[a-zA-Z0-9.]+\.eth$/.test(realm)
-}
-
 /** Where a photo was taken: a world's realm (`name.dcl.eth`) or Genesis City, and the parcel. */
 export interface PhotoPlace {
   realm?: string
@@ -134,8 +130,14 @@ export interface PhotoPlace {
   y: number
 }
 
+/** The photo's own realm when it is a world's; null for Genesis City. */
+export function photoWorldRealm(place: PhotoPlace): string | null {
+  return place.realm != null && worldOfRealm(place.realm) != null ? place.realm : null
+}
+
 /** A world's photo changes realm to the world; any other teleports to its Genesis City parcel,
  *  leaving a world first. */
 export function travelToPhoto(place: PhotoPlace, map: Pick<MapState, 'teleportToPlace' | 'changeRealm'>): TravelOutcome {
-  return isWorldRealm(place.realm) ? map.changeRealm(place.realm) : map.teleportToPlace(place.x, place.y)
+  const world = photoWorldRealm(place)
+  return world != null ? map.changeRealm(world) : map.teleportToPlace(place.x, place.y)
 }

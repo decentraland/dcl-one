@@ -67,7 +67,8 @@ export function PhotoDetail({
   const [panelOpen, setPanelOpen] = useState(true)
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
   // Optimistic: reverts if the service refuses the write.
-  const [publicChoice, setPublicChoice] = useState<{ id: string; isPublic: boolean } | null>(null)
+  const [publicChoice, setPublicChoice] = useState<{ id: string; isPublic: boolean; turn: number } | null>(null)
+  const choiceTurn = useRef(0)
   const isPublic = publicChoice?.id === photo.id ? publicChoice.isPublic : photo.isPublic === true
 
   useEffect(() => {
@@ -92,8 +93,9 @@ export function PhotoDetail({
   const setPublic = (next: boolean): void => {
     if (onSetPublic == null) return
     const id = photo.id
-    setPublicChoice({ id, isPublic: next })
-    void onSetPublic(photo, next).then(() => setPublicChoice((cur) => (cur?.id === id ? null : cur)))
+    const turn = ++choiceTurn.current
+    setPublicChoice({ id, isPublic: next, turn })
+    void onSetPublic(photo, next).then(() => setPublicChoice((cur) => (cur?.turn === turn ? null : cur)))
   }
 
   const loaded = loadedUrl === photo.url

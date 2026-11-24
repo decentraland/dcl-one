@@ -9714,7 +9714,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "36c443778a3d71c267c9ac2976dd407800119efa0fc1c20c5406a4a2a7ced9a9"
+      "sha256": "9154cd6eddeb07f88e3074a1b08714c7fbdf245455f203487cb6807ffbd47ccb"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
@@ -9726,7 +9726,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
-      "sha256": "03952873ede9ec0dbf4f76d806653cf549e60418ae9a295ad0ec1e4d377bd024"
+      "sha256": "2cbb7bc0b82e4f8b2bf3ed4927a92f683fbbb07ec0656875197b71c159d2413e"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/publicReels.ts",
@@ -9734,11 +9734,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/reelActions.ts",
-      "sha256": "41f386b0d29944ceca9809a3794f4a627b970905a2f3f7d7a553c0e34c0ad2b6"
+      "sha256": "660b3925167bd0216ca1abf745d8c42b2849dd0a38aa1d6c01fb15b20800645c"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
-      "sha256": "257f38df47dc370db4cc45f0f83ff9ff79011ef9fea73b541c7c96f947f0a4ff"
+      "sha256": "024e28877e9b53db2db4617107b7ff3eeab8dfacb7f4aea5098c0d128315f1e7"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/usePhotoViewer.tsx",
@@ -9858,7 +9858,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "4f5490125192e27f593f8a20b0a5469f4cd45b87bd7c73fcf17335025e474a93"
+      "sha256": "6567c59e833b78499ddb9c2c52ff979e2745764cfe26c93d940fd67a44de2e61"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -11094,7 +11094,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/photoDetail.test.tsx",
-      "sha256": "8828a32216fc360a7b4e967ce44eb6a73dd9de8d6ae0d201c6bfb8ffdec6cd3a"
+      "sha256": "a8ed1c524fbcef147bf99745e0b1f4e74731b5d321c4a240da359cf1aa7948ef"
     },
     {
       "path": "library/ui/apps/hud/test/placesBrowser.test.tsx",
@@ -11134,11 +11134,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
-      "sha256": "d9e21751a0f85eb6742e4dd18e2793379844217e3f2ad7a3295c2affad4cb2a0"
+      "sha256": "b3f59c03fdc4247306de2cb91df9f99a9c9932f5cf4132cf2859b71fc9c8725d"
     },
     {
       "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
-      "sha256": "9dddc507f001ea71379ada1a403a6daaee9c485122211dea6ccbab9eb8afdec6"
+      "sha256": "eabe4ef5ced59f26e57cc3b6b987b76a1bf787b60f8c88e41863efbdd55a5c11"
     },
     {
       "path": "library/ui/apps/hud/test/referral.test.ts",
@@ -24492,6 +24492,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/features/lobby/goto.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "to": "library/explorer-core/lib/cefNativeBridge.ts",
       "kind": "native:runtime"
     },
@@ -44978,6 +44993,21 @@
     {
       "from": "library/ui/apps/hud/test/reelActions.test.ts",
       "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
       "kind": "test:dynamic"
     },
     {

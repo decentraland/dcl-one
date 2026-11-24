@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { pending } from '@explorer-core/lib/analytics'
 import type { GalleryPhoto, GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import { PhotoDetail } from '../features/gallery/PhotoDetail'
-import { isWorldRealm, photoDate, travelToPhoto } from '../features/gallery/reelActions'
+import { photoDate, travelToPhoto } from '../features/gallery/reelActions'
 import { receiveProfile, resetProfileStore } from '../features/session/profileStore'
 import { ToastHost, resetPopups } from '../design'
 
@@ -99,6 +99,24 @@ describe('PhotoDetail', () => {
     expect(onSetPublic).toHaveBeenCalledWith(photos[1], false)
     expect(toggle).toHaveAttribute('aria-checked', 'false')
     await act(async () => settle(false))
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('a second choice stays while the first write settles, and a refused one shows the photo\'s value', async () => {
+    const settle: Array<(ok: boolean) => void> = []
+    const onSetPublic = vi.fn(() => new Promise<boolean>((r) => settle.push(r)))
+    render(<PhotoDetail {...viewer({ onSetPublic })} />)
+    const toggle = screen.getByRole('switch', { name: 'Set as Public' })
+    await userEvent.click(toggle)
+    await userEvent.click(toggle)
+    await userEvent.click(toggle)
+    expect(onSetPublic.mock.calls.map((c) => (c as unknown[])[1])).toEqual([false, true, false])
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await act(async () => settle[1](true))
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await act(async () => settle[0](true))
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await act(async () => settle[2](false))
     expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
@@ -225,11 +243,14 @@ describe('PhotoDetail', () => {
 describe('Jump In travel', () => {
   it("goes to a world's realm, else to the Genesis parcel", () => {
     const map = { teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const) }
-    travelToPhoto({ realm: 'boedo.dcl.eth', x: 1, y: 2 }, map)
-    expect(map.changeRealm).toHaveBeenCalledWith('boedo.dcl.eth')
-    travelToPhoto({ realm: 'main', x: 1, y: 2 }, map)
-    expect(map.teleportToPlace).toHaveBeenCalledWith(1, 2)
-    expect(isWorldRealm('https://peer.decentraland.org')).toBe(false)
+    const worlds = ['boedo.dcl.eth', 'my-world.eth', 'https://worlds.example/world/boedo.dcl.eth']
+    for (const realm of worlds) travelToPhoto({ realm, x: 1, y: 2 }, map)
+    expect(map.changeRealm.mock.calls).toEqual(worlds.map((realm) => [realm]))
+    expect(map.teleportToPlace).not.toHaveBeenCalled()
+    const others = ['main', 'https://peer.decentraland.org', undefined]
+    for (const realm of others) travelToPhoto({ realm, x: 1, y: 2 }, map)
+    expect(map.teleportToPlace.mock.calls).toEqual(others.map(() => [1, 2]))
+    expect(map.changeRealm).toHaveBeenCalledTimes(worlds.length)
   })
 
   it('writes the date as month, padded day and year', () => {
