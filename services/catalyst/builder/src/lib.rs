@@ -55,6 +55,7 @@ pub(crate) use catalyst_storage as storage;
 pub mod access;
 pub mod auth;
 pub mod chain_state;
+pub mod cheques;
 pub mod collections;
 pub mod committee;
 pub mod cors;
@@ -71,6 +72,7 @@ pub mod publication;
 pub mod publication_chain;
 pub mod publication_store;
 pub mod rarities;
+pub mod terms;
 pub mod third_parties;
 pub mod writes;
 
@@ -124,6 +126,25 @@ impl std::fmt::Debug for NewsletterForward {
         f.debug_struct("NewsletterForward")
             .field("url", &self.url)
             .field("publication_id", &self.publication_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The warehouse a terms-of-service acceptance is forwarded to
+/// (`WAREHOUSE_URL`, `WAREHOUSE_TOKEN` and the optional
+/// `WAREHOUSE_CONTEXT_PREFIX`), configured only when the URL and the token
+/// are set.
+#[derive(Clone)]
+pub struct WarehouseForward {
+    pub url: String,
+    pub token: String,
+    pub context_prefix: Option<String>,
+}
+
+impl std::fmt::Debug for WarehouseForward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WarehouseForward")
+            .field("context_prefix", &self.context_prefix)
             .finish_non_exhaustive()
     }
 }
@@ -210,6 +231,14 @@ pub struct Settings {
     pub admin_addresses: Vec<String>,
     pub admin_token: Option<String>,
     pub newsletter: Option<NewsletterForward>,
+    pub warehouse: Option<WarehouseForward>,
+    /// The curators' Slack channel; none sends no notice.
+    pub slack: Option<curation::slack::Slack>,
+    pub links: curation::slack::Links,
+    /// The curators' forum; none posts nothing and answers 503.
+    pub forum: Option<curation::forum::Forum>,
+    /// Where a forum post's thumbnails link to.
+    pub builder_server_url: String,
     /// Who may read the answers from another origin.
     pub cors: cors::Cors,
     /// The node's bound of unpublished upload bytes, if not the default.
@@ -234,6 +263,11 @@ impl std::fmt::Debug for Settings {
             .field("admin_addresses", &self.admin_addresses)
             .field("admin_token", &self.admin_token.is_some())
             .field("newsletter", &self.newsletter)
+            .field("warehouse", &self.warehouse)
+            .field("slack", &self.slack)
+            .field("links", &self.links)
+            .field("forum", &self.forum)
+            .field("builder_server_url", &self.builder_server_url)
             .field("cors", &self.cors)
             .field("unpublished_max_bytes", &self.unpublished_max_bytes)
             .field("unpublished_max_files", &self.unpublished_max_files)
@@ -332,6 +366,69 @@ impl Settings {
             })
         })
         .transpose()?;
+        let warehouse = all_or_none([
+            ("WAREHOUSE_URL", &raw.warehouse_url),
+            ("WAREHOUSE_TOKEN", &raw.warehouse_token),
+        ])?
+        .map(|[url, token]| {
+            token_url("WAREHOUSE_URL", &url).map(|()| WarehouseForward {
+                url,
+                token,
+                context_prefix: non_empty(&raw.warehouse_context_prefix),
+            })
+        })
+        .transpose()?;
+        let slack = match (
+            non_empty(&raw.slack_bot_token),
+            non_empty(&raw.slack_curation_channel),
+        ) {
+            (Some(token), Some(channel)) => Some(curation::slack::Slack {
+                token,
+                channel,
+                api: curation::slack::API.to_string(),
+            }),
+            (None, Some(_)) => {
+                bail!(
+                    "SLACK_CURATION_CHANNEL is set without SLACK_BOT_TOKEN, the bot that posts to it"
+                )
+            }
+            _ => None,
+        };
+        let links = curation::slack::Links {
+            creators_url: non_empty(&raw.creators_url),
+            builder_url: non_empty(&raw.builder_url),
+        };
+        let forum = match all_or_none([
+            ("FORUM_URL", &raw.forum_url),
+            ("FORUM_API_KEY", &raw.forum_api_key),
+            ("FORUM_API_USERNAME", &raw.forum_api_username),
+            ("FORUM_CATEGORY", &raw.forum_category),
+        ])? {
+            Some([url, api_key, api_username, category]) => curation::forum::Forum::parse(
+                Some(url),
+                Some(api_key),
+                Some(api_username),
+                Some(category),
+            )?,
+            None => None,
+        };
+        let builder_server_url = non_empty(&raw.builder_server_url);
+        if forum.is_some() && builder_server_url.is_none() {
+            bail!(
+                "FORUM_URL is set without BUILDER_SERVER_URL, the origin of the thumbnails a topic shows"
+            );
+        }
+        for (name, url) in [
+            ("CREATORS_URL", &links.creators_url),
+            ("BUILDER_URL", &links.builder_url),
+            ("BUILDER_SERVER_URL", &builder_server_url),
+        ] {
+            if let Some(url) = url
+                && !url::Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+            {
+                bail!("{name} must be an http(s) URL");
+            }
+        }
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
         let admin_token = non_empty(&raw.admin_token);
         for (name, secret) in [("CATALYRST_BUILDER_ADMIN_TOKEN", &admin_token)] {
@@ -360,11 +457,16 @@ impl Settings {
             unpublished_max_bytes: raw.unpublished_max_bytes,
             unpublished_max_files: raw.unpublished_max_files,
             video_uploads_max: raw.video_uploads_max,
+            slack,
+            links,
+            forum,
+            builder_server_url: builder_server_url.unwrap_or_default(),
             writes_enabled: raw.writes_enabled,
             polygon_rpc_url,
             admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
             admin_token,
             newsletter,
+            warehouse,
         })
     }
 }
@@ -394,6 +496,8 @@ pub struct State {
     pub now: fn() -> chrono::DateTime<chrono::Utc>,
     /// What the Polygon RPC says of collection contracts, kept per contract.
     pub deployments: collections::deployment::Deployments,
+    /// The curators' Slack notices.
+    pub notices: curation::slack::Notices,
     /// The content sync's state: whether this process is its own content
     /// authority, so an item URN its content lacks is unused.
     pub content_sync: Arc<crate::content::SyncStatus>,
@@ -431,6 +535,7 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         settings: Settings,
     ) -> anyhow::Result<Self> {
+        let notices = curation::slack::Notices::new(settings.slack.clone(), settings.links.clone());
         let blobs = blobs
             .item_files()
             .cloned()
@@ -462,6 +567,7 @@ impl State {
             committee: committee::Committee::default(),
             now: chrono::Utc::now,
             deployments: collections::deployment::Deployments::default(),
+            notices,
             content_sync: Arc::default(),
             videos,
             file_uploads: items::places::Places::new(
@@ -496,12 +602,15 @@ impl State {
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "polygon_chain={} polygon_rpc={} collections_reader={} admins={} newsletter={}",
+            "polygon_chain={} polygon_rpc={} collections_reader={} admins={} newsletter={} warehouse={} slack={} forum={}",
             self.settings.network.chain_id,
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
             self.settings.admin_addresses.len(),
             self.settings.newsletter.is_some(),
+            self.settings.warehouse.is_some(),
+            self.settings.slack.is_some(),
+            self.settings.forum.is_some(),
         )
     }
 }
@@ -550,8 +659,31 @@ fn api_routes() -> Router<SharedState> {
             "/v1/collections/{id}",
             get(handlers::collections::get_collection)
                 .put(handlers::drafts::put_collection)
+                .delete(handlers::lifecycle::delete)
                 .layer(DefaultBodyLimit::max(LARGE_BODY_LIMIT)),
         )
+        .route("/v1/collections/{id}/lock", post(handlers::lifecycle::lock))
+        .route(
+            "/v1/collections/{id}/owner/sync",
+            post(handlers::lifecycle::owner_sync),
+        )
+        .route(
+            "/v1/collections/{id}/tos",
+            post(handlers::lifecycle::terms).layer(DefaultBodyLimit::max(LARGE_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/collections/{id}/publish",
+            post(handlers::lifecycle::publish).layer(DefaultBodyLimit::max(LARGE_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/collections/{id}/approvalData",
+            get(handlers::lifecycle::approval_data),
+        )
+        .route(
+            "/v1/collections/{id}/curation/post",
+            post(handlers::forum::reply),
+        )
+        .route("/v1/collections/{id}/post", post(handlers::forum::post))
         .route(
             "/v1/{address}/collections",
             get(handlers::collections::get_address_collections),
@@ -668,6 +800,96 @@ mod router_tests {
         );
     }
 
+    #[test]
+    fn an_integration_set_in_part_or_carrying_its_token_in_clear_refuses_to_start() {
+        let some = |v: &str| Some(v.to_string());
+        for (raw, named) in [
+            (
+                RawSettings {
+                    newsletter_service_url: some("https://newsletter.example/v2"),
+                    newsletter_publication_id: some("pub_1"),
+                    ..RawSettings::default()
+                },
+                "NEWSLETTER_SERVICE_API_KEY",
+            ),
+            (
+                RawSettings {
+                    warehouse_url: some("https://warehouse.example/events"),
+                    ..RawSettings::default()
+                },
+                "WAREHOUSE_TOKEN",
+            ),
+            (
+                RawSettings {
+                    slack_curation_channel: some("curation"),
+                    ..RawSettings::default()
+                },
+                "SLACK_BOT_TOKEN",
+            ),
+            (
+                RawSettings {
+                    forum_url: some("https://forum.example"),
+                    forum_api_key: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "FORUM_API_USERNAME",
+            ),
+            (
+                RawSettings {
+                    warehouse_url: some("http://warehouse.example/events"),
+                    warehouse_token: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "WAREHOUSE_URL",
+            ),
+            (
+                RawSettings {
+                    newsletter_service_url: some("http://newsletter.example/v2"),
+                    newsletter_publication_id: some("pub_1"),
+                    newsletter_api_key: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "NEWSLETTER_SERVICE_URL",
+            ),
+            (
+                RawSettings {
+                    newsletter_service_url: some("https://newsletter.example/v2"),
+                    newsletter_publication_id: some("pub_1/../admin"),
+                    newsletter_api_key: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "NEWSLETTER_PUBLICATION_ID",
+            ),
+            (
+                RawSettings {
+                    forum_url: some("http://forum.example"),
+                    forum_api_key: some("sk-example123"),
+                    forum_api_username: some("builder"),
+                    forum_category: some("12"),
+                    builder_server_url: some("https://builder-api.example"),
+                    ..RawSettings::default()
+                },
+                "FORUM_URL",
+            ),
+            (
+                RawSettings {
+                    forum_url: some("https://forum.example"),
+                    forum_api_key: some("sk-example123"),
+                    forum_api_username: some("builder"),
+                    forum_category: some("12"),
+                    ..RawSettings::default()
+                },
+                "BUILDER_SERVER_URL",
+            ),
+        ] {
+            let err = Settings::parse(raw).unwrap_err().to_string();
+            assert!(
+                err.contains(named) && !err.contains("sk-example123"),
+                "{named}: {err}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn the_video_places_setting_sizes_the_node_and_refuses_what_it_cannot_hold() {
         for refused in [0, MAX_VIDEO_UPLOADS_SETTING + 1] {
@@ -709,6 +931,15 @@ mod router_tests {
             newsletter_service_url: Some("https://newsletter.example/v2".into()),
             newsletter_publication_id: Some("pub-example".into()),
             newsletter_api_key: Some("sk-example-newsletter".into()),
+            warehouse_url: Some("https://warehouse.example/?key=sk-example-warehouse-url".into()),
+            warehouse_token: Some("sk-example-warehouse".into()),
+            slack_bot_token: Some("xoxb-example-slack".into()),
+            slack_curation_channel: Some("curation".into()),
+            forum_url: Some("https://forum.example".into()),
+            forum_api_key: Some("sk-example-forum".into()),
+            forum_api_username: Some("builder".into()),
+            forum_category: Some("7".into()),
+            builder_server_url: Some("https://builder-api.example".into()),
             ..RawSettings::default()
         })
         .unwrap();
@@ -717,8 +948,75 @@ mod router_tests {
             "sk-example-rpc",
             "sk-example-admin",
             "sk-example-newsletter",
+            "sk-example-warehouse",
+            "xoxb-example-slack",
+            "sk-example-forum",
         ] {
             assert!(!printed.contains(secret), "{secret} in {printed}");
         }
+    }
+
+    #[test]
+    fn the_warehouse_needs_its_url_and_token_and_a_public_url() {
+        let warehouse = |url: &str, token: Option<&str>, prefix: Option<&str>| {
+            Settings::parse(RawSettings {
+                warehouse_url: Some(url.into()),
+                warehouse_token: token.map(str::to_string),
+                warehouse_context_prefix: prefix.map(str::to_string),
+                ..RawSettings::default()
+            })
+        };
+        let forward = warehouse(
+            "https://warehouse.example/events",
+            Some("sk-example123"),
+            Some(" prd "),
+        )
+        .unwrap()
+        .warehouse
+        .unwrap();
+        assert_eq!(
+            (
+                forward.url.as_str(),
+                forward.token.as_str(),
+                forward.context_prefix.as_deref()
+            ),
+            (
+                "https://warehouse.example/events",
+                "sk-example123",
+                Some("prd")
+            )
+        );
+        assert!(warehouse("https://warehouse.example/events", None, None).is_err());
+        assert!(warehouse("https://warehouse.example/events", Some(" "), None).is_err());
+        assert!(
+            warehouse(
+                "https://warehouse.example/events",
+                Some("sk-example123"),
+                Some("")
+            )
+            .unwrap()
+            .warehouse
+            .unwrap()
+            .context_prefix
+            .is_none()
+        );
+        let settings = warehouse(
+            "https://warehouse.example/events?key=sk-example456",
+            Some("sk-example123"),
+            None,
+        )
+        .unwrap();
+        let printed = format!("{settings:?}");
+        assert!(
+            !printed.contains("sk-example123") && !printed.contains("sk-example456"),
+            "{printed}"
+        );
+        let err = warehouse("http://127.0.0.1/events", Some("sk-example123"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("WAREHOUSE_URL") && !err.contains("sk-example123"),
+            "{err}"
+        );
     }
 }

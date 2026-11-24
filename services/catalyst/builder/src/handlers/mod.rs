@@ -2,6 +2,8 @@
 
 pub mod collections;
 pub mod drafts;
+pub mod forum;
+pub mod lifecycle;
 pub mod newsletter;
 pub mod publication;
 pub mod small_reads;

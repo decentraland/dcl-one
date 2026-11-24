@@ -1836,6 +1836,44 @@ impl ThirdPartyPublish {
     }
 }
 
+/// [`publish_third_party`]'s decision again, inside the publish's
+/// transaction: the collection still of the provider, the signer still its
+/// manager.
+pub(crate) async fn confirm_third_party_publish(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    grant: &ThirdPartyPublish,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, grant.id, Some(&grant.registry)).await?;
+    if c.is_none_or(|c| {
+        c.provider.as_deref() != Some(grant.provider.as_str()) || !c.provider_manager(&grant.signer)
+    }) {
+        return Err(ApiError::unauthorized("Unauthorized to upsert collection")
+            .with_data(json!({ "id": grant.id, "eth_address": grant.signer })));
+    }
+    Ok(())
+}
+
+/// [`sync_collection`]'s decision again, inside the write's transaction: a
+/// role the rows decide, else a committee read that started after the
+/// decision.
+pub(crate) async fn confirm_collection_sync(
+    conn: &mut PgConnection,
+    view: &DecisionView,
+    state: &State,
+    sync: &CollectionSync,
+) -> Result<(), ApiError> {
+    let c = collection(conn, view, sync.id, providers(&sync.registry))
+        .await?
+        .ok_or_else(|| not_found(sync.id, COLLECTIONS))?;
+    if !c.role(&sync.signer)
+        && !(sync.committee && on_committee(state, Since::write(), &sync.signer).await?)
+    {
+        return Err(unauthorized_user(&sync.signer, COLLECTIONS, sync.id));
+    }
+    Ok(())
+}
+
 /// `builder-server`'s curation 404: no collection, or an item without one.
 fn curation_not_found(signer: &str) -> ApiError {
     ApiError::not_found("Not found").with_data(json!({ "ethAddress": signer }))

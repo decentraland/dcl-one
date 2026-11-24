@@ -885,6 +885,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading camera_reel.withheld_blobs")?;
     camera_reel.spawn_ranking_job(&jobs);
+    {
+        let builder = builder.clone();
+        jobs.spawn_periodic_leased(
+            "builder-terms-forward",
+            jobs::PeriodicCfg::every(Duration::from_secs(60)),
+            move |_ctx| {
+                let builder = builder.clone();
+                async move {
+                    builder::terms::forward_due(&builder).await?;
+                    Ok(())
+                }
+            },
+        );
+    }
     camera_reel::events::spawn_retention_job(&camera_reel, &jobs);
     tracing::info!(
         builder = %builder.sources_label(),
