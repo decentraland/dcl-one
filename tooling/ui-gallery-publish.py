@@ -747,13 +747,14 @@ def probe(env, request=answer, sleep=time.sleep):
 # --- comment --------------------------------------------------------------------------------------------------------
 
 # No response header keeps a page from a wallet extension, so the comment itself warns the reviewer.
-WALLET_WARNING = ("The preview runs this pull request's code on a host outside Decentraland's sites: never connect a "
-                  'wallet or sign anything there.')
+WALLET_WARNING = ("This preview runs this pull request's code outside Decentraland's sites: never connect a wallet "
+                  'or sign anything there.')
 
 
 def render(url, head, expires):
-    return (f'[Open the UI gallery]({url})\n\nBuilt from {head[:7]}, kept until {expires} (UTC).\n\n'
-            f'{WALLET_WARNING}\n\n{MARKER}\n')
+    return (f'### [Open the UI gallery]({url})\n\n'
+            f'| Built from | Available until |\n| --- | --- |\n| `{head[:7]}` | {expires} (UTC) |\n\n'
+            f'> [!WARNING]\n> {WALLET_WARNING}\n\n{MARKER}\n')
 
 
 def comment(env, github=None):
