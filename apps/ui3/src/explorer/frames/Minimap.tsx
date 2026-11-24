@@ -10,7 +10,7 @@ import ContextMenu from "../../components/ContextMenu";
 import { SceneFeedbackModal, SceneTipModal, useSceneOwner } from "../components/SceneOwnerActions";
 import RealmMap from "../pages/RealmMap";
 import MapSurface, { GRID_PARCELS, useMapView } from "../components/MapSurface";
-import { coordsToPercent } from "../../data/catalyst/places";
+import { coordsToPercent } from "@web-core/catalyst/places";
 import type { FriendPin } from "../../data/hooks/useFriendPins";
 import { realmMapBase } from "../../data/realmMap";
 import "./minimap.css";

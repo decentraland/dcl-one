@@ -65,11 +65,10 @@ mod tests {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                market,
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), market)
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -199,11 +198,10 @@ mod tests {
             Settings::for_tests(),
             Some(market.clone()),
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -1766,11 +1764,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -2192,11 +2189,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),

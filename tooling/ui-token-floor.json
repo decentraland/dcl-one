@@ -21,7 +21,7 @@
   },
   "apps/sites/src/features/components/chrome/SitesLayout.module.css": {
     "primitives": 0,
-    "tokens": 11
+    "tokens": 12
   },
   "apps/sites/src/features/components/chrome/SitesTopBar.module.css": {
     "primitives": 0,
@@ -29,7 +29,7 @@
   },
   "apps/sites/src/features/components/chrome/routepending.css": {
     "primitives": 0,
-    "tokens": 5
+    "tokens": 14
   },
   "apps/sites/src/features/create-landing/Carousel.module.css": {
     "primitives": 0,
@@ -334,10 +334,6 @@
   "apps/sites/src/features/creators/components/StepIndicator/StepIndicator.module.css": {
     "primitives": 0,
     "tokens": 10
-  },
-  "apps/sites/src/features/creators/components/SubNav/SubNav.module.css": {
-    "primitives": 0,
-    "tokens": 4
   },
   "apps/sites/src/features/creators/components/SuccessModal/SuccessModal.module.css": {
     "primitives": 0,

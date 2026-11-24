@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 37] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -49,6 +49,7 @@ const PREPARED_PENDING_STEPS: [&str; 37] = [
     "0056_signatures_rental_cancel_reason",
     "0057_worlds_thumbnail_alias_expiry",
     "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -70,8 +71,15 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     .unwrap()
 }
 
+fn expected_pending_steps() -> Vec<&'static str> {
+    PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain(["0060_shop_third_party_registry_index"])
+        .collect()
+}
+
 fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
-    assert_eq!(after.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(after.len(), before.len() + expected_pending_steps().len());
     for row in before {
         assert!(
             after.contains(row),
@@ -81,7 +89,7 @@ fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
     let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_pending_steps()
     );
     let steps = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL);
     for row in added {
@@ -648,7 +656,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps,
+        expected_pending_steps(),
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
@@ -1350,7 +1359,8 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .await
                 .unwrap();
         assert_eq!(
-            applied.steps, PREPARED_PENDING_STEPS,
+            applied.steps,
+            expected_pending_steps(),
             "only new main event-hook steps apply; historical 0020 never re-adds retired columns"
         );
         catalyst::db::bootstrap(pool).await.unwrap();

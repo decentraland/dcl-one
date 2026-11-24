@@ -19,11 +19,19 @@ The browser logic the web apps share, with no UI ([ADR](../../docs/adr/2026-11-1
 | `newsletter.ts` | The site newsletter subscription request |
 | `shop-chain-env.ts` | The Shop's chain selection from the build environment, with page overrides in development builds only |
 | `place-view.ts` | Whether a place has a thumbnail of its own, and the viewer's relation to a place |
-| `freshness/` | How old a cached copy is: its stamp, the older of two copies, a coarse duration and the per-section freshness model |
+| `freshness/` | How old a cached copy is: its stamp, the older of two copies, a coarse duration, the per-section freshness model and the page's store of the newest stamp per domain |
 | `flow-map/` | The node, edge and section model of the flow map and its statistics, and the Explorer's (`/play`) map built on it |
 | `status-copy.ts` | The copy and art of the HTTP error screens, shared by the Sites status page and the static error pages |
 | `creator-hub-host.ts` | The Creator Hub host contract: its paths, scope and the installed host |
 | `multiplayer-test/` | The Creator Hub multiplayer test: its lanes, launch rules and limits (`rules.ts`), the sidecar's run, report and event types with their normalizers (`types.ts`), and the client of the local sidecar (`sidecar.ts`) |
+| `catalyst/client.ts` | The catalyst HTTP client: node and service bases (Vite env, page globals or the node's own paths), JSON reads and writes, and its error. Signed requests through the engine bridge stay in ui3 |
+| `catalyst/rows.ts`, `catalyst/schemas/` | The row guards and the zod schemas of the places, events and backpack replies |
+| `catalyst/places.ts`, `catalyst/placesSchema.ts` | The place and category views and the places, worlds and categories reads |
+| `catalyst/events.ts` | The event views, their parsers and the events reads |
+| `catalyst/backpack.ts`, `catalyst/taxonomy.ts` | The wearables, emotes, equipped avatar and outfits reads and their views |
+| `screens/play.ts` | The `/play` screen contract: its section requests and the shape Sites renders and the HUD reads |
+| `publicImage.ts` | Rewrites marketing images to the site's own origin |
+| `format.ts` | Address truncation, a stable hue for a seed and the relative age of a date |
 
 ## Rules
 

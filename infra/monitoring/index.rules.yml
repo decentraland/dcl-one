@@ -1,0 +1,80 @@
+groups:
+  - name: catalyst-index
+    interval: 1m
+    rules:
+      - alert: CatalystIndexMetricsMissing
+        expr: |
+          absent(up{job="catalyst-index"})
+          or (catalyst_index_target_expected{job="catalyst-index"} == 1
+              unless on(cluster,job,instance) up{job="catalyst-index"})
+          or (up{job="catalyst-index"} unless (time() - catalyst_index_sample_timestamp_seconds{job="catalyst-index"} < 180))
+          or (up{job="catalyst-index"} == 0)
+        for: 5m
+        labels: {team: operators, severity: warning}
+        annotations:
+          summary: Index metrics are missing or the sampler has stopped
+      - alert: CatalystIndexSourceMetricsMissing
+        expr: |
+          (catalyst_index_lag_limit_blocks{job="catalyst-index"} unless (catalyst_index_lag_blocks{job="catalyst-index"} >= 0))
+          or ((catalyst_index_mirror_age_limit_seconds{job="catalyst-index"} or catalyst_index_lag_limit_blocks{job="catalyst-index"})
+              unless (catalyst_index_source_observed{job="catalyst-index"} == 1))
+        for: 5m
+        labels: {team: operators, severity: warning}
+        annotations:
+          summary: 'Missing cursor, mirror or chain head for {{ $labels.source }} on {{ $labels.network }}'
+      # Ignore an isolated unknown head, but expire the last valid comparison after four minutes.
+      - record: catalyst_index:last_valid_lag_blocks
+        expr: last_over_time((catalyst_index_lag_blocks{job="catalyst-index"} >= 0)[4m:1m])
+      - record: catalyst_index:behind_head_blocks
+        expr: |
+          (catalyst_index:last_valid_lag_blocks > catalyst_index_lag_limit_blocks)
+          unless (catalyst_index_held_at_stop == 1 or catalyst_index_quarantined == 1)
+      - alert: CatalystIndexLagging
+        expr: catalyst_index:behind_head_blocks
+        for: 5m
+        labels: {team: operators, severity: warning}
+        annotations:
+          summary: '{{ $labels.source }} on {{ $labels.network }} is outside its publishable block range'
+      - alert: CatalystIndexStalled
+        expr: |
+          catalyst_index:behind_head_blocks
+          and (changes(catalyst_index_last_block[2m]) == 0)
+        for: 15m
+        labels: {team: operators, severity: critical}
+        annotations:
+          summary: '{{ $labels.source }} on {{ $labels.network }} has stopped advancing while behind'
+      - alert: CatalystIndexQuarantined
+        expr: catalyst_index_quarantined{job="catalyst-index"} == 1
+        labels: {team: operators, severity: critical}
+        annotations:
+          summary: '{{ $labels.source }} on {{ $labels.network }} is quarantined'
+      - alert: CatalystIndexPublicationStale
+        expr: catalyst_index_fold_age_seconds{job="catalyst-index"} >= 7200
+        labels: {team: operators, severity: warning}
+        annotations:
+          summary: 'The published {{ $labels.source }} index on {{ $labels.network }} is at least two hours old'
+      - alert: CatalystIndexUnpublished
+        expr: |
+          ((catalyst_index_publication_expected{job="catalyst-index"} == 1)
+           and (catalyst_index:last_valid_lag_blocks <= catalyst_index_lag_limit_blocks))
+          unless ((catalyst_index_folded_block >= 0) and (catalyst_index_fold_age_seconds >= 0))
+        for: 30m
+        labels: {team: operators, severity: warning}
+        annotations:
+          summary: '{{ $labels.source }} on {{ $labels.network }} has stayed near the chain head for 30 minutes without a publication'
+      - alert: CatalystIndexMirrorLagging
+        expr: catalyst_index_mirror_age_seconds{job="catalyst-index"} > catalyst_index_mirror_age_limit_seconds
+        for: 5m
+        labels: {team: operators, severity: warning}
+        annotations:
+          summary: 'The last complete {{ $labels.source }} pass on {{ $labels.network }} exceeds its freshness budget'
+      - alert: CatalystIndexMirrorStalled
+        expr: |
+          ((catalyst_index_mirror_age_limit_seconds{job="catalyst-index"}
+            unless (catalyst_index_mirror_age_seconds <= catalyst_index_mirror_age_limit_seconds))
+           and (catalyst_index_source_observed == 1))
+          and (changes(catalyst_index_mirror_pages[2m]) == 0)
+        for: 15m
+        labels: {team: operators, severity: critical}
+        annotations:
+          summary: 'The {{ $labels.source }} mirror on {{ $labels.network }} has no fresh pass and its page count is stationary'

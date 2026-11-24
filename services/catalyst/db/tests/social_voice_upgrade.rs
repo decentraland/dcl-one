@@ -8,7 +8,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 37] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -46,6 +46,7 @@ const PREPARED_PENDING_STEPS: [&str; 37] = [
     "0056_signatures_rental_cancel_reason",
     "0057_worlds_thumbnail_alias_expiry",
     "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -236,11 +237,15 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         .execute(pool)
         .await
         .unwrap();
+    let expected_steps: Vec<_> = PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain(["0060_shop_third_party_registry_index"])
+        .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
         .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps, expected_steps,
         "only steps the prepared capture lacks run; recorded historical steps never replay"
     );
     let after: String = sqlx::query_scalar(facts_sql).fetch_one(pool).await.unwrap();
@@ -265,7 +270,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     );
     let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
         sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
-    assert_eq!(ledger.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(ledger.len(), before.len() + expected_steps.len());
     for row in &before {
         assert!(
             ledger.contains(row),
@@ -275,7 +280,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     let added: Vec<_> = ledger.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_steps
     );
     let embedded = schema_migrate::parse_steps(MIGRATIONS_SQL);
     for row in added {

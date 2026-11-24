@@ -8,6 +8,7 @@ use bevy::{
 };
 use common::{
     dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
+    inputs::MOVE_SET,
     sets::{PostUpdateSets, SceneSets},
     structs::{
         avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
@@ -27,13 +28,14 @@ use dcl_component::{
     DclReader, DclWriter, SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::{ComponentPosition, CrdtType};
+use input_manager::{InputManager, InputPriority};
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     IpfsAssetServer,
 };
 
 use scene_runner::{
-    initialize_scene::PARCEL_SIZE,
+    initialize_scene::{PortableScenes, PARCEL_SIZE},
     renderer_context::RendererSceneContext,
     update_world::{
         avatar_modifier_area::InputModifier,
@@ -102,6 +104,7 @@ impl Plugin for AvatarMovementPlugin {
                 resolve_collisions,
                 apply_impulses,
                 apply_movement,
+                record_own_movement,
                 record_ground_collider,
                 accumulate_movement_periods,
             )
@@ -756,6 +759,57 @@ fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState) {
     if dynamic_state.ground_height < 0.2 && dynamic_state.velocity.y <= 0.0 {
         dynamic_state.jump_time = -1.0;
     }
+}
+
+// Below this an impulse or force sum is no push: a zero `PhysicsCombinedForce` still sets
+// `external_velocity`.
+const NO_EXTERNAL_VELOCITY: f32 = 1e-3;
+
+// The player's own walking, for analytics: the controller's displacement after collisions, so
+// lifts, platforms and walls add nothing. Only a startup portable counts (launch-time, console or
+// server-hosted, which includes the default controller); a parcel scene's override, a smart
+// wearable or scene-spawned portable, a suppression, an impulse or force this frame, or no
+// movement input held leaves none.
+fn record_own_movement(
+    mut player: Query<
+        (
+            &mut AvatarDynamicState,
+            &ActivePlayerComponent<AvatarMovement>,
+        ),
+        With<PrimaryUser>,
+    >,
+    scenes: Query<&RendererSceneContext>,
+    portables: Res<PortableScenes>,
+    info: Res<AvatarMovementInfo>,
+    movement_control: Res<EngineMovementControl>,
+    input_manager: InputManager,
+) {
+    let Ok((mut dynamic_state, movement)) = player.single_mut() else {
+        return;
+    };
+    let startup_controller = scenes
+        .get(movement.scene())
+        .ok()
+        .filter(|ctx| ctx.is_portable)
+        .and_then(|ctx| portables.get(&ctx.hash))
+        .is_some_and(|source| source.is_startup());
+    let pushed = info
+        .0
+        .external_velocity
+        .is_some_and(|v| v.world_vec_to_vec3().length() > NO_EXTERNAL_VELOCITY);
+    // a zero request skips `apply_movement`'s solve, leaving `actual_velocity` stale
+    let own = startup_controller
+        && movement.component.velocity != Vec3::ZERO
+        && !movement_suppressed(&movement_control, movement)
+        && !pushed
+        && input_manager.get_analog(MOVE_SET, InputPriority::Scene) != Vec2::ZERO;
+    let velocity = info
+        .0
+        .actual_velocity
+        .filter(|_| own)
+        .map_or(Vec3::ZERO, |v| v.world_vec_to_vec3());
+    // `step_time` is this frame's delta, the one `actual_velocity` was divided by
+    dynamic_state.own_displacement = velocity * info.0.step_time;
 }
 
 // (scene entity, collider id) of collider player is standing on
