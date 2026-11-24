@@ -3528,15 +3528,10 @@ commits in between is never half-seen:
 - fresh: complete and `folded_at` within 30 minutes. Every other reader needs
   it on the networks it reads (wearables both, emotes Polygon), and the lists
   also need the items mirror's complete pass (`shop.mirror_state`); otherwise
-  they answer the `nft-index` envelope. The `/v1/orders` routes instead
-  answer 200: until the index is fresh on the networks the read names, their
-  v3 listings leg keeps only the Ethereum LAND and Estate registries'
-  listings, which the index never holds (it reads their `Update` logs, not
-  their transfers) and the guard never filters, and the
-  `x-listings-owner-check` header says `partial` (`checked` when the guard
-  ran, `unchecked` on a node that does not walk the index). Which contracts
-  the index holds is not read from `shop.nft`: a rewind deletes the rows of
-  the tokens it reaches, so a sold token's collection could look unindexed.
+  they answer the `nft-index` envelope. The `/v1/orders` routes follow the
+  same rule, and their legacy orders are the index's too (see "Legacy
+  Marketplace orders"); the `x-listings-owner-check` header says `checked`
+  when the guard ran, `unchecked` on a node that does not walk the index.
 
 Queries, all bounded by one owner or one batch:
 
@@ -3715,3 +3710,53 @@ CREATE INDEX CONCURRENTLY nft_ens_label_idx
 ```
 
 Its size and the lookup time on production data are unmeasured.
+
+## Legacy Marketplace orders
+
+`shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,
+`/v1/orders/open-by-items` (and credits pricing through it) and the activity
+feed's orders leg on a node that walks the nft index. It is one row per
+`OrderCreated` of the Marketplace contracts the nft walk takes in, folded
+from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
+in the nft fold's transaction, so it is published with the ownership it is
+read beside. The shop writes and reads it; no other area does.
+
+Invariants:
+
+- The row of an order is a deterministic function of its token's order logs:
+  the latest creation of the id, sold or cancelled by the event naming the
+  id, otherwise cancelled by the token's next creation on either
+  Marketplace of the network, otherwise open. `expires_at` is milliseconds,
+  the log's normalised value.
+- A fold rewrites every order of each token an order event past its marker
+  touched, over the token's whole history, and leaves an unchanged row
+  alone. A rebuild (`since = -1`) folds every token.
+- A reorg rewind deletes the orders of the tokens whose events it deletes,
+  in its own transaction, and clears the publish marker; the rebuild that
+  follows restores the orders whose creation remains.
+- `transferred` is not stored: a reader derives it on its snapshot from the
+  token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
+  estates), and serves only the orders of a mirrored collection, the LAND
+  and Estate registries and the DCLRegistrar.
+- A database that predates the table fills it in the schema run that creates
+  it: the seed statement after its `CREATE TABLE` (a follow-up, so it runs
+  only then) applies the fold's rules to every token of both networks.
+
+Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
+nft cursor (fresh on the networks read) and, when an open LAND or estate
+order could be answered, the land-authz cursor; each statement is bounded by
+the `/v1/nfts` statement timeout:
+
+- the page: the filters, a sort (`created_at`, `updated_at`, `price` or
+  `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
+  of the same snapshot;
+- the total: a count capped at 5,000, or at the deep window for a deeper
+  page;
+- open-by-items: per contract, its open orders cheapest first
+  (`legacy_order_open_idx`), up to `perContract`.
+
+Indexes: `legacy_order_token_idx` (the fold's and the rewind's per-token
+rewrite, a token filter), `legacy_order_seller_idx` (an owner's orders
+newest first), `legacy_order_buyer_idx` (the orders a buyer filled),
+`legacy_order_created_idx` (the newest-first window with no filter) and
+`legacy_order_open_idx` (a contract's open orders by price).

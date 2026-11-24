@@ -14,7 +14,8 @@
 //! the chain's position, appended with its cursor advance
 //! (`chain_walk::run_pass`), and folded into `shop.nft` (owner = the
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
-//! legacy order event per token) and `land_data` (the latest Update per
+//! legacy order event per token), `legacy_order` (every legacy order,
+//! `legacy_orders`) and `land_data` (the latest Update per
 //! token), each a deterministic function of the log: a touched key is
 //! refolded over its whole history (for `land_data` the window is enough: a
 //! touched token's latest Update is in it), `since = None` rebuilds.
@@ -525,6 +526,8 @@ const BACKFILLS_OWED_SQL: &str = "SELECT count(*) FROM shop.nft_contract WHERE n
 pub struct FoldCounts {
     pub nfts: u64,
     pub orders: u64,
+    /// The rows of `shop.legacy_order` written (`legacy_orders`).
+    pub legacy_orders: u64,
     pub land_data: u64,
     /// The contracts whose backfill the lane still owes, counted in the
     /// fold's transaction.
@@ -590,6 +593,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    let legacy_orders = super::legacy_orders::fold(&mut tx, net, since).await?;
     let land_data = if net == ChainNet::Ethereum {
         fold_land_data(&mut tx, since).await?
     } else {
@@ -620,6 +624,7 @@ pub async fn fold(
     Ok(FoldCounts {
         nfts,
         orders,
+        legacy_orders,
         land_data,
         backfills_owed,
     })
@@ -967,6 +972,7 @@ impl ChainIndex for NftIndex {
         .bind(&tokens)
         .execute(&mut *conn)
         .await?;
+        super::legacy_orders::rewind(&mut *conn, self.net, &contracts, &tokens).await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
         // keys with a remaining Update: a key whose Updates were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below
@@ -1015,6 +1021,7 @@ impl ChainIndex for NftIndex {
             network = self.net.db_name(),
             nfts = counts.nfts,
             orders = counts.orders,
+            legacy_orders = counts.legacy_orders,
             land_data = counts.land_data,
             "nft index: folded"
         );

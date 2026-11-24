@@ -1225,7 +1225,30 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // The readers: canned subgraph rows merged with the mirror legs.
     let now_s = chrono::Utc::now().timestamp();
     let far = (now_s + 86_400 * 30) * 1000;
-    up.set("orders", vec![json!({ "id": "legacy-order-1", "marketplaceAddress": "0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539", "nftAddress": c_nft, "tokenId": "5", "owner": WALLET_A, "buyer": null, "price": "1000000000000000000", "status": "open", "expiresAt": far.to_string(), "createdAt": (now_s - 100).to_string(), "updatedAt": (now_s - 100).to_string(), "nft": { "issuedId": "5" } })]);
+    // The legacy order book is the nft index's on this walking node: the
+    // order sits in `shop.legacy_order`, and its contract is a collection
+    // the node serves (kept only around the order routes below).
+    sqlx::query(
+        "INSERT INTO shop.collections SELECT (jsonb_populate_record(NULL::shop.collections, to_jsonb(c) \
+           || jsonb_build_object('contract_address', $2::text))).* FROM shop.collections c WHERE c.network = 'matic' AND c.contract_address = $1",
+    )
+    .bind(&c1)
+    .bind(&c_nft)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status, \
+             created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+         VALUES ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'legacy-order-1', $1, 5, $2, 1000000000000000000, $3, 'open', 1, 0, $4, 1, 0, $4)",
+    )
+    .bind(&c_nft)
+    .bind(WALLET_A)
+    .bind(far)
+    .bind(now_s - 100)
+    .execute(&pool)
+    .await
+    .unwrap();
     up.set("bids", vec![json!({ "id": "legacy-bid-1", "bidAddress": "0xb1d", "nftAddress": c_nft, "tokenId": "5", "bidder": WALLET_B, "seller": WALLET_A, "price": "2000000000000000000", "fingerprint": "0x", "status": "open", "blockchainId": "bid-1", "blockNumber": "1", "expiresAt": far.to_string(), "createdAt": (now_s - 1000).to_string(), "updatedAt": (now_s - 1000).to_string() })]);
     let sale = |i: i64| json!({ "id": format!("sale-{i}"), "type": if i % 2 == 0 { "mint" } else { "order" }, "buyer": WALLET_B, "seller": if i % 2 == 0 { CREATOR } else { WALLET_A }, "price": "5000000000000000000", "timestamp": (now_s - 3600 * i).to_string(), "txHash": format!("0xtx{i}"), "searchContractAddress": c1, "searchItemId": "1", "searchTokenId": "77", "searchCategory": "wearable", "item": { "id": format!("{c1}-1"), "creator": CREATOR } });
     up.set("sales", (1..=6).map(sale).collect());
@@ -1324,6 +1347,11 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         body["total"], "1",
         "only the token whose id encodes item 2: {body}"
     );
+    sqlx::query("DELETE FROM shop.collections WHERE network = 'matic' AND contract_address = $1")
+        .bind(&c_nft)
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, body) = get(app(), "/v1/bids?sortBy=most_expensive").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let results = body["data"]["results"].as_array().unwrap();
@@ -3409,9 +3437,10 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
 /// another address holds (even while the signer holds another copy of the
 /// item) or nobody holds (burned) drops out, and a token the index does not
 /// hold (LAND, an estate, a collection outside the mirror) passes. Until the
-/// index is published the leg is empty, never unguarded; a node that does
-/// not walk the index has no guard and serves every open listing, whatever
-/// rows its `shop.nft` holds.
+/// index is published on every network the read names, the leg answers the
+/// unavailable envelope, never unguarded or partial; a node that does not
+/// walk the index has no guard and serves every open listing, whatever rows
+/// its `shop.nft` holds.
 #[tokio::test]
 async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     let up = FakeGraph::new();
@@ -3501,12 +3530,14 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         ids.sort();
         ids
     };
-    let (unpublished, check) = super::orders::trades_leg(&state, &open).await.unwrap();
-    assert_eq!(check, OwnerCheck::Partial);
+    let unavailable = |r: Result<
+        (Vec<super::orders::Keyed>, OwnerCheck),
+        axum::response::Response,
+    >| { r.err().map(|resp| resp.status()) };
     assert_eq!(
-        ids_of(unpublished),
-        vec![land.clone()],
-        "an unpublished index serves only the LAND and Estate registries' listings: the guard passes those anyway, and a contract merely absent from the index is not one of them"
+        unavailable(super::orders::trades_leg(&state, &open).await),
+        Some(StatusCode::SERVICE_UNAVAILABLE),
+        "an unpublished index answers the envelope"
     );
     let not_walking = std::sync::Arc::new(super::MarketplaceState::new(
         pool.clone(),
@@ -3539,11 +3570,10 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         Duration::ZERO,
     )
     .await;
-    let (rows, check) = super::orders::trades_leg(&state, &open).await.unwrap();
     assert_eq!(
-        (ids_of(rows), check),
-        (vec![land.clone()], OwnerCheck::Partial),
-        "a read of both networks waits for Ethereum to guard the indexed contracts"
+        unavailable(super::orders::trades_leg(&state, &open).await),
+        Some(StatusCode::SERVICE_UNAVAILABLE),
+        "a read of both networks waits for Ethereum"
     );
     let matic = super::orders::OrderFilters {
         network: Some(super::wire::Network::Matic),
@@ -3575,9 +3605,12 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
 }
 
 /// A listing the guard drops (its signer sold the token) stays out on both
-/// order routes while a rewind has deleted the token's row and withdrawn
-/// the index, and after the refill publishes it again; the LAND registry's
-/// listing, which the guard never filters, is served throughout.
+/// order routes once the index is published; while a rewind has deleted
+/// the token's row and withdrawn the index both routes answer the
+/// unavailable envelope instead of serving it unguarded, and after the
+/// refill publishes it again it still drops out. The LAND registry's
+/// listing, which the guard never filters, is served whenever the routes
+/// answer.
 #[tokio::test]
 async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
     use super::orders::OwnerCheck;
@@ -3658,6 +3691,26 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
             "0".to_string(),
         ),
     ];
+    // The LAND index is ready: the open LAND orders the routes may answer
+    // are checked against it.
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
+        .bind(crate::land_authz::LAND_REGISTRY_MAINNET)
+        .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let withdrawn = || async {
+        (
+            super::orders::list_orders_checked(&state, &open)
+                .await
+                .err()
+                .map(|r| r.status()),
+            super::orders::open_orders_by_items_checked(&state, &items, 10)
+                .await
+                .err()
+                .map(|r| r.status()),
+        )
+    };
     let routes = || async {
         let (orders, _, listed) = super::orders::list_orders_checked(&state, &open)
             .await
@@ -3693,15 +3746,281 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
     .await
     .unwrap();
     assert_eq!(
-        routes().await,
-        want(OwnerCheck::Partial),
-        "rewound: {sold} stays out although its token has no row"
+        withdrawn().await,
+        (
+            Some(StatusCode::SERVICE_UNAVAILABLE),
+            Some(StatusCode::SERVICE_UNAVAILABLE)
+        ),
+        "rewound: the routes answer the envelope, never {sold} unguarded"
     );
     fold().await;
     assert_eq!(
         routes().await,
         want(OwnerCheck::Checked),
         "refilled: {sold} still drops out"
+    );
+    own.drop().await;
+}
+
+/// The legacy order book of a walking node is `shop.legacy_order` on one
+/// snapshot: only the orders of the contracts it serves (a collection, the
+/// LAND and Estate registries, names), an open order whose seller no longer
+/// holds the token reading `transferred` (its owner in `shop.nft`, or in
+/// `land_authz.token_right` for LAND), the unavailable envelope naming the
+/// nft index while it is not published on a network the read names, and
+/// the land-authz index's while it is not ready for a read that could
+/// answer an open LAND order.
+#[tokio::test]
+async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let (c, stray) = (contract_of(&t, 1), contract_of(&t, 2));
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase();
+    let (m_eth, m_matic) = (
+        super::nft_index::legacy_marketplaces(super::chain_walk::ChainNet::Ethereum)[0].0,
+        super::nft_index::legacy_marketplaces(super::chain_walk::ChainNet::Matic)[1].0,
+    );
+    let token = |item: u64, issued: u64| {
+        (alloy_primitives::U256::from(item) << 216u32 | alloy_primitives::U256::from(issued))
+            .to_string()
+    };
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         SELECT 'matic', $1, 137, 'Pirates', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let far = (chrono::Utc::now().timestamp() + 86_400) * 1000;
+    let order = |network: &'static str,
+                 market: &'static str,
+                 id: &'static str,
+                 contract: String,
+                 token: String,
+                 seller: &'static str,
+                 price: i64,
+                 created: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status, \
+                     created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, 'open', $9, 0, $9, $9, 0, $9)",
+            )
+            .bind(network)
+            .bind(market)
+            .bind(id)
+            .bind(contract)
+            .bind(token)
+            .bind(seller)
+            .bind(price)
+            .bind(far)
+            .bind(created)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    // held: the seller still holds it; moved: the index holds it elsewhere;
+    // parcel / parcel_moved: LAND, checked on the land index; stray: a
+    // contract the node does not serve.
+    order(
+        "matic",
+        m_matic,
+        "held",
+        c.clone(),
+        token(3, 1),
+        WALLET_A,
+        30,
+        1_000,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "moved",
+        c.clone(),
+        token(3, 2),
+        WALLET_A,
+        20,
+        1_001,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "parcel",
+        land.clone(),
+        "77".into(),
+        WALLET_A,
+        10,
+        1_002,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "parcel_moved",
+        land.clone(),
+        "78".into(),
+        WALLET_A,
+        40,
+        1_003,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "stray",
+        stray.clone(),
+        "5".into(),
+        WALLET_A,
+        5,
+        1_004,
+    )
+    .await;
+    for (issued, owner) in [(1, WALLET_A), (2, WALLET_B)] {
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2::numeric, $3, 3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(&c)
+        .bind(token(3, issued))
+        .bind(owner)
+        .bind(issued as i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let app = || market_router(state.clone());
+    let ids = |body: &Value| -> Vec<(String, String)> {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| {
+                (
+                    o["id"].as_str().unwrap().to_string(),
+                    o["status"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    // Not published: the envelope, never a partial page.
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    // Polygon alone needs no LAND index.
+    let (status, body) = get(app(), "/v1/orders?network=MATIC&sortBy=cheapest").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("moved".to_string(), "transferred".to_string()),
+            ("held".to_string(), "open".to_string())
+        ],
+        "the stray contract is not served: {body}"
+    );
+    assert_eq!(body["total"], "2", "{body}");
+    assert_eq!(
+        (
+            body["data"][1]["issuedId"].as_str(),
+            body["data"][1]["owner"].as_str(),
+            body["data"][1]["tradeId"].as_str(),
+            body["data"][1]["chainId"].as_i64()
+        ),
+        (Some("1"), Some(WALLET_A), Some(""), Some(137))
+    );
+    // An open LAND order could be answered: the LAND index must be ready.
+    let (status, body) = get(app(), "/v1/orders?status=open").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "{body}"
+    );
+    let (status, body) = get(app(), "/v1/orders?status=sold").await;
+    assert_eq!(
+        (status, body["total"].as_str()),
+        (StatusCode::OK, Some("0")),
+        "a sold order needs no LAND owner: {body}"
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+         VALUES ('ethereum-mainnet', '{land}', '{estate}', 1, 1, timezone('UTC', now()), true); \
+         INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES \
+            ('{land}', 77, 0, 77, '{WALLET_A}', 1, 0), ('{land}', 78, 0, 78, '{WALLET_B}', 1, 1)",
+        estate = crate::land_authz::ESTATE_REGISTRY_MAINNET.to_lowercase(),
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), "/v1/orders?sortBy=oldest").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("held".to_string(), "open".to_string()),
+            ("moved".to_string(), "transferred".to_string()),
+            ("parcel".to_string(), "open".to_string()),
+            ("parcel_moved".to_string(), "transferred".to_string()),
+        ],
+        "{body}"
+    );
+    assert_eq!(
+        (
+            body["data"][2]["network"].as_str(),
+            body["data"][2]["issuedId"].clone()
+        ),
+        (Some("ETHEREUM"), Value::Null)
+    );
+    let (_, body) = get(app(), "/v1/orders?status=open").await;
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("parcel".to_string(), "open".to_string()),
+            ("held".to_string(), "open".to_string())
+        ],
+        "open, newest first, leaves out a listing whose seller lost the token: {body}"
+    );
+    let (_, body) = get(app(), "/v1/orders?status=transferred&network=ETHEREUM").await;
+    assert_eq!(
+        ids(&body),
+        vec![("parcel_moved".to_string(), "transferred".to_string())],
+        "{body}"
+    );
+    let (_, body) = get(
+        app(),
+        &format!("/v1/orders?contractAddress={c}&itemId=3&status=open"),
+    )
+    .await;
+    assert_eq!(
+        ids(&body),
+        vec![("held".to_string(), "open".to_string())],
+        "{body}"
+    );
+    let (status, body) = get(app(), &format!("/v1/orders/open-by-items?item={c}-3")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![("held".to_string(), "open".to_string())],
+        "{body}"
     );
     own.drop().await;
 }

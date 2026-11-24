@@ -548,6 +548,92 @@ CREATE TABLE shop.nft_order (
 -- the estate stats): WHERE status = 'open' AND expires_at > $now.
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
 
+-- Every legacy Marketplace order ever created, one row per order (the order
+-- book of /v1/orders, /v1/orders/open-by-items and the activity orders
+-- leg), folded from `shop.nft_event` in the nft fold's transaction
+-- (services/catalyst/shop/src/market/legacy_orders.rs) with the subgraphs'
+-- rules: an OrderCreated opens the order; the OrderSuccessful or
+-- OrderCancelled naming its id marks it sold (with the buyer and the price
+-- paid) or cancelled; a later OrderCreated on the same token, on either
+-- Marketplace of the network, cancels it unless one of those follows. The
+-- latest creation of an id is the order. `open` is the folded state: a
+-- reader reports an open order whose seller no longer holds the token as
+-- `transferred`, and keeps only the orders of contracts it serves.
+-- expires_at is milliseconds (the log's normalised value), the times unix
+-- seconds. Workload: one row per OrderCreated (`DATABASE.md` "Legacy
+-- Marketplace orders"); a fold rewrites the orders of the tokens an order
+-- event past its marker touched, a rewind deletes them and the rebuild that
+-- follows restores them.
+CREATE TABLE shop.legacy_order (
+    network text NOT NULL,
+    marketplace_address varchar(42) NOT NULL,
+    order_id text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    seller varchar(42) NOT NULL,
+    buyer varchar(42),
+    price numeric(78,0) NOT NULL,
+    expires_at bigint NOT NULL,
+    status text NOT NULL,
+    created_block bigint NOT NULL,
+    created_log integer NOT NULL,
+    created_at bigint NOT NULL,
+    updated_block bigint NOT NULL,
+    updated_log integer NOT NULL,
+    updated_at bigint NOT NULL,
+    PRIMARY KEY (network, marketplace_address, order_id),
+    CONSTRAINT legacy_order_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT legacy_order_status_known CHECK (status IN ('open', 'sold', 'cancelled')),
+    CONSTRAINT legacy_order_price_nonneg CHECK (price >= 0)
+);
+
+-- A database that predates the table fills it from the log in the run that
+-- creates it, so no reader finds it empty under a published nft cursor: the
+-- fold's rules (legacy_orders::FOLD_SQL) over every token of both networks.
+INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
+    created_block, created_log, created_at, updated_block, updated_log, updated_at)
+WITH events AS (
+    SELECT network, contract_address, token_id, block_number, log_index, block_time, kind, emitter, detail, from_address, to_address, amount, expires_at
+    FROM shop.nft_event
+    WHERE kind IN ('order_created', 'order_successful', 'order_cancelled') AND detail IS NOT NULL
+), created AS (
+    SELECT DISTINCT ON (c.network, c.emitter, c.detail) c.*
+    FROM (
+        SELECT e.*, lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
+        FROM events e WHERE e.kind = 'order_created'
+        WINDOW w AS (PARTITION BY e.network, e.contract_address, e.token_id ORDER BY e.block_number, e.log_index)
+    ) c
+    ORDER BY c.network, c.emitter, c.detail, c.block_number DESC, c.log_index DESC
+), terminal AS (
+    SELECT DISTINCT ON (e.network, e.emitter, e.detail) e.network, e.emitter, e.detail, e.kind, e.to_address, e.amount, e.block_number, e.log_index, e.block_time
+    FROM events e WHERE e.kind <> 'order_created'
+    ORDER BY e.network, e.emitter, e.detail, e.block_number DESC, e.log_index DESC
+)
+SELECT c.network, c.emitter, c.detail, c.contract_address, c.token_id,
+       COALESCE(c.from_address, '0x0000000000000000000000000000000000000000'),
+       CASE WHEN t.kind = 'order_successful' THEN t.to_address END,
+       CASE WHEN t.kind = 'order_successful' THEN COALESCE(t.amount, c.amount, 0) ELSE COALESCE(c.amount, 0) END,
+       COALESCE(c.expires_at, 0),
+       CASE WHEN t.kind = 'order_successful' THEN 'sold' WHEN t.kind = 'order_cancelled' OR c.next_block IS NOT NULL THEN 'cancelled' ELSE 'open' END,
+       c.block_number, c.log_index, c.block_time,
+       COALESCE(t.block_number, c.next_block, c.block_number), COALESCE(t.log_index, c.next_log, c.log_index), COALESCE(t.block_time, c.next_time, c.block_time)
+FROM created c
+LEFT JOIN terminal t ON (t.network, t.emitter, t.detail) = (c.network, c.emitter, c.detail)
+    AND (t.block_number, t.log_index) > (c.block_number, c.log_index);
+
+-- A token's orders: the fold's and the rewind's per-token rewrite, and
+-- /v1/orders?contractAddress=&tokenId=.
+CREATE INDEX legacy_order_token_idx ON shop.legacy_order (network, contract_address, token_id);
+-- An owner's orders, newest first (/v1/orders?owner=, the activity orders leg).
+CREATE INDEX legacy_order_seller_idx ON shop.legacy_order (seller, created_at DESC);
+-- The orders a buyer filled (/v1/orders?buyer=, the activity orders leg).
+CREATE INDEX legacy_order_buyer_idx ON shop.legacy_order (buyer) WHERE buyer IS NOT NULL;
+-- The newest-first window over every order (/v1/orders without a filter).
+CREATE INDEX legacy_order_created_idx ON shop.legacy_order (created_at DESC);
+-- A contract's open orders cheapest first (/v1/orders/open-by-items and
+-- /v1/orders?contractAddress=&status=open).
+CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
+
 -- LAND and estate names and descriptions, folded from the registries'
 -- Update(assetId, holder, operator, data) logs: the latest one decides; the
 -- data string is the registries' CSV (`0,"name","description"`), anything

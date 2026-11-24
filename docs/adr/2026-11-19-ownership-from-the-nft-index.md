@@ -45,15 +45,11 @@ transaction as its rows. Two rules:
   on the networks they read (wearables both, emotes Polygon), and the lists
   also the items mirror's first complete pass; otherwise they answer the
   `nft-index` unavailable envelope. `/v1/orders` and
-  `/v1/orders/open-by-items` are the exception: while the index does not
-  meet the rule their v3 listings leg keeps only the Ethereum LAND and
-  Estate registries' listings, contracts the index never holds and the
-  owner guard never filters, so no listing the guard could drop is served
-  unguarded, and the legacy orders still answer with status 200. The total
-  counts what is served. That set is fixed, not read from `shop.nft`: a
-  rewind deletes the rows of the tokens it reaches, so a sold token's
-  collection could otherwise pass for one the index does not hold. The `x-listings-owner-check` response header names the case:
-  `checked` (the guard ran), `partial` (this one) or `unchecked` (below).
+  `/v1/orders/open-by-items` follow the same rule, and read their legacy
+  orders from the index too
+  ([legacy orders from the nft index](2026-11-24-legacy-orders-from-the-nft-index.md)).
+  The `x-listings-owner-check` response header names the case: `checked`
+  (the guard ran) or `unchecked` (below).
 
 Neither rule compares `folded_block` with `last_block`: each pass advances
 `last_block` before it folds and publishes, so that equality is false for part
