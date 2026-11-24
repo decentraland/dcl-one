@@ -35,9 +35,16 @@ on:
       - 'apps/ui3/src/shop/land/**'
       - 'apps/ui3/src/explorer/components/MapSurface.tsx'
       - 'apps/ui3/src/explorer/components/mapsurface.css'
-      - 'apps/ui3/src/data/**'
+      - 'apps/ui3/src/data/site.ts'
+      - 'apps/ui3/src/data/catalyst/client.ts'
+      - 'apps/ui3/src/data/catalyst/landListing.ts'
       - 'apps/ui3/src/generated/bridge/**'
-      - 'library/shop/**'
+      - 'library/shop/checkout/chain/selection.ts'
+      - 'library/shop/land/contracts.ts'
+      - 'library/shop/model/address.ts'
+      - 'library/shop/model/chain.ts'
+      - 'library/shop/model/decimal.ts'
+      - 'library/shop/model/money.ts'
       - 'library/web-core/shop-chain-env.ts'
       - 'library/web-core/site.ts'
       - '.github/workflows/creator-hub-*'
@@ -92,6 +99,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
           ACTION: ${{ github.event.action }}
+          EVENT_AT: ${{ github.event.pull_request.updated_at }}
           PR: ${{ github.event.pull_request.number }}
         run: python3 tooling/creator-hub-ci.py plan
       - name: Take the e2e label off the pushed commit

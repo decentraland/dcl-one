@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       actions: write
+      pull-requests: read
     steps:
       - name: Run Creator Hub CI again on the pull request's head
         env:

@@ -2,6 +2,7 @@
 """Decide which Creator Hub e2e suites a pull request requires, and whether its label runs them."""
 import argparse
 from dataclasses import dataclass, field
+from datetime import datetime
 import importlib.util
 import json
 import os
@@ -137,16 +138,26 @@ def _spec_args(specs):
     return ' '.join(sorted(specs))
 
 
-def plan(event, action, attempt, changed, labels, selection, impact, importers):
-    """Outputs for the workflow: what to run and what the `Creator Hub e2e` status says."""
+def _added_after(labelled_at, event_at):
+    if not labelled_at or not event_at:
+        return False
+    moment = lambda value: datetime.fromisoformat(value.replace('Z', '+00:00'))
+    return moment(labelled_at) > moment(event_at)
+
+
+def plan(event, action, changed, labels, selection, impact, importers, labelled_at=None, event_at=None):
+    """Outputs for the workflow: what to run and what the `Creator Hub e2e` status says.
+
+    A push or a reopen at `event_at` takes off a label added at `labelled_at` before it.
+    """
     label = selection['label']
     if event != 'pull_request':
         return {'creator-hub': 'true', 'required': 'true', 'run': 'true', 'inspector': 'true',
                 'inspector-specs': '', 'creator-hub-offline': 'true', 'creator-hub-live': 'true',
                 'remove-label': 'false', 'state': 'pending', 'description': 'Running every suite', 'rows': []}
     required = resolve(changed, selection, impact, importers)
-    pushed = action in ('synchronize', 'reopened') and int(attempt) == 1
-    labelled = label in labels and not pushed
+    stale = label in labels and action in ('synchronize', 'reopened') and not _added_after(labelled_at, event_at)
+    labelled = label in labels and not stale
     needed = bool(required.inspector or required.offline or required.live)
     run = needed and labelled
     if not needed:
@@ -161,7 +172,7 @@ def plan(event, action, attempt, changed, labels, selection, impact, importers):
         'inspector': flag(run and required.inspector),
         'inspector-specs': _spec_args(required.inspector),
         'creator-hub-offline': flag(run and required.offline), 'creator-hub-live': flag(run and required.live),
-        'remove-label': flag(pushed and label in labels),
+        'remove-label': flag(stale),
         'state': 'pending' if needed else 'success', 'description': description[:STATUS_LIMIT],
         'rows': required.rows,
     }
@@ -179,6 +190,13 @@ def _labels(repo, number):
     return out.split()
 
 
+def _labelled_at(repo, number, label):
+    out = subprocess.check_output(['gh', 'api', '--paginate', f'repos/{repo}/issues/{number}/events', '--jq',
+                                   f'.[] | select(.event == "labeled" and .label.name == "{label}") | .created_at'],
+                                  text=True)
+    return max(out.split(), default=None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['plan'])
@@ -189,10 +207,12 @@ def main():
     pull_request = event == 'pull_request'
     impact = json.loads(args.impact_map.read_text()) if args.impact_map and args.impact_map.is_file() else None
     selection = load_selection()
-    out = plan(event, env.get('ACTION', ''), env.get('GITHUB_RUN_ATTEMPT', '1'),
-               _changed(env['BASE'], env['HEAD']) if pull_request else [],
-               _labels(env['GITHUB_REPOSITORY'], env['PR']) if pull_request else [],
-               selection, impact, e2e_importers(selection))
+    labels = _labels(env['GITHUB_REPOSITORY'], env['PR']) if pull_request else []
+    labelled_at = (_labelled_at(env['GITHUB_REPOSITORY'], env['PR'], selection['label'])
+                   if selection['label'] in labels else None)
+    out = plan(event, env.get('ACTION', ''), _changed(env['BASE'], env['HEAD']) if pull_request else [],
+               labels, selection, impact, e2e_importers(selection),
+               labelled_at=labelled_at, event_at=env.get('EVENT_AT'))
     rows = out.pop('rows')
     with open(env['GITHUB_OUTPUT'], 'a') as output:
         output.writelines(f'{key}={value}\n' for key, value in out.items())

@@ -1,6 +1,8 @@
 """Creator Hub e2e selection: what a pull request's changes require, and when the label runs it."""
 import importlib.util
+import json
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
@@ -21,9 +23,12 @@ def resolve(*changed, impact=None):
     return ci.resolve(list(changed), ci.load_selection(), impact, ci.e2e_importers())
 
 
-def pull_request(*changed, labels=(), action='opened', attempt=1, impact=None):
-    return ci.plan('pull_request', action, attempt, list(changed), list(labels), ci.load_selection(), impact,
-                   ci.e2e_importers())
+PUSHED_AT = '2026-11-24T12:00:00Z'
+
+
+def pull_request(*changed, labels=(), action='opened', labelled_at=None, event_at=PUSHED_AT, impact=None):
+    return ci.plan('pull_request', action, list(changed), list(labels), ci.load_selection(), impact,
+                   ci.e2e_importers(), labelled_at=labelled_at, event_at=event_at)
 
 
 class SelectionTest(unittest.TestCase):
@@ -96,9 +101,11 @@ class SelectionTest(unittest.TestCase):
                 got = resolve(path)
                 self.assertEqual((got.creator_hub, got.offline), (True, True))
 
-    def test_shop_checkout_files_the_renderer_never_reaches_are_not_creator_hub_changes(self):
+    def test_shop_and_data_files_the_renderer_never_reaches_are_not_creator_hub_changes(self):
         for path in ('apps/ui3/src/shop/checkout/chain/metatx.ts', 'apps/ui3/src/shop/checkout/chain/wallet.ts',
-                     'apps/ui3/src/shop/checkout/chain/config.ts', 'apps/ui3/src/shop/pageOverride.ts'):
+                     'apps/ui3/src/shop/checkout/chain/config.ts', 'apps/ui3/src/shop/pageOverride.ts',
+                     'library/shop/cart/splitPlan.ts', 'library/shop/model/purchase.ts',
+                     'apps/ui3/src/data/catalyst/backpack.ts', 'apps/ui3/src/data/auth/wallet.ts'):
             with self.subTest(path=path):
                 self.assertFalse(resolve(path).creator_hub)
 
@@ -152,23 +159,35 @@ class PlanTest(unittest.TestCase):
         out = pull_request(CH + 'renderer/src/components/Home/Home.tsx', labels=['ci:creator-hub-e2e'])
         self.assertEqual((out['creator-hub-offline'], out['creator-hub-live']), ('true', 'false'))
 
-    def test_a_push_takes_the_label_off(self):
-        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize')
+    def test_a_push_takes_off_a_label_added_before_it(self):
+        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize',
+                           labelled_at='2026-11-24T11:59:00Z')
         self.assertEqual((out['run'], out['state'], out['remove-label']), ('false', 'pending', 'true'))
 
-    def test_a_rerun_after_the_label_is_put_back_runs(self):
-        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize', attempt=2)
+    def test_a_label_added_after_the_push_runs_even_before_the_run_reads_it(self):
+        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize',
+                           labelled_at='2026-11-24T12:00:05Z')
         self.assertEqual((out['run'], out['remove-label']), ('true', 'false'))
 
-    def test_reopening_takes_the_label_off(self):
-        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='reopened')
+    def test_a_label_added_in_the_same_second_as_the_push_comes_off(self):
+        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize',
+                           labelled_at=PUSHED_AT)
+        self.assertEqual((out['run'], out['remove-label']), ('false', 'true'))
+
+    def test_a_label_with_no_known_time_comes_off_after_a_push(self):
+        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize')
+        self.assertEqual((out['run'], out['remove-label']), ('false', 'true'))
+
+    def test_reopening_takes_off_a_label_added_before_it(self):
+        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='reopened',
+                           labelled_at='2026-11-24T11:59:00Z')
         self.assertEqual((out['run'], out['state'], out['remove-label']), ('false', 'pending', 'true'))
 
     def test_a_spec_name_unsafe_for_the_shell_runs_the_whole_suite(self):
         for name in ('test/e2e/a;b.spec.ts', 'test/e2e/a b.spec.ts', 'test/e2e/$(id).spec.ts'):
             with self.subTest(name=name):
                 path = E2E + name.removeprefix('test/e2e/')
-                out = ci.plan('pull_request', 'opened', 1, [path], ['ci:creator-hub-e2e'], ci.load_selection(),
+                out = ci.plan('pull_request', 'opened', [path], ['ci:creator-hub-e2e'], ci.load_selection(),
                               None, {path: {name}})
                 self.assertEqual((out['inspector'], out['inspector-specs']), ('true', ''))
 
@@ -189,7 +208,7 @@ class PlanTest(unittest.TestCase):
     def test_main_runs_everything(self):
         for event in ('push', 'workflow_dispatch'):
             with self.subTest(event=event):
-                out = ci.plan(event, '', 1, [], [], ci.load_selection(), None, ci.e2e_importers())
+                out = ci.plan(event, '', [], [], ci.load_selection(), None, ci.e2e_importers())
                 self.assertEqual((out['creator-hub'], out['run'], out['inspector'], out['inspector-specs'],
                                   out['creator-hub-offline'], out['creator-hub-live']),
                                  ('true', 'true', 'true', '', 'true', 'true'))
@@ -200,6 +219,25 @@ class PlanTest(unittest.TestCase):
 
 
 class SelectionFileTest(unittest.TestCase):
+
+    def test_every_file_the_renderer_typechecks_from_ui3_or_the_library_requires_the_offline_suite(self):
+        renderer = ROOT / CH / 'renderer'
+        tsconfig = json.loads((renderer / 'tsconfig.ui3.json').read_text())
+        files = {str(path.resolve().relative_to(ROOT)) for include in tsconfig['include']
+                 for path in renderer.glob(include)}
+        outside = sorted(path for path in files
+                         if not path.startswith('apps/creator-hub/') and not re.search(r'\.(test|spec)\.', path))
+        self.assertTrue(outside)
+        for path in outside:
+            with self.subTest(path=path):
+                got = resolve(path)
+                self.assertEqual((got.creator_hub, got.offline), (True, True))
+
+    def test_the_push_filter_lists_exactly_the_creator_hub_paths(self):
+        workflow = (ROOT / '.github/workflows/creator-hub-ci.yml').read_text()
+        push = workflow.split('  push:\n', 1)[1].split('  pull_request:', 1)[0]
+        listed = re.findall(r"^      - '([^']+)'$", push, re.MULTILINE)
+        self.assertEqual(listed, ci.load_selection()['creator-hub'])
 
     def test_every_pattern_names_a_tracked_file(self):
         tracked = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
