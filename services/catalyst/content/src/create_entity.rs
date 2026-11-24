@@ -436,7 +436,7 @@ async fn read_form(
             let file_name = field.file_name().unwrap_or("undefined").to_string();
             let mut part = match spool.part().await {
                 Ok(part) => part,
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e, "write_error"))),
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
             };
             // The files before it, this one and the request's directory.
             let charged = (files.len() as u64 + 2) * SPOOL_FILE_OVERHEAD_BYTES;
@@ -461,12 +461,12 @@ async fn read_form(
                     return Ok(Form::Refused(source_busy()));
                 }
                 if let Err(e) = part.write(&chunk).await {
-                    return Ok(Form::Refused(spool_unavailable(&e, "write_error")));
+                    return Ok(Form::Refused(spool_unavailable(&e)));
                 }
             }
             match part.finish(name).await {
                 Ok(spooled) => files.push(spooled),
-                Err(e) => return Ok(Form::Refused(spool_unavailable(&e, "write_error"))),
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
             }
         } else {
             if field_count >= max_fields {
@@ -499,14 +499,12 @@ async fn read_form(
 }
 
 /// Upstream's 503 for a spool the disk refuses (full, failing): the cause
-/// is logged, the client told to retry. `reason` is `folder`, `write_error`
-/// or `read_error`.
-fn spool_unavailable(e: &std::io::Error, reason: &'static str) -> Response {
+/// is logged, the client told to retry.
+fn spool_unavailable(e: &std::io::Error) -> Response {
     tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
     crate::metrics::SPOOL_FAILURES
         .handle([SPOOL_ROUTE])
         .increment(1);
-    crate::series::upload_spool_failed(reason);
     with_retry_after(
         super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, SPOOL_UNAVAILABLE_MESSAGE),
         header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
@@ -571,7 +569,7 @@ async fn uploads_of(
         }
         let bytes = Bytes::from(part.read().await.map_err(|e| {
             refused("error");
-            spool_unavailable(&e, "read_error")
+            spool_unavailable(&e)
         })?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
             .map(|parsed| {
@@ -1054,7 +1052,7 @@ async fn deploy_form(
     // ends, after the deploy stored what it keeps.
     let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE, true).await {
         Ok(spool) => spool,
-        Err(e) => return Ok(spool_unavailable(&e, "folder")),
+        Err(e) => return Ok(spool_unavailable(&e)),
     };
     let is_partial = |fields: &BTreeMap<String, String>| {
         fields.get("partial").map(String::as_str) == Some("true")

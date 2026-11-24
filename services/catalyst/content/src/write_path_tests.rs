@@ -1654,16 +1654,19 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     };
     use crate::series::{DEPLOYMENTS_ENDPOINT, TOTAL_DEPLOYMENTS};
     assert_eq!(
-        sample(DEPLOYMENTS_ENDPOINT, &[("kind", "success")]),
-        Some(3.0)
-    );
-    assert_eq!(
-        sample(DEPLOYMENTS_ENDPOINT, &[("kind", "validation_error")]),
+        sample(DEPLOYMENTS_ENDPOINT.descriptor.name, &[("kind", "success")]),
         Some(3.0)
     );
     assert_eq!(
         sample(
-            TOTAL_DEPLOYMENTS,
+            DEPLOYMENTS_ENDPOINT.descriptor.name,
+            &[("kind", "validation_error")]
+        ),
+        Some(3.0)
+    );
+    assert_eq!(
+        sample(
+            TOTAL_DEPLOYMENTS.descriptor.name,
             &[("entity_type", "profile"), ("deployment_context", "LOCAL")]
         ),
         Some(3.0),
@@ -1671,7 +1674,7 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     );
     assert_eq!(
         sample(
-            crate::series::RATE_LIMITER_KEYS,
+            crate::series::RATE_LIMITER_KEYS.descriptor.name,
             &[("entity_type", "profile"), ("cache_type", "deployment")]
         ),
         Some(1.0),
@@ -2153,15 +2156,15 @@ async fn an_unwritable_spool_answers_503() {
     assert_eq!(
         crate::series::test_support::sample(
             &rendered,
-            crate::series::UPLOAD_SPOOL_FAILURES,
-            &[("reason", "folder")]
+            crate::metrics::SPOOL_FAILURES.descriptor.name,
+            &[("route", "content-entities")]
         ),
         Some(1.0)
     );
     assert_eq!(
         crate::series::test_support::sample(
             &rendered,
-            crate::series::UPLOAD_BUDGET_ACTIVE,
+            crate::series::UPLOAD_BUDGET_ACTIVE.descriptor.name,
             &[("budget", "disk")]
         ),
         Some(0.0),
@@ -2324,7 +2327,7 @@ async fn a_source_past_its_uploads_in_flight_is_turned_away() {
     assert_eq!(
         crate::series::test_support::sample(
             &recorder.handle().render(),
-            crate::series::UPLOAD_BUDGET_REJECTIONS,
+            crate::series::UPLOAD_BUDGET_REJECTIONS.descriptor.name,
             &[("budget", "source"), ("reason", "source_concurrency")]
         ),
         Some(1.0)
@@ -2375,13 +2378,17 @@ async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
     );
     let rendered = recorder.handle().render();
     assert_eq!(
-        crate::series::test_support::sample(&rendered, crate::series::MULTIPART_TIMEOUTS, &[]),
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::MULTIPART_TIMEOUTS.descriptor.name,
+            &[]
+        ),
         Some(1.0)
     );
     assert_eq!(
         crate::series::test_support::sample(
             &rendered,
-            crate::series::MULTIPART_ABORTS,
+            crate::series::MULTIPART_ABORTS.descriptor.name,
             &[("reason", "client_closed")]
         ),
         None,
@@ -2418,7 +2425,7 @@ async fn a_client_closing_mid_body_counts_one_abort() {
     let aborts = || {
         crate::series::test_support::sample(
             &recorder.handle().render(),
-            crate::series::MULTIPART_ABORTS,
+            crate::series::MULTIPART_ABORTS.descriptor.name,
             &[("reason", "client_closed")],
         )
     };

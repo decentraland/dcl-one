@@ -366,22 +366,31 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
         |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
     for kind in ["accepted", "validation_error", "finalized", "replayed"] {
         assert_eq!(
-            sample(PARTIAL_STAGING, &[("kind", kind)]),
+            sample(PARTIAL_STAGING.descriptor.name, &[("kind", kind)]),
             Some(1.0),
             "{kind}"
         );
     }
-    assert_eq!(sample(PARTIAL_STARTED, &[]), Some(1.0));
-    assert_eq!(sample(PARTIAL_COMPLETED, &[]), Some(1.0));
+    assert_eq!(sample(PARTIAL_STARTED.descriptor.name, &[]), Some(1.0));
+    assert_eq!(sample(PARTIAL_COMPLETED.descriptor.name, &[]), Some(1.0));
     assert_eq!(
-        sample(PARTIAL_BATCHES, &[("outcome", "incomplete")]),
+        sample(
+            PARTIAL_BATCHES.descriptor.name,
+            &[("outcome", "incomplete")]
+        ),
         Some(1.0)
     );
     assert_eq!(
-        sample(&format!("{PARTIAL_BATCHES_PER_UPLOAD}_count"), &[]),
+        sample(
+            &format!("{}_count", PARTIAL_BATCHES_PER_UPLOAD.descriptor.name),
+            &[]
+        ),
         Some(1.0)
     );
-    assert_eq!(sample(&format!("{PARTIAL_DURATION}_count"), &[]), Some(1.0));
+    assert_eq!(
+        sample(&format!("{}_count", PARTIAL_DURATION.descriptor.name), &[]),
+        Some(1.0)
+    );
     for stage in [
         "hash",
         "validate",
@@ -393,7 +402,7 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     ] {
         assert!(
             sample(
-                &format!("{PARTIAL_STAGE_DURATION}_count"),
+                &format!("{}_count", PARTIAL_STAGE_DURATION.descriptor.name),
                 &[("stage", stage)]
             )
             .is_some_and(|n| n >= 1.0),
@@ -402,7 +411,7 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     }
     assert_eq!(
         sample(
-            &format!("{PARTIAL_STAGE_DURATION}_count"),
+            &format!("{}_count", PARTIAL_STAGE_DURATION.descriptor.name),
             &[("stage", "finalize_deploy")]
         ),
         Some(2.0),
@@ -1313,17 +1322,35 @@ async fn a_busy_store_lock_ends_the_cleanup_run() {
     let sample =
         |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
     assert_eq!(
-        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "deferred")]),
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "deferred")]
+        ),
         Some(1.0)
     );
     assert_eq!(
-        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "success")]),
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "success")]
+        ),
         Some(1.0)
     );
-    assert_eq!(sample(LOCK_WRITER_TIMEOUTS, &[]), Some(1.0));
-    assert_eq!(sample(PARTIAL_EXPIRED, &[]), Some(ids.len() as f64));
-    assert_eq!(sample(PARTIAL_PENDING, &[("state", "expired")]), Some(0.0));
-    assert!(sample(PARTIAL_CLEANUP_LAST_SUCCESS, &[]).is_some_and(|t| t > 0.0));
+    assert_eq!(
+        sample(
+            crate::storage::gc::LOCK_WRITER_TIMEOUTS.descriptor.name,
+            &[]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        sample(PARTIAL_EXPIRED.descriptor.name, &[]),
+        Some(ids.len() as f64)
+    );
+    assert_eq!(
+        sample(PARTIAL_PENDING.descriptor.name, &[("state", "expired")]),
+        Some(0.0)
+    );
+    assert!(sample(PARTIAL_CLEANUP_LAST_SUCCESS.descriptor.name, &[]).is_some_and(|t| t > 0.0));
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -1433,18 +1460,27 @@ async fn an_unlink_failure_keeps_only_its_upload() {
     let sample =
         |name: &str, labels: &[(&str, &str)]| test_support::sample(&rendered, name, labels);
     assert_eq!(
-        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "error")]),
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "error")]
+        ),
         Some(1.0)
     );
     assert_eq!(
-        sample(PARTIAL_CLEANUP_RUNS, &[("outcome", "success")]),
+        sample(
+            PARTIAL_CLEANUP_RUNS.descriptor.name,
+            &[("outcome", "success")]
+        ),
         Some(1.0)
     );
     assert_eq!(
-        sample(PARTIAL_CLEANUP_FAILURES, &[("reason", "storage")]),
+        sample(
+            PARTIAL_CLEANUP_FAILURES.descriptor.name,
+            &[("reason", "storage")]
+        ),
         Some(1.0)
     );
-    assert_eq!(sample(PARTIAL_EXPIRED, &[]), Some(2.0));
+    assert_eq!(sample(PARTIAL_EXPIRED.descriptor.name, &[]), Some(2.0));
     let _ = std::fs::remove_dir_all(&tmp);
 }
 

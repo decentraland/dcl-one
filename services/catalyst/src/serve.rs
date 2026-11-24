@@ -156,36 +156,6 @@ mod metrics_tests {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
     }
-
-    /// The serve exporter renders every content histogram as a histogram with its buckets.
-    #[test]
-    fn serve_renders_the_content_histograms_with_their_buckets() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        dcl_metrics::with_local_recorder(&recorder, || {
-            for (name, _) in crate::content::series::BUCKETS {
-                dcl_metrics::histogram!(name).record(1.0);
-            }
-        });
-        let rendered = handle.render();
-        for (name, buckets) in crate::content::series::BUCKETS {
-            assert!(
-                rendered.contains(&format!("# TYPE {name} histogram")),
-                "{name}: {rendered}"
-            );
-            let prefix = format!("{name}_bucket{{le=\"");
-            let le: Vec<&str> = rendered
-                .lines()
-                .filter_map(|line| line.strip_prefix(&prefix))
-                .filter_map(|line| line.split('"').next())
-                .collect();
-            let mut expected: Vec<String> = buckets.iter().map(f64::to_string).collect();
-            expected.push("+Inf".to_string());
-            assert_eq!(le, expected, "{name}");
-        }
-    }
 }
 
 pub async fn serve(mut config: Config) -> anyhow::Result<()> {

@@ -45,7 +45,12 @@ pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
 pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 
 /// Exclusive store-lock waits that gave up because publishes kept the shared side busy.
-pub const LOCK_WRITER_TIMEOUTS: &str = "dcl_content_lock_writer_timeouts_total";
+pub const LOCK_WRITER_TIMEOUTS: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "dcl_content_lock_writer_timeouts_total",
+    "Garbage collection or cleanup runs deferred because deployments kept the content lock busy",
+    None,
+    &[],
+);
 
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -140,7 +145,7 @@ pub async fn lock_store_exclusive_within(
     {
         Ok(_) => Ok(tx),
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
-            dcl_metrics::counter!(LOCK_WRITER_TIMEOUTS).increment(1);
+            LOCK_WRITER_TIMEOUTS.handle([]).increment(1);
             Err(GcError::LockTimeout)
         }
         Err(e) => Err(e.into()),

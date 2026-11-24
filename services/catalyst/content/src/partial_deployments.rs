@@ -1956,7 +1956,6 @@ pub async fn cleanup_expired(
     storage: &Storage,
     limits: &Limits,
 ) -> anyhow::Result<usize> {
-    let started = Instant::now();
     let mut run = Reclaim::default();
     let reclaimed = reclaim_expired(pool, storage, limits, &mut run).await;
     let recorded = record_run(pool).await;
@@ -1966,7 +1965,7 @@ pub async fn cleanup_expired(
         (Ok(()), Ok(())) if run.failed == 0 => "success",
         _ => "error",
     };
-    crate::series::partial_cleanup(started, outcome, run.removed);
+    crate::series::partial_cleanup(outcome, run.removed);
     recorded?;
     reclaimed?;
     run_result(run.removed, run.failed)
